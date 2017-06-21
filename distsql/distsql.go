@@ -184,7 +184,7 @@ func (pr *partialResult) Close() error {
 // concurrency: The max concurrency for underlying coprocessor request.
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
-func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
+func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, priority int) (SelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics
@@ -196,7 +196,7 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 	}()
 
 	// Convert tipb.*Request to kv.Request.
-	kvReq, err1 := composeRequest(req, keyRanges, concurrency, keepOrder)
+	kvReq, err1 := composeRequest(req, keyRanges, concurrency, keepOrder, priority)
 	if err1 != nil {
 		err = errors.Trace(err1)
 		return nil, err
@@ -267,11 +267,12 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 }
 
 // Convert tipb.Request to kv.Request.
-func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (*kv.Request, error) {
+func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, priority int) (*kv.Request, error) {
 	kvReq := &kv.Request{
 		Concurrency: concurrency,
 		KeepOrder:   keepOrder,
 		KeyRanges:   keyRanges,
+		Priority:    priority,
 	}
 	if req.IndexInfo != nil {
 		kvReq.Tp = kv.ReqTypeIndex

@@ -699,6 +699,7 @@ type SelectStmtOpts struct {
 	SQLCache      bool
 	CalcFoundRows bool
 	TableHints    []*TableOptimizerHint
+	Priority      int
 }
 
 // TableOptimizerHint is Table level optimizer hint

@@ -620,6 +620,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		aggFuncs:    v.AggFuncsPB,
 		byItems:     v.GbyItemsPB,
 		orderByList: v.SortItemsPB,
+		priority:    v.Priority,
 	}
 	return e
 }
@@ -653,6 +654,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggregate:            v.Aggregated,
 		aggFuncs:             v.AggFuncsPB,
 		byItems:              v.GbyItemsPB,
+		priority:             v.Priority,
 	}
 	vars := b.ctx.GetSessionVars()
 	if v.OutOfOrder {
@@ -993,6 +995,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		desc:      ts.Desc,
 		ranges:    ts.Ranges,
 		columns:   ts.Columns,
+		priority:  ts.Priority,
 	}
 
 	for i := range v.Schema().Columns {
@@ -1021,6 +1024,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		desc:      is.Desc,
 		ranges:    is.Ranges,
 		columns:   is.Columns,
+		priority:  is.Priority,
 	}
 
 	for _, col := range v.OutputColumns {
@@ -1059,6 +1063,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		ranges:       is.Ranges,
 		tableRequest: tableReq,
 		columns:      is.Columns,
+		priority:     is.Priority,
 	}
 	return e
 }

@@ -528,6 +528,7 @@ func (r *Region) GetContext() *kvrpcpb.Context {
 		RegionId:    r.meta.Id,
 		RegionEpoch: r.meta.RegionEpoch,
 		Peer:        r.peer,
+		Priority:    kvrpcpb.CommandPri_Normal,
 	}
 }
 

@@ -147,6 +147,8 @@ type Request struct {
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
+	// Priority is the of this request, 0:normal, 1:low, 2:high.
+	Priority int
 }
 
 // Response represents the response returned from KV layer.

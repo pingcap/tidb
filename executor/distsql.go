@@ -394,6 +394,7 @@ type XSelectIndexExec struct {
 	scanConcurrency int
 	execStart       time.Time
 	partialCount    int
+	priority        int
 }
 
 // Open implements the Executor Open interface.
@@ -664,7 +665,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return distsql.Select(e.ctx.GetClient(), e.ctx.GoCtx(), selIdxReq, keyRanges, e.scanConcurrency, !e.outOfOrder)
+	return distsql.Select(e.ctx.GetClient(), e.ctx.GoCtx(), selIdxReq, keyRanges, e.scanConcurrency, !e.outOfOrder, e.priority)
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -809,7 +810,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
 	// Use the table scan concurrency variable to do table request.
 	concurrency := e.ctx.GetSessionVars().DistSQLScanConcurrency
-	resp, err := distsql.Select(e.ctx.GetClient(), goctx.Background(), selTableReq, keyRanges, concurrency, false)
+	resp, err := distsql.Select(e.ctx.GetClient(), goctx.Background(), selTableReq, keyRanges, concurrency, false, e.priority)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -856,6 +857,7 @@ type XSelectTableExec struct {
 
 	execStart    time.Time
 	partialCount int
+	priority     int
 }
 
 // Schema implements the Executor Schema interface.
@@ -889,7 +891,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.GroupBy = e.byItems
 
 	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
-	e.result, err = distsql.Select(e.ctx.GetClient(), goctx.Background(), selReq, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder)
+	e.result, err = distsql.Select(e.ctx.GetClient(), goctx.Background(), selReq, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.priority)
 	if err != nil {
 		return errors.Trace(err)
 	}

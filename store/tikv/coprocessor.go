@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tipb/go-tipb"
@@ -82,7 +83,7 @@ func (c *CopClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
 	coprocessorCounter.WithLabelValues("send").Inc()
 
 	bo := NewBackoffer(copBuildTaskMaxBackoff, ctx)
-	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc)
+	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Priority)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -115,6 +116,8 @@ type copTask struct {
 
 	respChan  chan copResponse
 	storeAddr string
+
+	priority kvrpcpb.CommandPri
 }
 
 func (r *copTask) String() string {
@@ -212,7 +215,7 @@ func (r *copRanges) toPBRanges() []*coprocessor.KeyRange {
 	return ranges
 }
 
-func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool) ([]*copTask, error) {
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, priority int) ([]*copTask, error) {
 	coprocessorCounter.WithLabelValues("build_task").Inc()
 
 	start := time.Now()
@@ -220,10 +223,20 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 
 	var tasks []*copTask
 	appendTask := func(region RegionVerID, ranges *copRanges) {
+		var pri kvrpcpb.CommandPri
+		switch priority {
+		case 0:
+			pri = kvrpcpb.CommandPri_Normal
+		case 1:
+			pri = kvrpcpb.CommandPri_Low
+		case 2:
+			pri = kvrpcpb.CommandPri_High
+		}
 		tasks = append(tasks, &copTask{
 			region:   region,
 			ranges:   ranges,
 			respChan: make(chan copResponse, 1),
+			priority: pri,
 		})
 	}
 
@@ -449,7 +462,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 				Ranges: task.ranges.toPBRanges(),
 			},
 		}
-		resp, err := sender.SendReq(bo, req, task.region, readTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, task.region, readTimeoutMedium, task.priority)
 		if err != nil {
 			return []copResponse{{err: errors.Trace(err)}}
 		}
@@ -488,7 +501,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 func (it *copIterator) handleRegionErrorTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("rebuild_task").Inc()
 
-	newTasks, err := buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc)
+	newTasks, err := buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc, it.req.Priority)
 	if err != nil {
 		return []copResponse{{err: errors.Trace(err)}}
 	}

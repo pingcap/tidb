@@ -445,6 +445,7 @@ type SelectStmt struct {
 	dmlNode
 	resultSetNode
 
+	*SelectStmtOpts
 	// Distinct represents if the select has distinct option.
 	Distinct bool
 	// From is the from clause of the query.

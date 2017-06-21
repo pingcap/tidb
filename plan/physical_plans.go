@@ -148,6 +148,7 @@ type PhysicalIndexScan struct {
 	accessEqualCount int
 
 	TableAsName *model.CIStr
+	Priority    int
 
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
@@ -437,6 +438,7 @@ type PhysicalTableScan struct {
 
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
+	Priority  int
 }
 
 // PhysicalApply represents apply plan, only used for subquery.

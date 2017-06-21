@@ -56,6 +56,7 @@ type TableReaderExecutor struct {
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
+	priority      int
 }
 
 // Schema implements the Executor Schema interface.
@@ -161,7 +162,8 @@ type IndexReaderExecutor struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 	// columns are only required by union scan.
-	columns []*model.ColumnInfo
+	columns  []*model.ColumnInfo
+	priority int
 }
 
 // Schema implements the Executor Schema interface.
@@ -270,7 +272,8 @@ type IndexLookUpExecutor struct {
 
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
-	columns []*model.ColumnInfo
+	columns  []*model.ColumnInfo
+	priority int
 }
 
 // Open implements the Executor Open interface.

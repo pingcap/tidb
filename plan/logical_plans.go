@@ -261,6 +261,7 @@ type DataSource struct {
 	pushedDownConds []expression.Expression
 
 	statisticTable *statistics.Table
+	priority       int // ast.NoPriority
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {

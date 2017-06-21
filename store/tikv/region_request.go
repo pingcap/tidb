@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -55,7 +56,7 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 }
 
 // SendReq sends a request to tikv server.
-func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, priority kvrpcpb.CommandPri) (*tikvrpc.Response, error) {
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
 		if err != nil {
@@ -72,7 +73,7 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 		}
 
 		s.storeAddr = ctx.Addr
-		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
+		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout, priority)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -97,7 +98,8 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 	}
 }
 
-func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration, priority kvrpcpb.CommandPri) (resp *tikvrpc.Response, retry bool, err error) {
+	ctx.KVCtx.Priority = priority
 	if e := tikvrpc.SetContext(req, ctx.KVCtx); e != nil {
 		return nil, false, errors.Trace(e)
 	}

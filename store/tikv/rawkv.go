@@ -142,7 +142,7 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Respon
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort, kvrpcpb.CommandPri_Normal)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

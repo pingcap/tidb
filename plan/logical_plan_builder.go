@@ -977,6 +977,10 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 			defer b.popTableHints()
 		}
 	}
+	if sel.SelectStmtOpts != nil && sel.SelectStmtOpts.Priority != 0 {
+		b.priority = sel.SelectStmtOpts.Priority
+		defer func() { b.priority = 0 }()
+	}
 
 	hasAgg := b.detectSelectAgg(sel)
 	var (
@@ -993,6 +997,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
+
 	originalFields := sel.Fields.Fields
 	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
 	if b.err != nil {
@@ -1105,6 +1110,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		tableInfo:      tableInfo,
 		statisticTable: statisticTable,
 		DBName:         schemaName,
+		priority:       b.priority,
 	}.init(b.allocator, b.ctx)
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
