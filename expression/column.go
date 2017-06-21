@@ -266,9 +266,10 @@ func indexCol2Col(cols []*Column, col *model.IndexColumn) *Column {
 	return nil
 }
 
-// IndexInfo2Cols changes a indexInfo's []*IndexColumn to corresponding []*Column and the length of each *IndexColumn.
+// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
+// together with a []int containing their lengths.
 // If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be only the 1st corresponding *Column.
+// the return value will be only the 1st corresponding *Column and its length.
 func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 	retCols := make([]*Column, 0, len(index.Columns))
 	lengths := make([]int, 0, len(index.Columns))
