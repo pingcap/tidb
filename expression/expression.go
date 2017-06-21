@@ -512,6 +512,7 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 
 // NewCastFunc creates a new cast function.
 func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *ScalarFunction {
+	// TODO: rewrite this function using buildCastFunction()
 	bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),

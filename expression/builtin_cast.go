@@ -157,7 +157,7 @@ func (b *castAsIntFunctionClass) getFunction(args []Expression, ctx context.Cont
 			sig = &builtinCastStringAsIntSig{bf}
 		}
 	}
-	return sig, errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 }
 
 type castAsRealFunctionClass struct {
@@ -189,7 +189,7 @@ func (b *castAsRealFunctionClass) getFunction(args []Expression, ctx context.Con
 			sig = &builtinCastStringAsRealSig{bf}
 		}
 	}
-	return sig, errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 }
 
 type castAsDecimalFunctionClass struct {
@@ -221,7 +221,7 @@ func (b *castAsDecimalFunctionClass) getFunction(args []Expression, ctx context.
 			sig = &builtinCastStringAsDecimalSig{bf}
 		}
 	}
-	return sig, errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 }
 
 type castAsStringFunctionClass struct {
@@ -253,7 +253,7 @@ func (b *castAsStringFunctionClass) getFunction(args []Expression, ctx context.C
 			sig = &builtinCastStringAsStringSig{bf}
 		}
 	}
-	return sig, errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 }
 
 type castAsTimeFunctionClass struct {
@@ -285,7 +285,7 @@ func (b *castAsTimeFunctionClass) getFunction(args []Expression, ctx context.Con
 			sig = &builtinCastStringAsTimeSig{bf}
 		}
 	}
-	return sig, errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 }
 
 type castAsDurationFunctionClass struct {
@@ -317,7 +317,7 @@ func (b *castAsDurationFunctionClass) getFunction(args []Expression, ctx context
 			sig = &builtinCastStringAsDurationSig{bf}
 		}
 	}
-	return sig, errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 }
 
 type builtinCastIntAsIntSig struct {

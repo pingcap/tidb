@@ -203,7 +203,7 @@ type concatFunctionClass struct {
 
 func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	retType, argTps := c.inferType(args)
-	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps)
+	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
