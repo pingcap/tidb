@@ -28,13 +28,13 @@ import (
 
 func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	defer testleak.AfterTest(c)()
-	v, err := GetTimeValue(nil, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
+	ctx := mock.NewContext()
+	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
 	c.Assert(v.Kind(), Equals, types.KindMysqlTime)
 	timeValue := v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
-	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum(""))
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)

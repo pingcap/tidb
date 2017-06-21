@@ -47,7 +47,7 @@ func GetDefaultDecimal(tp byte) int {
 	case TypeNewDecimal:
 		// See https://dev.mysql.com/doc/refman/5.7/en/fixed-point-types.html
 		return 0
-	case TypeDatetime:
+	case TypeDatetime, TypeDuration:
 		return 0
 	default:
 		//TODO: Add more types.

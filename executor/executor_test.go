@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -57,6 +58,7 @@ type testSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
+	expression.TurnOnNewExprEval = true
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -79,6 +81,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
+	expression.TurnOnNewExprEval = false
 }
 
 func (s *testSuite) cleanEnv(c *C) {
@@ -773,6 +776,26 @@ func (s *testSuite) TestUnsignedPKColumn(c *C) {
 	result.Check(testkit.Rows("1 1 2"))
 }
 
+func (s *testSuite) TestStringBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for concat
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef")`)
+	result := tk.MustQuery("select concat(a, b, c, d, e) from t")
+	result.Check(testkit.Rows("11.12017-01-01 12:01:0112:01:01abcdef"))
+	result = tk.MustQuery("select concat(null)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select concat(null, a, b) from t")
+	result.Check(testkit.Rows("<nil>"))
+}
+
 func (s *testSuite) TestBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -812,6 +835,12 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("11:11:11"))
 	result = tk.MustQuery("select * from t where a > cast(2 as decimal)")
 	result.Check(testkit.Rows("3 2"))
+	// fixed issue #3471
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(6));")
+	tk.MustExec("insert into t value('12:59:59.999999')")
+	result = tk.MustQuery("select cast(a as signed) from t")
+	result.Check(testkit.Rows("130000"))
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
@@ -957,7 +986,11 @@ func (s *testSuite) TestBuiltin(c *C) {
 }
 
 func (s *testSuite) TestJSON(c *C) {
+	// This will be opened after implementing cast as json.
+	origin := expression.TurnOnNewExprEval
+	expression.TurnOnNewExprEval = false
 	defer func() {
+		expression.TurnOnNewExprEval = origin
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
@@ -1020,6 +1053,57 @@ func (s *testSuite) TestJSON(c *C) {
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
 	result.Check(testkit.Rows(`3 {} <nil>`))
+}
+
+func (s *testSuite) TestGeneratedColumnWrite(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key, b int, c int as (a+8) virtual)`)
+	tk.MustExec(`CREATE TABLE test_gc_write_1 (a int primary key, b int, c int)`)
+
+	tests := []struct {
+		stmt string
+		err  int
+	}{
+		// Can't modify generated column by values.
+		{`insert into test_gc_write (a, b, c) values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by select clause.
+		{`insert into test_gc_write select 1, 1, 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by on duplicate clause.
+		{`insert into test_gc_write (a, b) values (1, 1) on duplicate key update c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by set.
+		{`insert into test_gc_write set a = 1, b = 1, c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by update clause.
+		{`update test_gc_write set c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by multi-table update clause.
+		{`update test_gc_write, test_gc_write_1 set test_gc_write.c = 1`, mysql.ErrBadGeneratedColumn},
+
+		// Can insert without generated columns.
+		{`insert into test_gc_write (a, b) values (1, 1)`, 0},
+		{`insert into test_gc_write set a = 2, b = 2`, 0},
+		// Can update without generated columns.
+		{`update test_gc_write set b = 2 where a = 2`, 0},
+		{`update test_gc_write t1, test_gc_write_1 t2 set t1.b = 3, t2.b = 4`, 0},
+
+		// But now we can't do this, just as same with MySQL 5.7:
+		{`insert into test_gc_write values (1, 1)`, mysql.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write select 1, 1`, mysql.ErrWrongValueCountOnRow},
+	}
+	for _, tt := range tests {
+		_, err := tk.Exec(tt.stmt)
+		if tt.err != 0 {
+			c.Assert(err, NotNil)
+			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+		} else {
+			c.Assert(err, IsNil)
+		}
+	}
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
@@ -1098,9 +1182,9 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	tk.MustExec("insert t values ('11:11:12', '11:11:12')")
 	tk.MustExec("insert t values ('11:11:13', '11:11:13')")
 	result = tk.MustQuery("select * from t where a > '11:11:11.5'")
-	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
+	result.Check(testkit.Rows("11:11:12.000 11:11:12", "11:11:13.000 11:11:13"))
 	result = tk.MustQuery("select * from t where b > '11:11:11.5'")
-	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
+	result.Check(testkit.Rows("11:11:12.000 11:11:12", "11:11:13.000 11:11:13"))
 }
 
 func (s *testSuite) TestSQLMode(c *C) {
@@ -1226,11 +1310,15 @@ func (s *testSuite) TestPointGet(c *C) {
 		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, plan)
 		c.Assert(ret, Equals, result)
 	}
-
 }
 
 func (s *testSuite) TestRow(c *C) {
+	// There exists a constant folding problem when the arguments of compare functions are Rows,
+	// the switch will be opened after the problem be fixed.
+	origin := expression.TurnOnNewExprEval
+	expression.TurnOnNewExprEval = false
 	defer func() {
+		expression.TurnOnNewExprEval = origin
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
@@ -1453,7 +1541,7 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (ts timestamp)")
 	tk.MustExec("set time_zone = '+00:00'")
 	tk.MustExec("insert into t values ('2017-04-27 22:40:42')")
@@ -1467,8 +1555,45 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	}
 	for _, tt := range tests {
 		tk.MustExec(fmt.Sprintf("set time_zone = '%s'", tt.timezone))
-		tk.MustQuery(fmt.Sprintf("select * from t where ts = '%s'", tt.expect)).Check(testkit.Rows(tt.expect))
+		tk.MustQuery("select * from t").Check(testkit.Rows(tt.expect))
 	}
+
+	// For issue https://github.com/pingcap/tidb/issues/3467
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (
+ 	      id bigint(20) NOT NULL AUTO_INCREMENT,
+ 	      uid int(11) DEFAULT NULL,
+ 	      datetime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ 	      ip varchar(128) DEFAULT NULL,
+ 	    PRIMARY KEY (id),
+ 	      KEY i_datetime (datetime),
+ 	      KEY i_userid (uid)
+ 	    );`)
+	tk.MustExec(`INSERT INTO t1 VALUES (123381351,1734,"2014-03-31 08:57:10","127.0.0.1");`)
+	r := tk.MustQuery("select datetime from t1;") // Cover TableReaderExec
+	r.Check(testkit.Rows("2014-03-31 08:57:10"))
+	r = tk.MustQuery("select datetime from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("2014-03-31 08:57:10")) // Cover IndexReaderExec
+	r = tk.MustQuery("select * from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("123381351 1734 2014-03-31 08:57:10 127.0.0.1")) // Cover IndexLookupExec
+
+	// For issue https://github.com/pingcap/tidb/issues/3485
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (
+	    id bigint(20) NOT NULL AUTO_INCREMENT,
+	    datetime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	    PRIMARY KEY (id)
+	  );`)
+	tk.MustExec(`INSERT INTO t1 VALUES (123381351,"2014-03-31 08:57:10");`)
+	r = tk.MustQuery(`select * from t1 where datetime="2014-03-31 08:57:10";`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	tk.MustExec(`alter table t1 add key i_datetime (datetime);`)
+	r = tk.MustQuery(`select * from t1 where datetime="2014-03-31 08:57:10";`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	r = tk.MustQuery(`select * from t1;`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	r = tk.MustQuery("select datetime from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("2014-03-31 08:57:10"))
 }
 
 func (s *testSuite) TestTiDBCurrentTS(c *C) {

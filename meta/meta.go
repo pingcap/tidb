@@ -290,7 +290,9 @@ func (m *Meta) DropDatabase(dbID int64) error {
 }
 
 // DropTable drops table in database.
-func (m *Meta) DropTable(dbID int64, tableID int64) error {
+// If delAutoID is true, it will delete the auto_increment id key-value of the table.
+// For rename table, we do not need to rename auto_increment id key-value.
+func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -307,10 +309,11 @@ func (m *Meta) DropTable(dbID int64, tableID int64) error {
 		return errors.Trace(err)
 	}
 
-	if err := m.txn.HDel(dbKey, m.autoTalbeIDKey(tableID)); err != nil {
-		return errors.Trace(err)
+	if delAutoID {
+		if err := m.txn.HDel(dbKey, m.autoTalbeIDKey(tableID)); err != nil {
+			return errors.Trace(err)
+		}
 	}
-
 	return nil
 }
 
@@ -435,8 +438,8 @@ var (
 	mDDLJobReorgKey   = []byte("DDLJobReorg")
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode()
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -445,7 +448,7 @@ func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 
 // EnQueueDDLJob adds a DDL job to the list.
 func (m *Meta) EnQueueDDLJob(job *model.Job) error {
-	return m.enQueueDDLJob(mDDLJobListKey, job)
+	return m.enQueueDDLJob(mDDLJobListKey, job, true)
 }
 
 func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
@@ -482,7 +485,7 @@ func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
 }
 
 func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte) error {
-	b, err := job.Encode()
+	b, err := job.Encode(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -506,7 +509,7 @@ func (m *Meta) jobIDKey(id int64) []byte {
 }
 
 func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode()
+	b, err := job.Encode(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -631,7 +634,11 @@ func (m *Meta) GetBgJob(index int64) (*model.Job, error) {
 
 // EnQueueBgJob adds a background job to the list.
 func (m *Meta) EnQueueBgJob(job *model.Job) error {
-	return m.enQueueDDLJob(mBgJobListKey, job)
+	var updateRawArgs bool
+	if job.RawArgs == nil {
+		updateRawArgs = true
+	}
+	return m.enQueueDDLJob(mBgJobListKey, job, updateRawArgs)
 }
 
 // BgJobQueueLen returns the background job queue length.

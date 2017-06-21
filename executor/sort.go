@@ -128,9 +128,9 @@ func (e *SortExec) Next() (*Row, error) {
 	return row, nil
 }
 
-// TopnExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
+// TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
-type TopnExec struct {
+type TopNExec struct {
 	SortExec
 	limit      *plan.Limit
 	totalCount int
@@ -138,7 +138,7 @@ type TopnExec struct {
 }
 
 // Less implements heap.Interface Less interface.
-func (e *TopnExec) Less(i, j int) bool {
+func (e *TopNExec) Less(i, j int) bool {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	for index, by := range e.ByItems {
 		v1 := e.Rows[i].key[index]
@@ -165,24 +165,24 @@ func (e *TopnExec) Less(i, j int) bool {
 }
 
 // Len implements heap.Interface Len interface.
-func (e *TopnExec) Len() int {
+func (e *TopNExec) Len() int {
 	return e.heapSize
 }
 
 // Push implements heap.Interface Push interface.
-func (e *TopnExec) Push(x interface{}) {
+func (e *TopNExec) Push(x interface{}) {
 	e.Rows = append(e.Rows, x.(*orderByRow))
 	e.heapSize++
 }
 
 // Pop implements heap.Interface Pop interface.
-func (e *TopnExec) Pop() interface{} {
+func (e *TopNExec) Pop() interface{} {
 	e.heapSize--
 	return nil
 }
 
 // Next implements the Executor Next interface.
-func (e *TopnExec) Next() (*Row, error) {
+func (e *TopNExec) Next() (*Row, error) {
 	if !e.fetched {
 		e.Idx = int(e.limit.Offset)
 		e.totalCount = int(e.limit.Offset + e.limit.Count)
