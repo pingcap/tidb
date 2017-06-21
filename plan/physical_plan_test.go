@@ -19,11 +19,14 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -1040,4 +1043,16 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 			sessionctx.GetDomain(ctx).StatsHandle().Clear()
 		}
 	}
+}
+
+func (s *testPlanSuite) TestIssue3337(c *C) {
+	defer testleak.AfterTest(c)()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
+	tb, _ := is.TableByID(0)
+	tbl := tb.Meta()
+	statsTbl := mockStatsTable(tbl, 0)
+	ran := ranger.FullIndexRange()
+	rowCount, err := statsTbl.GetRowCountByIndexRanges(new(variable.StatementContext), 1, ran)
+	c.Assert(err, IsNil)
+	c.Assert(rowCount, Equals, float64(0))
 }

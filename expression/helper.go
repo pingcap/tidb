@@ -120,7 +120,9 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	default:
 		return d, nil
 	}
-
+	if tp == mysql.TypeTimestamp {
+		value.TimeZone = ctx.GetSessionVars().GetTimeZone()
+	}
 	d.SetMysqlTime(value)
 	return d, nil
 }

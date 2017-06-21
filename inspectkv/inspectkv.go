@@ -35,7 +35,6 @@ import (
 type DDLInfo struct {
 	SchemaVer   int64
 	ReorgHandle int64 // it's only used for DDL information.
-	Owner       *model.Owner
 	Job         *model.Job
 }
 
@@ -45,11 +44,6 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	info := &DDLInfo{}
 	t := meta.NewMeta(txn)
 
-	// TODO: Get DDL owner information from etcd.
-	//info.Owner, err = t.GetDDLJobOwner()
-	//if err != nil {
-	//	return nil, errors.Trace(err)
-	//}
 	info.Job, err = t.GetDDLJob(0)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -76,11 +70,6 @@ func GetBgDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	info := &DDLInfo{}
 	t := meta.NewMeta(txn)
 
-	// TODO: Get background owner information from etcd.
-	//info.Owner, err = t.GetBgJobOwner()
-	//if err != nil {
-	//	return nil, errors.Trace(err)
-	//}
 	info.Job, err = t.GetBgJob(0)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -19,8 +19,17 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
+
+// Range is the interface of the three type of range.
+type Range interface {
+	fmt.Stringer
+	Convert2IntRange() IntColumnRange
+	Convert2ColumnRange() *ColumnRange
+	Convert2IndexRange() *IndexRange
+}
 
 // IntColumnRange represents a range for a integer column, both low and high are inclusive.
 type IntColumnRange struct {
@@ -51,12 +60,57 @@ func (tr IntColumnRange) String() string {
 	return l + "," + r
 }
 
+// Convert2IntRange implements the Convert2IntRange interface.
+func (tr IntColumnRange) Convert2IntRange() IntColumnRange {
+	return tr
+}
+
+// Convert2ColumnRange implements the Convert2ColumnRange interface.
+func (tr IntColumnRange) Convert2ColumnRange() *ColumnRange {
+	panic("you shouldn't call this method.")
+}
+
+// Convert2IndexRange implements the Convert2IndexRange interface.
+func (tr IntColumnRange) Convert2IndexRange() *IndexRange {
+	panic("you shouldn't call this method.")
+}
+
 // ColumnRange represents a range for a column.
 type ColumnRange struct {
 	Low      Datum
 	High     Datum
-	lowExcl  bool
-	highExcl bool
+	LowExcl  bool
+	HighExcl bool
+}
+
+func (cr *ColumnRange) String() string {
+	var l, r string
+	if cr.LowExcl {
+		l = "("
+	} else {
+		l = "["
+	}
+	if cr.HighExcl {
+		r = ")"
+	} else {
+		r = "]"
+	}
+	return l + formatDatum(cr.Low) + "," + formatDatum(cr.High) + r
+}
+
+// Convert2IntRange implements the Convert2IntRange interface.
+func (cr *ColumnRange) Convert2IntRange() IntColumnRange {
+	panic("you shouldn't call this method.")
+}
+
+// Convert2ColumnRange implements the Convert2ColumnRange interface.
+func (cr *ColumnRange) Convert2ColumnRange() *ColumnRange {
+	return cr
+}
+
+// Convert2IndexRange implements the Convert2IndexRange interface.
+func (cr *ColumnRange) Convert2IndexRange() *IndexRange {
+	panic("you shouldn't call this method.")
 }
 
 // IndexRange represents a range for an index.
@@ -90,6 +144,7 @@ func (ir *IndexRange) IsPoint(sc *variable.StatementContext) bool {
 	return !ir.LowExclude && !ir.HighExclude
 }
 
+// Convert2IndexRange implements the Convert2IndexRange interface.
 func (ir *IndexRange) String() string {
 	lowStrs := make([]string, 0, len(ir.LowVal))
 	for _, d := range ir.LowVal {
@@ -109,6 +164,21 @@ func (ir *IndexRange) String() string {
 	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
 }
 
+// Convert2IntRange implements the Convert2IntRange interface.
+func (ir *IndexRange) Convert2IntRange() IntColumnRange {
+	panic("you shouldn't call this method.")
+}
+
+// Convert2ColumnRange implements the Convert2ColumnRange interface.
+func (ir *IndexRange) Convert2ColumnRange() *ColumnRange {
+	panic("you shouldn't call this method.")
+}
+
+// Convert2IndexRange implements the Convert2IndexRange interface.
+func (ir *IndexRange) Convert2IndexRange() *IndexRange {
+	return ir
+}
+
 // Align appends low value and high value up to the number of columns with max value, min not null value or null value.
 func (ir *IndexRange) Align(numColumns int) {
 	for i := len(ir.LowVal); i < numColumns; i++ {
@@ -125,6 +195,22 @@ func (ir *IndexRange) Align(numColumns int) {
 			ir.HighVal = append(ir.HighVal, MaxValueDatum())
 		}
 	}
+}
+
+// PrefixEqualLen tells you how long the prefix of the range is a point.
+// e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
+func (ir *IndexRange) PrefixEqualLen(sc *variable.StatementContext) (int, error) {
+	// Here, len(ir.LowVal) always equal to len(ir.HighVal)
+	for i := 0; i < len(ir.LowVal); i++ {
+		cmp, err := ir.LowVal[i].CompareDatum(sc, ir.HighVal[i])
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if cmp != 0 {
+			return i, nil
+		}
+	}
+	return len(ir.LowVal), nil
 }
 
 func formatDatum(d Datum) string {

@@ -183,7 +183,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmts[0], is, ctx)
-
+		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		var selection *plan.Selection
@@ -199,7 +199,10 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		result, err := ranger.BuildTableRange(conds, new(variable.StatementContext))
+		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
+		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
+		c.Assert(col, NotNil)
+		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -243,7 +246,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		},
 		{
 			exprStr:    "a LIKE '%'",
-			resultStr:  "[[-inf,+inf]]",
+			resultStr:  "[[<nil>,+inf]]",
 			inAndEqCnt: 0,
 		},
 		{
@@ -281,7 +284,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmts[0], is, ctx)
-
+		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		var selection *plan.Selection
@@ -298,9 +301,170 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		result, err := ranger.BuildIndexRange(new(variable.StatementContext), tbl, tbl.Indices[0], tt.inAndEqCnt, conds)
+		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[0])
+		c.Assert(cols, NotNil)
+		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IndexRangeType, cols, lengths)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
+		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+	}
+}
+
+func (s *testRangerSuite) TestColumnRange(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := newStoreWithBootstrap()
+	defer store.Close()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int)")
+
+	tests := []struct {
+		exprStr   string
+		resultStr string
+	}{
+		{
+			exprStr:   "a = 1 and b > 1",
+			resultStr: "[[1,1]]",
+		},
+		{
+			exprStr:   "b > 1",
+			resultStr: "[[<nil>,+inf]]",
+		},
+		{
+			exprStr:   "1 = a",
+			resultStr: "[[1,1]]",
+		},
+		{
+			exprStr:   "a != 1",
+			resultStr: "[[-inf,1) (1,+inf]]",
+		},
+		{
+			exprStr:   "1 != a",
+			resultStr: "[[-inf,1) (1,+inf]]",
+		},
+		{
+			exprStr:   "a > 1",
+			resultStr: "[(1,+inf]]",
+		},
+		{
+			exprStr:   "1 < a",
+			resultStr: "[(1,+inf]]",
+		},
+		{
+			exprStr:   "a >= 1",
+			resultStr: "[[1,+inf]]",
+		},
+		{
+			exprStr:   "1 <= a",
+			resultStr: "[[1,+inf]]",
+		},
+		{
+			exprStr:   "a < 1",
+			resultStr: "[[-inf,1)]",
+		},
+		{
+			exprStr:   "1 > a",
+			resultStr: "[[-inf,1)]",
+		},
+		{
+			exprStr:   "a <= 1",
+			resultStr: "[[-inf,1]]",
+		},
+		{
+			exprStr:   "1 >= a",
+			resultStr: "[[-inf,1]]",
+		},
+		{
+			exprStr:   "(a)",
+			resultStr: "[[-inf,0) (0,+inf]]",
+		},
+		{
+			exprStr:   "a in (1, 3, NULL, 2)",
+			resultStr: "[[<nil>,<nil>] [1,1] [2,2] [3,3]]",
+		},
+		{
+			exprStr:   `a IN (8,8,81,45)`,
+			resultStr: `[[8,8] [45,45] [81,81]]`,
+		},
+		{
+			exprStr:   "a between 1 and 2",
+			resultStr: "[[1,2]]",
+		},
+		{
+			exprStr:   "a not between 1 and 2",
+			resultStr: "[[-inf,1) (2,+inf]]",
+		},
+		{
+			exprStr:   "a not between null and 0",
+			resultStr: "[(0,+inf]]",
+		},
+		{
+			exprStr:   "a between 2 and 1",
+			resultStr: "[]",
+		},
+		{
+			exprStr:   "a not between 2 and 1",
+			resultStr: "[[-inf,+inf]]",
+		},
+		{
+			exprStr:   "a IS NULL",
+			resultStr: "[[<nil>,<nil>]]",
+		},
+		{
+			exprStr:   "a IS NOT NULL",
+			resultStr: "[[-inf,+inf]]",
+		},
+		{
+			exprStr:   "a IS TRUE",
+			resultStr: "[[-inf,0) (0,+inf]]",
+		},
+		{
+			exprStr:   "a IS NOT TRUE",
+			resultStr: "[[<nil>,<nil>] [0,0]]",
+		},
+		{
+			exprStr:   "a IS FALSE",
+			resultStr: "[[0,0]]",
+		},
+		{
+			exprStr:   "a IS NOT FALSE",
+			resultStr: "[[<nil>,0) (0,+inf]]",
+		},
+	}
+
+	for _, tt := range tests {
+		sql := "select * from t where " + tt.exprStr
+		ctx := testKit.Se.(context.Context)
+		stmts, err := tidb.Parse(ctx, sql)
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
+		c.Assert(stmts, HasLen, 1)
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		err = plan.ResolveName(stmts[0], is, ctx)
+		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
+		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
+		var sel *plan.Selection
+		for _, child := range p.Children() {
+			plan, ok := child.(*plan.Selection)
+			if ok {
+				sel = plan
+				break
+			}
+		}
+		c.Assert(sel, NotNil, Commentf("expr:%v", tt.exprStr))
+		ds, ok := sel.Children()[0].(*plan.DataSource)
+		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
+		conds := make([]expression.Expression, 0, len(sel.Conditions))
+		for _, cond := range sel.Conditions {
+			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+		}
+		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[0])
+		c.Assert(col, NotNil)
+		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
+		c.Assert(err, IsNil)
+		got := fmt.Sprintf("%s", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
 }

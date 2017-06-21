@@ -48,16 +48,23 @@ const (
 		Delete_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Drop_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Process_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Process_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Grant_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		References_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		References_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Show_db_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Show_db_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Super_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Execute_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_tmp_table_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Lock_tables_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Index_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_user_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Trigger_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_user_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Event_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
@@ -195,6 +202,7 @@ const (
 	version10 = 10
 	version11 = 11
 	version12 = 12
+	version13 = 13
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -295,6 +303,10 @@ func upgrade(s Session) {
 
 	if ver < version12 {
 		upgradeToVer12(s)
+	}
+
+	if ver < version13 {
+		upgradeToVer13(s)
 	}
 
 	updateBootstrapVer(s)
@@ -450,6 +462,28 @@ func upgradeToVer12(s Session) {
 	mustExecute(s, "COMMIT")
 }
 
+func upgradeToVer13(s Session) {
+	sqls := []string{
+		"ALTER TABLE mysql.user ADD COLUMN `Create_tmp_table_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Super_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Lock_tables_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_tmp_table_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Create_view_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Show_view_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_view_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Create_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_view_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Alter_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_routine_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Event_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`",
+	}
+	for _, sql := range sqls {
+		_, err := s.Execute(sql)
+		if err != nil {
+			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+				continue
+			}
+			log.Fatal(err)
+		}
+	}
+	mustExecute(s, "UPDATE mysql.user SET Create_tmp_table_priv='Y',Lock_tables_priv='Y',Create_view_priv='Y',Show_view_priv='Y',Create_routine_priv='Y',Alter_routine_priv='Y',Event_priv='Y'")
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -503,7 +537,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))

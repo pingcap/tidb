@@ -49,7 +49,7 @@ var (
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
 	_ Executor = &TableScanExec{}
-	_ Executor = &TopnExec{}
+	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
 )
 
@@ -171,18 +171,13 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
 	}
+
+	// TODO: Get the DDL owner information.
 	var ddlOwner, ddlJob string
-	if e.ddlInfo.Owner != nil {
-		ddlOwner = e.ddlInfo.Owner.String()
-	}
 	if e.ddlInfo.Job != nil {
 		ddlJob = e.ddlInfo.Job.String()
 	}
-
 	var bgOwner, bgJob string
-	if e.bgInfo.Owner != nil {
-		bgOwner = e.bgInfo.Owner.String()
-	}
 	if e.bgInfo.Job != nil {
 		bgJob = e.bgInfo.Job.String()
 	}
@@ -438,7 +433,7 @@ func (e *SelectionExec) initController() error {
 
 	switch x := e.children[0].(type) {
 	case *XSelectTableExec:
-		accessCondition, restCondtion := ranger.DetachTableScanConditions(newConds, x.tableInfo.GetPkName())
+		accessCondition, restCondtion := ranger.DetachColumnConditions(newConds, x.tableInfo.GetPkName())
 		x.where, _, _ = expression.ExpressionsToPB(sc, restCondtion, client)
 		ranges, err := ranger.BuildTableRange(accessCondition, sc)
 		if err != nil {

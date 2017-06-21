@@ -204,7 +204,7 @@ func (p *Selection) checkScanController() int {
 		}
 	}
 	if pkCol != nil {
-		access, _ := ranger.DetachTableScanConditions(corColConds, pkCol.ColName)
+		access, _ := ranger.DetachColumnConditions(corColConds, pkCol.ColName)
 		for _, cond := range access {
 			if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
 				return controlTableScan

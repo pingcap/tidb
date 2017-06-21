@@ -489,9 +489,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Use time.UTC instead of session's timezone because coprocessor evaluator has
-		// already handle the timezone.
-		err = decodeRawValues(values, schema, time.UTC)
+		err = decodeRawValues(values, schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -641,7 +639,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	if e.desc {
 		selIdxReq.OrderBy = []*tipb.ByItem{{Desc: e.desc}}
 	}
-	// If the index is single read, we can push topn down.
+	// If the index is single read, we can push topN down.
 	if e.singleReadMode {
 		selIdxReq.Limit = e.limitCount
 		// If sortItemsPB is empty, the Desc may be true and we shouldn't overwrite it.
@@ -649,7 +647,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 			selIdxReq.OrderBy = e.sortItemsPB
 		}
 	} else if e.where == nil && len(e.sortItemsPB) == 0 {
-		// If the index is double read but table scan has no filter or topn, we can push limit down to index.
+		// If the index is double read but table scan has no filter or topN, we can push limit down to index.
 		selIdxReq.Limit = e.limitCount
 	}
 	selIdxReq.Where = e.indexConditionPBExpr
@@ -776,9 +774,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Use time.UTC instead of session's timezone because coprocessor evaluator has
-		// already handle the timezone.
-		err = decodeRawValues(values, e.Schema(), time.UTC)
+		err = decodeRawValues(values, e.Schema(), e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
