@@ -1375,11 +1375,11 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		return ConvertFloatToInt(sc, d.GetFloat64(), lowerBound, upperBound, tp)
 	case KindString, KindBytes:
 		iVal, err := StrToInt(sc, d.GetString())
-		if err != nil {
-			return iVal, errors.Trace(err)
+		iVal, err2 := ConvertIntToInt(iVal, lowerBound, upperBound, tp)
+		if err == nil {
+			err = err2
 		}
-		i64, err := ConvertIntToInt(iVal, lowerBound, upperBound, tp)
-		return i64, errors.Trace(err)
+		return iVal, errors.Trace(err)
 	case KindMysqlTime:
 		// 2011-11-10 11:11:11.999999 -> 20111110111112
 		// 2011-11-10 11:59:59.999999 -> 20111110120000
