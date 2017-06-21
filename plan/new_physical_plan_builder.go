@@ -699,7 +699,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 				return nil, errors.Trace(err)
 			}
 			is.Ranges = ranger.Ranges2IndexRanges(ranges)
-			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, len(is.AccessCondition))
+			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
