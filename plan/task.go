@@ -379,7 +379,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	for i, aggFun := range p.AggFuncs {
 		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
-		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor+1))
+		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor))
 		if needCount(fun) {
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen = 21
