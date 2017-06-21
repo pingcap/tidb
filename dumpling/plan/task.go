@@ -372,40 +372,49 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	gkType := types.NewFieldType(mysql.TypeBlob)
 	gkType.Charset = charset.CharsetBin
 	gkType.Collate = charset.CollationBin
-	partialSchema := expression.NewSchema(&expression.Column{RetType: gkType, FromID: p.id, Position: 0})
+	partialSchema := expression.NewSchema()
 	partialAgg.SetSchema(partialSchema)
 	cursor := 0
 	finalAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
 		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
-		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor+1))
+		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor))
 		if needCount(fun) {
-			cursor++
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen = 21
 			ft.Charset = charset.CharsetBin
 			ft.Collate = charset.CollationBin
-			partialSchema.Append(&expression.Column{Position: cursor, ColName: colName, RetType: ft})
+			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
 			args = append(args, partialSchema.Columns[cursor].Clone())
+			cursor++
 		}
 		if needValue(fun) {
-			cursor++
 			ft := p.schema.Columns[i].GetType()
-			partialSchema.Append(&expression.Column{Position: cursor, ColName: colName, RetType: ft})
+			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
 			args = append(args, partialSchema.Columns[cursor].Clone())
+			cursor++
 		}
 		fun.SetArgs(args)
 		fun.SetMode(expression.FinalMode)
 		finalAggFuncs[i] = fun
 	}
 	finalAgg = PhysicalAggregation{
-		HasGby:       p.HasGby,
-		AggType:      FinalAgg,
-		GroupByItems: []expression.Expression{partialSchema.Columns[0].Clone()},
-		AggFuncs:     finalAggFuncs,
+		HasGby:   p.HasGby, // TODO: remove this field
+		AggType:  FinalAgg,
+		AggFuncs: finalAggFuncs,
 	}.init(p.allocator, p.ctx)
 	finalAgg.SetSchema(p.schema)
+	// add group by columns
+	for i, gbyExpr := range p.GroupByItems {
+		gbyCol := &expression.Column{
+			FromID:   partialAgg.id,
+			Position: cursor + i,
+			RetType:  gbyExpr.GetType(),
+		}
+		partialSchema.Append(gbyCol)
+		finalAgg.GroupByItems = append(finalAgg.GroupByItems, gbyCol.Clone())
+	}
 	return
 }
 
