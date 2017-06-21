@@ -105,7 +105,7 @@ func (s *testJSONSuite) TestUnquoteString(c *C) {
 		input  string
 		output string
 	}{
-		{"bad escaped: \\a", "bad escaped: \\a"},
+		{"bad escaped: \\a", "bad escaped: a"},
 		{"good escaped: \\b \\f \\n \\r \\t \\\\ \u4f60", "good escaped: \b \f \n \r \t \\ 你"},
 		{"quoted string: hello \\\"quoted\\\" world", "quoted string: hello \"quoted\" world"},
 	}
