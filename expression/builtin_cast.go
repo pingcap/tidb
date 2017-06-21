@@ -135,7 +135,8 @@ type castAsIntFunctionClass struct {
 }
 
 func (b *castAsIntFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	bf := baseIntBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	bf := baseIntBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+	bf.tp = b.tp
 	if IsHybridType(args[0]) {
 		return &builtinCastIntAsIntSig{bf}, nil
 	}
@@ -166,7 +167,8 @@ type castAsRealFunctionClass struct {
 }
 
 func (b *castAsRealFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	bf := baseRealBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	bf := baseRealBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+	bf.tp = b.tp
 	if IsHybridType(args[0]) {
 		return &builtinCastRealAsRealSig{bf}, nil
 	}
@@ -197,7 +199,8 @@ type castAsDecimalFunctionClass struct {
 }
 
 func (b *castAsDecimalFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	bf := baseDecimalBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	bf := baseDecimalBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+	bf.tp = b.tp
 	if IsHybridType(args[0]) {
 		return &builtinCastDecimalAsDecimalSig{bf}, nil
 	}
@@ -228,7 +231,8 @@ type castAsStringFunctionClass struct {
 }
 
 func (b *castAsStringFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	bf := baseStringBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	bf := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+	bf.tp = b.tp
 	if IsHybridType(args[0]) {
 		return &builtinCastStringAsStringSig{bf}, nil
 	}
@@ -259,7 +263,8 @@ type castAsTimeFunctionClass struct {
 }
 
 func (b *castAsTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	bf := baseTimeBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	bf := baseTimeBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+	bf.tp = b.tp
 	if IsHybridType(args[0]) {
 		return &builtinCastTimeAsTimeSig{bf}, nil
 	}
@@ -290,7 +295,8 @@ type castAsDurationFunctionClass struct {
 }
 
 func (b *castAsDurationFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	bf := baseDurationBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	bf := baseDurationBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+	bf.tp = b.tp
 	if IsHybridType(args[0]) {
 		return &builtinCastDurationAsDurationSig{bf}, nil
 	}

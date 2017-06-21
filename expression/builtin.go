@@ -26,6 +26,18 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// argTp indicates the specified types that arguments of a built-in function should be.
+type argTp byte
+
+const (
+	tpInt argTp = iota
+	tpReal
+	tpDecimal
+	tpString
+	tpTime
+	tpDuration
+)
+
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
 	args          []Expression
@@ -49,17 +61,33 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 }
 
 // newBaseBuiltinFuncWithTp will be renamed to newBaseBuiltinFunc and replaces the older one later.
-// We'll move the type infer work to expression writer,
-// thus the `tp` attribute is needed for `baseBuiltinFunc`
-// to obtain the FieldType of a ScalarFunction.
-func newBaseBuiltinFuncWithTp(args []Expression, tp *types.FieldType, ctx context.Context) baseBuiltinFunc {
+// argTps indicates the types of the args, retType indicates the return type of the built-in function.
+func newBaseBuiltinFuncWithTp(args []Expression, retType *types.FieldType, ctx context.Context, argTps ...argTp) (bf baseBuiltinFunc, err error) {
+	for i := range args {
+		switch argTps[i] {
+		case tpInt:
+			args[i], err = WrapWithCastAsInt(args[i], ctx)
+		case tpReal:
+			args[i], err = WrapWithCastAsReal(args[i], ctx)
+		case tpDecimal:
+			args[i], err = WrapWithCastAsDecimal(args[i], ctx)
+		case tpString:
+			args[i], err = WrapWithCastAsString(args[i], ctx)
+		case tpTime:
+			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
+		case tpDuration:
+			args[i], err = WrapWithCastAsDuration(args[i], ctx)
+		}
+	}
+	if err != nil {
+		return bf, errors.Trace(err)
+	}
 	return baseBuiltinFunc{
 		args:          args,
 		argValues:     make([]types.Datum, len(args)),
 		ctx:           ctx,
 		deterministic: true,
-		tp:            tp,
-	}
+		tp:            retType}, errors.Trace(err)
 }
 
 func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
