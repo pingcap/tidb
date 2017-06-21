@@ -160,6 +160,17 @@ func (s *testSuite) TestInsert(c *C) {
 	r = tk.MustQuery("select length(c) from t;")
 	r.Check(testkit.Rows("1"))
 
+	// issue 3509
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c int)")
+	tk.MustExec("set @origin_time_zone = @@time_zone")
+	tk.MustExec("set @@time_zone = '+08:00'")
+	_, err = tk.Exec("insert into t value(Unix_timestamp('2002-10-27 01:00'))")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows("1035651600"))
+	tk.MustExec("set @@time_zone = @origin_time_zone")
+
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {

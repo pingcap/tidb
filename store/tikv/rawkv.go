@@ -49,8 +49,7 @@ func (c *RawKVClient) ClusterID() uint64 {
 	return c.clusterID
 }
 
-// Get queries value with the key. When the key does not exist, it returns
-// `nil, nil`, while `[]byte{}, nil` means an empty value.
+// Get queries value with the key. When the key does not exist, it returns `nil, nil`.
 func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	start := time.Now()
 	defer func() { rawkvCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
@@ -72,6 +71,9 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	if cmdResp.GetError() != "" {
 		return nil, errors.New(cmdResp.GetError())
 	}
+	if len(cmdResp.Value) == 0 {
+		return nil, nil
+	}
 	return cmdResp.Value, nil
 }
 
@@ -81,6 +83,10 @@ func (c *RawKVClient) Put(key, value []byte) error {
 	defer func() { rawkvCmdHistogram.WithLabelValues("put").Observe(time.Since(start).Seconds()) }()
 	rawkvSizeHistogram.WithLabelValues("key").Observe(float64(len(key)))
 	rawkvSizeHistogram.WithLabelValues("value").Observe(float64(len(value)))
+
+	if len(value) == 0 {
+		return errors.New("empty value is not supported")
+	}
 
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,

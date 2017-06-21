@@ -40,6 +40,7 @@ type invalidMockType struct {
 func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	d := NewDatum(val)
 	sc := new(variable.StatementContext)
+	sc.TimeZone = time.UTC
 	ret, err := d.ConvertTo(sc, target)
 	if err != nil {
 		return ret.GetValue(), errors.Trace(err)
@@ -189,6 +190,17 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, uint64(100))
+	// issue 3470
+	ft = NewFieldType(mysql.TypeLonglong)
+	v, err = Convert(Duration{Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond), Fsp: 3}, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(130000))
+	v, err = Convert(Time{
+		Time: FromDate(2017, 1, 1, 12, 59, 59, 555000),
+		Type: mysql.TypeDatetime,
+		Fsp:  MaxFsp}, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(20170101130000))
 
 	// For TypeBit
 	ft = NewFieldType(mysql.TypeBit)
@@ -532,6 +544,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeLong, int64(math.MaxInt32), strvalue(int64(math.MaxInt32)))
 	signedDeny(c, mysql.TypeLong, uint64(math.MaxUint64), strvalue(uint64(math.MaxInt32)))
 	signedDeny(c, mysql.TypeLong, int64(math.MaxInt32)+1, strvalue(int64(math.MaxInt32)))
+	signedDeny(c, mysql.TypeLong, "1343545435346432587475", strvalue(int64(math.MaxInt32)))
 	unsignedDeny(c, mysql.TypeLong, -1, "4294967295")
 	unsignedAccept(c, mysql.TypeLong, 0, "0")
 	unsignedAccept(c, mysql.TypeLong, uint64(math.MaxUint32), strvalue(uint64(math.MaxUint32)))
