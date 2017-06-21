@@ -133,6 +133,7 @@ type lengthFunctionClass struct {
 
 func (c *lengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.Flen = 10
 	types.SetBinChsClnFlag(tp)
 	sig := &builtinLengthSig{baseIntBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
