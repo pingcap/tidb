@@ -91,7 +91,7 @@ func newBaseBuiltinFuncWithTp(args []Expression, retType *types.FieldType, ctx c
 		argValues:     make([]types.Datum, len(args)),
 		ctx:           ctx,
 		deterministic: true,
-		tp:            retType}, errors.Trace(err)
+		tp:            retType}, nil
 }
 
 func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
