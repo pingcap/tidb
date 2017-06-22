@@ -147,7 +147,7 @@ type builtinLengthSig struct {
 	baseIntBuiltinFunc
 }
 
-// eval evals a builtinLengthSig.
+// evalInt evaluates a builtinLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html
 func (b *builtinLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
