@@ -1273,58 +1273,61 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 			return nil
 		}
 	}
-	orderedList, np := b.buildUpdateLists(tableList, update.List, p)
+	orderedList, offsets, np := b.buildUpdateLists(tableList, update.List, p)
 	if b.err != nil {
 		return nil
 	}
 	p = np
-	updt := Update{OrderedList: orderedList}.init(b.allocator, b.ctx)
+	updt := Update{OrderedList: orderedList, Offsets: offsets}.init(b.allocator, b.ctx)
 	addChild(updt, p)
 	updt.SetSchema(p.Schema())
 	return updt
 }
 
-func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
-	schema := p.Schema()
-	newList := make([]*expression.Assignment, schema.Len())
-	modifyColumns := make(map[string]struct{}, schema.Len()) // which columns are in set list.
+func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, []int, LogicalPlan) {
+	modifyColumns := make(map[string]int, p.Schema().Len()) // which columns are in set list.
 	for _, assign := range list {
-		col, err := schema.FindColumn(assign.Column)
+		col, offset, err := p.Schema().FindColumnAndIndex(assign.Column)
+		if err == nil && col == nil {
+			err = errors.Trace(errors.Errorf("column %s not found", assign.Column.Name.O))
+		}
 		if err != nil {
 			b.err = errors.Trace(err)
-			return nil, nil
+			return nil, nil, nil
 		}
-		if col == nil {
-			b.err = errors.Trace(errors.Errorf("column %s not found", assign.Column.Name.O))
-			return nil, nil
-		}
-		offset := schema.ColumnIndex(col)
-		if offset == -1 {
-			b.err = errors.Trace(errors.Errorf("could not find column %s.%s", col.TblName, col.ColName))
-			return nil, nil
-		}
-		newExpr, np, err := b.rewrite(assign.Expr, p, nil, false)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil, nil
-		}
-		p = np
-		newList[offset] = &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr}
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
-		modifyColumns[columnFullName] = struct{}{}
+		modifyColumns[columnFullName] = offset
 	}
 	// If columnes in set list contains generated columns, raise error.
 	for _, tn := range tableList {
 		tableInfo := tn.TableInfo
 		for _, colInfo := range tableInfo.Columns {
-			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
-			if _, ok := modifyColumns[columnFullName]; ok && len(colInfo.GeneratedExprString) != 0 {
-				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
-				return nil, nil
+			if len(colInfo.GeneratedExprString) != 0 {
+				columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+				if _, ok := modifyColumns[columnFullName]; ok {
+					b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
+					return nil, nil, nil
+				}
 			}
 		}
 	}
-	return newList, p
+
+	newList := make([]*expression.Assignment, p.Schema().Len())
+	offsets := make([]int, 0, p.Schema().Len())
+	for _, assign := range list {
+		col, offset, err := p.Schema().FindColumnAndIndex(assign.Column)
+		var newExpr expression.Expression
+		var np LogicalPlan
+		newExpr, np, err = b.rewrite(assign.Expr, p, nil, false)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil, nil, nil
+		}
+		p = np
+		newList[offset] = &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr}
+		offsets = append(offsets, offset)
+	}
+	return newList, offsets, p
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {

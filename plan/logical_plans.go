@@ -328,6 +328,7 @@ type Update struct {
 	basePhysicalPlan
 
 	OrderedList []*expression.Assignment
+	Offsets     []int
 }
 
 // Delete represents a delete plan.
