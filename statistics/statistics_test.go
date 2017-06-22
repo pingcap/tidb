@@ -225,22 +225,22 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	hg, err := BuildColumn(ctx, bucketCount, 5, ndv, s.count, 0, s.samples)
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg}
-	ran := types.ColumnRange{
+	ran := []*types.ColumnRange{{
 		Low:  types.Datum{},
 		High: types.Datum{},
-	}
+	}}
 	count, err := col.getColumnRowCount(sc, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 10000)
-	ran.Low = types.NewIntDatum(1000)
-	ran.LowExcl = true
-	ran.High = types.NewIntDatum(2000)
-	ran.HighExcl = true
+	ran[0].Low = types.NewIntDatum(1000)
+	ran[0].LowExcl = true
+	ran[0].High = types.NewIntDatum(2000)
+	ran[0].HighExcl = true
 	count, err = col.getColumnRowCount(sc, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 9964)
-	ran.LowExcl = false
-	ran.HighExcl = false
+	ran[0].LowExcl = false
+	ran[0].HighExcl = false
 	count, err = col.getColumnRowCount(sc, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 9965)
