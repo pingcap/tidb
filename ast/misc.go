@@ -698,7 +698,7 @@ type SelectStmtOpts struct {
 	Distinct      bool
 	SQLCache      bool
 	CalcFoundRows bool
-	Priority      PriorityEnum // NoPriority | LowPriority | HighPriority | DelayedPriority
+	Priority      mysql.PriorityEnum
 	TableHints    []*TableOptimizerHint
 }
 

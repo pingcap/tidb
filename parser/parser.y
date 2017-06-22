@@ -639,7 +639,6 @@ import (
 	GroupByClause		"GROUP BY clause"
 	HashString		"Hashed string"
 	HavingClause		"HAVING clause"
-	HighPriorityOptional	"HIGH_PRIORITY or empty"
 	IfExists		"If Exists"
 	IfNotExists		"If Not Exists"
 	IgnoreOptional		"IGNORE or empty"
@@ -2396,7 +2395,7 @@ InsertIntoStmt:
 	"INSERT" Priority IgnoreOptional IntoOpt TableName InsertValues OnDuplicateKeyUpdate
 	{
 		x := $6.(*ast.InsertStmt)
-		x.Priority = $2.(ast.PriorityEnum)
+		x.Priority = $2.(mysql.PriorityEnum)
 		x.Ignore = $3.(bool)
 		// Wraps many layers here so that it can be processed the same way as select statement.
 		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
@@ -2512,7 +2511,7 @@ ReplaceIntoStmt:
 	{
 		x := $5.(*ast.InsertStmt)
 		x.IsReplace = true
-		x.Priority = $2.(ast.PriorityEnum)
+		x.Priority = $2.(mysql.PriorityEnum)
 		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
 		$$ = x
@@ -2520,15 +2519,15 @@ ReplaceIntoStmt:
 
 ReplacePriority:
 	{
-		$$ = ast.NoPriority
+		$$ = mysql.NoPriority
 	}
 |	"LOW_PRIORITY"
 	{
-		$$ = ast.LowPriority
+		$$ = mysql.LowPriority
 	}
 |	"DELAYED"
 	{
-		$$ = ast.DelayedPriority
+		$$ = mysql.DelayedPriority
 	}
 
 /***********************************Replace Statements END************************************/
@@ -4085,19 +4084,19 @@ PrimaryFactor:
 
 Priority:
 	{
-		$$ = ast.NoPriority
+		$$ = mysql.NoPriority
 	}
 |	"LOW_PRIORITY"
 	{
-		$$ = ast.LowPriority
+		$$ = mysql.LowPriority
 	}
 |	"HIGH_PRIORITY"
 	{
-		$$ = ast.HighPriority
+		$$ = mysql.HighPriority
 	}
 |	"DELAYED"
 	{
-		$$ = ast.DelayedPriority
+		$$ = mysql.DelayedPriority
 	}
 
 LowPriorityOptional:
@@ -4107,15 +4106,6 @@ LowPriorityOptional:
 |	"LOW_PRIORITY"
 	{
 		$$ = true
-	}
-
-HighPriorityOptional:
-	{
-		$$ = ast.NoPriority
-	}
-|	"HIGH_PRIORITY"
-	{
-		$$ = ast.HighPriority
 	}
 
 TableName:
@@ -4598,7 +4588,7 @@ SelectStmtDistinct:
 	}
 
 SelectStmtOpts:
-	TableOptimizerHints SelectStmtDistinct HighPriorityOptional SelectStmtSQLCache SelectStmtCalcFoundRows
+	TableOptimizerHints SelectStmtDistinct Priority SelectStmtSQLCache SelectStmtCalcFoundRows
 	{
 		opt := &ast.SelectStmtOpts{}
 		if $1 != nil {
@@ -4608,7 +4598,7 @@ SelectStmtOpts:
 		    opt.Distinct = $2.(bool)
 		}
 		if $3 != nil {
-		    opt.Priority = $3.(ast.PriorityEnum)
+		    opt.Priority = $3.(mysql.PriorityEnum)
 		}
 		if $4 != nil {
 		    opt.SQLCache = $4.(bool)

@@ -1552,7 +1552,7 @@ func (s *testParserSuite) TestPriority(c *C) {
 	stmt, err := parser.Parse("select HIGH_PRIORITY * from t", "", "")
 	c.Assert(err, IsNil)
 	sel := stmt[0].(*ast.SelectStmt)
-	c.Assert(sel.SelectStmtOpts.Priority, Equals, ast.HighPriority)
+	c.Assert(sel.SelectStmtOpts.Priority, Equals, mysql.HighPriority)
 }
 
 func (s *testParserSuite) TestEscape(c *C) {
