@@ -65,7 +65,7 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 // Every built-in function needs determined argTps and retType when we create it.
 func newBaseBuiltinFuncWithTp(args []Expression, retType *types.FieldType, ctx context.Context, argTps ...argTp) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
-		panic("unexpected length of args and argTps")
+		return bf, errors.New("unexpected length of args and argTps")
 	}
 	for i := range args {
 		switch argTps[i] {
