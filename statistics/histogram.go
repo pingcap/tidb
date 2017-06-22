@@ -434,7 +434,7 @@ func (idx *Index) String() string {
 	return idx.Histogram.toString(true)
 }
 
-func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*types.IndexRange, inAndEQCnt int) (float64, error) {
+func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*types.IndexRange) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
 		indexRange.Align(idx.NumColumns)

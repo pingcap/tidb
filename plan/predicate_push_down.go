@@ -80,7 +80,7 @@ func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]ex
 	for i, expr := range predicates {
 		predicates[i] = p.replaceColumnByGenerationExpression(expr)
 	}
-	if useDAGPlanBuilder(p.ctx) {
+	if UseDAGPlanBuilder(p.ctx) {
 		_, p.pushedDownConds, predicates = expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, predicates, p.ctx.GetClient())
 	}
 	return predicates, p, nil

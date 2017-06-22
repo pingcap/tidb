@@ -570,7 +570,7 @@ func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint
 }
 
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
-	if useDAGPlanBuilder(b.ctx) {
+	if UseDAGPlanBuilder(b.ctx) {
 		b.optFlag = b.optFlag | flagPushDownTopN
 	}
 	var (
