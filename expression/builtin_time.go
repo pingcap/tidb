@@ -2024,7 +2024,6 @@ type makeDateFunctionClass struct {
 
 func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	tp := types.NewFieldType(mysql.TypeDate)
-	tp.Flen = 10
 	types.SetBinChsClnFlag(tp)
 	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpInt, tpInt)
 	if err != nil {
@@ -2038,7 +2037,7 @@ type builtinMakeDateSig struct {
 	baseTimeBuiltinFunc
 }
 
-// eval evals a builtinMakeDateSig.
+// evalTime evaluates a builtinMakeDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
 func (b *builtinMakeDateSig) evalTime(row []types.Datum) (d types.Time, isNull bool, err error) {
 	args := b.getArgs()
