@@ -171,7 +171,15 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 		return res, val.IsNull(), errors.Trace(err)
 	}
 	if expr.GetTypeClass() == types.ClassDecimal {
-		return val.GetMysqlDecimal(), false, nil
+		res, err = val.ToDecimal(sc)
+		return res, false, errors.Trace(err)
+		// TODO: We maintain two sets of type systems, one for Expression, one for Datum.
+		// So there exists some situations that the two types are not corresponded.
+		// For example, `select 1.1+1.1`
+		// we infer the result type of the sql as `mysql.TypeNewDecimal` which is consistent with MySQL,
+		// but what we actually get is store as float64 in Datum.
+		// So if we wrap `CastDecimalAsInt` upon the result, we'll get <nil> when call `arg.EvalDecimal()`.
+		// This will be fixed after all built-in functions be rewrite correctlly.
 	} else if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
@@ -512,6 +520,7 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 
 // NewCastFunc creates a new cast function.
 func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *ScalarFunction {
+	// TODO: rewrite this function using buildCastFunction()
 	bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
