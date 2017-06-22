@@ -1219,11 +1219,13 @@ func (e *UpdateExec) fetchRows() error {
 		newRowData := make([]types.Datum, len(row.Data))
 		copy(newRowData, row.Data)
 		for _, offset := range e.Offsets {
-			val, err := e.OrderedList[offset].Expr.Eval(newRowData)
-			if err != nil {
-				return errors.Trace(err)
+			if e.OrderedList[offset] != nil {
+				val, err := e.OrderedList[offset].Expr.Eval(newRowData)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				newRowData[offset] = val
 			}
-			newRowData[offset] = val
 		}
 		e.rows = append(e.rows, row)
 		e.newRowsData = append(e.newRowsData, newRowData)
