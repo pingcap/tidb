@@ -332,6 +332,8 @@ type StatementContext struct {
 
 	// Copied from SessionVars.TimeZone.
 	TimeZone *time.Location
+	// Priority of this statement.
+	Priority int
 }
 
 // AddAffectedRows adds affected rows.

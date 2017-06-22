@@ -127,7 +127,6 @@ type planBuilder struct {
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
 	optFlag       uint64
-	priority      int
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {

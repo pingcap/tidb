@@ -51,7 +51,6 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		TableAsName:         p.TableAsName,
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
-		Priority:            p.priority,
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.Schema())
 	if p.ctx.Txn() != nil {
@@ -117,7 +116,6 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		OutOfOrder:          true,
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
-		Priority:            p.priority,
 	}.init(p.allocator, p.ctx)
 	is.SetSchema(p.schema)
 	if p.ctx.Txn() != nil {
@@ -1272,7 +1270,6 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 					OutOfOrder:          true,
 					DBName:              ds.DBName,
 					physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
-					Priority:            ds.priority,
 				}.init(p.allocator, p.ctx)
 				is.SetSchema(ds.schema)
 				if is.ctx.Txn() != nil {

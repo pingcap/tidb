@@ -150,6 +150,12 @@ func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	if sel, ok := rawStmt.(*ast.SelectStmt); ok {
+		if sel.SelectStmtOpts != nil {
+			ctx.GetSessionVars().StmtCtx.Priority = sel.SelectStmtOpts.Priority
+		}
+	}
 	return st, nil
 }
 
