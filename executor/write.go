@@ -1181,6 +1181,7 @@ type UpdateExec struct {
 
 	SelectExec  Executor
 	OrderedList []*expression.Assignment
+	Offsets     []int // Offsets of every assignment in schema.
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
 	updatedRowKeys map[table.Table]map[int64]struct{}
@@ -1261,16 +1262,15 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		l := len(e.OrderedList)
 		newRowData := make([]types.Datum, len(row.Data))
 		copy(newRowData, row.Data)
-		for i := 0; i < l; i++ {
-			if e.OrderedList[i] != nil {
-				val, err := e.OrderedList[i].Expr.Eval(newRowData)
+		for _, offset := range e.Offsets {
+			if e.OrderedList[offset] != nil {
+				val, err := e.OrderedList[offset].Expr.Eval(newRowData)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				newRowData[i] = val
+				newRowData[offset] = val
 			}
 		}
 		e.rows = append(e.rows, row)
