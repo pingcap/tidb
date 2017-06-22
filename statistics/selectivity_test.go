@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/statistics"
@@ -90,7 +91,6 @@ func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 }
 
 func (s *testSelectivitySuite) TestSelectivity(c *C) {
-	c.Skip("need to fix")
 	defer testleak.AfterTest(c)()
 	store, do, err := newStoreWithBootstrap()
 	defer store.Close()
@@ -173,8 +173,15 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 			}
 		}
 		c.Assert(sel, NotNil, comment)
-		//ratio, err := statistics.Selectivity(ctx, sel.Conditions, tbl.Indices, 1, tbl, statsTbl)
-		ratio := 0.0
+		units := make([]*statistics.SelUnit, 0, 2+len(tbl.Indices))
+		pkCol := expression.ColInfo2Col(sel.Schema().Columns, tbl.GetPkColInfo())
+		units = append(units, statistics.MakeSelUnit(statistics.SelPkUnit, nil, pkCol))
+		for _, index := range tbl.Indices {
+			idxCols, lengths := expression.IndexInfo2Cols(sel.Schema().Columns, index)
+			units = append(units, statistics.MakeSelUnit(index.ID, lengths, idxCols...))
+		}
+		units = append(units, statistics.MakeSelUnit(statistics.SelColumnUnit, nil, sel.Schema().Columns...))
+		ratio, err := statistics.Selectivity(ctx, sel.Conditions, units, statsTbl)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, comment)
 	}

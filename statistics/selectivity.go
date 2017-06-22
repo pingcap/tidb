@@ -27,15 +27,35 @@ import (
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
 const selectionFactor = 0.8
 
-// calcBlock is used when calculating selectivity.
+// calcBlock is used for calculating selectivity.
 type calcBlock struct {
 	tp int
-	// the position that this index is in the index slice, if is -1, then this is primary key.
-	pos int
+	ID int64
 	// the ith bit of `cover` will tell whether the ith expression is covered by this index.
-	cover uint64
-	// ranges calculated by this index or pk.
+	cover int64
+	// ranges calculated.
 	ranges []types.Range
+}
+
+// The type of the SelUnit if it isn't a index.
+const (
+	SelPkUnit     = -1
+	SelColumnUnit = -2
+)
+
+// SelUnit is used as a param passed by Selectivity.
+// When ID >= 0, this unit is a index. And the ID, cols, lengths is the information of this index.
+// When ID is SelPkUnit, cols' len is 0, and it stores the pk column.
+// When ID is SelColumnUnit, cols stores the columns used for column sampling calculation.
+type SelUnit struct {
+	ID      int64
+	cols    []*expression.Column
+	lengths []int
+}
+
+// MakeSelUnit generates a SelUnit by the params.
+func MakeSelUnit(id int64, lengths []int, cols ...*expression.Column) *SelUnit {
+	return &SelUnit{ID: id, cols: cols, lengths: lengths}
 }
 
 // Selectivity is a function calculate the selectivity of the expressions.
@@ -43,85 +63,93 @@ type calcBlock struct {
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 // TODO: support expressions that the top layer is a DNF.
 // Currently the time complexity if o(n^2).
-func Selectivity(ctx context.Context, exprs []expression.Expression, keys []expression.KeyInfo,
-	keyIDs []int64, hasPk bool, lengths [][]int, cols []*expression.Column, statsTbl *Table) (float64, error) {
-	// TODO: If len(exprs) is bigger than 64, we could use bitset structure to replace the uint64.
+func Selectivity(ctx context.Context, exprs []expression.Expression, units []*SelUnit, statsTbl *Table) (float64, error) {
+	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
-	if statsTbl.Pseudo || len(exprs) > 64 {
+	if statsTbl.Pseudo || len(exprs) > 63 {
 		return selectionFactor, nil
 	}
 	var blocks []*calcBlock
 	sc := ctx.GetSessionVars().StmtCtx
-	idxBeginID := 0
-	if hasPk {
-		idxBeginID = 1
-		c := statsTbl.Columns[keyIDs[0]]
-		// pk should have histogram.
-		if c != nil && len(c.Buckets) > 0 {
-			covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.IntRangeType, nil, keys[0][0])
-			if err != nil {
-				return 0, errors.Trace(err)
+	for _, unit := range units {
+		switch unit.ID {
+		case SelPkUnit:
+			c := statsTbl.Columns[unit.cols[0].ID]
+			// pk should have histogram.
+			if c != nil && len(c.Buckets) > 0 {
+				covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.IntRangeType, nil, unit.cols...)
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				blocks = append(blocks, &calcBlock{
+					tp:     ranger.IntRangeType,
+					ID:     unit.cols[0].ID,
+					cover:  covered,
+					ranges: ranges,
+				})
 			}
-			blocks = append(blocks, &calcBlock{
-				tp:     ranger.IntRangeType,
-				pos:    0,
-				cover:  covered,
-				ranges: ranges,
-			})
-		}
-	}
-	for i := idxBeginID; i < len(keys); i++ {
-		c := statsTbl.Indices[keyIDs[i]]
-		// This index should have histogram.
-		if c != nil && len(c.Buckets) > 0 {
-			// covered, ranges, err := getMaskByIndex(sc, exprs, keys[i], lengths)
-			covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.IndexRangeType, lengths[i], keys[i]...)
-			if err != nil {
-				return 0, errors.Trace(err)
+		case SelColumnUnit:
+			for _, col := range unit.cols {
+				c := statsTbl.Columns[col.ID]
+				// This column should have histogram.
+				if c != nil && len(c.Buckets) > 0 {
+					covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.ColumnRangeType, nil, col)
+					if err != nil {
+						return 0, errors.Trace(err)
+					}
+					blocks = append(blocks, &calcBlock{
+						tp:     ranger.ColumnRangeType,
+						ID:     col.ID,
+						cover:  covered,
+						ranges: ranges,
+					})
+				}
 			}
-			blocks = append(blocks, &calcBlock{
-				tp:     ranger.IndexRangeType,
-				pos:    i,
-				cover:  covered,
-				ranges: ranges,
-			})
-		}
-	}
-	for i, col := range cols {
-		c := statsTbl.Columns[col.ID]
-		// This column should have histogram.
-		if c != nil && len(c.Buckets) > 0 {
-			covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.ColumnRangeType, nil, col)
-			if err != nil {
-				return 0, errors.Trace(err)
+		default:
+			c := statsTbl.Indices[unit.ID]
+			// This index should have histogram.
+			if c != nil && len(c.Buckets) > 0 {
+				covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.IndexRangeType, unit.lengths, unit.cols...)
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				blocks = append(blocks, &calcBlock{
+					tp:     ranger.IndexRangeType,
+					ID:     unit.ID,
+					cover:  covered,
+					ranges: ranges,
+				})
 			}
-			blocks = append(blocks, &calcBlock{
-				tp: ranger.ColumnRangeType,
-				pos: i,
-				cover: covered,
-				ranges: ranges,
-			})
 		}
 	}
 	blocks = getUsedBlocksByGreedy(blocks)
 	ret := 1.0
 	// cut off the higher bit of mask
-	mask := uint64(math.MaxUint64) >> uint64(64-len(exprs))
+	mask := int64(math.MaxInt64) >> uint64(63-len(exprs))
 	for _, block := range blocks {
 		mask &^= block.cover
 		var (
 			rowCount float64
 			err      error
 		)
-		if block.pos == 0 && hasPk {
+		switch block.tp {
+		case ranger.IntRangeType:
 			ranges := ranger.Ranges2IntRanges(block.ranges)
-			rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, keyIDs[0], ranges)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-		} else {
+			rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, block.ID, ranges)
+		case ranger.ColumnRangeType:
+			/*
+				ranges := ranger.Ranges2ColumnRanges(block.ranges)
+				rowCount, err = statsTbl.GetRowCountByColumnRanges(sc, block.ID, ranges)
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+			*/
+		default:
 			ranges := ranger.Ranges2IndexRanges(block.ranges)
-			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, keyIDs[block.pos], ranges)
+			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, block.ID, ranges)
+		}
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
 		ret *= rowCount / float64(statsTbl.Count)
 	}
@@ -132,7 +160,7 @@ func Selectivity(ctx context.Context, exprs []expression.Expression, keys []expr
 }
 
 func getMaskAndRanges(sc *variable.StatementContext, exprs []expression.Expression, rangeType int,
-	lengths []int, cols ...*expression.Column) (uint64, []types.Range, error) {
+	lengths []int, cols ...*expression.Column) (int64, []types.Range, error) {
 	exprsClone := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		exprsClone = append(exprsClone, expr.Clone())
@@ -141,7 +169,7 @@ func getMaskAndRanges(sc *variable.StatementContext, exprs []expression.Expressi
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	mask := uint64(0)
+	mask := int64(0)
 	for i := range exprs {
 		for j := range accessConds {
 			if exprs[i].Equal(accessConds[j], nil) {
@@ -155,7 +183,7 @@ func getMaskAndRanges(sc *variable.StatementContext, exprs []expression.Expressi
 
 // getUsedBlocksByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
 func getUsedBlocksByGreedy(blocks []*calcBlock) (newBlocks []*calcBlock) {
-	mask := uint64(math.MaxUint64)
+	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
 		bestID := -1
@@ -183,12 +211,11 @@ func getUsedBlocksByGreedy(blocks []*calcBlock) (newBlocks []*calcBlock) {
 }
 
 // popcount is the digit sum of the binary representation of the number x.
-func popcount(x uint64) int {
+func popcount(x int64) int {
 	ret := 0
-	for ; x > 0; x = x >> 1 {
-		if (x & 1) > 0 {
-			ret++
-		}
+	// x = x & -x, cut the highest bit of the x.
+	for ; x > 0; x -= x & -x {
+		ret++
 	}
 	return ret
 }
