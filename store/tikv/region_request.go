@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -41,17 +42,24 @@ import (
 // errors, since region range have changed, the request may need to split, so we
 // simply return the error to caller.
 type RegionRequestSender struct {
-	regionCache *RegionCache
-	client      Client
-	storeAddr   string
+	regionCache    *RegionCache
+	client         Client
+	isolationLevel kvrpcpb.IsolationLevel
+	storeAddr      string
 }
 
 // NewRegionRequestSender creates a new sender.
 func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequestSender {
 	return &RegionRequestSender{
-		regionCache: regionCache,
-		client:      client,
+		regionCache:    regionCache,
+		client:         client,
+		isolationLevel: kvrpcpb.IsolationLevel_SI,
 	}
+}
+
+// SetIsolationLevel setups isolation level.
+func (s *RegionRequestSender) SetIsolationLevel(isolationLevel kvrpcpb.IsolationLevel) {
+	s.isolationLevel = isolationLevel
 }
 
 // SendReq sends a request to tikv server.
@@ -72,6 +80,7 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 		}
 
 		s.storeAddr = ctx.Addr
+		ctx.KVCtx.IsolationLevel = s.isolationLevel
 		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {
 			return nil, errors.Trace(err)

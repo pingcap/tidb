@@ -20,6 +20,7 @@ import (
 	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
@@ -31,6 +32,7 @@ var (
 
 // tikvTxn implements kv.Transaction.
 type tikvTxn struct {
+	snapshot  *tikvSnapshot
 	us        kv.UnionStore
 	store     *tikvStore // for connection to region.
 	startTS   uint64
@@ -53,8 +55,10 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 // newTikvTxnWithStartTS creates a txn with startTS.
 func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
+	snapshot := newTiKVSnapshot(store, ver)
 	return &tikvTxn{
-		us:        kv.NewUnionStore(newTiKVSnapshot(store, ver)),
+		snapshot:  snapshot,
+		us:        kv.NewUnionStore(snapshot),
 		store:     store,
 		startTS:   startTS,
 		startTime: monotime.Now(),
@@ -112,10 +116,16 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
+	if opt == kv.ReadUncommitted {
+		txn.snapshot.isolationLevel = kvrpcpb.IsolationLevel_RU
+	}
 }
 
 func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
+	if opt == kv.ReadUncommitted {
+		txn.snapshot.isolationLevel = kvrpcpb.IsolationLevel_SI
+	}
 }
 
 func (txn *tikvTxn) Commit() error {
