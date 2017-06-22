@@ -997,11 +997,15 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		columns:   ts.Columns,
 		GenValues: ts.GenValues,
 	}
-
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-
+	for _, executor := range dagReq.Executors {
+		if executor.Tp == tipb.ExecType_TypeAggregation {
+			e.aggregate = true
+			break
+		}
+	}
 	return e
 }
 

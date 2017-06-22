@@ -972,19 +972,18 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Calculate generated columns here.
-		for i, col := range e.Columns {
-			if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
-				val, err := e.GenValues[i].Eval(values)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				values[i] = val
-			}
-		}
 		if e.aggregate {
 			// compose aggregate row
 			return &Row{Data: values}, nil
+		}
+		// Calculate generated columns here.
+		for i, col := range e.Columns {
+			if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+				values[i], err = e.GenValues[col.Offset].Eval(values)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
 		}
 		return resultRowToRow(e.table, h, values, e.asName), nil
 	}

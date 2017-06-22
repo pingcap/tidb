@@ -57,6 +57,9 @@ type TableReaderExecutor struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 
+	// aggregate indicates whether it contains Aggregation executors or not.
+	aggregate bool
+
 	// GenValues is for calculating virtual generated columns.
 	GenValues map[int]expression.Expression
 }
@@ -109,14 +112,14 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Calculate generated columns here.
-		for i, col := range e.columns {
-			if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
-				val, err := e.GenValues[i].Eval(values)
-				if err != nil {
-					return nil, errors.Trace(err)
+		if !e.aggregate {
+			for i, col := range e.columns {
+				if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+					values[i], err = e.GenValues[col.Offset].Eval(values)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
 				}
-				values[i] = val
 			}
 		}
 		return resultRowToRow(e.table, h, values, e.asName), nil

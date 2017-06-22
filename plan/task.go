@@ -14,8 +14,6 @@
 package plan
 
 import (
-	"fmt"
-
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -379,7 +377,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	for i, aggFun := range p.AggFuncs {
 		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
-		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor+1))
+		colName := model.NewCIStr(aggFun.String())
 		if needCount(fun) {
 			cursor++
 			ft := types.NewFieldType(mysql.TypeLonglong)
