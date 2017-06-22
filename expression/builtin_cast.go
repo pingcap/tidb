@@ -138,7 +138,8 @@ func (b *castAsIntFunctionClass) getFunction(args []Expression, ctx context.Cont
 	bf := baseIntBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
 	bf.tp = b.tp
 	if IsHybridType(args[0]) {
-		return &builtinCastIntAsIntSig{bf}, nil
+		sig = &builtinCastIntAsIntSig{bf}
+		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -170,7 +171,8 @@ func (b *castAsRealFunctionClass) getFunction(args []Expression, ctx context.Con
 	bf := baseRealBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
 	bf.tp = b.tp
 	if IsHybridType(args[0]) {
-		return &builtinCastRealAsRealSig{bf}, nil
+		sig = &builtinCastRealAsRealSig{bf}
+		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -202,7 +204,8 @@ func (b *castAsDecimalFunctionClass) getFunction(args []Expression, ctx context.
 	bf := baseDecimalBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
 	bf.tp = b.tp
 	if IsHybridType(args[0]) {
-		return &builtinCastDecimalAsDecimalSig{bf}, nil
+		sig = &builtinCastDecimalAsDecimalSig{bf}
+		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -234,7 +237,8 @@ func (b *castAsStringFunctionClass) getFunction(args []Expression, ctx context.C
 	bf := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
 	bf.tp = b.tp
 	if IsHybridType(args[0]) {
-		return &builtinCastStringAsStringSig{bf}, nil
+		sig = &builtinCastStringAsStringSig{bf}
+		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -266,7 +270,8 @@ func (b *castAsTimeFunctionClass) getFunction(args []Expression, ctx context.Con
 	bf := baseTimeBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
 	bf.tp = b.tp
 	if IsHybridType(args[0]) {
-		return &builtinCastTimeAsTimeSig{bf}, nil
+		sig = &builtinCastTimeAsTimeSig{bf}
+		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -298,7 +303,8 @@ func (b *castAsDurationFunctionClass) getFunction(args []Expression, ctx context
 	bf := baseDurationBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
 	bf.tp = b.tp
 	if IsHybridType(args[0]) {
-		return &builtinCastDurationAsDurationSig{bf}, nil
+		sig = &builtinCastDurationAsDurationSig{bf}
+		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
