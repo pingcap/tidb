@@ -159,7 +159,6 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 		}
 	}
 
-	fc := funcs[fcName]
 	typeCases := []struct {
 		args    []Expression
 		retType *types.FieldType
@@ -181,6 +180,7 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 	}
+	fc := funcs[fcName].(*concatFunctionClass)
 	for _, t := range typeCases {
 		retType := fc.inferType(t.args)
 		c.Assert(retType.Tp, Equals, t.retType.Tp)
