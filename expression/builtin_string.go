@@ -202,17 +202,20 @@ type concatFunctionClass struct {
 }
 
 func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinConcatSig{
-		baseStringBuiltinFunc{
-			newBaseBuiltinFuncWithTp(args, c.inferType(args), ctx),
-		},
+	retType, argTps := c.inferType(args)
+	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	sig := &builtinConcatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-func (c *concatFunctionClass) inferType(args []Expression) *types.FieldType {
+func (c *concatFunctionClass) inferType(args []Expression) (*types.FieldType, []argTp) {
+	tps := make([]argTp, len(args))
 	existsBinStr, tp := false, mysql.TypeVarString
 	for i := 0; i < len(args); i++ {
+		tps[i] = tpString
 		curArgTp := args[i].GetType()
 		tp = types.MergeFieldType(tp, curArgTp.Tp)
 		if types.IsBinaryStr(curArgTp) {
@@ -225,7 +228,7 @@ func (c *concatFunctionClass) inferType(args []Expression) *types.FieldType {
 		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
 		retType.Flag |= mysql.BinaryFlag
 	}
-	return retType
+	return retType, tps
 }
 
 type builtinConcatSig struct {
@@ -236,10 +239,6 @@ type builtinConcatSig struct {
 func (b *builtinConcatSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	var s []byte
 	for _, a := range b.getArgs() {
-		a, err = WrapWithCastAsString(a, b.ctx)
-		if err != nil {
-			return d, false, errors.Trace(err)
-		}
 		d, isNull, err = a.EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 		if isNull || err != nil {
 			return d, isNull, errors.Trace(err)

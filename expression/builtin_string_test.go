@@ -171,7 +171,7 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 	}
 	fc := funcs[fcName].(*concatFunctionClass)
 	for _, t := range typeCases {
-		retType := fc.inferType(t.args)
+		retType, _ := fc.inferType(t.args)
 		c.Assert(retType.Tp, Equals, t.retType.Tp)
 		c.Assert(retType.Charset, Equals, t.retType.Charset)
 		c.Assert(retType.Collate, Equals, t.retType.Collate)

@@ -119,7 +119,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	if useDAGPlanBuilder(ctx) {
+	if UseDAGPlanBuilder(ctx) {
 		return dagPhysicalOptimize(logic)
 	}
 	logic.ResolveIndices()
