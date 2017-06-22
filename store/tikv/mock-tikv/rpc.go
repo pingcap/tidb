@@ -173,6 +173,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	h.startKey, h.endKey = region.StartKey, region.EndKey
 	h.rawStartKey = MvccKey(h.startKey).Raw()
 	h.rawEndKey = MvccKey(h.endKey).Raw()
+	h.isolationLevel = ctx.IsolationLevel
 	return nil
 }
 

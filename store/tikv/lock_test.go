@@ -179,6 +179,19 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 }
 
+func (s *testLockSuite) TestRU(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set([]byte("key"), []byte("value"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+	txn2, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn2.SetOption(kv.ReadUncommitted, true)
+	val, err := txn2.Get([]byte("key"))
+	c.Assert(err, IsNil)
+	c.Assert(string(val), Equals, "value")
+}
+
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
 	committer, err := newTwoPhaseCommitter(txn)
 	c.Assert(err, IsNil)
