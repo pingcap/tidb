@@ -784,11 +784,18 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
+	// for length
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
+	result := tk.MustQuery("select length(a), length(b), length(c), length(d), length(e), length(f), length(null) from t")
+	result.Check(testkit.Rows("1 3 19 8 6 2 <nil>"))
+
 	// for concat
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20))")
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef")`)
-	result := tk.MustQuery("select concat(a, b, c, d, e) from t")
+	result = tk.MustQuery("select concat(a, b, c, d, e) from t")
 	result.Check(testkit.Rows("11.12017-01-01 12:01:0112:01:01abcdef"))
 	result = tk.MustQuery("select concat(null)")
 	result.Check(testkit.Rows("<nil>"))
