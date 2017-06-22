@@ -317,6 +317,9 @@ func getPseudoRowCountByColumnRange(sc *variable.StatementContext, tableRowCount
 			return 0, errors.Trace(err)
 		}
 	}
+	if rowCount > tableRowCount {
+		rowCount = tableRowCount
+	}
 	return rowCount, nil
 }
 
