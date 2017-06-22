@@ -160,8 +160,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 	for i, t := range castToDecCases {
 		args := []Expression{t.before}
-		tp := types.NewFieldType(mysql.TypeNewDecimal)
-		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
+		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
 		switch i {
 		case 0:
 			sig = &builtinCastIntAsDecimalSig{decFunc}
@@ -243,7 +243,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeNewDecimal)
 		tp.Flen, tp.Decimal = t.flen, t.decimal
-		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
+		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		decFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastIntAsDecimalSig{decFunc}
@@ -427,7 +428,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.Charset = charset.CharsetBin
 		args := []Expression{t.before}
-		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
+		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		stringFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsStringSig{stringFunc}
@@ -502,7 +504,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.Flen, tp.Charset = t.flen, charset.CharsetBin
-		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
+		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		stringFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsStringSig{stringFunc}
@@ -570,7 +573,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDatetime)
 		tp.Decimal = types.DefaultFsp
-		timeFunc := baseTimeBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
+		timeFunc := baseTimeBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		timeFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsTimeSig{timeFunc}
@@ -651,7 +655,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(t.tp)
 		tp.Decimal = t.fsp
-		timeFunc := baseTimeBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
+		timeFunc := baseTimeBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		timeFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsTimeSig{timeFunc}
@@ -725,7 +730,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = types.DefaultFsp
-		durationFunc := baseDurationBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
+		durationFunc := baseDurationBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		durationFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsDurationSig{durationFunc}
@@ -799,7 +805,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = t.fsp
-		durationFunc := baseDurationBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
+		durationFunc := baseDurationBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		durationFunc.tp = tp
 		switch i {
 		case 0:
 			sig = &builtinCastRealAsDurationSig{durationFunc}
@@ -830,8 +837,9 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	// null case
 	args := []Expression{&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
 	row := []types.Datum{types.NewDatum(nil)}
-	tp := types.NewFieldType(mysql.TypeVarString)
-	sig = &builtinCastRealAsStringSig{baseStringBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}}
+	bf := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+	bf.tp = types.NewFieldType(mysql.TypeVarString)
+	sig = &builtinCastRealAsStringSig{bf}
 	sRes, isNull, err := sig.evalString(row)
 	c.Assert(sRes, Equals, "")
 	c.Assert(isNull, Equals, true)
