@@ -333,7 +333,7 @@ type StatementContext struct {
 	// Copied from SessionVars.TimeZone.
 	TimeZone *time.Location
 	// Priority of this statement.
-	Priority int
+	Priority mysql.PriorityEnum
 }
 
 // AddAffectedRows adds affected rows.

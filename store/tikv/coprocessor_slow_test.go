@@ -49,6 +49,6 @@ func (s *testCoprocessorSuite) TestBuildHugeTasks(c *C) {
 		}
 	}
 
-	_, err := buildCopTasks(bo, cache, &copRanges{mid: ranges}, false, 0)
+	_, err := buildCopTasks(bo, cache, &copRanges{mid: ranges}, false)
 	c.Assert(err, IsNil)
 }

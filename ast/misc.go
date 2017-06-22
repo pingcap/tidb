@@ -699,7 +699,7 @@ type SelectStmtOpts struct {
 	SQLCache      bool
 	CalcFoundRows bool
 	TableHints    []*TableOptimizerHint
-	Priority      int
+	Priority      mysql.PriorityEnum
 }
 
 // TableOptimizerHint is Table level optimizer hint
