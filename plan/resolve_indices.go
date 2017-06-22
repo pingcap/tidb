@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -22,7 +21,6 @@ import (
 func (p *Projection) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, expr := range p.Exprs {
-		log.Warning(expr.String())
 		expr.ResolveIndices(p.children[0].Schema())
 	}
 }

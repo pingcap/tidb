@@ -148,13 +148,13 @@ func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Exp
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. If op are LE or GE, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0)
 // 3. If op are LT or GT, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
-// `CASE a0 EQ b0
-// 		WHEN 0 THEN a0 op b0
-//		WHEN 1 THEN CASE a1 EQ b1
-//			WHEN 0 THEN a1 op b1
-//			WHEN 1 THEN a2 op b2
-//		END CASE
-//	END CASE`
+// `IF((a0 EQ b0) EQ 0,
+//     a0 op b0,
+//     IF((a1 EQ b1) EQ 0,
+//         a1 op b1,
+//         a2 op b2
+//     )
+// )`
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := getRowLen(l), getRowLen(r)
 	if lLen == 1 && rLen == 1 {
@@ -178,9 +178,8 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	default: // ast.LT, ast.GT
 		larg0, rarg0 := getRowArg(l, 0), getRowArg(r, 0)
 		val, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		whenCon0, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expression.Zero, val)
-		whenCon1, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expression.One, val)
-		result0, _ := expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+		expr1, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), val, expression.Zero)
+		expr2, _ := expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		l, err := popRowArg(er.ctx, l)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -189,12 +188,11 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		result1, err := er.constructBinaryOpFunction(l, r, op)
+		expr3, err := er.constructBinaryOpFunction(l, r, op)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		args := []expression.Expression{whenCon0, result0, whenCon1, result1}
-		return expression.NewFunction(er.ctx, ast.Case, types.NewFieldType(mysql.TypeTiny), args...)
+		return expression.NewFunction(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), expr1, expr2, expr3)
 	}
 }
 
