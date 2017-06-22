@@ -163,7 +163,6 @@ type ShowDDLExec struct {
 	ddlOwnerID string
 	bgOwnerID  string
 	selfID     string
-	schema     *expression.Schema
 	ddlInfo    *inspectkv.DDLInfo
 	bgInfo     *inspectkv.DDLInfo
 	done       bool
