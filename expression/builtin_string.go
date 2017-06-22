@@ -135,7 +135,11 @@ func (c *lengthFunctionClass) getFunction(args []Expression, ctx context.Context
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.Flen = 10
 	types.SetBinChsClnFlag(tp)
-	sig := &builtinLengthSig{baseIntBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}}
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinLengthSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
@@ -146,12 +150,7 @@ type builtinLengthSig struct {
 // eval evals a builtinLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html
 func (b *builtinLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
-	ctx, sc := b.ctx, b.ctx.GetSessionVars().StmtCtx
-	arg0, err := WrapWithCastAsString(b.args[0], ctx)
-	if err != nil {
-		return 0, false, errors.Trace(err)
-	}
-	val, isNull, err := arg0.EvalString(row, sc)
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
