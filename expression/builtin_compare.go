@@ -215,8 +215,105 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
-func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinCompareSig{newBaseBuiltinFunc(args, ctx), c.op}
+// getCmpType gets the ClassType that the two args will be treated as when comparing.
+func getCmpType(a types.TypeClass, b types.TypeClass) types.TypeClass {
+	if a == types.ClassString && b == types.ClassString {
+		return types.ClassString
+	} else if a == types.ClassInt && b == types.ClassInt {
+		return types.ClassInt
+	} else if (a == types.ClassInt || a == types.ClassDecimal) &&
+		(b == types.ClassInt || b == types.ClassDecimal) {
+		return types.ClassDecimal
+	}
+	return types.ClassReal
+}
+
+// canCompareAsTime checks whether the two args can be compared as time.
+// date[time] <cmp> date[time]
+// string <cmp> date[time]
+func canCompareAsTime(ft0, ft1 *types.FieldType) bool {
+	if isTemporalTypeWithDate(ft0) && ft1.ToClass() == types.ClassString {
+		return true
+	}
+	if isTemporalTypeWithDate(ft1) && ft0.ToClass() == types.ClassString { // string <cmp> date[time]
+		return true
+	}
+	return false
+}
+
+// isTemporalTypeWithDate checks if ft is temporal type and has date part.
+func isTemporalTypeWithDate(ft *types.FieldType) bool {
+	return types.IsTypeTime(ft.Tp)
+}
+
+// isTemporalColumn checks if a expression is a temporal column,
+// temporal column indicates time column or duration column.
+func isTemporalColumn(expr Expression) bool {
+	ft := expr.GetType()
+	if !isTemporalTypeWithDate(ft) && ft.Tp != mysql.TypeDuration {
+		return false
+	}
+	if _, isCol := expr.(*Column); !isCol {
+		return false
+	}
+	return true
+}
+
+func (c *compareFunctionClass) inferType(_ []Expression) (tp *types.FieldType) {
+	tp = types.NewFieldType(mysql.TypeLonglong)
+	types.SetBinChsClnFlag(tp)
+	return
+}
+
+// getFunction sets compare built-in function signatures for various types.
+func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	baseFunc := newBaseBuiltinFuncWithTp(args, c.inferType(nil), ctx)
+	ft0, ft1 := args[0].GetType(), args[1].GetType()
+	tc0, tc1 := ft0.ToClass(), ft1.ToClass()
+	cmpType := getCmpType(tc0, tc1)
+	if canCompareAsTime(ft0, ft1) { // compare as time
+		sig = &builtinCompareTimeSig{baseIntBuiltinFunc{baseFunc}, c.op}
+	} else if ft0.Tp == mysql.TypeDuration && ft1.Tp == mysql.TypeDuration { // compare as duration
+		sig = &builtinCompareDurationSig{baseIntBuiltinFunc{baseFunc}, c.op}
+	} else if cmpType == types.ClassReal {
+		_, isConst0 := args[0].(*Constant)
+		_, isConst1 := args[1].(*Constant)
+		if (tc0 == types.ClassDecimal && !isConst0 && tc1 == types.ClassString && isConst1) ||
+			(tc1 == types.ClassDecimal && !isConst1 && tc0 == types.ClassString && isConst0) {
+			/*
+				<non-const decimal expression> <cmp> <const string expression>
+				or
+				<const string expression> <cmp> <non-const decimal expression>
+
+				Do comparision as decimal rather than float, in order not to lose precision.
+			)*/
+			cmpType = types.ClassDecimal
+		} else if isTemporalColumn(args[0]) && isConst1 ||
+			isTemporalColumn(args[1]) && isConst0 {
+			/*
+				<time column> <cmp> <non-time constant>
+				or
+				<non-time constant> <cmp> <time column>
+
+				Convert the constant to time type.
+			*/
+			sig = &builtinCompareTimeSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		}
+	}
+	if sig == nil {
+		switch cmpType {
+		case types.ClassRow:
+			sig = &builtinCompareRowSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		case types.ClassString:
+			sig = &builtinCompareStringSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		case types.ClassInt:
+			sig = &builtinCompareIntSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		case types.ClassDecimal:
+			sig = &builtinCompareDecimalSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		case types.ClassReal:
+			sig = &builtinCompareRealSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		}
+	}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
@@ -318,13 +415,21 @@ type builtinCompareStringSig struct {
 	op opcode.Op
 }
 
-func (s *builtinCompareStringSig) evalInt(row []types.Datum) (int64, bool, error) {
-	sc := s.ctx.GetSessionVars().StmtCtx
-	arg0, isKindNull0, err := s.args[0].EvalString(row, sc)
+func (s *builtinCompareStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
+	arg0Str, err := WrapWithCastAsString(s.args[0], ctx)
+	if err != nil {
+		return val, false, errors.Trace(err)
+	}
+	arg1Str, err := WrapWithCastAsString(s.args[1], ctx)
+	if err != nil {
+		return val, false, errors.Trace(err)
+	}
+	arg0, isKindNull0, err := arg0Str.EvalString(row, sc)
 	if err != nil {
 		return zeroI64, false, errors.Trace(err)
 	}
-	arg1, isKindNull1, err := s.args[1].EvalString(row, sc)
+	arg1, isKindNull1, err := arg1Str.EvalString(row, sc)
 	if err != nil {
 		return zeroI64, false, errors.Trace(err)
 	}
@@ -351,13 +456,21 @@ type builtinCompareRealSig struct {
 	op opcode.Op
 }
 
-func (s *builtinCompareRealSig) evalInt(row []types.Datum) (int64, bool, error) {
-	sc := s.ctx.GetSessionVars().StmtCtx
-	arg0, isKindNull0, err := s.args[0].EvalReal(row, sc)
+func (s *builtinCompareRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
+	arg0Real, err := WrapWithCastAsReal(s.args[0], ctx)
+	if err != nil {
+		return val, false, errors.Trace(err)
+	}
+	arg1Real, err := WrapWithCastAsReal(s.args[1], ctx)
+	if err != nil {
+		return val, false, errors.Trace(err)
+	}
+	arg0, isKindNull0, err := arg0Real.EvalReal(row, sc)
 	if err != nil {
 		return zeroI64, false, errors.Trace(err)
 	}
-	arg1, isKindNull1, err := s.args[1].EvalReal(row, sc)
+	arg1, isKindNull1, err := arg1Real.EvalReal(row, sc)
 	if err != nil {
 		return zeroI64, false, errors.Trace(err)
 	}
@@ -384,13 +497,21 @@ type builtinCompareDecimalSig struct {
 	op opcode.Op
 }
 
-func (s *builtinCompareDecimalSig) evalInt(row []types.Datum) (int64, bool, error) {
-	sc := s.ctx.GetSessionVars().StmtCtx
-	arg0, isKindNull0, err := s.args[0].EvalDecimal(row, sc)
+func (s *builtinCompareDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
+	arg0Dec, err := WrapWithCastAsDecimal(s.args[0], ctx)
+	if err != nil {
+		return val, false, errors.Trace(err)
+	}
+	arg1Dec, err := WrapWithCastAsDecimal(s.args[1], ctx)
+	if err != nil {
+		return val, false, errors.Trace(err)
+	}
+	arg0, isKindNull0, err := arg0Dec.EvalDecimal(row, sc)
 	if err != nil {
 		return zeroI64, false, errors.Trace(err)
 	}
-	arg1, isKindNull1, err := s.args[1].EvalDecimal(row, sc)
+	arg1, isKindNull1, err := arg1Dec.EvalDecimal(row, sc)
 	if err != nil {
 		return zeroI64, false, errors.Trace(err)
 	}
@@ -417,13 +538,21 @@ type builtinCompareIntSig struct {
 	op opcode.Op
 }
 
-func (s *builtinCompareIntSig) evalInt(row []types.Datum) (int64, bool, error) {
-	sc := s.ctx.GetSessionVars().StmtCtx
-	arg0, isKindNull0, err := s.args[0].EvalInt(row, sc)
+func (s *builtinCompareIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
+	arg0Int, err := WrapWithCastAsInt(s.args[0], ctx)
+	if err != nil {
+		return val, false, errors.Trace(err)
+	}
+	arg1Int, err := WrapWithCastAsInt(s.args[1], ctx)
+	if err != nil {
+		return val, false, errors.Trace(err)
+	}
+	arg0, isKindNull0, err := arg0Int.EvalInt(row, sc)
 	if err != nil {
 		return zeroI64, false, errors.Trace(err)
 	}
-	arg1, isKindNull1, err := s.args[1].EvalInt(row, sc)
+	arg1, isKindNull1, err := arg1Int.EvalInt(row, sc)
 	if err != nil {
 		return zeroI64, isKindNull1, errors.Trace(err)
 	}
@@ -515,4 +644,51 @@ func (s *builtinCompareRowSig) evalInt(row []types.Datum) (int64, bool, error) {
 		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
 	}
 	return ret, false, nil
+}
+
+// builtinCompareStringSig compares two datetimes.
+type builtinCompareTimeSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareTimeSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.getCtx().GetSessionVars().StmtCtx
+	args := s.getArgs()
+	arg0, err := args[0].Eval(row)
+	if arg0.IsNull() || err != nil {
+		return 0, arg0.IsNull(), errors.Trace(err)
+	}
+	arg1, err := args[1].Eval(row)
+	if arg1.IsNull() || err != nil {
+		return 0, arg1.IsNull(), errors.Trace(err)
+	}
+	time0, err := arg0.ConvertTo(sc, types.NewFieldType(mysql.TypeTimestamp))
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	time1, err := arg1.ConvertTo(sc, types.NewFieldType(mysql.TypeTimestamp))
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	res, err := time0.CompareDatum(sc, time1)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	ret := resOfCmp(res, s.op)
+	if ret == -1 {
+		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	return ret, false, nil
+}
+
+type builtinCompareDurationSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareDurationSig) evalInt(row []types.Datum) (int64, bool, error) {
+	return
 }
