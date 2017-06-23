@@ -53,19 +53,20 @@ func (s *testJSONSuite) TestSerializeAndDeserialize(c *C) {
 	j1 := mustParseFromString(`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.0], "bbbbbbbbbb": true, "ccccccccc": "d"}`)
 	j2 := mustParseFromString(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
-	var testcses = []struct {
-		In  JSON
-		Out JSON
+	var testcases = []struct {
+		In   JSON
+		Out  JSON
+		size int
 	}{
-		{In: jsonNilValue, Out: jsonNilValue},
-		{In: jsonBoolValue, Out: jsonBoolValue},
-		{In: jsonDoubleValue, Out: jsonDoubleValue},
-		{In: jsonStringValue, Out: jsonStringValue},
-		{In: j1, Out: j1},
-		{In: j2, Out: j2},
+		{In: jsonNilValue, Out: jsonNilValue, size: 2},
+		{In: jsonBoolValue, Out: jsonBoolValue, size: 2},
+		{In: jsonDoubleValue, Out: jsonDoubleValue, size: 9},
+		{In: jsonStringValue, Out: jsonStringValue, size: 15},
+		{In: j1, Out: j1, size: 144},
+		{In: j2, Out: j2, size: 108},
 	}
 
-	for _, s := range testcses {
+	for _, s := range testcases {
 		data := Serialize(s.In)
 		t, err := Deserialize(data)
 		c.Assert(err, IsNil)
@@ -73,6 +74,11 @@ func (s *testJSONSuite) TestSerializeAndDeserialize(c *C) {
 		v1 := t.String()
 		v2 := s.Out.String()
 		c.Assert(v1, Equals, v2)
+
+		size, err := PeekBytesAsJSON(data)
+		c.Assert(err, IsNil)
+		c.Assert(len(data), Equals, size)
+		c.Assert(len(data), Equals, s.size)
 	}
 }
 
