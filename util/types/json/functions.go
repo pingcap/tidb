@@ -119,7 +119,7 @@ func unquoteString(s string) (string, error) {
 				ret.Write(char[0:size])
 				i += 5
 			default:
-				ret.WriteByte('\\')
+				// For all other escape sequences, backslash is ignored.
 				ret.WriteByte(s[i])
 			}
 		} else {
