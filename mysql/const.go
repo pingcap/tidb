@@ -193,7 +193,7 @@ const (
 // AllPrivMask is the mask for PrivilegeType with all bits set to 1.
 const AllPrivMask = AllPriv - 1
 
-// Built-in function field length.
+// MYSQL type maximum length
 const (
 	// MaxDateWidth YYYY-MM-DD
 	MaxDateWidth = 10
