@@ -53,7 +53,7 @@ func (s *testJSONSuite) TestSerializeAndDeserialize(c *C) {
 	j1 := mustParseFromString(`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.0], "bbbbbbbbbb": true, "ccccccccc": "d"}`)
 	j2 := mustParseFromString(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
-	var testcses = []struct {
+	var testcases = []struct {
 		In   JSON
 		Out  JSON
 		size int
@@ -66,7 +66,7 @@ func (s *testJSONSuite) TestSerializeAndDeserialize(c *C) {
 		{In: j2, Out: j2, size: 108},
 	}
 
-	for _, s := range testcses {
+	for _, s := range testcases {
 		data := Serialize(s.In)
 		t, err := Deserialize(data)
 		c.Assert(err, IsNil)
