@@ -68,7 +68,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	if !useDAGPlanBuilder(p.ctx) { // close join reorder for new plan.
+	if !UseDAGPlanBuilder(p.ctx) { // close join reorder for new plan.
 		groups, valid := tryToGetJoinGroup(p)
 		if valid {
 			e := joinReOrderSolver{allocator: p.allocator, ctx: p.ctx}
