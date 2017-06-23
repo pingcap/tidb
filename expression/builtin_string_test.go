@@ -96,7 +96,7 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 		{"你好", 228, false, false},
 	}
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Length, primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.ASCII, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
 		tp := f.GetType()
