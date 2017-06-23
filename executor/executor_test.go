@@ -1173,7 +1173,7 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 9 14 45`))
 
 	// Test select only-generated-column-without-dependences.
-	result = tk.MustQuery(`SELECT c, d FROM test_gv_read ORDER BY c`)
+	result = tk.MustQuery(`SELECT c, d FROM test_gv_read`)
 	result.Check(testkit.Rows(`<nil> <nil>`, `3 2`, `7 12`, `14 45`))
 
 	// Test order of on duplicate key update list.
@@ -1201,6 +1201,13 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 
 	result = tk.MustQuery(`SELECT t1.* FROM test_gv_read t1 JOIN test_gv_help t2 ON t1.d = t2.d ORDER BY t1.a`)
 	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+
+	// Test aggregation on virtual/stored generated column.
+	result = tk.MustQuery(`SELECT c, sum(a) aa, max(d) dd FROM test_gv_read GROUP BY c ORDER BY aa`)
+	result.Check(testkit.Rows(`<nil> 0 <nil>`, `3 1 2`, `7 3 12`, `16 8 64`))
+
+	result = tk.MustQuery(`SELECT a, sum(c), sum(d) FROM test_gv_read GROUP BY a ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil>`, `1 3 2`, `3 7 12`, `8 16 64`))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
