@@ -2046,11 +2046,11 @@ func (b *builtinMakeDateSig) evalTime(row []types.Datum) (d types.Time, isNull b
 	var year, dayOfYear int64
 	year, isNull, err = args[0].EvalInt(row, sc)
 	if isNull || err != nil {
-		return d, isNull, errors.Trace(err)
+		return d, true, errors.Trace(err)
 	}
 	dayOfYear, isNull, err = args[1].EvalInt(row, sc)
 	if isNull || err != nil {
-		return d, isNull, errors.Trace(err)
+		return d, true, errors.Trace(err)
 	}
 	if dayOfYear <= 0 || year < 0 || year > 9999 {
 		return d, true, nil
