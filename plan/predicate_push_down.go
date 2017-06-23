@@ -32,9 +32,9 @@ func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression,
 	return InsertPlan(p, child, selection)
 }
 
-// replaceColumnByGenerationExpression replaces all generated columns in expr by
-// their generation expressions. Returns a new Expression, maybe not changed.
-// It can be called only in DataSource.PredicatePushDown.
+// replaceColumnByGenerationExpression replaces all virtual generated columns
+// in expr by their generation expressions. Returns a new Expression, maybe not
+// changed. It can be called only in pushdown optimizations of DataSource.
 func (p *DataSource) replaceColumnByGenerationExpression(expr expression.Expression) expression.Expression {
 	switch v := expr.(type) {
 	case *expression.Column:
