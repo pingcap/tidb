@@ -34,8 +34,8 @@ const (
 	SkipCheckForWrite
 	// SchemaLeaseChecker is used for schema lease check.
 	SchemaLeaseChecker
-	// ReadUncommitted sets isolation level to RU.
-	ReadUncommitted
+	// ReadCommitted sets isolation level to RC.
+	ReadCommitted
 )
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
@@ -149,9 +149,8 @@ type Request struct {
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
-	// IsolationRU sets the isolation level as RU, which means uncommitted
-	// values could be read without resolving lock.
-	IsolationRU bool
+	// IsolationRC sets the isolation level as RC(Read Committed).
+	IsolationRC bool
 }
 
 // Response represents the response returned from KV layer.

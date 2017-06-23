@@ -116,14 +116,14 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
-	if opt == kv.ReadUncommitted {
-		txn.snapshot.isolationLevel = kvrpcpb.IsolationLevel_RU
+	if opt == kv.ReadCommitted {
+		txn.snapshot.isolationLevel = kvrpcpb.IsolationLevel_RC
 	}
 }
 
 func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
-	if opt == kv.ReadUncommitted {
+	if opt == kv.ReadCommitted {
 		txn.snapshot.isolationLevel = kvrpcpb.IsolationLevel_SI
 	}
 }

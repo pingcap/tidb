@@ -435,8 +435,8 @@ func (it *copIterator) Next() ([]byte, error) {
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
 	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
-	if it.req.IsolationRU {
-		sender.SetIsolationLevel(kvrpcpb.IsolationLevel_RU)
+	if it.req.IsolationRC {
+		sender.SetIsolationLevel(kvrpcpb.IsolationLevel_RC)
 	}
 	for {
 		select {

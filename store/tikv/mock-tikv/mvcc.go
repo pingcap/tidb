@@ -96,15 +96,8 @@ func (e *mvccEntry) lockErr() error {
 }
 
 func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
-	if e.lock != nil && e.lock.startTS <= ts {
-		switch isoLevel {
-		case kvrpcpb.IsolationLevel_SI:
-			return nil, e.lockErr()
-		case kvrpcpb.IsolationLevel_RU:
-			if e.lock.op == kvrpcpb.Op_Put || e.lock.op == kvrpcpb.Op_Del {
-				return e.lock.value, nil
-			}
-		}
+	if e.lock != nil && e.lock.startTS <= ts && isoLevel == kvrpcpb.IsolationLevel_SI {
+		return nil, e.lockErr()
 	}
 	for _, v := range e.values {
 		if v.commitTS <= ts && v.valueType != typeRollback {
