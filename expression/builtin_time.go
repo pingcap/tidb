@@ -2024,7 +2024,7 @@ type makeDateFunctionClass struct {
 
 func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	tp := types.NewFieldType(mysql.TypeDate)
-	tp.Flen = mysql.MAX_DATE_WIDTH
+	tp.Flen = mysql.MaxDateWidth
 	types.SetBinChsClnFlag(tp)
 	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpInt, tpInt)
 	if err != nil {
