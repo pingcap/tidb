@@ -572,7 +572,7 @@ func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint
 }
 
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
-	if useDAGPlanBuilder(b.ctx) {
+	if UseDAGPlanBuilder(b.ctx) {
 		b.optFlag = b.optFlag | flagPushDownTopN
 	}
 	var (
@@ -1275,7 +1275,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 			return nil
 		}
 	}
-	orderedList, np := b.buildUpdateLists(update.List, p)
+	orderedList, np := b.buildUpdateLists(tableList, update.List, p)
 	if b.err != nil {
 		return nil
 	}
@@ -1286,9 +1286,10 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	return updt
 }
 
-func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
+func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
 	schema := p.Schema()
 	newList := make([]*expression.Assignment, schema.Len())
+	modifyColumns := make(map[string]struct{}, schema.Len()) // which columns are in set list.
 	for _, assign := range list {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -1311,6 +1312,19 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([
 		}
 		p = np
 		newList[offset] = &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr}
+		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
+		modifyColumns[columnFullName] = struct{}{}
+	}
+	// If columnes in set list contains generated columns, raise error.
+	for _, tn := range tableList {
+		tableInfo := tn.TableInfo
+		for _, colInfo := range tableInfo.Columns {
+			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+			if _, ok := modifyColumns[columnFullName]; ok && len(colInfo.GeneratedExprString) != 0 {
+				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
+				return nil, nil
+			}
+		}
 	}
 	return newList, p
 }

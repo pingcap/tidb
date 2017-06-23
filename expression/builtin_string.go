@@ -132,32 +132,29 @@ type lengthFunctionClass struct {
 }
 
 func (c *lengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLengthSig{newBaseBuiltinFunc(args, ctx)}
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.Flen = 10
+	types.SetBinChsClnFlag(tp)
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinLengthSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLengthSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinLengthSig.
+// evalInt evaluates a builtinLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html
-func (b *builtinLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	switch args[0].Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetInt64(int64(len(s)))
-		return d, nil
-	}
+	return int64(len([]byte(val))), false, nil
 }
 
 type asciiFunctionClass struct {
@@ -202,35 +199,50 @@ type concatFunctionClass struct {
 }
 
 func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinConcatSig{newBaseBuiltinFunc(args, ctx)}
+	retType, argTps := c.inferType(args)
+	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinConcatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinConcatSig struct {
-	baseBuiltinFunc
+func (c *concatFunctionClass) inferType(args []Expression) (*types.FieldType, []argTp) {
+	tps := make([]argTp, len(args))
+	existsBinStr, tp := false, mysql.TypeVarString
+	for i := 0; i < len(args); i++ {
+		tps[i] = tpString
+		curArgTp := args[i].GetType()
+		tp = types.MergeFieldType(tp, curArgTp.Tp)
+		if types.IsBinaryStr(curArgTp) {
+			existsBinStr = true
+		}
+	}
+	retType := types.NewFieldType(tp)
+	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	if existsBinStr {
+		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
+		retType.Flag |= mysql.BinaryFlag
+	}
+	return retType, tps
 }
 
-// eval evals a builtinConcatSig.
+type builtinConcatSig struct {
+	baseStringBuiltinFunc
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
-func (b *builtinConcatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
+func (b *builtinConcatSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	var s []byte
-	for _, a := range args {
-		if a.IsNull() {
-			return d, nil
+	for _, a := range b.getArgs() {
+		d, isNull, err = a.EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+		if isNull || err != nil {
+			return d, isNull, errors.Trace(err)
 		}
-		var ss string
-		ss, err = a.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		s = append(s, []byte(ss)...)
+		s = append(s, []byte(d)...)
 	}
-	d.SetBytesAsString(s)
-	return d, nil
+	return string(s), false, nil
 }
 
 type concatWSFunctionClass struct {

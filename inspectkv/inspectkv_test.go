@@ -124,7 +124,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 
-	err = t.DropTable(s.dbInfo.ID, s.tbInfo.ID)
+	err = t.DropTable(s.dbInfo.ID, s.tbInfo.ID, true)
 	c.Assert(err, IsNil)
 	err = t.DropDatabase(s.dbInfo.ID)
 	c.Assert(err, IsNil)
@@ -141,9 +141,6 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 
-	owner := &model.Owner{OwnerID: "owner"}
-	err = t.SetDDLJobOwner(owner)
-	c.Assert(err, IsNil)
 	dbInfo2 := &model.DBInfo{
 		ID:    2,
 		Name:  model.NewCIStr("b"),
@@ -158,8 +155,6 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 	info, err := GetDDLInfo(txn)
 	c.Assert(err, IsNil)
-	// TODO: Pass this test.
-	// c.Assert(info.Owner, DeepEquals, owner)
 	c.Assert(info.Job, DeepEquals, job)
 	c.Assert(info.ReorgHandle, Equals, int64(0))
 	err = txn.Commit()
@@ -172,9 +167,6 @@ func (s *testSuite) TestGetBgDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 
-	owner := &model.Owner{OwnerID: "owner"}
-	err = t.SetBgJobOwner(owner)
-	c.Assert(err, IsNil)
 	job := &model.Job{
 		SchemaID: 1,
 		Type:     model.ActionDropTable,
@@ -184,8 +176,6 @@ func (s *testSuite) TestGetBgDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 	info, err := GetBgDDLInfo(txn)
 	c.Assert(err, IsNil)
-	// TODO: Pass this test.
-	// c.Assert(info.Owner, DeepEquals, owner)
 	c.Assert(info.Job, DeepEquals, job)
 	c.Assert(info.ReorgHandle, Equals, int64(0))
 	err = txn.Commit()

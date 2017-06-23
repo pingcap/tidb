@@ -405,6 +405,8 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		}
 		log.Warnf("[%d] retryable error: %v, txn: %v", connID, err, s.txn)
 		kv.BackOff(retryCnt)
+		s.txn = nil
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}
 	return err
 }
@@ -968,7 +970,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 12
+	currentBootstrapVersion = 13
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1019,7 +1021,6 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.MaxAllowedPacket + quoteCommaQuote +
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check + quoteCommaQuote +
-	variable.TiDBSkipDDLWait + quoteCommaQuote +
 	variable.TiDBIndexLookupSize + quoteCommaQuote +
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +

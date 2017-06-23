@@ -26,6 +26,18 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// argTp indicates the specified types that arguments of a built-in function should be.
+type argTp byte
+
+const (
+	tpInt argTp = iota
+	tpReal
+	tpDecimal
+	tpString
+	tpTime
+	tpDuration
+)
+
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
 	args          []Expression
@@ -48,18 +60,38 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 	}
 }
 
-// newBaseBuiltinFuncWithTp will be renamed to newBaseBuiltinFunc and replaces the older one later.
-// We'll move the type infer work to expression writer,
-// thus the `tp` attribute is needed for `baseBuiltinFunc`
-// to obtain the FieldType of a ScalarFunction.
-func newBaseBuiltinFuncWithTp(args []Expression, tp *types.FieldType, ctx context.Context) baseBuiltinFunc {
+// newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
+// argTps indicates the types of the args, retType indicates the return type of the built-in function.
+// Every built-in function needs determined argTps and retType when we create it.
+func newBaseBuiltinFuncWithTp(args []Expression, retType *types.FieldType, ctx context.Context, argTps ...argTp) (bf baseBuiltinFunc, err error) {
+	if len(args) != len(argTps) {
+		return bf, errors.New("unexpected length of args and argTps")
+	}
+	for i := range args {
+		switch argTps[i] {
+		case tpInt:
+			args[i], err = WrapWithCastAsInt(args[i], ctx)
+		case tpReal:
+			args[i], err = WrapWithCastAsReal(args[i], ctx)
+		case tpDecimal:
+			args[i], err = WrapWithCastAsDecimal(args[i], ctx)
+		case tpString:
+			args[i], err = WrapWithCastAsString(args[i], ctx)
+		case tpTime:
+			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
+		case tpDuration:
+			args[i], err = WrapWithCastAsDuration(args[i], ctx)
+		}
+		if err != nil {
+			return bf, errors.Trace(err)
+		}
+	}
 	return baseBuiltinFunc{
 		args:          args,
 		argValues:     make([]types.Datum, len(args)),
 		ctx:           ctx,
 		deterministic: true,
-		tp:            tp,
-	}
+		tp:            retType}, nil
 }
 
 func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
@@ -142,6 +174,10 @@ func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool,
 		val, err = val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &types.FieldType{Tp: mysql.TypeDuration, Decimal: types.MaxFsp})
 	}
 	return val.GetMysqlDuration(), false, errors.Trace(err)
+}
+
+func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
+	return b.tp
 }
 
 // equal only checks if both functions are non-deterministic and if these arguments are same.
@@ -426,6 +462,8 @@ type builtinFunc interface {
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
 	getCtx() context.Context
+	// getRetTp returns the return type of the built-in function.
+	getRetTp() *types.FieldType
 	// setSelf sets a pointer to itself.
 	setSelf(builtinFunc) builtinFunc
 }
