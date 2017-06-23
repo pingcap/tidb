@@ -2042,12 +2042,13 @@ type builtinMakeDateSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
 func (b *builtinMakeDateSig) evalTime(row []types.Datum) (d types.Time, isNull bool, err error) {
 	args := b.getArgs()
+	sc := b.ctx.GetSessionVars().StmtCtx
 	var year, dayOfYear int64
-	year, isNull, err = args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	year, isNull, err = args[0].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	dayOfYear, isNull, err = args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	dayOfYear, isNull, err = args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}

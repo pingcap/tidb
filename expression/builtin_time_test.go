@@ -1213,6 +1213,7 @@ func (s *testEvaluatorSuite) TestMakeDate(c *C) {
 		getErr   bool
 	}{
 		{[]interface{}{71, 1}, "1971-01-01", false, false},
+		{[]interface{}{71.1, 1.89}, "1971-01-02", false, false},
 		{[]interface{}{99, 1}, "1999-01-01", false, false},
 		{[]interface{}{100, 1}, "0100-01-01", false, false},
 		{[]interface{}{69, 1}, "2069-01-01", false, false},
