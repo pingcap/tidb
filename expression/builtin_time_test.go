@@ -1222,11 +1222,11 @@ func (s *testEvaluatorSuite) TestMakeDate(c *C) {
 		{[]interface{}{10000, 3660}, "", true, false},
 		{[]interface{}{2060, 2900025}, "9999-12-31", false, false},
 		{[]interface{}{2060, 2900026}, "", true, false},
-		{[]interface{}{nil, 2900025}, "", true, false},
-		{[]interface{}{2060, nil}, "", true, false},
 		{[]interface{}{"71", 1}, "1971-01-01", false, false},
 		{[]interface{}{71, "1"}, "1971-01-01", false, false},
 		{[]interface{}{"71", "1"}, "1971-01-01", false, false},
+		{[]interface{}{nil, 2900025}, "", true, false},
+		{[]interface{}{2060, nil}, "", true, false},
 		{[]interface{}{nil, nil}, "", true, false},
 		{[]interface{}{errors.New("must error"), errors.New("must error")}, "", false, true},
 	}
@@ -1239,6 +1239,7 @@ func (s *testEvaluatorSuite) TestMakeDate(c *C) {
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
 		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, 10)
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
