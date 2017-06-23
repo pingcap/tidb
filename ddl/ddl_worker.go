@@ -206,6 +206,7 @@ func (d *ddl) handleDDLJobQueue() error {
 			once = false
 
 			if job.IsDone() {
+				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
 				job.State = model.JobSynced
 				err = d.finishDDLJob(t, job)
 				return errors.Trace(err)
@@ -218,12 +219,9 @@ func (d *ddl) handleDDLJobQueue() error {
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
 			schemaVer = d.runDDLJob(t, job)
-			if job.IsFinished() {
-				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
-				if job.IsCancelled() {
-					err = d.finishDDLJob(t, job)
-					return errors.Trace(err)
-				}
+			if job.IsCancelled() {
+				err = d.finishDDLJob(t, job)
+				return errors.Trace(err)
 			}
 			err = d.updateDDLJob(t, job, txn.StartTS())
 			return errors.Trace(err)
@@ -310,9 +308,9 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 	if err != nil {
 		// If job is not cancelled, we should log this error.
 		if job.State != model.JobCancelled {
-			log.Errorf("[ddl] run ddl job err %v", errors.ErrorStack(err))
+			log.Errorf("[ddl] run DDL job err %v", errors.ErrorStack(err))
 		} else {
-			log.Infof("[ddl] the job is normal to cancel because %v", errors.ErrorStack(err))
+			log.Infof("[ddl] the DDL job is normal to cancel because %v", errors.ErrorStack(err))
 		}
 
 		job.Error = toTError(err)

@@ -433,7 +433,7 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 		}
 
 		// If a job is a history job, the state must be JobSynced or JobCancel.
-		if historyJob.State == model.JobSynced {
+		if historyJob.IsSynced() {
 			log.Infof("[ddl] DDL job %d is finished", jobID)
 			return nil
 		}
