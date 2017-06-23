@@ -221,7 +221,7 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colI
 func (t *Table) GetRowCountByColumnRanges(sc *variable.StatementContext, colID int64, colRanges []*types.ColumnRange) (float64, error) {
 	c := t.Columns[colID]
 	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
-		return getPseudoRowCountByColumnRange(sc, float64(t.Count), colRanges)
+		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges)
 	}
 	return c.getColumnRowCount(sc, colRanges)
 }
@@ -262,7 +262,7 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 			i = len(indexRange.LowVal) - 1
 		}
 		colRange := []*types.ColumnRange{{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}}
-		rowCount, err := getPseudoRowCountByColumnRange(sc, tableRowCount, colRange)
+		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, colRange)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -285,7 +285,7 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 	return totalCount, nil
 }
 
-func getPseudoRowCountByColumnRange(sc *variable.StatementContext, tableRowCount float64, columnRanges []*types.ColumnRange) (float64, error) {
+func getPseudoRowCountByColumnRanges(sc *variable.StatementContext, tableRowCount float64, columnRanges []*types.ColumnRange) (float64, error) {
 	var rowCount float64
 	var err error
 	for _, ran := range columnRanges {
