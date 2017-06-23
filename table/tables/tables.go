@@ -459,10 +459,11 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	row, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().GetTimeZone())
+	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	defaultVals := make([]types.Datum, len(cols))
 	for i, col := range cols {
 		if col == nil {
 			continue
@@ -470,22 +471,14 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 		if col.IsPKHandleColumn(t.meta) {
 			continue
 		}
-		ri, ok := row[col.ID]
+		ri, ok := rowMap[col.ID]
 		if ok {
 			v[i] = ri
 			continue
 		}
-
-		if col.OriginDefaultValue != nil && col.State == model.StatePublic {
-			ri, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			v[i] = ri
-			continue
-		}
-		if mysql.HasNotNullFlag(col.Flag) {
-			return nil, errors.New("Miss column")
+		v[i], err = GetColDefaultValue(ctx, col, defaultVals)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return v, nil
@@ -633,29 +626,21 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 		}
 		data := make([]types.Datum, len(cols))
 		for _, col := range cols {
-			if col.IsPKHandleColumn(t.Meta()) {
-				data[col.Offset] = types.NewIntDatum(handle)
+			if col.IsPKHandleColumn(t.meta) {
+				if mysql.HasUnsignedFlag(col.Flag) {
+					data[col.Offset].SetUint64(uint64(handle))
+				} else {
+					data[col.Offset].SetInt64(handle)
+				}
 				continue
 			}
 			if _, ok := rowMap[col.ID]; ok {
 				data[col.Offset] = rowMap[col.ID]
 				continue
 			}
-			if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
-				return errors.New("Miss column")
-			}
-			if col.State != model.StatePublic {
-				continue
-			}
-			if defaultVals[col.Offset].IsNull() {
-				d, err := table.GetColOriginDefaultValue(ctx, col.ToInfo())
-				if err != nil {
-					return errors.Trace(err)
-				}
-				data[col.Offset] = d
-				defaultVals[col.Offset] = d
-			} else {
-				data[col.Offset] = defaultVals[col.Offset]
+			data[col.Offset], err = GetColDefaultValue(ctx, col, defaultVals)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 		more, err := fn(handle, data, cols)
@@ -671,6 +656,29 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 	}
 
 	return nil
+}
+
+// GetColDefaultValue gets a column default value.
+// The defaultVals is used to avoid calculating the default value multiple times.
+func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []types.Datum) (
+	colVal types.Datum, err error) {
+	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+		return colVal, errors.New("Miss column")
+	}
+	if col.State != model.StatePublic {
+		return colVal, nil
+	}
+	if defaultVals[col.Offset].IsNull() {
+		colVal, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
+		if err != nil {
+			return colVal, errors.Trace(err)
+		}
+		defaultVals[col.Offset] = colVal
+	} else {
+		colVal = defaultVals[col.Offset]
+	}
+
+	return colVal, nil
 }
 
 // AllocAutoID implements table.Table AllocAutoID interface.

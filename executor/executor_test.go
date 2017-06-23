@@ -784,11 +784,18 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
+	// for length
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
+	result := tk.MustQuery("select length(a), length(b), length(c), length(d), length(e), length(f), length(null) from t")
+	result.Check(testkit.Rows("1 3 19 8 6 2 <nil>"))
+
 	// for concat
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20))")
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef")`)
-	result := tk.MustQuery("select concat(a, b, c, d, e) from t")
+	result = tk.MustQuery("select concat(a, b, c, d, e) from t")
 	result.Check(testkit.Rows("11.12017-01-01 12:01:0112:01:01abcdef"))
 	result = tk.MustQuery("select concat(null)")
 	result.Check(testkit.Rows("<nil>"))
@@ -835,6 +842,12 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("11:11:11"))
 	result = tk.MustQuery("select * from t where a > cast(2 as decimal)")
 	result.Check(testkit.Rows("3 2"))
+	// fixed issue #3471
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(6));")
+	tk.MustExec("insert into t value('12:59:59.999999')")
+	result = tk.MustQuery("select cast(a as signed) from t")
+	result.Check(testkit.Rows("130000"))
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
@@ -1176,9 +1189,9 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	tk.MustExec("insert t values ('11:11:12', '11:11:12')")
 	tk.MustExec("insert t values ('11:11:13', '11:11:13')")
 	result = tk.MustQuery("select * from t where a > '11:11:11.5'")
-	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
+	result.Check(testkit.Rows("11:11:12.000 11:11:12", "11:11:13.000 11:11:13"))
 	result = tk.MustQuery("select * from t where b > '11:11:11.5'")
-	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
+	result.Check(testkit.Rows("11:11:12.000 11:11:12", "11:11:13.000 11:11:13"))
 }
 
 func (s *testSuite) TestSQLMode(c *C) {
@@ -1535,7 +1548,7 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (ts timestamp)")
 	tk.MustExec("set time_zone = '+00:00'")
 	tk.MustExec("insert into t values ('2017-04-27 22:40:42')")
@@ -1549,8 +1562,45 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	}
 	for _, tt := range tests {
 		tk.MustExec(fmt.Sprintf("set time_zone = '%s'", tt.timezone))
-		tk.MustQuery(fmt.Sprintf("select * from t where ts = '%s'", tt.expect)).Check(testkit.Rows(tt.expect))
+		tk.MustQuery("select * from t").Check(testkit.Rows(tt.expect))
 	}
+
+	// For issue https://github.com/pingcap/tidb/issues/3467
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (
+ 	      id bigint(20) NOT NULL AUTO_INCREMENT,
+ 	      uid int(11) DEFAULT NULL,
+ 	      datetime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ 	      ip varchar(128) DEFAULT NULL,
+ 	    PRIMARY KEY (id),
+ 	      KEY i_datetime (datetime),
+ 	      KEY i_userid (uid)
+ 	    );`)
+	tk.MustExec(`INSERT INTO t1 VALUES (123381351,1734,"2014-03-31 08:57:10","127.0.0.1");`)
+	r := tk.MustQuery("select datetime from t1;") // Cover TableReaderExec
+	r.Check(testkit.Rows("2014-03-31 08:57:10"))
+	r = tk.MustQuery("select datetime from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("2014-03-31 08:57:10")) // Cover IndexReaderExec
+	r = tk.MustQuery("select * from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("123381351 1734 2014-03-31 08:57:10 127.0.0.1")) // Cover IndexLookupExec
+
+	// For issue https://github.com/pingcap/tidb/issues/3485
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (
+	    id bigint(20) NOT NULL AUTO_INCREMENT,
+	    datetime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	    PRIMARY KEY (id)
+	  );`)
+	tk.MustExec(`INSERT INTO t1 VALUES (123381351,"2014-03-31 08:57:10");`)
+	r = tk.MustQuery(`select * from t1 where datetime="2014-03-31 08:57:10";`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	tk.MustExec(`alter table t1 add key i_datetime (datetime);`)
+	r = tk.MustQuery(`select * from t1 where datetime="2014-03-31 08:57:10";`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	r = tk.MustQuery(`select * from t1;`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	r = tk.MustQuery("select datetime from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("2014-03-31 08:57:10"))
 }
 
 func (s *testSuite) TestTiDBCurrentTS(c *C) {

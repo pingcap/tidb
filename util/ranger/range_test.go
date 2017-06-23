@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -185,7 +183,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmts[0], is, ctx)
-
+		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		var selection *plan.Selection
@@ -201,7 +199,10 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		result, err := ranger.BuildTableRange(conds, new(variable.StatementContext))
+		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
+		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
+		c.Assert(col, NotNil)
+		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -245,7 +246,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		},
 		{
 			exprStr:    "a LIKE '%'",
-			resultStr:  "[[-inf,+inf]]",
+			resultStr:  "[[<nil>,+inf]]",
 			inAndEqCnt: 0,
 		},
 		{
@@ -283,7 +284,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmts[0], is, ctx)
-
+		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		var selection *plan.Selection
@@ -300,7 +301,9 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		result, err := ranger.BuildIndexRange(new(variable.StatementContext), tbl, tbl.Indices[0], tt.inAndEqCnt, conds)
+		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[0])
+		c.Assert(cols, NotNil)
+		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IndexRangeType, cols, lengths)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -439,7 +442,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmts[0], is, ctx)
-
+		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		var sel *plan.Selection
@@ -457,7 +460,9 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		for _, cond := range sel.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		result, _, _, err := ranger.BuildColumnRange(conds, ds.TableInfo().Columns[0].Name, new(variable.StatementContext), types.NewFieldType(mysql.TypeLonglong))
+		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[0])
+		c.Assert(col, NotNil)
+		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%s", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))

@@ -49,7 +49,7 @@ var (
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
 	_ Executor = &TableScanExec{}
-	_ Executor = &TopnExec{}
+	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
 )
 
