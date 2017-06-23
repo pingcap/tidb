@@ -28,7 +28,7 @@ type leaseGrantItem struct {
 
 func (*testSuite) TestSchemaValidator(c *C) {
 	defer testleak.AfterTest(c)()
-	lease := 2 * time.Millisecond
+	lease := 5 * time.Millisecond
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
 	exit := make(chan struct{})
