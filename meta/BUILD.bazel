@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["meta.go"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kv:go_default_library",
+        "//model:go_default_library",
+        "//mysql:go_default_library",
+        "//structure:go_default_library",
+        "//terror:go_default_library",
+        "//vendor/github.com/juju/errors:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_xtest",
+    srcs = ["meta_test.go"],
+    deps = [
+        ":go_default_library",
+        "//model:go_default_library",
+        "//store/localstore:go_default_library",
+        "//store/localstore/goleveldb:go_default_library",
+        "//util/testleak:go_default_library",
+        "//vendor/github.com/pingcap/check:go_default_library",
+    ],
+)

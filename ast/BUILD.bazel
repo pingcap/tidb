@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "ast.go",
+        "base.go",
+        "ddl.go",
+        "dml.go",
+        "expressions.go",
+        "flag.go",
+        "functions.go",
+        "misc.go",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//context:go_default_library",
+        "//model:go_default_library",
+        "//mysql:go_default_library",
+        "//parser/opcode:go_default_library",
+        "//util/types:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_xtest",
+    srcs = [
+        "flag_test.go",
+        "misc_test.go",
+    ],
+    deps = [
+        ":go_default_library",
+        "//parser:go_default_library",
+        "//vendor/github.com/pingcap/check:go_default_library",
+    ],
+)

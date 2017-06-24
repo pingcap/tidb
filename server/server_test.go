@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+
 	"strconv"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	tmysql "github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/version"
 )
 
 func TestT(t *testing.T) {
@@ -252,8 +253,8 @@ func runTestLoadData(c *C) {
 	}()
 	_, err = fp.WriteString(`
 xxx row1_col1	- row1_col2	1abc
-xxx row2_col1	- row2_col2	
-xxxy row3_col1	- row3_col2	
+xxx row2_col1	- row2_col2
+xxxy row3_col1	- row3_col2
 xxx row4_col1	- 		900
 xxx row5_col1	- 	row5_col3`)
 	c.Assert(err, IsNil)
@@ -516,7 +517,7 @@ func runTestStatusAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Version, Equals, tmysql.ServerVersion)
-	c.Assert(data.GitHash, Equals, printer.TiDBGitHash)
+	c.Assert(data.GitHash, Equals, version.Get().GitCommit)
 }
 
 func runTestMultiStatements(c *C) {

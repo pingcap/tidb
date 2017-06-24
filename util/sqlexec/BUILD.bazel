@@ -1,0 +1,11 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["restricted_sql_executor.go"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//ast:go_default_library",
+        "//context:go_default_library",
+    ],
+)

@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "session.go",
+        "statusvar.go",
+        "sysvar.go",
+        "tidb_vars.go",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//mysql:go_default_library",
+        "//terror:go_default_library",
+        "//vendor/github.com/juju/errors:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "statusvar_test.go",
+        "sysvar_test.go",
+    ],
+    library = ":go_default_library",
+    deps = [
+        "//util/testleak:go_default_library",
+        "//vendor/github.com/pingcap/check:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_xtest",
+    srcs = ["session_test.go"],
+    deps = [
+        "//util/mock:go_default_library",
+        "//vendor/github.com/pingcap/check:go_default_library",
+    ],
+)

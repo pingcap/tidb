@@ -1,0 +1,61 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "bounded_tables.go",
+        "index.go",
+        "memory_tables.go",
+        "tables.go",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//context:go_default_library",
+        "//expression:go_default_library",
+        "//kv:go_default_library",
+        "//meta/autoid:go_default_library",
+        "//model:go_default_library",
+        "//mysql:go_default_library",
+        "//sessionctx/binloginfo:go_default_library",
+        "//table:go_default_library",
+        "//tablecodec:go_default_library",
+        "//terror:go_default_library",
+        "//util:go_default_library",
+        "//util/codec:go_default_library",
+        "//util/parser:go_default_library",
+        "//util/types:go_default_library",
+        "//vendor/github.com/juju/errors:go_default_library",
+        "//vendor/github.com/ngaut/log:go_default_library",
+        "//vendor/github.com/petar/GoLLRB/llrb:go_default_library",
+        "//vendor/github.com/pingcap/tipb/go-binlog:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_xtest",
+    srcs = [
+        "bounded_tables_test.go",
+        "index_test.go",
+        "memory_tables_test.go",
+        "tables_test.go",
+    ],
+    deps = [
+        ":go_default_library",
+        "//:go_default_library",
+        "//context:go_default_library",
+        "//kv:go_default_library",
+        "//meta/autoid:go_default_library",
+        "//model:go_default_library",
+        "//mysql:go_default_library",
+        "//sessionctx:go_default_library",
+        "//store/localstore:go_default_library",
+        "//store/localstore/goleveldb:go_default_library",
+        "//table:go_default_library",
+        "//tablecodec:go_default_library",
+        "//terror:go_default_library",
+        "//util:go_default_library",
+        "//util/testleak:go_default_library",
+        "//util/types:go_default_library",
+        "//vendor/github.com/pingcap/check:go_default_library",
+    ],
+)
