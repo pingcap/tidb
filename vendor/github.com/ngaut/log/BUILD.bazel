@@ -5,15 +5,9 @@ go_library(
     srcs = [
         "log.go",
     ] + select({
-        "@io_bazel_rules_go//go/platform:darwin_amd64": [
-            "crash_unix.go",
-        ],
-        "@io_bazel_rules_go//go/platform:linux_amd64": [
-            "crash_unix.go",
-        ],
-        "@io_bazel_rules_go//go/platform:windows_amd64": [
-            "crash_win.go",
-        ],
+        "@io_bazel_rules_go//go/platform:darwin_amd64": ["crash_unix.go"],
+        "@io_bazel_rules_go//go/platform:linux_amd64": ["crash_unix.go"],
+        "@io_bazel_rules_go//go/platform:windows_amd64": ["crash_win.go"],
         "//conditions:default": [],
     }),
     visibility = ["//visibility:public"],

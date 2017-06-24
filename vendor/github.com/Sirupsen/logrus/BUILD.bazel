@@ -23,9 +23,7 @@ go_library(
             "terminal_linux.go",
             "terminal_notwindows.go",
         ],
-        "@io_bazel_rules_go//go/platform:windows_amd64": [
-            "terminal_windows.go",
-        ],
+        "@io_bazel_rules_go//go/platform:windows_amd64": ["terminal_windows.go"],
         "//conditions:default": [],
     }),
     visibility = ["//visibility:public"],
