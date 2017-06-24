@@ -831,6 +831,17 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select strcmp("", "123"), strcmp("123", ""), strcmp("", ""), strcmp("", null), strcmp(null, "")`)
 	result.Check(testkit.Rows("-1 1 0 <nil> <nil>"))
 
+	// for left
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery("select left(a, 2), left(b, 2), left(c, 2), left(d, 2), left(e, 2) from t")
+	result.Check(testkit.Rows("2 2 2. 20 12"))
+	result = tk.MustQuery(`select left("abc", 0), left("abc", -1), left(NULL, 1), left("abc", NULL)`)
+	result.Check(testkit.Rows("  <nil> <nil>"))
+	result = tk.MustQuery(`select left("abc", "a"), left("abc", 1.9), left("abc", 1.2)`)
+	result.Check(testkit.Rows(" ab a"))
+
 	// for ord
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")

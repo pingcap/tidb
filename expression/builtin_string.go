@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -277,37 +278,54 @@ type leftFunctionClass struct {
 }
 
 func (c *leftFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLeftSig{newBaseBuiltinFunc(args, ctx)}
+	retType := c.inferRetType(args)
+	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinLeftSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
+func (c *leftFunctionClass) inferRetType(args []Expression) *types.FieldType {
+	argTp := args[0].GetType()
+	tp := types.MergeFieldType(mysql.TypeVarString, argTp.Tp)
+	retType := types.NewFieldType(tp)
+	if types.IsBinaryStr(argTp) {
+		types.SetBinChsClnFlag(retType)
+	} else {
+		retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	}
+	return retType
+}
+
 type builtinLeftSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinLeftSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
-func (b *builtinLeftSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinLeftSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var left int64
+
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	left, isNull, err = b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if terror.ErrorEqual(err, types.ErrTruncated) {
+		return "", false, nil
 	}
-	length, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	l := int(length)
+	l := int(left)
 	if l < 0 {
 		l = 0
-	} else if l > len(str) {
-		l = len(str)
+	} else if l > len(d) {
+		l = len(d)
 	}
-	d.SetString(str[:l])
-	return d, nil
+	return d[:l], false, nil
 }
 
 type rightFunctionClass struct {
