@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/version"
+	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -96,7 +96,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	st := status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
-		GitHash:     version.Get().GitCommit,
+		GitHash:     printer.TiDBGitHash,
 	}
 	js, err := json.Marshal(st)
 	if err != nil {

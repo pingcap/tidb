@@ -18,19 +18,26 @@ import (
 	"fmt"
 
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/version"
+)
+
+// Version information.
+var (
+	TiDBBuildTS = "None"
+	TiDBGitHash = "None"
 )
 
 // PrintTiDBInfo prints the TiDB version information.
 func PrintTiDBInfo() {
 	log.Infof("Welcome to TiDB.")
 	log.Infof("Version:")
-	log.Infof("%#v\n", version.Get())
+	log.Infof("Git Commit Hash: %s", TiDBGitHash)
+	log.Infof("UTC Build Time:  %s", TiDBBuildTS)
 }
 
 // PrintRawTiDBInfo prints the TiDB version information without log info.
 func PrintRawTiDBInfo() {
-	fmt.Printf("%#v\n", version.Get())
+	fmt.Println("Git Commit Hash:", TiDBGitHash)
+	fmt.Println("UTC Build Time: ", TiDBBuildTS)
 }
 
 // checkValidity checks whether cols and every data have the same length.
