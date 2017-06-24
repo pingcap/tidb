@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "bits.go",
+        "envelope.go",
+        "mathutil.go",
+        "permute.go",
+        "primes.go",
+        "rat.go",
+        "rnd.go",
+        "tables.go",
+        "test_deps.go",
+    ],
+    visibility = ["//visibility:public"],
+)

@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "reader.go",
+        "table.go",
+        "writer.go",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//vendor/github.com/golang/snappy:go_default_library",
+        "//vendor/github.com/pingcap/goleveldb/leveldb/cache:go_default_library",
+        "//vendor/github.com/pingcap/goleveldb/leveldb/comparer:go_default_library",
+        "//vendor/github.com/pingcap/goleveldb/leveldb/errors:go_default_library",
+        "//vendor/github.com/pingcap/goleveldb/leveldb/filter:go_default_library",
+        "//vendor/github.com/pingcap/goleveldb/leveldb/iterator:go_default_library",
+        "//vendor/github.com/pingcap/goleveldb/leveldb/opt:go_default_library",
+        "//vendor/github.com/pingcap/goleveldb/leveldb/storage:go_default_library",
+        "//vendor/github.com/pingcap/goleveldb/leveldb/util:go_default_library",
+    ],
+)

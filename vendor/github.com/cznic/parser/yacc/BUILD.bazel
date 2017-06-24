@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "api.go",
+        "ast.go",
+        "goscanner.go",
+        "lexer.go",
+        "parser.go",
+        "scanner.go",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//vendor/github.com/cznic/golex/lex:go_default_library",
+        "//vendor/github.com/cznic/strutil:go_default_library",
+    ],
+)
