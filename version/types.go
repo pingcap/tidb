@@ -13,7 +13,7 @@
 
 package version
 
-// how we'll want to distribute that information.
+// Info contains versioning information.
 type Info struct {
 	GitVersion   string `json:"gitVersion"`
 	GitCommit    string `json:"gitCommit"`
