@@ -35,7 +35,6 @@ go_library(
         "//util/arena:go_default_library",
         "//util/codec:go_default_library",
         "//util/hack:go_default_library",
-        "//util/printer:go_default_library",
         "//util/types:go_default_library",
         "//vendor/github.com/gorilla/mux:go_default_library",
         "//vendor/github.com/juju/errors:go_default_library",
@@ -44,6 +43,7 @@ go_library(
         "//vendor/github.com/pingcap/pd/pd-client:go_default_library",
         "//vendor/github.com/prometheus/client_golang/prometheus:go_default_library",
         "//vendor/golang.org/x/net/context:go_default_library",
+        "//version:go_default_library",
     ],
 )
 
@@ -65,11 +65,11 @@ go_test(
         "//store/tikv/mock-tikv:go_default_library",
         "//tablecodec:go_default_library",
         "//util/codec:go_default_library",
-        "//util/printer:go_default_library",
         "//util/testleak:go_default_library",
         "//util/types:go_default_library",
         "//vendor/github.com/go-sql-driver/mysql:go_default_library",
         "//vendor/github.com/ngaut/log:go_default_library",
         "//vendor/github.com/pingcap/check:go_default_library",
+        "//version:go_default_library",
     ],
 )

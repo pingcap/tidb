@@ -21,8 +21,6 @@
 #    TIDB_GIT_TREE_STATE - "clean" indicates no changes since the git commit id
 #        "dirty" indicates source code changes after the git commit id
 #    TIDB_GIT_VERSION - "vX.Y" used to indicate the last release version.
-#    TIDB_GIT_MAJOR - The major part of the version
-#    TIDB_GIT_MINOR - The minor component of the version
 
 # Grovels through git to set a set of env variables.
 #
@@ -63,18 +61,6 @@ tidb::version::get_version_vars() {
         # so use our idea of "dirty" from git status instead.
         TIDB_GIT_VERSION+="-dirty"
       fi
-
-
-      # Try to match the "git describe" output to a regex to try to extract
-      # the "major" and "minor" versions and whether this is the exact tagged
-      # version or whether the tree is between two tagged versions.
-      if [[ "${TIDB_GIT_VERSION}" =~ ^v([0-9]+)\.([0-9]+)(\.[0-9]+)?([-].*)?$ ]]; then
-        TIDB_GIT_MAJOR=${BASH_REMATCH[1]}
-        TIDB_GIT_MINOR=${BASH_REMATCH[2]}
-        if [[ -n "${BASH_REMATCH[4]}" ]]; then
-          TIDB_GIT_MINOR+="+"
-        fi
-      fi
     fi
   fi
 }
@@ -83,7 +69,8 @@ tidb::version::get_version_vars() {
 tidb::version::save_version_vars() {
   local version_file=${1-}
   [[ -n ${version_file} ]] || {
-    echo "!!! Internal error.  No file specified in tidb::version::save_version_vars"
+
+      echo "!!! Internal error.  No file specified in tidb::version::save_version_vars"
     return 1
   }
 
@@ -112,8 +99,7 @@ tidb::version::ldflag() {
   local val=${2}
 
   # If you update these, also update the list pkg/version/def.bzl.
-  echo "-X ${TIDB_GO_PACKAGE}/pkg/version.${key}=${val}"
-  echo "-X ${TIDB_GO_PACKAGE}/vendor/k8s.io/client-go/pkg/version.${key}=${val}"
+  echo "-X ${TIDB_GO_PACKAGE}/version.${key}=${val}"
 }
 
 # Prints the value that needs to be passed to the -ldflags parameter of go build
@@ -131,13 +117,6 @@ tidb::version::ldflags() {
 
   if [[ -n ${TIDB_GIT_VERSION-} ]]; then
     ldflags+=($(tidb::version::ldflag "gitVersion" "${TIDB_GIT_VERSION}"))
-  fi
-
-  if [[ -n ${TIDB_GIT_MAJOR-} && -n ${TIDB_GIT_MINOR-} ]]; then
-    ldflags+=(
-      $(tidb::version::ldflag "gitMajor" "${TIDB_GIT_MAJOR}")
-      $(tidb::version::ldflag "gitMinor" "${TIDB_GIT_MINOR}")
-    )
   fi
 
   # The -ldflags parameter takes a single string, so join the output.

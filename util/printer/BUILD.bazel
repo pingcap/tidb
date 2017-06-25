@@ -4,7 +4,10 @@ go_library(
     name = "go_default_library",
     srcs = ["printer.go"],
     visibility = ["//visibility:public"],
-    deps = ["//vendor/github.com/ngaut/log:go_default_library"],
+    deps = [
+        "//vendor/github.com/ngaut/log:go_default_library",
+        "//version:go_default_library",
+    ],
 )
 
 go_test(
