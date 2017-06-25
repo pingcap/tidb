@@ -103,6 +103,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 
+	zone, _ := time.Now().In(time.Local).Zone()
 	// Test case for time_zone session variable.
 	tests := []struct {
 		input        string
@@ -112,7 +113,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	}{
 		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour},
 		{"US/Eastern", "US/Eastern", true, 5 * time.Hour},
-		{"SYSTEM", "Local", false, 0},
+		{"SYSTEM", zone, false, 0},
 		{"+10:00", "UTC", true, -10 * time.Hour},
 		{"-6:00", "UTC", true, 6 * time.Hour},
 	}
