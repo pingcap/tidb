@@ -15,8 +15,9 @@ package version
 
 // Info contains versioning information.
 type Info struct {
-	GitVersion   string `json:"gitVersion"`
-	GitCommit    string `json:"gitCommit"`
+	GitVersion string `json:"gitVersion"`
+	GitCommit  string `json:"gitCommit"`
+
 	GitTreeState string `json:"gitTreeState"`
 	BuildDate    string `json:"buildDate"`
 	GoVersion    string `json:"goVersion"`

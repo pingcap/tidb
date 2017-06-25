@@ -23,9 +23,7 @@ import (
 
 // PrintTiDBInfo prints the TiDB version information.
 func PrintTiDBInfo() {
-	log.Infof("Welcome to TiDB.")
-	// TODO add format
-	log.Infof("#%v", version.Get())
+	log.Infof("Welcome to TiDB: %s", version.Get())
 }
 
 // PrintRawTiDBInfo prints the TiDB version information without log info.
