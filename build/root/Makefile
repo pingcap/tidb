@@ -170,3 +170,10 @@ endif
 
 checklist:
 	cat checklist.md
+bazel-test:
+	bazel test //executor/... //distsql/... //mysql/... //sessionctx/...  --test_output=errors
+	bazel test //ddl/...
+	bazel test //terror/... //ast/... //infoschema/... //parser/... //statistics/...  --test_output=errors
+	bazel test //domain/... //inspectkv/... //perfschema/... //store/... //util/...  --test_output=errors
+	bazel test //cmd/... //kv/... //plan/... //structure/... //context/... //expression/...  --test_output=errors
+	bazel test //meta/... //privilege/... //table/... //model/...  //server/... //tablecodec/...  --test_output=errors

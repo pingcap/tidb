@@ -48,6 +48,7 @@ go_library(
 
 go_test(
     name = "go_default_test",
+    size = "medium",
     srcs = [
         "bench_test.go",
         "bootstrap_test.go",
