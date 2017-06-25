@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
@@ -333,51 +332,55 @@ type rightFunctionClass struct {
 }
 
 func (c *rightFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRightSig{newBaseBuiltinFunc(args, ctx)}
+	retType := c.inferRetType(args)
+	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinRightSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinRightSig struct {
-	baseBuiltinFunc
+func (c *rightFunctionClass) inferRetType(args []Expression) *types.FieldType {
+	argTp := args[0].GetType()
+	tp := types.MergeFieldType(mysql.TypeVarString, argTp.Tp)
+	retType := types.NewFieldType(tp)
+	if types.IsBinaryStr(argTp) {
+		types.SetBinChsClnFlag(retType)
+	} else {
+		retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	}
+	return retType
 }
 
-func (b *builtinRightSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if len(args) != 2 {
-		return d, nil
-	}
-	arg0, arg1 := args[0], args[1]
-	if arg0.IsNull() || arg1.IsNull() {
-		return d, nil
-	}
+type builtinRightSig struct {
+	baseStringBuiltinFunc
+}
 
-	str, err := arg0.ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	sc := new(variable.StatementContext)
-	sc.IgnoreTruncate = true
-	length, err := arg1.ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if length <= 0 {
-		d.SetString("")
-		return d, nil
-	}
-	var result string
-	strLen := int64(len(str))
-	if strLen >= length {
-		result = str[strLen-length:]
-	} else {
-		result = str
-	}
-	d.SetString(result)
+// eval evals a builtinRightSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_right
+func (b *builtinRightSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var right int64
 
-	return d, nil
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	right, isNull, err = b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if terror.ErrorEqual(err, types.ErrTruncated) {
+		return "", false, nil
+	}
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	r := int(right)
+	length := len(d)
+	if r < 0 {
+		r = 0
+	} else if r > length {
+		r = length
+	}
+	return d[length-r:], false, nil
 }
 
 type repeatFunctionClass struct {
