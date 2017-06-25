@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/versio"
+	"github.com/pingcap/tidb/version"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
