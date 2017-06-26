@@ -15,7 +15,7 @@ package plan
 
 import "github.com/pingcap/tidb/expression"
 
-func (p *DataSource) getAllPossibleProperties() (result [][]*expression.Column) {
+func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
 	indices, includeTS := availableIndices(p.indexHints, p.tableInfo)
 	if includeTS {
 		col := p.getPKIsHandleCol()
@@ -46,17 +46,17 @@ func (p *DataSource) getAllPossibleProperties() (result [][]*expression.Column) 
 	return
 }
 
-func (p *Selection) getAllPossibleProperties() (result [][]*expression.Column) {
-	return p.children[0].(LogicalPlan).getAllPossibleProperties()
+func (p *Selection) preparePossibleProperties() (result [][]*expression.Column) {
+	return p.children[0].(LogicalPlan).preparePossibleProperties()
 }
 
-func (p *baseLogicalPlan) getAllPossibleProperties() [][]*expression.Column {
+func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
 	return nil
 }
 
-func (p *LogicalJoin) getAllPossibleOrderCols() [][]*expression.Column {
-	leftProperties := p.children[0].(LogicalPlan).getAllPossibleProperties()
-	rightProperties := p.children[1].(LogicalPlan).getAllPossibleProperties()
+func (p *LogicalJoin) preparePossibleOrderCols() [][]*expression.Column {
+	leftProperties := p.children[0].(LogicalPlan).preparePossibleProperties()
+	rightProperties := p.children[1].(LogicalPlan).preparePossibleProperties()
 	// TODO: We should consider properties propagation.
 	p.leftProperties = leftProperties
 	p.rightProperties = rightProperties
@@ -64,4 +64,9 @@ func (p *LogicalJoin) getAllPossibleOrderCols() [][]*expression.Column {
 	copy(resultProperties, leftProperties)
 	resultProperties = append(resultProperties, rightProperties...)
 	return resultProperties
+}
+
+func (p *LogicalAggregation) preparePossibleOrderCols() [][]*expression.Column {
+	p.possibleProperties = p.children[0].(LogicalPlan).preparePossibleProperties()
+	return nil
 }
