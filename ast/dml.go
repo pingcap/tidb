@@ -15,6 +15,7 @@ package ast
 
 import (
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 )
 
 var (
@@ -445,7 +446,9 @@ type SelectStmt struct {
 	dmlNode
 	resultSetNode
 
-	// Distinct represents if the select has distinct option.
+	// SelectStmtOpts wraps around select hints and switches.
+	*SelectStmtOpts
+	// Distinct represents whether the select has distinct option.
 	Distinct bool
 	// From is the from clause of the query.
 	From *TableRefsClause
@@ -642,15 +645,6 @@ func (n *Assignment) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// Priority const values.
-// See https://dev.mysql.com/doc/refman/5.7/en/insert.html
-const (
-	NoPriority = iota
-	LowPriority
-	HighPriority
-	DelayedPriority
-)
-
 // LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
 // See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
 type LoadDataStmt struct {
@@ -712,7 +706,7 @@ type InsertStmt struct {
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
 	Setlist     []*Assignment
-	Priority    int
+	Priority    mysql.PriorityEnum
 	OnDuplicate []*Assignment
 	Select      ResultSetNode
 }
