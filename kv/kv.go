@@ -34,8 +34,18 @@ const (
 	SkipCheckForWrite
 	// SchemaLeaseChecker is used for schema lease check.
 	SchemaLeaseChecker
-	// IsolationRC sets isolation level to RC.
-	IsolationRC
+	// IsolationLevel sets isolation level for current transaction. The default level is SI.
+	IsolationLevel
+)
+
+// IsoLevel is the transaction's isolation level.
+type IsoLevel int
+
+const (
+	// SI stands for 'snapshot isolation'.
+	SI IsoLevel = iota
+	// RC stands for 'read committed'.
+	RC
 )
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.

@@ -20,7 +20,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -40,7 +39,7 @@ const (
 type tikvSnapshot struct {
 	store          *tikvStore
 	version        kv.Version
-	isolationLevel kvrpcpb.IsolationLevel
+	isolationLevel kv.IsoLevel
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -48,7 +47,7 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 	return &tikvSnapshot{
 		store:          store,
 		version:        ver,
-		isolationLevel: kvrpcpb.IsolationLevel_SI,
+		isolationLevel: kv.SI,
 	}
 }
 
@@ -117,7 +116,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 }
 
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
-	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, s.isolationLevel)
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, pbIsolationLevel(s.isolationLevel))
 
 	pending := batch.keys
 	for {
@@ -196,7 +195,7 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 }
 
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
-	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, s.isolationLevel)
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, pbIsolationLevel(s.isolationLevel))
 
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGet,

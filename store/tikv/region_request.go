@@ -20,6 +20,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -181,4 +182,15 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	log.Debugf("tikv reports region error: %s, ctx: %s", regionErr, ctx.KVCtx)
 	s.regionCache.DropRegion(ctx.Region)
 	return false, nil
+}
+
+func pbIsolationLevel(level kv.IsoLevel) kvrpcpb.IsolationLevel {
+	switch level {
+	case kv.RC:
+		return kvrpcpb.IsolationLevel_RC
+	case kv.SI:
+		return kvrpcpb.IsolationLevel_SI
+	default:
+		return kvrpcpb.IsolationLevel_SI
+	}
 }

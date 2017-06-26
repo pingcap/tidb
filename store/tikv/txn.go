@@ -20,7 +20,6 @@ import (
 	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
@@ -116,15 +115,15 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
-	if opt == kv.IsolationRC {
-		txn.snapshot.isolationLevel = kvrpcpb.IsolationLevel_RC
+	if opt == kv.IsolationLevel {
+		txn.snapshot.isolationLevel = val.(kv.IsoLevel)
 	}
 }
 
 func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
-	if opt == kv.IsolationRC {
-		txn.snapshot.isolationLevel = kvrpcpb.IsolationLevel_SI
+	if opt == kv.IsolationLevel {
+		txn.snapshot.isolationLevel = kv.SI
 	}
 }
 

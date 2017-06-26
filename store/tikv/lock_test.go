@@ -189,7 +189,7 @@ func (s *testLockSuite) TestRC(c *C) {
 
 	txn2, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn2.SetOption(kv.IsolationRC, true)
+	txn2.SetOption(kv.IsolationLevel, kv.RC)
 	val, err := txn2.Get([]byte("key"))
 	c.Assert(err, IsNil)
 	c.Assert(string(val), Equals, "v1")
