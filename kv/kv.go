@@ -159,8 +159,8 @@ type Request struct {
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
-	// IsolationRC sets the isolation level as RC(Read Committed).
-	IsolationRC bool
+	// IsolationLevel is the isolation level, default is SI.
+	IsolationLevel IsoLevel
 }
 
 // Response represents the response returned from KV layer.

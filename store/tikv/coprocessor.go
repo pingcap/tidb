@@ -22,7 +22,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tipb/go-tipb"
@@ -434,11 +433,7 @@ func (it *copIterator) Next() ([]byte, error) {
 // handleTask handles single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
-	isoLevel := kvrpcpb.IsolationLevel_SI
-	if it.req.IsolationRC {
-		isoLevel = kvrpcpb.IsolationLevel_RC
-	}
-	sender := NewRegionRequestSender(it.store.regionCache, it.store.client, isoLevel)
+	sender := NewRegionRequestSender(it.store.regionCache, it.store.client, pbIsolationLevel(it.req.IsolationLevel))
 	for {
 		select {
 		case <-it.finished:
