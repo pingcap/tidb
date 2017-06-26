@@ -80,9 +80,8 @@ func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 		case types.KindMysqlSet:
 			b = encodeUnsignedInt(b, uint64(val.GetMysqlSet().ToNumber()), comparable)
 		case types.KindMysqlJSON:
-			bytes := json.Serialize(val.GetMysqlJSON())
 			b = append(b, jsonFlag)
-			b = EncodeCompactBytes(b, bytes)
+			b = append(b, json.Serialize(val.GetMysqlJSON())...)
 		case types.KindNull:
 			b = append(b, NilFlag)
 		case types.KindMinNotNull:
@@ -216,12 +215,8 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 			d.SetValue(v)
 		}
 	case jsonFlag:
-		var v []byte
-		if b, v, err = DecodeCompactBytes(b); err == nil {
-			var j json.JSON
-			if j, err = json.Deserialize(v); err == nil {
-				d.SetMysqlJSON(j)
-			}
+		if j, err := json.Deserialize(b); err == nil {
+			d.SetMysqlJSON(j)
 		}
 	case NilFlag:
 	default:
@@ -272,7 +267,7 @@ func peek(b []byte) (length int, err error) {
 		l = 8
 	case bytesFlag:
 		l, err = peekBytes(b, false)
-	case compactBytesFlag, jsonFlag:
+	case compactBytesFlag:
 		l, err = peekCompactBytes(b)
 	case decimalFlag:
 		l, err = types.DecimalPeak(b)
@@ -280,6 +275,8 @@ func peek(b []byte) (length int, err error) {
 		l, err = peekVarint(b)
 	case uvarintFlag:
 		l, err = peekUvarint(b)
+	case jsonFlag:
+		l, err = json.PeekBytesAsJSON(b)
 	default:
 		return 0, errors.Errorf("invalid encoded key flag %v", flag)
 	}
