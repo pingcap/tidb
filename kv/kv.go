@@ -34,8 +34,8 @@ const (
 	SkipCheckForWrite
 	// SchemaLeaseChecker is used for schema lease check.
 	SchemaLeaseChecker
-	// ReadCommitted sets isolation level to RC.
-	ReadCommitted
+	// IsolationRC sets isolation level to RC.
+	IsolationRC
 )
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
