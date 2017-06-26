@@ -223,7 +223,9 @@ type LogicalPlan interface {
 	// statsProfile will return the stats for this plan.
 	statsProfile() *statsProfile
 
-	getAllPossibleOrderCols() [][]int
+	// getAllPossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
+	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
+	getAllPossibleProperties() [][]*expression.Column
 }
 
 // PhysicalPlan is a tree of the physical operators.

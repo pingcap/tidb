@@ -81,9 +81,10 @@ type LogicalJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 
-	LeftJoinKeys     []*expression.Column
-	RightJoinKeys    []*expression.Column
-	allPossibleOrder [][]int
+	LeftJoinKeys    []*expression.Column
+	RightJoinKeys   []*expression.Column
+	leftProperties  [][]*expression.Column
+	rightProperties [][]*expression.Column
 
 	// DefaultValues is only used for outer join, which stands for the default values when the outer table cannot find join partner
 	// instead of null padding.

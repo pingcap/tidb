@@ -13,101 +13,55 @@
 
 package plan
 
-func (p *DataSource) getAllPossibleOrderCols() (result [][]int) {
+import "github.com/pingcap/tidb/expression"
+
+func (p *DataSource) getAllPossibleProperties() (result [][]*expression.Column) {
 	indices, includeTS := availableIndices(p.indexHints, p.tableInfo)
 	if includeTS {
 		col := p.getPKIsHandleCol()
 		if col != nil {
-			pkOffset := p.schema.ColumnIndex(col)
-			if pkOffset != -1 {
-				result = append(result, []int{pkOffset})
-			}
+			result = append(result, []*expression.Column{col})
 		}
 	}
 	for _, idx := range indices {
-		var offsets []int
-		for _, col := range idx.Columns {
+		var cols []*expression.Column
+		for _, idxCol := range idx.Columns {
 			found := false
-			for i := range p.schema.Columns {
-				if p.schema.Columns[i].ColName.L == col.Name.L {
-					offsets = append(offsets, i)
+			for _, col := range p.schema.Columns {
+				if col.ColName.L == idxCol.Name.L {
+					cols = append(cols, col)
 					found = true
 					break
 				}
 			}
 			if !found {
+				cols = nil
 				break
 			}
 		}
-		if len(offsets) > 0 {
-			result = append(result, offsets)
+		if len(cols) > 0 {
+			result = append(result, cols)
 		}
 	}
 	return
 }
 
-func (p *Selection) getAllPossibleOrderCols() (result [][]int) {
-	return p.children[0].(LogicalPlan).getAllPossibleOrderCols()
+func (p *Selection) getAllPossibleProperties() (result [][]*expression.Column) {
+	return p.children[0].(LogicalPlan).getAllPossibleProperties()
 }
 
-func (p *baseLogicalPlan) getAllPossibleOrderCols() [][]int {
+func (p *baseLogicalPlan) getAllPossibleProperties() [][]*expression.Column {
 	return nil
 }
 
-func colOffsetsMatch(keyOffsets, idxOffsets []int) (order []int) {
-	for _, orderOffset := range idxOffsets {
-		found := false
-		for i, keyOffset := range keyOffsets {
-			if orderOffset == keyOffset {
-				order = append(order, i)
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil
-		}
-	}
-	return
-}
-
-func (p *LogicalJoin) getAllPossibleOrderCols() [][]int {
-	leftIdxResult := p.children[0].(LogicalPlan).getAllPossibleOrderCols()
-	rightIdxResult := p.children[1].(LogicalPlan).getAllPossibleOrderCols()
-	var leftMatchedOrder, rightMatchedOrder [][]int
-	leftKeyOffsets := p.children[0].Schema().ColumnsIndices(p.LeftJoinKeys)
-	rightKeyOffsets := p.children[1].Schema().ColumnsIndices(p.RightJoinKeys)
-	for _, leftIdxCols := range leftIdxResult {
-		if order := colOffsetsMatch(leftKeyOffsets, leftIdxCols); order != nil {
-			leftMatchedOrder = append(leftMatchedOrder, order)
-		}
-	}
-	for _, rightIdxCols := range rightIdxResult {
-		if order := colOffsetsMatch(rightKeyOffsets, rightIdxCols); order != nil {
-			rightMatchedOrder = append(rightMatchedOrder, order)
-		}
-	}
-	for _, leftOrder := range leftMatchedOrder {
-		for _, rightOrder := range rightMatchedOrder {
-			if len(leftOrder) == len(rightOrder) {
-				matched := true
-				for i := range leftOrder {
-					if leftOrder[i] != rightOrder[i] {
-						matched = false
-						break
-					}
-				}
-				if matched {
-					p.allPossibleOrder = append(p.allPossibleOrder, leftOrder)
-				}
-			}
-		}
-	}
-	for _, rightCols := range rightIdxResult {
-		for i := range rightCols {
-			rightCols[i] += p.children[0].Schema().Len()
-		}
-		leftIdxResult = append(leftIdxResult, rightCols)
-	}
-	return leftIdxResult
+func (p *LogicalJoin) getAllPossibleOrderCols() [][]*expression.Column {
+	leftProperties := p.children[0].(LogicalPlan).getAllPossibleProperties()
+	rightProperties := p.children[1].(LogicalPlan).getAllPossibleProperties()
+	// TODO: We should consider properties propagation.
+	p.leftProperties = leftProperties
+	p.rightProperties = rightProperties
+	resultProperties := make([][]*expression.Column, len(leftProperties), len(leftProperties)+len(rightProperties))
+	copy(resultProperties, leftProperties)
+	resultProperties = append(resultProperties, rightProperties...)
+	return resultProperties
 }
