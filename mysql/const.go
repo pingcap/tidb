@@ -193,6 +193,12 @@ const (
 // AllPrivMask is the mask for PrivilegeType with all bits set to 1.
 const AllPrivMask = AllPriv - 1
 
+// MySQL type maximum length.
+const (
+	// MaxDateWidth YYYY-MM-DD.
+	MaxDateWidth = 10
+)
+
 // Priv2UserCol is the privilege to mysql.user table column name.
 var Priv2UserCol = map[PrivilegeType]string{
 	CreatePriv:     "Create_priv",

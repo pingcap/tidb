@@ -135,6 +135,17 @@ func (t *TableInfo) GetPkName() CIStr {
 	return CIStr{}
 }
 
+// GetPkColInfo gets the ColumnInfo of pk if exists.
+// Make sure PkIsHandle checked before call this method.
+func (t *TableInfo) GetPkColInfo() *ColumnInfo {
+	for _, colInfo := range t.Columns {
+		if mysql.HasPriKeyFlag(colInfo.Flag) {
+			return colInfo
+		}
+	}
+	return nil
+}
+
 // ColumnIsInIndex checks whether c is included in any indices of t.
 func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 	for _, index := range t.Indices {
