@@ -69,7 +69,8 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == CurrentTimestamp {
-			value.Time = types.FromGoTime(defaultTime)
+			d.SetMysqlTime(defaultTime)
+			return d, nil
 		} else if upperX == ZeroTimestamp {
 			value, _ = types.ParseTimeFromNum(0, tp, fsp)
 		} else {
@@ -136,15 +137,15 @@ func IsCurrentTimeExpr(e ast.ExprNode) bool {
 	return x.FnName.L == currentTimestampL
 }
 
-func getSystemTimestamp(ctx context.Context) (time.Time, error) {
-	value := time.Now()
-
-	if ctx == nil {
-		return value, nil
+func getSystemTimestamp(ctx context.Context) (types.Time, error) {
+	sessionVars := ctx.GetSessionVars()
+	value := types.Time{
+		Time:     types.FromGoTime(time.Now()),
+		Type:     mysql.TypeTimestamp,
+		TimeZone: sessionVars.GetTimeZone(),
 	}
 
 	// check whether use timestamp variable
-	sessionVars := ctx.GetSessionVars()
 	val, err := varsutil.GetSessionSystemVar(sessionVars, "timestamp")
 	if err != nil {
 		return value, errors.Trace(err)
@@ -152,12 +153,18 @@ func getSystemTimestamp(ctx context.Context) (time.Time, error) {
 	if val != "" {
 		timestamp, err := types.StrToInt(sessionVars.StmtCtx, val)
 		if err != nil {
-			return time.Time{}, errors.Trace(err)
+			return value, errors.Trace(err)
 		}
 		if timestamp <= 0 {
 			return value, nil
 		}
-		return time.Unix(timestamp, 0), nil
+		// Machine's local timezone to UTC.
+		value.Time = types.FromGoTime(time.Unix(timestamp, 0).In(time.UTC))
+		value.Type = mysql.TypeTimestamp
+		value.TimeZone = time.UTC
+		// UTC to session's timezone.
+		value.ConvertTimeZone(time.UTC, sessionVars.GetTimeZone())
+		return value, nil
 	}
 	return value, nil
 }
