@@ -273,7 +273,6 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	insert := &InsertExec{
 		InsertValues: ivs,
 		OnDuplicate:  v.OnDuplicate,
-		Priority:     v.Priority,
 		Ignore:       v.Ignore,
 	}
 	return insert

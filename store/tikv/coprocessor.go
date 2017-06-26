@@ -22,7 +22,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -449,7 +451,17 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 				Ranges: task.ranges.toPBRanges(),
 			},
 		}
-		resp, err := sender.SendReq(bo, req, task.region, readTimeoutMedium)
+
+		var pri kvrpcpb.CommandPri
+		switch it.req.Priority {
+		case mysql.NoPriority:
+			pri = kvrpcpb.CommandPri_Normal
+		case mysql.LowPriority:
+			pri = kvrpcpb.CommandPri_Low
+		case mysql.HighPriority:
+			pri = kvrpcpb.CommandPri_High
+		}
+		resp, err := sender.SendReq(bo, req, task.region, readTimeoutMedium, pri)
 		if err != nil {
 			return []copResponse{{err: errors.Trace(err)}}
 		}

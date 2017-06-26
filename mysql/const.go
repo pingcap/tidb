@@ -442,3 +442,14 @@ var locale2FormatFunction = map[string]FormatFunc{
 	"en_US": formatENUS,
 	"zh_CN": formatZHCN,
 }
+
+// PriorityEnum type enum.
+type PriorityEnum int
+
+// Priority const values.
+const (
+	NoPriority PriorityEnum = iota
+	LowPriority
+	HighPriority
+	DelayedPriority
+)
