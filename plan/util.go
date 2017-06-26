@@ -60,6 +60,7 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
+// MockTable is used to creare a table for testing.
 func MockTable() *model.TableInfo {
 	indices := []*model.IndexInfo{
 		{
@@ -257,6 +258,7 @@ func MockTable() *model.TableInfo {
 	return table
 }
 
+// MockResolve resolves Node.
 func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
 	ctx := mockContext()
