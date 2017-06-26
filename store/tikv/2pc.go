@@ -333,7 +333,8 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		skipCheck = true
 	}
 	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdPrewrite,
+		Type:     tikvrpc.CmdPrewrite,
+		Priority: getTxnPriority(c.txn),
 		Prewrite: &pb.PrewriteRequest{
 			Mutations:           mutations,
 			PrimaryLock:         c.primary(),
@@ -342,7 +343,6 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			SkipConstraintCheck: skipCheck,
 		},
 	}
-
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
@@ -402,9 +402,23 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	}
 }
 
+func getTxnPriority(txn *tikvTxn) pb.CommandPri {
+	if pri := txn.us.GetOption(kv.Priority); pri != nil {
+		switch pri.(int) {
+		case kv.PriorityNormal:
+		case kv.PriorityLow:
+			return pb.CommandPri_Low
+		case kv.PriorityHigh:
+			return pb.CommandPri_High
+		}
+	}
+	return pb.CommandPri_Normal
+}
+
 func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
 	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdCommit,
+		Type:     tikvrpc.CmdCommit,
+		Priority: getTxnPriority(c.txn),
 		Commit: &pb.CommitRequest{
 			StartVersion:  c.startTS,
 			Keys:          batch.keys,

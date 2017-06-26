@@ -34,6 +34,15 @@ const (
 	SkipCheckForWrite
 	// SchemaLeaseChecker is used for schema lease check.
 	SchemaLeaseChecker
+	// Priority marks the priority of this transaction.
+	Priority
+)
+
+// Priority value for transaction priority.
+const (
+	PriorityNormal int = iota
+	PriorityLow
+	PriorityHigh
 )
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.

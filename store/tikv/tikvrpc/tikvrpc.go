@@ -47,6 +47,7 @@ const (
 // Request wraps all kv/coprocessor requests.
 type Request struct {
 	Type          CmdType
+	Priority      kvrpcpb.CommandPri
 	Get           *kvrpcpb.GetRequest
 	Scan          *kvrpcpb.ScanRequest
 	Prewrite      *kvrpcpb.PrewriteRequest

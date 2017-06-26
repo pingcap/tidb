@@ -98,6 +98,7 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 }
 
 func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+	ctx.KVCtx.Priority = req.Priority
 	if e := tikvrpc.SetContext(req, ctx.KVCtx); e != nil {
 		return nil, false, errors.Trace(e)
 	}
