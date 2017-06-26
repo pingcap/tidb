@@ -58,10 +58,10 @@ import (
 type Session interface {
 	context.Context
 	Status() uint16                              // Flag of current status, such as autocommit.
-	LastInsertID() uint64                        // Last inserted auto_increment id.
+	LastInsertID() uint64                        // LastInsertID is the last inserted auto_increment ID.
 	AffectedRows() uint64                        // Affected rows by latest executed stmt.
 	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement.
-	String() string                              // For debug
+	String() string                              // String is used to debug.
 	CommitTxn() error
 	RollbackTxn() error
 	// PrepareStmt executes prepare statement in binary protocol.
@@ -602,7 +602,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	for i, rst := range rawStmts {
 		s.prepareTxnCtx()
 		startTS := time.Now()
-		// Some execution is done in compile stage, so we reset it before compile.
+		// Some executions are done in compile stage, so we reset them before compile.
 		executor.ResetStmtCtx(s, rst)
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
