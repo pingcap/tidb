@@ -385,40 +385,37 @@ type repeatFunctionClass struct {
 }
 
 func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRepeatSig{newBaseBuiltinFunc(args, ctx)}
+	resultTp := types.NewFieldType(mysql.TypeString)
+	types.SetBinChsClnFlag(resultTp)
+	bf, err := newBaseBuiltinFuncWithTp(args, resultTp, ctx, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinRepeatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinRepeatSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinRepeatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
-func (b *builtinRepeatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinRepeatSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, err
+	num, isNull, err := b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
+
 	ch := fmt.Sprintf("%v", str)
-	num := 0
-	x := args[1]
-	switch x.Kind() {
-	case types.KindInt64:
-		num = int(x.GetInt64())
-	case types.KindUint64:
-		num = int(x.GetUint64())
-	}
 	if num < 1 {
-		d.SetString("")
-		return d, nil
+		return "", false, nil
 	}
-	d.SetString(strings.Repeat(ch, num))
-	return d, nil
+	return strings.Repeat(ch, int(num)), false, nil
 }
 
 type lowerFunctionClass struct {
