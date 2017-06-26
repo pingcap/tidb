@@ -23,6 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -244,7 +245,7 @@ func (s *tikvStore) GetOracle() oracle.Oracle {
 }
 
 func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	sender := NewRegionRequestSender(s.regionCache, s.client)
+	sender := NewRegionRequestSender(s.regionCache, s.client, kvrpcpb.IsolationLevel_SI)
 	return sender.SendReq(bo, req, regionID, timeout)
 }
 

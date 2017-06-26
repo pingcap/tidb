@@ -434,10 +434,11 @@ func (it *copIterator) Next() ([]byte, error) {
 // handleTask handles single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
-	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
+	isoLevel := kvrpcpb.IsolationLevel_SI
 	if it.req.IsolationRC {
-		sender.SetIsolationLevel(kvrpcpb.IsolationLevel_RC)
+		isoLevel = kvrpcpb.IsolationLevel_RC
 	}
+	sender := NewRegionRequestSender(it.store.regionCache, it.store.client, isoLevel)
 	for {
 		select {
 		case <-it.finished:

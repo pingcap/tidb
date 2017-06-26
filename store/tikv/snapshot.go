@@ -117,8 +117,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 }
 
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
-	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
-	sender.SetIsolationLevel(s.isolationLevel)
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, s.isolationLevel)
 
 	pending := batch.keys
 	for {
@@ -197,8 +196,7 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 }
 
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
-	sender := NewRegionRequestSender(s.store.regionCache, s.store.client)
-	sender.SetIsolationLevel(s.isolationLevel)
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, s.isolationLevel)
 
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGet,

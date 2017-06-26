@@ -49,17 +49,12 @@ type RegionRequestSender struct {
 }
 
 // NewRegionRequestSender creates a new sender.
-func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequestSender {
+func NewRegionRequestSender(regionCache *RegionCache, client Client, isolationLevel kvrpcpb.IsolationLevel) *RegionRequestSender {
 	return &RegionRequestSender{
 		regionCache:    regionCache,
 		client:         client,
-		isolationLevel: kvrpcpb.IsolationLevel_SI,
+		isolationLevel: isolationLevel,
 	}
-}
-
-// SetIsolationLevel setups isolation level.
-func (s *RegionRequestSender) SetIsolationLevel(isolationLevel kvrpcpb.IsolationLevel) {
-	s.isolationLevel = isolationLevel
 }
 
 // SendReq sends a request to tikv server.
