@@ -146,12 +146,14 @@ func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Exp
 }
 
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
-// 2. If op are LE or GE, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0)
+// 2. If op are LE or GE, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
+// `IF( a0 op b0, 1,
+//      IF (a1 op b1, 1, a2 op b2))`
 // 3. If op are LT or GT, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
 // `IF( a0 NE b0, a0 op b0,
-//     IF( a1 NE b1,
-//         a1 op b1,
-//         a2 op b2)
+//      IF( a1 NE b1,
+//          a1 op b1,
+//          a2 op b2)
 // )`
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := getRowLen(l), getRowLen(r)
@@ -171,12 +173,16 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 			}
 		}
 		return expression.ComposeCNFCondition(er.ctx, funcs...), nil
-	case ast.LE, ast.GE:
-		return expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), getRowArg(l, 0), getRowArg(r, 0))
-	default: // ast.LT, ast.GT
+	default:
 		larg0, rarg0 := getRowArg(l, 0), getRowArg(r, 0)
-		expr1, _ := expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		expr2, _ := expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+		var expr1, expr2, expr3 expression.Expression
+		if op == ast.LE && op == ast.GE {
+			expr1, _ = expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+			expr2 = expression.One
+		} else { // ast.LT, ast.GT
+			expr1, _ = expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+			expr2, _ = expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+		}
 		l, err := popRowArg(er.ctx, l)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -185,7 +191,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		expr3, err := er.constructBinaryOpFunction(l, r, op)
+		expr3, err = er.constructBinaryOpFunction(l, r, op)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
