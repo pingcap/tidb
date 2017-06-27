@@ -1538,6 +1538,23 @@ func (s *testParserSuite) TestIndexHint(c *C) {
 	s.RunTest(c, table)
 }
 
+func (s *testParserSuite) TestPriority(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{`select high_priority * from t`, true},
+		{`insert high_priority into t values (1)`, true},
+		{`insert LOW_PRIORITY into t values (1)`, true},
+		{`update low_priority t set a = 2`, true},
+	}
+	s.RunTest(c, table)
+
+	parser := New()
+	stmt, err := parser.Parse("select HIGH_PRIORITY * from t", "", "")
+	c.Assert(err, IsNil)
+	sel := stmt[0].(*ast.SelectStmt)
+	c.Assert(sel.SelectStmtOpts.Priority, Equals, mysql.HighPriority)
+}
+
 func (s *testParserSuite) TestEscape(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{

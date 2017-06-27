@@ -604,7 +604,7 @@ type InsertExec struct {
 
 	OnDuplicate []*expression.Assignment
 
-	Priority int
+	Priority mysql.PriorityEnum
 	Ignore   bool
 
 	finished bool

@@ -16,10 +16,12 @@ package executor
 import (
 	"math"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -27,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -142,6 +146,24 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	e := &ShowDDLExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 	}
+
+	var err error
+	ownerManager := sessionctx.GetDomain(e.ctx).DDL().OwnerManager()
+	ctx, cancel := goctx.WithTimeout(goctx.Background(), 3*time.Second)
+	e.ddlOwnerID, err = ownerManager.GetOwnerID(ctx, ddl.DDLOwnerKey)
+	cancel()
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	ctx, cancel = goctx.WithTimeout(goctx.Background(), 3*time.Second)
+	e.bgOwnerID, err = ownerManager.GetOwnerID(ctx, ddl.BgOwnerKey)
+	cancel()
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+
 	ddlInfo, err := inspectkv.GetDDLInfo(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
@@ -154,6 +176,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	}
 	e.ddlInfo = ddlInfo
 	e.bgInfo = bgInfo
+	e.selfID = ownerManager.ID()
 	return e
 }
 

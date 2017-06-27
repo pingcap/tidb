@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -80,7 +81,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		if !bytes.HasPrefix(startKey, recordPrefix) {
 			continue
 		}
-		pairs := cli.MvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64)
+		pairs := cli.MvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI)
 		if len(pairs) > 0 {
 			c.Assert(pairs, HasLen, 100)
 		}
@@ -101,7 +102,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		if !bytes.HasPrefix(startKey, indexPrefix) {
 			continue
 		}
-		pairs := cli.MvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64)
+		pairs := cli.MvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI)
 		if len(pairs) > 0 {
 			c.Assert(pairs, HasLen, 100)
 		}

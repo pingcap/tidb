@@ -160,10 +160,12 @@ type Executor interface {
 type ShowDDLExec struct {
 	baseExecutor
 
-	schema  *expression.Schema
-	ddlInfo *inspectkv.DDLInfo
-	bgInfo  *inspectkv.DDLInfo
-	done    bool
+	ddlOwnerID string
+	bgOwnerID  string
+	selfID     string
+	ddlInfo    *inspectkv.DDLInfo
+	bgInfo     *inspectkv.DDLInfo
+	done       bool
 }
 
 // Next implements the Executor Next interface.
@@ -172,12 +174,11 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 		return nil, nil
 	}
 
-	// TODO: Get the DDL owner information.
-	var ddlOwner, ddlJob string
+	var ddlJob string
 	if e.ddlInfo.Job != nil {
 		ddlJob = e.ddlInfo.Job.String()
 	}
-	var bgOwner, bgJob string
+	var bgJob string
 	if e.bgInfo.Job != nil {
 		bgJob = e.bgInfo.Job.String()
 	}
@@ -185,11 +186,12 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	row := &Row{}
 	row.Data = types.MakeDatums(
 		e.ddlInfo.SchemaVer,
-		ddlOwner,
+		e.ddlOwnerID,
 		ddlJob,
 		e.bgInfo.SchemaVer,
-		bgOwner,
+		e.bgOwnerID,
 		bgJob,
+		e.selfID,
 	)
 	e.done = true
 
