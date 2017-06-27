@@ -1128,7 +1128,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		e.fetched = true
 	}
 
-	assignFlag, err := getUpdateColumns(e.OrderedList, e.SelectExec.Schema())
+	assignFlag, err := getUpdateColumns(e.OrderedList, e.SelectExec.Schema().Len())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1167,8 +1167,8 @@ func (e *UpdateExec) Next() (*Row, error) {
 	return &Row{}, nil
 }
 
-func getUpdateColumns(assignList []*expression.Assignment, schema *expression.Schema) ([]bool, error) {
-	assignFlag := make([]bool, schema.Len())
+func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
+	assignFlag := make([]bool, schemaLen)
 	for _, v := range assignList {
 		idx := v.Col.Index
 		if v != nil {

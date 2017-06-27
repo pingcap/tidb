@@ -234,6 +234,10 @@ func (p *Insert) ResolveIndices() {
 		asgn.Col.ResolveIndices(p.tableSchema)
 		asgn.Expr.ResolveIndices(p.tableSchema)
 	}
+	for _, set := range p.Setlist {
+		set.Col.ResolveIndices(p.tableSchema)
+		set.Expr.ResolveIndices(p.tableSchema)
+	}
 }
 
 // ResolveIndices implements Plan interface.
