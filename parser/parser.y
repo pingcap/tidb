@@ -1038,6 +1038,13 @@ AlterTableSpec:
 			NewTable:      $3.(*ast.TableName),
 		}
 	}
+|	"RENAME" TableName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableRenameTable,
+			NewTable:      $2.(*ast.TableName),
+		}
+	}
 |	"RENAME" "AS" TableName
 	{
 		$$ = &ast.AlterTableSpec{

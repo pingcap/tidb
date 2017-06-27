@@ -113,3 +113,28 @@ func (s *testExpressionSuite) TestIsCurrentTimeExpr(c *C) {
 	v = IsCurrentTimeExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")})
 	c.Assert(v, IsTrue)
 }
+
+func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := mock.NewContext()
+	sessionVars := ctx.GetSessionVars()
+
+	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
+	varsutil.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+00:00"))
+	v, err := GetTimeValue(ctx, CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
+		Time:     types.FromDate(1970, 1, 1, 0, 20, 34, 0),
+		Type:     mysql.TypeTimestamp,
+		TimeZone: sessionVars.GetTimeZone()})
+
+	// CurrentTimestamp from "timestamp" session variable is based on UTC, so change timezone
+	// would get different value.
+	varsutil.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+08:00"))
+	v, err = GetTimeValue(ctx, CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
+		Time:     types.FromDate(1970, 1, 1, 8, 20, 34, 0),
+		Type:     mysql.TypeTimestamp,
+		TimeZone: sessionVars.GetTimeZone()})
+}
