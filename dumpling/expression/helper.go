@@ -70,6 +70,12 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 		upperX := strings.ToUpper(x)
 		if upperX == CurrentTimestamp {
 			value.Time = types.FromGoTime(defaultTime)
+			if tp == mysql.TypeTimestamp {
+				err := value.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
+				if err != nil {
+					return d, errors.Trace(err)
+				}
+			}
 		} else if upperX == ZeroTimestamp {
 			value, _ = types.ParseTimeFromNum(0, tp, fsp)
 		} else {
