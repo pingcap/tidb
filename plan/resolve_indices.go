@@ -234,6 +234,10 @@ func (p *Insert) ResolveIndices() {
 		asgn.Col.ResolveIndices(p.tableSchema)
 		asgn.Expr.ResolveIndices(p.tableSchema)
 	}
+	for _, set := range p.Setlist {
+		set.Col.ResolveIndices(p.tableSchema)
+		set.Expr.ResolveIndices(p.tableSchema)
+	}
 	if p.GenCols != nil {
 		for _, list := range p.GenCols.Lists {
 			for _, expr := range list {
@@ -241,6 +245,7 @@ func (p *Insert) ResolveIndices() {
 			}
 		}
 		for _, expr := range p.GenCols.Setlist {
+			expr.Col.ResolveIndices(p.tableSchema)
 			expr.Expr.ResolveIndices(p.tableSchema)
 		}
 	}
