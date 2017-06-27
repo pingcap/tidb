@@ -136,7 +136,7 @@ func (c *RawKVClient) Delete(key []byte) error {
 
 func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
-	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
+	sender := NewRegionRequestSender(c.regionCache, c.rpcClient, kvrpcpb.IsolationLevel_SI)
 	for {
 		loc, err := c.regionCache.LocateKey(bo, key)
 		if err != nil {

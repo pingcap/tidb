@@ -124,11 +124,12 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *t
 	ranges := h.extractKVRanges(ctx.keyRanges, executor.TblScan.Desc)
 
 	return &tableScanExec{
-		TableScan: executor.TblScan,
-		kvRanges:  ranges,
-		colIDs:    ctx.evalCtx.colIDs,
-		startTS:   ctx.dagReq.GetStartTs(),
-		mvccStore: h.mvccStore,
+		TableScan:      executor.TblScan,
+		kvRanges:       ranges,
+		colIDs:         ctx.evalCtx.colIDs,
+		startTS:        ctx.dagReq.GetStartTs(),
+		isolationLevel: h.isolationLevel,
+		mvccStore:      h.mvccStore,
 	}
 }
 
@@ -145,12 +146,13 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 	ranges := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
 
 	return &indexScanExec{
-		IndexScan: executor.IdxScan,
-		kvRanges:  ranges,
-		colsLen:   len(columns),
-		startTS:   ctx.dagReq.GetStartTs(),
-		mvccStore: h.mvccStore,
-		pkCol:     pkCol,
+		IndexScan:      executor.IdxScan,
+		kvRanges:       ranges,
+		colsLen:        len(columns),
+		startTS:        ctx.dagReq.GetStartTs(),
+		isolationLevel: h.isolationLevel,
+		mvccStore:      h.mvccStore,
+		pkCol:          pkCol,
 	}
 }
 

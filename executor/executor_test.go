@@ -108,7 +108,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 6)
+	c.Assert(row.Data, HasLen, 7)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	ddlInfo, err := inspectkv.GetDDLInfo(txn)
