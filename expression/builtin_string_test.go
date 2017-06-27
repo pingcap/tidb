@@ -299,42 +299,78 @@ func (s *testEvaluatorSuite) TestRepeat(c *C) {
 
 func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 	defer testleak.AfterTest(c)()
-	lower := funcs[ast.Lower]
-	f, err := lower.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
-	c.Assert(err, IsNil)
-	d, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.Kind(), Equals, types.KindNull)
-
-	upper := funcs[ast.Upper]
-	f, err = upper.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
-	c.Assert(err, IsNil)
-	d, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.Kind(), Equals, types.KindNull)
-
-	tbl := []struct {
-		Input  interface{}
-		Expect string
+	cases := []struct {
+		args     interface{}
+		isNil    bool
+		getErr   bool
+		expected string
 	}{
-		{"abc", "abc"},
-		{1, "1"},
+		{"abcde", false, false, "abcde"},
+		{"abCDe", false, false, "abcde"},
+		{"123", false, false, "123"},
+		{123, false, false, "123"},
+		{nil, true, false, ""},
+		{12.34, false, false, "12.34"},
+		{errors.New("must err"), false, true, ""},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Upper, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
+		v, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(v.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(v.GetString(), Equals, strings.ToUpper(t.expected))
+			}
+		}
+
+		f, err = newFunctionForTest(s.ctx, ast.Lower, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
+		v, err = f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(v.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(v.GetString(), Equals, t.expected)
+			}
+		}
 	}
 
-	dtbl := tblToDtbl(tbl)
+	typecases := []struct {
+		args    []Expression
+		retType *types.FieldType
+	}{
+		{
+			[]Expression{varcharCon, int8Con},
+			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
+		},
+		{
+			[]Expression{blobCon, int8Con},
+			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+		},
+	}
+	fc := funcs[ast.Upper].(*upperFunctionClass)
+	fcLower := funcs[ast.Lower].(*lowerFunctionClass)
 
-	for _, t := range dtbl {
-		f, err = lower.getFunction(datumsToConstants(t["Input"]), s.ctx)
-		c.Assert(err, IsNil)
-		d, err = f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+	for _, t := range typecases {
+		retType, _ := fc.inferType(t.args)
+		c.Assert(retType.Tp, Equals, t.retType.Tp)
+		c.Assert(retType.Charset, Equals, t.retType.Charset)
+		c.Assert(retType.Collate, Equals, t.retType.Collate)
+		c.Assert(retType.Flag, Equals, t.retType.Flag)
 
-		f, err = upper.getFunction(datumsToConstants(t["Input"]), s.ctx)
-		c.Assert(err, IsNil)
-		d, err = f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d.GetString(), Equals, strings.ToUpper(t["Expect"][0].GetString()))
+		retTypeLower, _ := fcLower.inferType(t.args)
+		c.Assert(retTypeLower.Tp, Equals, t.retType.Tp)
+		c.Assert(retTypeLower.Charset, Equals, t.retType.Charset)
+		c.Assert(retTypeLower.Collate, Equals, t.retType.Collate)
+		c.Assert(retTypeLower.Flag, Equals, t.retType.Flag)
 	}
 }
 

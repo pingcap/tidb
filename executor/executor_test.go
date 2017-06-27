@@ -108,7 +108,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 7)
+	c.Assert(row.Data, HasLen, 6)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	ddlInfo, err := inspectkv.GetDDLInfo(txn)
@@ -800,6 +800,16 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery("select concat(null)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select concat(null, a, b) from t")
+	result.Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f varchar(20))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", NULL)`)
+	result = tk.MustQuery("select upper(a), upper(b), upper(c), upper(d), upper(e), upper(f) from t")
+	result.Check(testkit.Rows("1 1.1 2017-01-01 12:01:01 12:01:01 ABCDEF <nil>"))
+	result = tk.MustQuery("select upper(null)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select upper(null) from t")
 	result.Check(testkit.Rows("<nil>"))
 }
 

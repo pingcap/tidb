@@ -426,33 +426,47 @@ type lowerFunctionClass struct {
 }
 
 func (c *lowerFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLowerSig{newBaseBuiltinFunc(args, ctx)}
+	retType, argTps := c.inferType(args)
+	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinLowerSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
+func (c *lowerFunctionClass) inferType(args []Expression) (*types.FieldType, []argTp) {
+	tps := make([]argTp, len(args))
+	existsBinStr, tp := false, mysql.TypeVarString
+	for i := 0; i < len(args); i++ {
+		tps[i] = tpString
+		curArgTp := args[i].GetType()
+		tp = types.MergeFieldType(tp, curArgTp.Tp)
+		if types.IsBinaryStr(curArgTp) {
+			existsBinStr = true
+		}
+	}
+	retType := types.NewFieldType(tp)
+	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	if existsBinStr {
+		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
+		retType.Flag |= mysql.BinaryFlag
+	}
+	return retType, tps
+}
+
 type builtinLowerSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinLowerSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
-func (b *builtinLowerSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinLowerSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	x := args[0]
-	switch x.Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := x.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(strings.ToLower(s))
-		return d, nil
-	}
+	return strings.ToLower(d), false, nil
 }
 
 type reverseFunctionClass struct {
@@ -542,33 +556,48 @@ type upperFunctionClass struct {
 }
 
 func (c *upperFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinUpperSig{newBaseBuiltinFunc(args, ctx)}
+	retType, argTps := c.inferType(args)
+	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinUpperSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
+func (c *upperFunctionClass) inferType(args []Expression) (*types.FieldType, []argTp) {
+	tps := make([]argTp, len(args))
+	existsBinStr, tp := false, mysql.TypeVarString
+	for i := 0; i < len(args); i++ {
+		tps[i] = tpString
+		curArgTp := args[i].GetType()
+		tp = types.MergeFieldType(tp, curArgTp.Tp)
+		if types.IsBinaryStr(curArgTp) {
+			existsBinStr = true
+		}
+	}
+	retType := types.NewFieldType(tp)
+	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	if existsBinStr {
+		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
+		retType.Flag |= mysql.BinaryFlag
+	}
+	// log.Warnf("retType:%v, tps:%v", retType, tps)
+	return retType, tps
+}
+
 type builtinUpperSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinUpperSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
-func (b *builtinUpperSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinUpperSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	x := args[0]
-	switch x.Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := x.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(strings.ToUpper(s))
-		return d, nil
-	}
+	return strings.ToUpper(d), false, nil
 }
 
 type strcmpFunctionClass struct {
