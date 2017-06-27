@@ -69,7 +69,7 @@ const (
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
 		Host			CHAR(60),
-		DB				CHAR(64),
+		DB			CHAR(64),
 		User			CHAR(16),
 		Select_priv		ENUM('N','Y') Not Null DEFAULT 'N',
 		Insert_priv		ENUM('N','Y') Not Null DEFAULT 'N',
@@ -78,9 +78,18 @@ const (
 		Create_priv		ENUM('N','Y') Not Null DEFAULT 'N',
 		Drop_priv		ENUM('N','Y') Not Null DEFAULT 'N',
 		Grant_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+		References_priv 	ENUM('N','Y') Not Null DEFAULT 'N',
 		Index_priv		ENUM('N','Y') Not Null DEFAULT 'N',
 		Alter_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Execute_priv	ENUM('N','Y') Not Null DEFAULT 'N',
+		Create_tmp_table_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Lock_tables_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_view_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Show_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_routine_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Alter_routine_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Execute_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+		Event_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Trigger_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, DB, User));`
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE if not exists mysql.tables_priv (
@@ -203,6 +212,7 @@ const (
 	version11 = 11
 	version12 = 12
 	version13 = 13
+	version14 = 14
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -307,6 +317,10 @@ func upgrade(s Session) {
 
 	if ver < version13 {
 		upgradeToVer13(s)
+	}
+
+	if ver < version14 {
+		upgradeToVer14(s)
 	}
 
 	updateBootstrapVer(s)
@@ -482,6 +496,29 @@ func upgradeToVer13(s Session) {
 		}
 	}
 	mustExecute(s, "UPDATE mysql.user SET Create_tmp_table_priv='Y',Lock_tables_priv='Y',Create_view_priv='Y',Show_view_priv='Y',Create_routine_priv='Y',Alter_routine_priv='Y',Event_priv='Y'")
+}
+
+func upgradeToVer14(s Session) {
+	sqls := []string{
+		"ALTER TABLE mysql.db ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Create_tmp_table_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Alter_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Lock_tables_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_tmp_table_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Create_view_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Lock_tables_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Show_view_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_view_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Create_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_view_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Alter_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_routine_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Event_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Event_priv`",
+	}
+	for _, sql := range sqls {
+		_, err := s.Execute(sql)
+		if err != nil {
+			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+				continue
+			}
+			log.Fatal(err)
+		}
+	}
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
