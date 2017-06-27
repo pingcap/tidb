@@ -339,9 +339,8 @@ func fixLeftRightLength(str string, length int, isLengthNull bool) int {
 	}
 	if strLength > length {
 		return length
-	} else {
-		return strLength
 	}
+	return strLength
 }
 
 type rightFunctionClass struct {
