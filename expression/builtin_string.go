@@ -582,7 +582,6 @@ func (c *upperFunctionClass) inferType(args []Expression) (*types.FieldType, []a
 		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
 		retType.Flag |= mysql.BinaryFlag
 	}
-	// log.Warnf("retType:%v, tps:%v", retType, tps)
 	return retType, tps
 }
 
