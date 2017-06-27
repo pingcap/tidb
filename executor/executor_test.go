@@ -831,6 +831,15 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("aaa"))
 	result = tk.MustQuery("select lower('A') from t")
 	result.Check(testkit.Rows("a"))
+
+	// for ascii
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010)`)
+	result = tk.MustQuery("select ascii(a), ascii(b), ascii(c), ascii(d), ascii(e), ascii(f) from t")
+	result.Check(testkit.Rows("50 50 50 50 49 10"))
+	result = tk.MustQuery("select ascii('123'), ascii(123), ascii(''), ascii('你好'), ascii(NULL)")
+	result.Check(testkit.Rows("49 49 0 228 <nil>"))
 }
 
 func (s *testSuite) TestTimeBuiltin(c *C) {
