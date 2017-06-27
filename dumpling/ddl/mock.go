@@ -81,6 +81,24 @@ func (m *mockOwnerManager) SetBgOwner(isOwner bool) {
 	}
 }
 
+// GetOwnerID implements OwnerManager.GetOwnerID interface.
+func (m *mockOwnerManager) GetOwnerID(ctx goctx.Context, key string) (string, error) {
+	if key != DDLOwnerKey && key != BgOwnerKey {
+		return "", errors.New("invalid owner key")
+	}
+
+	if key == DDLOwnerKey {
+		if m.IsOwner() {
+			return m.ID(), nil
+		}
+		return "", errors.New("no owner")
+	}
+	if m.IsBgOwner() {
+		return m.ID(), nil
+	}
+	return "", errors.New("no owner")
+}
+
 // CampaignOwners implements mockOwnerManager.CampaignOwners interface.
 func (m *mockOwnerManager) CampaignOwners(_ goctx.Context) error {
 	m.SetOwner(true)
