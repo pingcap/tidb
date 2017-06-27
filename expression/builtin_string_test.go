@@ -196,6 +196,13 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 
 func (s *testEvaluatorSuite) TestLeft(c *C) {
 	defer testleak.AfterTest(c)()
+	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+	origin := stmtCtx.IgnoreTruncate
+	stmtCtx.IgnoreTruncate = true
+	defer func() {
+		stmtCtx.IgnoreTruncate = origin
+	}()
+
 	cases := []struct {
 		args   []interface{}
 		isNil  bool
@@ -260,6 +267,13 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 
 func (s *testEvaluatorSuite) TestRight(c *C) {
 	defer testleak.AfterTest(c)()
+	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+	origin := stmtCtx.IgnoreTruncate
+	stmtCtx.IgnoreTruncate = true
+	defer func() {
+		stmtCtx.IgnoreTruncate = origin
+	}()
+
 	cases := []struct {
 		args   []interface{}
 		isNil  bool

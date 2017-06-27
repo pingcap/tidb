@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -314,9 +313,6 @@ func (b *builtinLeftSig) evalString(row []types.Datum) (d string, isNull bool, e
 	}
 	left, isNull, err = b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	b.tp.Flen = fixLeftRightLength(d, int(left), isNull)
-	if terror.ErrorEqual(err, types.ErrTruncated) {
-		return "", false, nil
-	}
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
@@ -390,9 +386,6 @@ func (b *builtinRightSig) evalString(row []types.Datum) (d string, isNull bool, 
 	}
 	right, isNull, err = b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	b.tp.Flen = fixLeftRightLength(d, int(right), isNull)
-	if terror.ErrorEqual(err, types.ErrTruncated) {
-		return "", false, nil
-	}
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
