@@ -123,6 +123,7 @@ type Response struct {
 
 // SetContext set the Context field for the given req to the specifed ctx.
 func SetContext(req *Request, ctx *kvrpcpb.Context) error {
+	ctx.Priority = req.Priority
 	switch req.Type {
 	case CmdGet:
 		req.Get.Context = ctx
