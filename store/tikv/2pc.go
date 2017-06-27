@@ -405,7 +405,6 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 	if pri := txn.us.GetOption(kv.Priority); pri != nil {
 		switch pri.(int) {
-		case kv.PriorityNormal:
 		case kv.PriorityLow:
 			return pb.CommandPri_Low
 		case kv.PriorityHigh:
