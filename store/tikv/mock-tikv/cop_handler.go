@@ -331,7 +331,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 	}
 
 	if ran.IsPoint() {
-		val, err := h.mvccStore.Get(startKey, ctx.sel.GetStartTs())
+		val, err := h.mvccStore.Get(startKey, ctx.sel.GetStartTs(), h.isolationLevel)
 		if len(val) == 0 {
 			return chunks, nil
 		} else if err != nil {
@@ -366,9 +366,9 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 			err   error
 		)
 		if ctx.descScan {
-			pairs = h.mvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs())
+			pairs = h.mvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs(), h.isolationLevel)
 		} else {
-			pairs = h.mvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs())
+			pairs = h.mvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs(), h.isolationLevel)
 		}
 		if len(pairs) > 0 {
 			pair = pairs[0]
@@ -570,9 +570,9 @@ func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, l
 			err   error
 		)
 		if ctx.descScan {
-			pairs = h.mvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs())
+			pairs = h.mvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs(), h.isolationLevel)
 		} else {
-			pairs = h.mvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs())
+			pairs = h.mvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs(), h.isolationLevel)
 		}
 		if len(pairs) > 0 {
 			pair = pairs[0]

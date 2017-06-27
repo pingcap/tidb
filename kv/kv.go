@@ -34,6 +34,8 @@ const (
 	SkipCheckForWrite
 	// SchemaLeaseChecker is used for schema lease check.
 	SchemaLeaseChecker
+	// IsolationLevel sets isolation level for current transaction. The default level is SI.
+	IsolationLevel
 	// Priority marks the priority of this transaction.
 	Priority
 )
@@ -43,6 +45,16 @@ const (
 	PriorityNormal int = iota
 	PriorityLow
 	PriorityHigh
+)
+
+// IsoLevel is the transaction's isolation level.
+type IsoLevel int
+
+const (
+	// SI stands for 'snapshot isolation'.
+	SI IsoLevel = iota
+	// RC stands for 'read committed'.
+	RC
 )
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
@@ -156,6 +168,8 @@ type Request struct {
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
+	// IsolationLevel is the isolation level, default is SI.
+	IsolationLevel IsoLevel
 }
 
 // Response represents the response returned from KV layer.
