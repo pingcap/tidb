@@ -309,9 +309,11 @@ func (b *builtinLeftSig) evalString(row []types.Datum) (d string, isNull bool, e
 
 	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
+		b.tp.Flen = fixLeftRightLength(d, 0, false)
 		return d, isNull, errors.Trace(err)
 	}
 	left, isNull, err = b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	b.tp.Flen = fixLeftRightLength(d, int(left), isNull)
 	if terror.ErrorEqual(err, types.ErrTruncated) {
 		return "", false, nil
 	}
@@ -325,6 +327,25 @@ func (b *builtinLeftSig) evalString(row []types.Datum) (d string, isNull bool, e
 		l = len(d)
 	}
 	return d[:l], false, nil
+}
+
+// The Flen field of the left and right function is related to the return value,
+// so we have to set the Flen field in eval stage.
+// This will be only used by Left and Right function.
+// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_strfunc.cc#L1668
+func fixLeftRightLength(str string, length int, isLengthNull bool) int {
+	strLength := len(str)
+	if isLengthNull {
+		return strLength
+	}
+	if length <= 0 {
+		return 0
+	}
+	if strLength > length {
+		return length
+	} else {
+		return strLength
+	}
 }
 
 type rightFunctionClass struct {
@@ -364,9 +385,11 @@ func (b *builtinRightSig) evalString(row []types.Datum) (d string, isNull bool, 
 
 	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
+		b.tp.Flen = fixLeftRightLength(d, 0, false)
 		return d, isNull, errors.Trace(err)
 	}
 	right, isNull, err = b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	b.tp.Flen = fixLeftRightLength(d, int(right), isNull)
 	if terror.ErrorEqual(err, types.ErrTruncated) {
 		return "", false, nil
 	}
