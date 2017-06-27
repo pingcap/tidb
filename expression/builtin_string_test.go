@@ -311,22 +311,65 @@ func (s *testEvaluatorSuite) TestRepeat(c *C) {
 
 func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 	defer testleak.AfterTest(c)()
+	lower := funcs[ast.Lower]
+	f, err := lower.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	c.Assert(err, IsNil)
+	d, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
+
+	upper := funcs[ast.Upper]
+	f, err = upper.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	c.Assert(err, IsNil)
+	d, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
+
+	tbl := []struct {
+		Input  interface{}
+		Expect string
+	}{
+		{"abc", "abc"},
+		{1, "1"},
+	}
+
+	dtbl := tblToDtbl(tbl)
+
+	for _, t := range dtbl {
+		f, err = lower.getFunction(datumsToConstants(t["Input"]), s.ctx)
+		c.Assert(err, IsNil)
+		d, err = f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+
+		f, err = upper.getFunction(datumsToConstants(t["Input"]), s.ctx)
+		c.Assert(err, IsNil)
+		d, err = f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d.GetString(), Equals, strings.ToUpper(t["Expect"][0].GetString()))
+	}
+}
+
+func (s *testEvaluatorSuite) TestReverse(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
 		isNil    bool
 		getErr   bool
 		expected string
 	}{
-		{"abcde", false, false, "abcde"},
-		{"abCDe", false, false, "abcde"},
-		{"123", false, false, "123"},
-		{123, false, false, "123"},
+		{"abcde", false, false, "edcba"},
+		{"abCDe", false, false, "eDCba"},
+		{"123", false, false, "321"},
+		{123, false, false, "321"},
 		{nil, true, false, ""},
-		{12.34, false, false, "12.34"},
+		{"", false, false, ""},
+		{12.34, false, false, "43.21"},
 		{errors.New("must err"), false, true, ""},
 	}
+
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Upper, primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Reverse, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
 		tp := f.GetType()
@@ -344,62 +387,14 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 			if t.isNil {
 				c.Assert(v.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(v.GetString(), Equals, strings.ToUpper(t.expected))
-			}
-		}
-
-		f, err = newFunctionForTest(s.ctx, ast.Lower, primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
-
-		tp = f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeVarchar)
-		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
-		c.Assert(tp.Collate, Equals, charset.CollationUTF8)
-		c.Assert(tp.Flag, Equals, uint(0))
-		c.Assert(tp.Flen, Equals, -1)
-
-		v, err = f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
-		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(v.Kind(), Equals, types.KindNull)
-			} else {
 				c.Assert(v.GetString(), Equals, t.expected)
 			}
 		}
 	}
-}
 
-func (s *testEvaluatorSuite) TestReverse(c *C) {
-	defer testleak.AfterTest(c)()
-	fc := funcs[ast.Reverse]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	f, err := funcs[ast.Reverse].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	d, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.Kind(), Equals, types.KindNull)
-
-	tbl := []struct {
-		Input  interface{}
-		Expect string
-	}{
-		{"abc", "cba"},
-		{"LIKE", "EKIL"},
-		{123, "321"},
-		{"", ""},
-	}
-
-	dtbl := tblToDtbl(tbl)
-
-	for _, t := range dtbl {
-		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
-		c.Assert(err, IsNil)
-		d, err = f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
-	}
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestStrcmp(c *C) {

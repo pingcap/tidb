@@ -424,45 +424,17 @@ type lowerFunctionClass struct {
 }
 
 func (c *lowerFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	retType := oneArgsInferType(args)
-	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinLowerSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinLowerSig{newBaseBuiltinFunc(args, ctx)}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLowerSig struct {
-	baseStringBuiltinFunc
-}
-
-// evalString evaluates a builtinLowerSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
-func (b *builtinLowerSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return d, isNull, errors.Trace(err)
-	}
-	return strings.ToLower(d), false, nil
-}
-
-type reverseFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinReverseSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinReverseSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinReverseSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
-func (b *builtinReverseSig) eval(row []types.Datum) (d types.Datum, err error) {
+// eval evals a builtinLowerSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
+func (b *builtinLowerSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
@@ -476,9 +448,50 @@ func (b *builtinReverseSig) eval(row []types.Datum) (d types.Datum, err error) {
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		d.SetString(stringutil.Reverse(s))
+		d.SetString(strings.ToLower(s))
 		return d, nil
 	}
+}
+
+func oneArgsInferType(args []Expression) *types.FieldType {
+	argTp := args[0].GetType()
+	tp := types.MergeFieldType(mysql.TypeVarString, argTp.Tp)
+	retType := types.NewFieldType(tp)
+	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	if types.IsBinaryStr(argTp) {
+		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
+		retType.Flag |= mysql.BinaryFlag
+	}
+	return retType
+}
+
+type reverseFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	retType := oneArgsInferType(args)
+	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinReverseSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+}
+
+type builtinReverseSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evaluates a builtinReverseSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
+func (b *builtinReverseSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+
+	return stringutil.Reverse(d), false, nil
 }
 
 type spaceFunctionClass struct {
@@ -534,39 +547,33 @@ type upperFunctionClass struct {
 }
 
 func (c *upperFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	retType := oneArgsInferType(args)
-	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinUpperSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinUpperSig{newBaseBuiltinFunc(args, ctx)}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-func oneArgsInferType(args []Expression) *types.FieldType {
-	argTp := args[0].GetType()
-	tp := types.MergeFieldType(mysql.TypeVarString, argTp.Tp)
-	retType := types.NewFieldType(tp)
-	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	if types.IsBinaryStr(argTp) {
-		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
-		retType.Flag |= mysql.BinaryFlag
-	}
-	return retType
-}
-
 type builtinUpperSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
-// evalString evaluates a builtinUpperSig.
+// eval evals a builtinUpperSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
-func (b *builtinUpperSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return d, isNull, errors.Trace(err)
+func (b *builtinUpperSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
 	}
-	return strings.ToUpper(d), false, nil
+	x := args[0]
+	switch x.Kind() {
+	case types.KindNull:
+		return d, nil
+	default:
+		s, err := x.ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetString(strings.ToUpper(s))
+		return d, nil
+	}
 }
 
 type strcmpFunctionClass struct {
