@@ -162,36 +162,34 @@ type asciiFunctionClass struct {
 }
 
 func (c *asciiFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinASCIISig{newBaseBuiltinFunc(args, ctx)}
+	// ascii function will always return Type BIGINT, Charset Binary, Size 3
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.Flen = 3
+	types.SetBinChsClnFlag(tp)
+
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinASCIISig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinASCIISig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
 // eval evals a builtinASCIISig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
-func (b *builtinASCIISig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinASCIISig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	switch args[0].Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		if len(s) == 0 {
-			d.SetInt64(0)
-			return d, nil
-		}
-		d.SetInt64(int64(s[0]))
-		return d, nil
+	if len(val) == 0 {
+		return 0, false, nil
 	}
+	return int64(val[0]), false, nil
 }
 
 type concatFunctionClass struct {
