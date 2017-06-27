@@ -131,6 +131,8 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer) error {
 
 func (s *Scanner) getData(bo *Backoffer) error {
 	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
+	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client, pbIsolationLevel(s.snapshot.isolationLevel))
+
 	for {
 		loc, err := s.snapshot.store.regionCache.LocateKey(bo, s.nextStartKey)
 		if err != nil {
@@ -144,7 +146,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				Version:  s.startTS(),
 			},
 		}
-		resp, err := s.snapshot.store.SendReq(bo, req, loc.Region, readTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}

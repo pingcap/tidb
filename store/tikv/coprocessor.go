@@ -433,7 +433,7 @@ func (it *copIterator) Next() ([]byte, error) {
 // handleTask handles single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
-	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
+	sender := NewRegionRequestSender(it.store.regionCache, it.store.client, pbIsolationLevel(it.req.IsolationLevel))
 	for {
 		select {
 		case <-it.finished:
