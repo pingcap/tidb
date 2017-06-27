@@ -131,6 +131,8 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 	return &expression.Constant{Value: d, RetType: c.GetType()}
 }
 
+// popRowArg pops the first element and return the rest of row.
+// e.g. After this function (1, 2, 3) becomes (2, 3).
 func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Expression, err error) {
 	if f, ok := e.(*expression.ScalarFunction); ok {
 		args := f.GetArgs()
@@ -147,8 +149,8 @@ func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Exp
 
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. If op are LE or GE, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
-// `IF( a0 op b0, 1,
-//      IF (a1 op b1, 1, a2 op b2))`
+// `IF( (a0 op b0) EQ 0, 0,
+//      IF ( (a1 op b1) EQ 0, 0, a2 op b2))`
 // 3. If op are LT or GT, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
 // `IF( a0 NE b0, a0 op b0,
 //      IF( a1 NE b1,
@@ -176,10 +178,11 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	default:
 		larg0, rarg0 := getRowArg(l, 0), getRowArg(r, 0)
 		var expr1, expr2, expr3 expression.Expression
-		if op == ast.LE && op == ast.GE {
+		if op == ast.LE || op == ast.GE {
 			expr1, _ = expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr2 = expression.One
-		} else { // ast.LT, ast.GT
+			expr1, _ = expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expr1, expression.Zero)
+			expr2 = expression.Zero
+		} else if op == ast.LT || op == ast.GT {
 			expr1, _ = expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 			expr2, _ = expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		}

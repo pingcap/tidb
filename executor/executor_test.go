@@ -1350,6 +1350,8 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select (2, 3, 4) <= (2, 3, 4)")
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 1, 4)")
+	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select (2, 3, 4) >= (2, 3, 4)")
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select (2, 3, 4) = (2, 3, 4)")
