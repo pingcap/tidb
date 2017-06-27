@@ -1287,18 +1287,18 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 			return nil
 		}
 	}
-	orderedList, offsets, np := b.buildUpdateLists(tableList, update.List, p)
+	orderedList, np := b.buildUpdateLists(tableList, update.List, p)
 	if b.err != nil {
 		return nil
 	}
 	p = np
-	updt := Update{OrderedList: orderedList, Offsets: offsets, NormalAssignLength: len(update.List)}.init(b.allocator, b.ctx)
+	updt := Update{OrderedList: orderedList, NormalAssignLength: len(update.List)}.init(b.allocator, b.ctx)
 	addChild(updt, p)
 	updt.SetSchema(p.Schema())
 	return updt
 }
 
-func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, []int, LogicalPlan) {
+func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
 	modifyColumns := make(map[string]int, p.Schema().Len()) // which columns are in set list.
 	for _, assign := range list {
 		col, offset, err := p.Schema().FindColumnAndIndex(assign.Column)
@@ -1307,7 +1307,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		}
 		if err != nil {
 			b.err = errors.Trace(err)
-			return nil, nil, nil
+			return nil, nil
 		}
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
 		modifyColumns[columnFullName] = offset
@@ -1323,7 +1323,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
 				if _, ok := modifyColumns[columnFullName]; ok {
 					b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
-					return nil, nil, nil
+					return nil, nil
 				}
 				if colInfo.GeneratedStored || tableInfo.ColumnIsInIndex(colInfo) {
 					virtualAssignments = append(virtualAssignments, &ast.Assignment{
@@ -1339,10 +1339,9 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		}
 	}
 
-	newList := make([]*expression.Assignment, p.Schema().Len())
-	offsets := make([]int, 0, p.Schema().Len())
+	newList := make([]*expression.Assignment, 0, p.Schema().Len())
 	for i, assign := range append(list, virtualAssignments...) {
-		col, offset, err := p.Schema().FindColumnAndIndex(assign.Column)
+		col, err := p.Schema().FindColumn(assign.Column)
 		var newExpr expression.Expression
 		var np LogicalPlan
 		if i < len(list) {
@@ -1364,13 +1363,12 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		}
 		if err != nil {
 			b.err = errors.Trace(err)
-			return nil, nil, nil
+			return nil, nil
 		}
 		p = np
-		newList[offset] = &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr}
-		offsets = append(offsets, offset)
+		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
 	}
-	return newList, offsets, p
+	return newList, p
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {

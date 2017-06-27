@@ -332,7 +332,6 @@ type Update struct {
 	basePhysicalPlan
 
 	OrderedList []*expression.Assignment
-	Offsets     []int
 
 	// NormalAssignLength is for those assignments calculated by generation expressions.
 	// They are appended into OrderedList, so we need a length to know now many normal

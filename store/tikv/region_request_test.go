@@ -48,7 +48,7 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.bo = NewBackoffer(1, goctx.Background())
 	s.mvccStore = mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
-	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
+	s.regionRequestSender = NewRegionRequestSender(s.cache, client, kvrpcpb.IsolationLevel_SI)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
@@ -141,7 +141,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
 }
 
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
-	sender := NewRegionRequestSender(s.cache, newRPCClient())
+	sender := NewRegionRequestSender(s.cache, newRPCClient(), kvrpcpb.IsolationLevel_SI)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
 		RawPut: &kvrpcpb.RawPutRequest{

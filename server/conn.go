@@ -343,7 +343,8 @@ func (cc *clientConn) Run() {
 		data, err := cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				log.Error(errors.ErrorStack(err))
+				log.Error("[%d] read packet error, close this connection %s",
+					cc.connectionID, errors.ErrorStack(err))
 			}
 			return
 		}

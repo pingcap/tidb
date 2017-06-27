@@ -607,7 +607,7 @@ type InsertExec struct {
 
 	OnDuplicate []*expression.Assignment
 
-	Priority int
+	Priority mysql.PriorityEnum
 	Ignore   bool
 
 	finished bool
@@ -635,7 +635,6 @@ func (e *InsertExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	toUpdateColumns, toUpdateColumnsOrder, err := getOnDuplicateUpdateColumns(e.OnDuplicate, e.Table)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -683,7 +682,7 @@ func (e *InsertExec) Next() (*Row, error) {
 				continue
 			}
 			if len(e.OnDuplicate) > 0 {
-				if err = e.onDuplicateUpdate(row, h, toUpdateColumns, toUpdateColumnsOrder); err != nil {
+				if err = e.onDuplicateUpdate(row, h, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
 				}
 				continue
@@ -1004,36 +1003,25 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 
 // onDuplicateUpdate updates the duplicate row.
 // TODO: Report rows affected and last insert id.
-func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]*expression.Assignment, colsOrder []int) error {
+func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expression.Assignment) error {
 	data, err := e.Table.Row(e.ctx, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.ctx.GetSessionVars().CurrInsertValues = row
+
 	// evaluate assignment
+	assignFlag := make([]bool, len(e.Table.Cols()))
 	newData := make([]types.Datum, len(data))
 	copy(newData, data)
-	for _, i := range colsOrder {
-		if asgn, ok := cols[i]; ok {
-			// "on duplicate key update f1 = 3, f2 = f1" should
-			// set both f1 and f2 to 3, so we eval Expr by newData.
-			val, err1 := asgn.Expr.Eval(newData)
-			if err1 != nil {
-				return errors.Trace(err1)
-			}
-			newData[i] = val
+	for _, col := range cols {
+		val, err1 := col.Expr.Eval(newData)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
-	}
-
-	assignFlag := make([]bool, len(e.Table.Cols()))
-	for i, asgn := range cols {
-		if asgn != nil {
-			assignFlag[i] = true
-		} else {
-			assignFlag[i] = false
-		}
+		newData[col.Col.Index] = val
+		assignFlag[col.Col.Index] = true
 	}
 	if err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true); err != nil {
 		return errors.Trace(err)
@@ -1051,21 +1039,6 @@ func findColumnByName(t table.Table, tableName, colName string) (*table.Column, 
 		return nil, errors.Errorf("unknown field %s", colName)
 	}
 	return c, nil
-}
-
-func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Table) (map[int]*expression.Assignment, []int, error) {
-	m := make(map[int]*expression.Assignment, len(assignList))
-	a := make([]int, 0, len(assignList)) // store order of assignment.
-	for _, v := range assignList {
-		col := v.Col
-		c, err := findColumnByName(t, col.TblName.L, col.ColName.L)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		m[c.Offset] = v
-		a = append(a, c.Offset)
-	}
-	return m, a, nil
 }
 
 // ReplaceExec represents a replace executor.
@@ -1181,7 +1154,6 @@ type UpdateExec struct {
 
 	SelectExec  Executor
 	OrderedList []*expression.Assignment
-	Offsets     []int // Offsets of every assignment in schema.
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
 	updatedRowKeys map[table.Table]map[int64]struct{}
@@ -1202,7 +1174,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		e.fetched = true
 	}
 
-	assignFlag, err := getUpdateColumns(e.OrderedList)
+	assignFlag, err := getUpdateColumns(e.OrderedList, e.SelectExec.Schema())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1241,13 +1213,14 @@ func (e *UpdateExec) Next() (*Row, error) {
 	return &Row{}, nil
 }
 
-func getUpdateColumns(assignList []*expression.Assignment) ([]bool, error) {
-	assignFlag := make([]bool, len(assignList))
-	for i, v := range assignList {
+func getUpdateColumns(assignList []*expression.Assignment, schema *expression.Schema) ([]bool, error) {
+	assignFlag := make([]bool, schema.Len())
+	for _, v := range assignList {
+		idx := v.Col.Index
 		if v != nil {
-			assignFlag[i] = true
+			assignFlag[idx] = true
 		} else {
-			assignFlag[i] = false
+			assignFlag[idx] = false
 		}
 	}
 	return assignFlag, nil
@@ -1264,14 +1237,12 @@ func (e *UpdateExec) fetchRows() error {
 		}
 		newRowData := make([]types.Datum, len(row.Data))
 		copy(newRowData, row.Data)
-		for _, offset := range e.Offsets {
-			if e.OrderedList[offset] != nil {
-				val, err := e.OrderedList[offset].Expr.Eval(newRowData)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				newRowData[offset] = val
+		for _, assign := range e.OrderedList {
+			val, err := assign.Expr.Eval(newRowData)
+			if err != nil {
+				return errors.Trace(err)
 			}
+			newRowData[assign.Col.Index] = val
 		}
 		e.rows = append(e.rows, row)
 		e.newRowsData = append(e.newRowsData, newRowData)
