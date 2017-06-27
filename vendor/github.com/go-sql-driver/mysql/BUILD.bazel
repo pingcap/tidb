@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "buffer.go",
+        "collations.go",
+        "connection.go",
+        "const.go",
+        "driver.go",
+        "errors.go",
+        "infile.go",
+        "packets.go",
+        "result.go",
+        "rows.go",
+        "statement.go",
+        "transaction.go",
+        "utils.go",
+    ],
+    visibility = ["//visibility:public"],
+)

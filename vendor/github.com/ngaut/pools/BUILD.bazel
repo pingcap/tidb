@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "id_pool.go",
+        "numbered.go",
+        "resource_pool.go",
+        "roundrobin.go",
+    ],
+    visibility = ["//visibility:public"],
+    deps = ["//vendor/github.com/ngaut/sync2:go_default_library"],
+)

@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["testkit.go"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//:go_default_library",
+        "//ast:go_default_library",
+        "//kv:go_default_library",
+        "//util/testutil:go_default_library",
+        "//vendor/github.com/juju/errors:go_default_library",
+        "//vendor/github.com/pingcap/check:go_default_library",
+    ],
+)

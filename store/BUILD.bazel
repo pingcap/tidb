@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "go_default_test",
+    srcs = ["store_test.go"],
+    deps = [
+        "//:go_default_library",
+        "//kv:go_default_library",
+        "//store/localstore:go_default_library",
+        "//store/localstore/boltdb:go_default_library",
+        "//store/localstore/goleveldb:go_default_library",
+        "//util/testleak:go_default_library",
+        "//vendor/github.com/ngaut/log:go_default_library",
+        "//vendor/github.com/pingcap/check:go_default_library",
+    ],
+)

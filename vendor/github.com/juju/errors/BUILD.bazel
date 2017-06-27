@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "doc.go",
+        "error.go",
+        "errortypes.go",
+        "functions.go",
+        "path.go",
+    ],
+    visibility = ["//visibility:public"],
+)

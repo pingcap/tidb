@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "array.go",
+        "rfc4122.go",
+        "saver.go",
+        "state.go",
+        "struct.go",
+        "timestamp.go",
+        "uuids.go",
+    ],
+    visibility = ["//visibility:public"],
+)

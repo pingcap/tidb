@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+
 	"strconv"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	tmysql "github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/version"
 )
 
 func TestT(t *testing.T) {
@@ -516,7 +517,7 @@ func runTestStatusAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Version, Equals, tmysql.ServerVersion)
-	c.Assert(data.GitHash, Equals, printer.TiDBGitHash)
+	c.Assert(data.GitHash, Equals, version.Get().GitCommit)
 }
 
 func runTestMultiStatements(c *C) {

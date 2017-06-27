@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["privilege.go"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//context:go_default_library",
+        "//mysql:go_default_library",
+        "//util/types:go_default_library",
+    ],
+)

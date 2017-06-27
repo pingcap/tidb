@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "builder.go",
+        "infoschema.go",
+        "tables.go",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//context:go_default_library",
+        "//kv:go_default_library",
+        "//meta:go_default_library",
+        "//meta/autoid:go_default_library",
+        "//model:go_default_library",
+        "//mysql:go_default_library",
+        "//perfschema:go_default_library",
+        "//privilege:go_default_library",
+        "//sessionctx/variable:go_default_library",
+        "//sessionctx/varsutil:go_default_library",
+        "//table:go_default_library",
+        "//table/tables:go_default_library",
+        "//terror:go_default_library",
+        "//util/charset:go_default_library",
+        "//util/types:go_default_library",
+        "//vendor/github.com/juju/errors:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_xtest",
+    srcs = ["infoschema_test.go"],
+    deps = [
+        ":go_default_library",
+        "//kv:go_default_library",
+        "//meta:go_default_library",
+        "//model:go_default_library",
+        "//mysql:go_default_library",
+        "//perfschema:go_default_library",
+        "//store/localstore:go_default_library",
+        "//store/localstore/goleveldb:go_default_library",
+        "//util/testleak:go_default_library",
+        "//util/testutil:go_default_library",
+        "//util/types:go_default_library",
+        "//vendor/github.com/juju/errors:go_default_library",
+        "//vendor/github.com/pingcap/check:go_default_library",
+    ],
+)

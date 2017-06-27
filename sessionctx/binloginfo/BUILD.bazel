@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["binloginfo.go"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//context:go_default_library",
+        "//kv:go_default_library",
+        "//terror:go_default_library",
+        "//vendor/github.com/juju/errors:go_default_library",
+        "//vendor/github.com/ngaut/log:go_default_library",
+        "//vendor/github.com/pingcap/tipb/go-binlog:go_default_library",
+        "//vendor/golang.org/x/net/context:go_default_library",
+        "//vendor/google.golang.org/grpc:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_xtest",
+    srcs = ["binloginfo_test.go"],
+    deps = [
+        "//:go_default_library",
+        "//context:go_default_library",
+        "//ddl:go_default_library",
+        "//kv:go_default_library",
+        "//sessionctx:go_default_library",
+        "//store/tikv:go_default_library",
+        "//util/codec:go_default_library",
+        "//util/testkit:go_default_library",
+        "//util/types:go_default_library",
+        "//vendor/github.com/ngaut/log:go_default_library",
+        "//vendor/github.com/pingcap/check:go_default_library",
+        "//vendor/github.com/pingcap/tipb/go-binlog:go_default_library",
+        "//vendor/golang.org/x/net/context:go_default_library",
+        "//vendor/google.golang.org/grpc:go_default_library",
+    ],
+)
