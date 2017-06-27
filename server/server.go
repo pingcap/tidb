@@ -155,8 +155,7 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 
 // Run runs the server.
 func (s *Server) Run() error {
-
-	// Start http api to report tidb info such as tps.
+	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.ReportStatus {
 		s.startStatusHTTP()
 	}

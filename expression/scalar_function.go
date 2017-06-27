@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -101,10 +102,12 @@ func (sf *ScalarFunction) Clone() Expression {
 	for _, arg := range sf.GetArgs() {
 		newArgs = append(newArgs, arg.Clone())
 	}
-	switch v := sf.Function.(type) {
-	case *builtinCastSig:
-		return NewCastFunc(v.tp, newArgs[0], sf.GetCtx())
-	case *builtinValuesSig:
+	switch sf.FuncName.L {
+	case ast.Cast:
+		newFunc, _ := buildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
+		return newFunc
+	case ast.Values:
+		v := sf.Function.(*builtinValuesSig)
 		return NewValuesFunc(v.offset, sf.GetType(), sf.GetCtx())
 	}
 	newFunc, _ := NewFunction(sf.GetCtx(), sf.FuncName.L, sf.RetType, newArgs...)
