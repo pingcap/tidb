@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/tablecodec"
 	goctx "golang.org/x/net/context"
@@ -317,7 +318,7 @@ func (c *Cluster) splitRange(mvccStore *MvccStore, start, end MvccKey, count int
 func (c *Cluster) getEntriesGroupByRegions(mvccStore *MvccStore, start, end MvccKey, count int) [][]Pair {
 	startTS := uint64(math.MaxUint64)
 	limit := int(math.MaxInt32)
-	pairs := mvccStore.Scan(start.Raw(), end.Raw(), limit, startTS)
+	pairs := mvccStore.Scan(start.Raw(), end.Raw(), limit, startTS, kvrpcpb.IsolationLevel_SI)
 	regionEntriesSlice := make([][]Pair, 0, count)
 	quotient := len(pairs) / count
 	remainder := len(pairs) % count

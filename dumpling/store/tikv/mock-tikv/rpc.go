@@ -97,6 +97,8 @@ type rpcHandler struct {
 	// Used for handling coprocessor request.
 	rawStartKey []byte
 	rawEndKey   []byte
+	// Used for current request.
+	isolationLevel kvrpcpb.IsolationLevel
 }
 
 func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
@@ -171,6 +173,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	h.startKey, h.endKey = region.StartKey, region.EndKey
 	h.rawStartKey = MvccKey(h.startKey).Raw()
 	h.rawEndKey = MvccKey(h.endKey).Raw()
+	h.isolationLevel = ctx.IsolationLevel
 	return nil
 }
 
@@ -205,7 +208,7 @@ func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 		panic("KvGet: key not in region")
 	}
 
-	val, err := h.mvccStore.Get(req.Key, req.GetVersion())
+	val, err := h.mvccStore.Get(req.Key, req.GetVersion(), h.isolationLevel)
 	if err != nil {
 		return &kvrpcpb.GetResponse{
 			Error: convertToKeyError(err),
@@ -220,7 +223,7 @@ func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanRespons
 	if !h.checkKeyInRegion(req.GetStartKey()) {
 		panic("KvScan: startKey not in region")
 	}
-	pairs := h.mvccStore.Scan(req.GetStartKey(), h.endKey, int(req.GetLimit()), req.GetVersion())
+	pairs := h.mvccStore.Scan(req.GetStartKey(), h.endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
 	return &kvrpcpb.ScanResponse{
 		Pairs: convertToPbPairs(pairs),
 	}
@@ -274,7 +277,7 @@ func (h *rpcHandler) handleKvBatchGet(req *kvrpcpb.BatchGetRequest) *kvrpcpb.Bat
 			panic("KvBatchGet: key not in region")
 		}
 	}
-	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion())
+	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion(), h.isolationLevel)
 	return &kvrpcpb.BatchGetResponse{
 		Pairs: convertToPbPairs(pairs),
 	}
