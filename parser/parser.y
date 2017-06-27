@@ -824,7 +824,6 @@ import (
 	DatabaseSym		"DATABASE or SCHEMA"
 	ExplainSym		"EXPLAIN or DESCRIBE or DESC"
 	RegexpSym		"REGEXP or RLIKE"
-	RenameTable             "Rename the table for alter table"
 	IntoOpt			"INTO or EmptyString"
 	ValueSym		"Value or Values"
 	TimeUnit		"Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
@@ -1032,11 +1031,25 @@ AlterTableSpec:
 			},
 		}
 	}
-|	RenameTable TableName
+|	"RENAME" "TO" TableName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableRenameTable,
+			NewTable:      $3.(*ast.TableName),
+		}
+	}
+|	"RENAME" TableName
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableRenameTable,
 			NewTable:      $2.(*ast.TableName),
+		}
+	}
+|	"RENAME" "AS" TableName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableRenameTable,
+			NewTable:      $3.(*ast.TableName),
 		}
 	}
 |	LockClause
@@ -1046,8 +1059,6 @@ AlterTableSpec:
 			LockType:   $1.(ast.LockType),
 		}
 	}
-
-RenameTable: "RENAME" "TO" | "RENAME" "AS" | "RENAME"
 
 LockClause: 
 	"LOCK" eq "NONE"
