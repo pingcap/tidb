@@ -813,6 +813,8 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select upper('aAa') from t")
 	result.Check(testkit.Rows("AAA"))
+	result = tk.MustQuery("select upper('a') from t")
+	result.Check(testkit.Rows("A"))
 
 	result = tk.MustQuery("select lower(a), lower(b), lower(c), lower(d), lower(e), lower(f) from t")
 	result.Check(testkit.Rows("1 1.1 2017-01-01 12:01:01 12:01:01 abcdef <nil>"))
@@ -822,6 +824,8 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select lower('aAa') from t")
 	result.Check(testkit.Rows("aaa"))
+	result = tk.MustQuery("select lower('A') from t")
+	result.Check(testkit.Rows("a"))
 }
 
 func (s *testSuite) TestTimeBuiltin(c *C) {
