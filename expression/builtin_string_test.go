@@ -328,6 +328,14 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Upper, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
+
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeVarchar)
+		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
+		c.Assert(tp.Collate, Equals, charset.CollationUTF8)
+		c.Assert(tp.Flag, Equals, uint(0))
+		c.Assert(tp.Flen, Equals, -1)
+
 		v, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -342,6 +350,14 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 
 		f, err = newFunctionForTest(s.ctx, ast.Lower, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
+
+		tp = f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeVarchar)
+		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
+		c.Assert(tp.Collate, Equals, charset.CollationUTF8)
+		c.Assert(tp.Flag, Equals, uint(0))
+		c.Assert(tp.Flen, Equals, -1)
+
 		v, err = f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -353,36 +369,6 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 				c.Assert(v.GetString(), Equals, t.expected)
 			}
 		}
-	}
-
-	typecases := []struct {
-		args    []Expression
-		retType *types.FieldType
-	}{
-		{
-			[]Expression{varcharCon, int8Con},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
-		},
-		{
-			[]Expression{blobCon, int8Con},
-			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
-		},
-	}
-	fc := funcs[ast.Upper].(*upperFunctionClass)
-	fcLower := funcs[ast.Lower].(*lowerFunctionClass)
-
-	for _, t := range typecases {
-		retType, _ := fc.inferType(t.args)
-		c.Assert(retType.Tp, Equals, t.retType.Tp)
-		c.Assert(retType.Charset, Equals, t.retType.Charset)
-		c.Assert(retType.Collate, Equals, t.retType.Collate)
-		c.Assert(retType.Flag, Equals, t.retType.Flag)
-
-		retTypeLower, _ := fcLower.inferType(t.args)
-		c.Assert(retTypeLower.Tp, Equals, t.retType.Tp)
-		c.Assert(retTypeLower.Charset, Equals, t.retType.Charset)
-		c.Assert(retTypeLower.Collate, Equals, t.retType.Collate)
-		c.Assert(retTypeLower.Flag, Equals, t.retType.Flag)
 	}
 }
 
