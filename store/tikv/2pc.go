@@ -148,7 +148,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 		keys:      keys,
 		mutations: mutations,
 		lockTTL:   txnLockTTL(txn.startTime, size),
-		priority:  getTxnPriority(c.txn),
+		priority:  getTxnPriority(txn),
 	}, nil
 }
 
@@ -406,12 +406,17 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 
 func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 	if pri := txn.us.GetOption(kv.Priority); pri != nil {
-		switch pri.(int) {
-		case kv.PriorityLow:
-			return pb.CommandPri_Low
-		case kv.PriorityHigh:
-			return pb.CommandPri_High
-		}
+		kvPriorityToCommandPri(pri.(int))
+	}
+	return pb.CommandPri_Normal
+}
+
+func kvPriorityToCommandPri(pri int) pb.CommandPri {
+	switch pri {
+	case kv.PriorityLow:
+		return pb.CommandPri_Low
+	case kv.PriorityHigh:
+		return pb.CommandPri_High
 	}
 	return pb.CommandPri_Normal
 }

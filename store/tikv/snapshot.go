@@ -40,7 +40,7 @@ type tikvSnapshot struct {
 	store          *tikvStore
 	version        kv.Version
 	isolationLevel kv.IsoLevel
-	priority       int
+	priority       pb.CommandPri
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -49,7 +49,7 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 		store:          store,
 		version:        ver,
 		isolationLevel: kv.SI,
-		priority:       kv.PriorityNormal,
+		priority:       pb.CommandPri_Normal,
 	}
 }
 

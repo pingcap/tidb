@@ -119,7 +119,7 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	case kv.IsolationLevel:
 		txn.snapshot.isolationLevel = val.(kv.IsoLevel)
 	case kv.Priority:
-		txn.snapshot.priority = val.(int)
+		txn.snapshot.priority = kvPriorityToCommandPri(val.(int))
 	}
 }
 
