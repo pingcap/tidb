@@ -73,6 +73,7 @@ type twoPhaseCommitter struct {
 		committed    bool
 		undetermined bool
 	}
+	priority pb.CommandPri
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -147,6 +148,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 		keys:      keys,
 		mutations: mutations,
 		lockTTL:   txnLockTTL(txn.startTime, size),
+		priority:  getTxnPriority(c.txn),
 	}, nil
 }
 
@@ -334,7 +336,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	}
 	req := &tikvrpc.Request{
 		Type:     tikvrpc.CmdPrewrite,
-		Priority: getTxnPriority(c.txn),
+		Priority: c.priority,
 		Prewrite: &pb.PrewriteRequest{
 			Mutations:           mutations,
 			PrimaryLock:         c.primary(),
@@ -417,7 +419,7 @@ func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
 	req := &tikvrpc.Request{
 		Type:     tikvrpc.CmdCommit,
-		Priority: getTxnPriority(c.txn),
+		Priority: c.priority,
 		Commit: &pb.CommitRequest{
 			StartVersion:  c.startTS,
 			Keys:          batch.keys,
