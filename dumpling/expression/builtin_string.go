@@ -724,6 +724,10 @@ func (b *builtinSubstringSig) eval(row []types.Datum) (d types.Datum, err error)
 	// arg[0] -> StrExpr
 	// arg[1] -> Pos
 	// arg[2] -> Len (Optional)
+	if args[0].IsNull() || args[1].IsNull() {
+		return
+	}
+
 	str, err := args[0].ToString()
 	if err != nil {
 		return d, errors.Errorf("Substring invalid args, need string but get %T", args[0].GetValue())
@@ -736,6 +740,9 @@ func (b *builtinSubstringSig) eval(row []types.Datum) (d types.Datum, err error)
 
 	length, hasLen := int64(-1), false
 	if len(args) == 3 {
+		if args[2].IsNull() {
+			return
+		}
 		if args[2].Kind() != types.KindInt64 {
 			return d, errors.Errorf("Substring invalid pos args, need int but get %T", args[2].GetValue())
 		}
