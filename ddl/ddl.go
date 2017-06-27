@@ -110,7 +110,7 @@ var (
 	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
 	// ErrTooLongIdent returns for too long name of database/table/column.
 	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
-
+	// ErrWrongTableName return for wrong table name.
 	ErrWrongTableName = errWrongTableName
 )
 
