@@ -1176,10 +1176,10 @@ func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 		return errWrongDBName.GenByArgs(spec.OldColumnName.Schema.O)
 	}
 	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
-		return errWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
+		return ErrWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
 	}
 	if len(spec.OldColumnName.Table.O) != 0 && ident.Name.L != spec.OldColumnName.Table.L {
-		return errWrongTableName.GenByArgs(spec.OldColumnName.Table.O)
+		return ErrWrongTableName.GenByArgs(spec.OldColumnName.Table.O)
 	}
 
 	job, err := d.getModifiableColumnJob(ctx, ident, spec.OldColumnName.Name, spec)
@@ -1199,7 +1199,7 @@ func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 		return errWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
 	}
 	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
-		return errWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
+		return ErrWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
 	}
 
 	originalColName := spec.NewColumn.Name.Name
