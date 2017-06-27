@@ -811,7 +811,6 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		SelectExec:   b.build(v.Children()[0]),
 		OrderedList:  v.OrderedList,
-		Offsets:      v.Offsets,
 	}
 }
 
