@@ -1275,6 +1275,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255) FIRST", true},
 		{"ALTER TABLE db.t RENAME to db1.t1", true},
+		{"ALTER TABLE db.t RENAME db1.t1", true},
 		{"ALTER TABLE t RENAME as t1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1", true},
 		{"ALTER TABLE t ALTER a SET DEFAULT 1", true},
@@ -1302,6 +1303,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
+		{"RENAME TABLE t t1", false},
 		{"RENAME TABLE d.t TO d1.t1", true},
 
 		// for truncate statement
