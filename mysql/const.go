@@ -193,6 +193,12 @@ const (
 // AllPrivMask is the mask for PrivilegeType with all bits set to 1.
 const AllPrivMask = AllPriv - 1
 
+// MySQL type maximum length.
+const (
+	// MaxDateWidth YYYY-MM-DD.
+	MaxDateWidth = 10
+)
+
 // Priv2UserCol is the privilege to mysql.user table column name.
 var Priv2UserCol = map[PrivilegeType]string{
 	CreatePriv:     "Create_priv",
@@ -436,3 +442,15 @@ var locale2FormatFunction = map[string]FormatFunc{
 	"en_US": formatENUS,
 	"zh_CN": formatZHCN,
 }
+
+// PriorityEnum is defined for Priority const values.
+type PriorityEnum int
+
+// Priority const values.
+// See https://dev.mysql.com/doc/refman/5.7/en/insert.html
+const (
+	NoPriority PriorityEnum = iota
+	LowPriority
+	HighPriority
+	DelayedPriority
+)
