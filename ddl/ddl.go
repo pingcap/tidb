@@ -110,6 +110,8 @@ var (
 	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
 	// ErrTooLongIdent returns for too long name of database/table/column.
 	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
+
+	ErrWrongTableName = errWrongTableName
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
