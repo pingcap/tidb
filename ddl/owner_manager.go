@@ -40,6 +40,8 @@ type OwnerManager interface {
 	IsBgOwner() bool
 	// SetOwner sets whether the ownerManager is the background owner.
 	SetBgOwner(isOwner bool)
+	// GetOwnerID gets the owner ID.
+	GetOwnerID(ctx goctx.Context, ownerKey string) (string, error)
 	// CampaignOwners campaigns the DDL owner and the background owner.
 	CampaignOwners(ctx goctx.Context) error
 	// Cancel cancels this etcd ownerManager campaign.
@@ -208,6 +210,18 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		m.watchOwner(ctx, etcdSession, ownerKey)
 		m.setOwnerVal(key, false)
 	}
+}
+
+// GetOwnerID implements OwnerManager.GetOwnerID interface.
+func (m *ownerManager) GetOwnerID(ctx goctx.Context, key string) (string, error) {
+	resp, err := m.etcdCli.Get(ctx, key, clientv3.WithFirstCreate()...)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if len(resp.Kvs) == 0 {
+		return "", concurrency.ErrElectionNoLeader
+	}
+	return string(resp.Kvs[0].Value), nil
 }
 
 // GetOwnerInfo gets the owner information.
