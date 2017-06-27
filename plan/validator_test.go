@@ -14,8 +14,6 @@
 package plan_test
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -91,10 +89,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		err = plan.Validate(stmt, tt.inPrepare)
-		if terror.ErrorEqual(err, tt.err) == false {
-			fmt.Printf("err: %v, tt.err: %v\n", err.Error(), tt.err.Error())
-		}
-
 		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
 	}
 }
