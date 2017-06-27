@@ -148,12 +148,10 @@ func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Exp
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. If op are LE or GE, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0)
 // 3. If op are LT or GT, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
-// `IF((a0 EQ b0) EQ 0,
-//     a0 op b0,
-//     IF((a1 EQ b1) EQ 0,
+// `IF( a0 NE b0, a0 op b0,
+//     IF( a1 NE b1,
 //         a1 op b1,
-//         a2 op b2
-//     )
+//         a2 op b2)
 // )`
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := getRowLen(l), getRowLen(r)
@@ -177,8 +175,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		return expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), getRowArg(l, 0), getRowArg(r, 0))
 	default: // ast.LT, ast.GT
 		larg0, rarg0 := getRowArg(l, 0), getRowArg(r, 0)
-		val, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		expr1, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), val, expression.Zero)
+		expr1, _ := expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		expr2, _ := expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		l, err := popRowArg(er.ctx, l)
 		if err != nil {
