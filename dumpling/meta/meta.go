@@ -83,6 +83,7 @@ type Meta struct {
 
 // NewMeta creates a Meta in transaction txn.
 func NewMeta(txn kv.Transaction) *Meta {
+	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	return &Meta{txn: t}
 }
