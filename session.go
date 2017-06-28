@@ -1181,7 +1181,8 @@ func logCrucialStmt(node ast.StmtNode) {
 		log.Infof("[CRUCIAL OPERATION] set password for user %s.", stmt.User)
 	case *ast.GrantStmt:
 		text := stmt.Text()
-		idx := strings.Index(text, "identified by")
+		// Filter "identified by xxx" because it would expose password information.
+		idx := strings.Index(strings.ToLower(text), "identified")
 		if idx > 0 {
 			text = text[:idx]
 		}
