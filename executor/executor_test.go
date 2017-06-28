@@ -1093,6 +1093,39 @@ func (s *testSuite) TestJSON(c *C) {
 	result.Check(testkit.Rows(`3 {} <nil>`))
 }
 
+func (s *testSuite) TestMultiUpdate(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_mu (a int primary key, b int, c int)`)
+	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3), (4, 5, 6), (7, 8, 9)`)
+
+	// Test INSERT ... ON DUPLICATE UPDATE set_lists.
+	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE b = 3, c = b`)
+	result := tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 3 3`, `4 5 6`, `7 8 9`))
+
+	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE c = 2, b = c+5`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 5 6`, `7 8 9`))
+
+	// Test UPDATE ... set_lists.
+	tk.MustExec(`UPDATE test_mu SET b = 0, c = b WHERE a = 4`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 0 0`, `7 8 9`))
+
+	tk.MustExec(`UPDATE test_mu SET c = 8, b = c WHERE a = 4`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 8 8`, `7 8 9`))
+
+	tk.MustExec(`UPDATE test_mu SET c = b, b = c WHERE a = 7`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 8 8`, `7 8 8`))
+}
+
 func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 	defer func() {
 		s.cleanEnv(c)
