@@ -909,6 +909,12 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select strcmp('abc', 'abc')")
 	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select substr(null, 1, 2)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select substr('123', null, 2)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select substr('123', 1, null)")
+	result.Check(testkit.Rows("<nil>"))
 
 	// for case
 	tk.MustExec("drop table if exists t")
