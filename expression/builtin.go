@@ -755,4 +755,6 @@ var funcs = map[string]functionClass{
 	ast.JSONInsert:  &jsonInsertFunctionClass{baseFunctionClass{ast.JSONInsert, 3, -1}},
 	ast.JSONReplace: &jsonReplaceFunctionClass{baseFunctionClass{ast.JSONReplace, 3, -1}},
 	ast.JSONMerge:   &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
+	ast.JSONObject:  &jsonObjectFunctionClass{baseFunctionClass{ast.JSONObject, 2, -1}},
+	ast.JSONArray:   &jsonArrayFunctionClass{baseFunctionClass{ast.JSONArray, 1, -1}},
 }

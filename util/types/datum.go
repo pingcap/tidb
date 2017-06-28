@@ -635,28 +635,33 @@ func (d *Datum) compareMysqlSet(sc *variable.StatementContext, set Set) (int, er
 	}
 }
 
-func (d *Datum) compareMysqlJSON(sc *variable.StatementContext, target json.JSON) (int, error) {
-	var origin json.JSON
-
+// AsJSONPrimitive is similar to convertToMysqlJSON, except the
+// latter parses from string, but the former uses it as primitive.
+func (d *Datum) AsJSONPrimitive() (j json.JSON) {
 	switch d.Kind() {
 	case KindMysqlJSON:
-		origin = d.x.(json.JSON)
+		j = d.x.(json.JSON)
 	case KindInt64, KindUint64:
 		i64 := d.GetInt64()
-		origin = json.CreateJSON(i64)
+		j = json.CreateJSON(i64)
 	case KindFloat32, KindFloat64:
 		f64 := d.GetFloat64()
-		origin = json.CreateJSON(f64)
+		j = json.CreateJSON(f64)
 	case KindMysqlDecimal:
 		f64, _ := d.GetMysqlDecimal().ToFloat64()
-		origin = json.CreateJSON(f64)
+		j = json.CreateJSON(f64)
 	case KindString, KindBytes:
 		s := d.GetString()
-		origin = json.CreateJSON(s)
+		j = json.CreateJSON(s)
 	default:
 		s, _ := d.ToString()
-		origin = json.CreateJSON(s)
+		j = json.CreateJSON(s)
 	}
+	return
+}
+
+func (d *Datum) compareMysqlJSON(sc *variable.StatementContext, target json.JSON) (int, error) {
+	var origin = d.AsJSONPrimitive()
 	return json.CompareJSON(origin, target)
 }
 

@@ -237,6 +237,23 @@ func JSONMerge(args []types.Datum, sc *variable.StatementContext) (d types.Datum
 	return
 }
 
+// JSONObject creates a json from an ordered key-value slice.
+func JSONObject(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	if len(args)&1 == 0 {
+		// TODO: error 1582(42000)
+		err = errors.New("Incorrect parameter count")
+		return
+	}
+	// TODO: real logic.
+	return
+}
+
+// JSONArray creates a json from a slice.
+func JSONArray(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	// TODO: real logic.
+	return
+}
+
 type jsonTypeFunctionClass struct {
 	baseFunctionClass
 }
@@ -375,4 +392,44 @@ func (b *builtinJSONMergeSig) eval(row []types.Datum) (d types.Datum, err error)
 		return d, errors.Trace(err)
 	}
 	return JSONMerge(args, b.ctx.GetSessionVars().StmtCtx)
+}
+
+type jsonObjectFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONObjectSig struct {
+	baseBuiltinFunc
+}
+
+func (c *jsonObjectFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinJSONObjectSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+func (b *builtinJSONObjectSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	return JSONObject(args, b.ctx.GetSessionVars().StmtCtx)
+}
+
+type jsonArrayFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONArraySig struct {
+	baseBuiltinFunc
+}
+
+func (c *jsonArrayFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinJSONArraySig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+func (b *builtinJSONArraySig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	return JSONArray(args, b.ctx.GetSessionVars().StmtCtx)
 }

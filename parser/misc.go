@@ -543,6 +543,8 @@ var tokenMap = map[string]int{
 	"JSON_INSERT":                jsonInsert,
 	"JSON_REPLACE":               jsonReplace,
 	"JSON_MERGE":                 jsonMerge,
+	"JSON_OBJECT":                jsonObject,
+	"JSON_ARRAY":                 jsonArray,
 	"SECOND_MICROSECOND":         secondMicrosecond,
 	"MINUTE_MICROSECOND":         minuteMicrosecond,
 	"MINUTE_SECOND":              minuteSecond,
