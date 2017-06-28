@@ -79,36 +79,48 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 
 func (s *testEvaluatorSuite) TestASCII(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.ASCII]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
 
-	for _, t := range []struct {
-		Input    interface{}
-		Expected int64
+	cases := []struct {
+		args     interface{}
+		expected int64
+		isNil    bool
+		getErr   bool
 	}{
-		{"", 0},
-		{"A", 65},
-		{"你好", 228},
-		{1, 49},
-		{1.2, 49},
-		{true, 49},
-		{false, 48},
-	} {
-		f, err = fc.getFunction(datumsToConstants(types.MakeDatums(t.Input)), s.ctx)
-		c.Assert(err, IsNil)
-		v, err = f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v.GetInt64(), Equals, t.Expected)
+		{"2", 50, false, false},
+		{2, 50, false, false},
+		{"23", 50, false, false},
+		{23, 50, false, false},
+		{2.3, 50, false, false},
+		{nil, 0, true, false},
+		{"", 0, false, false},
+		{"你好", 228, false, false},
 	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.ASCII, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
 
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(errors.New("must error"))), s.ctx)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, 3)
+
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.expected)
+			}
+		}
+	}
+	f, err := funcs[ast.Length].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
-	c.Assert(err, NotNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestConcat(c *C) {
