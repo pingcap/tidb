@@ -36,6 +36,15 @@ const (
 	SchemaLeaseChecker
 	// IsolationLevel sets isolation level for current transaction. The default level is SI.
 	IsolationLevel
+	// Priority marks the priority of this transaction.
+	Priority
+)
+
+// Priority value for transaction priority.
+const (
+	PriorityNormal int = iota
+	PriorityLow
+	PriorityHigh
 )
 
 // IsoLevel is the transaction's isolation level.
