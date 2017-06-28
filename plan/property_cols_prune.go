@@ -40,7 +40,7 @@ func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
 	return nil
 }
 
-func (p *LogicalJoin) preparePossibleOrderCols() [][]*expression.Column {
+func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
 	leftProperties := p.children[0].(LogicalPlan).preparePossibleProperties()
 	rightProperties := p.children[1].(LogicalPlan).preparePossibleProperties()
 	// TODO: We should consider properties propagation.
@@ -52,7 +52,7 @@ func (p *LogicalJoin) preparePossibleOrderCols() [][]*expression.Column {
 	return resultProperties
 }
 
-func (p *LogicalAggregation) preparePossibleOrderCols() [][]*expression.Column {
+func (p *LogicalAggregation) preparePossibleProperties() [][]*expression.Column {
 	p.possibleProperties = p.children[0].(LogicalPlan).preparePossibleProperties()
 	return nil
 }
