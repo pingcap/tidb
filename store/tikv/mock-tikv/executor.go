@@ -18,6 +18,7 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -35,12 +36,13 @@ type executor interface {
 
 type tableScanExec struct {
 	*tipb.TableScan
-	colIDs    map[int64]int
-	kvRanges  []kv.KeyRange
-	startTS   uint64
-	mvccStore *MvccStore
-	cursor    int
-	seekKey   []byte
+	colIDs         map[int64]int
+	kvRanges       []kv.KeyRange
+	startTS        uint64
+	isolationLevel kvrpcpb.IsolationLevel
+	mvccStore      *MvccStore
+	cursor         int
+	seekKey        []byte
 
 	src executor
 }
@@ -78,7 +80,7 @@ func (e *tableScanExec) Next() (handle int64, value [][]byte, err error) {
 }
 
 func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error) {
-	val, err := e.mvccStore.Get(ran.StartKey, e.startTS)
+	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel)
 	if len(val) == 0 {
 		return 0, nil, nil
 	} else if err != nil {
@@ -106,9 +108,9 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	var pairs []Pair
 	var pair Pair
 	if e.Desc {
-		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS)
+		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS, e.isolationLevel)
 	} else {
-		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS)
+		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS, e.isolationLevel)
 	}
 	if len(pairs) > 0 {
 		pair = pairs[0]
@@ -145,13 +147,14 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 
 type indexScanExec struct {
 	*tipb.IndexScan
-	colsLen   int
-	kvRanges  []kv.KeyRange
-	startTS   uint64
-	mvccStore *MvccStore
-	cursor    int
-	seekKey   []byte
-	pkCol     *tipb.ColumnInfo
+	colsLen        int
+	kvRanges       []kv.KeyRange
+	startTS        uint64
+	isolationLevel kvrpcpb.IsolationLevel
+	mvccStore      *MvccStore
+	cursor         int
+	seekKey        []byte
+	pkCol          *tipb.ColumnInfo
 
 	src executor
 }
@@ -189,9 +192,9 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	var pairs []Pair
 	var pair Pair
 	if e.Desc {
-		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS)
+		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS, e.isolationLevel)
 	} else {
-		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS)
+		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS, e.isolationLevel)
 	}
 	if len(pairs) > 0 {
 		pair = pairs[0]

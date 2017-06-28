@@ -442,3 +442,15 @@ var locale2FormatFunction = map[string]FormatFunc{
 	"en_US": formatENUS,
 	"zh_CN": formatZHCN,
 }
+
+// PriorityEnum is defined for Priority const values.
+type PriorityEnum int
+
+// Priority const values.
+// See https://dev.mysql.com/doc/refman/5.7/en/insert.html
+const (
+	NoPriority PriorityEnum = iota
+	LowPriority
+	HighPriority
+	DelayedPriority
+)
