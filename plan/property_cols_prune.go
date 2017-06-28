@@ -24,21 +24,7 @@ func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column)
 		}
 	}
 	for _, idx := range indices {
-		var cols []*expression.Column
-		for _, idxCol := range idx.Columns {
-			found := false
-			for _, col := range p.schema.Columns {
-				if col.ColName.L == idxCol.Name.L {
-					cols = append(cols, col)
-					found = true
-					break
-				}
-			}
-			if !found {
-				cols = nil
-				break
-			}
-		}
+		cols, _ := expression.IndexInfo2Cols(p.schema.Columns, idx)
 		if len(cols) > 0 {
 			result = append(result, cols)
 		}
