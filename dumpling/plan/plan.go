@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -67,6 +68,10 @@ type Plan interface {
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 	ResolveIndices()
+
+	// findColumn finds the column in basePlan's schema.
+	// If the column is not in the schema, returns error.
+	findColumn(*ast.ColumnName) (*expression.Column, int, error)
 }
 
 type columnProp struct {
@@ -508,4 +513,12 @@ func (p *basePlan) SetChildren(children ...Plan) {
 
 func (p *basePlan) context() context.Context {
 	return p.ctx
+}
+
+func (p *basePlan) findColumn(column *ast.ColumnName) (*expression.Column, int, error) {
+	col, idx, err := p.Schema().FindColumnAndIndex(column)
+	if err == nil && col == nil {
+		err = errors.Errorf("column %s not found", column.Name.O)
+	}
+	return col, idx, errors.Trace(err)
 }
