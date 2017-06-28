@@ -465,7 +465,9 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 			}
 			err := do.privHandle.Update(ctx)
 			if err != nil {
-				log.Error("load privilege fail:", errors.ErrorStack(err))
+				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
+			} else {
+				log.Info("[domain] reload privilege success.")
 			}
 		}
 	}()

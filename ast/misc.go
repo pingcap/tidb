@@ -414,6 +414,20 @@ type UserSpec struct {
 	AuthOpt *AuthOption
 }
 
+// SecurityString formats the UserSpec without password information.
+func (u *UserSpec) SecurityString() string {
+	withPassword := false
+	if opt := u.AuthOpt; opt != nil {
+		if len(opt.AuthString) > 0 || len(opt.HashString) > 0 {
+			withPassword = true
+		}
+	}
+	if withPassword {
+		return fmt.Sprintf("{%s password = ***}", u.User)
+	}
+	return u.User
+}
+
 // CreateUserStmt creates user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
