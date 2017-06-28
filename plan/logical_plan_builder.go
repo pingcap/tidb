@@ -1370,6 +1370,24 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
 	}
+
+	newList := make([]*expression.Assignment, 0, p.Schema().Len())
+	for _, assign := range list {
+		col, _, err := p.findColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil, nil
+		}
+		var newExpr expression.Expression
+		var np LogicalPlan
+		newExpr, np, err = b.rewrite(assign.Expr, p, nil, false)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil, nil
+		}
+		p = np
+		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
+	}
 	return newList, p
 }
 
