@@ -1299,18 +1299,15 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
-	modifyColumns := make(map[string]int, p.Schema().Len()) // which columns are in set list.
+	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
 	for _, assign := range list {
-		col, offset, err := p.Schema().FindColumnAndIndex(assign.Column)
-		if err == nil && col == nil {
-			err = errors.Trace(errors.Errorf("column %s not found", assign.Column.Name.O))
-		}
+		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil
 		}
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
-		modifyColumns[columnFullName] = offset
+		modifyColumns[columnFullName] = struct{}{}
 	}
 	// If columnes in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
@@ -1319,29 +1316,34 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		tableInfo := tn.TableInfo
 		table, _ := b.is.TableByID(tableInfo.ID)
 		for i, colInfo := range tableInfo.Columns {
-			if len(colInfo.GeneratedExprString) != 0 {
-				columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
-				if _, ok := modifyColumns[columnFullName]; ok {
-					b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
-					return nil, nil
-				}
-				if colInfo.GeneratedStored || tableInfo.ColumnIsInIndex(colInfo) {
-					virtualAssignments = append(virtualAssignments, &ast.Assignment{
-						Column: &ast.ColumnName{
-							Schema: tn.Schema,
-							Table:  tn.Name,
-							Name:   colInfo.Name,
-						},
-						Expr: table.Cols()[i].GeneratedExpr,
-					})
-				}
+			if len(colInfo.GeneratedExprString) == 0 {
+				continue
+			}
+			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+			if _, ok := modifyColumns[columnFullName]; ok {
+				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
+				return nil, nil
+			}
+			if colInfo.GeneratedStored || tableInfo.ColumnIsInIndex(colInfo) {
+				virtualAssignments = append(virtualAssignments, &ast.Assignment{
+					Column: &ast.ColumnName{
+						Schema: tn.Schema,
+						Table:  tn.Name,
+						Name:   colInfo.Name,
+					},
+					Expr: table.Cols()[i].GeneratedExpr,
+				})
 			}
 		}
 	}
 
 	newList := make([]*expression.Assignment, 0, p.Schema().Len())
 	for i, assign := range append(list, virtualAssignments...) {
-		col, err := p.Schema().FindColumn(assign.Column)
+		col, _, err := p.findColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil, nil
+		}
 		var newExpr expression.Expression
 		var np LogicalPlan
 		if i < len(list) {
