@@ -381,35 +381,6 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 			}
 		}
 	}
-
-	typeCases := []struct {
-		args    []Expression
-		retType *types.FieldType
-	}{
-		{
-			[]Expression{varcharCon},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
-		},
-		{
-			[]Expression{blobCon},
-			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
-		},
-	}
-	lfc := funcs[lower].(*lowerFunctionClass)
-	ufc := funcs[upper].(*upperFunctionClass)
-	for _, t := range typeCases {
-		retType := lfc.inferType(t.args)
-		c.Assert(retType.Tp, Equals, t.retType.Tp)
-		c.Assert(retType.Charset, Equals, t.retType.Charset)
-		c.Assert(retType.Collate, Equals, t.retType.Collate)
-		c.Assert(retType.Flag, Equals, t.retType.Flag)
-
-		retType = ufc.inferType(t.args)
-		c.Assert(retType.Tp, Equals, t.retType.Tp)
-		c.Assert(retType.Charset, Equals, t.retType.Charset)
-		c.Assert(retType.Collate, Equals, t.retType.Collate)
-		c.Assert(retType.Flag, Equals, t.retType.Flag)
-	}
 }
 
 func (s *testEvaluatorSuite) TestReverse(c *C) {
