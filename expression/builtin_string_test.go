@@ -309,11 +309,35 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 		{[]interface{}{"ab"}, false, false, "ab"},
 		{[]interface{}{1}, false, false, "1"},
 	}
+
+	typeCases := []struct {
+		args []Expression
+		tp   *types.FieldType
+	}{
+		{
+			[]Expression{blobCon},
+			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+		},
+		{
+			[]Expression{varcharCon},
+			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
+		},
+		{
+			[]Expression{varcharCon},
+			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
+		},
+	}
+
 	lower := ast.Lower
 	upper := ast.Upper
-	for _, t := range cases {
+	for i, t := range cases {
 		l, err := newFunctionForTest(s.ctx, lower, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
+		tp := l.GetType()
+		c.Assert(tp.Tp, Equals, typeCases[i].tp.Tp)
+		c.Assert(tp.Charset, Equals, typeCases[i].tp.Charset)
+		c.Assert(tp.Collate, Equals, typeCases[i].tp.Collate)
+		c.Assert(tp.Flag, Equals, typeCases[i].tp.Flag)
 		v, err := l.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -328,6 +352,11 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 
 		u, err := newFunctionForTest(s.ctx, upper, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
+		tp = u.GetType()
+		c.Assert(tp.Tp, Equals, typeCases[i].tp.Tp)
+		c.Assert(tp.Charset, Equals, typeCases[i].tp.Charset)
+		c.Assert(tp.Collate, Equals, typeCases[i].tp.Collate)
+		c.Assert(tp.Flag, Equals, typeCases[i].tp.Flag)
 		v, err = u.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)

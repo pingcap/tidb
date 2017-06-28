@@ -426,25 +426,19 @@ type lowerFunctionClass struct {
 }
 
 func (c *lowerFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	retType := c.inferType(args)
-	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, tpString)
+	tp := types.NewFieldType(mysql.TypeVarchar)
+	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	argTp := args[0].GetType()
+	if types.IsBinaryStr(argTp) || argTp.Tp == mysql.TypeNull {
+		types.SetBinChsClnFlag(tp)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinLowerSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-func (c *lowerFunctionClass) inferType(args []Expression) *types.FieldType {
-	argTp := args[0].GetType()
-	tp := types.MergeFieldType(mysql.TypeVarString, argTp.Tp)
-	retType := types.NewFieldType(tp)
-	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	if types.IsBinaryStr(argTp) {
-		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
-		retType.Flag |= mysql.BinaryFlag
-	}
-	return retType
 }
 
 type builtinLowerSig struct {
@@ -550,25 +544,19 @@ type upperFunctionClass struct {
 }
 
 func (c *upperFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	retType := c.inferType(args)
-	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, tpString)
+	tp := types.NewFieldType(mysql.TypeVarchar)
+	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	argTp := args[0].GetType()
+	if types.IsBinaryStr(argTp) || argTp.Tp == mysql.TypeNull {
+		types.SetBinChsClnFlag(tp)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinUpperSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-func (c *upperFunctionClass) inferType(args []Expression) *types.FieldType {
-	argTp := args[0].GetType()
-	tp := types.MergeFieldType(mysql.TypeVarString, argTp.Tp)
-	retType := types.NewFieldType(tp)
-	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	if types.IsBinaryStr(argTp) {
-		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
-		retType.Flag |= mysql.BinaryFlag
-	}
-	return retType
 }
 
 type builtinUpperSig struct {
