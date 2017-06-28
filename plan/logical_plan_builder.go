@@ -1138,7 +1138,8 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		idx := col.Position
 		colInfo := tableInfo.Columns[idx]
 		if len(colInfo.GeneratedExprString) != 0 && !colInfo.GeneratedStored {
-			expr, _, err := b.rewrite(tbl.Cols()[idx].GeneratedExpr, p, nil, true)
+			column := tbl.Cols()[idx]
+			expr, _, err := b.rewrite(column.GeneratedExpr, p, nil, true)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil

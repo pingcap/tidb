@@ -158,7 +158,7 @@ func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
 func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
 
-	// Resolve all generated columns.
+	// Resolve all virtual generated columns.
 	var name2Offset = make(map[string]int, len(p.schema.Columns))
 	for i, column := range p.schema.Columns {
 		name2Offset[column.ColName.L] = i

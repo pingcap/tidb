@@ -50,8 +50,7 @@ type TableReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
-	// columns are only required by union scan.
-	columns []*model.ColumnInfo
+	columns   []*model.ColumnInfo
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -60,8 +59,8 @@ type TableReaderExecutor struct {
 	// aggregate indicates whether it contains Aggregation executors or not.
 	aggregate bool
 
-	// GenValues is for calculating virtual generated columns.
-	GenValues map[int]expression.Expression
+	// genValues is for calculating virtual generated columns.
+	genValues map[int]expression.Expression
 }
 
 // Schema implements the Executor Schema interface.
@@ -113,13 +112,8 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if !e.aggregate {
-			for i, col := range e.columns {
-				if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
-					values[i], err = e.GenValues[col.Offset].Eval(values)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-				}
+			if calculateGeneratedColumns(e.columns, e.genValues, values) != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 		return resultRowToRow(e.table, h, values, e.asName), nil

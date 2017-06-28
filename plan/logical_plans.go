@@ -334,7 +334,7 @@ type Update struct {
 	OrderedList []*expression.Assignment
 
 	// NormalAssignLength is for those assignments calculated by generation expressions.
-	// They are appended into OrderedList, so we need a length to know now many normal
+	// They are appended into OrderedList, so we need a length to know how many normal
 	// entries in OrderedList.
 	NormalAssignLength int
 }
