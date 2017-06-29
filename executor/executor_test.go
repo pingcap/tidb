@@ -830,6 +830,8 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("0 0 0 0 0"))
 	result = tk.MustQuery(`select strcmp("1", "123"), strcmp("123", "1"), strcmp("123", "45"), strcmp("123", null), strcmp(null, "123")`)
 	result.Check(testkit.Rows("-1 1 -1 <nil> <nil>"))
+	result = tk.MustQuery(`select strcmp("", "123"), strcmp("123", ""), strcmp("", ""), strcmp("", null), strcmp(null, "")`)
+	result.Check(testkit.Rows("-1 1 0 <nil> <nil>"))
 }
 
 func (s *testSuite) TestTimeBuiltin(c *C) {

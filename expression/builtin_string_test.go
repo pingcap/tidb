@@ -410,6 +410,12 @@ func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 		{[]interface{}{"12.34", 12.34}, false, false, 0},
 		{[]interface{}{nil, "123"}, true, false, 0},
 		{[]interface{}{"123", nil}, true, false, 0},
+		{[]interface{}{"", "123"}, false, false, -1},
+		{[]interface{}{"123", ""}, false, false, 1},
+		{[]interface{}{"", ""}, false, false, 0},
+		{[]interface{}{"", nil}, true, false, 0},
+		{[]interface{}{nil, ""}, true, false, 0},
+		{[]interface{}{nil, nil}, true, false, 0},
 		{[]interface{}{"123", errors.New("must err")}, false, true, 0},
 	}
 	for _, t := range cases {
