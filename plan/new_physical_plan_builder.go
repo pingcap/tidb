@@ -54,9 +54,6 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context, allocator
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
 func (p *Projection) getPushedProp(prop *requiredProp) []*requiredProp {
-	if prop.isEmpty() {
-		return nil
-	}
 	newProp := &requiredProp{taskTp: rootTaskType}
 	newCols := make([]*expression.Column, 0, len(prop.cols))
 	for _, col := range prop.cols {
@@ -465,31 +462,6 @@ func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	return task, p.storeTask(prop, task)
 }
 
-func (p *Limit) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if task != nil {
-		return task, nil
-	}
-	if prop.taskTp != rootTaskType {
-		return invalidTask, p.storeTask(prop, invalidTask)
-	}
-	for _, taskTp := range wholeTaskTypes {
-		optTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: taskTp})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		optTask = p.attach2Task(optTask)
-		optTask = prop.enforceProperty(optTask, p.ctx, p.allocator)
-		if task == nil || task.cost() > optTask.cost() {
-			task = optTask
-		}
-	}
-	return task, p.storeTask(prop, task)
-}
-
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	// look up the task map
@@ -515,32 +487,42 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, err
 	// Else we suppose it only has one child.
 	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
 		// We consider to add enforcer firstly.
-		enforceTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
+		task, err = p.getBestTask(task, prop, pp, true)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		enforceTask = pp.attach2Task(enforceTask)
-		enforceTask = prop.enforceProperty(enforceTask, p.basePlan.ctx, p.basePlan.allocator)
-		if enforceTask.cost() < task.cost() {
-			task = enforceTask
 		}
 		if prop.isEmpty() {
 			continue
 		}
-		// TODO: We should consider result task types.
-		newProps := pp.getPushedProp(prop)
-		for _, newProp := range newProps {
-			orderedTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			orderedTask = pp.attach2Task(orderedTask)
-			if orderedTask.cost() < task.cost() {
-				task = orderedTask
-			}
+		task, err = p.getBestTask(task, prop, pp, false)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return task, p.storeTask(prop, task)
+}
+
+func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan, enforced bool) (task, error) {
+	var newProps []*requiredProp
+	if enforced {
+		newProps = pp.getPushedProp(&requiredProp{taskTp: rootTaskType})
+	} else {
+		newProps = pp.getPushedProp(prop)
+	}
+	for _, newProp := range newProps {
+		resultTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resultTask = pp.attach2Task(resultTask)
+		if enforced {
+			resultTask = prop.enforceProperty(resultTask, p.basePlan.ctx, p.basePlan.allocator)
+		}
+		if resultTask.cost() < bestTask.cost() {
+			bestTask = resultTask
+		}
+	}
+	return bestTask, nil
 }
 
 func tryToAddUnionScan(cop *copTask, conds []expression.Expression, ctx context.Context, allocator *idAllocator) task {
@@ -998,4 +980,14 @@ func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
 func (p *basePhysicalPlan) getPushedProp(prop *requiredProp) []*requiredProp {
 	// By default, physicalPlan can always match the orders.
 	return []*requiredProp{prop}
+}
+
+func (p *Limit) getPushedProp(prop *requiredProp) (props []*requiredProp) {
+	if !prop.isEmpty() {
+		return nil
+	}
+	for _, tp := range wholeTaskTypes {
+		props = append(props, &requiredProp{taskTp: tp})
+	}
+	return
 }
