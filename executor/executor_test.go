@@ -887,6 +887,13 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1267"))
 	result = tk.MustQuery("select hex(unhex(1267))")
 	result.Check(testkit.Rows("1267"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a binary(8))")
+	tk.MustExec(`insert into t values('test')`)
+	result = tk.MustQuery("select hex(a) from t")
+	result.Check(testkit.Rows("7465737400000000"))
+	result = tk.MustQuery("select unhex(a) from t")
+	result.Check(testkit.Rows("<nil>"))
 
 	// select from_unixtime
 	result = tk.MustQuery("select from_unixtime(1451606400)")
@@ -1347,11 +1354,11 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
-	stmtNode, err = s.ParseOneStmt("create table t (a int)", "", "")
+	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
 	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
-	c.Check(stmt.OriginText(), Equals, "create table t (a int)")
+	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
 
 func (s *testSuite) TestPointGet(c *C) {
