@@ -895,47 +895,6 @@ func splitConditionsByIndexColumns(conditions []expression.Expression, schema *e
 	return
 }
 
-func (p *LogicalAggregation) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if task != nil {
-		return task, nil
-	}
-	if prop.taskTp != rootTaskType {
-		// Aggregation can only return rootTask.
-		return invalidTask, p.storeTask(prop, invalidTask)
-	}
-	task, err = p.convert2HashAggregation(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return task, p.storeTask(prop, task)
-}
-
-func (p *LogicalAggregation) convert2HashAggregation(prop *requiredProp) (bestTask task, _ error) {
-	for _, taskTp := range wholeTaskTypes {
-		task, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: taskTp})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ha := PhysicalAggregation{
-			GroupByItems: p.GroupByItems,
-			AggFuncs:     p.AggFuncs,
-			HasGby:       len(p.GroupByItems) > 0,
-			AggType:      CompleteAgg,
-		}.init(p.allocator, p.ctx)
-		ha.SetSchema(p.schema)
-		task = ha.attach2Task(task)
-		task = prop.enforceProperty(task, p.ctx, p.allocator)
-		if bestTask == nil || task.cost() < bestTask.cost() {
-			bestTask = task
-		}
-	}
-	return
-}
-
 func (p *LogicalApply) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	task, err := p.getTask(prop)
 	if err != nil {
@@ -983,6 +942,27 @@ func (p *basePhysicalPlan) getPushedProp(prop *requiredProp) []*requiredProp {
 }
 
 func (p *Limit) getPushedProp(prop *requiredProp) (props []*requiredProp) {
+	if !prop.isEmpty() {
+		return nil
+	}
+	for _, tp := range wholeTaskTypes {
+		props = append(props, &requiredProp{taskTp: tp})
+	}
+	return
+}
+
+func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
+	ha := PhysicalAggregation{
+		GroupByItems: p.GroupByItems,
+		AggFuncs:     p.AggFuncs,
+		HasGby:       len(p.GroupByItems) > 0,
+		AggType:      CompleteAgg,
+	}.init(p.allocator, p.ctx)
+	ha.SetSchema(p.schema)
+	return []PhysicalPlan{ha}
+}
+
+func (p *PhysicalAggregation) getPushedProp(prop *requiredProp) (props []*requiredProp) {
 	if !prop.isEmpty() {
 		return nil
 	}
