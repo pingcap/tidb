@@ -195,6 +195,27 @@ func JSONReplace(args []types.Datum, sc *variable.StatementContext) (d types.Dat
 	return jsonModify(args, json.ModifyReplace, sc)
 }
 
+// JSONRemove is for json_remove builtin function.
+func JSONRemove(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	if argsAnyNull(args) {
+		return d, nil
+	}
+	j, err := datum2JSON(args[0], sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	pathExprs, err := parsePathExprs(args[1:])
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	j, err = j.Remove(pathExprs)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlJSON(j)
+	return
+}
+
 // JSONMerge is for json_merge builtin function.
 func JSONMerge(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
 	if argsAnyNull(args) {
@@ -369,6 +390,26 @@ func (b *builtinJSONReplaceSig) eval(row []types.Datum) (d types.Datum, err erro
 		return d, errors.Trace(err)
 	}
 	return JSONReplace(args, b.ctx.GetSessionVars().StmtCtx)
+}
+
+type jsonRemoveFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONRemoveSig struct {
+	baseBuiltinFunc
+}
+
+func (c *jsonRemoveFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinJSONRemoveSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+func (b *builtinJSONRemoveSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	return JSONRemove(args, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type jsonMergeFunctionClass struct {

@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
+
+	"fmt"
 )
 
 func (s *testEvaluatorSuite) TestJSONType(c *C) {
@@ -219,6 +221,47 @@ func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 		{[]interface{}{1, true}, `{"1": 1}`, true},
 	}
 	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+
+		if t.Success {
+			c.Assert(err, IsNil)
+			switch x := t.Expected.(type) {
+			case string:
+				j1, err := json.ParseFromString(x)
+				c.Assert(err, IsNil)
+				j2 := d.GetMysqlJSON()
+				cmp, err := json.CompareJSON(j1, j2)
+				c.Assert(err, IsNil)
+				c.Assert(cmp, Equals, 0)
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONORemove(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONRemove]
+	tbl := []struct {
+		Input    []interface{}
+		Expected interface{}
+		Success  bool
+	}{
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$"}, nil, false},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.*"}, nil, false},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$[*]"}, nil, false},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$**.a"}, nil, false},
+
+		{[]interface{}{nil, "$.a"}, nil, true},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa"}, `{"a": [1, 2, {}]}`, true},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[1]"}, `{"a": [1, {"aa": "xx"}]}`, true},
+	}
+	for i, t := range tbl {
+		fmt.Printf("i: %d\n", i)
 		args := types.MakeDatums(t.Input...)
 		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
 		c.Assert(err, IsNil)

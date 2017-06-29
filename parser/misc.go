@@ -542,6 +542,7 @@ var tokenMap = map[string]int{
 	"JSON_SET":                   jsonSet,
 	"JSON_INSERT":                jsonInsert,
 	"JSON_REPLACE":               jsonReplace,
+	"JSON_REMOVE":                jsonRemove,
 	"JSON_MERGE":                 jsonMerge,
 	"JSON_OBJECT":                jsonObject,
 	"JSON_ARRAY":                 jsonArray,
