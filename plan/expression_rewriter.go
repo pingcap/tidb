@@ -131,7 +131,32 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 	return &expression.Constant{Value: d, RetType: c.GetType()}
 }
 
-// constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2).
+// popRowArg pops the first element and return the rest of row.
+// e.g. After this function (1, 2, 3) becomes (2, 3).
+func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Expression, err error) {
+	if f, ok := e.(*expression.ScalarFunction); ok {
+		args := f.GetArgs()
+		if len(args) == 2 {
+			return args[1].Clone(), nil
+		}
+		ret, err = expression.NewFunction(ctx, f.FuncName.L, f.GetType(), args[1:]...)
+		return ret, errors.Trace(err)
+	}
+	c, _ := e.(*expression.Constant)
+	ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
+	return
+}
+
+// 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
+// 2. If op are LE or GE, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
+// `IF( (a0 op b0) EQ 0, 0,
+//      IF ( (a1 op b1) EQ 0, 0, a2 op b2))`
+// 3. If op are LT or GT, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
+// `IF( a0 NE b0, a0 op b0,
+//      IF( a1 NE b1,
+//          a1 op b1,
+//          a2 op b2)
+// )`
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := getRowLen(l), getRowLen(r)
 	if lLen == 1 && rLen == 1 {
@@ -139,15 +164,42 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	} else if rLen != lLen {
 		return nil, ErrOperandColumns.GenByArgs(lLen)
 	}
-	funcs := make([]expression.Expression, lLen)
-	for i := 0; i < lLen; i++ {
-		var err error
-		funcs[i], err = er.constructBinaryOpFunction(getRowArg(l, i), getRowArg(r, i), op)
+	switch op {
+	case ast.EQ, ast.NE, ast.NullEQ:
+		funcs := make([]expression.Expression, lLen)
+		for i := 0; i < lLen; i++ {
+			var err error
+			funcs[i], err = er.constructBinaryOpFunction(getRowArg(l, i), getRowArg(r, i), op)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return expression.ComposeCNFCondition(er.ctx, funcs...), nil
+	default:
+		larg0, rarg0 := getRowArg(l, 0), getRowArg(r, 0)
+		var expr1, expr2, expr3 expression.Expression
+		if op == ast.LE || op == ast.GE {
+			expr1, _ = expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+			expr1, _ = expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expr1, expression.Zero)
+			expr2 = expression.Zero
+		} else if op == ast.LT || op == ast.GT {
+			expr1, _ = expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+			expr2, _ = expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+		}
+		l, err := popRowArg(er.ctx, l)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		r, err := popRowArg(er.ctx, r)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		expr3, err = er.constructBinaryOpFunction(l, r, op)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return expression.NewFunction(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), expr1, expr2, expr3)
 	}
-	return expression.ComposeCNFCondition(er.ctx, funcs...), nil
 }
 
 func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) LogicalPlan {
@@ -753,23 +805,14 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 	stkLen := len(er.ctxStack)
 	var function expression.Expression
 	switch v.Op {
-	case opcode.EQ, opcode.NE, opcode.NullEQ:
+	case opcode.EQ, opcode.NE, opcode.NullEQ, opcode.GT, opcode.GE, opcode.LT, opcode.LE:
 		function, er.err = er.constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
 			v.Op.String())
 	default:
 		lLen := getRowLen(er.ctxStack[stkLen-2])
 		rLen := getRowLen(er.ctxStack[stkLen-1])
-		switch v.Op {
-		case opcode.GT, opcode.GE, opcode.LT, opcode.LE:
-			if lLen != rLen {
-				er.err = ErrOperandColumns.GenByArgs(lLen)
-			}
-		default:
-			if lLen != 1 || rLen != 1 {
-				er.err = ErrOperandColumns.GenByArgs(1)
-			}
-		}
-		if er.err != nil {
+		if lLen != 1 || rLen != 1 {
+			er.err = ErrOperandColumns.GenByArgs(1)
 			return
 		}
 		function, er.err = expression.NewFunction(er.ctx, v.Op.String(), &v.Type, er.ctxStack[stkLen-2:]...)
