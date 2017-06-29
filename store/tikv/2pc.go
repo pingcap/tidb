@@ -60,14 +60,15 @@ func (ca twoPhaseCommitAction) MetricsTag() string {
 
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-	store     *tikvStore
-	txn       *tikvTxn
-	startTS   uint64
-	keys      [][]byte
-	mutations map[string]*pb.Mutation
-	lockTTL   uint64
-	commitTS  uint64
-	mu        struct {
+	store             *tikvStore
+	txn               *tikvTxn
+	startTS           uint64
+	keys              [][]byte
+	mutations         map[string]*pb.Mutation
+	lockTTL           uint64
+	commitTS          uint64
+	skipCheckForWrite bool
+	mu                struct {
 		sync.RWMutex
 		writtenKeys  [][]byte
 		committed    bool
@@ -141,14 +142,17 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	txnWriteKVCountHistogram.Observe(float64(len(keys)))
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
 
+	optSkipCheck := txn.us.GetOption(kv.SkipCheckForWrite)
+	skip, ok := optSkipCheck.(bool)
 	return &twoPhaseCommitter{
-		store:     txn.store,
-		txn:       txn,
-		startTS:   txn.StartTS(),
-		keys:      keys,
-		mutations: mutations,
-		lockTTL:   txnLockTTL(txn.startTime, size),
-		priority:  getTxnPriority(txn),
+		store:             txn.store,
+		txn:               txn,
+		startTS:           txn.StartTS(),
+		keys:              keys,
+		mutations:         mutations,
+		skipCheckForWrite: skip && ok,
+		lockTTL:           txnLockTTL(txn.startTime, size),
+		priority:          getTxnPriority(txn),
 	}, nil
 }
 
@@ -209,7 +213,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
-	if firstIsPrimary && (c.skipCheckForWrite() || action == actionCommit || action == actionCleanup) {
+	if firstIsPrimary && (c.skipCheckForWrite || action == actionCommit || action == actionCleanup) {
 		// primary should be committed/cleanup first
 		// primary should be prewrite first when skip_constraint_check is true
 		err = c.doActionOnBatches(bo, action, batches[:1])
@@ -324,12 +328,6 @@ func (c *twoPhaseCommitter) keySize(key []byte) int {
 	return len(key)
 }
 
-func (c *twoPhaseCommitter) skipCheckForWrite() bool {
-	optSkipCheck := c.txn.us.GetOption(kv.SkipCheckForWrite)
-	skip, ok := optSkipCheck.(bool)
-	return ok && skip
-}
-
 func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) error {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	for i, k := range batch.keys {
@@ -344,7 +342,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			PrimaryLock:         c.primary(),
 			StartVersion:        c.startTS,
 			LockTtl:             c.lockTTL,
-			SkipConstraintCheck: c.skipCheckForWrite(),
+			SkipConstraintCheck: c.skipCheckForWrite,
 		},
 	}
 	for {
