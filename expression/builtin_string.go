@@ -391,7 +391,6 @@ func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context
 	} else {
 		tp.Charset = charset.CharsetUTF8
 		tp.Collate = charset.CollationUTF8
-		tp.Flag ^= ^(uint(mysql.BinaryFlag))
 	}
 
 	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpInt)
