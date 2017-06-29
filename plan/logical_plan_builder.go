@@ -213,10 +213,10 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 }
 
 func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
-	b.optFlag = b.optFlag | flagPredicatePushDown
 	if join.Right == nil {
 		return b.buildResultSetNode(join.Left)
 	}
+	b.optFlag = b.optFlag | flagPredicatePushDown
 	leftPlan := b.buildResultSetNode(join.Left)
 	rightPlan := b.buildResultSetNode(join.Right)
 	leftAlias := extractTableAlias(leftPlan)
@@ -250,6 +250,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 		if joinPlan.preferMergeJoin && joinPlan.preferINLJ > 0 {
 			b.err = errors.New("Optimizer Hints is conflict")
+			return nil
 		}
 	}
 
@@ -266,6 +267,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 		if onExpr.IsCorrelated() {
 			b.err = errors.New("ON condition doesn't support subqueries yet")
+			return nil
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
 		joinPlan.attachOnConds(onCondition)

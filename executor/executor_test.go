@@ -887,6 +887,13 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1267"))
 	result = tk.MustQuery("select hex(unhex(1267))")
 	result.Check(testkit.Rows("1267"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a binary(8))")
+	tk.MustExec(`insert into t values('test')`)
+	result = tk.MustQuery("select hex(a) from t")
+	result.Check(testkit.Rows("7465737400000000"))
+	result = tk.MustQuery("select unhex(a) from t")
+	result.Check(testkit.Rows("<nil>"))
 
 	// select from_unixtime
 	result = tk.MustQuery("select from_unixtime(1451606400)")
@@ -1347,11 +1354,11 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
-	stmtNode, err = s.ParseOneStmt("create table t (a int)", "", "")
+	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
 	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
-	c.Check(stmt.OriginText(), Equals, "create table t (a int)")
+	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
 
 func (s *testSuite) TestPointGet(c *C) {
@@ -1386,10 +1393,7 @@ func (s *testSuite) TestPointGet(c *C) {
 func (s *testSuite) TestRow(c *C) {
 	// There exists a constant folding problem when the arguments of compare functions are Rows,
 	// the switch will be opened after the problem be fixed.
-	origin := expression.TurnOnNewExprEval
-	expression.TurnOnNewExprEval = false
 	defer func() {
-		expression.TurnOnNewExprEval = origin
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
@@ -1411,6 +1415,20 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1 1"))
 	result = tk.MustQuery("select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d))")
 	result.Check(testkit.Rows("1 1", "1 3", "2 1", "2 3"))
+	result = tk.MustQuery("select (1, 2, 3) < (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 3, 3)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 1, 4)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select (2, 3, 4) >= (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) = (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) != (2, 3, 4)")
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestColumnName(c *C) {

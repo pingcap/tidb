@@ -347,6 +347,11 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 // handleTableName looks up and sets the schema information and result fields for table name.
 func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
+		sessionVars := nr.Ctx.GetSessionVars()
+		if sessionVars.CurrentDB == "" {
+			nr.Err = errors.Trace(ErrNoDB)
+			return
+		}
 		tn.Schema = nr.DefaultSchema
 	}
 	ctx := nr.currentContext()
