@@ -83,37 +83,12 @@ func parsePathExprs(datums []types.Datum) ([]json.PathExpression, error) {
 }
 
 // createJSONFromDatums creates JSONs from Datums.
-func createJSONFromDatums(datums []types.Datum) ([]json.JSON, error) {
-	jsons := make([]json.JSON, 0, len(datums))
+func createJSONFromDatums(datums []types.Datum) (jsons []json.JSON, err error) {
+	jsons = make([]json.JSON, 0, len(datums))
 	for _, datum := range datums {
-		// TODO: Here semantic of creating JSON from datum is the same with types.compareMysqlJSON.
-		// But it's different from "CAST semantic" because for string, cast will parse it into
-		// JSON but here and compareMysqlJSON needs a JSON with the string as primitives.
-		// We should rewrite this as a function for here and compareMysqlJSON both can use it.
-		var j json.JSON
-		switch datum.Kind() {
-		case types.KindNull:
-			j = json.CreateJSON(nil)
-		case types.KindMysqlJSON:
-			j = datum.GetMysqlJSON()
-		case types.KindInt64, types.KindUint64:
-			j = json.CreateJSON(datum.GetInt64())
-		case types.KindFloat32, types.KindFloat64:
-			j = json.CreateJSON(datum.GetFloat64())
-		case types.KindMysqlDecimal:
-			f64, err := datum.GetMysqlDecimal().ToFloat64()
-			if err != nil {
-				return jsons, errors.Trace(err)
-			}
-			j = json.CreateJSON(f64)
-		case types.KindString, types.KindBytes:
-			j = json.CreateJSON(datum.GetString())
-		default:
-			s, err := datum.ToString()
-			if err != nil {
-				return jsons, errors.Trace(err)
-			}
-			j = json.CreateJSON(s)
+		j, err := datum.ToMysqlJSON()
+		if err != nil {
+			return jsons, errors.Trace(err)
 		}
 		jsons = append(jsons, j)
 	}
@@ -239,18 +214,40 @@ func JSONMerge(args []types.Datum, sc *variable.StatementContext) (d types.Datum
 
 // JSONObject creates a json from an ordered key-value slice.
 func JSONObject(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	if len(args)&1 == 0 {
-		// TODO: error 1582(42000)
-		err = errors.New("Incorrect parameter count")
+	if len(args)&1 == 1 {
+		err = errIncorrectParameterCount.GenByArgs("json_object")
 		return
 	}
-	// TODO: real logic.
+	var m = make(map[string]json.JSON, len(args)>>1)
+	var keyTp = types.NewFieldType(mysql.TypeVarchar)
+	for i := 0; i < len(args); i += 2 {
+		if args[i].Kind() == types.KindNull {
+			err = errors.New("JSON documents may not contain NULL member names")
+			return
+		}
+		key, err := args[i].ConvertTo(sc, keyTp)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		value, err := args[i+1].ToMysqlJSON()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		m[key.GetString()] = value
+	}
+	j := json.CreateJSON(m)
+	d.SetMysqlJSON(j)
 	return
 }
 
 // JSONArray creates a json from a slice.
 func JSONArray(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	// TODO: real logic.
+	jsons, err := createJSONFromDatums(args)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	j := json.CreateJSON(jsons)
+	d.SetMysqlJSON(j)
 	return
 }
 

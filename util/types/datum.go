@@ -635,33 +635,11 @@ func (d *Datum) compareMysqlSet(sc *variable.StatementContext, set Set) (int, er
 	}
 }
 
-// AsJSONPrimitive is similar to convertToMysqlJSON, except the
-// latter parses from string, but the former uses it as primitive.
-func (d *Datum) AsJSONPrimitive() (j json.JSON) {
-	switch d.Kind() {
-	case KindMysqlJSON:
-		j = d.x.(json.JSON)
-	case KindInt64, KindUint64:
-		i64 := d.GetInt64()
-		j = json.CreateJSON(i64)
-	case KindFloat32, KindFloat64:
-		f64 := d.GetFloat64()
-		j = json.CreateJSON(f64)
-	case KindMysqlDecimal:
-		f64, _ := d.GetMysqlDecimal().ToFloat64()
-		j = json.CreateJSON(f64)
-	case KindString, KindBytes:
-		s := d.GetString()
-		j = json.CreateJSON(s)
-	default:
-		s, _ := d.ToString()
-		j = json.CreateJSON(s)
-	}
-	return
-}
-
 func (d *Datum) compareMysqlJSON(sc *variable.StatementContext, target json.JSON) (int, error) {
-	var origin = d.AsJSONPrimitive()
+	origin, err := d.ToMysqlJSON()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	return json.CompareJSON(origin, target)
 }
 
@@ -1522,6 +1500,37 @@ func (d *Datum) ToBytes() ([]byte, error) {
 		}
 		return []byte(str), nil
 	}
+}
+
+// ToMysqlJSON is similar to convertToMysqlJSON, except the
+// latter parses from string, but the former uses it as primitive.
+func (d *Datum) ToMysqlJSON() (j json.JSON, err error) {
+	switch d.Kind() {
+	case KindNull:
+		j = json.CreateJSON(nil)
+	case KindMysqlJSON:
+		j = d.x.(json.JSON)
+	case KindInt64, KindUint64:
+		i64 := d.GetInt64()
+		j = json.CreateJSON(i64)
+	case KindFloat32, KindFloat64:
+		f64 := d.GetFloat64()
+		j = json.CreateJSON(f64)
+	case KindMysqlDecimal:
+		f64, _ := d.GetMysqlDecimal().ToFloat64()
+		j = json.CreateJSON(f64)
+	case KindString, KindBytes:
+		s := d.GetString()
+		j = json.CreateJSON(s)
+	default:
+		s, convErr := d.ToString()
+		if convErr != nil {
+			err = errors.Trace(convErr)
+			return
+		}
+		j = json.CreateJSON(s)
+	}
+	return
 }
 
 func invalidConv(d *Datum, tp byte) (Datum, error) {

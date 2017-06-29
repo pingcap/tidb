@@ -174,3 +174,69 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestJSONArray(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONArray]
+	tbl := []struct {
+		Input    []interface{}
+		Expected interface{}
+	}{
+		{[]interface{}{1}, `[1]`},
+		{[]interface{}{nil, "a", 3, `{"a": "b"}`}, `[null, "a", 3, "{\"a\": \"b\"}"]`},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		switch x := t.Expected.(type) {
+		case string:
+			j1, err := json.ParseFromString(x)
+			c.Assert(err, IsNil)
+			j2 := d.GetMysqlJSON()
+			cmp, err := json.CompareJSON(j1, j2)
+			c.Assert(err, IsNil)
+			c.Assert(cmp, Equals, 0)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONObject(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONObject]
+	tbl := []struct {
+		Input    []interface{}
+		Expected interface{}
+		Success  bool
+	}{
+		{[]interface{}{1, 2, 3}, nil, false},
+		{[]interface{}{1, 2, "hello", nil}, `{"1": 2, "hello": null}`, true},
+		{[]interface{}{nil, 2}, nil, false},
+
+		// It's because TiDB treats bool as integer.
+		{[]interface{}{1, true}, `{"1": 1}`, true},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+
+		if t.Success {
+			c.Assert(err, IsNil)
+			switch x := t.Expected.(type) {
+			case string:
+				j1, err := json.ParseFromString(x)
+				c.Assert(err, IsNil)
+				j2 := d.GetMysqlJSON()
+				cmp, err := json.CompareJSON(j1, j2)
+				c.Assert(err, IsNil)
+				c.Assert(cmp, Equals, 0)
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}
