@@ -802,6 +802,36 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery("select concat(null, a, b) from t")
 	result.Check(testkit.Rows("<nil>"))
 
+	// for upper
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f varchar(20))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", NULL)`)
+	result = tk.MustQuery("select upper(a), upper(b), upper(c), upper(d), upper(e), upper(f) from t")
+	result.Check(testkit.Rows("1 1.1 2017-01-01 12:01:01 12:01:01 ABCDEF <nil>"))
+	result = tk.MustQuery("select upper(null)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select upper(null) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select upper('aAa') from t")
+	result.Check(testkit.Rows("AAA"))
+	result = tk.MustQuery("select upper('a') from t")
+	result.Check(testkit.Rows("A"))
+
+	// for lower
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f varchar(20))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", NULL)`)
+	result = tk.MustQuery("select lower(a), lower(b), lower(c), lower(d), lower(e), lower(f) from t")
+	result.Check(testkit.Rows("1 1.1 2017-01-01 12:01:01 12:01:01 abcdef <nil>"))
+	result = tk.MustQuery("select lower(null)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select lower(null) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select lower('aAa') from t")
+	result.Check(testkit.Rows("aaa"))
+	result = tk.MustQuery("select lower('A') from t")
+	result.Check(testkit.Rows("a"))
+
 	// for ascii
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4))")
