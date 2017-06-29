@@ -949,7 +949,7 @@ func (b *builtinHexSig) eval(row []types.Datum) (d types.Datum, err error) {
 	switch args[0].Kind() {
 	case types.KindNull:
 		return d, nil
-	case types.KindString:
+	case types.KindString, types.KindBytes:
 		x, err := args[0].ToString()
 		if err != nil {
 			return d, errors.Trace(err)
