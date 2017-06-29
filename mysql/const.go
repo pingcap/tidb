@@ -197,6 +197,7 @@ const AllPrivMask = AllPriv - 1
 const (
 	// MaxDateWidth YYYY-MM-DD.
 	MaxDateWidth = 10
+	MaxBlobWidth = 16777216
 )
 
 // Priv2UserCol is the privilege to mysql.user table column name.

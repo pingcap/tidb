@@ -287,6 +287,20 @@ func (s *testEvaluatorSuite) TestRepeat(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "aa")
 
+	args = []interface{}{"a", uint64(16777217)}
+	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+
+	args = []interface{}{"a", uint64(16777216)}
+	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsFalse)
+
 	args = []interface{}{"a", int64(-1)}
 	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
 	c.Assert(err, IsNil)
