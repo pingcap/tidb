@@ -197,7 +197,7 @@ type concatFunctionClass struct {
 }
 
 func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	retType, argTps := c.inferType(args)
+	retType, argTps := inferType(args)
 	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -206,7 +206,8 @@ func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-func (c *concatFunctionClass) inferType(args []Expression) (*types.FieldType, []argTp) {
+// for concatFunctionClass.getFunction, concatWSFunctionClass.getFunction use
+func inferType(args []Expression) (*types.FieldType, []argTp) {
 	tps := make([]argTp, len(args))
 	existsBinStr, tp := false, mysql.TypeVarString
 	for i := 0; i < len(args); i++ {
@@ -248,44 +249,50 @@ type concatWSFunctionClass struct {
 }
 
 func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinConcatWSSig{newBaseBuiltinFunc(args, ctx)}
+	retType, argTps := inferType(args)
+	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	sig := &builtinConcatWSSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinConcatWSSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinConcatWSSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
-func (b *builtinConcatWSSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
+func (b *builtinConcatWSSig) evalString(row []types.Datum) (string, bool, error) {
+	args := b.getArgs()
+	strs := make([]string, 0, len(args))
 	var sep string
-	s := make([]string, 0, len(args))
-	for i, a := range args {
-		if a.IsNull() {
-			if i == 0 {
-				return d, nil
-			}
-			continue
-		}
-		ss, err := a.ToString()
+	for i, arg := range args {
+		val, isNull, err := arg.EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return d, errors.Trace(err)
+			return val, isNull, errors.Trace(err)
+		}
+
+		if isNull {
+			// If the separator is NULL, the result is NULL.
+			if i == 0 {
+				return val, isNull, nil
+			}
+			// CONCAT_WS() does not skip empty strings. However,
+			// it does skip any NULL values after the separator argument.
+			continue
 		}
 
 		if i == 0 {
-			sep = ss
+			sep = val
 			continue
 		}
-		s = append(s, ss)
+		strs = append(strs, val)
 	}
 
-	d.SetString(strings.Join(s, sep))
-	return d, nil
+	return strings.Join(strs, sep), false, nil
 }
 
 type leftFunctionClass struct {
