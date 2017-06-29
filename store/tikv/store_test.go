@@ -20,9 +20,11 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/kv"
 	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -332,3 +334,58 @@ func (c *mockPDClient) GetStore(ctx goctx.Context, storeID uint64) (*metapb.Stor
 }
 
 func (c *mockPDClient) Close() {}
+
+type checkRequestClient struct {
+	Client
+	priority pb.CommandPri
+}
+
+func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	if c.priority != req.Priority {
+		return nil, errors.New("request check error")
+	}
+
+	return c.Client.SendReq(ctx, addr, req)
+}
+
+func (s *testStoreSuite) TestRequestPriority(c *C) {
+	client := &checkRequestClient{
+		Client: s.store.client,
+	}
+	s.store.client = client
+
+	// Cover 2PC commit.
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	client.priority = pb.CommandPri_High
+	txn.SetOption(kv.Priority, kv.PriorityHigh)
+	err = txn.Set([]byte("key"), []byte("value"))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+
+	// Cover the basic Get request.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	client.priority = pb.CommandPri_Low
+	txn.SetOption(kv.Priority, kv.PriorityLow)
+	_, err = txn.Get([]byte("key"))
+	c.Assert(err, IsNil)
+
+	// A counter example.
+	client.priority = pb.CommandPri_Low
+	txn.SetOption(kv.Priority, kv.PriorityNormal)
+	_, err = txn.Get([]byte("key"))
+	// err is translated to "try again later" by backoffer, so doesn't check error value here.
+	c.Assert(err, NotNil)
+
+	// Cover Seek request.
+	client.priority = pb.CommandPri_High
+	txn.SetOption(kv.Priority, kv.PriorityHigh)
+	iter, err := txn.Seek([]byte("key"))
+	c.Assert(err, IsNil)
+	for iter.Valid() {
+		c.Assert(iter.Next(), IsNil)
+	}
+	iter.Close()
+}
