@@ -68,15 +68,17 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	groups, valid := tryToGetJoinGroup(p)
-	if valid {
-		e := joinReOrderSolver{allocator: p.allocator, ctx: p.ctx}
-		e.reorderJoin(groups, predicates)
-		newJoin := e.resultJoin
-		parent := p.parents[0]
-		newJoin.SetParents(parent)
-		parent.ReplaceChild(p, newJoin)
-		return newJoin.PredicatePushDown(predicates)
+	if !UseDAGPlanBuilder(p.ctx) { // close join reorder for new plan.
+		groups, valid := tryToGetJoinGroup(p)
+		if valid {
+			e := joinReOrderSolver{allocator: p.allocator, ctx: p.ctx}
+			e.reorderJoin(groups, predicates)
+			newJoin := e.resultJoin
+			parent := p.parents[0]
+			newJoin.SetParents(parent)
+			parent.ReplaceChild(p, newJoin)
+			return newJoin.PredicatePushDown(predicates)
+		}
 	}
 	var leftCond, rightCond []expression.Expression
 	retPlan = p
@@ -123,6 +125,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.OtherConditions = otherCond
 		leftCond = leftPushCond
 		rightCond = rightPushCond
+	}
+	for _, eqCond := range p.EqualConditions {
+		p.LeftJoinKeys = append(p.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
+		p.RightJoinKeys = append(p.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
 	leftRet, _, err1 := leftPlan.PredicatePushDown(leftCond)
 	if err1 != nil {

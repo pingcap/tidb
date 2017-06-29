@@ -93,6 +93,48 @@ import (
                              // lengths up to 16383, and so on...
 */
 
+const (
+	typeCodeLen      int = 1
+	compoundCountLen     = 4
+	compoundSizeLen      = 4
+	keyOffsetLen         = 4
+	keyLengthLen         = 2
+	valueInlineLen       = 4
+)
+
+// PeekBytesAsJSON trys to peek some bytes from b, until
+// we can deserialize a JSON from those bytes.
+func PeekBytesAsJSON(b []byte) (n int, err error) {
+	if len(b) <= 0 {
+		err = errors.New("Cant peek from empty bytes")
+		return
+	}
+	switch c := TypeCode(b[0]); c {
+	case typeCodeObject, typeCodeArray:
+		if len(b) >= typeCodeLen+compoundCountLen+compoundSizeLen {
+			var size uint32
+			start := typeCodeLen + compoundCountLen
+			end := typeCodeLen + compoundCountLen + compoundSizeLen
+			binary.Read(bytes.NewReader(b[start:end]), binary.LittleEndian, &size)
+			n = int(size) + typeCodeLen
+			return
+		}
+	case typeCodeString:
+		var size uint64
+		reader := bytes.NewReader(b[typeCodeLen:])
+		size, err = binary.ReadUvarint(reader)
+		if err == nil {
+			n = int(size) + int(reader.Size()) - int(reader.Len()) + typeCodeLen
+			return
+		}
+	case typeCodeInt64, typeCodeFloat64, typeCodeLiteral:
+		n = jsonTypeCodeLength[TypeCode(c)] + typeCodeLen
+		return
+	}
+	err = errors.New("Invalid JSON bytes")
+	return
+}
+
 // Serialize means serialize itself into bytes.
 func Serialize(j JSON) []byte {
 	var buffer = new(bytes.Buffer)
@@ -202,11 +244,11 @@ func encodeJSONObject(m map[string]JSON, buffer *bytes.Buffer) {
 	// object ::= element-count size key-entry* value-entry* key* value*
 	// key-entry ::= key-offset key-length
 	var countAndSize = make([]uint32, 2)
-	var countAndSizeLen = len(countAndSize) * 4
+	var countAndSizeLen = compoundCountLen + compoundSizeLen
 	var keySlice = getSortedKeys(m)
 
-	var keyEntrysLen = (4 + 2) * len(m)
-	var valueEntrysLen = (1 + 4) * len(m)
+	var keyEntrysLen = (keyOffsetLen + keyLengthLen) * len(m)
+	var valueEntrysLen = (typeCodeLen + valueInlineLen) * len(m)
 	var keyEntrys = new(bytes.Buffer)
 	var valueEntrys = new(bytes.Buffer)
 	var keys = new(bytes.Buffer)
@@ -268,9 +310,9 @@ func decodeJSONObject(m *map[string]JSON, data []byte) (err error) {
 		var key = string(keyBuffer)
 		var value JSON
 		typeLen, _ := jsonTypeCodeLength[TypeCode(valueTypes[i])]
-		if typeLen >= 0 && typeLen <= 4 {
+		if typeLen >= 0 && typeLen <= valueInlineLen {
 			var inline = valueOffsets[i]
-			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: 4, Cap: 4}
+			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: valueInlineLen, Cap: valueInlineLen}
 			var buf = *(*[]byte)(unsafe.Pointer(&hdr))
 			value, err = decode(valueTypes[i], buf)
 		} else {
@@ -287,9 +329,9 @@ func decodeJSONObject(m *map[string]JSON, data []byte) (err error) {
 func encodeJSONArray(a []JSON, buffer *bytes.Buffer) {
 	// array ::= element-count size value-entry* value*
 	var countAndSize = make([]uint32, 2)
-	var countAndSizeLen = len(countAndSize) * 4
+	var countAndSizeLen = compoundCountLen + compoundSizeLen
 
-	var valueEntrysLen = (1 + 4) * len(a)
+	var valueEntrysLen = (typeCodeLen + valueInlineLen) * len(a)
 	var valueEntrys = new(bytes.Buffer)
 	var values = new(bytes.Buffer)
 	for _, value := range a {
@@ -323,9 +365,9 @@ func decodeJSONArray(a *[]JSON, data []byte) (err error) {
 	for i := 0; i < int(countAndSize[0]); i++ {
 		var value JSON
 		typeLen, _ := jsonTypeCodeLength[TypeCode(valueTypes[i])]
-		if typeLen >= 0 && typeLen <= 4 {
+		if typeLen >= 0 && typeLen <= valueInlineLen {
 			var inline = valueOffsets[i]
-			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: 4, Cap: 4}
+			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: valueInlineLen, Cap: valueInlineLen}
 			var buf = *(*[]byte)(unsafe.Pointer(&hdr))
 			value, err = decode(valueTypes[i], buf)
 		} else {
@@ -365,7 +407,7 @@ func pushValueEntry(value JSON, valueEntrys *bytes.Buffer, values *bytes.Buffer,
 	valueEntrys.WriteByte(byte(typeCode))
 
 	typeLen, _ := jsonTypeCodeLength[typeCode]
-	if typeLen > 0 && typeLen <= 4 {
+	if typeLen > 0 && typeLen <= valueInlineLen {
 		// If the value has length in (0, 4], it could be inline here.
 		// And padding 0x00 to 4 bytes if needed.
 		pushInlineValue(valueEntrys, value)
@@ -390,7 +432,7 @@ func pushInlineValue(buffer *bytes.Buffer, value JSON) {
 		panic(msg)
 	}
 	var newLen = buffer.Len()
-	for i := 0; i < 4-(newLen-oldLen); i++ {
+	for i := 0; i < valueInlineLen-(newLen-oldLen); i++ {
 		buffer.WriteByte(0x00)
 	}
 }

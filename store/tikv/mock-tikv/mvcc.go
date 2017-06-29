@@ -95,9 +95,9 @@ func (e *mvccEntry) lockErr() error {
 	}
 }
 
-func (e *mvccEntry) Get(ts uint64) ([]byte, error) {
-	if e.lock != nil {
-		if e.lock.startTS <= ts {
+func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
+	if isoLevel == kvrpcpb.IsolationLevel_SI {
+		if e.lock != nil && e.lock.startTS <= ts {
 			return nil, e.lockErr()
 		}
 	}
@@ -222,19 +222,19 @@ func NewMvccStore() *MvccStore {
 }
 
 // Get reads a key by ts.
-func (s *MvccStore) Get(key []byte, startTS uint64) ([]byte, error) {
+func (s *MvccStore) Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
 	s.RLock()
 	defer s.RUnlock()
 
-	return s.get(NewMvccKey(key), startTS)
+	return s.get(NewMvccKey(key), startTS, isoLevel)
 }
 
-func (s *MvccStore) get(key MvccKey, startTS uint64) ([]byte, error) {
+func (s *MvccStore) get(key MvccKey, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
 	entry := s.tree.Get(newEntry(key))
 	if entry == nil {
 		return nil, nil
 	}
-	return entry.(*mvccEntry).Get(startTS)
+	return entry.(*mvccEntry).Get(startTS, isoLevel)
 }
 
 // A Pair is a KV pair read from MvccStore or an error if any occurs.
@@ -245,13 +245,13 @@ type Pair struct {
 }
 
 // BatchGet gets values with keys and ts.
-func (s *MvccStore) BatchGet(ks [][]byte, startTS uint64) []Pair {
+func (s *MvccStore) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
 	s.RLock()
 	defer s.RUnlock()
 
 	var pairs []Pair
 	for _, k := range ks {
-		val, err := s.get(NewMvccKey(k), startTS)
+		val, err := s.get(NewMvccKey(k), startTS, isoLevel)
 		if val == nil && err == nil {
 			continue
 		}
@@ -270,7 +270,7 @@ func regionContains(startKey []byte, endKey []byte, key []byte) bool {
 }
 
 // Scan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey.
-func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
+func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
 	s.RLock()
 	defer s.RUnlock()
 
@@ -286,7 +286,7 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 		if !regionContains(startKey, endKey, k) {
 			return false
 		}
-		val, err := s.get(k, startTS)
+		val, err := s.get(k, startTS, isoLevel)
 		if val != nil || err != nil {
 			pairs = append(pairs, Pair{
 				Key:   k.Raw(),
@@ -302,7 +302,7 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 
 // ReverseScan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey
 // in descending order.
-func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
+func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
 	s.RLock()
 	defer s.RUnlock()
 
@@ -321,7 +321,7 @@ func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint
 		if bytes.Compare(k, startKey) < 0 {
 			return false
 		}
-		val, err := s.get(k, startTS)
+		val, err := s.get(k, startTS, isoLevel)
 		if val != nil || err != nil {
 			pairs = append(pairs, Pair{
 				Key:   k.Raw(),
