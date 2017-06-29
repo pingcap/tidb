@@ -6443,12 +6443,15 @@ LinesTerminated:
  *********************************************************************/
 
 UnlockTablesStmt:
-	"UNLOCK" "TABLES"
-	{}
+	"UNLOCK" TablesTerminalSym {}
 
 LockTablesStmt:
-	"LOCK" "TABLES" TableLockList
+	"LOCK" TablesTerminalSym TableLockList
 	{}
+	
+TablesTerminalSym:
+	"TABLES"
+|	"TABLE"
 
 TableLock:
 	TableName LockType

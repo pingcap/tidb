@@ -14,11 +14,11 @@
 package varsutil
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
