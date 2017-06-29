@@ -53,65 +53,27 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context, allocator
 // getPushedProp will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
-func (p *Projection) getPushedProp(prop *requiredProp) (*requiredProp, bool) {
-	newProp := &requiredProp{taskTp: rootTaskType}
+func (p *Projection) getPushedProp(prop *requiredProp) []*requiredProp {
 	if prop.isEmpty() {
-		return newProp, false
+		return nil
 	}
+	newProp := &requiredProp{taskTp: rootTaskType}
 	newCols := make([]*expression.Column, 0, len(prop.cols))
 	for _, col := range prop.cols {
 		idx := p.schema.ColumnIndex(col)
 		if idx == -1 {
-			return newProp, false
+			return nil
 		}
 		switch expr := p.Exprs[idx].(type) {
 		case *expression.Column:
 			newCols = append(newCols, expr)
 		case *expression.ScalarFunction:
-			return newProp, false
+			return nil
 		}
 	}
 	newProp.cols = newCols
 	newProp.desc = prop.desc
-	return newProp, true
-}
-
-// convert2NewPhysicalPlan implements PhysicalPlan interface.
-// If the Projection maps a scalar function to a sort column, it will refuse the prop.
-// TODO: We can analyze the function dependence to propagate the required prop. e.g For a + 1 as b , we can take the order
-// of b to a.
-func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if task != nil {
-		return task, nil
-	}
-	if prop.taskTp != rootTaskType {
-		// Projection cannot be pushed down currently, it can only return rootTask.
-		return invalidTask, p.storeTask(prop, invalidTask)
-	}
-	// enforceProperty task.
-	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	task = p.attach2Task(task)
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
-
-	newProp, canPassProp := p.getPushedProp(prop)
-	if canPassProp {
-		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		orderedTask = p.attach2Task(orderedTask)
-		if orderedTask.cost() < task.cost() {
-			task = orderedTask
-		}
-	}
-	return task, p.storeTask(prop, task)
+	return []*requiredProp{newProp}
 }
 
 // joinKeysMatchIndex checks if all keys match columns in index.
@@ -530,6 +492,7 @@ func (p *Limit) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+	// look up the task map
 	task, err := p.getTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -537,28 +500,44 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, err
 	if task != nil {
 		return task, nil
 	}
+	task = invalidTask
 	if prop.taskTp != rootTaskType {
-		return invalidTask, p.storeTask(prop, invalidTask)
+		// Currently all plan cannot totally push down.
+		return task, p.storeTask(prop, task)
 	}
+	// Now we only consider rootTask.
 	if len(p.basePlan.children) == 0 {
+		// When the children length is 0, we process it specially.
 		task = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
-	} else {
-		// enforce branch
-		task, err = p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		task = p.basePlan.self.(PhysicalPlan).attach2Task(task)
+		task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
+		return task, p.storeTask(prop, task)
 	}
-	task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
-	if !prop.isEmpty() && len(p.basePlan.children) > 0 {
-		orderedTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(prop)
+	// Else we suppose it only has one child.
+	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
+		// We consider to add enforcer firstly.
+		enforceTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		orderedTask = p.basePlan.self.(PhysicalPlan).attach2Task(orderedTask)
-		if orderedTask.cost() < task.cost() {
-			task = orderedTask
+		enforceTask = pp.attach2Task(enforceTask)
+		enforceTask = prop.enforceProperty(enforceTask, p.basePlan.ctx, p.basePlan.allocator)
+		if enforceTask.cost() < task.cost() {
+			task = enforceTask
+		}
+		if prop.isEmpty() {
+			continue
+		}
+		// TODO: We should consider result task types.
+		newProps := pp.getPushedProp(prop)
+		for _, newProp := range newProps {
+			orderedTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			orderedTask = pp.attach2Task(orderedTask)
+			if orderedTask.cost() < task.cost() {
+				task = orderedTask
+			}
 		}
 	}
 	return task, p.storeTask(prop, task)
@@ -1009,4 +988,14 @@ func (p *LogicalApply) convert2NewPhysicalPlan(prop *requiredProp) (task, error)
 	}
 	task = prop.enforceProperty(newTask, p.ctx, p.allocator)
 	return task, p.storeTask(prop, task)
+}
+
+func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
+	np := p.basePlan.self.(PhysicalPlan).Copy()
+	return []PhysicalPlan{np}
+}
+
+func (p *basePhysicalPlan) getPushedProp(prop *requiredProp) []*requiredProp {
+	// By default, physicalPlan can always match the orders.
+	return []*requiredProp{prop}
 }
