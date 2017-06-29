@@ -150,7 +150,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 		startTS:           txn.StartTS(),
 		keys:              keys,
 		mutations:         mutations,
-		skipCheckForWrite: skip && ok,
+		skipCheckForWrite: ok && skip,
 		lockTTL:           txnLockTTL(txn.startTime, size),
 		priority:          getTxnPriority(txn),
 	}, nil
