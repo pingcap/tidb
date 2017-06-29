@@ -408,20 +408,21 @@ type builtinRepeatSig struct {
 // eval evals a builtinRepeatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
 func (b *builtinRepeatSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
 
-	num, isNull, err := b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	num, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
 	if num < 1 {
 		return "", false, nil
 	}
-	if num > 0x7FFFFFFF {
-		num = 0x7FFFFFFF
+	if num > math.MaxInt32 {
+		num = math.MaxInt32
 	}
 
 	if int64(len(str)) > int64(b.tp.Flen)/num {
