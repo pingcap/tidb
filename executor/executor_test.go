@@ -892,7 +892,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 	tk.MustExec(`insert into t values('test')`)
 	result = tk.MustQuery("select hex(a) from t")
 	result.Check(testkit.Rows("7465737400000000"))
-  result = tk.MustQuery("select unhex(a) from t")
+	result = tk.MustQuery("select unhex(a) from t")
 	result.Check(testkit.Rows("<nil>"))
 
 	// select from_unixtime
