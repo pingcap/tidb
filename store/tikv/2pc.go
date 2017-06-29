@@ -209,8 +209,9 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
-	if firstIsPrimary && (action == actionCommit || action == actionCleanup) {
-		// primary should be committed/cleanup first.
+	if firstIsPrimary && (c.skipCheckForWrite() || action == actionCommit || action == actionCleanup) {
+		// primary should be committed/cleanup first
+		// primary should be prewrite first when skip_constraint_check is true
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
 			return errors.Trace(err)
@@ -323,17 +324,18 @@ func (c *twoPhaseCommitter) keySize(key []byte) int {
 	return len(key)
 }
 
+func (c *twoPhaseCommitter) skipCheckForWrite() bool {
+	optSkipCheck := c.txn.us.GetOption(kv.SkipCheckForWrite)
+	skip, ok := optSkipCheck.(bool)
+	return ok && skip
+}
+
 func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) error {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	for i, k := range batch.keys {
 		mutations[i] = c.mutations[string(k)]
 	}
 
-	skipCheck := false
-	optSkipCheck := c.txn.us.GetOption(kv.SkipCheckForWrite)
-	if skip, ok := optSkipCheck.(bool); ok && skip {
-		skipCheck = true
-	}
 	req := &tikvrpc.Request{
 		Type:     tikvrpc.CmdPrewrite,
 		Priority: c.priority,
@@ -342,7 +344,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			PrimaryLock:         c.primary(),
 			StartVersion:        c.startTS,
 			LockTtl:             c.lockTTL,
-			SkipConstraintCheck: skipCheck,
+			SkipConstraintCheck: c.skipCheckForWrite(),
 		},
 	}
 	for {
