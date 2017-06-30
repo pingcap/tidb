@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
@@ -598,7 +597,8 @@ type InsertValues struct {
 	Setlist   []*expression.Assignment
 	IsPrepare bool
 
-	GenValues *plan.InsertGeneratedColumns
+	GenColumns []*ast.ColumnName
+	GenExprs   []expression.Expression
 }
 
 // InsertExec represents an insert executor.
@@ -731,10 +731,8 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		for _, v := range e.Setlist {
 			columns = append(columns, v.Col.ColName.O)
 		}
-		if e.GenValues != nil {
-			for _, v := range e.GenValues.Setlist {
-				columns = append(columns, v.Col.ColName.O)
-			}
+		for _, v := range e.GenColumns {
+			columns = append(columns, v.Name.O)
 		}
 		cols, err = table.FindCols(tableCols, columns)
 		if err != nil {
@@ -743,25 +741,22 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		if len(cols) == 0 {
 			return nil, errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
 		}
-	} else {
+	} else if len(e.Columns) > 0 {
 		// Process `name` type column.
 		columns := make([]string, 0, len(e.Columns))
 		for _, v := range e.Columns {
 			columns = append(columns, v.Name.O)
 		}
-		if e.GenValues != nil {
-			for _, v := range e.GenValues.Columns {
-				columns = append(columns, v.Name.O)
-			}
+		for _, v := range e.GenColumns {
+			columns = append(columns, v.Name.O)
 		}
 		cols, err = table.FindCols(tableCols, columns)
 		if err != nil {
 			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
-		// If cols are empty, use all columns instead.
-		if len(cols) == 0 {
-			cols = tableCols
-		}
+	} else {
+		// If e.Columns are empty, use all columns instead.
+		cols = tableCols
 	}
 
 	// Check column whether is specified only once.
@@ -784,20 +779,10 @@ func (e *InsertValues) fillValueList() error {
 		}
 		e.Lists = append(e.Lists, l)
 	}
-	if e.GenValues != nil && len(e.GenValues.Setlist) > 0 {
-		if len(e.GenValues.Lists) > 0 {
-			return errors.Errorf("INSERT INTO %s: set type should not use values", e.Table)
-		}
-		l := make([]expression.Expression, 0, len(e.GenValues.Setlist))
-		for _, v := range e.GenValues.Setlist {
-			l = append(l, v.Expr)
-		}
-		e.GenValues.Lists = append(e.GenValues.Lists, l)
-	}
 	return nil
 }
 
-func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, cols []*table.Column) error {
+func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCount int, num int, cols []*table.Column) error {
 	// TODO: This check should be done in plan builder.
 	if insertValueCount != valueCount {
 		// "insert into t values (), ()" is valid.
@@ -810,8 +795,18 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	if valueCount == 0 && len(e.Columns) > 0 {
 		// "insert into t (c1) values ()" is not valid.
 		return ErrWrongValueCountOnRow.GenByArgs(num + 1)
-	} else if valueCount > 0 && valueCount != len(cols) {
-		return ErrWrongValueCountOnRow.GenByArgs(num + 1)
+	} else if valueCount > 0 {
+		explicitSetLen := 0
+		if len(e.Columns) != 0 {
+			explicitSetLen = len(e.Columns)
+		} else {
+			explicitSetLen = len(e.Setlist)
+		}
+		if explicitSetLen > 0 && valueCount+genColsCount != len(cols) {
+			return ErrWrongValueCountOnRow.GenByArgs(num + 1)
+		} else if explicitSetLen == 0 && valueCount != len(cols) {
+			return ErrWrongValueCountOnRow.GenByArgs(num + 1)
+		}
 	}
 	return nil
 }
@@ -824,14 +819,8 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 
 	rows = make([][]types.Datum, len(e.Lists))
 	length := len(e.Lists[0])
-	if e.GenValues != nil {
-		length += len(e.GenValues.Lists[0])
-	}
 	for i, list := range e.Lists {
-		if e.GenValues != nil {
-			list = append(list, e.GenValues.Lists[i]...)
-		}
-		if err = e.checkValueCount(length, len(list), i, cols); err != nil {
+		if err = e.checkValueCount(length, len(list), len(e.GenColumns), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
 		e.currRow = int64(i)
@@ -844,9 +833,8 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 }
 
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression) ([]types.Datum, error) {
-	length := len(e.Lists[0]) // It's length of elements coming from values(...) explicitly.
-	vals := make([]types.Datum, length)
-	for i, expr := range list[0:length] {
+	vals := make([]types.Datum, len(e.Lists[0]))
+	for i, expr := range list {
 		val, err := expr.Eval(nil)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -856,18 +844,6 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 	datums, err := e.fillRowData(cols, vals, false)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	// For generated column, we should eval expr with a datum list
-	// which has same schema with e.Table. And, we can eval them one
-	// by one, because they can only refer generated columns occurring
-	// earilier in the table.
-	for i, expr := range list[length:] {
-		val, err := expr.Eval(datums)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		offset := cols[length+i].Offset
-		datums[offset] = val
 	}
 	return datums, nil
 }
@@ -912,6 +888,14 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 	}
 	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
 		return nil, errors.Trace(err)
+	}
+	for i, expr := range e.GenExprs {
+		val, err := expr.Eval(row)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		offset := cols[len(vals)+i].Offset
+		row[offset] = val
 	}
 	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
 		return nil, errors.Trace(err)

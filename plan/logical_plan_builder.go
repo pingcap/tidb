@@ -1310,6 +1310,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
 		modifyColumns[columnFullName] = struct{}{}
 	}
+	tableAsName := extractTableAsNameForUpdate(p)
 	// If columnes in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
@@ -1325,16 +1326,18 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
 				return nil, nil
 			}
-			if colInfo.GeneratedStored || tableInfo.ColumnIsInIndex(colInfo) {
-				virtualAssignments = append(virtualAssignments, &ast.Assignment{
-					Column: &ast.ColumnName{
-						Schema: tn.Schema,
-						Table:  tn.Name,
-						Name:   colInfo.Name,
-					},
-					Expr: table.Cols()[i].GeneratedExpr,
-				})
+
+			var sName, tName model.CIStr
+			if asName, ok := tableAsName[tableInfo]; ok {
+				tName = asName
+			} else {
+				sName = tn.Schema
+				tName = tn.Name
 			}
+			virtualAssignments = append(virtualAssignments, &ast.Assignment{
+				Column: &ast.ColumnName{Schema: sName, Table: tName, Name: colInfo.Name},
+				Expr:   table.Cols()[i].GeneratedExpr,
+			})
 		}
 	}
 
@@ -1372,6 +1375,21 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
 	}
 	return newList, p
+}
+
+// extractTableAsNameForUpdate extracts tables' name alias for update.
+func extractTableAsNameForUpdate(p Plan) (asNames map[*model.TableInfo]model.CIStr) {
+	asNames = make(map[*model.TableInfo]model.CIStr)
+	if x, ok := p.(*DataSource); ok {
+		asNames[x.tableInfo] = *x.TableAsName
+	} else {
+		for _, child := range p.Children() {
+			for k, v := range extractTableAsNameForUpdate(child) {
+				asNames[k] = v
+			}
+		}
+	}
+	return
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {

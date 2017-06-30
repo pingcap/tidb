@@ -112,8 +112,8 @@ type Simple struct {
 // We resolve generation expressions in plan, and eval those in executor.
 type InsertGeneratedColumns struct {
 	Columns []*ast.ColumnName
-	Lists   [][]expression.Expression
-	Setlist []*expression.Assignment
+	Exprs   []expression.Expression
+	OnDups  []*expression.Assignment
 }
 
 // Insert represents an insert plan.
@@ -133,7 +133,7 @@ type Insert struct {
 	Priority  mysql.PriorityEnum
 	Ignore    bool
 
-	GenCols *InsertGeneratedColumns
+	GenCols InsertGeneratedColumns
 }
 
 // AnalyzePKTask is used for analyze pk. Used only when pk is handle.

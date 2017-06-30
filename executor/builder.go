@@ -281,11 +281,12 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	ivs := &InsertValues{
-		ctx:       b.ctx,
-		Columns:   v.Columns,
-		Lists:     v.Lists,
-		Setlist:   v.Setlist,
-		GenValues: v.GenCols,
+		ctx:        b.ctx,
+		Columns:    v.Columns,
+		Lists:      v.Lists,
+		Setlist:    v.Setlist,
+		GenColumns: v.GenCols.Columns,
+		GenExprs:   v.GenCols.Exprs,
 	}
 	if len(v.Children()) > 0 {
 		ivs.SelectExec = b.build(v.Children()[0])
@@ -296,7 +297,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	}
 	insert := &InsertExec{
 		InsertValues: ivs,
-		OnDuplicate:  v.OnDuplicate,
+		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDups...),
 		Priority:     v.Priority,
 		Ignore:       v.Ignore,
 	}
