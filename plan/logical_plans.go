@@ -81,6 +81,11 @@ type LogicalJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 
+	LeftJoinKeys    []*expression.Column
+	RightJoinKeys   []*expression.Column
+	leftProperties  [][]*expression.Column
+	rightProperties [][]*expression.Column
+
 	// DefaultValues is only used for outer join, which stands for the default values when the outer table cannot find join partner
 	// instead of null padding.
 	DefaultValues []types.Datum
@@ -157,6 +162,8 @@ type LogicalAggregation struct {
 
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
+
+	possibleProperties [][]*expression.Column
 }
 
 func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {

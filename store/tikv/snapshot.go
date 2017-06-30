@@ -40,6 +40,7 @@ type tikvSnapshot struct {
 	store          *tikvStore
 	version        kv.Version
 	isolationLevel kv.IsoLevel
+	priority       pb.CommandPri
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -48,6 +49,7 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 		store:          store,
 		version:        ver,
 		isolationLevel: kv.SI,
+		priority:       pb.CommandPri_Normal,
 	}
 }
 
@@ -121,7 +123,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 	pending := batch.keys
 	for {
 		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdBatchGet,
+			Type:     tikvrpc.CmdBatchGet,
+			Priority: s.priority,
 			BatchGet: &pb.BatchGetRequest{
 				Keys:    pending,
 				Version: s.version.Ver,
@@ -198,7 +201,8 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, pbIsolationLevel(s.isolationLevel))
 
 	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGet,
+		Type:     tikvrpc.CmdGet,
+		Priority: s.priority,
 		Get: &pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
