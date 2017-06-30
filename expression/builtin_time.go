@@ -638,9 +638,20 @@ func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err err
 		}
 	}
 
-	t, err := convertTimeToMysqlTime(time.Now(), fsp)
+	// This would consider "timestamp" session variable.
+	now, err := getSystemTimestamp(ctx)
 	if err != nil {
 		return d, errors.Trace(err)
+	}
+	tr, err := types.RoundFrac(now, int(fsp))
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	t := types.Time{
+		Type: mysql.TypeDatetime,
+		Time: types.FromGoTime(tr),
+		Fsp:  fsp,
 	}
 
 	d.SetMysqlTime(t)
@@ -1205,7 +1216,20 @@ func (b *builtinSysDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
 	// But here we can just think they are the same because we don't support stored function
 	// and trigger now.
-	return builtinNow(args, b.ctx)
+	fsp := 0
+	sc := b.ctx.GetSessionVars().StmtCtx
+	if len(args) == 1 && !args[0].IsNull() {
+		if fsp, err = checkFsp(sc, args[0]); err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+
+	t, err := convertTimeToMysqlTime(time.Now(), fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlTime(t)
+	return
 }
 
 type currentDateFunctionClass struct {

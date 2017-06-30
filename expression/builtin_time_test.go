@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -473,6 +474,18 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		_, err = f.eval(nil)
 		c.Assert(err, NotNil)
 	}
+
+	// Test that timestamp variable may affect the result of Now() builtin function.
+	varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(1234))
+	fc := funcs[ast.Now]
+	f, err := fc.getFunction(datumsToConstants(nil), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	result, err := v.ToString()
+	c.Assert(err, IsNil)
+	c.Assert(result, Equals, "1970-01-01 08:20:34")
+	varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(0))
 }
 
 func (s *testEvaluatorSuite) TestIsDuration(c *C) {
