@@ -604,15 +604,18 @@ type builtinStrcmpSig struct {
 // eval evals a builtinStrcmpSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
 func (b *builtinStrcmpSig) evalInt(row []types.Datum) (int64, bool, error) {
-	var left, right string
-	var isNull bool
-	var err error
+	var (
+		left, right string
+		isNull      bool
+		err         error
+	)
 
-	left, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	left, isNull, err = b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	right, isNull, err = b.args[1].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	right, isNull, err = b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
