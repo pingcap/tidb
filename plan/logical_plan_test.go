@@ -381,12 +381,12 @@ func mockContext() context.Context {
 
 func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 	statsTbl := &statistics.Table{
-		TableID: tbl.ID,
-		Count:   rowCount,
-		ColInfo: tbl.Columns,
+		TableID:   tbl.ID,
+		Count:     rowCount,
+		ColInfo:   tbl.Columns,
 		IndexInfo: tbl.Indices,
-		Columns: make(map[int64]*statistics.Column, len(tbl.Columns)),
-		Indices: make(map[int64]*statistics.Index, len(tbl.Indices)),
+		Columns:   make(map[int64]*statistics.Column, len(tbl.Columns)),
+		Indices:   make(map[int64]*statistics.Index, len(tbl.Indices)),
 	}
 	return statsTbl
 }
