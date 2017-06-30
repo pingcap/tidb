@@ -57,16 +57,17 @@ func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *mod
 // calculateGeneratedColumns calculates all virtual generated columns, with such arguments:
 //  cols is the collection of columns of vs;
 //  gvs's keys are index in cols, and the values are generation expressions.
-func calculateGeneratedColumns(cols []*model.ColumnInfo, gvs map[int]expression.Expression, vs []types.Datum) (err error) {
+func calculateGeneratedColumns(cols []*model.ColumnInfo, gvs map[int]expression.Expression, vs []types.Datum) error {
 	for i, col := range cols {
 		if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
-			vs[i], err = gvs[col.Offset].Eval(vs)
+			val, err := gvs[col.Offset].Eval(vs)
 			if err != nil {
-				return
+				return errors.Trace(err)
 			}
+			vs[i] = val
 		}
 	}
-	return
+	return nil
 }
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
@@ -992,7 +993,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			return &Row{Data: values}, nil
 		}
 		// Calculate generated columns here.
-		if calculateGeneratedColumns(e.Columns, e.genValues, values) != nil {
+		if err := calculateGeneratedColumns(e.Columns, e.genValues, values); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return resultRowToRow(e.table, h, values, e.asName), nil
