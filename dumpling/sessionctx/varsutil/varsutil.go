@@ -34,7 +34,7 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	if sysVar == nil {
 		return "", variable.UnknownSystemVar.GenByArgs(key)
 	}
-	// For virtual system varaibles:
+	// For virtual system variables:
 	switch sysVar.Name {
 	case variable.TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), nil
