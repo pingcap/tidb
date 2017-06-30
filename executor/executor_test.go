@@ -887,6 +887,13 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1267"))
 	result = tk.MustQuery("select hex(unhex(1267))")
 	result.Check(testkit.Rows("1267"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a binary(8))")
+	tk.MustExec(`insert into t values('test')`)
+	result = tk.MustQuery("select hex(a) from t")
+	result.Check(testkit.Rows("7465737400000000"))
+	result = tk.MustQuery("select unhex(a) from t")
+	result.Check(testkit.Rows("<nil>"))
 
 	// select from_unixtime
 	result = tk.MustQuery("select from_unixtime(1451606400)")
@@ -1411,11 +1418,11 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
-	stmtNode, err = s.ParseOneStmt("create table t (a int)", "", "")
+	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
 	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
-	c.Check(stmt.OriginText(), Equals, "create table t (a int)")
+	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
 
 func (s *testSuite) TestPointGet(c *C) {
@@ -1450,10 +1457,7 @@ func (s *testSuite) TestPointGet(c *C) {
 func (s *testSuite) TestRow(c *C) {
 	// There exists a constant folding problem when the arguments of compare functions are Rows,
 	// the switch will be opened after the problem be fixed.
-	origin := expression.TurnOnNewExprEval
-	expression.TurnOnNewExprEval = false
 	defer func() {
-		expression.TurnOnNewExprEval = origin
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
@@ -1475,6 +1479,20 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1 1"))
 	result = tk.MustQuery("select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d))")
 	result.Check(testkit.Rows("1 1", "1 3", "2 1", "2 3"))
+	result = tk.MustQuery("select (1, 2, 3) < (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 3, 3)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 1, 4)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select (2, 3, 4) >= (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) = (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) != (2, 3, 4)")
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestColumnName(c *C) {
@@ -1812,4 +1830,41 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	tk2.MustExec("commit")
 
 	tk1.MustExec("commit")
+}
+
+func (s *testSuite) TestFuncREPEAT(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS table_string;")
+	tk.MustExec("CREATE TABLE table_string(a CHAR(20), b VARCHAR(20), c TINYTEXT, d TEXT(20), e MEDIUMTEXT, f LONGTEXT, g BIGINT);")
+	tk.MustExec("INSERT INTO table_string (a, b, c, d, e, f, g) VALUES ('a', 'b', 'c', 'd', 'e', 'f', 2);")
+	tk.CheckExecResult(1, 0)
+
+	r := tk.MustQuery("SELECT REPEAT(a, g), REPEAT(b, g), REPEAT(c, g), REPEAT(d, g), REPEAT(e, g), REPEAT(f, g) FROM table_string;")
+	r.Check(testkit.Rows("aa bb cc dd ee ff"))
+
+	r = tk.MustQuery("SELECT REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g) FROM table_string;")
+	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+
+	r = tk.MustQuery("SELECT REPEAT(a, NULL), REPEAT(b, NULL), REPEAT(c, NULL), REPEAT(d, NULL), REPEAT(e, NULL), REPEAT(f, NULL) FROM table_string;")
+	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+
+	r = tk.MustQuery("SELECT REPEAT(a, 2), REPEAT(b, 2), REPEAT(c, 2), REPEAT(d, 2), REPEAT(e, 2), REPEAT(f, 2) FROM table_string;")
+	r.Check(testkit.Rows("aa bb cc dd ee ff"))
+
+	r = tk.MustQuery("SELECT REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2) FROM table_string;")
+	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+
+	r = tk.MustQuery("SELECT REPEAT(a, -1), REPEAT(b, -2), REPEAT(c, -2), REPEAT(d, -2), REPEAT(e, -2), REPEAT(f, -2) FROM table_string;")
+	r.Check(testkit.Rows("     "))
+
+	r = tk.MustQuery("SELECT REPEAT(a, 0), REPEAT(b, 0), REPEAT(c, 0), REPEAT(d, 0), REPEAT(e, 0), REPEAT(f, 0) FROM table_string;")
+	r.Check(testkit.Rows("     "))
+
+	r = tk.MustQuery("SELECT REPEAT(a, 16777217), REPEAT(b, 16777217), REPEAT(c, 16777217), REPEAT(d, 16777217), REPEAT(e, 16777217), REPEAT(f, 16777217) FROM table_string;")
+	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
 }
