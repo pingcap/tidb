@@ -310,7 +310,13 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
-	insertVal := &InsertValues{ctx: b.ctx, Table: tbl, Columns: v.Columns}
+	insertVal := &InsertValues{
+		ctx:        b.ctx,
+		Table:      tbl,
+		Columns:    v.Columns,
+		GenColumns: v.GenCols.Columns,
+		GenExprs:   v.GenCols.Exprs,
+	}
 	tableCols := tbl.WritableCols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {

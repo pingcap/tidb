@@ -633,16 +633,16 @@ func (b *planBuilder) calculateGeneratedColumns(columns []*table.Column, onDups 
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
 		columnName.SetText(column.Name.O)
-
 		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return
 		}
-
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
-
+		if onDups == nil {
+			continue
+		}
 		for dep := range column.Dependences {
 			if _, ok := onDups[dep]; ok {
 				expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
@@ -863,6 +863,16 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 		FieldsInfo: ld.FieldsInfo,
 		LinesInfo:  ld.LinesInfo,
 	}
+	tableInfo := p.Table.TableInfo
+	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
+		return nil
+	}
+	schema := expression.TableInfo2Schema(tableInfo)
+	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+	mockTablePlan.SetSchema(schema)
+	p.GenCols = b.calculateGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
 	p.SetSchema(expression.NewSchema())
 	return p
 }

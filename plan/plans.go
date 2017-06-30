@@ -173,6 +173,8 @@ type LoadData struct {
 	Columns    []*ast.ColumnName
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
+
+	GenCols InsertGeneratedColumns
 }
 
 // DDL represents a DDL statement plan.
