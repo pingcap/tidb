@@ -1216,6 +1216,7 @@ func (b *builtinRpadSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 
 	if l < 0 || (len(str) < l && padStr == "") {
+		d.SetNull()
 		return d, nil
 	}
 
@@ -1557,6 +1558,7 @@ func (b *builtinMakeSetSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	if args[0].IsNull() {
+		d.SetNull()
 		return
 	}
 	var (
