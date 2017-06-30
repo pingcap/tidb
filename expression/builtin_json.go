@@ -241,10 +241,10 @@ func JSONMerge(args []types.Datum, sc *variable.StatementContext) (d types.Datum
 // JSONObject creates a json from an ordered key-value slice.
 func JSONObject(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
 	if len(args)&1 == 1 {
-		err = errIncorrectParameterCount.GenByArgs("json_object")
+		err = errIncorrectParameterCount.GenByArgs(ast.JSONObject)
 		return
 	}
-	var m = make(map[string]json.JSON, len(args)>>1)
+	var jsonMap = make(map[string]json.JSON, len(args)>>1)
 	var keyTp = types.NewFieldType(mysql.TypeVarchar)
 	for i := 0; i < len(args); i += 2 {
 		if args[i].Kind() == types.KindNull {
@@ -259,9 +259,9 @@ func JSONObject(args []types.Datum, sc *variable.StatementContext) (d types.Datu
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		m[key.GetString()] = value
+		jsonMap[key.GetString()] = value
 	}
-	j := json.CreateJSON(m)
+	j := json.CreateJSON(jsonMap)
 	d.SetMysqlJSON(j)
 	return
 }

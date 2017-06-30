@@ -20,8 +20,6 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
-
-	"fmt"
 )
 
 func (s *testEvaluatorSuite) TestJSONType(c *C) {
@@ -260,9 +258,17 @@ func (s *testEvaluatorSuite) TestJSONORemove(c *C) {
 		{[]interface{}{nil, "$.a"}, nil, true},
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa"}, `{"a": [1, 2, {}]}`, true},
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[1]"}, `{"a": [1, {"aa": "xx"}]}`, true},
+
+		// Tests multi path expressions.
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa", "$.a[1]"}, `{"a": [1, {}]}`, true},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[1]", "$.a[1].aa"}, `{"a": [1, {}]}`, true},
+
+		// Tests path expressions not exists.
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.b"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]", "$.b"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
 	}
-	for i, t := range tbl {
-		fmt.Printf("i: %d\n", i)
+	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
 		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
 		c.Assert(err, IsNil)
