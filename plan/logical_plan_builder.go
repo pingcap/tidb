@@ -1344,7 +1344,8 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	}
 
 	newList := make([]*expression.Assignment, 0, p.Schema().Len())
-	for i, assign := range append(list, virtualAssignments...) {
+	allAssignments := append(list, virtualAssignments...)
+	for i, assign := range allAssignments {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
 			b.err = errors.Trace(err)

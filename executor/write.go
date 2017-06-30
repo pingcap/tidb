@@ -966,7 +966,8 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				e.ctx.GetSessionVars().RetryInfo.AddAutoIncrementID(recordID)
 			}
 		} else if len(c.GeneratedExprString) != 0 {
-			// just leave generated column as null.
+			// Just leave generated column as null. It will be calculated later
+			// but before we check whether the column can be null or not.
 			row[i].SetNull()
 		} else {
 			var err error
