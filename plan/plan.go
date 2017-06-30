@@ -232,7 +232,7 @@ type LogicalPlan interface {
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
 	preparePossibleProperties() [][]*expression.Column
 
-	// generatePhysicalPlans generate all possible plans.
+	// generatePhysicalPlans generates all possible plans.
 	generatePhysicalPlans() []PhysicalPlan
 }
 
@@ -262,7 +262,7 @@ type PhysicalPlan interface {
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx context.Context) (*tipb.Executor, error)
 
-	// getPushedProp try to push the required property to its child and get the result property.
+	// getPushedProp tries to push the required property to its child and get the result property.
 	getPushedProp(prop *requiredProp) []*requiredProp
 }
 

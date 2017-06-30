@@ -941,14 +941,15 @@ func (p *basePhysicalPlan) getPushedProp(prop *requiredProp) []*requiredProp {
 	return []*requiredProp{prop}
 }
 
-func (p *Limit) getPushedProp(prop *requiredProp) (props []*requiredProp) {
+func (p *Limit) getPushedProp(prop *requiredProp) []*requiredProp {
 	if !prop.isEmpty() {
 		return nil
 	}
+	props := make([]*requiredProp, 0, len(wholeTaskTypes))
 	for _, tp := range wholeTaskTypes {
 		props = append(props, &requiredProp{taskTp: tp})
 	}
-	return
+	return props
 }
 
 func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
@@ -962,12 +963,13 @@ func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
 	return []PhysicalPlan{ha}
 }
 
-func (p *PhysicalAggregation) getPushedProp(prop *requiredProp) (props []*requiredProp) {
+func (p *PhysicalAggregation) getPushedProp(prop *requiredProp) []*requiredProp {
 	if !prop.isEmpty() {
 		return nil
 	}
+	props := make([]*requiredProp, 0, len(wholeTaskTypes))
 	for _, tp := range wholeTaskTypes {
 		props = append(props, &requiredProp{taskTp: tp})
 	}
-	return
+	return props
 }
