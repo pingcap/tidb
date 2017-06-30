@@ -42,6 +42,8 @@ const (
 // Table represents statistics for a table.
 type Table struct {
 	TableID int64
+	ColInfo []*model.ColumnInfo
+	IndexInfo []*model.IndexInfo
 	Columns map[int64]*Column
 	Indices map[int64]*Index
 	Count   int64 // Total row count in a table.
@@ -53,6 +55,8 @@ func (t *Table) copy() *Table {
 		TableID: t.TableID,
 		Count:   t.Count,
 		Pseudo:  t.Pseudo,
+		ColInfo: t.ColInfo,
+		IndexInfo: t.IndexInfo,
 		Columns: make(map[int64]*Column),
 		Indices: make(map[int64]*Index),
 	}
@@ -70,6 +74,9 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok {
 		table = &Table{
+			TableID: tableInfo.ID,
+			ColInfo: tableInfo.Columns,
+			IndexInfo: tableInfo.Indices,
 			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices: make(map[int64]*Index, len(tableInfo.Indices)),
 		}
@@ -77,7 +84,6 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		// We copy it before writing to avoid race.
 		table = table.copy()
 	}
-	table.TableID = tableInfo.ID
 	table.Count = count
 
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count from mysql.stats_histograms where table_id = %d", tableInfo.ID)
@@ -97,7 +103,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		if row.Data[1].GetInt64() > 0 {
 			// process index
 			idx := table.Indices[histID]
-			for _, idxInfo := range tableInfo.Indices {
+			for _, idxInfo := range table.IndexInfo {
 				if histID == idxInfo.ID {
 					if idx == nil || idx.LastUpdateVersion < histVer {
 						hg, err := h.histogramFromStorage(tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
@@ -117,7 +123,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		} else {
 			// process column
 			col := table.Columns[histID]
-			for _, colInfo := range tableInfo.Columns {
+			for _, colInfo := range table.ColInfo {
 				if histID == colInfo.ID {
 					if col == nil || col.LastUpdateVersion < histVer {
 						hg, err := h.histogramFromStorage(tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
