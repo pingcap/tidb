@@ -228,7 +228,7 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 
 func (s *testLockSuite) ttlEquals(c *C, x, y uint64) {
 	// NOTE: On ppc64le, all integers are by default unsigned integers,
-	// hence we have to seperately cast the value returned by "math.Abs()" function for ppc64le.
+	// hence we have to separately cast the value returned by "math.Abs()" function for ppc64le.
 	if runtime.GOARCH == "ppc64le" {
 		c.Assert(int(-math.Abs(float64(x-y))), LessEqual, 2)
 	} else {
