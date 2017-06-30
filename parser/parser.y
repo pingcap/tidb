@@ -834,6 +834,7 @@ import (
 	DeallocateSym		"Deallocate or drop"
 	OuterOpt		"optional OUTER clause"
 	CrossOpt		"Cross join option"
+	TablesTerminalSym 	"{TABLE|TABLES}"
 	TransactionChar		"Transaction characteristic"
 	TransactionChars	"Transaction characteristic list"
 	IsolationLevel		"Isolation level"
