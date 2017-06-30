@@ -47,7 +47,10 @@ var (
 	_ functionClass = &jsonSetFunctionClass{}
 	_ functionClass = &jsonInsertFunctionClass{}
 	_ functionClass = &jsonReplaceFunctionClass{}
+	_ functionClass = &jsonRemoveFunctionClass{}
 	_ functionClass = &jsonMergeFunctionClass{}
+	_ functionClass = &jsonObjectFunctionClass{}
+	_ functionClass = &jsonArrayFunctionClass{}
 )
 
 // argsAnyNull returns true if args contains any null.
@@ -96,15 +99,9 @@ func createJSONFromDatums(datums []types.Datum) (jsons []json.JSON, err error) {
 }
 
 // jsonModify is the portal for modify JSON with path expressions and values.
+// If the first argument is null, returns null;
+// If any path expressions in arguments are null, return null;
 func jsonModify(args []types.Datum, mt json.ModifyType, sc *variable.StatementContext) (d types.Datum, err error) {
-	if argsAnyNull(args) {
-		return d, nil
-	}
-	var j json.JSON
-	if j, err = datum2JSON(args[0], sc); err != nil {
-		return d, errors.Trace(err)
-	}
-
 	// alloc 1 extra element, for len(args) is an even number.
 	pes := make([]types.Datum, 0, (len(args)-1)/2+1)
 	vs := make([]types.Datum, 0, (len(args)-1)/2+1)
@@ -114,6 +111,14 @@ func jsonModify(args []types.Datum, mt json.ModifyType, sc *variable.StatementCo
 		} else {
 			vs = append(vs, args[i])
 		}
+	}
+	if args[0].Kind() == types.KindNull || argsAnyNull(pes) {
+		return d, nil
+	}
+
+	j, err := datum2JSON(args[0], sc)
+	if err != nil {
+		return d, errors.Trace(err)
 	}
 	pathExprs, err := parsePathExprs(pes)
 	if err != nil {

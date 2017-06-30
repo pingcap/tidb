@@ -122,6 +122,7 @@ func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 		{funcs[ast.JSONInsert], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`, true},
 		{funcs[ast.JSONReplace], []interface{}{`{}`, `$.a`, 3}, `{}`, true},
 		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`, "3"}, `{"a": 3, "b": "3"}`, true},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, nil, `$.b`, "nil"}, `{"a": null, "b": "nil"}`, true},
 		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`}, nil, false},
 		{funcs[ast.JSONSet], []interface{}{`{}`, `$InvalidPath`, 3}, nil, false},
 	}
