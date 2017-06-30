@@ -108,7 +108,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 6)
+	c.Assert(row.Data, HasLen, 7)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	ddlInfo, err := inspectkv.GetDDLInfo(txn)
@@ -784,16 +784,48 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
+	// for length
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
+	result := tk.MustQuery("select length(a), length(b), length(c), length(d), length(e), length(f), length(null) from t")
+	result.Check(testkit.Rows("1 3 19 8 6 2 <nil>"))
+
 	// for concat
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20))")
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef")`)
-	result := tk.MustQuery("select concat(a, b, c, d, e) from t")
+	result = tk.MustQuery("select concat(a, b, c, d, e) from t")
 	result.Check(testkit.Rows("11.12017-01-01 12:01:0112:01:01abcdef"))
 	result = tk.MustQuery("select concat(null)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select concat(null, a, b) from t")
 	result.Check(testkit.Rows("<nil>"))
+
+	// for ascii
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010)`)
+	result = tk.MustQuery("select ascii(a), ascii(b), ascii(c), ascii(d), ascii(e), ascii(f) from t")
+	result.Check(testkit.Rows("50 50 50 50 49 10"))
+	result = tk.MustQuery("select ascii('123'), ascii(123), ascii(''), ascii('你好'), ascii(NULL)")
+	result.Check(testkit.Rows("49 49 0 228 <nil>"))
+}
+
+func (s *testSuite) TestTimeBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for makeDate
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
+	result := tk.MustQuery("select makedate(a,a), makedate(b,b), makedate(c,c), makedate(d,d), makedate(e,e), makedate(f,f), makedate(null,null), makedate(a,b) from t")
+	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
 }
 
 func (s *testSuite) TestBuiltin(c *C) {
@@ -855,6 +887,13 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1267"))
 	result = tk.MustQuery("select hex(unhex(1267))")
 	result.Check(testkit.Rows("1267"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a binary(8))")
+	tk.MustExec(`insert into t values('test')`)
+	result = tk.MustQuery("select hex(a) from t")
+	result.Check(testkit.Rows("7465737400000000"))
+	result = tk.MustQuery("select unhex(a) from t")
+	result.Check(testkit.Rows("<nil>"))
 
 	// select from_unixtime
 	result = tk.MustQuery("select from_unixtime(1451606400)")
@@ -877,6 +916,12 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select strcmp('abc', 'abc')")
 	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select substr(null, 1, 2)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select substr('123', null, 2)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select substr('123', 1, null)")
+	result.Check(testkit.Rows("<nil>"))
 
 	// for case
 	tk.MustExec("drop table if exists t")
@@ -1053,6 +1098,39 @@ func (s *testSuite) TestJSON(c *C) {
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
 	result.Check(testkit.Rows(`3 {} <nil>`))
+}
+
+func (s *testSuite) TestMultiUpdate(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_mu (a int primary key, b int, c int)`)
+	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3), (4, 5, 6), (7, 8, 9)`)
+
+	// Test INSERT ... ON DUPLICATE UPDATE set_lists.
+	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE b = 3, c = b`)
+	result := tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 3 3`, `4 5 6`, `7 8 9`))
+
+	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE c = 2, b = c+5`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 5 6`, `7 8 9`))
+
+	// Test UPDATE ... set_lists.
+	tk.MustExec(`UPDATE test_mu SET b = 0, c = b WHERE a = 4`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 0 0`, `7 8 9`))
+
+	tk.MustExec(`UPDATE test_mu SET c = 8, b = c WHERE a = 4`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 8 8`, `7 8 9`))
+
+	tk.MustExec(`UPDATE test_mu SET c = b, b = c WHERE a = 7`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 8 8`, `7 8 8`))
 }
 
 func (s *testSuite) TestGeneratedColumnWrite(c *C) {
@@ -1276,11 +1354,11 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
-	stmtNode, err = s.ParseOneStmt("create table t (a int)", "", "")
+	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
 	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
-	c.Check(stmt.OriginText(), Equals, "create table t (a int)")
+	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
 
 func (s *testSuite) TestPointGet(c *C) {
@@ -1315,10 +1393,7 @@ func (s *testSuite) TestPointGet(c *C) {
 func (s *testSuite) TestRow(c *C) {
 	// There exists a constant folding problem when the arguments of compare functions are Rows,
 	// the switch will be opened after the problem be fixed.
-	origin := expression.TurnOnNewExprEval
-	expression.TurnOnNewExprEval = false
 	defer func() {
-		expression.TurnOnNewExprEval = origin
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
@@ -1340,6 +1415,20 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1 1"))
 	result = tk.MustQuery("select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d))")
 	result.Check(testkit.Rows("1 1", "1 3", "2 1", "2 3"))
+	result = tk.MustQuery("select (1, 2, 3) < (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 3, 3)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 1, 4)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select (2, 3, 4) >= (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) = (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) != (2, 3, 4)")
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestColumnName(c *C) {

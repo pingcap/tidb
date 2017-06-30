@@ -243,19 +243,3 @@ func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) ([]*SampleColle
 		}
 	}
 }
-
-func rowsToColumnSamples(rows []*ast.Row) [][]types.Datum {
-	if len(rows) == 0 {
-		return nil
-	}
-	columnSamples := make([][]types.Datum, len(rows[0].Data))
-	for i := range columnSamples {
-		columnSamples[i] = make([]types.Datum, len(rows))
-	}
-	for j, row := range rows {
-		for i, val := range row.Data {
-			columnSamples[i][j] = val
-		}
-	}
-	return columnSamples
-}

@@ -47,6 +47,7 @@ const (
 // Request wraps all kv/coprocessor requests.
 type Request struct {
 	Type          CmdType
+	Priority      kvrpcpb.CommandPri
 	Get           *kvrpcpb.GetRequest
 	Scan          *kvrpcpb.ScanRequest
 	Prewrite      *kvrpcpb.PrewriteRequest
@@ -122,6 +123,7 @@ type Response struct {
 
 // SetContext set the Context field for the given req to the specifed ctx.
 func SetContext(req *Request, ctx *kvrpcpb.Context) error {
+	ctx.Priority = req.Priority
 	switch req.Type {
 	case CmdGet:
 		req.Get.Context = ctx

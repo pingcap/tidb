@@ -157,8 +157,8 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 		leftConds     expression.CNFExprs
 		innerTask     task
 		err           error
-		innerJoinKeys = make([]*expression.Column, 0, len(p.EqualConditions))
-		outerJoinKeys = make([]*expression.Column, 0, len(p.EqualConditions))
+		innerJoinKeys []*expression.Column
+		outerJoinKeys []*expression.Column
 	)
 	outerTask, err = outerChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
@@ -167,24 +167,22 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 	if outerIdx == 0 {
 		rightConds = p.RightConditions.Clone()
 		leftConds = p.LeftConditions.Clone()
+		outerJoinKeys = p.LeftJoinKeys
+		innerJoinKeys = p.RightJoinKeys
 	} else {
 		rightConds = p.LeftConditions.Clone()
 		leftConds = p.RightConditions.Clone()
+		innerJoinKeys = p.LeftJoinKeys
+		outerJoinKeys = p.RightJoinKeys
 	}
 	for {
 		switch x := innerChild.(type) {
 		case *DataSource:
 			indices, includeTableScan := availableIndices(x.indexHints, x.tableInfo)
-			for _, cond := range p.EqualConditions {
-				innerJoinKeys = append(innerJoinKeys, cond.GetArgs()[1-outerIdx].(*expression.Column))
-				outerJoinKeys = append(outerJoinKeys, cond.GetArgs()[outerIdx].(*expression.Column))
-			}
-			if includeTableScan {
-				if len(innerJoinKeys) == 1 {
-					pkCol := x.getPKIsHandleCol()
-					if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
-						useTableScan = true
-					}
+			if includeTableScan && len(innerJoinKeys) == 1 {
+				pkCol := x.getPKIsHandleCol()
+				if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
+					useTableScan = true
 				}
 			}
 			if useTableScan {

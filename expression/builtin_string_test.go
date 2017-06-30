@@ -30,69 +30,97 @@ import (
 
 func (s *testEvaluatorSuite) TestLength(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.Length]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
-	c.Assert(err, IsNil)
-	d, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.Kind(), Equals, types.KindNull)
-
-	tbl := []struct {
-		Input    interface{}
-		Expected int64
+	cases := []struct {
+		args     interface{}
+		expected int64
+		isNil    bool
+		getErr   bool
 	}{
-		{"abc", 3},
-		{1, 1},
-		{3.14, 4},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, 26},
-		{types.Bit{Value: 1, Width: 8}, 1},
-		{types.Hex{Value: 1}, 1},
-		{types.Set{Value: 1, Name: "abc"}, 3},
+		{"abc", 3, false, false},
+		{"你好", 6, false, false},
+		{1, 1, false, false},
+		{3.14, 4, false, false},
+		{types.NewDecFromFloatForTest(123.123), 7, false, false},
+		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, 26, false, false},
+		{types.Bit{Value: 1, Width: 8}, 1, false, false},
+		{types.Hex{Value: 1}, 1, false, false},
+		{types.Set{Value: 1, Name: "abc"}, 3, false, false},
+		{types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second), Fsp: types.DefaultFsp}, 8, false, false},
+		{nil, 0, true, false},
+		{errors.New("must error"), 0, false, true},
 	}
 
-	dtbl := tblToDtbl(tbl)
-
-	for _, t := range dtbl {
-		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Length, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		d, err = f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, 10)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.expected)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Length].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestASCII(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.ASCII]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
 
-	for _, t := range []struct {
-		Input    interface{}
-		Expected int64
+	cases := []struct {
+		args     interface{}
+		expected int64
+		isNil    bool
+		getErr   bool
 	}{
-		{"", 0},
-		{"A", 65},
-		{"你好", 228},
-		{1, 49},
-		{1.2, 49},
-		{true, 49},
-		{false, 48},
-	} {
-		f, err = fc.getFunction(datumsToConstants(types.MakeDatums(t.Input)), s.ctx)
-		c.Assert(err, IsNil)
-		v, err = f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v.GetInt64(), Equals, t.Expected)
+		{"2", 50, false, false},
+		{2, 50, false, false},
+		{"23", 50, false, false},
+		{23, 50, false, false},
+		{2.3, 50, false, false},
+		{nil, 0, true, false},
+		{"", 0, false, false},
+		{"你好", 228, false, false},
 	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.ASCII, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
 
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(errors.New("must error"))), s.ctx)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, 3)
+
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.expected)
+			}
+		}
+	}
+	f, err := funcs[ast.Length].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
-	c.Assert(err, NotNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestConcat(c *C) {

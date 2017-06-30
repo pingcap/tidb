@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 )
 
@@ -121,7 +122,7 @@ type Insert struct {
 	OnDuplicate []*expression.Assignment
 
 	IsReplace bool
-	Priority  int
+	Priority  mysql.PriorityEnum
 	Ignore    bool
 }
 
