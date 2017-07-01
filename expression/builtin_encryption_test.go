@@ -302,22 +302,40 @@ func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
 }
 func (s *testEvaluatorSuite) TestPassword(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
-		in     interface{}
-		expect interface{}
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    string
 	}{
-		{nil, string("")},
-		{string(""), string("")},
-		{string("abc"), string("*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")},
+		{
+			[]interface{}{nil},
+			true, false, "",
+		},
+		{
+			[]interface{}{""},
+			false, false, "",
+		},
+		{
+			[]interface{}{"abc"},
+			false, false, "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E",
+		},
 	}
 
-	fc := funcs[ast.PasswordFunc]
-	for _, test := range tests {
-		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+	fcName := ast.PasswordFunc
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, fcName, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		out, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(out.GetString(), Equals, test.expect)
+		v, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(v.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(v.GetString(), Equals, t.res)
+			}
+		}
 	}
 }
