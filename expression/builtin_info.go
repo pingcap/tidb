@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -37,6 +38,7 @@ var (
 	_ functionClass = &coercibilityFunctionClass{}
 	_ functionClass = &collationFunctionClass{}
 	_ functionClass = &rowCountFunctionClass{}
+	_ functionClass = &tidbVersionFunctionClass{}
 )
 
 var (
@@ -52,6 +54,7 @@ var (
 	_ builtinFunc = &builtinCoercibilitySig{}
 	_ builtinFunc = &builtinCollationSig{}
 	_ builtinFunc = &builtinRowCountSig{}
+	_ builtinFunc = &builtinTiDBVersionSig{}
 )
 
 type databaseFunctionClass struct {
@@ -242,6 +245,28 @@ type builtinVersionSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_version
 func (b *builtinVersionSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	d.SetString(mysql.ServerVersion)
+	return d, nil
+}
+
+type tidbVersionFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbVersionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinTiDBVersionSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = true
+	return bt.setSelf(bt), errors.Trace(err)
+}
+
+type builtinTiDBVersionSig struct {
+	baseBuiltinFunc
+}
+
+// eval evals a builtinTiDBVersionSig.
+// This will show git hash and build time for tidb-server.
+func (b *builtinTiDBVersionSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	d.SetString(printer.GetTiDBInfo())
 	return d, nil
 }
 
