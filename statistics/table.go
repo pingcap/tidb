@@ -41,24 +41,20 @@ const (
 
 // Table represents statistics for a table.
 type Table struct {
-	TableID   int64
-	ColInfo   []*model.ColumnInfo
-	IndexInfo []*model.IndexInfo
-	Columns   map[int64]*Column
-	Indices   map[int64]*Index
-	Count     int64 // Total row count in a table.
-	Pseudo    bool
+	TableID int64
+	Columns map[int64]*Column
+	Indices map[int64]*Index
+	Count   int64 // Total row count in a table.
+	Pseudo  bool
 }
 
 func (t *Table) copy() *Table {
 	nt := &Table{
-		TableID:   t.TableID,
-		Count:     t.Count,
-		Pseudo:    t.Pseudo,
-		ColInfo:   t.ColInfo,
-		IndexInfo: t.IndexInfo,
-		Columns:   make(map[int64]*Column),
-		Indices:   make(map[int64]*Index),
+		TableID: t.TableID,
+		Count:   t.Count,
+		Pseudo:  t.Pseudo,
+		Columns: make(map[int64]*Column),
+		Indices: make(map[int64]*Index),
 	}
 	for id, col := range t.Columns {
 		nt.Columns[id] = col
@@ -74,11 +70,9 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok {
 		table = &Table{
-			TableID:   tableInfo.ID,
-			ColInfo:   tableInfo.Columns,
-			IndexInfo: tableInfo.Indices,
-			Columns:   make(map[int64]*Column, len(tableInfo.Columns)),
-			Indices:   make(map[int64]*Index, len(tableInfo.Indices)),
+			TableID: tableInfo.ID,
+			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
+			Indices: make(map[int64]*Index, len(tableInfo.Indices)),
 		}
 	} else {
 		// We copy it before writing to avoid race.
@@ -103,14 +97,14 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		if row.Data[1].GetInt64() > 0 {
 			// process index
 			idx := table.Indices[histID]
-			for _, idxInfo := range table.IndexInfo {
+			for _, idxInfo := range tableInfo.Indices {
 				if histID == idxInfo.ID {
 					if idx == nil || idx.LastUpdateVersion < histVer {
 						hg, err := h.histogramFromStorage(tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
-						idx = &Index{Histogram: *hg}
+						idx = &Index{Histogram: *hg, info: idxInfo}
 					}
 					break
 				}
@@ -123,14 +117,14 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		} else {
 			// process column
 			col := table.Columns[histID]
-			for _, colInfo := range table.ColInfo {
+			for _, colInfo := range tableInfo.Columns {
 				if histID == colInfo.ID {
 					if col == nil || col.LastUpdateVersion < histVer {
 						hg, err := h.histogramFromStorage(tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
-						col = &Column{Histogram: *hg}
+						col = &Column{Histogram: *hg, info: colInfo}
 					}
 					break
 				}

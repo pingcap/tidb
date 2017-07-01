@@ -21,6 +21,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
@@ -336,6 +337,7 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 // Column represents a column histogram.
 type Column struct {
 	Histogram
+	info *model.ColumnInfo
 }
 
 func (c *Column) String() string {
@@ -427,7 +429,7 @@ func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges ...type
 // Index represents an index histogram.
 type Index struct {
 	Histogram
-	NumColumns int
+	info *model.IndexInfo
 }
 
 func (idx *Index) String() string {
@@ -437,7 +439,7 @@ func (idx *Index) String() string {
 func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*types.IndexRange) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
-		indexRange.Align(idx.NumColumns)
+		indexRange.Align(len(idx.info.Columns))
 		lb, err := codec.EncodeKey(nil, indexRange.LowVal...)
 		if err != nil {
 			return 0, errors.Trace(err)
