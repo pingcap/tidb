@@ -908,40 +908,46 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitLength(c *C) {
-	tests := []struct {
-		str    string
-		expect int64
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		args     interface{}
+		expected int64
+		isNil    bool
+		getErr   bool
 	}{
-		{"hi", 16},
-		{"你好", 48},
-		{"", 0},
-	}
-	for _, test := range tests {
-		fc := funcs[ast.BitLength]
-		str := types.NewStringDatum(test.str)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{str}), s.ctx)
-		c.Assert(err, IsNil)
-		result, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(result.GetInt64(), Equals, test.expect)
+		{"abc", 24, false, false},
+		{"你好", 48, false, false},
+		{1, 8, false, false},
+		{3.14,32 , false, false},
+		{nil, 0, true, false},
+		{"", 0, false, false},
 	}
 
-	errTbl := []struct {
-		str    interface{}
-		expect interface{}
-	}{
-		{nil, nil},
-	}
-	for _, test := range errTbl {
-		fc := funcs[ast.BitLength]
-		str := types.NewDatum(test.str)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{str}), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.BitLength, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		result, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(result.Kind(), Equals, types.KindNull)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, 10)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.expected)
+			}
+		}
 	}
 
+	f, err := funcs[ast.Length].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestChar(c *C) {
