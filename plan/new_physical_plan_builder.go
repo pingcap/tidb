@@ -50,10 +50,10 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context, allocator
 	return sort.attach2Task(task)
 }
 
-// getPushedProp will check if this sort property can be pushed or not.
+// getChildrenPossibleProps will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
-func (p *Projection) getPushedProp(prop *requiredProp) [][]*requiredProp {
+func (p *Projection) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	newProp := &requiredProp{taskTp: rootTaskType}
 	newCols := make([]*expression.Column, 0, len(prop.cols))
 	for _, col := range prop.cols {
@@ -505,9 +505,9 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, err
 func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan, enforced bool) (task, error) {
 	var newProps [][]*requiredProp
 	if enforced {
-		newProps = pp.getPushedProp(&requiredProp{taskTp: rootTaskType})
+		newProps = pp.getChildrenPossibleProps(&requiredProp{taskTp: rootTaskType})
 	} else {
-		newProps = pp.getPushedProp(prop)
+		newProps = pp.getChildrenPossibleProps(prop)
 	}
 	for _, newProp := range newProps {
 		tasks := make([]task, 0, len(p.basePlan.children))
@@ -913,7 +913,7 @@ func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
 	return []PhysicalPlan{np}
 }
 
-func (p *basePhysicalPlan) getPushedProp(prop *requiredProp) [][]*requiredProp {
+func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	// By default, physicalPlan can always match the orders.
 	props := make([]*requiredProp, 0, len(p.basePlan.children))
 	for range p.basePlan.children {
@@ -922,7 +922,7 @@ func (p *basePhysicalPlan) getPushedProp(prop *requiredProp) [][]*requiredProp {
 	return [][]*requiredProp{props}
 }
 
-func (p *Limit) getPushedProp(prop *requiredProp) [][]*requiredProp {
+func (p *Limit) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	if !prop.isEmpty() {
 		return nil
 	}
@@ -944,7 +944,7 @@ func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
 	return []PhysicalPlan{ha}
 }
 
-func (p *PhysicalAggregation) getPushedProp(prop *requiredProp) [][]*requiredProp {
+func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	if !prop.isEmpty() {
 		return nil
 	}
