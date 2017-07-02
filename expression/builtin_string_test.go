@@ -1539,40 +1539,59 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestToBase64(c *C) {
+	defer testleak.AfterTest(c)()
+
 	tests := []struct {
 		args   interface{}
-		expect interface{}
+		expect string
+		isNil  bool
+		getErr bool
 	}{
-		{string(""), string("")},
-		{string("abc"), string("YWJj")},
-		{string("ab c"), string("YWIgYw==")},
-		{string("ab\nc"), string("YWIKYw==")},
-		{string("ab\tc"), string("YWIJYw==")},
-		{string("qwerty123456"), string("cXdlcnR5MTIzNDU2")},
+		{string(""), string(""), false, false},
+		{string("abc"), string("YWJj"), false, false},
+		{string("ab c"), string("YWIgYw=="), false, false},
+		{1, string("MQ=="), false, false},
+		{1.1, string("MS4x"), false, false},
+		{string("ab\nc"), string("YWIKYw=="), false, false},
+		{string("ab\tc"), string("YWIJYw=="), false, false},
+		{string("qwerty123456"), string("cXdlcnR5MTIzNDU2"), false, false},
 		{
 			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
 			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw=="),
+			false,
+			false,
 		},
 		{
 			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
 			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv"),
+			false,
+			false,
 		},
 		{
 			string("ABCD  EFGHI\nJKLMNOPQRSTUVWXY\tZabcdefghijklmnopqrstuv  wxyz012\r3456789+/"),
 			string("QUJDRCAgRUZHSEkKSktMTU5PUFFSU1RVVldYWQlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1diAgd3h5\nejAxMg0zNDU2Nzg5Ky8="),
+			false,
+			false,
 		},
+		{nil, string(""), true, false},
 	}
-	fc := funcs[ast.ToBase64]
 	for _, test := range tests {
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args)), s.ctx)
+		f, err := newFunctionForTest(s.ctx, ast.ToBase64, primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
-		result, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		if test.expect == nil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
+		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
+		c.Assert(tp.Collate, Equals, charset.CollationUTF8)
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			expect, _ := test.expect.(string)
-			c.Assert(result.GetString(), Equals, expect)
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetString(), Equals, test.expect)
+			}
 		}
 	}
 }

@@ -1996,25 +1996,31 @@ type toBase64FunctionClass struct {
 }
 
 func (c *toBase64FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinToBase64Sig{newBaseBuiltinFunc(args, ctx)}
+	tp := types.NewFieldType(mysql.TypeVarString)
+	tp.Charset = charset.CharsetUTF8
+	tp.Collate = charset.CollationUTF8
+
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinToBase64Sig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinToBase64Sig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinToBase64Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_to-base64
-func (b *builtinToBase64Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinToBase64Sig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
+
 	//encode
 	strBytes := []byte(str)
 	result := base64.StdEncoding.EncodeToString(strBytes)
@@ -2024,9 +2030,8 @@ func (b *builtinToBase64Sig) eval(row []types.Datum) (d types.Datum, err error) 
 		resultArr := splitToSubN(result, 76)
 		result = strings.Join(resultArr, "\n")
 	}
-	// Set the result to be of type string
-	d.SetString(result)
-	return d, nil
+
+	return result, false, nil
 }
 
 // splitToSubN splits a string every n runes into a string[]
