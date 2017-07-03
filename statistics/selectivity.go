@@ -40,9 +40,9 @@ type exprSet struct {
 
 // The type of the exprSet.
 const (
-	setByIndex = iota
-	setByPk
-	setByCol
+	indexType = iota
+	pkType
+	colType
 )
 
 // Selectivity is a function calculate the selectivity of the expressions.
@@ -70,9 +70,9 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			sets = append(sets, &exprSet{tp: setByCol, ID: col.ID, mask: maskCovered, ranges: ranges})
+			sets = append(sets, &exprSet{tp: colType, ID: col.ID, mask: maskCovered, ranges: ranges})
 			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
-				sets[len(sets)-1].tp = setByPk
+				sets[len(sets)-1].tp = pkType
 			}
 		}
 	}
@@ -84,7 +84,7 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			sets = append(sets, &exprSet{tp: setByIndex, ID: idxInfo.ID, mask: maskCovered, ranges: ranges})
+			sets = append(sets, &exprSet{tp: indexType, ID: idxInfo.ID, mask: maskCovered, ranges: ranges})
 		}
 	}
 	sets = getUsableSetsByGreedy(sets)
@@ -98,10 +98,10 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 			err      error
 		)
 		switch set.tp {
-		case setByPk, setByCol:
+		case pkType, colType:
 			ranges := ranger.Ranges2ColumnRanges(set.ranges)
 			rowCount, err = t.GetRowCountByColumnRanges(sc, set.ID, ranges)
-		case setByIndex:
+		case indexType:
 			ranges := ranger.Ranges2IndexRanges(set.ranges)
 			rowCount, err = t.GetRowCountByIndexRanges(sc, set.ID, ranges)
 		}
@@ -146,11 +146,11 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 		// Choose the index that covers most.
 		bestID := -1
 		bestCount := 0
-		bestID, bestCount, bestTp := -1, 0, setByCol
+		bestID, bestCount, bestTp := -1, 0, colType
 		for i, set := range sets {
 			set.mask &= mask
 			bits := popCount(set.mask)
-			if (bestTp == setByCol && set.tp < setByCol) || bestCount < bits {
+			if (bestTp == colType && set.tp < colType) || bestCount < bits {
 				bestID, bestCount, bestTp = i, bits, set.tp
 			}
 		}
