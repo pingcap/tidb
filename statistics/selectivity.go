@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
@@ -37,89 +38,53 @@ type calcBlock struct {
 	ranges []types.Range
 }
 
-// The type of the SelUnit if it isn't a index.
+// The type of the calcBlock.
 const (
-	SelPkUnit     = -1
-	SelColumnUnit = -2
+	IndexBlock = iota
+	PkBlock
+	ColumnBlock
 )
-
-// SelUnit is used as a param passed by Selectivity.
-// When ID >= 0, this unit is a index. And the ID, cols, lengths is the information of this index.
-// When ID is SelPkUnit, cols' len is 0, and it stores the pk column.
-// When ID is SelColumnUnit, cols stores the columns used for column sampling calculation.
-type SelUnit struct {
-	ID      int64
-	cols    []*expression.Column
-	lengths []int
-}
-
-// MakeSelUnit generates a SelUnit by the params.
-func MakeSelUnit(id int64, lengths []int, cols ...*expression.Column) *SelUnit {
-	return &SelUnit{ID: id, cols: cols, lengths: lengths}
-}
 
 // Selectivity is a function calculate the selectivity of the expressions.
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 // TODO: support expressions that the top layer is a DNF.
 // Currently the time complexity if o(n^2).
-func Selectivity(ctx context.Context, exprs []expression.Expression, units []*SelUnit, statsTbl *Table) (float64, error) {
+func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) (float64, error) {
+	if t.Count == 0 {
+		return 0, nil
+	}
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
-	if statsTbl.Pseudo || len(exprs) > 63 {
+	if t.Pseudo || len(exprs) > 63 {
 		return selectionFactor, nil
 	}
 	var blocks []*calcBlock
 	sc := ctx.GetSessionVars().StmtCtx
-	for _, unit := range units {
-		switch unit.ID {
-		case SelPkUnit:
-			c := statsTbl.Columns[unit.cols[0].ID]
-			// pk should have histogram.
-			if c != nil && len(c.Buckets) > 0 {
-				covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.IntRangeType, nil, unit.cols...)
-				if err != nil {
-					return 0, errors.Trace(err)
-				}
-				blocks = append(blocks, &calcBlock{
-					tp:     ranger.IntRangeType,
-					ID:     unit.cols[0].ID,
-					cover:  covered,
-					ranges: ranges,
-				})
+	extractedCols := expression.ExtractColumns(expression.ComposeCNFCondition(ctx, exprs...))
+	for _, colInfo := range t.Columns {
+		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
+		// This column should have histogram.
+		if col != nil && len(colInfo.Histogram.Buckets) > 0 {
+			covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.ColumnRangeType, nil, col)
+			if err != nil {
+				return 0, errors.Trace(err)
 			}
-		case SelColumnUnit:
-			for _, col := range unit.cols {
-				c := statsTbl.Columns[col.ID]
-				// This column should have histogram.
-				if c != nil && len(c.Buckets) > 0 {
-					covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.ColumnRangeType, nil, col)
-					if err != nil {
-						return 0, errors.Trace(err)
-					}
-					blocks = append(blocks, &calcBlock{
-						tp:     ranger.ColumnRangeType,
-						ID:     col.ID,
-						cover:  covered,
-						ranges: ranges,
-					})
-				}
+			blocks = append(blocks, &calcBlock{tp: ColumnBlock, ID: col.ID, cover: covered, ranges: ranges})
+			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
+				blocks[len(blocks)-1].tp = PkBlock
 			}
-		default:
-			c := statsTbl.Indices[unit.ID]
-			// This index should have histogram.
-			if c != nil && len(c.Buckets) > 0 {
-				covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.IndexRangeType, unit.lengths, unit.cols...)
-				if err != nil {
-					return 0, errors.Trace(err)
-				}
-				blocks = append(blocks, &calcBlock{
-					tp:     ranger.IndexRangeType,
-					ID:     unit.ID,
-					cover:  covered,
-					ranges: ranges,
-				})
+		}
+	}
+	for _, idxInfo := range t.Indices {
+		idxCols, lengths := expression.IndexInfo2Cols(extractedCols, idxInfo.Info)
+		// This index should have histogram.
+		if len(idxCols) > 0 && len(idxInfo.Histogram.Buckets) > 0 {
+			covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.IndexRangeType, lengths, idxCols...)
+			if err != nil {
+				return 0, errors.Trace(err)
 			}
+			blocks = append(blocks, &calcBlock{tp: IndexBlock, ID: idxInfo.ID, cover: covered, ranges: ranges})
 		}
 	}
 	blocks = getUsedBlocksByGreedy(blocks)
@@ -127,32 +92,25 @@ func Selectivity(ctx context.Context, exprs []expression.Expression, units []*Se
 	// cut off the higher bit of mask
 	mask := int64(math.MaxInt64) >> uint64(63-len(exprs))
 	for _, block := range blocks {
-		mask &^= block.cover
+		mask ^= block.cover
 		var (
 			rowCount float64
 			err      error
 		)
 		switch block.tp {
-		case ranger.IntRangeType:
-			ranges := ranger.Ranges2IntRanges(block.ranges)
-			rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, block.ID, ranges)
-		case ranger.ColumnRangeType:
-			/*
-				ranges := ranger.Ranges2ColumnRanges(block.ranges)
-				rowCount, err = statsTbl.GetRowCountByColumnRanges(sc, block.ID, ranges)
-				if err != nil {
-					return 0, errors.Trace(err)
-				}
-			*/
-		default:
+		case PkBlock, ColumnBlock:
+			ranges := ranger.Ranges2ColumnRanges(block.ranges)
+			rowCount, err = t.GetRowCountByColumnRanges(sc, block.ID, ranges)
+		case IndexBlock:
 			ranges := ranger.Ranges2IndexRanges(block.ranges)
-			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, block.ID, ranges)
+			rowCount, err = t.GetRowCountByIndexRanges(sc, block.ID, ranges)
 		}
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		ret *= rowCount / float64(statsTbl.Count)
+		ret *= rowCount / float64(t.Count)
 	}
+	// If there's still conditions which cannot be calculated, we will multiply a selectionFactor.
 	if mask > 0 {
 		ret *= selectionFactor
 	}
@@ -188,11 +146,11 @@ func getUsedBlocksByGreedy(blocks []*calcBlock) (newBlocks []*calcBlock) {
 		// Choose the index that covers most.
 		bestID := -1
 		bestCount := 0
-		bestID, bestCount, bestTp := -1, 0, ranger.ColumnRangeType
+		bestID, bestCount, bestTp := -1, 0, ColumnBlock
 		for i, block := range blocks {
 			block.cover &= mask
 			bits := popcount(block.cover)
-			if (bestTp == ranger.ColumnRangeType && block.tp < ranger.ColumnRangeType) || bestCount < bits {
+			if (bestTp == ColumnBlock && block.tp < ColumnBlock) || bestCount < bits {
 				bestID, bestCount, bestTp = i, bits, block.tp
 			}
 		}

@@ -19,7 +19,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/statistics"
@@ -109,15 +108,17 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 	// mock the statistic table
 	statsTbl := mockStatsTable(tbl, 540)
 
-	// Set the value of pk column's histogram.
-	pkValues, _ := s.generateIntDatum(1, 54)
-	statsTbl.Columns[1] = &statistics.Column{Histogram: *mockStatsHistogram(1, pkValues, 10)}
+	// Set the value of columns' histogram.
+	colValues, _ := s.generateIntDatum(1, 54)
+	for i := 1; i <= 5; i++ {
+		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10), Info: tbl.Columns[i-1]}
+	}
 
 	// Set the value of two indices' histograms.
 	idxValues, err := s.generateIntDatum(2, 3)
 	c.Assert(err, IsNil)
-	statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60), NumColumns: 2}
-	statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60), NumColumns: 2}
+	statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60), Info: tbl.Indices[0]}
+	statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60), Info: tbl.Indices[1]}
 
 	tests := []struct {
 		exprs       string
@@ -133,7 +134,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "a >= 1 and b > 1 and a < 2",
-			selectivity: 0.01481481481,
+			selectivity: 0.01783264746,
 		},
 		{
 			exprs:       "a >= 1 and c > 1 and a < 2",
@@ -149,14 +150,17 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "b > 1",
-			selectivity: 0.8,
+			selectivity: 0.96296296296,
+		},
+		{
+			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
+			selectivity: 0.00123287439,
 		},
 	}
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprs
 		comment := Commentf("for %s", tt.exprs)
 		ctx := testKit.Se.(context.Context)
-		// is := do.InfoSchema()
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
@@ -173,15 +177,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 			}
 		}
 		c.Assert(sel, NotNil, comment)
-		units := make([]*statistics.SelUnit, 0, 2+len(tbl.Indices))
-		pkCol := expression.ColInfo2Col(sel.Schema().Columns, tbl.GetPkColInfo())
-		units = append(units, statistics.MakeSelUnit(statistics.SelPkUnit, nil, pkCol))
-		for _, index := range tbl.Indices {
-			idxCols, lengths := expression.IndexInfo2Cols(sel.Schema().Columns, index)
-			units = append(units, statistics.MakeSelUnit(index.ID, lengths, idxCols...))
-		}
-		units = append(units, statistics.MakeSelUnit(statistics.SelColumnUnit, nil, sel.Schema().Columns...))
-		ratio, err := statistics.Selectivity(ctx, sel.Conditions, units, statsTbl)
+		ratio, err := statsTbl.Selectivity(ctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, comment)
 	}
