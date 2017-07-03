@@ -235,7 +235,7 @@ func instanceName() string {
 	if err != nil {
 		return "unknown"
 	}
-	return fmt.Sprintf("%s:%s", hostname, *port)
+	return fmt.Sprintf("%s_%s", hostname, *port)
 }
 
 // parseLease parses lease argument string.
