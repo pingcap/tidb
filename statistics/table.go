@@ -70,6 +70,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok {
 		table = &Table{
+			TableID: tableInfo.ID,
 			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices: make(map[int64]*Index, len(tableInfo.Indices)),
 		}
@@ -77,7 +78,6 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		// We copy it before writing to avoid race.
 		table = table.copy()
 	}
-	table.TableID = tableInfo.ID
 	table.Count = count
 
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count from mysql.stats_histograms where table_id = %d", tableInfo.ID)
@@ -104,7 +104,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
-						idx = &Index{Histogram: *hg}
+						idx = &Index{Histogram: *hg, info: idxInfo}
 					}
 					break
 				}
@@ -124,7 +124,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
-						col = &Column{Histogram: *hg}
+						col = &Column{Histogram: *hg, info: colInfo}
 					}
 					break
 				}
@@ -217,6 +217,15 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colI
 	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
 }
 
+// GetRowCountByColumnRanges estimates the row count by a slice of ColumnRange.
+func (t *Table) GetRowCountByColumnRanges(sc *variable.StatementContext, colID int64, colRanges []*types.ColumnRange) (float64, error) {
+	c := t.Columns[colID]
+	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
+		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges)
+	}
+	return c.getColumnRowCount(sc, colRanges)
+}
+
 // GetRowCountByIndexRanges estimates the row count by a slice of IndexRange.
 func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID int64, indexRanges []*types.IndexRange) (float64, error) {
 	idx := t.Indices[idxID]
@@ -252,8 +261,8 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 		if i >= len(indexRange.LowVal) {
 			i = len(indexRange.LowVal) - 1
 		}
-		colRange := types.ColumnRange{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}
-		rowCount, err := getPseudoRowCountByColumnRange(sc, tableRowCount, colRange)
+		colRange := []*types.ColumnRange{{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}}
+		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, colRange)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -276,35 +285,40 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 	return totalCount, nil
 }
 
-func getPseudoRowCountByColumnRange(sc *variable.StatementContext, tableRowCount float64, ran types.ColumnRange) (float64, error) {
+func getPseudoRowCountByColumnRanges(sc *variable.StatementContext, tableRowCount float64, columnRanges []*types.ColumnRange) (float64, error) {
 	var rowCount float64
 	var err error
-	if ran.Low.Kind() == types.KindNull && ran.High.Kind() == types.KindMaxValue {
-		return tableRowCount, nil
-	} else if ran.Low.Kind() == types.KindMinNotNull {
-		var nullCount float64
-		nullCount = tableRowCount / pseudoEqualRate
-		if ran.High.Kind() == types.KindMaxValue {
-			rowCount = tableRowCount - nullCount
-		} else if err == nil {
-			lessCount := tableRowCount / pseudoLessRate
-			rowCount = lessCount - nullCount
-		}
-	} else if ran.High.Kind() == types.KindMaxValue {
-		rowCount = tableRowCount / pseudoLessRate
-	} else {
-		compare, err1 := ran.Low.CompareDatum(sc, ran.High)
-		if err1 != nil {
-			return 0, errors.Trace(err1)
-		}
-		if compare == 0 {
-			rowCount = tableRowCount / pseudoEqualRate
+	for _, ran := range columnRanges {
+		if ran.Low.Kind() == types.KindNull && ran.High.Kind() == types.KindMaxValue {
+			rowCount += tableRowCount
+		} else if ran.Low.Kind() == types.KindMinNotNull {
+			var nullCount float64
+			nullCount = tableRowCount / pseudoEqualRate
+			if ran.High.Kind() == types.KindMaxValue {
+				rowCount += tableRowCount - nullCount
+			} else if err == nil {
+				lessCount := tableRowCount / pseudoLessRate
+				rowCount += lessCount - nullCount
+			}
+		} else if ran.High.Kind() == types.KindMaxValue {
+			rowCount += tableRowCount / pseudoLessRate
 		} else {
-			rowCount = tableRowCount / pseudoBetweenRate
+			compare, err1 := ran.Low.CompareDatum(sc, ran.High)
+			if err1 != nil {
+				return 0, errors.Trace(err1)
+			}
+			if compare == 0 {
+				rowCount += tableRowCount / pseudoEqualRate
+			} else {
+				rowCount += tableRowCount / pseudoBetweenRate
+			}
+		}
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
 	}
-	if err != nil {
-		return 0, errors.Trace(err)
+	if rowCount > tableRowCount {
+		rowCount = tableRowCount
 	}
 	return rowCount, nil
 }
