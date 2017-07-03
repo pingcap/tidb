@@ -190,24 +190,24 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case int:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flen = len(strconv.FormatInt(int64(x), 10))
-		tp.Decimal = 0
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case int64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flen = len(strconv.FormatInt(int64(x), 10))
-		tp.Decimal = 0
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
 		tp.Flen = len(strconv.FormatUint(uint64(x), 10))
-		tp.Decimal = 0
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case string:
 		tp.Tp = mysql.TypeVarString
 		// max bytes length of CharsetUTF8
 		tp.Flen = len(x) * 3
-		tp.Decimal = 0
+		tp.Decimal = UnspecifiedLength
 		tp.Charset = mysql.DefaultCharset
 		tp.Collate = mysql.DefaultCollationName
 	case float64:
@@ -219,24 +219,24 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case []byte:
 		tp.Tp = mysql.TypeBlob
 		tp.Flen = len(x)
-		tp.Decimal = 0
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case Bit:
 		tp.Tp = mysql.TypeVarchar
 		tp.Flen = len(x.String())
-		tp.Decimal = 0
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case Hex:
 		tp.Tp = mysql.TypeVarchar
 		tp.Flen = len(x.String())
-		tp.Decimal = 0
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case Time:
 		tp.Tp = x.Type
 		switch x.Type {
 		case mysql.TypeDate:
 			tp.Flen = 10
-			tp.Decimal = 0
+			tp.Decimal = UnspecifiedLength
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			tp.Flen = 19
 			if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
@@ -261,12 +261,12 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case Enum:
 		tp.Tp = mysql.TypeEnum
 		tp.Flen = len(x.Name)
-		tp.Decimal = 0
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case Set:
 		tp.Tp = mysql.TypeSet
 		tp.Flen = len(x.Name)
-		tp.Decimal = 0
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	default:
 		tp.Tp = mysql.TypeUnspecified
