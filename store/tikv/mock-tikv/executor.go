@@ -386,8 +386,9 @@ func (e *aggregateExec) getGroupKey() ([]byte, [][]byte, error) {
 	if length == 0 {
 		return nil, nil, nil
 	}
-	vals := make([]types.Datum, 0, len(e.groupByExprs))
-	row := make([][]byte, 0, len(e.groupByExprs))
+	bufLen := 0
+	vals := make([]types.Datum, 0, length)
+	row := make([][]byte, 0, length)
 	for _, item := range e.groupByExprs {
 		v, err := item.Eval(e.row)
 		if err != nil {
@@ -398,10 +399,14 @@ func (e *aggregateExec) getGroupKey() ([]byte, [][]byte, error) {
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		bufLen += len(b)
 		row = append(row, b)
 	}
-	buf, err := codec.EncodeValue(nil, vals...)
-	return buf, row, errors.Trace(err)
+	buf := make([]byte, 0, bufLen)
+	for _, col := range row {
+		buf = append(buf, col...)
+	}
+	return buf, row, nil
 }
 
 // aggregate updates aggregate functions with row.
