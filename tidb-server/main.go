@@ -218,7 +218,8 @@ func prometheusPushClient(addr string, interval time.Duration) {
 	job := "tidb"
 	for {
 		err := push.AddFromGatherer(
-			job, push.HostnameGroupingKey(),
+			job,
+			map[string]string{"instance": instanceName()},
 			addr,
 			prometheus.DefaultGatherer,
 		)
@@ -227,6 +228,14 @@ func prometheusPushClient(addr string, interval time.Duration) {
 		}
 		time.Sleep(interval)
 	}
+}
+
+func instanceName() string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return fmt.Sprintf("%s_%s", hostname, *port)
 }
 
 // parseLease parses lease argument string.
