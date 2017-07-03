@@ -60,14 +60,15 @@ func (ca twoPhaseCommitAction) MetricsTag() string {
 
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-	store     *tikvStore
-	txn       *tikvTxn
-	startTS   uint64
-	keys      [][]byte
-	mutations map[string]*pb.Mutation
-	lockTTL   uint64
-	commitTS  uint64
-	mu        struct {
+	store             *tikvStore
+	txn               *tikvTxn
+	startTS           uint64
+	keys              [][]byte
+	mutations         map[string]*pb.Mutation
+	lockTTL           uint64
+	commitTS          uint64
+	skipCheckForWrite bool
+	mu                struct {
 		sync.RWMutex
 		writtenKeys  [][]byte
 		committed    bool
@@ -140,12 +141,12 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	txnWriteKVCountHistogram.Observe(float64(len(keys)))
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
 	return &twoPhaseCommitter{
-		store:     txn.store,
-		txn:       txn,
-		startTS:   txn.StartTS(),
-		keys:      keys,
-		mutations: mutations,
-		lockTTL:   txnLockTTL(txn.startTime, size),
+		store:             txn.store,
+		txn:               txn,
+		startTS:           txn.StartTS(),
+		keys:              keys,
+		mutations:         mutations,
+		lockTTL:           txnLockTTL(txn.startTime, size),
 	}, nil
 }
 
@@ -206,8 +207,9 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
-	if firstIsPrimary && (action == actionCommit || action == actionCleanup) {
-		// primary should be committed/cleanup first.
+	if firstIsPrimary && (c.skipCheckForWrite || action == actionCommit || action == actionCleanup) {
+		// primary should be committed/cleanup first
+		// primary should be prewrite first when skip_constraint_check is true
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
 			return errors.Trace(err)
@@ -332,7 +334,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			Mutations:    mutations,
 			PrimaryLock:  c.primary(),
 			StartVersion: c.startTS,
-			LockTtl:      c.lockTTL,
+			LockTtl:      c.lockTTL, 
 		},
 	}
 
