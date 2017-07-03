@@ -70,6 +70,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok {
 		table = &Table{
+			TableID: tableInfo.ID,
 			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices: make(map[int64]*Index, len(tableInfo.Indices)),
 		}
@@ -77,7 +78,6 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		// We copy it before writing to avoid race.
 		table = table.copy()
 	}
-	table.TableID = tableInfo.ID
 	table.Count = count
 
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count from mysql.stats_histograms where table_id = %d", tableInfo.ID)
@@ -104,7 +104,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
-						idx = &Index{Histogram: *hg}
+						idx = &Index{Histogram: *hg, info: idxInfo}
 					}
 					break
 				}
@@ -124,7 +124,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
-						col = &Column{Histogram: *hg}
+						col = &Column{Histogram: *hg, info: colInfo}
 					}
 					break
 				}
