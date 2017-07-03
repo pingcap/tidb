@@ -379,7 +379,7 @@ func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges [
 }
 
 // getColumnRowCount estimates the row count by a slice of ColumnRange.
-func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges ...types.ColumnRange) (float64, error) {
+func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []*types.ColumnRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
 		cmp, err := rg.Low.CompareDatum(sc, rg.High)
