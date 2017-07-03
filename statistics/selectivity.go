@@ -28,21 +28,21 @@ import (
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
 const selectionFactor = 0.8
 
-// calcBlock is used for calculating selectivity.
-type calcBlock struct {
+// exprSet is used for calculating selectivity.
+type exprSet struct {
 	tp int
 	ID int64
-	// the ith bit of `cover` will tell whether the ith expression is covered by this index.
-	cover int64
-	// ranges calculated.
+	// The ith bit of `mask` will tell whether the ith expression is covered by this index/column.
+	mask int64
+	// This stores ranges we get.
 	ranges []types.Range
 }
 
-// The type of the calcBlock.
+// The type of the exprSet.
 const (
-	IndexBlock = iota
-	PkBlock
-	ColumnBlock
+	setByIndex = iota
+	setByPk
+	setByCol
 )
 
 // Selectivity is a function calculate the selectivity of the expressions.
@@ -59,20 +59,20 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 	if t.Pseudo || len(exprs) > 63 {
 		return selectionFactor, nil
 	}
-	var blocks []*calcBlock
+	var sets []*exprSet
 	sc := ctx.GetSessionVars().StmtCtx
 	extractedCols := expression.ExtractColumns(expression.ComposeCNFCondition(ctx, exprs...))
 	for _, colInfo := range t.Columns {
 		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
 		// This column should have histogram.
 		if col != nil && len(colInfo.Histogram.Buckets) > 0 {
-			covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.ColumnRangeType, nil, col)
+			maskCovered, ranges, err := getMaskAndRanges(sc, exprs, ranger.ColumnRangeType, nil, col)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			blocks = append(blocks, &calcBlock{tp: ColumnBlock, ID: col.ID, cover: covered, ranges: ranges})
+			sets = append(sets, &exprSet{tp: setByCol, ID: col.ID, mask: maskCovered, ranges: ranges})
 			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
-				blocks[len(blocks)-1].tp = PkBlock
+				sets[len(sets)-1].tp = setByPk
 			}
 		}
 	}
@@ -80,30 +80,30 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 		idxCols, lengths := expression.IndexInfo2Cols(extractedCols, idxInfo.Info)
 		// This index should have histogram.
 		if len(idxCols) > 0 && len(idxInfo.Histogram.Buckets) > 0 {
-			covered, ranges, err := getMaskAndRanges(sc, exprs, ranger.IndexRangeType, lengths, idxCols...)
+			maskCovered, ranges, err := getMaskAndRanges(sc, exprs, ranger.IndexRangeType, lengths, idxCols...)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			blocks = append(blocks, &calcBlock{tp: IndexBlock, ID: idxInfo.ID, cover: covered, ranges: ranges})
+			sets = append(sets, &exprSet{tp: setByIndex, ID: idxInfo.ID, mask: maskCovered, ranges: ranges})
 		}
 	}
-	blocks = getUsedBlocksByGreedy(blocks)
+	sets = getUsableSetsByGreedy(sets)
 	ret := 1.0
-	// cut off the higher bit of mask
-	mask := int64(math.MaxInt64) >> uint64(63-len(exprs))
-	for _, block := range blocks {
-		mask ^= block.cover
+	// Initialize the mask with the full set.
+	mask := (int64(1) << uint(len(exprs))) - 1
+	for _, set := range sets {
+		mask ^= set.mask
 		var (
 			rowCount float64
 			err      error
 		)
-		switch block.tp {
-		case PkBlock, ColumnBlock:
-			ranges := ranger.Ranges2ColumnRanges(block.ranges)
-			rowCount, err = t.GetRowCountByColumnRanges(sc, block.ID, ranges)
-		case IndexBlock:
-			ranges := ranger.Ranges2IndexRanges(block.ranges)
-			rowCount, err = t.GetRowCountByIndexRanges(sc, block.ID, ranges)
+		switch set.tp {
+		case setByPk, setByCol:
+			ranges := ranger.Ranges2ColumnRanges(set.ranges)
+			rowCount, err = t.GetRowCountByColumnRanges(sc, set.ID, ranges)
+		case setByIndex:
+			ranges := ranger.Ranges2IndexRanges(set.ranges)
+			rowCount, err = t.GetRowCountByIndexRanges(sc, set.ID, ranges)
 		}
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -139,39 +139,39 @@ func getMaskAndRanges(sc *variable.StatementContext, exprs []expression.Expressi
 	return mask, ranges, nil
 }
 
-// getUsedBlocksByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
-func getUsedBlocksByGreedy(blocks []*calcBlock) (newBlocks []*calcBlock) {
+// getUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
+func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
 		bestID := -1
 		bestCount := 0
-		bestID, bestCount, bestTp := -1, 0, ColumnBlock
-		for i, block := range blocks {
-			block.cover &= mask
-			bits := popcount(block.cover)
-			if (bestTp == ColumnBlock && block.tp < ColumnBlock) || bestCount < bits {
-				bestID, bestCount, bestTp = i, bits, block.tp
+		bestID, bestCount, bestTp := -1, 0, setByCol
+		for i, set := range sets {
+			set.mask &= mask
+			bits := popCount(set.mask)
+			if (bestTp == setByCol && set.tp < setByCol) || bestCount < bits {
+				bestID, bestCount, bestTp = i, bits, set.tp
 			}
 		}
 		if bestCount == 0 {
 			break
 		} else {
-			// update the mask, remove the bit that blocks[bestID].cover has.
-			mask &^= blocks[bestID].cover
+			// update the mask, remove the bit that sets[bestID].mask has.
+			mask &^= sets[bestID].mask
 
-			newBlocks = append(newBlocks, blocks[bestID])
+			newBlocks = append(newBlocks, sets[bestID])
 			// remove the chosen one
-			blocks = append(blocks[:bestID], blocks[bestID+1:]...)
+			sets = append(sets[:bestID], sets[bestID+1:]...)
 		}
 	}
 	return
 }
 
-// popcount is the digit sum of the binary representation of the number x.
-func popcount(x int64) int {
+// popCount is the digit sum of the binary representation of the number x.
+func popCount(x int64) int {
 	ret := 0
-	// x = x & -x, cut the highest bit of the x.
+	// x -= x & -x, cut the highest bit of the x.
 	for ; x > 0; x -= x & -x {
 		ret++
 	}
