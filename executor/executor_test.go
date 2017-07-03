@@ -923,6 +923,12 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select substr('123', 1, null)")
 	result.Check(testkit.Rows("<nil>"))
 
+	// test cos
+	result = tk.MustQuery("select cos(0)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cos(3.1415926535898)")
+	result.Check(testkit.Rows("-1"))
+
 	// for case
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(255), b int)")
