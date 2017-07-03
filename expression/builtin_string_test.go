@@ -209,27 +209,68 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 
 func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 	defer testleak.AfterTest(c)()
-	args := types.MakeDatums([]interface{}{nil, nil}...)
-
-	fc := funcs[ast.ConcatWS]
-	f, err := fc.getFunction(datumsToConstants(args), s.ctx)
-	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
-
-	args = types.MakeDatums([]interface{}{"|", "a", nil, "b", "c"}...)
-	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
-	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetString(), Equals, "a|b|c")
-
-	args = types.MakeDatums([]interface{}{errors.New("must error"), nil}...)
-	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
-	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
-	c.Assert(err, NotNil)
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    string
+	}{
+		/*
+			{
+				[]interface{}{nil},
+				true, false, "",
+			},
+		*/
+		{
+			[]interface{}{",", "a", "b",
+				1, 2,
+				1.1, 1.2,
+				types.NewDecFromFloatForTest(1.1),
+				types.Time{
+					Time: types.FromDate(2000, 1, 1, 12, 01, 01, 0),
+					Type: mysql.TypeDatetime,
+					Fsp:  types.DefaultFsp},
+				types.Duration{
+					Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second),
+					Fsp:      types.DefaultFsp},
+			},
+			false, false, "a,b,1,2,1.1,1.2,1.1,2000-01-01 12:01:01,12:01:01",
+		},
+		{
+			[]interface{}{",", "a", "b", nil, "c"},
+			false, false, "a,b,c",
+		},
+		{
+			[]interface{}{nil, "a", "b", "c"},
+			true, false, "",
+		},
+		{
+			[]interface{}{",", nil, "a"},
+			false, false, "a",
+		},
+		/*
+			{
+				[]interface{}{errors.New("must error")},
+				false, true, "",
+			},
+		*/
+	}
+	fcName := ast.ConcatWS
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, fcName, primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		v, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(v.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(v.GetString(), Equals, t.res)
+			}
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestLeft(c *C) {
