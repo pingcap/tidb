@@ -262,8 +262,8 @@ type PhysicalPlan interface {
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx context.Context) (*tipb.Executor, error)
 
-	// getPushedProp tries to push the required property to its child and get the result property.
-	getPushedProp(prop *requiredProp) []*requiredProp
+	// getChildrenPossibleProps tries to push the required properties to its children and return all the possible properties.
+	getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp
 }
 
 type baseLogicalPlan struct {

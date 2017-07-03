@@ -50,10 +50,10 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context, allocator
 	return sort.attach2Task(task)
 }
 
-// getPushedProp will check if this sort property can be pushed or not.
+// getChildrenPossibleProps will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
-func (p *Projection) getPushedProp(prop *requiredProp) []*requiredProp {
+func (p *Projection) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	newProp := &requiredProp{taskTp: rootTaskType}
 	newCols := make([]*expression.Column, 0, len(prop.cols))
 	for _, col := range prop.cols {
@@ -70,7 +70,7 @@ func (p *Projection) getPushedProp(prop *requiredProp) []*requiredProp {
 	}
 	newProp.cols = newCols
 	newProp.desc = prop.desc
-	return []*requiredProp{newProp}
+	return [][]*requiredProp{{newProp}}
 }
 
 // joinKeysMatchIndex checks if all keys match columns in index.
@@ -503,18 +503,22 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, err
 }
 
 func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan, enforced bool) (task, error) {
-	var newProps []*requiredProp
+	var newProps [][]*requiredProp
 	if enforced {
-		newProps = pp.getPushedProp(&requiredProp{taskTp: rootTaskType})
+		newProps = pp.getChildrenPossibleProps(&requiredProp{taskTp: rootTaskType})
 	} else {
-		newProps = pp.getPushedProp(prop)
+		newProps = pp.getChildrenPossibleProps(prop)
 	}
 	for _, newProp := range newProps {
-		resultTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
-		if err != nil {
-			return nil, errors.Trace(err)
+		tasks := make([]task, 0, len(p.basePlan.children))
+		for i, child := range p.basePlan.children {
+			childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(newProp[i])
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tasks = append(tasks, childTask)
 		}
-		resultTask = pp.attach2Task(resultTask)
+		resultTask := pp.attach2Task(tasks...)
 		if enforced {
 			resultTask = prop.enforceProperty(resultTask, p.basePlan.ctx, p.basePlan.allocator)
 		}
@@ -841,33 +845,6 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	return task, nil
 }
 
-func (p *Union) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	t, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if t != nil {
-		return t, nil
-	}
-	if prop.taskTp != rootTaskType {
-		// Union can only return rootTask.
-		return invalidTask, p.storeTask(prop, invalidTask)
-	}
-	// Union is a sort blocker. We can only enforce it.
-	tasks := make([]task, 0, len(p.children))
-	for _, child := range p.children {
-		t, err = child.(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		tasks = append(tasks, t)
-	}
-	t = p.attach2Task(tasks...)
-	t = prop.enforceProperty(t, p.ctx, p.allocator)
-
-	return t, p.storeTask(prop, t)
-}
-
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
@@ -936,18 +913,22 @@ func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
 	return []PhysicalPlan{np}
 }
 
-func (p *basePhysicalPlan) getPushedProp(prop *requiredProp) []*requiredProp {
+func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	// By default, physicalPlan can always match the orders.
-	return []*requiredProp{prop}
+	props := make([]*requiredProp, 0, len(p.basePlan.children))
+	for range p.basePlan.children {
+		props = append(props, prop)
+	}
+	return [][]*requiredProp{props}
 }
 
-func (p *Limit) getPushedProp(prop *requiredProp) []*requiredProp {
+func (p *Limit) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	if !prop.isEmpty() {
 		return nil
 	}
-	props := make([]*requiredProp, 0, len(wholeTaskTypes))
+	props := make([][]*requiredProp, 0, len(wholeTaskTypes))
 	for _, tp := range wholeTaskTypes {
-		props = append(props, &requiredProp{taskTp: tp})
+		props = append(props, []*requiredProp{{taskTp: tp}})
 	}
 	return props
 }
@@ -963,13 +944,13 @@ func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
 	return []PhysicalPlan{ha}
 }
 
-func (p *PhysicalAggregation) getPushedProp(prop *requiredProp) []*requiredProp {
+func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	if !prop.isEmpty() {
 		return nil
 	}
-	props := make([]*requiredProp, 0, len(wholeTaskTypes))
+	props := make([][]*requiredProp, 0, len(wholeTaskTypes))
 	for _, tp := range wholeTaskTypes {
-		props = append(props, &requiredProp{taskTp: tp})
+		props = append(props, []*requiredProp{{taskTp: tp}})
 	}
 	return props
 }
