@@ -181,7 +181,7 @@ func (s *testEvaluatorSuite) TestJSONArray(c *C) {
 	fc := funcs[ast.JSONArray]
 	tbl := []struct {
 		Input    []interface{}
-		Expected interface{}
+		Expected string
 	}{
 		{[]interface{}{1}, `[1]`},
 		{[]interface{}{nil, "a", 3, `{"a": "b"}`}, `[null, "a", 3, "{\"a\": \"b\"}"]`},
@@ -192,15 +192,13 @@ func (s *testEvaluatorSuite) TestJSONArray(c *C) {
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		switch x := t.Expected.(type) {
-		case string:
-			j1, err := json.ParseFromString(x)
-			c.Assert(err, IsNil)
-			j2 := d.GetMysqlJSON()
-			cmp, err := json.CompareJSON(j1, j2)
-			c.Assert(err, IsNil)
-			c.Assert(cmp, Equals, 0)
-		}
+
+		j1, err := json.ParseFromString(t.Expected)
+		c.Assert(err, IsNil)
+		j2 := d.GetMysqlJSON()
+		cmp, err := json.CompareJSON(j1, j2)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
 	}
 }
 

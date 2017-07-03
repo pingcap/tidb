@@ -1505,31 +1505,29 @@ func (d *Datum) ToBytes() ([]byte, error) {
 // ToMysqlJSON is similar to convertToMysqlJSON, except the
 // latter parses from string, but the former uses it as primitive.
 func (d *Datum) ToMysqlJSON() (j json.JSON, err error) {
+	var in interface{}
 	switch d.Kind() {
-	case KindNull:
-		j = json.CreateJSON(nil)
 	case KindMysqlJSON:
 		j = d.x.(json.JSON)
+		return
 	case KindInt64, KindUint64:
-		i64 := d.GetInt64()
-		j = json.CreateJSON(i64)
+		in = d.GetInt64()
 	case KindFloat32, KindFloat64:
-		f64 := d.GetFloat64()
-		j = json.CreateJSON(f64)
+		in = d.GetFloat64()
 	case KindMysqlDecimal:
-		f64, _ := d.GetMysqlDecimal().ToFloat64()
-		j = json.CreateJSON(f64)
+		in, _ = d.GetMysqlDecimal().ToFloat64()
 	case KindString, KindBytes:
-		s := d.GetString()
-		j = json.CreateJSON(s)
+		in = d.GetString()
+	case KindNull:
+		in = nil
 	default:
-		s, convErr := d.ToString()
-		if convErr != nil {
-			err = errors.Trace(convErr)
+		in, err = d.ToString()
+		if err != nil {
+			err = errors.Trace(err)
 			return
 		}
-		j = json.CreateJSON(s)
 	}
+	j = json.CreateJSON(in)
 	return
 }
 
