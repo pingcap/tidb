@@ -58,10 +58,10 @@ import (
 type Session interface {
 	context.Context
 	Status() uint16                              // Flag of current status, such as autocommit.
-	LastInsertID() uint64                        // Last inserted auto_increment id.
+	LastInsertID() uint64                        // LastInsertID is the last inserted auto_increment ID.
 	AffectedRows() uint64                        // Affected rows by latest executed stmt.
 	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement.
-	String() string                              // For debug
+	String() string                              // String is used to debug.
 	CommitTxn() error
 	RollbackTxn() error
 	// PrepareStmt executes prepare statement in binary protocol.
@@ -602,7 +602,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	for i, rst := range rawStmts {
 		s.prepareTxnCtx()
 		startTS := time.Now()
-		// Some execution is done in compile stage, so we reset it before compile.
+		// Some executions are done in compile stage, so we reset them before compile.
 		executor.ResetStmtCtx(s, rst)
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
@@ -628,6 +628,8 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		if r != nil {
 			rs = append(rs, r)
 		}
+
+		logCrucialStmt(rst)
 	}
 
 	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(rs) > 1 {
@@ -970,7 +972,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 13
+	currentBootstrapVersion = 14
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1021,7 +1023,6 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.MaxAllowedPacket + quoteCommaQuote +
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check + quoteCommaQuote +
-	variable.TiDBSkipDDLWait + quoteCommaQuote +
 	variable.TiDBIndexLookupSize + quoteCommaQuote +
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
@@ -1161,4 +1162,32 @@ func (s *session) ShowProcess() util.ProcessInfo {
 		pi = tmp.(util.ProcessInfo)
 	}
 	return pi
+}
+
+// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD etc.
+func logCrucialStmt(node ast.StmtNode) {
+	switch stmt := node.(type) {
+	case *ast.CreateUserStmt:
+		for _, user := range stmt.Specs {
+			log.Infof("[CRUCIAL OPERATION] create user %s.", user.SecurityString())
+		}
+	case *ast.DropUserStmt:
+		log.Infof("[CRUCIAL OPERATION] drop user %v.", stmt.UserList)
+	case *ast.AlterUserStmt:
+		for _, user := range stmt.Specs {
+			log.Infof("[CRUCIAL OPERATION] alter user %s.", user.SecurityString())
+		}
+	case *ast.SetPwdStmt:
+		log.Infof("[CRUCIAL OPERATION] set password for user %s.", stmt.User)
+	case *ast.GrantStmt:
+		text := stmt.Text()
+		// Filter "identified by xxx" because it would expose password information.
+		idx := strings.Index(strings.ToLower(text), "identified")
+		if idx > 0 {
+			text = text[:idx]
+		}
+		log.Infof("[CRUCIAL OPERATION] %s.", text)
+	case *ast.RevokeStmt:
+		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
+	}
 }

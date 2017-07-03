@@ -1275,6 +1275,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255) FIRST", true},
 		{"ALTER TABLE db.t RENAME to db1.t1", true},
+		{"ALTER TABLE db.t RENAME db1.t1", true},
 		{"ALTER TABLE t RENAME as t1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1", true},
 		{"ALTER TABLE t ALTER a SET DEFAULT 1", true},
@@ -1302,6 +1303,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
+		{"RENAME TABLE t t1", false},
 		{"RENAME TABLE d.t TO d1.t1", true},
 
 		// for truncate statement
@@ -1519,6 +1521,13 @@ func (s *testParserSuite) TestMysqlDump(c *C) {
 		{`LOCK TABLES t1 READ;`, true},
 		{`show table status like 't'`, true},
 		{`LOCK TABLES t2 WRITE`, true},
+
+		// for unlock table and lock table
+		{`UNLOCK TABLE;`, true},
+		{`LOCK TABLE t1 READ;`, true},
+		{`show table status like 't'`, true},
+		{`LOCK TABLE t2 WRITE`, true},
+		{`LOCK TABLE t1 WRITE, t3 READ`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -1536,6 +1545,23 @@ func (s *testParserSuite) TestIndexHint(c *C) {
 		{`select * from t use index for group by (idx1) use index for order by (idx2), t2`, true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestPriority(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{`select high_priority * from t`, true},
+		{`insert high_priority into t values (1)`, true},
+		{`insert LOW_PRIORITY into t values (1)`, true},
+		{`update low_priority t set a = 2`, true},
+	}
+	s.RunTest(c, table)
+
+	parser := New()
+	stmt, err := parser.Parse("select HIGH_PRIORITY * from t", "", "")
+	c.Assert(err, IsNil)
+	sel := stmt[0].(*ast.SelectStmt)
+	c.Assert(sel.SelectStmtOpts.Priority, Equals, mysql.HighPriority)
 }
 
 func (s *testParserSuite) TestEscape(c *C) {

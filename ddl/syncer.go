@@ -123,7 +123,8 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.session, err = newSession(ctx, s.etcdCli, newSessionDefaultRetryCnt, SyncerSessionTTL)
+	s.session, err = newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
+		newSessionDefaultRetryCnt, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -140,7 +141,8 @@ func (s *schemaVersionSyncer) Done() <-chan struct{} {
 // Restart implements SchemaSyncer.Restart interface.
 func (s *schemaVersionSyncer) Restart(ctx goctx.Context) error {
 	var err error
-	s.session, err = newSession(ctx, s.etcdCli, newSessionRetryUnlimited, SyncerSessionTTL)
+	s.session, err = newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
+		newSessionRetryUnlimited, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}

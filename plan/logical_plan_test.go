@@ -372,6 +372,7 @@ func mockContext() context.Context {
 	ctx.Store = &mockStore{
 		client: &mockClient{},
 	}
+	ctx.GetSessionVars().CurrentDB = "test"
 	do := &domain.Domain{}
 	do.CreateStatsHandle(ctx)
 	sessionctx.BindDomain(ctx, do)

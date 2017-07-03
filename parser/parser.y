@@ -831,6 +831,7 @@ import (
 	DeallocateSym		"Deallocate or drop"
 	OuterOpt		"optional OUTER clause"
 	CrossOpt		"Cross join option"
+	TablesTerminalSym 	"{TABLE|TABLES}"
 	TransactionChar		"Transaction characteristic"
 	TransactionChars	"Transaction characteristic list"
 	IsolationLevel		"Isolation level"
@@ -1036,6 +1037,13 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableRenameTable,
 			NewTable:      $3.(*ast.TableName),
+		}
+	}
+|	"RENAME" TableName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableRenameTable,
+			NewTable:      $2.(*ast.TableName),
 		}
 	}
 |	"RENAME" "AS" TableName
@@ -2395,7 +2403,7 @@ InsertIntoStmt:
 	"INSERT" Priority IgnoreOptional IntoOpt TableName InsertValues OnDuplicateKeyUpdate
 	{
 		x := $6.(*ast.InsertStmt)
-		x.Priority = $2.(int)
+		x.Priority = $2.(mysql.PriorityEnum)
 		x.Ignore = $3.(bool)
 		// Wraps many layers here so that it can be processed the same way as select statement.
 		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
@@ -2511,7 +2519,7 @@ ReplaceIntoStmt:
 	{
 		x := $5.(*ast.InsertStmt)
 		x.IsReplace = true
-		x.Priority = $2.(int)
+		x.Priority = $2.(mysql.PriorityEnum)
 		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
 		$$ = x
@@ -2519,15 +2527,15 @@ ReplaceIntoStmt:
 
 ReplacePriority:
 	{
-		$$ = ast.NoPriority
+		$$ = mysql.NoPriority
 	}
 |	"LOW_PRIORITY"
 	{
-		$$ = ast.LowPriority
+		$$ = mysql.LowPriority
 	}
 |	"DELAYED"
 	{
-		$$ = ast.DelayedPriority
+		$$ = mysql.DelayedPriority
 	}
 
 /***********************************Replace Statements END************************************/
@@ -4084,19 +4092,19 @@ PrimaryFactor:
 
 Priority:
 	{
-		$$ = ast.NoPriority
+		$$ = mysql.NoPriority
 	}
 |	"LOW_PRIORITY"
 	{
-		$$ = ast.LowPriority
+		$$ = mysql.LowPriority
 	}
 |	"HIGH_PRIORITY"
 	{
-		$$ = ast.HighPriority
+		$$ = mysql.HighPriority
 	}
 |	"DELAYED"
 	{
-		$$ = ast.DelayedPriority
+		$$ = mysql.DelayedPriority
 	}
 
 LowPriorityOptional:
@@ -4230,6 +4238,7 @@ SelectStmt:
 	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
 	{
 		st := &ast.SelectStmt {
+			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
 			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
 			LockTp:	       $5.(ast.SelectLockType),
@@ -4258,6 +4267,7 @@ SelectStmt:
 |	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
 	{
 		st := &ast.SelectStmt {
+			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
 			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
 			LockTp:	       $7.(ast.SelectLockType),
@@ -4281,6 +4291,7 @@ SelectStmt:
 	{
 		opts := $2.(*ast.SelectStmtOpts)
 		st := &ast.SelectStmt{
+			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
 			Distinct:		opts.Distinct,
 			Fields:		$3.(*ast.FieldList),
 			From:		$5.(*ast.TableRefsClause),
@@ -4585,7 +4596,7 @@ SelectStmtDistinct:
 	}
 
 SelectStmtOpts:
-	TableOptimizerHints SelectStmtDistinct SelectStmtSQLCache SelectStmtCalcFoundRows
+	TableOptimizerHints SelectStmtDistinct Priority SelectStmtSQLCache SelectStmtCalcFoundRows
 	{
 		opt := &ast.SelectStmtOpts{}
 		if $1 != nil {
@@ -4595,10 +4606,13 @@ SelectStmtOpts:
 		    opt.Distinct = $2.(bool)
 		}
 		if $3 != nil {
-		    opt.SQLCache = $3.(bool)
+		    opt.Priority = $3.(mysql.PriorityEnum)
 		}
 		if $4 != nil {
-		    opt.CalcFoundRows = $4.(bool)
+		    opt.SQLCache = $4.(bool)
+		}
+		if $5 != nil {
+		    opt.CalcFoundRows = $5.(bool)
 		}
 
 		$$ = opt
@@ -6430,12 +6444,15 @@ LinesTerminated:
  *********************************************************************/
 
 UnlockTablesStmt:
-	"UNLOCK" "TABLES"
-	{}
+	"UNLOCK" TablesTerminalSym {}
 
 LockTablesStmt:
-	"LOCK" "TABLES" TableLockList
+	"LOCK" TablesTerminalSym TableLockList
 	{}
+	
+TablesTerminalSym:
+	"TABLES"
+|	"TABLE"
 
 TableLock:
 	TableName LockType
