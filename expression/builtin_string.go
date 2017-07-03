@@ -276,25 +276,14 @@ type leftFunctionClass struct {
 }
 
 func (c *leftFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	retType := c.inferRetType(args)
-	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, tpString, tpInt)
+	tp := types.NewFieldType(mysql.TypeVarString)
+	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinLeftSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-func (c *leftFunctionClass) inferRetType(args []Expression) *types.FieldType {
-	argTp := args[0].GetType()
-	tp := types.MergeFieldType(mysql.TypeVarString, argTp.Tp)
-	retType := types.NewFieldType(tp)
-	if types.IsBinaryStr(argTp) {
-		types.SetBinChsClnFlag(retType)
-	} else {
-		retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	}
-	return retType
 }
 
 type builtinLeftSig struct {
@@ -348,25 +337,14 @@ type rightFunctionClass struct {
 }
 
 func (c *rightFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	retType := c.inferRetType(args)
-	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, tpString, tpInt)
+	tp := types.NewFieldType(mysql.TypeVarString)
+	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinRightSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-func (c *rightFunctionClass) inferRetType(args []Expression) *types.FieldType {
-	argTp := args[0].GetType()
-	tp := types.MergeFieldType(mysql.TypeVarString, argTp.Tp)
-	retType := types.NewFieldType(tp)
-	if types.IsBinaryStr(argTp) {
-		types.SetBinChsClnFlag(retType)
-	} else {
-		retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	}
-	return retType
 }
 
 type builtinRightSig struct {

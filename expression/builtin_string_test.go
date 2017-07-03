@@ -248,16 +248,14 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 	}{
 		{
 			[]Expression{varcharCon, int8Con},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
-		},
-		{
-			[]Expression{blobCon, int8Con},
-			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			&types.FieldType{Tp: mysql.TypeVarString, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
 		},
 	}
 	fc := funcs[ast.Left].(*leftFunctionClass)
 	for _, t := range typecases {
-		retType := fc.inferRetType(t.args)
+		f, err := fc.getFunction(t.args, s.ctx)
+		c.Assert(err, IsNil)
+		retType := f.getRetTp()
 		c.Assert(retType.Tp, Equals, t.retType.Tp)
 		c.Assert(retType.Charset, Equals, t.retType.Charset)
 		c.Assert(retType.Collate, Equals, t.retType.Collate)
@@ -318,16 +316,14 @@ func (s *testEvaluatorSuite) TestRight(c *C) {
 	}{
 		{
 			[]Expression{varcharCon, int8Con},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
-		},
-		{
-			[]Expression{blobCon, int8Con},
-			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			&types.FieldType{Tp: mysql.TypeVarString, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
 		},
 	}
 	fc := funcs[ast.Right].(*rightFunctionClass)
 	for _, t := range typecases {
-		retType := fc.inferRetType(t.args)
+		f, err := fc.getFunction(t.args, s.ctx)
+		c.Assert(err, IsNil)
+		retType := f.getRetTp()
 		c.Assert(retType.Tp, Equals, t.retType.Tp)
 		c.Assert(retType.Charset, Equals, t.retType.Charset)
 		c.Assert(retType.Collate, Equals, t.retType.Collate)
