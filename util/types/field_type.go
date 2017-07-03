@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
+	"strconv"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -178,46 +179,100 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull
-	case bool, int64, int:
+		tp.Flen = 0
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+	case bool:
 		tp.Tp = mysql.TypeLonglong
+		tp.Flen = 1
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+	case int:
+		tp.Tp = mysql.TypeLonglong
+		tp.Flen = len(strconv.FormatInt(int64(x), 10))
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+	case int64:
+		tp.Tp = mysql.TypeLonglong
+		tp.Flen = len(strconv.FormatInt(int64(x), 10))
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
+		tp.Flen = len(strconv.FormatUint(uint64(x), 10))
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case string:
 		tp.Tp = mysql.TypeVarString
+		// max bytes length of CharsetUTF8
+		tp.Flen = len(x) * 3
+		tp.Decimal = 0
 		tp.Charset = mysql.DefaultCharset
 		tp.Collate = mysql.DefaultCollationName
 	case float64:
 		tp.Tp = mysql.TypeDouble
+		s := strconv.FormatFloat(x, 'f', 0, 64)
+		tp.Flen = len(s)
+		tp.Decimal = len(s) - 1 - strings.Index(s, ".")
 		SetBinChsClnFlag(tp)
 	case []byte:
 		tp.Tp = mysql.TypeBlob
+		tp.Flen = len(x)
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
-	case Bit, Hex:
+	case Bit:
 		tp.Tp = mysql.TypeVarchar
+		tp.Flen = len(x.String())
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+	case Hex:
+		tp.Tp = mysql.TypeVarchar
+		tp.Flen = len(x.String())
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case Time:
 		tp.Tp = x.Type
+		switch x.Type {
+		case mysql.TypeDate:
+			tp.Flen = 10
+			tp.Decimal = 0
+		case mysql.TypeDatetime, mysql.TypeTimestamp:
+			tp.Flen = 19
+			if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
+				tp.Flen = x.Fsp + 1
+			}
+			tp.Decimal = x.Fsp
+		}
 		SetBinChsClnFlag(tp)
 	case Duration:
 		tp.Tp = mysql.TypeDuration
+		tp.Flen = 9
+		if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
+			tp.Flen = x.Fsp + 1
+		}
+		tp.Decimal = x.Fsp
 		SetBinChsClnFlag(tp)
 	case *MyDecimal:
 		tp.Tp = mysql.TypeNewDecimal
+		tp.Flen = len(x.ToString())
+		tp.Decimal = int(x.digitsFrac)
 		SetBinChsClnFlag(tp)
 	case Enum:
 		tp.Tp = mysql.TypeEnum
+		tp.Flen = len(x.Name)
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case Set:
 		tp.Tp = mysql.TypeSet
+		tp.Flen = len(x.Name)
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	default:
 		tp.Tp = mysql.TypeUnspecified
+		tp.Flen = UnspecifiedLength
+		tp.Decimal = UnspecifiedLength
 	}
-	tp.Flen = UnspecifiedLength
-	tp.Decimal = UnspecifiedLength
 }
 
 // DefaultCharsetForType returns the default charset/collation for mysql type.
