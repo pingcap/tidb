@@ -248,44 +248,46 @@ type concatWSFunctionClass struct {
 }
 
 func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinConcatWSSig{newBaseBuiltinFunc(args, ctx)}
+	var cc concatFunctionClass
+	retType, argTps := cc.inferType(args)
+	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinConcatWSSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinConcatWSSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinConcatWSSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
-func (b *builtinConcatWSSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
+func (b *builtinConcatWSSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	var sep string
-	s := make([]string, 0, len(args))
-	for i, a := range args {
-		if a.IsNull() {
+	s := make([]string, 0, len(b.getArgs()))
+	for i, a := range b.getArgs() {
+		d, isNull, err = a.EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, isNull, errors.Trace(err)
+		}
+		if isNull {
 			if i == 0 {
-				return d, nil
+				return d, isNull, errors.Trace(err)
 			}
 			continue
 		}
-		ss, err := a.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
 
 		if i == 0 {
-			sep = ss
+			sep = d
 			continue
 		}
-		s = append(s, ss)
+		s = append(s, d)
 	}
 
-	d.SetString(strings.Join(s, sep))
-	return d, nil
+	d = strings.Join(s, sep)
+	return d, false, nil
 }
 
 type leftFunctionClass struct {
