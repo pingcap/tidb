@@ -649,10 +649,17 @@ func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err err
 	}
 
 	t := types.Time{
-		Type: mysql.TypeDatetime,
+		Type: mysql.TypeTimestamp,
 		Time: types.FromGoTime(tr),
 		Fsp:  fsp,
 	}
+	// Now() is a strange function, you can view it as timestamp converted datetime, so
+	// it also consider "time_zone" session variable.
+	err = t.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	t.Type = mysql.TypeDatetime
 
 	d.SetMysqlTime(t)
 	return

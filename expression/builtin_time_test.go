@@ -475,7 +475,8 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		c.Assert(err, NotNil)
 	}
 
-	// Test that timestamp variable may affect the result of Now() builtin function.
+	// Test that "timestamp" and "time_zone" variable may affect the result of Now() builtin function.
+	varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("+00:00"))
 	varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(1234))
 	fc := funcs[ast.Now]
 	f, err := fc.getFunction(datumsToConstants(nil), s.ctx)
@@ -484,8 +485,9 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	c.Assert(err, IsNil)
 	result, err := v.ToString()
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, "1970-01-01 08:20:34")
+	c.Assert(result, Equals, "1970-01-01 00:20:34")
 	varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(0))
+	varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("system"))
 }
 
 func (s *testEvaluatorSuite) TestIsDuration(c *C) {
