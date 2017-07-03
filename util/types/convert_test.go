@@ -669,3 +669,64 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	_, err = floatStrToIntStr("1e21")
 	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
 }
+
+// TestConvertTime tests time related conversion.
+// time conversion is complicated including Date/Datetime/Time/Timestamp etc,
+// Timestamp may involving timezone.
+func (s *testTypeConvertSuite) TestConvertTime(c *C) {
+	timezones := []*time.Location{
+		time.UTC,
+		time.FixedZone("UTC", 3*3600),
+		time.Local,
+	}
+
+	for _, timezone := range timezones {
+		sc := &variable.StatementContext{
+			TimeZone: timezone,
+		}
+		testConvertTimeTimeZone(c, sc)
+	}
+}
+
+func testConvertTimeTimeZone(c *C, sc *variable.StatementContext) {
+	raw := FromDate(2002, 3, 4, 4, 6, 7, 8)
+	tests := []struct {
+		input  Time
+		target *FieldType
+		expect Time
+	}{
+		{
+			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: sc.TimeZone},
+			target: NewFieldType(mysql.TypeTimestamp),
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+		},
+		{
+			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: nil},
+			target: NewFieldType(mysql.TypeTimestamp),
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+		},
+		{
+			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: time.UTC},
+			target: NewFieldType(mysql.TypeTimestamp),
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+		},
+		{
+			input:  Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			target: NewFieldType(mysql.TypeDatetime),
+			expect: Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: nil},
+		},
+	}
+
+	for _, test := range tests {
+		var d Datum
+		d.SetMysqlTime(test.input)
+		nd, err := d.ConvertTo(sc, test.target)
+		c.Assert(err, IsNil)
+		t := nd.GetMysqlTime()
+		c.Assert(t.Type, Equals, test.expect.Type)
+		c.Assert(t.Time, Equals, test.expect.Time)
+		if test.expect.Type == mysql.TypeTimestamp {
+			c.Assert(t.TimeZone, Equals, test.expect.TimeZone)
+		}
+	}
+}
