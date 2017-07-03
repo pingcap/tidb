@@ -130,7 +130,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *Selection:
 		str = "Selection"
-		if useDAGPlanBuilder(x.ctx) {
+		if UseDAGPlanBuilder(x.ctx) {
 			str = fmt.Sprintf("Sel(%s)", x.Conditions)
 		}
 	case *Projection:

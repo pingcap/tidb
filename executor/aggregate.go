@@ -91,7 +91,7 @@ func (e *HashAggExec) Next() (*Row, error) {
 }
 
 func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
-	if e.aggType == plan.FinalAgg {
+	if e.aggType == plan.FinalAgg && !plan.UseDAGPlanBuilder(e.ctx) {
 		val, err := e.GroupByItems[0].Eval(row.Data)
 		if err != nil {
 			return nil, errors.Trace(err)

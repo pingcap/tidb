@@ -66,6 +66,10 @@ func supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
 		return true
+	case tipb.ExprType_JsonType, tipb.ExprType_JsonExtract, tipb.ExprType_JsonUnquote, tipb.ExprType_JsonValid,
+		tipb.ExprType_JsonObject, tipb.ExprType_JsonArray, tipb.ExprType_JsonMerge, tipb.ExprType_JsonSet,
+		tipb.ExprType_JsonInsert, tipb.ExprType_JsonReplace, tipb.ExprType_JsonRemove, tipb.ExprType_JsonContains:
+		return false
 	case kv.ReqSubTypeDesc:
 		return true
 	default:
@@ -429,7 +433,7 @@ func (it *copIterator) Next() ([]byte, error) {
 // handleTask handles single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
-	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
+	sender := NewRegionRequestSender(it.store.regionCache, it.store.client, pbIsolationLevel(it.req.IsolationLevel))
 	for {
 		select {
 		case <-it.finished:

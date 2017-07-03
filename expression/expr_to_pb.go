@@ -151,6 +151,10 @@ func (pc pbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		return pc.bitwiseFuncToPBExpr(expr)
 	case ast.Case, ast.Coalesce, ast.If, ast.Ifnull, ast.IsNull, ast.Nullif:
 		return pc.builtinFuncToPBExpr(expr)
+	case ast.JSONType, ast.JSONExtract, ast.JSONUnquote, ast.JSONValid,
+		ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
+		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONContains:
+		return pc.jsonFuncToPBExpr(expr)
 	default:
 		return nil
 	}
@@ -267,6 +271,11 @@ func (pc pbConverter) bitwiseFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	case ast.BitNeg:
 		tp = tipb.ExprType_BitNeg
 	}
+	return pc.convertToPBExpr(expr, tp)
+}
+
+func (pc pbConverter) jsonFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
+	var tp = jsonFunctionNameToPB[expr.FuncName.L]
 	return pc.convertToPBExpr(expr, tp)
 }
 

@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -52,65 +53,24 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context, allocator
 // getPushedProp will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
-func (p *Projection) getPushedProp(prop *requiredProp) (*requiredProp, bool) {
+func (p *Projection) getPushedProp(prop *requiredProp) []*requiredProp {
 	newProp := &requiredProp{taskTp: rootTaskType}
-	if prop.isEmpty() {
-		return newProp, false
-	}
 	newCols := make([]*expression.Column, 0, len(prop.cols))
 	for _, col := range prop.cols {
 		idx := p.schema.ColumnIndex(col)
 		if idx == -1 {
-			return newProp, false
+			return nil
 		}
 		switch expr := p.Exprs[idx].(type) {
 		case *expression.Column:
 			newCols = append(newCols, expr)
 		case *expression.ScalarFunction:
-			return newProp, false
+			return nil
 		}
 	}
 	newProp.cols = newCols
 	newProp.desc = prop.desc
-	return newProp, true
-}
-
-// convert2NewPhysicalPlan implements PhysicalPlan interface.
-// If the Projection maps a scalar function to a sort column, it will refuse the prop.
-// TODO: We can analyze the function dependence to propagate the required prop. e.g For a + 1 as b , we can take the order
-// of b to a.
-func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if task != nil {
-		return task, nil
-	}
-	if prop.taskTp != rootTaskType {
-		// Projection cannot be pushed down currently, it can only return rootTask.
-		return invalidTask, p.storeTask(prop, invalidTask)
-	}
-	// enforceProperty task.
-	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	task = p.attach2Task(task)
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
-
-	newProp, canPassProp := p.getPushedProp(prop)
-	if canPassProp {
-		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		orderedTask = p.attach2Task(orderedTask)
-		if orderedTask.cost() < task.cost() {
-			task = orderedTask
-		}
-	}
-	return task, p.storeTask(prop, task)
+	return []*requiredProp{newProp}
 }
 
 // joinKeysMatchIndex checks if all keys match columns in index.
@@ -156,8 +116,8 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 		leftConds     expression.CNFExprs
 		innerTask     task
 		err           error
-		innerJoinKeys = make([]*expression.Column, 0, len(p.EqualConditions))
-		outerJoinKeys = make([]*expression.Column, 0, len(p.EqualConditions))
+		innerJoinKeys []*expression.Column
+		outerJoinKeys []*expression.Column
 	)
 	outerTask, err = outerChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
@@ -166,24 +126,22 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 	if outerIdx == 0 {
 		rightConds = p.RightConditions.Clone()
 		leftConds = p.LeftConditions.Clone()
+		outerJoinKeys = p.LeftJoinKeys
+		innerJoinKeys = p.RightJoinKeys
 	} else {
 		rightConds = p.LeftConditions.Clone()
 		leftConds = p.RightConditions.Clone()
+		innerJoinKeys = p.LeftJoinKeys
+		outerJoinKeys = p.RightJoinKeys
 	}
 	for {
 		switch x := innerChild.(type) {
 		case *DataSource:
 			indices, includeTableScan := availableIndices(x.indexHints, x.tableInfo)
-			for _, cond := range p.EqualConditions {
-				innerJoinKeys = append(innerJoinKeys, cond.GetArgs()[1-outerIdx].(*expression.Column))
-				outerJoinKeys = append(outerJoinKeys, cond.GetArgs()[outerIdx].(*expression.Column))
-			}
-			if includeTableScan {
-				if len(innerJoinKeys) == 1 {
-					pkCol := x.getPKIsHandleCol()
-					if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
-						useTableScan = true
-					}
+			if includeTableScan && len(innerJoinKeys) == 1 {
+				pkCol := x.getPKIsHandleCol()
+				if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
+					useTableScan = true
 				}
 			}
 			if useTableScan {
@@ -504,7 +462,9 @@ func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	return task, p.storeTask(prop, task)
 }
 
-func (p *Limit) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+// convert2NewPhysicalPlan implements LogicalPlan interface.
+func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+	// look up the task map
 	task, err := p.getTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -512,57 +472,57 @@ func (p *Limit) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	if task != nil {
 		return task, nil
 	}
+	task = invalidTask
 	if prop.taskTp != rootTaskType {
-		return invalidTask, p.storeTask(prop, invalidTask)
+		// Currently all plan cannot totally push down.
+		return task, p.storeTask(prop, task)
 	}
-	for _, taskTp := range wholeTaskTypes {
-		optTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: taskTp})
+	// Now we only consider rootTask.
+	if len(p.basePlan.children) == 0 {
+		// When the children length is 0, we process it specially.
+		task = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
+		task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
+		return task, p.storeTask(prop, task)
+	}
+	// Else we suppose it only has one child.
+	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
+		// We consider to add enforcer firstly.
+		task, err = p.getBestTask(task, prop, pp, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		optTask = p.attach2Task(optTask)
-		optTask = prop.enforceProperty(optTask, p.ctx, p.allocator)
-		if task == nil || task.cost() > optTask.cost() {
-			task = optTask
+		if prop.isEmpty() {
+			continue
+		}
+		task, err = p.getBestTask(task, prop, pp, false)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return task, p.storeTask(prop, task)
 }
 
-// convert2NewPhysicalPlan implements LogicalPlan interface.
-func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if task != nil {
-		return task, nil
-	}
-	if prop.taskTp != rootTaskType {
-		return invalidTask, p.storeTask(prop, invalidTask)
-	}
-	if len(p.basePlan.children) == 0 {
-		task = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
+func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan, enforced bool) (task, error) {
+	var newProps []*requiredProp
+	if enforced {
+		newProps = pp.getPushedProp(&requiredProp{taskTp: rootTaskType})
 	} else {
-		// enforce branch
-		task, err = p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
+		newProps = pp.getPushedProp(prop)
+	}
+	for _, newProp := range newProps {
+		resultTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		task = p.basePlan.self.(PhysicalPlan).attach2Task(task)
-	}
-	task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
-	if !prop.isEmpty() && len(p.basePlan.children) > 0 {
-		orderedTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(prop)
-		if err != nil {
-			return nil, errors.Trace(err)
+		resultTask = pp.attach2Task(resultTask)
+		if enforced {
+			resultTask = prop.enforceProperty(resultTask, p.basePlan.ctx, p.basePlan.allocator)
 		}
-		orderedTask = p.basePlan.self.(PhysicalPlan).attach2Task(orderedTask)
-		if orderedTask.cost() < task.cost() {
-			task = orderedTask
+		if resultTask.cost() < bestTask.cost() {
+			bestTask = resultTask
 		}
 	}
-	return task, p.storeTask(prop, task)
+	return bestTask, nil
 }
 
 func tryToAddUnionScan(cop *copTask, conds []expression.Expression, ctx context.Context, allocator *idAllocator) task {
@@ -684,22 +644,27 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
+	idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, idx)
+	is.Ranges = ranger.FullIndexRange()
 	if len(p.pushedDownConds) > 0 {
 		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, is.filterCondition, is.accessEqualCount, is.accessInAndEqCount = ranger.DetachIndexScanConditions(conds, idx)
-		is.Ranges, err = ranger.BuildIndexRange(sc, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if len(idxCols) > 0 {
+			var ranges []types.Range
+			ranges, is.AccessCondition, is.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IndexRangeType, idxCols, colLengths)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			is.Ranges = ranger.Ranges2IndexRanges(ranges)
+			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			is.filterCondition = conds
 		}
-		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, is.accessInAndEqCount)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		is.Ranges = ranger.FullIndexRange()
 	}
 	cop := &copTask{
 		cnt:       rowCount,
@@ -739,7 +704,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			if col.Name.L == prop.cols[0].ColName.L {
 				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
 				break
-			} else if i >= is.accessEqualCount {
+			} else if i >= len(is.AccessCondition) || is.AccessCondition[i].(*expression.ScalarFunction).FuncName.L != ast.EQ {
 				matchProperty = false
 				break
 			}
@@ -818,34 +783,35 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
+	ts.Ranges = ranger.FullIntRange()
+	var pkCol *expression.Column
+	if ts.Table.PKIsHandle {
+		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
+			pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
+		}
+	}
 	if len(p.pushedDownConds) > 0 {
 		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, ts.filterCondition = ranger.DetachColumnConditions(conds, p.tableInfo.GetPkName())
-		ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
-	}
-	statsTbl := p.statisticTable
-	rowCount := float64(statsTbl.Count)
-	var pkCol *expression.Column
-	if p.tableInfo.PKIsHandle {
-		for i, colInfo := range ts.Columns {
-			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				pkCol = p.Schema().Columns[i]
-				break
-			}
-		}
 		if pkCol != nil {
-			rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, pkCol.ID, ts.Ranges)
+			var ranges []types.Range
+			ranges, ts.AccessCondition, ts.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
+			ts.Ranges = ranger.Ranges2IntRanges(ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+		} else {
+			ts.filterCondition = conds
+		}
+	}
+	statsTbl := p.statisticTable
+	rowCount := float64(statsTbl.Count)
+	if pkCol != nil {
+		rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, pkCol.ID, ts.Ranges)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	cost := rowCount * scanFactor
@@ -929,47 +895,6 @@ func splitConditionsByIndexColumns(conditions []expression.Expression, schema *e
 	return
 }
 
-func (p *LogicalAggregation) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if task != nil {
-		return task, nil
-	}
-	if prop.taskTp != rootTaskType {
-		// Aggregation can only return rootTask.
-		return invalidTask, p.storeTask(prop, invalidTask)
-	}
-	task, err = p.convert2HashAggregation(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return task, p.storeTask(prop, task)
-}
-
-func (p *LogicalAggregation) convert2HashAggregation(prop *requiredProp) (bestTask task, _ error) {
-	for _, taskTp := range wholeTaskTypes {
-		task, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: taskTp})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ha := PhysicalAggregation{
-			GroupByItems: p.GroupByItems,
-			AggFuncs:     p.AggFuncs,
-			HasGby:       len(p.GroupByItems) > 0,
-			AggType:      CompleteAgg,
-		}.init(p.allocator, p.ctx)
-		ha.SetSchema(p.schema)
-		task = ha.attach2Task(task)
-		task = prop.enforceProperty(task, p.ctx, p.allocator)
-		if bestTask == nil || task.cost() < bestTask.cost() {
-			bestTask = task
-		}
-	}
-	return
-}
-
 func (p *LogicalApply) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	task, err := p.getTask(prop)
 	if err != nil {
@@ -1004,4 +929,47 @@ func (p *LogicalApply) convert2NewPhysicalPlan(prop *requiredProp) (task, error)
 	}
 	task = prop.enforceProperty(newTask, p.ctx, p.allocator)
 	return task, p.storeTask(prop, task)
+}
+
+func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
+	np := p.basePlan.self.(PhysicalPlan).Copy()
+	return []PhysicalPlan{np}
+}
+
+func (p *basePhysicalPlan) getPushedProp(prop *requiredProp) []*requiredProp {
+	// By default, physicalPlan can always match the orders.
+	return []*requiredProp{prop}
+}
+
+func (p *Limit) getPushedProp(prop *requiredProp) []*requiredProp {
+	if !prop.isEmpty() {
+		return nil
+	}
+	props := make([]*requiredProp, 0, len(wholeTaskTypes))
+	for _, tp := range wholeTaskTypes {
+		props = append(props, &requiredProp{taskTp: tp})
+	}
+	return props
+}
+
+func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
+	ha := PhysicalAggregation{
+		GroupByItems: p.GroupByItems,
+		AggFuncs:     p.AggFuncs,
+		HasGby:       len(p.GroupByItems) > 0,
+		AggType:      CompleteAgg,
+	}.init(p.allocator, p.ctx)
+	ha.SetSchema(p.schema)
+	return []PhysicalPlan{ha}
+}
+
+func (p *PhysicalAggregation) getPushedProp(prop *requiredProp) []*requiredProp {
+	if !prop.isEmpty() {
+		return nil
+	}
+	props := make([]*requiredProp, 0, len(wholeTaskTypes))
+	for _, tp := range wholeTaskTypes {
+		props = append(props, &requiredProp{taskTp: tp})
+	}
+	return props
 }

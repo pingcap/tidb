@@ -71,7 +71,7 @@ func BeforeTest() {
 }
 
 // AfterTest gets the current goroutines and runs the returned function to
-// get the goroutines at that time to contrast wheter any goroutines leaked.
+// get the goroutines at that time to contrast whether any goroutines leaked.
 // Usage: defer testleak.AfterTest(c)()
 // It can call with BeforeTest() at the beginning of check.Suite.TearDownSuite() or
 // call alone at the beginning of each test.

@@ -48,6 +48,8 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"20121231113045", "2012-12-31 11:30:45"},
 		{"121231113045", "2012-12-31 11:30:45"},
 		{"2012-02-29", "2012-02-29 00:00:00"},
+		{"00-00-00", "0000-00-00 00:00:00"},
+		{"00-00-00 00:00:00.123", "2000-00-00 00:00:00"},
 	}
 
 	for _, test := range table {
@@ -834,8 +836,8 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 	}
 
 	for _, test := range tests {
-		t1 := Time{test.t1, mysql.TypeDatetime, 6}
-		t2 := Time{test.t2, mysql.TypeDatetime, 6}
+		t1 := Time{test.t1, mysql.TypeDatetime, 6, nil}
+		t2 := Time{test.t2, mysql.TypeDatetime, 6, nil}
 		c.Assert(TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}
 }
@@ -853,5 +855,26 @@ func (s *testTimeSuite) TestDateFSP(c *C) {
 
 	for _, test := range tests {
 		c.Assert(DateFSP(test.date), Equals, test.expect)
+	}
+}
+
+func (s *testTimeSuite) TestConvertTimeZone(c *C) {
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	tests := []struct {
+		input  TimeInternal
+		from   *time.Location
+		to     *time.Location
+		expect TimeInternal
+	}{
+		{FromDate(2017, 1, 1, 0, 0, 0, 0), time.UTC, loc, FromDate(2017, 1, 1, 8, 0, 0, 0)},
+		{FromDate(2017, 1, 1, 8, 0, 0, 0), loc, time.UTC, FromDate(2017, 1, 1, 0, 0, 0, 0)},
+		{FromDate(0, 0, 0, 0, 0, 0, 0), loc, time.UTC, FromDate(0, 0, 0, 0, 0, 0, 0)},
+	}
+
+	for _, test := range tests {
+		var t Time
+		t.Time = test.input
+		t.ConvertTimeZone(test.from, test.to)
+		c.Assert(compareTime(t.Time, test.expect), Equals, 0)
 	}
 }
