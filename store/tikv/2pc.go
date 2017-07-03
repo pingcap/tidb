@@ -141,12 +141,12 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	txnWriteKVCountHistogram.Observe(float64(len(keys)))
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
 	return &twoPhaseCommitter{
-		store:             txn.store,
-		txn:               txn,
-		startTS:           txn.StartTS(),
-		keys:              keys,
-		mutations:         mutations,
-		lockTTL:           txnLockTTL(txn.startTime, size),
+		store:     txn.store,
+		txn:       txn,
+		startTS:   txn.StartTS(),
+		keys:      keys,
+		mutations: mutations,
+		lockTTL:   txnLockTTL(txn.startTime, size),
 	}, nil
 }
 
@@ -334,7 +334,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			Mutations:    mutations,
 			PrimaryLock:  c.primary(),
 			StartVersion: c.startTS,
-			LockTtl:      c.lockTTL, 
+			LockTtl:      c.lockTTL,
 		},
 	}
 
