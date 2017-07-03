@@ -53,7 +53,7 @@ type testPrivilegeSuite struct {
 	createColumnPrivTableSQL string
 }
 
-func (s *testPrivilegeSuite) SetUpSuit(c *C) {
+func (s *testPrivilegeSuite) SetUpSuite(c *C) {
 	privileges.Enable = true
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
@@ -246,23 +246,20 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
-	ctx, _ := se.(context.Context)
 	mustExec(c, se, `CREATE TABLE todrop(c int);`)
-	ctx.GetSessionVars().User = "root@localhost"
-	mustExec(c, se, `CREATE USER 'drop'@'localhost' identified by '123';`)
-	mustExec(c, se, `GRANT Select ON test.todrop TO  'drop'@'localhost';`)
+	mustExec(c, se, `CREATE USER 'drop'@'127.%';`)
+	mustExec(c, se, `GRANT Select ON test.todrop TO  'drop'@'127.%';`)
 
-	ctx.GetSessionVars().User = "drop@localhost"
-	mustExec(c, se, `SELECT * FROM todrop;`)
-	_, err := se.Execute("DROP TABLE todrop;")
+	se1 := newSession(c, s.store, s.dbName)
+	c.Assert(se1.Auth("drop@127.0.0.1", nil, nil), IsTrue)
+	mustExec(c, se1, `SELECT * FROM todrop;`)
+	_, err := se1.Execute("DROP TABLE todrop;")
 	c.Assert(err, NotNil)
 
-	se = newSession(c, s.store, s.dbName)
-	ctx.GetSessionVars().User = "root@localhost"
-	mustExec(c, se, `GRANT Drop ON test.todrop TO  'drop'@'localhost';`)
+	mustExec(c, se, `GRANT Drop ON test.todrop TO  'drop'@'127.%';`)
 
-	se = newSession(c, s.store, s.dbName)
-	ctx.GetSessionVars().User = "drop@localhost"
+	se2 := newSession(c, s.store, s.dbName)
+	c.Assert(se2.Auth("drop@127.0.0.1", nil, nil), IsTrue)
 	mustExec(c, se, `DROP TABLE todrop;`)
 }
 
