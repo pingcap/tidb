@@ -93,6 +93,44 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	return colInfo, position, nil
 }
 
+func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	columns := &[]*model.ColumnInfo{}
+	pos := &ast.ColumnPosition{}
+	offset := 0
+	err = job.DecodeArgs(columns, pos, &offset)
+	if err != nil {
+		job.State = model.JobCancelled
+		return ver, errors.Trace(err)
+	}
+	for _, col := range *columns {
+		columnInfo := findCol(tblInfo.Columns, col.Name.L)
+		if columnInfo != nil {
+			if columnInfo.State == model.StatePublic {
+				// We already have a column with the same column name.
+				job.State = model.JobCancelled
+				return ver, infoschema.ErrColumnExists.GenByArgs(col.Name)
+			}
+		} else {
+			columnInfo, offset, err = d.createColumnInfo(tblInfo, col, pos)
+			if err != nil {
+				job.State = model.JobCancelled
+				return ver, errors.Trace(err)
+			}
+			// Set offset arg to job.
+			if offset != 0 {
+				job.Args = []interface{}{columnInfo, pos, offset}
+			}
+		}
+	}
+	return ver, nil
+}
+
 func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)

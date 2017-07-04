@@ -251,7 +251,7 @@ type ColumnOption struct {
 	node
 
 	Tp ColumnOptionType
-	// For ColumnOptionDefaultValue or ColumnOptionOnUpdate, it's the target value.
+	// Expr is used for ColumnOptionDefaultValue or ColumnOptionOnUpdate, it's the target value.
 	// For ColumnOptionGenerated, it's the target expression.
 	Expr ExprNode
 	// Stored is only for ColumnOptionGenerated, default is false.
@@ -647,6 +647,7 @@ const (
 	AlterTableRenameTable
 	AlterTableAlterColumn
 	AlterTableLock
+	AlterTableAddColumns
 
 // TODO: Add more actions
 )
@@ -673,6 +674,7 @@ type AlterTableSpec struct {
 	Options       []*TableOption
 	NewTable      *TableName
 	NewColumn     *ColumnDef
+	NewColumns    []*ColumnDef
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
 	LockType      LockType
@@ -705,6 +707,15 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.NewColumn = node.(*ColumnDef)
+	}
+	if n.NewColumns != nil {
+		for i := range n.NewColumns {
+			node, ok := n.NewColumns[i].Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.NewColumns[i] = node.(*ColumnDef)
+		}
 	}
 	if n.OldColumnName != nil {
 		node, ok := n.OldColumnName.Accept(v)

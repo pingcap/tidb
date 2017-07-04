@@ -798,6 +798,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 		switch spec.Tp {
 		case ast.AlterTableAddColumn:
 			err = d.AddColumn(ctx, ident, spec)
+		case ast.AlterTableAddColumns:
+			err = d.AddColumns(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
@@ -852,26 +854,14 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 	return nil
 }
 
-// AddColumn will add a new column to the table.
-func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) ValidColumnDef(column *ast.ColumnDef, t table.Table) error {
 	// Check whether the added column constraints are supported.
-	err := checkColumnConstraint(spec.NewColumn.Options)
+	err := checkColumnConstraint(column.Options)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	is := d.infoHandle.Get()
-	schema, ok := is.SchemaByName(ti.Schema)
-	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
-	}
-	t, err := is.TableByName(ti.Schema, ti.Name)
-	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
-	}
-
-	// Check whether added column has existed.
-	colName := spec.NewColumn.Name.Name.O
+	colName := column.Name.Name.O
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.GenByArgs(colName)
@@ -881,13 +871,13 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	// NOTE: Because now we can only append columns to table,
 	// we dont't need check whether the column refers other
 	// generated columns occurring later in table.
-	for _, option := range spec.NewColumn.Options {
+	for _, option := range column.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			referableColNames := make(map[string]struct{}, len(t.Cols()))
 			for _, col := range t.Cols() {
 				referableColNames[col.Name.L] = struct{}{}
 			}
-			_, dependColNames := findDependedColumnNames(spec.NewColumn)
+			_, dependColNames := findDependedColumnNames(column)
 			if err := columnNamesCover(referableColNames, dependColNames); err != nil {
 				return errors.Trace(err)
 			}
@@ -898,25 +888,92 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return ErrTooLongIdent.Gen("too long column %s", colName)
 	}
 
+	return nil
+}
+
+func (d *ddl) BuildColumnWithDefValue(ctx context.Context, t table.Table, column *ast.ColumnDef) (*table.Column, error) {
 	// Ingore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
-	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), spec.NewColumn)
+	col, _, err := buildColumnAndConstraint(ctx, len(t.Cols()), column)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	col.OriginDefaultValue = col.DefaultValue
 	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
 		zeroVal := table.GetZeroValue(col.ToInfo())
 		col.OriginDefaultValue, err = zeroVal.ToString()
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 	}
 
 	if col.OriginDefaultValue == expression.CurrentTimestamp &&
 		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
 		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
+	}
+	return col, nil
+}
+
+func (d *ddl) AddColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+
+	newColumns := []*table.Column{}
+	for _, column := range spec.NewColumns {
+		err = d.ValidColumnDef(column, t)
+		if err != nil {
+			return err
+		}
+
+		col, err := d.BuildColumnWithDefValue(ctx, t, column)
+		if err != nil {
+			return err
+		}
+		newColumns = append(newColumns, col)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionAddColumns,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newColumns, spec.Position, 0},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+	return nil
+}
+
+// AddColumn will add a new column to the table.
+func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+
+	err = d.ValidColumnDef(spec.NewColumn, t)
+	if err != nil {
+		return err
+	}
+
+	col, err := d.BuildColumnWithDefValue(ctx, t, spec.NewColumn)
+	if err != nil {
+		return err
 	}
 
 	job := &model.Job{

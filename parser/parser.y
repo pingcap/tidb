@@ -571,6 +571,7 @@ import (
 	CastType		"Cast function target type"
 	CharsetName		"Character set name"
 	ColumnDef		"table column definition"
+	ColumnDefList   "table column definition list"
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
 	ColumnNameListOpt	"column name list opt"
@@ -954,6 +955,13 @@ AlterTableSpec:
 			Position:	$4.(*ast.ColumnPosition),
 		}
 	}
+|   "ADD" ColumnKeywordOpt '(' ColumnDefList ')'
+    {
+        $$ = &ast.AlterTableSpec{
+            Tp: 		ast.AlterTableAddColumns,
+            NewColumns:	$4.([]*ast.ColumnDef),
+        }
+    }
 |	"ADD" Constraint
 	{
 		constraint := $2.(*ast.Constraint)
@@ -1202,6 +1210,16 @@ BinlogStmt:
 	{
 		$$ = &ast.BinlogStmt{Str: $2}
 	}
+
+ColumnDefList:
+    ColumnDef
+    {
+        $$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}
+    }
+|   ColumnDefList ',' ColumnDef
+    {
+        $$ = append($1.([]*ast.ColumnDef), $3.(*ast.ColumnDef))
+    }
 
 ColumnDef:
 	ColumnName Type ColumnOptionListOpt
