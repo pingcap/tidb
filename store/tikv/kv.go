@@ -147,7 +147,7 @@ type mockOptions struct {
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
 type MockTiKVStoreOption func(*mockOptions)
 
-// WithHijackClient hijacks kv client's behavior, makes it easy to simulate the network
+// WithHijackClient hijacks KV client's behavior, makes it easy to simulate the network
 // problem between TiDB and TiKV.
 func WithHijackClient(wrap func(Client) Client) MockTiKVStoreOption {
 	return func(c *mockOptions) {
@@ -155,7 +155,7 @@ func WithHijackClient(wrap func(Client) Client) MockTiKVStoreOption {
 	}
 }
 
-// WithHijackPDClient hijacks pd client's behavior, makes it easy to simulate the network
+// WithHijackPDClient hijacks PD client's behavior, makes it easy to simulate the network
 // problem between TiDB and PD, such as GetTS too slow, GetStore or GetRegion fail.
 func WithHijackPDClient(wrap func(pd.Client) pd.Client) MockTiKVStoreOption {
 	return func(c *mockOptions) {
