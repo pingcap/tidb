@@ -262,12 +262,12 @@ const (
 // If any error occurs, the input won't be changed.
 func (j JSON) Modify(pathExprList []PathExpression, values []JSON, mt ModifyType) (retj JSON, err error) {
 	if len(pathExprList) != len(values) {
-		// TODO should return 1582(42000)
+		// TODO: should return 1582(42000)
 		return retj, errors.New("Incorrect parameter count")
 	}
 	for _, pathExpr := range pathExprList {
 		if pathExpr.flags.containsAnyAsterisk() {
-			// TODO should return 3149(42000)
+			// TODO: should return 3149(42000)
 			return retj, errors.New("Invalid path expression")
 		}
 	}
@@ -320,5 +320,46 @@ func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
 	// 1) we want to insert a new element, but the full path has already exists;
 	// 2) we want to replace an old element, but the full path doesn't exist;
 	// 3) we want to insert or replace something, but the path without last leg doesn't exist.
+	return j
+}
+
+// Remove removes the elements indicated by pathExprList from JSON.
+func (j JSON) Remove(pathExprList []PathExpression) (JSON, error) {
+	for _, pathExpr := range pathExprList {
+		if len(pathExpr.legs) == 0 {
+			// TODO: should return 3153(42000)
+			return j, errors.New("Invalid path expression")
+		}
+		if pathExpr.flags.containsAnyAsterisk() {
+			// TODO: should return 3149(42000)
+			return j, errors.New("Invalid path expression")
+		}
+		j = remove(j, pathExpr)
+	}
+	return j, nil
+}
+
+// remove is used in Remove.
+func remove(j JSON, pathExpr PathExpression) JSON {
+	currentLeg, subPathExpr := pathExpr.popOneLeg()
+	if currentLeg.typ == pathLegIndex && j.typeCode == typeCodeArray {
+		var index = currentLeg.arrayIndex
+		if len(j.array) > index {
+			if len(subPathExpr.legs) == 0 {
+				j.array = append(j.array[0:index], j.array[index+1:]...)
+			} else {
+				j.array[index] = remove(j.array[index], subPathExpr)
+			}
+		}
+	} else if currentLeg.typ == pathLegKey && j.typeCode == typeCodeObject {
+		var key = currentLeg.dotKey
+		if child, ok := j.object[key]; ok {
+			if len(subPathExpr.legs) == 0 {
+				delete(j.object, key)
+			} else {
+				j.object[key] = remove(child, subPathExpr)
+			}
+		}
+	}
 	return j
 }

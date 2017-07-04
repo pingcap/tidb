@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -385,40 +386,38 @@ type passwordFunctionClass struct {
 }
 
 func (c *passwordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinPasswordSig{newBaseBuiltinFunc(args, ctx)}
+	tp := types.NewFieldType(mysql.TypeVarString)
+	tp.Flen = mysql.PWDHashLen + 1
+
+	tp.Charset = charset.CharsetUTF8
+	tp.Collate = charset.CollationUTF8
+
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinPasswordSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinPasswordSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinPasswordSig.
+// evalString evals a builtinPasswordSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-func (b *builtinPasswordSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	arg := args[0]
-	if arg.IsNull() {
-		d.SetString("")
-		return d, nil
-	}
-
-	pass, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinPasswordSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	pass, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
 
 	if len(pass) == 0 {
-		d.SetString("")
-		return d, nil
+		return "", false, nil
 	}
 
-	d.SetString(util.EncodePassword(pass))
-	return d, nil
+	return util.EncodePassword(pass), false, nil
 }
 
 type randomBytesFunctionClass struct {

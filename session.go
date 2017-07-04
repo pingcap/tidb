@@ -628,6 +628,8 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		if r != nil {
 			rs = append(rs, r)
 		}
+
+		logCrucialStmt(rst)
 	}
 
 	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(rs) > 1 {
@@ -1160,4 +1162,32 @@ func (s *session) ShowProcess() util.ProcessInfo {
 		pi = tmp.(util.ProcessInfo)
 	}
 	return pi
+}
+
+// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD etc.
+func logCrucialStmt(node ast.StmtNode) {
+	switch stmt := node.(type) {
+	case *ast.CreateUserStmt:
+		for _, user := range stmt.Specs {
+			log.Infof("[CRUCIAL OPERATION] create user %s.", user.SecurityString())
+		}
+	case *ast.DropUserStmt:
+		log.Infof("[CRUCIAL OPERATION] drop user %v.", stmt.UserList)
+	case *ast.AlterUserStmt:
+		for _, user := range stmt.Specs {
+			log.Infof("[CRUCIAL OPERATION] alter user %s.", user.SecurityString())
+		}
+	case *ast.SetPwdStmt:
+		log.Infof("[CRUCIAL OPERATION] set password for user %s.", stmt.User)
+	case *ast.GrantStmt:
+		text := stmt.Text()
+		// Filter "identified by xxx" because it would expose password information.
+		idx := strings.Index(strings.ToLower(text), "identified")
+		if idx > 0 {
+			text = text[:idx]
+		}
+		log.Infof("[CRUCIAL OPERATION] %s.", text)
+	case *ast.RevokeStmt:
+		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
+	}
 }

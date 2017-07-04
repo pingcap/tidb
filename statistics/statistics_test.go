@@ -225,23 +225,50 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	hg, err := BuildColumn(ctx, bucketCount, 5, ndv, s.count, 0, s.samples)
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg}
-	ran := types.ColumnRange{
-		Low:  types.Datum{},
-		High: types.Datum{},
+	tbl := &Table{
+		Count:   int64(col.totalRowCount()),
+		Columns: make(map[int64]*Column),
 	}
-	count, err := col.getColumnRowCount(sc, ran)
+	ran := []*types.ColumnRange{{
+		Low:  types.Datum{},
+		High: types.MaxValueDatum(),
+	}}
+	count, err := tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 10000)
-	ran.Low = types.NewIntDatum(1000)
-	ran.LowExcl = true
-	ran.High = types.NewIntDatum(2000)
-	ran.HighExcl = true
-	count, err = col.getColumnRowCount(sc, ran)
+	c.Assert(int(count), Equals, 100000)
+	ran[0].Low = types.MinNotNullDatum()
+	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 99900)
+	ran[0].Low = types.NewIntDatum(1000)
+	ran[0].LowExcl = true
+	ran[0].High = types.NewIntDatum(2000)
+	ran[0].HighExcl = true
+	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 2500)
+	ran[0].LowExcl = false
+	ran[0].HighExcl = false
+	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 2500)
+
+	tbl.Columns[0] = col
+	ran[0].Low = types.Datum{}
+	ran[0].High = types.MaxValueDatum()
+	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 100000)
+	ran[0].Low = types.NewIntDatum(1000)
+	ran[0].LowExcl = true
+	ran[0].High = types.NewIntDatum(2000)
+	ran[0].HighExcl = true
+	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 9964)
-	ran.LowExcl = false
-	ran.HighExcl = false
-	count, err = col.getColumnRowCount(sc, ran)
+	ran[0].LowExcl = false
+	ran[0].HighExcl = false
+	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 9965)
 }

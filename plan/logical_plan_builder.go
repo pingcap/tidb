@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -213,10 +214,10 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 }
 
 func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
-	b.optFlag = b.optFlag | flagPredicatePushDown
 	if join.Right == nil {
 		return b.buildResultSetNode(join.Left)
 	}
+	b.optFlag = b.optFlag | flagPredicatePushDown
 	leftPlan := b.buildResultSetNode(join.Left)
 	rightPlan := b.buildResultSetNode(join.Right)
 	leftAlias := extractTableAlias(leftPlan)
@@ -250,6 +251,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 		if joinPlan.preferMergeJoin && joinPlan.preferINLJ > 0 {
 			b.err = errors.New("Optimizer Hints is conflict")
+			return nil
 		}
 	}
 
@@ -266,6 +268,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 		if onExpr.IsCorrelated() {
 			b.err = errors.New("ON condition doesn't support subqueries yet")
+			return nil
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
 		joinPlan.attachOnConds(onCondition)
@@ -950,8 +953,8 @@ func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	}
 	if len(sortMergeTables) != 0 || len(INLJTables) != 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
-			sortMergeJoinTables: sortMergeTables,
-			INLJTables:          INLJTables,
+			sortMergeJoinTables:       sortMergeTables,
+			indexNestedLoopJoinTables: INLJTables,
 		})
 		return true
 	}
@@ -1105,23 +1108,20 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		tableInfo:      tableInfo,
 		statisticTable: statisticTable,
 		DBName:         schemaName,
+		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
 	}.init(b.allocator, b.ctx)
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
-	// Equal condition contains a column from previous joined table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
-	for i, col := range tableInfo.Columns {
-		if b.inUpdateStmt {
-			switch col.State {
-			case model.StatePublic, model.StateWriteOnly, model.StateWriteReorganization:
-			default:
-				continue
-			}
-		} else if col.State != model.StatePublic {
-			continue
-		}
-		p.Columns = append(p.Columns, col)
+	var columns []*table.Column
+	if b.inUpdateStmt {
+		columns = tbl.WritableCols()
+	} else {
+		columns = tbl.Cols()
+	}
+	for i, col := range columns {
+		p.Columns = append(p.Columns, col.ColumnInfo)
 		schema.Append(&expression.Column{
 			FromID:   p.id,
 			ColName:  col.Name,

@@ -1521,6 +1521,13 @@ func (s *testParserSuite) TestMysqlDump(c *C) {
 		{`LOCK TABLES t1 READ;`, true},
 		{`show table status like 't'`, true},
 		{`LOCK TABLES t2 WRITE`, true},
+
+		// for unlock table and lock table
+		{`UNLOCK TABLE;`, true},
+		{`LOCK TABLE t1 READ;`, true},
+		{`show table status like 't'`, true},
+		{`LOCK TABLE t2 WRITE`, true},
+		{`LOCK TABLE t1 WRITE, t3 READ`, true},
 	}
 	s.RunTest(c, table)
 }

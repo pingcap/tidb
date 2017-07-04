@@ -227,6 +227,13 @@ type LogicalPlan interface {
 
 	// statsProfile will return the stats for this plan.
 	statsProfile() *statsProfile
+
+	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
+	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
+	preparePossibleProperties() [][]*expression.Column
+
+	// generatePhysicalPlans generates all possible plans.
+	generatePhysicalPlans() []PhysicalPlan
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -254,6 +261,9 @@ type PhysicalPlan interface {
 
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx context.Context) (*tipb.Executor, error)
+
+	// getChildrenPossibleProps tries to push the required properties to its children and return all the possible properties.
+	getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp
 }
 
 type baseLogicalPlan struct {
