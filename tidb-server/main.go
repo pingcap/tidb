@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/x-server"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -50,10 +51,13 @@ var (
 	logLevel        = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
 	host            = flag.String("host", "0.0.0.0", "tidb server host")
 	port            = flag.String("P", "4000", "tidb server port")
+	xhost           = flag.String("xhost", "0.0.0.0", "tidb x protocol server host")
+	xport           = flag.String("xP", "4001", "tidb x protocol server port")
 	statusPort      = flag.String("status", "10080", "tidb server status port")
 	ddlLease        = flag.String("lease", "10s", "schema lease duration, very dangerous to change only if you know what you do")
 	statsLease      = flag.String("stasLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
 	socket          = flag.String("socket", "", "The socket file to use for connection.")
+	xsocket         = flag.String("xsocket", "", "The socket file to use for x protocol connection.")
 	enablePS        = flag.Bool("perfschema", false, "If enable performance schema.")
 	enablePrivilege = flag.Bool("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
 	reportStatus    = flag.Bool("report-status", true, "If enable status report HTTP service.")
@@ -109,6 +113,11 @@ func main() {
 		Store:        *store,
 		StorePath:    *storePath,
 	}
+	xcfg := &xserver.Config{
+		Addr:     fmt.Sprintf("%s:%s", *xhost, *xport),
+		Socket:   *socket,
+		LogLevel: *logLevel,
+	}
 
 	// set log options
 	if len(*logFile) > 0 {
@@ -152,6 +161,11 @@ func main() {
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
+	var xsvr *xserver.Server
+	xsvr, err = xserver.NewServer(xcfg)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
 
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc,
@@ -163,6 +177,7 @@ func main() {
 	go func() {
 		sig := <-sc
 		log.Infof("Got signal [%d] to exit.", sig)
+		xsvr.Close() // Should close xserver before server.
 		svr.Close()
 	}()
 
@@ -174,6 +189,7 @@ func main() {
 	pushMetric(*metricsAddr, time.Duration(*metricsInterval)*time.Second)
 
 	log.Error(svr.Run())
+	log.Error(xsvr.Run())
 	domain.Close()
 	os.Exit(0)
 }
