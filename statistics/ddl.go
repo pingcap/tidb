@@ -31,7 +31,7 @@ func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
 	case model.ActionCreateTable:
 		return h.insertTableStats2KV(t.TableInfo)
 	case model.ActionDropTable:
-		return h.deleteTableStatsFromKV(t.TableInfo.ID)
+		return h.DeleteTableStatsFromKV(t.TableInfo.ID)
 	case model.ActionAddColumn:
 		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
 	case model.ActionDropColumn:
@@ -77,7 +77,8 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
-func (h *Handle) deleteTableStatsFromKV(id int64) error {
+// DeleteTableStatsFromKV deletes table statistics from kv.
+func (h *Handle) DeleteTableStatsFromKV(id int64) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute("begin")
 	if err != nil {
