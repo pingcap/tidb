@@ -123,6 +123,16 @@ func (s *testSuite) TestSetVar(c *C) {
 	c.Assert(vars.SkipConstraintCheck, IsTrue)
 	tk.MustExec("set @@tidb_skip_constraint_check = '0'")
 	c.Assert(vars.SkipConstraintCheck, IsFalse)
+
+	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
+	tk.MustExec("SET GLOBAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("SERIALIZABLE"))
+
+	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+
+	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
