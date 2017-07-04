@@ -181,28 +181,36 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 		retType *types.FieldType
 	}{
 		{
-			[]Expression{int8Con, decimalCon, charCon, floatCon, doubleCon},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
+			[]Expression{
+				&Constant{RetType: &types.FieldType{Charset: charset.CharsetUTF8, Flen: 10}},
+				&Constant{RetType: &types.FieldType{Charset: charset.CharsetBin, Flen: 20}},
+			},
+			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flen: 30, Decimal: types.UnspecifiedLength, Flag: mysql.BinaryFlag},
 		},
 		{
-			[]Expression{varcharCon, binaryCon},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			[]Expression{
+				&Constant{RetType: &types.FieldType{Charset: charset.CharsetUTF8, Flen: 65536}},
+				&Constant{RetType: &types.FieldType{Charset: charset.CharsetBin, Flen: 20}},
+			},
+			&types.FieldType{Tp: mysql.TypeMediumBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flen: 65556, Decimal: types.UnspecifiedLength, Flag: mysql.BinaryFlag},
 		},
 		{
-			[]Expression{int8Con, blobCon, charCon},
-			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
-		},
-		{
-			[]Expression{varbinaryCon, textCon},
-			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			[]Expression{
+				&Constant{RetType: &types.FieldType{Charset: charset.CharsetUTF8, Flen: 16777216}},
+				&Constant{RetType: &types.FieldType{Charset: charset.CharsetUTF8, Flen: 20}},
+			},
+			&types.FieldType{Tp: mysql.TypeLongBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flen: 16777216, Decimal: types.UnspecifiedLength, Flag: mysql.BinaryFlag},
 		},
 	}
-	fc := funcs[fcName].(*concatFunctionClass)
 	for _, t := range typeCases {
-		retType, _ := fc.inferType(t.args)
+		f, err := newFunctionForTest(s.ctx, fcName, t.args...)
+		c.Assert(err, IsNil)
+		retType := f.GetType()
 		c.Assert(retType.Tp, Equals, t.retType.Tp)
 		c.Assert(retType.Charset, Equals, t.retType.Charset)
 		c.Assert(retType.Collate, Equals, t.retType.Collate)
+		c.Assert(retType.Flen, Equals, t.retType.Flen)
+		c.Assert(retType.Decimal, Equals, t.retType.Decimal)
 		c.Assert(retType.Flag, Equals, t.retType.Flag)
 	}
 }

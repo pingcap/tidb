@@ -2023,13 +2023,14 @@ type makeDateFunctionClass struct {
 }
 
 func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeDate)
-	tp.Flen = mysql.MaxDateWidth
-	types.SetBinChsClnFlag(tp)
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpInt, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, tpTime, ctx, tpInt, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tp := bf.tp
+	tp.Tp = mysql.TypeDate
+	tp.Flen = mysql.MaxDateWidth
+	//tp.Decimal = NotFixedDec
 	sig := &builtinMakeDateSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }

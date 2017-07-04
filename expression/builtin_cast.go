@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -940,6 +941,8 @@ func WrapWithCastAsInt(expr Expression, ctx context.Context) (Expression, error)
 		return expr, nil
 	}
 	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.Flen, tp.Decimal = expr.GetType().Flen, 0
+	types.SetBinChsClnFlag(tp)
 	return buildCastFunction(expr, tp, ctx)
 }
 
@@ -951,6 +954,8 @@ func WrapWithCastAsReal(expr Expression, ctx context.Context) (Expression, error
 		return expr, nil
 	}
 	tp := types.NewFieldType(mysql.TypeDouble)
+	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
+	types.SetBinChsClnFlag(tp)
 	return buildCastFunction(expr, tp, ctx)
 }
 
@@ -962,6 +967,8 @@ func WrapWithCastAsDecimal(expr Expression, ctx context.Context) (Expression, er
 		return expr, nil
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
+	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
+	types.SetBinChsClnFlag(tp)
 	return buildCastFunction(expr, tp, ctx)
 }
 
@@ -973,7 +980,8 @@ func WrapWithCastAsString(expr Expression, ctx context.Context) (Expression, err
 		return expr, nil
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset, tp.Collate = expr.GetType().Charset, expr.GetType().Collate
+	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
 	return buildCastFunction(expr, tp, ctx)
 }
 
@@ -990,6 +998,16 @@ func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Contex
 	default:
 		tp.Decimal = types.MaxFsp
 	}
+	switch tp.Tp {
+	case mysql.TypeDate:
+		tp.Flen = 10
+	case mysql.TypeDatetime, mysql.TypeTimestamp:
+		tp.Flen = 19
+		if tp.Decimal > 0 {
+			tp.Flen = tp.Flen + 1 + tp.Decimal
+		}
+	}
+	types.SetBinChsClnFlag(tp)
 	return buildCastFunction(expr, tp, ctx)
 }
 
@@ -1006,6 +1024,10 @@ func WrapWithCastAsDuration(expr Expression, ctx context.Context) (Expression, e
 		tp.Decimal = x.Decimal
 	default:
 		tp.Decimal = types.MaxFsp
+	}
+	tp.Flen = 9
+	if tp.Decimal > 0 {
+		tp.Flen = tp.Flen + 1 + tp.Decimal
 	}
 	return buildCastFunction(expr, tp, ctx)
 }

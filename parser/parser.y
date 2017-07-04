@@ -3991,12 +3991,18 @@ CastType:
 |	"DATE"
 	{
 		x := types.NewFieldType(mysql.TypeDate)
+		x.Flen = 10
+		x.Decimal = 0
 		$$ = x
 	}
 |	"DATETIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDatetime)
+		x.Flen = 19
 		x.Decimal = $2.(int)
+		if x.Decimal > 0 {
+		    x.Flen = x.Flen + 1 + x.Decimal
+		}
 		$$ = x
 	}
 |	"DECIMAL" FloatOpt
@@ -4016,17 +4022,25 @@ CastType:
 |	"TIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDuration)
+		x.Flen = 9
 		x.Decimal = $2.(int)
+		if x.Decimal > 0 {
+		    x.Flen = x.Flen + 1 + x.Decimal
+		}
 		$$ = x
 	}
 |	"SIGNED" OptInteger
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
+		x.Flen = 20
+		x.Decimal = 0
 		$$ = x
 	}
 |	"UNSIGNED" OptInteger
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
+		x.Flen = 20
+		x.Decimal = 0
 		x.Flag |= mysql.UnsignedFlag
 		$$ = x
 	}
