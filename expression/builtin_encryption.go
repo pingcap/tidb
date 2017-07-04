@@ -404,7 +404,7 @@ type builtinPasswordSig struct {
 	baseStringBuiltinFunc
 }
 
-// eval evals a builtinPasswordSig.
+// evalString evals a builtinPasswordSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 func (b *builtinPasswordSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
