@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -51,7 +52,9 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	store kv.Storage
+	cluster   *mocktikv.Cluster
+	mvccStore *mocktikv.MvccStore
+	store     kv.Storage
 	*parser.Parser
 }
 
@@ -63,7 +66,13 @@ func (s *testSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		store, err := tikv.NewMockTikvStore("")
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.NewMvccStore()
+		store, err := tikv.NewMockTikvStore(
+			tikv.WithCluster(s.cluster),
+			tikv.WithMVCCStore(s.mvccStore),
+		)
 		c.Assert(err, IsNil)
 		s.store = store
 		tidb.SetSchemaLease(0)
@@ -810,6 +819,17 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("50 50 50 50 49 10"))
 	result = tk.MustQuery("select ascii('123'), ascii(123), ascii(''), ascii('你好'), ascii(NULL)")
 	result.Check(testkit.Rows("49 49 0 228 <nil>"))
+
+	// for password
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(41), b char(41), c char(41))")
+	tk.MustExec(`insert into t values(NULL, '', 'abc')`)
+	result = tk.MustQuery("select password(a) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select password(b) from t")
+	result.Check(testkit.Rows(""))
+	result = tk.MustQuery("select password(c) from t")
+	result.Check(testkit.Rows("*0D3CED9BEC10A777AEC23CCC353A8C08A633045E"))
 }
 
 func (s *testSuite) TestTimeBuiltin(c *C) {
