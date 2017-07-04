@@ -41,6 +41,7 @@ var (
 	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &FlushStmt{}
 	_ StmtNode = &KillStmt{}
+	_ StmtNode = &DropStatsStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -704,6 +705,27 @@ func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.TableNames[i] = node.(*TableName)
 	}
+	return v.Leave(n)
+}
+
+type DropStatsStmt struct {
+	stmtNode
+
+	Table *TableName
+}
+
+// Accept implements Node Accept interface.
+func (n *DropStatsStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropStatsStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
 

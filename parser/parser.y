@@ -500,6 +500,7 @@ import (
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
+	stats		"STATS"
 	status		"STATUS"
 	super		"SUPER"
 	some 		"SOME"
@@ -605,6 +606,7 @@ import (
 	DropTableStmt		"DROP TABLE statement"
 	DropUserStmt		"DROP USER"
 	DropViewStmt		"DROP VIEW statement"
+	DropStatsStmt		"DROP STATS statement"
 	EmptyStmt		"empty statement"
 	Enclosed		"Enclosed by"
 	EqOpt			"= or empty"
@@ -1847,6 +1849,12 @@ DropUserStmt:
         $$ = &ast.DropUserStmt{IfExists: true, UserList: $5.([]string)}
 	}
 
+DropStatsStmt:
+	"DROP" "STATS" TableName
+	{
+		$$ = &ast.DropStatsStmt{Table: $3.(*ast.TableName)}
+	}
+
 TableOrTables:
 	"TABLE"
 |	"TABLES"
@@ -2353,7 +2361,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE" | "STATS"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -5329,6 +5337,7 @@ Statement:
 |	DropTableStmt
 |	DropViewStmt
 |	DropUserStmt
+|	DropStatsStmt
 |	FlushStmt
 |	GrantStmt
 |	InsertIntoStmt

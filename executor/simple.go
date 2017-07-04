@@ -74,6 +74,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil, nil
+	case *ast.DropStatsStmt:
+		err = e.executeDropStats(x)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -319,4 +321,27 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
+	exec := e.ctx.(sqlexec.SQLExecutor)
+	_, err := exec.Execute("begin")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	id := s.Table.TableInfo.ID
+	_, err = exec.Execute(fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", e.ctx.Txn().StartTS(), id))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = exec.Execute(fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", id))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = exec.Execute(fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", id))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = exec.Execute("commit")
+	return errors.Trace(err)
 }
