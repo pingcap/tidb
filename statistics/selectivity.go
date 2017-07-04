@@ -49,7 +49,7 @@ const (
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 // TODO: support expressions that the top layer is a DNF.
-// Currently the time complexity if o(n^2).
+// Currently the time complexity is o(n^2).
 func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) (float64, error) {
 	if t.Count == 0 {
 		return 0, nil
@@ -171,7 +171,8 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 // popCount is the digit sum of the binary representation of the number x.
 func popCount(x int64) int {
 	ret := 0
-	// x -= x & -x, cut the highest bit of the x.
+	// x -= x & -x, remove the lowest bit of the x.
+	// e.g. result will be 2 if x is 3.
 	for ; x > 0; x -= x & -x {
 		ret++
 	}
