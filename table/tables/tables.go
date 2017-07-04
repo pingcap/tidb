@@ -56,7 +56,14 @@ type Table struct {
 
 // MockTableFromMeta only serves for test.
 func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
-	return &Table{ID: 0, meta: tableInfo}
+	columns := make([]*table.Column, 0, len(tableInfo.Columns))
+	for _, colInfo := range tableInfo.Columns {
+		col := table.ToColumn(colInfo)
+		columns = append(columns, col)
+	}
+	t := newTable(tableInfo.ID, columns, nil)
+	t.meta = tableInfo
+	return t
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
