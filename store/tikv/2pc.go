@@ -140,7 +140,6 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 
 	txnWriteKVCountHistogram.Observe(float64(len(keys)))
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
-
 	return &twoPhaseCommitter{
 		store:     txn.store,
 		txn:       txn,
@@ -210,7 +209,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
 	if firstIsPrimary && (action == actionCommit || action == actionCleanup) {
-		// primary should be committed/cleanup first.
+		// primary should be committed/cleanup first
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
 			return errors.Trace(err)
@@ -329,20 +328,14 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		mutations[i] = c.mutations[string(k)]
 	}
 
-	skipCheck := false
-	optSkipCheck := c.txn.us.GetOption(kv.SkipCheckForWrite)
-	if skip, ok := optSkipCheck.(bool); ok && skip {
-		skipCheck = true
-	}
 	req := &tikvrpc.Request{
 		Type:     tikvrpc.CmdPrewrite,
 		Priority: c.priority,
 		Prewrite: &pb.PrewriteRequest{
-			Mutations:           mutations,
-			PrimaryLock:         c.primary(),
-			StartVersion:        c.startTS,
-			LockTtl:             c.lockTTL,
-			SkipConstraintCheck: skipCheck,
+			Mutations:    mutations,
+			PrimaryLock:  c.primary(),
+			StartVersion: c.startTS,
+			LockTtl:      c.lockTTL,
 		},
 	}
 	for {

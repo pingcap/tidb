@@ -121,7 +121,7 @@ type Response struct {
 	Cop           *coprocessor.Response
 }
 
-// SetContext set the Context field for the given req to the specifed ctx.
+// SetContext set the Context field for the given req to the specified ctx.
 func SetContext(req *Request, ctx *kvrpcpb.Context) error {
 	ctx.Priority = req.Priority
 	switch req.Type {
