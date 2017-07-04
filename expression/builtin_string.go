@@ -383,40 +383,52 @@ type repeatFunctionClass struct {
 }
 
 func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRepeatSig{newBaseBuiltinFunc(args, ctx)}
+	tp := types.NewFieldType(mysql.TypeLongBlob)
+	tp.Flen = mysql.MaxBlobWidth
+
+	if isBinary := mysql.HasBinaryFlag(args[0].GetType().Flag); isBinary {
+		types.SetBinChsClnFlag(tp)
+	} else {
+		tp.Charset = charset.CharsetUTF8
+		tp.Collate = charset.CollationUTF8
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinRepeatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinRepeatSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinRepeatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
-func (b *builtinRepeatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinRepeatSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, err
-	}
-	ch := fmt.Sprintf("%v", str)
-	num := 0
-	x := args[1]
-	switch x.Kind() {
-	case types.KindInt64:
-		num = int(x.GetInt64())
-	case types.KindUint64:
-		num = int(x.GetUint64())
+
+	num, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
 	if num < 1 {
-		d.SetString("")
-		return d, nil
+		return "", false, nil
 	}
-	d.SetString(strings.Repeat(ch, num))
-	return d, nil
+	if num > math.MaxInt32 {
+		num = math.MaxInt32
+	}
+
+	if int64(len(str)) > int64(b.tp.Flen)/num {
+		return "", true, nil
+	}
+	return strings.Repeat(str, int(num)), false, nil
 }
 
 type lowerFunctionClass struct {
@@ -453,24 +465,14 @@ func (b *builtinLowerSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 }
 
-func oneArgsInferType(args []Expression) *types.FieldType {
-	argTp := args[0].GetType()
-	tp := types.MergeFieldType(mysql.TypeVarString, argTp.Tp)
-	retType := types.NewFieldType(tp)
-	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	if types.IsBinaryStr(argTp) {
-		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
-		retType.Flag |= mysql.BinaryFlag
-	}
-	return retType
-}
-
 type reverseFunctionClass struct {
 	baseFunctionClass
 }
 
 func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	retType := oneArgsInferType(args)
+	retType := types.NewFieldType(mysql.TypeVarString)
+	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
+
 	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -731,6 +733,10 @@ func (b *builtinSubstringSig) eval(row []types.Datum) (d types.Datum, err error)
 	// arg[0] -> StrExpr
 	// arg[1] -> Pos
 	// arg[2] -> Len (Optional)
+	if args[0].IsNull() || args[1].IsNull() {
+		return
+	}
+
 	str, err := args[0].ToString()
 	if err != nil {
 		return d, errors.Errorf("Substring invalid args, need string but get %T", args[0].GetValue())
@@ -743,6 +749,9 @@ func (b *builtinSubstringSig) eval(row []types.Datum) (d types.Datum, err error)
 
 	length, hasLen := int64(-1), false
 	if len(args) == 3 {
+		if args[2].IsNull() {
+			return
+		}
 		if args[2].Kind() != types.KindInt64 {
 			return d, errors.Errorf("Substring invalid pos args, need int but get %T", args[2].GetValue())
 		}
@@ -949,7 +958,7 @@ func (b *builtinHexSig) eval(row []types.Datum) (d types.Datum, err error) {
 	switch args[0].Kind() {
 	case types.KindNull:
 		return d, nil
-	case types.KindString:
+	case types.KindString, types.KindBytes:
 		x, err := args[0].ToString()
 		if err != nil {
 			return d, errors.Trace(err)
@@ -989,7 +998,7 @@ func (b *builtinUnHexSig) eval(row []types.Datum) (d types.Datum, err error) {
 	switch args[0].Kind() {
 	case types.KindNull:
 		return d, nil
-	case types.KindString:
+	case types.KindString, types.KindBytes:
 		x, err := args[0].ToString()
 		if err != nil {
 			return d, errors.Trace(err)
