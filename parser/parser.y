@@ -503,6 +503,7 @@ import (
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
+	statsMeta  "STATS_META"
 	status		"STATUS"
 	super		"SUPER"
 	some 		"SOME"
@@ -2356,7 +2357,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE" | "STATS_META"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -5075,6 +5076,20 @@ ShowStmt:
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowProcessList,
 		}
+	}
+|	"SHOW" "STATS_META" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowStatsMeta,
+		}
+		if $3 != nil {
+			if x, ok := $3.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $3.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
 	}
 
 ShowIndexKwd:
