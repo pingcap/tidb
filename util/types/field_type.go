@@ -15,11 +15,11 @@ package types
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
-	"strconv"
 )
 
 // UnspecifiedLength is unspecified length.
