@@ -367,19 +367,13 @@ type repeatFunctionClass struct {
 }
 
 func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeLongBlob)
-	tp.Flen = mysql.MaxBlobWidth
-
-	if isBinary := mysql.HasBinaryFlag(args[0].GetType().Flag); isBinary {
-		types.SetBinChsClnFlag(tp)
-	} else {
-		tp.Charset = charset.CharsetUTF8
-		tp.Collate = charset.CollationUTF8
-	}
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, tpString, ctx, tpString, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = mysql.MaxBlobWidth
+	if mysql.HasBinaryFlag(args[0].GetType().Flag) {
+		types.SetBinChsClnFlag(bf.tp)
 	}
 	sig := &builtinRepeatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))

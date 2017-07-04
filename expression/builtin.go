@@ -113,8 +113,8 @@ func newBaseBuiltinFuncWithTp(args []Expression, retType evalTp, ctx context.Con
 	case tpString:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeVarchar,
-			Flen:    types.UnspecifiedLength,
-			Decimal: 0,
+			Flen:    0,
+			Decimal: types.UnspecifiedLength,
 		}
 	case tpTime:
 		fieldType = &types.FieldType{
@@ -414,13 +414,15 @@ func (b *baseStringBuiltinFunc) evalDuration(row []types.Datum) (types.Duration,
 
 func (b *baseStringBuiltinFunc) getRetTp() *types.FieldType {
 	tp, flen := b.tp, b.tp.Flen
-	if flen >= MaxBlobWidth {
+	if flen >= mysql.MaxBlobWidth {
 		tp.Tp = mysql.TypeLongBlob
 	} else if flen >= 65536 {
 		tp.Tp = mysql.TypeMediumBlob
 	}
 	if mysql.HasBinaryFlag(tp.Flag) {
 		tp.Charset, tp.Collate = charset.CharsetBin, charset.CollationBin
+	} else {
+		tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
 	}
 	return tp
 }
