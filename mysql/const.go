@@ -195,6 +195,10 @@ const AllPrivMask = AllPriv - 1
 
 // MySQL type maximum length.
 const (
+	// For arguments that have no fixed number of decimals, the decimals value is set to 31,
+	// which is 1 more than the maximum number of decimals permitted for the DECIMAL, FLOAT, and DOUBLE data types.
+	NotFixedDec = 31
+
 	// MaxDateWidth YYYY-MM-DD.
 	MaxDateWidth = 10
 	MaxBlobWidth = 16777216
