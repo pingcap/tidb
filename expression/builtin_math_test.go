@@ -559,7 +559,7 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
 		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 8)
+		c.Assert(tp.Flen, Equals, 23)
 
 		d, err := f.Eval(nil)
 		if t.getErr {

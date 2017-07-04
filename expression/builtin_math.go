@@ -1046,7 +1046,7 @@ type sinFunctionClass struct {
 
 func (c *sinFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	tp := types.NewFieldType(mysql.TypeDouble)
-	tp.Flen = 8
+	tp.Flen = 23
 	types.SetBinChsClnFlag(tp)
 
 	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpReal)
