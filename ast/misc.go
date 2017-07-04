@@ -708,6 +708,7 @@ func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// DropStatsStmt is used to drop table statistics.
 type DropStatsStmt struct {
 	stmtNode
 
