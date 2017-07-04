@@ -31,7 +31,9 @@ func EliminateProjection(p PhysicalPlan) PhysicalPlan {
 	}
 	children := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		children = append(children, EliminateProjection(child.(PhysicalPlan)))
+		newChild := EliminateProjection(child.(PhysicalPlan))
+		children = append(children, newChild)
+		newChild.SetParents(p)
 	}
 	p.SetChildren(children...)
 	return p

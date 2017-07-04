@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
+	"strings"
 )
 
 // ExplainExec represents an explain executor.
@@ -59,12 +60,49 @@ func (e *ExplainExec) prepareExplainInfo(p plan.Plan, parent plan.Plan) error {
 	return nil
 }
 
+// TODO[jianzhang.zj]: avoid a plan being visited twice
+// prepare ["id", "parents", "schema", "key info", "task type", "operator info"] for every plan
+func (e *ExplainExec) prepareDAGExplainInfo(p plan.Plan) error {
+	for _, child := range p.Children() {
+		err := e.prepareDAGExplainInfo(child)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	parents := p.Parents()
+	parentIDs := make([]string, 0, len(parents))
+	for _, parent := range parents {
+		parentIDs = append(parentIDs, parent.ID())
+	}
+	parentInfo := strings.Join(parentIDs, ",")
+	columnInfo := p.Schema().ColumnInfo()
+	uniqueKeyInfo := p.Schema().KeyInfo()
+	taskTypeInfo := "unknown"
+	operatorInfo := "unknown"
+
+	row := &Row{
+		Data: types.MakeDatums(p.ID(), parentInfo, columnInfo, uniqueKeyInfo, taskTypeInfo, operatorInfo),
+	}
+	e.rows = append(e.rows, row)
+
+	return nil
+}
+
 // Next implements Execution Next interface.
 func (e *ExplainExec) Next() (*Row, error) {
 	if e.cursor == 0 {
-		err := e.prepareExplainInfo(e.StmtPlan, nil)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if plan.UseDAGPlanBuilder(e.ctx) {
+			e.StmtPlan.SetParents()
+			err := e.prepareDAGExplainInfo(e.StmtPlan)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			err := e.prepareExplainInfo(e.StmtPlan, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 	if e.cursor >= len(e.rows) {

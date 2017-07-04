@@ -56,6 +56,29 @@ func (s *Schema) String() string {
 	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
 }
 
+// ColumnInfo return columns in a form of "col1,col2,...colN"
+func (s *Schema) ColumnInfo() string {
+	colNames := make([]string, 0, len(s.Columns))
+	for _, col := range s.Columns {
+		colNames = append(colNames, col.String())
+	}
+	return strings.Join(colNames, ",")
+}
+
+// KeyInfo return unique keys in a form of "key1,key2,...keyN":
+// "keyN" = "[col1,col2,...colN]"
+func (s *Schema) KeyInfo() string {
+	keyNames := make([]string, 0, len(s.Keys))
+	for _, key := range s.Keys {
+		uniqueKeyColNames := make([]string, 0, len(key))
+		for _, col := range key {
+			uniqueKeyColNames = append(uniqueKeyColNames, col.String())
+		}
+		keyNames = append(keyNames, "["+strings.Join(uniqueKeyColNames, ",")+"]")
+	}
+	return strings.Join(keyNames, ",")
+}
+
 // Clone copies the total schema.
 func (s *Schema) Clone() *Schema {
 	cols := make([]*Column, 0, s.Len())
