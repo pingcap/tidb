@@ -46,6 +46,7 @@ var (
 	_ Node = &VariableAssignment{}
 )
 
+// Isolation level constants.
 const (
 	ReadCommitted   = "READ-COMMITTED"
 	ReadUncommitted = "READ-UNCOMMITTED"
