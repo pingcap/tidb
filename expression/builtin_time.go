@@ -2028,9 +2028,7 @@ func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Conte
 		return nil, errors.Trace(err)
 	}
 	tp := bf.tp
-	tp.Tp = mysql.TypeDate
-	tp.Flen = mysql.MaxDateWidth
-	//tp.Decimal = NotFixedDec
+	tp.Tp, tp.Flen, tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, 0
 	sig := &builtinMakeDateSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }

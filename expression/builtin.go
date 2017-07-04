@@ -92,14 +92,14 @@ func newBaseBuiltinFuncWithTp(args []Expression, retType evalTp, ctx context.Con
 	case tpInt:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeLonglong,
-			Flen:    20,
+			Flen:    mysql.MaxIntWidth,
 			Decimal: 0,
 			Flag:    mysql.BinaryFlag,
 		}
 	case tpReal:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeLonglong,
-			Flen:    23,
+			Flen:    mysql.MaxRealWidth,
 			Decimal: types.UnspecifiedLength,
 			Flag:    mysql.BinaryFlag,
 		}
@@ -119,15 +119,15 @@ func newBaseBuiltinFuncWithTp(args []Expression, retType evalTp, ctx context.Con
 	case tpTime:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDatetime,
-			Flen:    26,
-			Decimal: 6,
+			Flen:    mysql.MaxDatetimeWidthWithFsp,
+			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
 	case tpDuration:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDuration,
-			Flen:    16,
-			Decimal: 6,
+			Flen:    mysql.MaxDurationWidthWithFsp,
+			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
 	}

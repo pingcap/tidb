@@ -4008,17 +4008,17 @@ CastType:
 |	"DATE"
 	{
 		x := types.NewFieldType(mysql.TypeDate)
-		x.Flen = 10
+		x.Flen = mysql.MaxDateWidth
 		x.Decimal = 0
 		x.Charset = charset.CharsetBin
-        x.Collate = charset.CollationBin
+		x.Collate = charset.CollationBin
         x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"DATETIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDatetime)
-		x.Flen = 19
+		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
 		    x.Flen = x.Flen + 1 + x.Decimal
@@ -4048,7 +4048,7 @@ CastType:
 |	"TIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDuration)
-		x.Flen = 9
+		x.Flen = mysql.MaxDurationWidthNoFsp
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
 		    x.Flen = x.Flen + 1 + x.Decimal
@@ -4061,7 +4061,7 @@ CastType:
 |	"SIGNED" OptInteger
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
-		x.Flen = 20
+		x.Flen = mysql.MaxIntWidth
 		x.Decimal = 0
 		x.Charset = charset.CharsetBin
         x.Collate = charset.CollationBin
@@ -4071,7 +4071,7 @@ CastType:
 |	"UNSIGNED" OptInteger
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
-		x.Flen = 20
+		x.Flen = mysql.MaxIntWidth
 		x.Decimal = 0
 		x.Flag |= mysql.UnsignedFlag
 		x.Charset = charset.CharsetBin

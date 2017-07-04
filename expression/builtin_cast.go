@@ -171,6 +171,7 @@ type castAsRealFunctionClass struct {
 func (b *castAsRealFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
 	bf := baseRealBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
 	bf.tp = b.tp
+	bf.tp.Flen, bf.tp.Decimal = 23, types.UnspecifiedLength
 	if IsHybridType(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
@@ -1000,9 +1001,9 @@ func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Contex
 	}
 	switch tp.Tp {
 	case mysql.TypeDate:
-		tp.Flen = 10
+		tp.Flen = mysql.MaxDateWidth
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
-		tp.Flen = 19
+		tp.Flen = mysql.MaxDatetimeWidthNoFsp
 		if tp.Decimal > 0 {
 			tp.Flen = tp.Flen + 1 + tp.Decimal
 		}
@@ -1025,7 +1026,7 @@ func WrapWithCastAsDuration(expr Expression, ctx context.Context) (Expression, e
 	default:
 		tp.Decimal = types.MaxFsp
 	}
-	tp.Flen = 9
+	tp.Flen = mysql.MaxDurationWidthNoFsp
 	if tp.Decimal > 0 {
 		tp.Flen = tp.Flen + 1 + tp.Decimal
 	}
