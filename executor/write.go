@@ -178,9 +178,7 @@ func (e *DeleteExec) deleteMultiTables() error {
 	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
 	// by its alias instead of ID, so the table map value is an array which contains table aliases.
 	tblMap := make(map[int64][]string, len(e.Tables))
-	log.Warnf("schema: %v", e.SelectExec.Schema())
 	for _, t := range e.Tables {
-		log.Warnf("id: %v, name: %v", t.TableInfo.ID, t.Name.L)
 		tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
 	}
 
