@@ -1110,7 +1110,8 @@ type UpdateExec struct {
 	OrderedList []*expression.Assignment
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
-	updatedRowKeys map[table.Table]map[int64]struct{}
+	// According to issue#3604, TableName is better than table.Table.
+	updatedRowKeys map[string]map[int64]struct{}
 
 	rows        []*Row          // The rows fetched from TableExec.
 	newRowsData [][]types.Datum // The new values to be set.
@@ -1136,22 +1137,22 @@ func (e *UpdateExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[table.Table]map[int64]struct{})
+		e.updatedRowKeys = make(map[string]map[int64]struct{})
 	}
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
 	for _, entry := range row.RowKeys {
-		tbl := entry.Tbl
-		if e.updatedRowKeys[tbl] == nil {
-			e.updatedRowKeys[tbl] = make(map[int64]struct{})
+		if e.updatedRowKeys[entry.TableName] == nil {
+			e.updatedRowKeys[entry.TableName] = make(map[int64]struct{})
 		}
+		tbl := entry.Tbl
 		offset := getTableOffset(e.SelectExec.Schema(), entry)
 		end := offset + len(tbl.WritableCols())
 		handle := entry.Handle
 		oldData := row.Data[offset:end]
 		newTableData := newData[offset:end]
 		flags := assignFlag[offset:end]
-		_, ok := e.updatedRowKeys[tbl][handle]
+		_, ok := e.updatedRowKeys[entry.TableName][handle]
 		if ok {
 			// Each matched row is updated once, even if it matches the conditions multiple times.
 			continue
@@ -1161,7 +1162,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		e.updatedRowKeys[tbl][handle] = struct{}{}
+		e.updatedRowKeys[entry.TableName][handle] = struct{}{}
 	}
 	e.cursor++
 	return &Row{}, nil
