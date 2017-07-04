@@ -1078,7 +1078,6 @@ type tanFunctionClass struct {
 }
 
 func (c *tanFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	//sig := &builtinTanSig{newBaseBuiltinFunc(args, ctx)}
 	tp := types.NewFieldType(mysql.TypeDouble)
 	tp.Flen = 23
 	types.SetBinChsClnFlag(tp)
