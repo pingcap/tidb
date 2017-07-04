@@ -548,6 +548,7 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		{math.Pi / 6, float64(math.Sin(math.Pi / 6)), false, false}, // Pie/6(30 degrees) ==> 0.5
 		{-math.Pi / 6, float64(math.Sin(-math.Pi / 6)), false, false},
 		{math.Pi * 2, float64(math.Sin(math.Pi * 2)), false, false},
+		{string("adfsdfgs"), 0, false, true},
 	}
 
 	for _, t := range cases {
