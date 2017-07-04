@@ -549,6 +549,7 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		{-math.Pi / 6, float64(math.Sin(-math.Pi / 6)), false, false},
 		{math.Pi * 2, float64(math.Sin(math.Pi * 2)), false, false},
 		{string("adfsdfgs"), 0, false, true},
+		{"0.000", 0, false, false},
 	}
 
 	for _, t := range cases {
