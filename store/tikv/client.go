@@ -103,7 +103,7 @@ func (a *connArray) Close() {
 // TODO: Add flow control between RPC clients in TiDB ond RPC servers in TiKV.
 // Since we use shared client connection to communicate to the same TiKV, it's possible
 // that there are too many concurrent requests which overload the service of TiKV.
-// TODO: Implement background cleanup. It adds a backgroud goroutine to periodically check
+// TODO: Implement background cleanup. It adds a background goroutine to periodically check
 // whether there is any connection is idle and then close and remove these idle connections.
 type rpcClient struct {
 	sync.RWMutex

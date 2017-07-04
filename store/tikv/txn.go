@@ -115,8 +115,11 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
-	if opt == kv.IsolationLevel {
+	switch opt {
+	case kv.IsolationLevel:
 		txn.snapshot.isolationLevel = val.(kv.IsoLevel)
+	case kv.Priority:
+		txn.snapshot.priority = kvPriorityToCommandPri(val.(int))
 	}
 }
 

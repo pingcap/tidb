@@ -73,6 +73,7 @@ type twoPhaseCommitter struct {
 		committed    bool
 		undetermined bool
 	}
+	priority pb.CommandPri
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -139,7 +140,6 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 
 	txnWriteKVCountHistogram.Observe(float64(len(keys)))
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
-
 	return &twoPhaseCommitter{
 		store:     txn.store,
 		txn:       txn,
@@ -147,6 +147,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 		keys:      keys,
 		mutations: mutations,
 		lockTTL:   txnLockTTL(txn.startTime, size),
+		priority:  getTxnPriority(txn),
 	}, nil
 }
 
@@ -208,7 +209,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
 	if firstIsPrimary && (action == actionCommit || action == actionCleanup) {
-		// primary should be committed/cleanup first.
+		// primary should be committed/cleanup first
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
 			return errors.Trace(err)
@@ -327,22 +328,16 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		mutations[i] = c.mutations[string(k)]
 	}
 
-	skipCheck := false
-	optSkipCheck := c.txn.us.GetOption(kv.SkipCheckForWrite)
-	if skip, ok := optSkipCheck.(bool); ok && skip {
-		skipCheck = true
-	}
 	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdPrewrite,
+		Type:     tikvrpc.CmdPrewrite,
+		Priority: c.priority,
 		Prewrite: &pb.PrewriteRequest{
-			Mutations:           mutations,
-			PrimaryLock:         c.primary(),
-			StartVersion:        c.startTS,
-			LockTtl:             c.lockTTL,
-			SkipConstraintCheck: skipCheck,
+			Mutations:    mutations,
+			PrimaryLock:  c.primary(),
+			StartVersion: c.startTS,
+			LockTtl:      c.lockTTL,
 		},
 	}
-
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
@@ -402,9 +397,27 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	}
 }
 
+func getTxnPriority(txn *tikvTxn) pb.CommandPri {
+	if pri := txn.us.GetOption(kv.Priority); pri != nil {
+		return kvPriorityToCommandPri(pri.(int))
+	}
+	return pb.CommandPri_Normal
+}
+
+func kvPriorityToCommandPri(pri int) pb.CommandPri {
+	switch pri {
+	case kv.PriorityLow:
+		return pb.CommandPri_Low
+	case kv.PriorityHigh:
+		return pb.CommandPri_High
+	}
+	return pb.CommandPri_Normal
+}
+
 func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
 	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdCommit,
+		Type:     tikvrpc.CmdCommit,
+		Priority: c.priority,
 		Commit: &pb.CommitRequest{
 			StartVersion:  c.startTS,
 			Keys:          batch.keys,
