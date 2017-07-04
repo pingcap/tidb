@@ -204,6 +204,9 @@ const (
 	MaxBlobWidth = 16777216
 )
 
+// PWDHashLen is the length of password's hash.
+const PWDHashLen = 40
+
 // Priv2UserCol is the privilege to mysql.user table column name.
 var Priv2UserCol = map[PrivilegeType]string{
 	CreatePriv:     "Create_priv",
