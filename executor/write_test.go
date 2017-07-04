@@ -543,6 +543,17 @@ func (s *testSuite) TestMultipleTableUpdate(c *C) {
 
 	r = tk.MustQuery("select * from t1")
 	r.Check(testkit.Rows("10", "10"))
+
+	// fix https://github.com/pingcap/tidb/issues/3604
+	testSQL = `drop table if exists t;
+		create table t(a int, b int);
+		insert into t values(1, 1), (2, 2);
+		update t a, t b set a.a = a.a + 10;
+	`
+	tk.MustExec(testSQL)
+
+	r = tk.MustQuery("select * from t")
+	r.Check(testkit.Rows("11 1", "12 2"))
 }
 
 func (s *testSuite) TestDelete(c *C) {
