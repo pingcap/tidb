@@ -49,7 +49,7 @@ var (
 const (
 	ReadCommitted   = "READ-COMMITTED"
 	ReadUncommitted = "READ-UNCOMMITTED"
-	Serializable    = "SERIALIZABLE "
+	Serializable    = "SERIALIZABLE"
 	RepeatableRead  = "REPEATABLE-READ"
 )
 
