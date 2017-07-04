@@ -1999,6 +1999,7 @@ func (c *toBase64FunctionClass) getFunction(args []Expression, ctx context.Conte
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset = charset.CharsetUTF8
 	tp.Collate = charset.CollationUTF8
+	tp.Flen = mysql.MaxBlobWidth
 
 	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
 	if err != nil {
@@ -2012,13 +2013,24 @@ type builtinToBase64Sig struct {
 	baseStringBuiltinFunc
 }
 
-// eval evals a builtinToBase64Sig.
+// neededEncodedLength return the base64 encoded string length
+func (b *builtinToBase64Sig) neededEncodedLength(n int) int {
+	length := (n + 2) / 3 * 4
+	return length + (length-1)/76
+}
+
+// evalString evals a builtinToBase64Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_to-base64
 func (b *builtinToBase64Sig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	str, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
+	}
+
+	b.tp.Flen = b.neededEncodedLength(len(str))
+	if b.tp.Flen > mysql.MaxBlobWidth {
+		return "", true, nil
 	}
 
 	//encode
