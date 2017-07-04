@@ -601,7 +601,7 @@ type builtinStrcmpSig struct {
 	baseIntBuiltinFunc
 }
 
-// eval evals a builtinStrcmpSig.
+// evalInt evals a builtinStrcmpSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
 func (b *builtinStrcmpSig) evalInt(row []types.Datum) (int64, bool, error) {
 	var (
