@@ -56,7 +56,7 @@ func (s *Schema) String() string {
 	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
 }
 
-// ColumnInfo return columns in a form of "col1,col2,...colN"
+// ColumnInfo returns columns in a form of "col1,col2,...colN"
 func (s *Schema) ColumnInfo() string {
 	colNames := make([]string, 0, len(s.Columns))
 	for _, col := range s.Columns {
@@ -65,7 +65,7 @@ func (s *Schema) ColumnInfo() string {
 	return strings.Join(colNames, ",")
 }
 
-// KeyInfo return unique keys in a form of "key1,key2,...keyN":
+// KeyInfo returns unique keys in a form of "key1,key2,...keyN":
 // "keyN" = "[col1,col2,...colN]"
 func (s *Schema) KeyInfo() string {
 	keyNames := make([]string, 0, len(s.Keys))
