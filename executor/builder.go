@@ -1030,11 +1030,8 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	for _, executor := range dagReq.Executors {
-		if executor.Tp == tipb.ExecType_TypeAggregation {
-			e.aggregate = true
-			break
-		}
+	if dagReq.Executors[len(dagReq.Executors)-1].Tp == tipb.ExecType_TypeAggregation {
+		e.aggregate = true
 	}
 	return e
 }
@@ -1096,6 +1093,12 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		ranges:       is.Ranges,
 		tableRequest: tableReq,
 		columns:      is.Columns,
+	}
+	for _, p := range v.TablePlans {
+		if ts, ok := p.(*plan.PhysicalTableScan); ok {
+			e.genValues = ts.GenValues
+			break
+		}
 	}
 	return e
 }

@@ -281,6 +281,9 @@ type IndexLookUpExecutor struct {
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
+
+	// genValues is for calculating virtual generated columns.
+	genValues map[int]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -329,12 +332,14 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		task.doneCh <- errors.Trace(err)
 	}()
 	tableReader := &TableReaderExecutor{
-		asName:  e.asName,
-		table:   e.table,
-		tableID: e.tableID,
-		dagPB:   e.tableRequest,
-		schema:  e.schema,
-		ctx:     e.ctx,
+		asName:    e.asName,
+		table:     e.table,
+		tableID:   e.tableID,
+		dagPB:     e.tableRequest,
+		schema:    e.schema,
+		ctx:       e.ctx,
+		genValues: e.genValues,
+		columns:   e.columns,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {
