@@ -198,6 +198,9 @@ const (
 	CodeUnsupported         terror.ErrCode = 4
 	CodeInvalidGroupFuncUse terror.ErrCode = 5
 	CodeIllegalReference    terror.ErrCode = 6
+
+	// MySQL error code.
+	CodeNoDB terror.ErrCode = mysql.ErrNoDB
 )
 
 // Optimizer base errors.
@@ -207,6 +210,7 @@ var (
 	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(CodeUnsupported, "Cartesian product is unsupported")
 	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
 	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
+	ErrNoDB                        = terror.ClassOptimizer.New(CodeNoDB, "No database selected")
 )
 
 func init() {
@@ -215,6 +219,7 @@ func init() {
 		CodeInvalidWildCard:     mysql.ErrParse,
 		CodeInvalidGroupFuncUse: mysql.ErrInvalidGroupFuncUse,
 		CodeIllegalReference:    mysql.ErrIllegalReference,
+		CodeNoDB:                mysql.ErrNoDB,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 	expression.EvalAstExpr = evalAstExpr
