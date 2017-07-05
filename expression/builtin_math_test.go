@@ -532,12 +532,6 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSin(c *C) {
-	sc := s.ctx.GetSessionVars().StmtCtx
-	origin := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
-	defer func() {
-		sc.IgnoreTruncate = origin
-	}()
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
@@ -554,7 +548,7 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		{math.Pi / 6, float64(math.Sin(math.Pi / 6)), false, false}, // Pie/6(30 degrees) ==> 0.5
 		{-math.Pi / 6, float64(math.Sin(-math.Pi / 6)), false, false},
 		{math.Pi * 2, float64(math.Sin(math.Pi * 2)), false, false},
-		{string("adfsdfgs"), 0, false, false},
+		{string("adfsdfgs"), 0, false, true},
 		{"0.000", 0, false, false},
 	}
 
@@ -584,12 +578,6 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 
 func (s *testEvaluatorSuite) TestCos(c *C) {
 	defer testleak.AfterTest(c)()
-	sc := s.ctx.GetSessionVars().StmtCtx
-	origin := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
-	defer func() {
-		sc.IgnoreTruncate = origin
-	}()
 	cases := []struct {
 		args     interface{}
 		expected float64
@@ -603,7 +591,7 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 		{math.Pi / 2, float64(math.Cos(math.Pi / 2)), false, false}, // Pi/2 is some near 0 (6.123233995736766e-17) but not 0. Even in math it is 0.
 		{-math.Pi / 2, float64(math.Cos(-math.Pi / 2)), false, false},
 		{"0.000", float64(1), false, false}, // string value case
-		{"sdfgsfsdf", float64(1), false, false},
+		{"sdfgsfsdf", float64(1), false, true},
 	}
 
 	for _, t := range cases {
@@ -707,12 +695,6 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 
 func (s *testEvaluatorSuite) TestTan(c *C) {
 	defer testleak.AfterTest(c)()
-	sc := s.ctx.GetSessionVars().StmtCtx
-	origin := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
-	defer func() {
-		sc.IgnoreTruncate = origin
-	}()
 	cases := []struct {
 		args     interface{}
 		expected float64
@@ -725,7 +707,7 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 		{-math.Pi / 4, float64(-1), false, false},
 		{math.Pi * 3 / 4, math.Tan(math.Pi * 3 / 4), false, false}, //in mysql and golang, it equals -1.0000000000000002, not -1
 		{"0.000", float64(0), false, false},
-		{"sdfgsdfg", 0, false, false},
+		{"sdfgsdfg", 0, false, true},
 	}
 
 	for _, t := range cases {
