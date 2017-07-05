@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -51,7 +52,9 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	store kv.Storage
+	cluster   *mocktikv.Cluster
+	mvccStore *mocktikv.MvccStore
+	store     kv.Storage
 	*parser.Parser
 }
 
@@ -63,7 +66,13 @@ func (s *testSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		store, err := tikv.NewMockTikvStore("")
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.NewMvccStore()
+		store, err := tikv.NewMockTikvStore(
+			tikv.WithCluster(s.cluster),
+			tikv.WithMVCCStore(s.mvccStore),
+		)
 		c.Assert(err, IsNil)
 		s.store = store
 		tidb.SetSchemaLease(0)

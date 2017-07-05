@@ -420,6 +420,14 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 		return nil, ret
 	}
 
+	err = d.getIndexRecords(t, taskOpInfo, rawRecords, idxRecords)
+	if err != nil {
+		ret.err = errors.Trace(err)
+	}
+	return idxRecords, ret
+}
+
+func (d *ddl) getIndexRecords(t table.Table, taskOpInfo *indexTaskOpInfo, rawRecords [][]byte, idxRecords []*indexRecord) error {
 	cols := t.Cols()
 	ctx := d.newContext()
 	idxInfo := taskOpInfo.tblIndex.Meta()
@@ -427,27 +435,33 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 	for i, idxRecord := range idxRecords {
 		rowMap, err := tablecodec.DecodeRow(rawRecords[i], taskOpInfo.colMap, time.UTC)
 		if err != nil {
-			ret.err = errors.Trace(err)
-			return nil, ret
+			return errors.Trace(err)
 		}
-		idxVal := make([]types.Datum, 0, len(idxInfo.Columns))
-		for _, v := range idxInfo.Columns {
+		idxVal := make([]types.Datum, len(idxInfo.Columns))
+		for i, v := range idxInfo.Columns {
 			col := cols[v.Offset]
-			idxColumnVal := rowMap[col.ID]
-			if _, ok := rowMap[col.ID]; ok {
-				idxVal = append(idxVal, idxColumnVal)
+			if col.IsPKHandleColumn(t.Meta()) {
+				if mysql.HasUnsignedFlag(col.Flag) {
+					idxVal[col.Offset].SetUint64(uint64(idxRecord.handle))
+				} else {
+					idxVal[col.Offset].SetInt64(idxRecord.handle)
+				}
 				continue
 			}
-			idxColumnVal, ret.err = tables.GetColDefaultValue(ctx, col, defaultVals)
-			if ret.err != nil {
-				ret.err = errors.Trace(ret.err)
-				return nil, ret
+			idxColumnVal := rowMap[col.ID]
+			if _, ok := rowMap[col.ID]; ok {
+				idxVal[i] = idxColumnVal
+				continue
 			}
-			idxVal = append(idxVal, idxColumnVal)
+			idxColumnVal, err = tables.GetColDefaultValue(ctx, col, defaultVals)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			idxVal[i] = idxColumnVal
 		}
 		idxRecord.vals = idxVal
 	}
-	return idxRecords, ret
+	return nil
 }
 
 const (
