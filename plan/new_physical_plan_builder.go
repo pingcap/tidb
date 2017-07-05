@@ -141,33 +141,35 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) PhysicalPlan {
 		innerJoinKeys = p.LeftJoinKeys
 		outerJoinKeys = p.RightJoinKeys
 	}
-	if x, ok := innerChild.(*DataSource); ok {
-		indices, includeTableScan := availableIndices(x.indexHints, x.tableInfo)
-		if includeTableScan && len(innerJoinKeys) == 1 {
-			pkCol := x.getPKIsHandleCol()
-			if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
-				return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx)
-			}
-		}
-		for _, indexInfo := range indices {
-			matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo)
-			if matchedOffsets == nil {
-				continue
-			}
-			usedIndexInfo = indexInfo
-			newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
-			newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
-			for i, offset := range matchedOffsets {
-				newOuterJoinKeys[i] = outerJoinKeys[offset]
-				newInnerJoinKeys[i] = innerJoinKeys[offset]
-			}
-			outerJoinKeys = newOuterJoinKeys
-			innerJoinKeys = newInnerJoinKeys
-			break
-		}
-		if usedIndexInfo != nil {
+	x, ok := innerChild.(*DataSource)
+	if !ok {
+		return nil
+	}
+	indices, includeTableScan := availableIndices(x.indexHints, x.tableInfo)
+	if includeTableScan && len(innerJoinKeys) == 1 {
+		pkCol := x.getPKIsHandleCol()
+		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
 			return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx)
 		}
+	}
+	for _, indexInfo := range indices {
+		matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo)
+		if matchedOffsets == nil {
+			continue
+		}
+		usedIndexInfo = indexInfo
+		newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
+		newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
+		for i, offset := range matchedOffsets {
+			newOuterJoinKeys[i] = outerJoinKeys[offset]
+			newInnerJoinKeys[i] = innerJoinKeys[offset]
+		}
+		outerJoinKeys = newOuterJoinKeys
+		innerJoinKeys = newInnerJoinKeys
+		break
+	}
+	if usedIndexInfo != nil {
+		return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx)
 	}
 	return nil
 }
@@ -205,7 +207,6 @@ func (p *PhysicalMergeJoin) getChildrenPossibleProps(prop *requiredProp) [][]*re
 	return [][]*requiredProp{{lProp, rProp}}
 }
 
-// Currently we only check by hint. If we prefer the left index join but the join type is right outer, it will fail to return.
 func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	if len(p.EqualConditions) == 0 {
 		return nil, false
