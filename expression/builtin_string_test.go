@@ -396,33 +396,48 @@ func (s *testEvaluatorSuite) TestReverse(c *C) {
 
 func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Input  []interface{}
-		Expect interface{}
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    int64
 	}{
-		{[]interface{}{"1", "2"}, -1},
-		{[]interface{}{"2", "1"}, 1},
-		{[]interface{}{"123", "2"}, -1},
-		{[]interface{}{"1", "213"}, -1},
-		{[]interface{}{"123", "123"}, 0},
-		{[]interface{}{"", "123"}, -1},
-		{[]interface{}{"123", ""}, 1},
-		{[]interface{}{"", ""}, 0},
-		{[]interface{}{nil, "123"}, nil},
-		{[]interface{}{"123", nil}, nil},
-		{[]interface{}{nil, nil}, nil},
-		{[]interface{}{"", nil}, nil},
-		{[]interface{}{nil, ""}, nil},
+		{[]interface{}{"123", "123"}, false, false, 0},
+		{[]interface{}{"123", "1"}, false, false, 1},
+		{[]interface{}{"1", "123"}, false, false, -1},
+		{[]interface{}{"123", "45"}, false, false, -1},
+		{[]interface{}{123, "123"}, false, false, 0},
+		{[]interface{}{"12.34", 12.34}, false, false, 0},
+		{[]interface{}{nil, "123"}, true, false, 0},
+		{[]interface{}{"123", nil}, true, false, 0},
+		{[]interface{}{"", "123"}, false, false, -1},
+		{[]interface{}{"123", ""}, false, false, 1},
+		{[]interface{}{"", ""}, false, false, 0},
+		{[]interface{}{"", nil}, true, false, 0},
+		{[]interface{}{nil, ""}, true, false, 0},
+		{[]interface{}{nil, nil}, true, false, 0},
+		{[]interface{}{"123", errors.New("must err")}, false, true, 0},
 	}
-
-	dtbl := tblToDtbl(tbl)
-	for _, t := range dtbl {
-		fc := funcs[ast.Strcmp]
-		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Strcmp, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, 2)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.res)
+			}
+		}
 	}
 }
 
