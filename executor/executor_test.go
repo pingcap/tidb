@@ -954,6 +954,16 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select substr('123', 1, null)")
 	result.Check(testkit.Rows("<nil>"))
 
+	// test sin
+	result = tk.MustQuery("select sin(0)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select sin(1.5707963267949)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select sin(1)")
+	result.Check(testkit.Rows("0.8414709848078965"))
+	result = tk.MustQuery("select sin(100)")
+	result.Check(testkit.Rows("-0.5063656411097588"))
+
 	// test cos
 	result = tk.MustQuery("select cos(0)")
 	result.Check(testkit.Rows("1"))
