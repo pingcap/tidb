@@ -334,7 +334,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		ci.ColumnLength = uint32(fld.Column.Flen)
 	}
 	if fld.Column.Decimal == types.UnspecifiedLength {
-		ci.Decimal = 0
+		ci.Decimal = mysql.NotFixedDec
 	} else {
 		ci.Decimal = uint8(fld.Column.Decimal)
 	}
