@@ -123,6 +123,12 @@ func (s *testSuite) TestSetVar(c *C) {
 	c.Assert(vars.SkipConstraintCheck, IsTrue)
 	tk.MustExec("set @@tidb_skip_constraint_check = '0'")
 	c.Assert(vars.SkipConstraintCheck, IsFalse)
+
+	tk.MustExec("set global avoid_temporal_upgrade = on")
+	tk.MustExec("set session sql_log_bin = on")
+	tk.MustExec("set sql_log_bin = on")
+	tk.MustExec("set @@sql_log_bin = on")
+	tk.MustExec("set @@global.sql_log_bin = on")
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
