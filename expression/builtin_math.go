@@ -844,7 +844,6 @@ func (b *builtinAtanSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, nil
 }
 
-//cos start
 type cosFunctionClass struct {
 	baseFunctionClass
 }
