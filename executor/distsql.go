@@ -165,8 +165,10 @@ func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRa
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rangeKey := tablecodec.EncodeIndexSeekKey(tid, idxID, valKey)
-		krs = append(krs, kv.KeyRange{StartKey: rangeKey, EndKey: rangeKey})
+		valKeyNext := []byte(kv.Key(valKey).PrefixNext())
+		rangeBeginKey := tablecodec.EncodeIndexSeekKey(tid, idxID, valKey)
+		rangeEndKey := tablecodec.EncodeIndexSeekKey(tid, idxID, valKeyNext)
+		krs = append(krs, kv.KeyRange{StartKey: rangeBeginKey, EndKey: rangeEndKey})
 	}
 	return krs, nil
 }

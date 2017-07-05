@@ -176,10 +176,13 @@ func (p *PhysicalIndexJoin) getChildrenPossibleProps(prop *requiredProp) [][]*re
 	if !prop.isEmpty() {
 		return nil
 	}
-	requiredProps := make([]*requiredProp, 2)
-	requiredProps[p.outerIndex] = &requiredProp{taskTp: rootTaskType}
-	requiredProps[1-p.outerIndex] = &requiredProp{taskTp: rootTaskType, cols: p.InnerJoinKeys}
-	return [][]*requiredProp{requiredProps}
+	requiredProps1 := make([]*requiredProp, 2)
+	requiredProps1[p.outerIndex] = &requiredProp{taskTp: rootTaskType}
+	requiredProps1[1-p.outerIndex] = &requiredProp{taskTp: copSingleReadTaskType, cols: p.InnerJoinKeys}
+	requiredProps2 := make([]*requiredProp, 2)
+	requiredProps2[p.outerIndex] = &requiredProp{taskTp: rootTaskType}
+	requiredProps2[1-p.outerIndex] = &requiredProp{taskTp: copDoubleReadTaskType, cols: p.InnerJoinKeys}
+	return [][]*requiredProp{requiredProps1, requiredProps2}
 }
 
 func (p *PhysicalMergeJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
@@ -571,6 +574,7 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
+	task = invalidTask
 	if includeTableScan {
 		task, err = p.convertToTableScan(prop)
 		if err != nil {
@@ -582,7 +586,7 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if task == nil || idxTask.cost() < task.cost() {
+		if idxTask.cost() < task.cost() {
 			task = idxTask
 		}
 	}
@@ -683,6 +687,8 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)
+	} else if _, ok := task.(*rootTask); ok {
+		return invalidTask, nil
 	}
 	return task, nil
 }
@@ -795,6 +801,8 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)
+	} else if _, ok := task.(*rootTask); ok {
+		return invalidTask, nil
 	}
 	return task, nil
 }

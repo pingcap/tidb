@@ -33,6 +33,7 @@ type task interface {
 	cost() float64
 	copy() task
 	plan() PhysicalPlan
+	invalid() bool
 }
 
 // TODO: In future, we should split copTask to indexTask and tableTask.
@@ -44,6 +45,14 @@ type copTask struct {
 	cnt       float64
 	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
+}
+
+func (t *copTask) invalid() bool {
+	return t.tablePlan == nil && t.indexPlan == nil
+}
+
+func (t *rootTask) invalid() bool {
+	return t.p == nil
 }
 
 func (t *copTask) setCount(cnt float64) {
@@ -119,7 +128,11 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(tasks[p.outerIndex].copy(), p.ctx, p.allocator)
-	rTask := finishCopTask(tasks[1-p.outerIndex].copy(), p.ctx, p.allocator)
+	innerTask := tasks[1-p.outerIndex]
+	if innerTask.invalid() {
+		return invalidTask
+	}
+	rTask := finishCopTask(innerTask.copy(), p.ctx, p.allocator)
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), rTask.plan())
 	return &rootTask{
