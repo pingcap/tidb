@@ -954,6 +954,12 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select substr('123', 1, null)")
 	result.Check(testkit.Rows("<nil>"))
 
+	// test cos
+	result = tk.MustQuery("select cos(0)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cos(3.1415926535898)")
+	result.Check(testkit.Rows("-1"))
+
 	//for tan
 	result = tk.MustQuery("select tan(0.00)")
 	result.Check(testkit.Rows("0"))
