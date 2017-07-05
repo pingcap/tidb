@@ -1021,7 +1021,7 @@ type builtinRadiansSig struct {
 	baseBuiltinFunc
 }
 
-// evalreal evals a builtinRadiansSig.
+// eval evals a builtinRadiansSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_radians
 func (b *builtinRadiansSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -1061,7 +1061,7 @@ type builtinSinSig struct {
 	baseRealBuiltinFunc
 }
 
-// eval evals a builtinSinSig.
+// evalreal evals a builtinSinSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sin
 func (b *builtinSinSig) evalReal(row []types.Datum) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
