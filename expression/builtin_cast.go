@@ -955,7 +955,7 @@ func WrapWithCastAsReal(expr Expression, ctx context.Context) (Expression, error
 		return expr, nil
 	}
 	tp := types.NewFieldType(mysql.TypeDouble)
-	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
+	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 	types.SetBinChsClnFlag(tp)
 	return buildCastFunction(expr, tp, ctx)
 }

@@ -185,7 +185,7 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 				&Constant{RetType: &types.FieldType{Charset: charset.CharsetUTF8, Flen: 10}},
 				&Constant{RetType: &types.FieldType{Charset: charset.CharsetBin, Flen: 20}},
 			},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flen: 30, Decimal: types.UnspecifiedLength, Flag: mysql.BinaryFlag},
+			&types.FieldType{Tp: mysql.TypeVarString, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flen: 30, Decimal: types.UnspecifiedLength, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]Expression{

@@ -112,7 +112,7 @@ func newBaseBuiltinFuncWithTp(args []Expression, retType evalTp, ctx context.Con
 		}
 	case tpString:
 		fieldType = &types.FieldType{
-			Tp:      mysql.TypeVarchar,
+			Tp:      mysql.TypeVarString,
 			Flen:    0,
 			Decimal: types.UnspecifiedLength,
 		}
