@@ -532,6 +532,12 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSin(c *C) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	origin := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = origin
+	}()
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
@@ -548,7 +554,7 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		{math.Pi / 6, float64(math.Sin(math.Pi / 6)), false, false}, // Pie/6(30 degrees) ==> 0.5
 		{-math.Pi / 6, float64(math.Sin(-math.Pi / 6)), false, false},
 		{math.Pi * 2, float64(math.Sin(math.Pi * 2)), false, false},
-		{string("adfsdfgs"), 0, false, true},
+		{string("adfsdfgs"), 0, false, false},
 		{"0.000", 0, false, false},
 	}
 
