@@ -16,6 +16,7 @@ package types
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -111,23 +112,27 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
-		value interface{}
-		tp    byte
+		value     interface{}
+		tp        byte
+		flen      int
+		decimal   int
+		charset   string
+		collation string
+		flag      uint
 	}{
-		{nil, mysql.TypeNull},
-		{1, mysql.TypeLonglong},
-		{uint64(1), mysql.TypeLonglong},
-		{"abc", mysql.TypeVarString},
-		{1.1, mysql.TypeDouble},
-		{[]byte("abc"), mysql.TypeBlob},
-		{Bit{}, mysql.TypeVarchar},
-		{Hex{}, mysql.TypeVarchar},
-		{Time{Type: mysql.TypeDatetime}, mysql.TypeDatetime},
-		{Duration{}, mysql.TypeDuration},
-		{&MyDecimal{}, mysql.TypeNewDecimal},
-		{Enum{}, mysql.TypeEnum},
-		{Set{}, mysql.TypeSet},
-		{nil, mysql.TypeNull},
+		{nil, mysql.TypeNull, 0, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{1, mysql.TypeLonglong, 1, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{uint64(1), mysql.TypeLonglong, 1, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{"abc", mysql.TypeVarString, 9, UnspecifiedLength, charset.CharsetUTF8, charset.CollationUTF8, 0},
+		{1.1, mysql.TypeDouble, 3, 1, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{[]byte("abc"), mysql.TypeBlob, 3, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{Bit{}, mysql.TypeVarchar, 3, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{Hex{}, mysql.TypeVarchar, 3, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{Time{Type: mysql.TypeDatetime}, mysql.TypeDatetime, 19, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{Duration{}, mysql.TypeDuration, 9, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{&MyDecimal{}, mysql.TypeNewDecimal, 0, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{Enum{Name: "a", Value: 1}, mysql.TypeEnum, 1, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{Set{Name: "a", Value: 1}, mysql.TypeSet, 1, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
 	}
 	for _, tt := range tests {
 		var ft FieldType
