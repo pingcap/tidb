@@ -28,6 +28,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -1077,32 +1078,29 @@ type tanFunctionClass struct {
 }
 
 func (c *tanFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinTanSig{newBaseBuiltinFunc(args, ctx)}
+	tp := types.NewFieldType(mysql.TypeDouble)
+	tp.Flen = 23
+	types.SetBinChsClnFlag(tp)
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpReal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinTanSig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinTanSig struct {
-	baseBuiltinFunc
+	baseRealBuiltinFunc
 }
 
 // eval evals a builtinTanSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_tan
-func (b *builtinTanSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinTanSig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		return args[0], nil
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	theta, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	// Set the result to be of type float64
-	d.SetFloat64(math.Tan(theta))
-	return d, nil
+	return math.Tan(val), false, nil
 }
 
 type truncateFunctionClass struct {

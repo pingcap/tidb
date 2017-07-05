@@ -586,35 +586,41 @@ type strcmpFunctionClass struct {
 }
 
 func (c *strcmpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinStrcmpSig{newBaseBuiltinFunc(args, ctx)}
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.Flen = 2
+	types.SetBinChsClnFlag(tp)
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinStrcmpSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinStrcmpSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinStrcmpSig.
+// evalInt evals a builtinStrcmpSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
-func (b *builtinStrcmpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinStrcmpSig) evalInt(row []types.Datum) (int64, bool, error) {
+	var (
+		left, right string
+		isNull      bool
+		err         error
+	)
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	left, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
-	}
-	left, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	right, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	right, isNull, err = b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 	res := types.CompareString(left, right)
-	d.SetInt64(int64(res))
-	return d, nil
+	return int64(res), false, nil
 }
 
 type replaceFunctionClass struct {
