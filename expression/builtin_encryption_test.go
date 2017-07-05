@@ -19,6 +19,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -302,22 +304,38 @@ func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
 }
 func (s *testEvaluatorSuite) TestPassword(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
-		in     interface{}
-		expect interface{}
+	cases := []struct {
+		args     interface{}
+		expected string
+		isNil    bool
+		getErr   bool
 	}{
-		{nil, string("")},
-		{string(""), string("")},
-		{string("abc"), string("*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")},
+		{nil, "", true, false},
+		{"", "", false, false},
+		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", false, false},
+		{123, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", false, false},
+		{1.23, "*A589EEBA8D3F9E1A34A7EE518FAC4566BFAD5BB6", false, false},
+		{types.NewDecFromFloatForTest(123.123), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1", false, false},
 	}
 
-	fc := funcs[ast.PasswordFunc]
-	for _, test := range tests {
-		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.PasswordFunc, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		out, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(out.GetString(), Equals, test.expect)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
+		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
+		c.Assert(tp.Collate, Equals, charset.CollationUTF8)
+		c.Assert(tp.Flen, Equals, mysql.PWDHashLen+1)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.expected)
+			}
+		}
 	}
 }

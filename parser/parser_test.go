@@ -93,7 +93,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "default", "shared", "exclusive",
-		"always",
+		"always", "stats",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -1145,7 +1145,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create schema xxx", true},
 		{"create schema if exists xxx", false},
 		{"create schema if not exists xxx", true},
-		// for drop database/schema/table
+		// for drop database/schema/table/stats
 		{"drop database xxx", true},
 		{"drop database if exists xxx", true},
 		{"drop database if not exists xxx", false},
@@ -1159,6 +1159,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop table if exists xxx", true},
 		{"drop table if not exists xxx", false},
 		{"drop view if exists xxx", true},
+		{"drop stats t", true},
 		// for issue 974
 		{`CREATE TABLE address (
 		id bigint(20) NOT NULL AUTO_INCREMENT,
