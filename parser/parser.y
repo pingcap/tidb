@@ -504,7 +504,7 @@ import (
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
 	stats		"STATS"
-	statsMeta   "STATS_META"
+	statsMeta	"STATS_META"
 	status		"STATUS"
 	super		"SUPER"
 	some 		"SOME"

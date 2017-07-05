@@ -26,14 +26,14 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // ShowExec represents a show executor.
@@ -631,20 +631,20 @@ func (e *ShowExec) getTable() (table.Table, error) {
 
 func (e *ShowExec) fetchShowStatsMeta() error {
 	do := sessionctx.GetDomain(e.ctx)
-	statsCache := do.StatsHandle().CopyFromOldCache()
+	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
-			stats, ok := statsCache[tbl.ID]
-			if ok {
-				t := time.Unix(0, oracle.ExtractPhysical(stats.Version)*int64(time.Millisecond))
+			statsTbl := h.GetTableStats(tbl.ID)
+			if !statsTbl.Pseudo {
+				t := time.Unix(0, oracle.ExtractPhysical(statsTbl.Version)*int64(time.Millisecond))
 				row := &Row{
 					Data: types.MakeDatums(
 						db.Name.O,
 						tbl.Name.O,
 						types.Time{Time: types.FromGoTime(t), Type: mysql.TypeDatetime},
-						stats.ModifyCount,
-						stats.Count,
+						statsTbl.ModifyCount,
+						statsTbl.Count,
 					),
 				}
 				e.rows = append(e.rows, row)

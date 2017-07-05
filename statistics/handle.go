@@ -118,7 +118,7 @@ func (h *Handle) GetTableStats(tblID int64) *Table {
 	return tbl
 }
 
-func (h *Handle) CopyFromOldCache() statsCache {
+func (h *Handle) copyFromOldCache() statsCache {
 	newCache := statsCache{}
 	oldCache := h.statsCache.Load().(statsCache)
 	for k, v := range oldCache {
@@ -129,7 +129,7 @@ func (h *Handle) CopyFromOldCache() statsCache {
 
 // UpdateTableStats updates the statistics table cache using copy on write.
 func (h *Handle) UpdateTableStats(tables []*Table, deletedIDs []int64) {
-	newCache := h.CopyFromOldCache()
+	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
 		id := tbl.TableID
 		newCache[id] = tbl
