@@ -954,6 +954,12 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select substr('123', 1, null)")
 	result.Check(testkit.Rows("<nil>"))
 
+	//for tan
+	result = tk.MustQuery("select tan(0.00)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select tan(PI()/4)")
+	result.Check(testkit.Rows("1"))
+
 	// for case
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(255), b int)")
