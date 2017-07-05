@@ -562,29 +562,45 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 
 func (s *testEvaluatorSuite) TestCos(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+	cases := []struct {
+		args     interface{}
+		expected float64
+		isNil    bool
+		getErr   bool
 	}{
-		{nil, nil},
-		{int64(0), float64(1)},
-		{math.Pi, float64(-1)}, // cos pi equals -1
-		{-math.Pi, float64(-1)},
-		{math.Pi / 2, float64(math.Cos(math.Pi / 2))}, // Pi/2 is some near 0 (6.123233995736766e-17) but not 0. Even in math it is 0.
-		{-math.Pi / 2, float64(math.Cos(-math.Pi / 2))},
-		{"0.000", float64(1)}, // string value case
+		{nil, 0, true, false},
+		{int64(0), float64(1), false, false},
+		{math.Pi, float64(-1), false, false}, // cos pi equals -1
+		{-math.Pi, float64(-1), false, false},
+		{math.Pi / 2, float64(math.Cos(math.Pi / 2)), false, false}, // Pi/2 is some near 0 (6.123233995736766e-17) but not 0. Even in math it is 0.
+		{-math.Pi / 2, float64(math.Cos(-math.Pi / 2)), false, false},
+		{"0.000", float64(1), false, false}, // string value case
+		{"sdfgsfsdf", float64(0), false, true},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-	for _, t := range Dtbl {
-		fc := funcs[ast.Cos]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Cos, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Log(t)
-		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeDouble)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, 23)
+
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetFloat64(), Equals, t.expected)
+			}
+		}
 	}
+
 }
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {
