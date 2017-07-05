@@ -591,7 +591,7 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 		{math.Pi / 2, float64(math.Cos(math.Pi / 2)), false, false}, // Pi/2 is some near 0 (6.123233995736766e-17) but not 0. Even in math it is 0.
 		{-math.Pi / 2, float64(math.Cos(-math.Pi / 2)), false, false},
 		{"0.000", float64(1), false, false}, // string value case
-		{"sdfgsfsdf", float64(1), false, true},
+		{"sdfgsfsdf", float64(0), false, true},
 	}
 
 	for _, t := range cases {
