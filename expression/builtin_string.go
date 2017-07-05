@@ -1999,12 +1999,12 @@ func (c *toBase64FunctionClass) getFunction(args []Expression, ctx context.Conte
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset = charset.CharsetUTF8
 	tp.Collate = charset.CollationUTF8
-	tp.Flen = mysql.MaxBlobWidth
 
 	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
 	sig := &builtinToBase64Sig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
@@ -2013,8 +2013,8 @@ type builtinToBase64Sig struct {
 	baseStringBuiltinFunc
 }
 
-// neededEncodedLength return the base64 encoded string length
-func (b *builtinToBase64Sig) neededEncodedLength(n int) int {
+// base64NeededEncodedLength return the base64 encoded string length
+func base64NeededEncodedLength(n int) int {
 	length := (n + 2) / 3 * 4
 	return length + (length-1)/76
 }
@@ -2028,7 +2028,6 @@ func (b *builtinToBase64Sig) evalString(row []types.Datum) (d string, isNull boo
 		return "", isNull, errors.Trace(err)
 	}
 
-	b.tp.Flen = b.neededEncodedLength(len(str))
 	if b.tp.Flen > mysql.MaxBlobWidth {
 		return "", true, nil
 	}
