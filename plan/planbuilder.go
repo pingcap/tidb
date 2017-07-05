@@ -71,8 +71,8 @@ type visitInfo struct {
 }
 
 type tableHintInfo struct {
-	INLJTables          []model.CIStr
-	sortMergeJoinTables []model.CIStr
+	indexNestedLoopJoinTables []model.CIStr
+	sortMergeJoinTables       []model.CIStr
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
@@ -101,7 +101,7 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 		if tableName == nil {
 			continue
 		}
-		for _, curEntry := range info.INLJTables {
+		for _, curEntry := range info.indexNestedLoopJoinTables {
 			if curEntry.L == tableName.L {
 				return true
 			}

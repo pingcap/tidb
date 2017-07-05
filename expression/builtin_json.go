@@ -47,7 +47,10 @@ var (
 	_ functionClass = &jsonSetFunctionClass{}
 	_ functionClass = &jsonInsertFunctionClass{}
 	_ functionClass = &jsonReplaceFunctionClass{}
+	_ functionClass = &jsonRemoveFunctionClass{}
 	_ functionClass = &jsonMergeFunctionClass{}
+	_ functionClass = &jsonObjectFunctionClass{}
+	_ functionClass = &jsonArrayFunctionClass{}
 )
 
 // argsAnyNull returns true if args contains any null.
@@ -83,37 +86,12 @@ func parsePathExprs(datums []types.Datum) ([]json.PathExpression, error) {
 }
 
 // createJSONFromDatums creates JSONs from Datums.
-func createJSONFromDatums(datums []types.Datum) ([]json.JSON, error) {
-	jsons := make([]json.JSON, 0, len(datums))
+func createJSONFromDatums(datums []types.Datum) (jsons []json.JSON, err error) {
+	jsons = make([]json.JSON, 0, len(datums))
 	for _, datum := range datums {
-		// TODO: Here semantic of creating JSON from datum is the same with types.compareMysqlJSON.
-		// But it's different from "CAST semantic" because for string, cast will parse it into
-		// JSON but here and compareMysqlJSON needs a JSON with the string as primitives.
-		// We should rewrite this as a function for here and compareMysqlJSON both can use it.
-		var j json.JSON
-		switch datum.Kind() {
-		case types.KindNull:
-			j = json.CreateJSON(nil)
-		case types.KindMysqlJSON:
-			j = datum.GetMysqlJSON()
-		case types.KindInt64, types.KindUint64:
-			j = json.CreateJSON(datum.GetInt64())
-		case types.KindFloat32, types.KindFloat64:
-			j = json.CreateJSON(datum.GetFloat64())
-		case types.KindMysqlDecimal:
-			f64, err := datum.GetMysqlDecimal().ToFloat64()
-			if err != nil {
-				return jsons, errors.Trace(err)
-			}
-			j = json.CreateJSON(f64)
-		case types.KindString, types.KindBytes:
-			j = json.CreateJSON(datum.GetString())
-		default:
-			s, err := datum.ToString()
-			if err != nil {
-				return jsons, errors.Trace(err)
-			}
-			j = json.CreateJSON(s)
+		j, err := datum.ToMysqlJSON()
+		if err != nil {
+			return jsons, errors.Trace(err)
 		}
 		jsons = append(jsons, j)
 	}
@@ -121,15 +99,9 @@ func createJSONFromDatums(datums []types.Datum) ([]json.JSON, error) {
 }
 
 // jsonModify is the portal for modify JSON with path expressions and values.
+// If the first argument is null, returns null;
+// If any path expressions in arguments are null, return null;
 func jsonModify(args []types.Datum, mt json.ModifyType, sc *variable.StatementContext) (d types.Datum, err error) {
-	if argsAnyNull(args) {
-		return d, nil
-	}
-	var j json.JSON
-	if j, err = datum2JSON(args[0], sc); err != nil {
-		return d, errors.Trace(err)
-	}
-
 	// alloc 1 extra element, for len(args) is an even number.
 	pes := make([]types.Datum, 0, (len(args)-1)/2+1)
 	vs := make([]types.Datum, 0, (len(args)-1)/2+1)
@@ -139,6 +111,14 @@ func jsonModify(args []types.Datum, mt json.ModifyType, sc *variable.StatementCo
 		} else {
 			vs = append(vs, args[i])
 		}
+	}
+	if args[0].Kind() == types.KindNull || argsAnyNull(pes) {
+		return d, nil
+	}
+
+	j, err := datum2JSON(args[0], sc)
+	if err != nil {
+		return d, errors.Trace(err)
 	}
 	pathExprs, err := parsePathExprs(pes)
 	if err != nil {
@@ -220,6 +200,27 @@ func JSONReplace(args []types.Datum, sc *variable.StatementContext) (d types.Dat
 	return jsonModify(args, json.ModifyReplace, sc)
 }
 
+// JSONRemove is for json_remove builtin function.
+func JSONRemove(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	if argsAnyNull(args) {
+		return d, nil
+	}
+	j, err := datum2JSON(args[0], sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	pathExprs, err := parsePathExprs(args[1:])
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	j, err = j.Remove(pathExprs)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlJSON(j)
+	return
+}
+
 // JSONMerge is for json_merge builtin function.
 func JSONMerge(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
 	if argsAnyNull(args) {
@@ -234,6 +235,45 @@ func JSONMerge(args []types.Datum, sc *variable.StatementContext) (d types.Datum
 		jsons = append(jsons, j)
 	}
 	d.SetMysqlJSON(jsons[0].Merge(jsons[1:]))
+	return
+}
+
+// JSONObject creates a json from an ordered key-value slice. It retrieves 2 arguments at least.
+func JSONObject(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	if len(args)&1 == 1 {
+		err = errIncorrectParameterCount.GenByArgs(ast.JSONObject)
+		return
+	}
+	var jsonMap = make(map[string]json.JSON, len(args)>>1)
+	var keyTp = types.NewFieldType(mysql.TypeVarchar)
+	for i := 0; i < len(args); i += 2 {
+		if args[i].Kind() == types.KindNull {
+			err = errors.New("JSON documents may not contain NULL member names")
+			return
+		}
+		key, err := args[i].ConvertTo(sc, keyTp)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		value, err := args[i+1].ToMysqlJSON()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		jsonMap[key.GetString()] = value
+	}
+	j := json.CreateJSON(jsonMap)
+	d.SetMysqlJSON(j)
+	return
+}
+
+// JSONArray creates a json from a slice.
+func JSONArray(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	jsons, err := createJSONFromDatums(args)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	j := json.CreateJSON(jsons)
+	d.SetMysqlJSON(j)
 	return
 }
 
@@ -357,6 +397,26 @@ func (b *builtinJSONReplaceSig) eval(row []types.Datum) (d types.Datum, err erro
 	return JSONReplace(args, b.ctx.GetSessionVars().StmtCtx)
 }
 
+type jsonRemoveFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONRemoveSig struct {
+	baseBuiltinFunc
+}
+
+func (c *jsonRemoveFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinJSONRemoveSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+func (b *builtinJSONRemoveSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	return JSONRemove(args, b.ctx.GetSessionVars().StmtCtx)
+}
+
 type jsonMergeFunctionClass struct {
 	baseFunctionClass
 }
@@ -375,4 +435,44 @@ func (b *builtinJSONMergeSig) eval(row []types.Datum) (d types.Datum, err error)
 		return d, errors.Trace(err)
 	}
 	return JSONMerge(args, b.ctx.GetSessionVars().StmtCtx)
+}
+
+type jsonObjectFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONObjectSig struct {
+	baseBuiltinFunc
+}
+
+func (c *jsonObjectFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinJSONObjectSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+func (b *builtinJSONObjectSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	return JSONObject(args, b.ctx.GetSessionVars().StmtCtx)
+}
+
+type jsonArrayFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONArraySig struct {
+	baseBuiltinFunc
+}
+
+func (c *jsonArrayFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinJSONArraySig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+func (b *builtinJSONArraySig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	return JSONArray(args, b.ctx.GetSessionVars().StmtCtx)
 }
