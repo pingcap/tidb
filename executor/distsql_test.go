@@ -96,8 +96,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	cli := tikv.GetMockTiKVClient(s.store)
-	cli.Cluster.SplitTable(cli.MvccStore, tblID, 100)
+	s.cluster.SplitTable(s.mvccStore, tblID, 100)
 
 	// Send coprocessor request when the table split.
 	rss, err := tk.Se.Execute("select sum(id) from copclient")
@@ -110,9 +109,9 @@ func (s *testSuite) TestCopClientSend(c *C) {
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
-	region, _ := cli.Cluster.GetRegionByKey([]byte(key))
-	peerID := cli.Cluster.AllocID()
-	cli.Cluster.Split(region.GetId(), cli.Cluster.AllocID(), key, []uint64{peerID}, peerID)
+	region, _ := s.cluster.GetRegionByKey([]byte(key))
+	peerID := s.cluster.AllocID()
+	s.cluster.Split(region.GetId(), s.cluster.AllocID(), key, []uint64{peerID}, peerID)
 
 	// Check again.
 	rss, err = tk.Se.Execute("select sum(id) from copclient")
