@@ -954,7 +954,6 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select substr('123', 1, null)")
 	result.Check(testkit.Rows("<nil>"))
 
-
 	// test sin
 	result = tk.MustQuery("select sin(0)")
 	result.Check(testkit.Rows("0"))
@@ -970,7 +969,6 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select tan(PI()/4)")
 	result.Check(testkit.Rows("1"))
-
 
 	// for case
 	tk.MustExec("drop table if exists t")
