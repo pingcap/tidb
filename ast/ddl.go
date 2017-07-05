@@ -647,7 +647,7 @@ const (
 	AlterTableRenameTable
 	AlterTableAlterColumn
 	AlterTableLock
-	AlterTableAddColumns
+	AlterTableAppendColumns
 
 // TODO: Add more actions
 )
@@ -668,16 +668,16 @@ const (
 type AlterTableSpec struct {
 	node
 
-	Tp            AlterTableType
-	Name          string
-	Constraint    *Constraint
-	Options       []*TableOption
-	NewTable      *TableName
-	NewColumn     *ColumnDef
-	NewColumns    []*ColumnDef
-	OldColumnName *ColumnName
-	Position      *ColumnPosition
-	LockType      LockType
+	Tp              AlterTableType
+	Name            string
+	Constraint      *Constraint
+	Options         []*TableOption
+	NewTable        *TableName
+	NewColumn       *ColumnDef
+	AppendedColumns []*ColumnDef
+	OldColumnName   *ColumnName
+	Position        *ColumnPosition
+	LockType        LockType
 }
 
 // Accept implements Node Accept interface.
@@ -708,13 +708,13 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		}
 		n.NewColumn = node.(*ColumnDef)
 	}
-	if n.NewColumns != nil {
-		for i := range n.NewColumns {
-			node, ok := n.NewColumns[i].Accept(v)
+	if n.AppendedColumns != nil {
+		for i := range n.AppendedColumns {
+			node, ok := n.AppendedColumns[i].Accept(v)
 			if !ok {
 				return n, false
 			}
-			n.NewColumns[i] = node.(*ColumnDef)
+			n.AppendedColumns[i] = node.(*ColumnDef)
 		}
 	}
 	if n.OldColumnName != nil {

@@ -133,8 +133,57 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	mu.Lock()
 	tb := publicTable
 	mu.Unlock()
-	s.testColumnDrop(c, ctx, d, tb)
+	s.testColumnDrop(c, ctx, d, tb) // delete 3rd column
 	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
+	s.testColumnDrop(c, ctx, d, tb) // delete 3rd column
+	s.testAppendColumns(c, ctx, d, tblInfo)
+}
+
+func (s *testColumnChangeSuite) testAppendColumns(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {
+	d.Stop()
+	tc := &testDDLCallback{}
+	// set up hook
+	prevState := model.StateNone
+	var checkErr error
+	var writeOnlyTable table.Table
+	tc.onJobUpdated = func(job *model.Job) {
+		if job.SchemaState == prevState {
+			return
+		}
+		hookCtx := mock.NewContext()
+		hookCtx.Store = s.store
+		prevState = job.SchemaState
+		var err error
+		err = hookCtx.NewTxn()
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+		case model.StatePublic:
+			_, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+			_, err = writeOnlyTable.AddRecord(hookCtx, types.MakeDatums(10, 10, 10, 10))
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+		}
+		err = hookCtx.Txn().Commit()
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
+	}
+	d.setHook(tc)
+	d.start(goctx.Background())
+	job := testAppendMultipleColumn(c, ctx, d, s.dbInfo, tblInfo, []string{"c3", "c4"}, []interface{}{1, 1})
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	testCheckJobDone(c, d, job, true)
 }
 
 func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {

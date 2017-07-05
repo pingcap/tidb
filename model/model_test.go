@@ -160,6 +160,7 @@ func (testSuite) TestState(c *C) {
 		ActionDropColumn,
 		ActionAddIndex,
 		ActionDropIndex,
+		ActionAppendColumns,
 	}
 
 	for _, action := range actionTbl {

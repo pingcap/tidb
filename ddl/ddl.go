@@ -151,10 +151,10 @@ type DDL interface {
 
 // Event is an event that a ddl operation happened.
 type Event struct {
-	Tp         model.ActionType
-	TableInfo  *model.TableInfo
-	ColumnInfo *model.ColumnInfo
-	IndexInfo  *model.IndexInfo
+	Tp          model.ActionType
+	TableInfo   *model.TableInfo
+	ColumnsInfo []*model.ColumnInfo
+	IndexInfo   *model.IndexInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -163,8 +163,10 @@ func (e *Event) String() string {
 	if e.TableInfo != nil {
 		ret += fmt.Sprintf(", Table ID: %d, Table Name %s", e.TableInfo.ID, e.TableInfo.Name)
 	}
-	if e.ColumnInfo != nil {
-		ret += fmt.Sprintf(", Column ID: %d, Column Name %s", e.ColumnInfo.ID, e.ColumnInfo.Name)
+	if e.ColumnsInfo != nil {
+		for i := 0; i < len(e.ColumnsInfo); i++ {
+			ret += fmt.Sprintf(", Column ID: %d, Column Name %s", e.ColumnsInfo[i].ID, e.ColumnsInfo[i].Name)
+		}
 	}
 	if e.IndexInfo != nil {
 		ret += fmt.Sprintf(", Index ID: %d, Index Name %s", e.IndexInfo.ID, e.IndexInfo.Name)

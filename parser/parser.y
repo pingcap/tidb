@@ -958,8 +958,8 @@ AlterTableSpec:
 |   "ADD" ColumnKeywordOpt '(' ColumnDefList ')'
     {
         $$ = &ast.AlterTableSpec{
-            Tp: 		ast.AlterTableAddColumns,
-            NewColumns:	$4.([]*ast.ColumnDef),
+            Tp: 		ast.AlterTableAppendColumns,
+            AppendedColumns:	$4.([]*ast.ColumnDef),
         }
     }
 |	"ADD" Constraint

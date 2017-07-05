@@ -798,8 +798,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 		switch spec.Tp {
 		case ast.AlterTableAddColumn:
 			err = d.AddColumn(ctx, ident, spec)
-		case ast.AlterTableAddColumns:
-			err = d.AddColumns(ctx, ident, spec)
+		case ast.AlterTableAppendColumns:
+			err = d.AppendColumns(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
@@ -915,7 +915,7 @@ func (d *ddl) BuildColumnWithDefValue(ctx context.Context, t table.Table, column
 	return col, nil
 }
 
-func (d *ddl) AddColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) AppendColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -927,7 +927,10 @@ func (d *ddl) AddColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTable
 	}
 
 	newColumns := []*table.Column{}
-	for _, column := range spec.NewColumns {
+	if err = checkDuplicateColumn(spec.AppendedColumns); err != nil {
+		return errors.Trace(err)
+	}
+	for _, column := range spec.AppendedColumns {
 		err = d.ValidColumnDef(column, t)
 		if err != nil {
 			return err
@@ -943,15 +946,14 @@ func (d *ddl) AddColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTable
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
-		Type:       model.ActionAddColumns,
+		Type:       model.ActionAppendColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newColumns, spec.Position, 0},
+		Args:       []interface{}{newColumns, 0},
 	}
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
-	return nil
 }
 
 // AddColumn will add a new column to the table.

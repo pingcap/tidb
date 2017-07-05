@@ -42,7 +42,7 @@ const (
 	ActionModifyColumn
 	ActionRenameTable
 	ActionSetDefaultValue
-	ActionAddColumns
+	ActionAppendColumns
 )
 
 func (action ActionType) String() string {
@@ -57,8 +57,8 @@ func (action ActionType) String() string {
 		return "drop table"
 	case ActionAddColumn:
 		return "add column"
-	case ActionAddColumns:
-		return "add columns"
+	case ActionAppendColumns:
+		return "append columns"
 	case ActionDropColumn:
 		return "drop column"
 	case ActionAddIndex:

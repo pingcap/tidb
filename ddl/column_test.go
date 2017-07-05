@@ -85,6 +85,37 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 	return job
 }
 
+func testAppendMultipleColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	colNames []string, defaultValues []interface{}) *model.Job {
+	cols := []*model.ColumnInfo{}
+	tbllen := len(tblInfo.Columns)
+	for idx, colName := range colNames {
+		col := &model.ColumnInfo{
+			Name:               model.NewCIStr(colName),
+			Offset:             tbllen + idx,
+			DefaultValue:       defaultValues[idx],
+			OriginDefaultValue: defaultValues[idx],
+		}
+		col.ID = allocateColumnID(tblInfo)
+		col.FieldType = *types.NewFieldType(mysql.TypeLong)
+		cols = append(cols, col)
+	}
+
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAppendColumns,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{cols, 0},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
 func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,

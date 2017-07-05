@@ -192,6 +192,15 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropColumn, []interface{}{col, pos, 0}, ctx, d)
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{0}, ctx, d)
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{model.NewCIStr("c5")}, ctx, d)
+
+	// for appending column
+	cols := &[]*model.ColumnInfo{col}
+	// argument invalid err
+	doDDLJobErr(c, -1, tblInfo.ID, model.ActionAppendColumns, []interface{}{cols, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, -1, model.ActionAppendColumns, []interface{}{cols, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAppendColumns, []interface{}{0}, ctx, d)
+	cols = &[]*model.ColumnInfo{col, col} // duplicate coloumn err
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAppendColumns, []interface{}{cols, 0}, ctx, d)
 }
 
 func testCheckOwner(c *C, d *ddl, isOwner bool, flag JobType) {
