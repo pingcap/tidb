@@ -98,7 +98,7 @@ func newBaseBuiltinFuncWithTp(args []Expression, retType evalTp, ctx context.Con
 		}
 	case tpReal:
 		fieldType = &types.FieldType{
-			Tp:      mysql.TypeLonglong,
+			Tp:      mysql.TypeDouble,
 			Flen:    mysql.MaxRealWidth,
 			Decimal: types.UnspecifiedLength,
 			Flag:    mysql.BinaryFlag,

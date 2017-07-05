@@ -139,9 +139,9 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 		},
 		{
 			[]interface{}{"a", "b",
-						  1, 2,
-						  1.1, 1.2,
-						  types.NewDecFromFloatForTest(1.1),
+				1, 2,
+				1.1, 1.2,
+				types.NewDecFromFloatForTest(1.1),
 				types.Time{
 					Time: types.FromDate(2000, 1, 1, 12, 01, 01, 0),
 					Type: mysql.TypeDatetime,
