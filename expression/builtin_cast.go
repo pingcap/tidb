@@ -659,14 +659,20 @@ type builtinCastStringAsRealSig struct {
 }
 
 func (b *builtinCastStringAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
 	if IsHybridType(b.args[0]) {
-		return b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
+		return b.args[0].EvalReal(row, sc)
 	}
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = strconv.ParseFloat(val, 64)
+	res, err = types.StrToFloat(sc, val)
+	var err1 error
+	res, err1 = types.ProduceFloatWithSpecifiedTp(res, b.tp, sc)
+	if err == nil && err1 != nil {
+		err = err1
+	}
 	return res, false, errors.Trace(err)
 }
 
