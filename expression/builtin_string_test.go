@@ -126,20 +126,22 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 func (s *testEvaluatorSuite) TestConcat(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		args   []interface{}
-		isNil  bool
-		getErr bool
-		res    string
+		args    []interface{}
+		isNil   bool
+		getErr  bool
+		res     string
+		retType *types.FieldType
 	}{
 		{
 			[]interface{}{nil},
 			true, false, "",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: 0, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{"a", "b",
-				1, 2,
-				1.1, 1.2,
-				types.NewDecFromFloatForTest(1.1),
+						  1, 2,
+						  1.1, 1.2,
+						  types.NewDecFromFloatForTest(1.1),
 				types.Time{
 					Time: types.FromDate(2000, 1, 1, 12, 01, 01, 0),
 					Type: mysql.TypeDatetime,
@@ -149,20 +151,30 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 					Fsp:      types.DefaultFsp},
 			},
 			false, false, "ab121.11.21.12000-01-01 12:01:0112:01:01",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: 40, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{"a", "b", nil, "c"},
 			true, false, "",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: 3, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{errors.New("must error")},
 			false, true, "",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 	}
 	fcName := ast.Concat
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, fcName, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
+		retType := f.GetType()
+		c.Assert(retType.Tp, Equals, t.retType.Tp)
+		c.Assert(retType.Charset, Equals, t.retType.Charset)
+		c.Assert(retType.Collate, Equals, t.retType.Collate)
+		c.Assert(retType.Flen, Equals, t.retType.Flen)
+		c.Assert(retType.Decimal, Equals, t.retType.Decimal)
+		c.Assert(retType.Flag, Equals, t.retType.Flag)
 		v, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -174,44 +186,6 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 				c.Assert(v.GetString(), Equals, t.res)
 			}
 		}
-	}
-
-	typeCases := []struct {
-		args    []Expression
-		retType *types.FieldType
-	}{
-		{
-			[]Expression{
-				&Constant{RetType: &types.FieldType{Charset: charset.CharsetUTF8, Flen: 10}},
-				&Constant{RetType: &types.FieldType{Charset: charset.CharsetBin, Flen: 20}},
-			},
-			&types.FieldType{Tp: mysql.TypeVarString, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flen: 30, Decimal: types.UnspecifiedLength, Flag: mysql.BinaryFlag},
-		},
-		{
-			[]Expression{
-				&Constant{RetType: &types.FieldType{Charset: charset.CharsetUTF8, Flen: 65536}},
-				&Constant{RetType: &types.FieldType{Charset: charset.CharsetBin, Flen: 20}},
-			},
-			&types.FieldType{Tp: mysql.TypeMediumBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flen: 65556, Decimal: types.UnspecifiedLength, Flag: mysql.BinaryFlag},
-		},
-		{
-			[]Expression{
-				&Constant{RetType: &types.FieldType{Charset: charset.CharsetUTF8, Flen: 16777216}},
-				&Constant{RetType: &types.FieldType{Charset: charset.CharsetUTF8, Flen: 20}},
-			},
-			&types.FieldType{Tp: mysql.TypeLongBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flen: 16777216, Decimal: types.UnspecifiedLength, Flag: mysql.BinaryFlag},
-		},
-	}
-	for _, t := range typeCases {
-		f, err := newFunctionForTest(s.ctx, fcName, t.args...)
-		c.Assert(err, IsNil)
-		retType := f.GetType()
-		c.Assert(retType.Tp, Equals, t.retType.Tp)
-		c.Assert(retType.Charset, Equals, t.retType.Charset)
-		c.Assert(retType.Collate, Equals, t.retType.Collate)
-		c.Assert(retType.Flen, Equals, t.retType.Flen)
-		c.Assert(retType.Decimal, Equals, t.retType.Decimal)
-		c.Assert(retType.Flag, Equals, t.retType.Flag)
 	}
 }
 
