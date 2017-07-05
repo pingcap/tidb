@@ -25,22 +25,19 @@ import (
 	pd "github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
-	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
 type testStoreSuite struct {
-	cluster *mocktikv.Cluster
-	store   *tikvStore
+	store *tikvStore
 }
 
 var _ = Suite(&testStoreSuite{})
 
 func (s *testStoreSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
-	store, err := NewMockTikvStoreWithCluster(s.cluster)
+	store, err := NewMockTikvStore()
 	c.Check(err, IsNil)
 	s.store = store.(*tikvStore)
 }

@@ -169,6 +169,20 @@ func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrDupEntry)
 }
 
+func (s *testDBSuite) TestAddIndexWithPK(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("create table test_add_index_with_pk(a int not null, b int not null default '0', primary key(a))")
+	s.tk.MustExec("insert into test_add_index_with_pk values(1, 2)")
+	s.tk.MustExec("alter table test_add_index_with_pk add index idx (a)")
+	s.tk.MustQuery("select a from test_add_index_with_pk").Check(testkit.Rows("1"))
+	s.tk.MustExec("insert into test_add_index_with_pk values(2, 2)")
+	s.tk.MustExec("alter table test_add_index_with_pk add index idx1 (a, b)")
+	s.tk.MustQuery("select * from test_add_index_with_pk").Check(testkit.Rows("1 2", "2 2"))
+}
+
 func (s *testDBSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
