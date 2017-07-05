@@ -655,7 +655,6 @@ func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err err
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	t.Type = mysql.TypeDatetime
 
 	d.SetMysqlTime(t)
 	return
