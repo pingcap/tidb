@@ -104,7 +104,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
-						idx = &Index{Histogram: *hg, info: idxInfo}
+						idx = &Index{Histogram: *hg, Info: idxInfo}
 					}
 					break
 				}
@@ -124,7 +124,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
-						col = &Column{Histogram: *hg, info: colInfo}
+						col = &Column{Histogram: *hg, Info: colInfo}
 					}
 					break
 				}

@@ -337,7 +337,7 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 // Column represents a column histogram.
 type Column struct {
 	Histogram
-	info *model.ColumnInfo
+	Info *model.ColumnInfo
 }
 
 func (c *Column) String() string {
@@ -429,7 +429,7 @@ func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []*type
 // Index represents an index histogram.
 type Index struct {
 	Histogram
-	info *model.IndexInfo
+	Info *model.IndexInfo
 }
 
 func (idx *Index) String() string {
@@ -439,7 +439,7 @@ func (idx *Index) String() string {
 func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*types.IndexRange) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
-		indexRange.Align(len(idx.info.Columns))
+		indexRange.Align(len(idx.Info.Columns))
 		lb, err := codec.EncodeKey(nil, indexRange.LowVal...)
 		if err != nil {
 			return 0, errors.Trace(err)
