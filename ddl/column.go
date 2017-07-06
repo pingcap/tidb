@@ -31,15 +31,20 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int, added bool) {
+func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int, lastColOffset int, added bool) {
 	offsetChanged := make(map[int]int)
 	if added {
-		for i := offset + 1; i < len(columns); i++ {
-			offsetChanged[columns[i].Offset] = i
-			columns[i].Offset = i
+		for i := 0; i < len(columns); i++ {
+			colOffset := columns[i].Offset
+			if colOffset != i {
+				if colOffset != lastColOffset { // column before the add action,
+					offsetChanged[colOffset] = i
+				}
+				columns[i].Offset = i
+			}
 		}
-		columns[offset].Offset = offset
 	} else {
+		// on drop, now only support drop one column, so offsets has one offset
 		for i := offset + 1; i < len(columns); i++ {
 			offsetChanged[columns[i].Offset] = i - 1
 			columns[i].Offset = i - 1
@@ -60,7 +65,7 @@ func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.I
 	}
 }
 
-func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, int, error) {
+func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition, lastColOffset int) (*model.ColumnInfo, int, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
 	position := len(cols)
@@ -81,7 +86,7 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	colInfo.State = model.StateNone
 	// To support add column asynchronous, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.
-	colInfo.Offset = len(cols)
+	colInfo.Offset = lastColOffset
 
 	// Insert col into the right place of the column list.
 	newCols := make([]*model.ColumnInfo, 0, len(cols)+1)
@@ -121,45 +126,64 @@ func checkHasDuplicateColumnName(columnsInfo []*model.ColumnInfo) error {
 	return nil
 }
 
-func (d *ddl) onAppendColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+// getColumnInfos get all columnInfos correspond to column
+func (d *ddl) getColumnInfos(columns []*model.ColumnInfo, positions []*ast.ColumnPosition, job *model.Job, tblInfo *model.TableInfo) ([]*model.ColumnInfo, error) {
+	columnsInfo := []*model.ColumnInfo{}
+	lastColOffset := len(tblInfo.Columns)
+	var err error = nil
+	for idx, col := range columns {
+		colInfo := findCol(tblInfo.Columns, col.Name.L)
+		pos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+		if idx < len(positions) {
+			pos = positions[idx]
+		}
+
+		if colInfo != nil {
+			if colInfo.State == model.StatePublic {
+				// We already have a column with the same column name.
+				job.State = model.JobCancelled
+				return nil, infoschema.ErrColumnExists.GenByArgs(col.Name)
+			}
+		} else {
+			colInfo, _, err = d.createColumnInfo(tblInfo, col, pos, lastColOffset)
+			if err != nil {
+				job.State = model.JobCancelled
+				return nil, errors.Trace(err)
+			}
+		}
+		columnsInfo = append(columnsInfo, colInfo)
+	}
+	return columnsInfo, nil
+}
+
+func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	columns := &[]*model.ColumnInfo{}
-	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-	offset := 0
-	err = job.DecodeArgs(columns, &offset)
-	if err != nil {
+	columns := []*model.ColumnInfo{}
+	positions := []*ast.ColumnPosition{}
+	lastColOffset := 0
+	if err = job.DecodeArgs(&columns, &positions, &lastColOffset); err != nil {
 		job.State = model.JobCancelled
 		return ver, errors.Trace(err)
 	}
+	if lastColOffset == 0 { // first run of this job, get the offset of last column
+		lastColOffset = len(tblInfo.Columns)
+	}
 
-	columnsInfo := []*model.ColumnInfo{}
-	if err = checkHasDuplicateColumnName(*columns); err != nil {
+	if err = checkHasDuplicateColumnName(columns); err != nil {
 		job.State = model.JobCancelled
 		return ver, err
 	}
 
-	for _, col := range *columns {
-		colInfo := findCol(tblInfo.Columns, col.Name.L)
-		if colInfo != nil {
-			if colInfo.State == model.StatePublic {
-				// We already have a column with the same column name.
-				job.State = model.JobCancelled
-				return ver, infoschema.ErrColumnExists.GenByArgs(col.Name)
-			}
-		} else {
-			colInfo, offset, err = d.createColumnInfo(tblInfo, col, pos)
-			if err != nil {
-				job.State = model.JobCancelled
-				return ver, errors.Trace(err)
-			}
-		}
-		columnsInfo = append(columnsInfo, colInfo)
+	columnsInfo, err := d.getColumnInfos(columns, positions, job, tblInfo)
+	if err != nil {
+		return ver, err
 	}
+
 	// check whether all columns have the same state
 	originalState := columnsInfo[0].State
 	if !checkColumnsStateConsistency(columnsInfo) {
@@ -167,7 +191,7 @@ func (d *ddl) onAppendColumns(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, ErrInvalidColumnState.Gen("unconsistency of all columns state: %v", originalState)
 	}
 
-	job.Args = []interface{}{columnsInfo, offset}
+	job.Args = []interface{}{columnsInfo, positions, lastColOffset}
 	switch columnsInfo[0].State {
 	case model.StateNone:
 		job.SchemaState = model.StateDeleteOnly
@@ -196,6 +220,7 @@ func (d *ddl) onAppendColumns(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 
 		// Append column at the end of table, it does not need to adjust column offset.
+		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, 0, lastColOffset, true)
 		changeAllColumnsState(columnsInfo, model.StatePublic)
 		job.SchemaState = model.StatePublic
 		ver, err := updateTableInfo(t, job, tblInfo, originalState)
@@ -206,97 +231,12 @@ func (d *ddl) onAppendColumns(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-		d.asyncNotifyEvent(&Event{Tp: model.ActionAppendColumns, TableInfo: tblInfo, ColumnsInfo: columnsInfo})
+		d.asyncNotifyEvent(&Event{Tp: model.ActionAddColumns, TableInfo: tblInfo, ColumnsInfo: columnsInfo})
 	default:
 		err = ErrInvalidColumnState.Gen("invalid column state %v", originalState)
 	}
 
 	return ver, nil
-}
-
-func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	col := &model.ColumnInfo{}
-	pos := &ast.ColumnPosition{}
-	offset := 0
-	err = job.DecodeArgs(col, pos, &offset)
-	if err != nil {
-		job.State = model.JobCancelled
-		return ver, errors.Trace(err)
-	}
-
-	columnInfo := findCol(tblInfo.Columns, col.Name.L)
-	if columnInfo != nil {
-		if columnInfo.State == model.StatePublic {
-			// We already have a column with the same column name.
-			job.State = model.JobCancelled
-			return ver, infoschema.ErrColumnExists.GenByArgs(col.Name)
-		}
-	} else {
-		columnInfo, offset, err = d.createColumnInfo(tblInfo, col, pos)
-		if err != nil {
-			job.State = model.JobCancelled
-			return ver, errors.Trace(err)
-		}
-		// Set offset arg to job.
-		if offset != 0 {
-			job.Args = []interface{}{columnInfo, pos, offset}
-		}
-	}
-
-	originalState := columnInfo.State
-	switch columnInfo.State {
-	case model.StateNone:
-		// none -> delete only
-		job.SchemaState = model.StateDeleteOnly
-		columnInfo.State = model.StateDeleteOnly
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
-	case model.StateDeleteOnly:
-		// delete only -> write only
-		job.SchemaState = model.StateWriteOnly
-		columnInfo.State = model.StateWriteOnly
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
-	case model.StateWriteOnly:
-		// write only -> reorganization
-		job.SchemaState = model.StateWriteReorganization
-		columnInfo.State = model.StateWriteReorganization
-		// Initialize SnapshotVer to 0 for later reorganization check.
-		job.SnapshotVer = 0
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
-	case model.StateWriteReorganization:
-		// reorganization -> public
-		// Get the current version for reorganization if we don't have it.
-		reorgInfo, err := d.getReorgInfo(t, job)
-		if err != nil || reorgInfo.first {
-			// If we run reorg firstly, we should update the job snapshot version
-			// and then run the reorg next time.
-			return ver, errors.Trace(err)
-		}
-
-		// Adjust column offset.
-		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
-		columnInfo.State = model.StatePublic
-		job.SchemaState = model.StatePublic
-		ver, err := updateTableInfo(t, job, tblInfo, originalState)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		// Finish this job.
-		job.State = model.JobDone
-		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-
-		d.asyncNotifyEvent(&Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnsInfo: []*model.ColumnInfo{columnInfo}})
-	default:
-		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
-	}
-
-	return ver, errors.Trace(err)
 }
 
 func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -338,7 +278,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.SchemaState = model.StateWriteOnly
 		colInfo.State = model.StateWriteOnly
 		// Set this column's offset to the last and reset all following columns' offsets.
-		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, colInfo.Offset, false)
+		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, colInfo.Offset, len(tblInfo.Columns), false)
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteOnly:
 		// write only -> delete only

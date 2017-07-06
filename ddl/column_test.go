@@ -73,9 +73,9 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
-		Type:       model.ActionAddColumn,
+		Type:       model.ActionAddColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, pos, 0},
+		Args:       []interface{}{[]*model.ColumnInfo{col}, []*ast.ColumnPosition{pos}, 0},
 	}
 
 	err := d.doDDLJob(ctx, job)
@@ -88,6 +88,7 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 func testAppendMultipleColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	colNames []string, defaultValues []interface{}) *model.Job {
 	cols := []*model.ColumnInfo{}
+	positions := []*ast.ColumnPosition{}
 	tbllen := len(tblInfo.Columns)
 	for idx, colName := range colNames {
 		col := &model.ColumnInfo{
@@ -99,14 +100,15 @@ func testAppendMultipleColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.D
 		col.ID = allocateColumnID(tblInfo)
 		col.FieldType = *types.NewFieldType(mysql.TypeLong)
 		cols = append(cols, col)
+		positions = append(positions, &ast.ColumnPosition{Tp: ast.ColumnPositionNone})
 	}
 
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
-		Type:       model.ActionAppendColumns,
+		Type:       model.ActionAddColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{cols, 0},
+		Args:       []interface{}{cols, positions, 0},
 	}
 
 	err := d.doDDLJob(ctx, job)

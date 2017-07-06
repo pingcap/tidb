@@ -32,7 +32,7 @@ const (
 	ActionDropSchema
 	ActionCreateTable
 	ActionDropTable
-	ActionAddColumn
+	ActionAddColumns
 	ActionDropColumn
 	ActionAddIndex
 	ActionDropIndex
@@ -55,10 +55,8 @@ func (action ActionType) String() string {
 		return "create table"
 	case ActionDropTable:
 		return "drop table"
-	case ActionAddColumn:
-		return "add column"
-	case ActionAppendColumns:
-		return "append columns"
+	case ActionAddColumns:
+		return "add columns"
 	case ActionDropColumn:
 		return "drop column"
 	case ActionAddIndex:

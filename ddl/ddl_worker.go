@@ -278,10 +278,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 		ver, err = d.onCreateTable(t, job)
 	case model.ActionDropTable:
 		ver, err = d.onDropTable(t, job)
-	case model.ActionAddColumn:
-		ver, err = d.onAddColumn(t, job)
-	case model.ActionAppendColumns:
-		ver, err = d.onAppendColumns(t, job)
+	case model.ActionAddColumns:
+		ver, err = d.onAddColumns(t, job)
 	case model.ActionDropColumn:
 		ver, err = d.onDropColumn(t, job)
 	case model.ActionModifyColumn:

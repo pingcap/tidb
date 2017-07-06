@@ -183,6 +183,15 @@ func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert nn (c1) values (3)")
 	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0", "3 0"))
+
+	tk.MustExec("alter table nn add column (c3 int default -1, c4 int)")
+	tbl, err = sessionctx.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("nn"))
+	c.Assert(err, IsNil)
+	col3 := tbl.Meta().Columns[2]
+	c.Assert(col3.DefaultValue, Equals, "-1")
+	tk.MustExec("insert nn (c3, c4) values (3, 3)")
+	tk.MustQuery("select * from nn").Check(
+		testkit.Rows("1 0 -1 <nil>", "2 0 -1 <nil>", "3 0 -1 <nil>", "<nil> 0 3 3"))
 }
 
 func (s *testSuite) TestAlterTableModifyColumn(c *C) {

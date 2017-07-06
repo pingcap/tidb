@@ -182,10 +182,10 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c5")}}
 
 	// for adding column
-	doDDLJobErr(c, -1, tblInfo.ID, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
-	doDDLJobErr(c, dbInfo.ID, -1, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, []interface{}{0}, ctx, d)
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(c, -1, tblInfo.ID, model.ActionAddColumns, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, -1, model.ActionAddColumns, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{col, pos, 0}, ctx, d)
 
 	// for dropping column
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionDropColumn, []interface{}{col, pos, 0}, ctx, d)
@@ -196,11 +196,13 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	// for appending column
 	cols := &[]*model.ColumnInfo{col}
 	// argument invalid err
-	doDDLJobErr(c, -1, tblInfo.ID, model.ActionAppendColumns, []interface{}{cols, 0}, ctx, d)
-	doDDLJobErr(c, dbInfo.ID, -1, model.ActionAppendColumns, []interface{}{cols, 0}, ctx, d)
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAppendColumns, []interface{}{0}, ctx, d)
+	doDDLJobErr(c, -1, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, pos, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, -1, model.ActionAddColumns, []interface{}{cols, pos, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{0}, ctx, d)
 	cols = &[]*model.ColumnInfo{col, col} // duplicate coloumn err
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAppendColumns, []interface{}{cols, 0}, ctx, d)
+	nonpos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+	positions := &[]*ast.ColumnPosition{nonpos, nonpos}
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
 }
 
 func testCheckOwner(c *C, d *ddl, isOwner bool, flag JobType) {

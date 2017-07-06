@@ -32,19 +32,17 @@ func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
 		return h.insertTableStats2KV(t.TableInfo)
 	case model.ActionDropTable:
 		return h.deleteTableStatsFromKV(t.TableInfo.ID)
-	case model.ActionAddColumn:
-		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnsInfo[0])
-	case model.ActionDropColumn:
-		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.ColumnsInfo[0].ID, 0)
-	case model.ActionDropIndex:
-		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.IndexInfo.ID, 1)
-	case model.ActionAppendColumns:
+	case model.ActionAddColumns:
 		for i := 0; i < len(t.ColumnsInfo); i++ {
 			err := h.insertColStats2KV(t.TableInfo.ID, t.ColumnsInfo[i])
 			if err != nil {
 				return err
 			}
 		}
+	case model.ActionDropColumn:
+		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.ColumnsInfo[0].ID, 0)
+	case model.ActionDropIndex:
+		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.IndexInfo.ID, 1)
 	default:
 		log.Warnf("Unsupported ddl event for statistic %s", t)
 	}

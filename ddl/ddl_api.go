@@ -946,9 +946,9 @@ func (d *ddl) AppendColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTa
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
-		Type:       model.ActionAppendColumns,
+		Type:       model.ActionAddColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newColumns, 0},
+		Args:       []interface{}{newColumns, []*ast.ColumnPosition{}, 0},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -981,9 +981,9 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
-		Type:       model.ActionAddColumn,
+		Type:       model.ActionAddColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, spec.Position, 0},
+		Args:       []interface{}{[]*table.Column{col}, []*ast.ColumnPosition{spec.Position}, 0},
 	}
 
 	err = d.doDDLJob(ctx, job)
