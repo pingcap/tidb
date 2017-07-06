@@ -831,6 +831,7 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery("select password(c) from t")
 	result.Check(testkit.Rows("*0D3CED9BEC10A777AEC23CCC353A8C08A633045E"))
 
+
 	// for reverse
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f varchar(4))")
@@ -839,6 +840,17 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("52 2 3.2 10:10:21 10-10-7102 10:10:21 dcBa"))
 	result = tk.MustQuery("select reverse('123'), reverse(123), reverse(''), reverse('你好'), reverse(NULL)")
 	result.Check(testkit.Rows("321 321  好你 <nil>"))
+
+	// for strcmp
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values("123", 123, 12.34, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery(`select strcmp(a, "123"), strcmp(b, "123"), strcmp(c, "12.34"), strcmp(d, "2017-01-01 12:01:01"), strcmp(e, "12:01:01") from t`)
+	result.Check(testkit.Rows("0 0 0 0 0"))
+	result = tk.MustQuery(`select strcmp("1", "123"), strcmp("123", "1"), strcmp("123", "45"), strcmp("123", null), strcmp(null, "123")`)
+	result.Check(testkit.Rows("-1 1 -1 <nil> <nil>"))
+	result = tk.MustQuery(`select strcmp("", "123"), strcmp("123", ""), strcmp("", ""), strcmp("", null), strcmp(null, "")`)
+	result.Check(testkit.Rows("-1 1 0 <nil> <nil>"))
 }
 
 func (s *testSuite) TestTimeBuiltin(c *C) {
@@ -951,6 +963,34 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select substr('123', 1, null)")
 	result.Check(testkit.Rows("<nil>"))
+
+	// test sin
+	result = tk.MustQuery("select sin(0)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select sin(1.5707963267949)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select sin(1)")
+	result.Check(testkit.Rows("0.8414709848078965"))
+	result = tk.MustQuery("select sin(100)")
+	result.Check(testkit.Rows("-0.5063656411097588"))
+	result = tk.MustQuery("select sin('abcd')")
+	result.Check(testkit.Rows("0"))
+
+	// test cos
+	result = tk.MustQuery("select cos(0)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cos(3.1415926535898)")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cos('abcd')")
+	result.Check(testkit.Rows("1"))
+
+	//for tan
+	result = tk.MustQuery("select tan(0.00)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select tan(PI()/4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select tan('abcd')")
+	result.Check(testkit.Rows("0"))
 
 	// for case
 	tk.MustExec("drop table if exists t")
