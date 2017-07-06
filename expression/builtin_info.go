@@ -253,21 +253,24 @@ type tidbVersionFunctionClass struct {
 }
 
 func (c *tidbVersionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinTiDBVersionSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = true
-	return bt.setSelf(bt), errors.Trace(err)
+	tp := types.NewFieldType(mysql.TypeString)
+	tp.Flen = len(printer.GetTiDBInfo())
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	if err == nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinTiDBVersionSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinTiDBVersionSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinTiDBVersionSig.
 // This will show git hash and build time for tidb-server.
-func (b *builtinTiDBVersionSig) eval(_ []types.Datum) (d types.Datum, err error) {
-	d.SetString(printer.GetTiDBInfo())
-	return d, nil
+func (b *builtinTiDBVersionSig) evalString(_ []types.Datum) (string, bool, error) {
+	return printer.GetTiDBInfo(), false, nil
 }
 
 type benchmarkFunctionClass struct {
