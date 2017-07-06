@@ -123,7 +123,7 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 	return join
 }
 
-// convertToIndexJoin will generate index join by required properties and outerIndex. OuterIdx points out the outer child,
+// getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child,
 // because we will swap the children of join when the right child is outer child.
 // First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or pk
 // column of inner child, we can apply the index join. Then we convert the inner child to table scan or index scan explicitly.
@@ -174,6 +174,9 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) PhysicalPlan {
 	return nil
 }
 
+// For index join, we shouldn't require a root task which may let cbo framework select a sort operator in fact.
+// We are not sure which way of index scanning we should choose, so we try both single read and double read and finally
+// it will result in a best one.
 func (p *PhysicalIndexJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	if !prop.isEmpty() {
 		return nil
@@ -207,6 +210,8 @@ func (p *PhysicalMergeJoin) getChildrenPossibleProps(prop *requiredProp) [][]*re
 	return [][]*requiredProp{{lProp, rProp}}
 }
 
+// tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
+// will be true, which means we are forced to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	if len(p.EqualConditions) == 0 {
 		return nil, false
