@@ -1979,15 +1979,11 @@ type toBase64FunctionClass struct {
 }
 
 func (c *toBase64FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset = charset.CharsetUTF8
-	tp.Collate = charset.CollationUTF8
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
+	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
 	sig := &builtinToBase64Sig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
