@@ -30,7 +30,8 @@ var _ = Suite(&testSplitSuite{})
 
 func (s *testSplitSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
-	store, err := NewMockTikvStoreWithCluster(s.cluster)
+	mocktikv.BootstrapWithSingleStore(s.cluster)
+	store, err := NewMockTikvStore(WithCluster(s.cluster))
 	c.Check(err, IsNil)
 	s.store = store.(*tikvStore)
 	s.bo = NewBackoffer(5000, context.Background())

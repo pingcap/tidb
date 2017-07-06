@@ -82,7 +82,8 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
-func (h *Handle) deleteTableStatsFromKV(id int64) error {
+// DeleteTableStatsFromKV deletes table statistics from kv.
+func (h *Handle) DeleteTableStatsFromKV(id int64) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute("begin")
 	if err != nil {

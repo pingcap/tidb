@@ -109,17 +109,15 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 	outerChild := p.children[outerIdx].(LogicalPlan)
 	innerChild := p.children[1-outerIdx].(LogicalPlan)
 	var (
-		outerTask     task
 		useTableScan  bool
 		usedIndexInfo *model.IndexInfo
 		rightConds    expression.CNFExprs
 		leftConds     expression.CNFExprs
 		innerTask     task
-		err           error
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
 	)
-	outerTask, err = outerChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
+	outerTask, err := outerChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -152,18 +150,20 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 				break
 			}
 			for _, indexInfo := range indices {
-				if matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo); matchedOffsets != nil {
-					usedIndexInfo = indexInfo
-					newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
-					newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
-					for i, offset := range matchedOffsets {
-						newOuterJoinKeys[i] = outerJoinKeys[offset]
-						newInnerJoinKeys[i] = innerJoinKeys[offset]
-					}
-					outerJoinKeys = newOuterJoinKeys
-					innerJoinKeys = newInnerJoinKeys
-					break
+				matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo)
+				if matchedOffsets == nil {
+					continue
 				}
+				usedIndexInfo = indexInfo
+				newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
+				newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
+				for i, offset := range matchedOffsets {
+					newOuterJoinKeys[i] = outerJoinKeys[offset]
+					newInnerJoinKeys[i] = innerJoinKeys[offset]
+				}
+				outerJoinKeys = newOuterJoinKeys
+				innerJoinKeys = newInnerJoinKeys
+				break
 			}
 			if usedIndexInfo != nil {
 				innerTask, err = x.convertToIndexScan(&requiredProp{taskTp: rootTaskType}, usedIndexInfo)

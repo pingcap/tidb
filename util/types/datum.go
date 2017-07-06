@@ -636,26 +636,9 @@ func (d *Datum) compareMysqlSet(sc *variable.StatementContext, set Set) (int, er
 }
 
 func (d *Datum) compareMysqlJSON(sc *variable.StatementContext, target json.JSON) (int, error) {
-	var origin json.JSON
-
-	switch d.Kind() {
-	case KindMysqlJSON:
-		origin = d.x.(json.JSON)
-	case KindInt64, KindUint64:
-		i64 := d.GetInt64()
-		origin = json.CreateJSON(i64)
-	case KindFloat32, KindFloat64:
-		f64 := d.GetFloat64()
-		origin = json.CreateJSON(f64)
-	case KindMysqlDecimal:
-		f64, _ := d.GetMysqlDecimal().ToFloat64()
-		origin = json.CreateJSON(f64)
-	case KindString, KindBytes:
-		s := d.GetString()
-		origin = json.CreateJSON(s)
-	default:
-		s, _ := d.ToString()
-		origin = json.CreateJSON(s)
+	origin, err := d.ToMysqlJSON()
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
 	return json.CompareJSON(origin, target)
 }
@@ -776,13 +759,26 @@ func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType)
 	default:
 		return invalidConv(d, target.Tp)
 	}
+	var err1 error
+	f, err1 = ProduceFloatWithSpecifiedTp(f, target, sc)
+	if err == nil && err1 != nil {
+		err = err1
+	}
+	if target.Tp == mysql.TypeFloat {
+		ret.SetFloat32(float32(f))
+	} else {
+		ret.SetFloat64(f)
+	}
+	return ret, errors.Trace(err)
+}
+
+// ProduceFloatWithSpecifiedTp produces a new float64 according to `flen` and `decimal`.
+func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *variable.StatementContext) (_ float64, err error) {
 	// For float and following double type, we will only truncate it for float(M, D) format.
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
-		var err1 error
-		f, err1 = TruncateFloat(f, target.Flen, target.Decimal)
-		if err == nil && err1 != nil {
-			err = err1
+		f, err = TruncateFloat(f, target.Flen, target.Decimal)
+		if err != nil {
 			if sc.IgnoreTruncate {
 				err = nil
 			} else if sc.TruncateAsWarning {
@@ -791,12 +787,7 @@ func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType)
 			}
 		}
 	}
-	if target.Tp == mysql.TypeFloat {
-		ret.SetFloat32(float32(f))
-	} else {
-		ret.SetFloat64(f)
-	}
-	return ret, errors.Trace(err)
+	return f, errors.Trace(err)
 }
 
 func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType) (Datum, error) {
@@ -955,15 +946,17 @@ func (d *Datum) convertToMysqlTimestamp(sc *variable.StatementContext, target *F
 	switch d.k {
 	case KindMysqlTime:
 		t = d.GetMysqlTime()
-		switch {
-		case t.TimeZone == nil:
-			t.TimeZone = loc
-		case t.TimeZone == time.UTC:
-			// Convert to session timezone.
-			t.ConvertTimeZone(time.UTC, loc)
-		case t.TimeZone == sc.TimeZone:
-		default:
-			return ret, errors.New("get a wrong input")
+		if t.Type == mysql.TypeTimestamp {
+			switch {
+			case t.TimeZone == nil:
+				t.TimeZone = loc
+			case t.TimeZone == time.UTC:
+				// Convert to session timezone.
+				t.ConvertTimeZone(time.UTC, loc)
+			case t.TimeZone == sc.TimeZone:
+			default:
+				return ret, errors.New("get a wrong input")
+			}
 		}
 		t, err = t.RoundFrac(fsp)
 	case KindMysqlDuration:
@@ -980,6 +973,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *variable.StatementContext, target *F
 	default:
 		return invalidConv(d, mysql.TypeTimestamp)
 	}
+	t.Type = mysql.TypeTimestamp
 	t.TimeZone = loc
 	ret.SetMysqlTime(t)
 	if err != nil {
@@ -1517,6 +1511,35 @@ func (d *Datum) ToBytes() ([]byte, error) {
 		}
 		return []byte(str), nil
 	}
+}
+
+// ToMysqlJSON is similar to convertToMysqlJSON, except the
+// latter parses from string, but the former uses it as primitive.
+func (d *Datum) ToMysqlJSON() (j json.JSON, err error) {
+	var in interface{}
+	switch d.Kind() {
+	case KindMysqlJSON:
+		j = d.x.(json.JSON)
+		return
+	case KindInt64, KindUint64:
+		in = d.GetInt64()
+	case KindFloat32, KindFloat64:
+		in = d.GetFloat64()
+	case KindMysqlDecimal:
+		in, _ = d.GetMysqlDecimal().ToFloat64()
+	case KindString, KindBytes:
+		in = d.GetString()
+	case KindNull:
+		in = nil
+	default:
+		in, err = d.ToString()
+		if err != nil {
+			err = errors.Trace(err)
+			return
+		}
+	}
+	j = json.CreateJSON(in)
+	return
 }
 
 func invalidConv(d *Datum, tp byte) (Datum, error) {

@@ -292,7 +292,10 @@ import (
 	jsonSet				"JSON_SET"
 	jsonInsert			"JSON_INSERT"
 	jsonReplace			"JSON_REPLACE"
+	jsonRemove			"JSON_REMOVE"
 	jsonMerge			"JSON_MERGE"
+	jsonObject			"JSON_OBJECT"
+	jsonArray			"JSON_ARRAY"
 	kill				"KILL"
 	lastInsertID			"LAST_INSERT_ID"
 	lcase				"LCASE"
@@ -500,6 +503,8 @@ import (
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
+	stats		"STATS"
+	statsMeta	"STATS_META"
 	status		"STATUS"
 	super		"SUPER"
 	some 		"SOME"
@@ -603,6 +608,7 @@ import (
 	DoStmt			"Do statement"
 	DropDatabaseStmt	"DROP DATABASE statement"
 	DropIndexStmt		"DROP INDEX statement"
+	DropStatsStmt		"DROP STATS statement"
 	DropTableStmt		"DROP TABLE statement"
 	DropUserStmt		"DROP USER"
 	DropViewStmt		"DROP VIEW statement"
@@ -1865,6 +1871,12 @@ DropUserStmt:
         $$ = &ast.DropUserStmt{IfExists: true, UserList: $5.([]string)}
 	}
 
+DropStatsStmt:
+	"DROP" "STATS" TableName
+	{
+		$$ = &ast.DropStatsStmt{Table: $3.(*ast.TableName)}
+	}
+
 TableOrTables:
 	"TABLE"
 |	"TABLES"
@@ -2371,7 +2383,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE" | "STATS" | "STATS_META"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -2409,7 +2421,7 @@ NotKeywordToken:
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
 |	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
-|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE"
+|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY"
 
 /************************************************************************************
  *
@@ -3726,7 +3738,19 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"JSON_REMOVE" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
 |	"JSON_MERGE" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"JSON_OBJECT" '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"JSON_ARRAY" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
@@ -3991,6 +4015,7 @@ CastType:
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"CHAR" OptFieldLen OptBinary OptCharset
@@ -4010,12 +4035,24 @@ CastType:
 |	"DATE"
 	{
 		x := types.NewFieldType(mysql.TypeDate)
+		x.Flen = mysql.MaxDateWidth
+		x.Decimal = 0
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
+        x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"DATETIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDatetime)
+		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
+		if x.Decimal > 0 {
+		    x.Flen = x.Flen + 1 + x.Decimal
+		}
+		x.Charset = charset.CharsetBin
+        x.Collate = charset.CollationBin
+        x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"DECIMAL" FloatOpt
@@ -4030,23 +4067,43 @@ CastType:
 		} else if fopt.Decimal == types.UnspecifiedLength {
 			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
 		}
+		x.Charset = charset.CharsetBin
+        x.Collate = charset.CollationBin
+        x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"TIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDuration)
+		x.Flen = mysql.MaxDurationWidthNoFsp
 		x.Decimal = $2.(int)
+		if x.Decimal > 0 {
+		    x.Flen = x.Flen + 1 + x.Decimal
+		}
+		x.Charset = charset.CharsetBin
+        x.Collate = charset.CollationBin
+        x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"SIGNED" OptInteger
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
+		x.Flen = mysql.MaxIntWidth
+		x.Decimal = 0
+		x.Charset = charset.CharsetBin
+        x.Collate = charset.CollationBin
+        x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"UNSIGNED" OptInteger
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
+		x.Flen = mysql.MaxIntWidth
+		x.Decimal = 0
 		x.Flag |= mysql.UnsignedFlag
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"JSON"
@@ -5079,6 +5136,20 @@ ShowStmt:
 			Tp: ast.ShowProcessList,
 		}
 	}
+|	"SHOW" "STATS_META" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowStatsMeta,
+		}
+		if $3 != nil {
+			if x, ok := $3.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $3.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
 
 ShowIndexKwd:
 	"INDEX"
@@ -5347,6 +5418,7 @@ Statement:
 |	DropTableStmt
 |	DropViewStmt
 |	DropUserStmt
+|	DropStatsStmt
 |	FlushStmt
 |	GrantStmt
 |	InsertIntoStmt

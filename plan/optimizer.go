@@ -122,7 +122,6 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	if UseDAGPlanBuilder(ctx) {
 		return dagPhysicalOptimize(logic)
 	}
-	logic.ResolveIndices()
 	return physicalOptimize(flag, logic, allocator)
 }
 
@@ -155,6 +154,7 @@ func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 }
 
 func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
+	logic.ResolveIndices()
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
