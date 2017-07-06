@@ -964,6 +964,12 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select sin(100)")
 	result.Check(testkit.Rows("-0.5063656411097588"))
 
+	//test degrees
+	result = tk.MustQuery("select degrees(0)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select degrees(1)")
+	result.Check(testkit.Rows("57.29577951308232"))
+
 	// test cos
 	result = tk.MustQuery("select cos(0)")
 	result.Check(testkit.Rows("1"))
