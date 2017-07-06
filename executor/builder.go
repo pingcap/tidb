@@ -685,6 +685,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggregate:            v.Aggregated,
 		aggFuncs:             v.AggFuncsPB,
 		byItems:              v.GbyItemsPB,
+		genValues:            v.GenValues,
 	}
 	vars := b.ctx.GetSessionVars()
 	if v.OutOfOrder {

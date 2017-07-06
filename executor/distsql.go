@@ -396,6 +396,9 @@ type XSelectIndexExec struct {
 	outOfOrder           bool
 	indexConditionPBExpr *tipb.Expr
 
+	// genValues is for calculating virtual generated columns.
+	genValues map[int]expression.Expression
+
 	/*
 	   The following attributes are used for aggregation push down.
 	   aggFuncs is the aggregation functions in protobuf format. They will be added to distsql request msg.
@@ -792,6 +795,10 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		}
 		err = decodeRawValues(values, e.Schema(), e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Calculate generated columns here.
+		if err := calculateGeneratedColumns(e.columns, e.genValues, values); err != nil {
 			return nil, errors.Trace(err)
 		}
 		row := resultRowToRow(t, h, values, e.asName)
