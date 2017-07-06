@@ -1065,7 +1065,6 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 	if len(options) == 0 {
 		return nil
 	}
-
 	var hasDefaultValue, setOnUpdateNow bool
 	for _, opt := range options {
 		switch opt.Tp {
@@ -1109,6 +1108,11 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 	}
 
 	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+
+	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
+	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
+	setNoDefaultValueFlag(col, hasDefaultValue)
+
 	if hasDefaultValue {
 		return errors.Trace(checkDefaultValue(ctx, col, true))
 	}
@@ -1241,8 +1245,11 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 		return errBadField.GenByArgs(colName, ident.Name)
 	}
 
+	// Clean the NoDefaultValueFlag value.
+	col.Flag &= (^uint(mysql.NoDefaultValueFlag))
 	if len(spec.NewColumn.Options) == 0 {
 		col.DefaultValue = nil
+		setNoDefaultValueFlag(col, false)
 	} else {
 		err := setDefaultValue(ctx, col, spec.NewColumn.Options[0])
 		if err != nil {
