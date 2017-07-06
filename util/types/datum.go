@@ -759,13 +759,26 @@ func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType)
 	default:
 		return invalidConv(d, target.Tp)
 	}
+	var err1 error
+	f, err1 = ProduceFloatWithSpecifiedTp(f, target, sc)
+	if err == nil && err1 != nil {
+		err = err1
+	}
+	if target.Tp == mysql.TypeFloat {
+		ret.SetFloat32(float32(f))
+	} else {
+		ret.SetFloat64(f)
+	}
+	return ret, errors.Trace(err)
+}
+
+// ProduceFloatWithSpecifiedTp produces a new float64 according to `flen` and `decimal`.
+func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *variable.StatementContext) (_ float64, err error) {
 	// For float and following double type, we will only truncate it for float(M, D) format.
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
-		var err1 error
-		f, err1 = TruncateFloat(f, target.Flen, target.Decimal)
-		if err == nil && err1 != nil {
-			err = err1
+		f, err = TruncateFloat(f, target.Flen, target.Decimal)
+		if err != nil {
 			if sc.IgnoreTruncate {
 				err = nil
 			} else if sc.TruncateAsWarning {
@@ -774,12 +787,7 @@ func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType)
 			}
 		}
 	}
-	if target.Tp == mysql.TypeFloat {
-		ret.SetFloat32(float32(f))
-	} else {
-		ret.SetFloat64(f)
-	}
-	return ret, errors.Trace(err)
+	return f, errors.Trace(err)
 }
 
 func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType) (Datum, error) {
