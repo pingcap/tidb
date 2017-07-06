@@ -28,7 +28,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -849,11 +848,7 @@ type cosFunctionClass struct {
 }
 
 func (c *cosFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeDouble)
-	tp.Flen = 23
-	types.SetBinChsClnFlag(tp)
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpReal)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1042,11 +1037,7 @@ type sinFunctionClass struct {
 }
 
 func (c *sinFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeDouble)
-	tp.Flen = 23
-	types.SetBinChsClnFlag(tp)
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpReal)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1073,10 +1064,7 @@ type tanFunctionClass struct {
 }
 
 func (c *tanFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeDouble)
-	tp.Flen = 23
-	types.SetBinChsClnFlag(tp)
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpReal)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
