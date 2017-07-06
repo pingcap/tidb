@@ -481,7 +481,7 @@ func upgradeToVer13(s Session) {
 			log.Fatal(err)
 		}
 	}
-	mustExecute(s, "UPDATE mysql.user SET Create_tmp_table_priv='Y',Lock_tables_priv='Y',Create_view_priv='Y',Show_view_priv='Y',Create_routine_priv='Y',Alter_routine_priv='Y',Event_priv='Y'")
+	// mustExecute(s, "UPDATE mysql.user SET Create_tmp_table_priv='Y',Lock_tables_priv='Y',Create_view_priv='Y',Show_view_priv='Y',Create_routine_priv='Y',Alter_routine_priv='Y',Event_priv='Y'")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
