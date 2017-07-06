@@ -126,14 +126,16 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 func (s *testEvaluatorSuite) TestConcat(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		args   []interface{}
-		isNil  bool
-		getErr bool
-		res    string
+		args    []interface{}
+		isNil   bool
+		getErr  bool
+		res     string
+		retType *types.FieldType
 	}{
 		{
 			[]interface{}{nil},
 			true, false, "",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: 0, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{"a", "b",
@@ -149,20 +151,30 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 					Fsp:      types.DefaultFsp},
 			},
 			false, false, "ab121.11.21.12000-01-01 12:01:0112:01:01",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: 40, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{"a", "b", nil, "c"},
 			true, false, "",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: 3, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{errors.New("must error")},
 			false, true, "",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 	}
 	fcName := ast.Concat
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, fcName, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
+		retType := f.GetType()
+		c.Assert(retType.Tp, Equals, t.retType.Tp)
+		c.Assert(retType.Charset, Equals, t.retType.Charset)
+		c.Assert(retType.Collate, Equals, t.retType.Collate)
+		c.Assert(retType.Flen, Equals, t.retType.Flen)
+		c.Assert(retType.Decimal, Equals, t.retType.Decimal)
+		c.Assert(retType.Flag, Equals, t.retType.Flag)
 		v, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -174,36 +186,6 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 				c.Assert(v.GetString(), Equals, t.res)
 			}
 		}
-	}
-
-	typeCases := []struct {
-		args    []Expression
-		retType *types.FieldType
-	}{
-		{
-			[]Expression{int8Con, decimalCon, charCon, floatCon, doubleCon},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
-		},
-		{
-			[]Expression{varcharCon, binaryCon},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
-		},
-		{
-			[]Expression{int8Con, blobCon, charCon},
-			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
-		},
-		{
-			[]Expression{varbinaryCon, textCon},
-			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
-		},
-	}
-	fc := funcs[fcName].(*concatFunctionClass)
-	for _, t := range typeCases {
-		retType, _ := fc.inferType(t.args)
-		c.Assert(retType.Tp, Equals, t.retType.Tp)
-		c.Assert(retType.Charset, Equals, t.retType.Charset)
-		c.Assert(retType.Collate, Equals, t.retType.Collate)
-		c.Assert(retType.Flag, Equals, t.retType.Flag)
 	}
 }
 
