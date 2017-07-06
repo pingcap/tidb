@@ -292,7 +292,10 @@ import (
 	jsonSet				"JSON_SET"
 	jsonInsert			"JSON_INSERT"
 	jsonReplace			"JSON_REPLACE"
+	jsonRemove			"JSON_REMOVE"
 	jsonMerge			"JSON_MERGE"
+	jsonObject			"JSON_OBJECT"
+	jsonArray			"JSON_ARRAY"
 	kill				"KILL"
 	lastInsertID			"LAST_INSERT_ID"
 	lcase				"LCASE"
@@ -500,6 +503,7 @@ import (
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
+	stats		"STATS"
 	status		"STATUS"
 	super		"SUPER"
 	some 		"SOME"
@@ -602,6 +606,7 @@ import (
 	DoStmt			"Do statement"
 	DropDatabaseStmt	"DROP DATABASE statement"
 	DropIndexStmt		"DROP INDEX statement"
+	DropStatsStmt		"DROP STATS statement"
 	DropTableStmt		"DROP TABLE statement"
 	DropUserStmt		"DROP USER"
 	DropViewStmt		"DROP VIEW statement"
@@ -1847,6 +1852,12 @@ DropUserStmt:
         $$ = &ast.DropUserStmt{IfExists: true, UserList: $5.([]string)}
 	}
 
+DropStatsStmt:
+	"DROP" "STATS" TableName
+	{
+		$$ = &ast.DropStatsStmt{Table: $3.(*ast.TableName)}
+	}
+
 TableOrTables:
 	"TABLE"
 |	"TABLES"
@@ -2353,7 +2364,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE" | "STATS"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -2391,7 +2402,7 @@ NotKeywordToken:
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
 |	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
-|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE"
+|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY"
 
 /************************************************************************************
  *
@@ -3708,7 +3719,19 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"JSON_REMOVE" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
 |	"JSON_MERGE" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"JSON_OBJECT" '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"JSON_ARRAY" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
@@ -5329,6 +5352,7 @@ Statement:
 |	DropTableStmt
 |	DropViewStmt
 |	DropUserStmt
+|	DropStatsStmt
 |	FlushStmt
 |	GrantStmt
 |	InsertIntoStmt

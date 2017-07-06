@@ -383,40 +383,52 @@ type repeatFunctionClass struct {
 }
 
 func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRepeatSig{newBaseBuiltinFunc(args, ctx)}
+	tp := types.NewFieldType(mysql.TypeLongBlob)
+	tp.Flen = mysql.MaxBlobWidth
+
+	if isBinary := mysql.HasBinaryFlag(args[0].GetType().Flag); isBinary {
+		types.SetBinChsClnFlag(tp)
+	} else {
+		tp.Charset = charset.CharsetUTF8
+		tp.Collate = charset.CollationUTF8
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinRepeatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinRepeatSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinRepeatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
-func (b *builtinRepeatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinRepeatSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, err
-	}
-	ch := fmt.Sprintf("%v", str)
-	num := 0
-	x := args[1]
-	switch x.Kind() {
-	case types.KindInt64:
-		num = int(x.GetInt64())
-	case types.KindUint64:
-		num = int(x.GetUint64())
+
+	num, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
 	if num < 1 {
-		d.SetString("")
-		return d, nil
+		return "", false, nil
 	}
-	d.SetString(strings.Repeat(ch, num))
-	return d, nil
+	if num > math.MaxInt32 {
+		num = math.MaxInt32
+	}
+
+	if int64(len(str)) > int64(b.tp.Flen)/num {
+		return "", true, nil
+	}
+	return strings.Repeat(str, int(num)), false, nil
 }
 
 type lowerFunctionClass struct {
@@ -574,35 +586,41 @@ type strcmpFunctionClass struct {
 }
 
 func (c *strcmpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinStrcmpSig{newBaseBuiltinFunc(args, ctx)}
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.Flen = 2
+	types.SetBinChsClnFlag(tp)
+	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinStrcmpSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinStrcmpSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinStrcmpSig.
+// evalInt evals a builtinStrcmpSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
-func (b *builtinStrcmpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinStrcmpSig) evalInt(row []types.Datum) (int64, bool, error) {
+	var (
+		left, right string
+		isNull      bool
+		err         error
+	)
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	left, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
-	}
-	left, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	right, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	right, isNull, err = b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 	res := types.CompareString(left, right)
-	d.SetInt64(int64(res))
-	return d, nil
+	return int64(res), false, nil
 }
 
 type replaceFunctionClass struct {
