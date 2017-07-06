@@ -18,8 +18,10 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
@@ -234,4 +236,25 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	c.Check(err, IsNil)
 
 	privileges.Enable = save
+}
+
+func (s *testSuite) TestDropStats(c *C) {
+	defer testleak.AfterTest(c)()
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("analyze table t")
+	do := sessionctx.GetDomain(testKit.Se)
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	statsTbl := h.GetTableStats(tableInfo.ID)
+	c.Assert(statsTbl.Pseudo, IsFalse)
+
+	testKit.MustExec("drop stats t")
+	h.Update(is)
+	statsTbl = h.GetTableStats(tableInfo.ID)
+	c.Assert(statsTbl.Pseudo, IsTrue)
 }

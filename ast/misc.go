@@ -38,7 +38,6 @@ var (
 	_ StmtNode = &SetPwdStmt{}
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
-	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &FlushStmt{}
 	_ StmtNode = &KillStmt{}
 
@@ -680,31 +679,6 @@ func (i Ident) String() string {
 		return i.Name.O
 	}
 	return fmt.Sprintf("%s.%s", i.Schema, i.Name)
-}
-
-// AnalyzeTableStmt is used to create table statistics.
-type AnalyzeTableStmt struct {
-	stmtNode
-
-	TableNames []*TableName
-	IndexNames []model.CIStr
-}
-
-// Accept implements Node Accept interface.
-func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AnalyzeTableStmt)
-	for i, val := range n.TableNames {
-		node, ok := val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.TableNames[i] = node.(*TableName)
-	}
-	return v.Leave(n)
 }
 
 // SelectStmtOpts wrap around select hints and switches

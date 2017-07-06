@@ -141,7 +141,7 @@ func (p *PhysicalIndexLookUpReader) Copy() PhysicalPlan {
 	return &np
 }
 
-func (p *PhysicalIndexLookUpReader) MarshalJSON() ([]byte, error){
+func (p *PhysicalIndexLookUpReader) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf("\"read index from\":\"%s\",", p.indexPlan.ID()))
 	buffer.WriteString(fmt.Sprintf("\"read data from\":\"%s\"", p.tablePlan.ID()))
@@ -314,9 +314,9 @@ func (p *physicalTableSource) MarshalJSON() ([]byte, error) {
 		}
 		buffer.WriteString(fmt.Sprintf("\"table filter conditions\":%s,", tableFilter))
 	}
-	currJson := buffer.Bytes();
-	if length := len(currJson); currJson[length - 1] == ',' {
-		currJson[length - 1] = '}'
+	currJson := buffer.Bytes()
+	if length := len(currJson); currJson[length-1] == ',' {
+		currJson[length-1] = '}'
 	} else {
 		buffer.WriteString("}")
 	}
@@ -1093,18 +1093,19 @@ func (p *PhysicalAggregation) Copy() PhysicalPlan {
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
+	if p.GroupByItems != nil {
+		gbyExprs, err := json.Marshal(p.GroupByItems)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"group by\":%s,", gbyExprs))
+	}
 	aggFuncs, err := json.Marshal(p.AggFuncs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	gbyExprs, err := json.Marshal(p.GroupByItems)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	buffer.WriteString(fmt.Sprintf(
-		"\"AggFuncs\": %s,\n"+
-			"\"GroupByItems\": %s,\n"+
-			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].ID()))
+	buffer.WriteString(fmt.Sprintf("\"aggregate function\":%s", aggFuncs))
+	buffer.WriteString("}")
 	return buffer.Bytes(), nil
 }
 

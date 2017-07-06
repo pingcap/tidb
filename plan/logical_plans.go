@@ -59,7 +59,7 @@ const (
 	LeftOuterSemiJoin
 )
 
-func (tp JoinType)String() string {
+func (tp JoinType) String() string {
 	switch tp {
 	case InnerJoin:
 		return "inner join"
@@ -272,10 +272,11 @@ type DataSource struct {
 	*basePlan
 	baseLogicalPlan
 
-	indexHints []*ast.IndexHint
-	tableInfo  *model.TableInfo
-	Columns    []*model.ColumnInfo
-	DBName     model.CIStr
+	indexHints   []*ast.IndexHint
+	tableInfo    *model.TableInfo
+	Columns      []*model.ColumnInfo
+	DBName       model.CIStr
+	columnFromID string
 
 	TableAsName *model.CIStr
 
