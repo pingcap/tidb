@@ -632,6 +632,11 @@ func (e *ShowExec) getTable() (table.Table, error) {
 func (e *ShowExec) fetchShowStatsMeta() error {
 	do := sessionctx.GetDomain(e.ctx)
 	h := do.StatsHandle()
+	// Make sure that the statistics in memory is newest.
+	err := h.Update(do.InfoSchema())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
