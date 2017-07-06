@@ -3996,6 +3996,7 @@ CastType:
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"CHAR" OptFieldLen OptBinary OptCharset
@@ -4015,12 +4016,24 @@ CastType:
 |	"DATE"
 	{
 		x := types.NewFieldType(mysql.TypeDate)
+		x.Flen = mysql.MaxDateWidth
+		x.Decimal = 0
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
+        x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"DATETIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDatetime)
+		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
+		if x.Decimal > 0 {
+		    x.Flen = x.Flen + 1 + x.Decimal
+		}
+		x.Charset = charset.CharsetBin
+        x.Collate = charset.CollationBin
+        x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"DECIMAL" FloatOpt
@@ -4035,23 +4048,43 @@ CastType:
 		} else if fopt.Decimal == types.UnspecifiedLength {
 			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
 		}
+		x.Charset = charset.CharsetBin
+        x.Collate = charset.CollationBin
+        x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"TIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDuration)
+		x.Flen = mysql.MaxDurationWidthNoFsp
 		x.Decimal = $2.(int)
+		if x.Decimal > 0 {
+		    x.Flen = x.Flen + 1 + x.Decimal
+		}
+		x.Charset = charset.CharsetBin
+        x.Collate = charset.CollationBin
+        x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"SIGNED" OptInteger
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
+		x.Flen = mysql.MaxIntWidth
+		x.Decimal = 0
+		x.Charset = charset.CharsetBin
+        x.Collate = charset.CollationBin
+        x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"UNSIGNED" OptInteger
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
+		x.Flen = mysql.MaxIntWidth
+		x.Decimal = 0
 		x.Flag |= mysql.UnsignedFlag
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"JSON"

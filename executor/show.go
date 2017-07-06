@@ -443,7 +443,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		buf.WriteString(fmt.Sprintf(" PRIMARY KEY (`%s`)", pkCol.Name.O))
+		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (`%s`)", pkCol.Name.O))
 	}
 
 	if len(tb.Indices()) > 0 || len(tb.Meta().ForeignKeys) > 0 {
