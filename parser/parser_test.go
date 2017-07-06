@@ -93,7 +93,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "default", "shared", "exclusive",
-		"always", "stats",
+		"always", "stats", "stats_meta",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -406,6 +406,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show create table
 		{"show create table test.t", true},
 		{"show create table t", true},
+		// for show stats_meta.
+		{"show stats_meta", true},
+		{"show stats_meta where table_name = 't'", true},
 
 		// set
 		// user defined
