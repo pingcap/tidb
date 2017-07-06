@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	tipb "github.com/pingcap/tipb/go-tipb"
 )
@@ -404,8 +403,7 @@ func (sf *sumFunction) CalculateDefaultValue(schema *Schema, ctx context.Context
 // GetType implements AggregationFunction interface.
 func (sf *sumFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
-	ft.Charset = charset.CharsetBin
-	ft.Collate = charset.CollationBin
+	types.SetBinChsClnFlag(ft)
 	ft.Decimal = sf.Args[0].GetType().Decimal
 	return ft
 }
@@ -447,8 +445,7 @@ func (cf *countFunction) CalculateDefaultValue(schema *Schema, ctx context.Conte
 func (cf *countFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	ft.Flen = 21
-	ft.Charset = charset.CharsetBin
-	ft.Collate = charset.CollationBin
+	types.SetBinChsClnFlag(ft)
 	return ft
 }
 
@@ -557,8 +554,7 @@ func (af *avgFunction) Clone() AggregationFunction {
 // GetType implements AggregationFunction interface.
 func (af *avgFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
-	ft.Charset = charset.CharsetBin
-	ft.Collate = charset.CollationBin
+	types.SetBinChsClnFlag(ft)
 	ft.Decimal = af.Args[0].GetType().Decimal
 	return ft
 }

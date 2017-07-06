@@ -52,8 +52,6 @@ func (v *typeInferrer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 
 func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
-	case *ast.AggregateFuncExpr:
-		v.aggregateFunc(x)
 	case *ast.BetweenExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		types.SetBinChsClnFlag(&x.Type)
