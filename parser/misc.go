@@ -428,6 +428,7 @@ var tokenMap = map[string]int{
 	"SQRT":                       sqrt,
 	"START":                      start,
 	"STARTING":                   starting,
+	"STATS":                      stats,
 	"STATS_PERSISTENT":           statsPersistent,
 	"STATUS":                     status,
 	"STORED":                     stored,

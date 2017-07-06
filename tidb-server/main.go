@@ -55,7 +55,7 @@ var (
 	xport           = flag.String("xP", "4001", "tidb x protocol server port")
 	statusPort      = flag.String("status", "10080", "tidb server status port")
 	ddlLease        = flag.String("lease", "10s", "schema lease duration, very dangerous to change only if you know what you do")
-	statsLease      = flag.String("stasLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
+	statsLease      = flag.String("statsLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
 	socket          = flag.String("socket", "", "The socket file to use for connection.")
 	xsocket         = flag.String("xsocket", "", "The socket file to use for x protocol connection.")
 	enablePS        = flag.Bool("perfschema", false, "If enable performance schema.")
