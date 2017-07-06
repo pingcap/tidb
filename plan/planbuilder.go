@@ -909,7 +909,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)
 	if UseDAGPlanBuilder(b.ctx) {
-		retFields := []string{"id", "parents", "schema", "key info", "task type", "operator info"}
+		retFields := []string{"id", "parents", "children", "schema", "key info", "task type", "operator info"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		for _, fieldName := range retFields {
 			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))

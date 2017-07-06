@@ -448,7 +448,16 @@ func (p *basePlan) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	parents := make([]string, 0, len(p.parents))
+	for _, parent := range p.parents {
+		parents = append(parents, parent.ID())
+	}
+	parentsStrs, err := json.Marshal(parents)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"parents\": %s,", parentsStrs))
 	buffer.WriteString(fmt.Sprintf("\"children\": %s", childrenStrs))
 	buffer.WriteString("}")
 	return buffer.Bytes(), nil
