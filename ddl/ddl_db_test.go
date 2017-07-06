@@ -786,24 +786,33 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
-	s.mustExec(c, "create table t3 (a int default '0', b varchar(10))")
+	s.mustExec(c, "create table t3 (a int default '0', b varchar(10), d int not null default '0')")
 	s.mustExec(c, "insert into t3 set b = 'a'")
 	s.tk.MustQuery("select a from t3").Check(testkit.Rows("0"))
 	s.mustExec(c, "alter table t3 change a aa bigint")
 	s.mustExec(c, "insert into t3 set b = 'b'")
 	s.tk.MustQuery("select aa from t3").Check(testkit.Rows("0", "<nil>"))
-	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
-	s.mustExec(c, "alter table t3 change b b varchar(20) null default 'c' comment 'my comment'")
+	// for no default flag
+	s.mustExec(c, "alter table t3 change d dd bigint not null")
 	ctx := s.tk.Se.(context.Context)
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
+	colD := tblInfo.Columns[2]
+	hasNoDefault := tmysql.HasNoDefaultValueFlag(colD.Flag)
+	c.Assert(hasNoDefault, IsTrue)
+	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
+	s.mustExec(c, "alter table t3 change b b varchar(20) null default 'c' comment 'my comment'")
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
 	colB := tblInfo.Columns[1]
 	c.Assert(colB.Comment, Equals, "my comment")
 	hasNotNull := tmysql.HasNotNullFlag(colB.Flag)
 	c.Assert(hasNotNull, IsFalse)
-	s.mustExec(c, "insert into t3 set aa = 3")
+	s.mustExec(c, "insert into t3 set aa = 3, dd = 5")
 	s.tk.MustQuery("select b from t3").Check(testkit.Rows("a", "b", "c"))
 	// for timestamp
 	s.mustExec(c, "alter table t3 add column c timestamp not null")
@@ -812,7 +821,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
-	colC := tblInfo.Columns[2]
+	colC := tblInfo.Columns[3]
 	c.Assert(colC.Comment, Equals, "col c comment")
 	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
 	c.Assert(hasNotNull, IsFalse)
@@ -836,17 +845,49 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.mustExec(c, "create table test_alter_column (a int default 111, b varchar(8), c varchar(8) not null, d timestamp on update current_timestamp)")
 	s.mustExec(c, "insert into test_alter_column set b = 'a', c = 'aa'")
 	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	colA := tblInfo.Columns[0]
+	hasNoDefault := tmysql.HasNoDefaultValueFlag(colA.Flag)
+	c.Assert(hasNoDefault, IsFalse)
 	s.mustExec(c, "alter table test_alter_column alter column a set default 222")
 	s.mustExec(c, "insert into test_alter_column set b = 'b', c = 'bb'")
 	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222"))
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	colA = tblInfo.Columns[0]
+	hasNoDefault = tmysql.HasNoDefaultValueFlag(colA.Flag)
+	c.Assert(hasNoDefault, IsFalse)
 	s.mustExec(c, "alter table test_alter_column alter column b set default null")
 	s.mustExec(c, "insert into test_alter_column set c = 'cc'")
 	s.tk.MustQuery("select b from test_alter_column").Check(testkit.Rows("a", "b", "<nil>"))
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	colC := tblInfo.Columns[2]
+	hasNoDefault = tmysql.HasNoDefaultValueFlag(colC.Flag)
+	c.Assert(hasNoDefault, IsTrue)
+	s.mustExec(c, "alter table test_alter_column alter column c set default 'xx'")
+	s.mustExec(c, "insert into test_alter_column set a = 123")
+	s.tk.MustQuery("select c from test_alter_column").Check(testkit.Rows("aa", "bb", "cc", "xx"))
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	colC = tblInfo.Columns[2]
+	hasNoDefault = tmysql.HasNoDefaultValueFlag(colC.Flag)
+	c.Assert(hasNoDefault, IsFalse)
 	// TODO: After fix issue 2606.
 	// s.mustExec(c, "alter table test_alter_column alter column d set default null")
 	s.mustExec(c, "alter table test_alter_column alter column a drop default")
 	s.mustExec(c, "insert into test_alter_column set b = 'd', c = 'dd'")
-	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "<nil>"))
+	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
