@@ -28,7 +28,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -263,11 +262,7 @@ type log2FunctionClass struct {
 }
 
 func (c *log2FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeDouble)
-	tp.Flen = 8
-	types.SetBinChsClnFlag(tp)
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpReal)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -282,17 +277,14 @@ type builtinLog2Sig struct {
 // evalReal evals a builtinLog2Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log2
 func (b *builtinLog2Sig) evalReal(row []types.Datum) (float64, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	x, isNull, err := b.args[0].EvalReal(row, sc)
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-
-	if x <= 0 {
+	if val <= 0 {
 		return 0, true, nil
 	}
-
-	return math.Log2(x), false, nil
+	return math.Log2(val), false, nil
 }
 
 type log10FunctionClass struct {

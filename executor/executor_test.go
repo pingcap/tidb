@@ -859,22 +859,6 @@ func (s *testSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
 }
 
-func (s *testSuite) TestMathBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	// for log2
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10), g int, h char(20))")
-	tk.MustExec(`insert into t values(4, 8.0, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b00100, -1, "4xx")`)
-	result := tk.MustQuery("select log2(a), log2(b), log2(c), log2(d), log2(e), log2(f), log2(g), log2(h) from t")
-	result.Check(testkit.Rows("2 3 44.197283550263116 16.87388863787865 <nil> 2 <nil> 2"))
-}
-
 func (s *testSuite) TestBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -997,6 +981,14 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select tan('abcd')")
 	result.Check(testkit.Rows("0"))
+
+	//for log2
+	result = tk.MustQuery("select log2(0.0)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log2(4)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select log2('8.0abcd')")
+	result.Check(testkit.Rows("3"))
 
 	// for case
 	tk.MustExec("drop table if exists t")

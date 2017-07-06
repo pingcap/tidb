@@ -201,7 +201,7 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		{float64(16), 4, false, false},
 		{int64(5), 2.321928094887362, false, false},
 		{int64(-1), 0, true, false},
-		{"4abc", 2, false, false},
+		{"4abc", 0, false, true},
 	}
 	for _, test := range tests {
 		f, err := newFunctionForTest(s.ctx, ast.Log2, primitiveValsToConstants([]interface{}{test.args})...)
@@ -211,7 +211,7 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
 		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 8)
+		c.Assert(tp.Flen, Equals, 23)
 
 		result, err := f.Eval(nil)
 		if test.getErr {
