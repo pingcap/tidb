@@ -205,14 +205,14 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case string:
 		tp.Tp = mysql.TypeVarString
-		// max bytes length of CharsetUTF8
-		tp.Flen = len(x) * 3
+		// TODO: tp.Flen should be len(x) * 3 (max bytes length of CharsetUTF8)
+		tp.Flen = len(x)
 		tp.Decimal = UnspecifiedLength
 		tp.Charset = mysql.DefaultCharset
 		tp.Collate = mysql.DefaultCollationName
 	case float64:
 		tp.Tp = mysql.TypeDouble
-		s := strconv.FormatFloat(x, 'f', 0, 64)
+		s := strconv.FormatFloat(x, 'f', -1, 64)
 		tp.Flen = len(s)
 		tp.Decimal = len(s) - 1 - strings.Index(s, ".")
 		SetBinChsClnFlag(tp)
@@ -235,10 +235,10 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = x.Type
 		switch x.Type {
 		case mysql.TypeDate:
-			tp.Flen = 10
+			tp.Flen = mysql.MaxDateWidth
 			tp.Decimal = UnspecifiedLength
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
-			tp.Flen = 19
+			tp.Flen = mysql.MaxDatetimeWidthNoFsp
 			if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
 				tp.Flen = x.Fsp + 1
 			}
@@ -247,7 +247,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case Duration:
 		tp.Tp = mysql.TypeDuration
-		tp.Flen = 9
+		tp.Flen = len(x.String())
 		if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
 			tp.Flen = x.Fsp + 1
 		}

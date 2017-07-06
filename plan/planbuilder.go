@@ -1071,6 +1071,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+	case ast.ShowStatsMeta:
+		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
 	}
 	return composeShowSchema(names, ftypes)
 }
