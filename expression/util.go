@@ -77,7 +77,11 @@ func datumsToConstants(datums []types.Datum) []Expression {
 }
 
 func primitiveValsToConstants(args []interface{}) []Expression {
-	return datumsToConstants(types.MakeDatums(args...))
+	cons := datumsToConstants(types.MakeDatums(args...))
+	for i, arg := range args {
+		types.DefaultTypeForValue(arg, cons[i].GetType())
+	}
+	return cons
 }
 
 var kindToMysqlType = map[byte]byte{
