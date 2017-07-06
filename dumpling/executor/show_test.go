@@ -259,3 +259,18 @@ func (s *testSuite) TestShowWarnings(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 }
+
+func (s *testSuite) TestShowStatsMeta(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("analyze table t, t1")
+	result := tk.MustQuery("show stats_meta")
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[0][1], Equals, "t")
+	c.Assert(result.Rows()[1][1], Equals, "t1")
+	result = tk.MustQuery("show stats_meta where table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(result.Rows()[0][1], Equals, "t")
+}
