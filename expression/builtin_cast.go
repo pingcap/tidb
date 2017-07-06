@@ -663,16 +663,15 @@ func (b *builtinCastStringAsRealSig) evalReal(row []types.Datum) (res float64, i
 	if IsHybridType(b.args[0]) {
 		return b.args[0].EvalReal(row, sc)
 	}
-	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
+	val, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
 	res, err = types.StrToFloat(sc, val)
-	var err1 error
-	res, err1 = types.ProduceFloatWithSpecifiedTp(res, b.tp, sc)
-	if err == nil && err1 != nil {
-		err = err1
+	if err != nil {
+		return 0, false, errors.Trace(err)
 	}
+	res, err = types.ProduceFloatWithSpecifiedTp(res, b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
