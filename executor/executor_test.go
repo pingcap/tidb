@@ -963,18 +963,24 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("0.8414709848078965"))
 	result = tk.MustQuery("select sin(100)")
 	result.Check(testkit.Rows("-0.5063656411097588"))
+	result = tk.MustQuery("select sin('abcd')")
+	result.Check(testkit.Rows("0"))
 
 	// test cos
 	result = tk.MustQuery("select cos(0)")
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select cos(3.1415926535898)")
 	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cos('abcd')")
+	result.Check(testkit.Rows("1"))
 
 	//for tan
 	result = tk.MustQuery("select tan(0.00)")
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select tan(PI()/4)")
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select tan('abcd')")
+	result.Check(testkit.Rows("0"))
 
 	// for case
 	tk.MustExec("drop table if exists t")
