@@ -2023,7 +2023,7 @@ type makeDateFunctionClass struct {
 }
 
 func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, tpTime, ctx, tpInt, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpInt, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

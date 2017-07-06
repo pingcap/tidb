@@ -132,7 +132,7 @@ type lengthFunctionClass struct {
 }
 
 func (c *lengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, tpInt, ctx, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -160,7 +160,7 @@ type asciiFunctionClass struct {
 }
 
 func (c *asciiFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, tpInt, ctx, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -195,7 +195,7 @@ func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context
 	for i := 0; i < len(args); i++ {
 		argTps = append(argTps, tpString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, tpString, ctx, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -367,7 +367,7 @@ type repeatFunctionClass struct {
 }
 
 func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, tpString, ctx, tpString, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -564,7 +564,7 @@ type strcmpFunctionClass struct {
 }
 
 func (c *strcmpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, tpInt, ctx, tpString, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -385,7 +385,7 @@ type passwordFunctionClass struct {
 }
 
 func (c *passwordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, tpString, ctx, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

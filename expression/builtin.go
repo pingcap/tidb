@@ -64,7 +64,7 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(args []Expression, retType evalTp, ctx context.Context, argTps ...evalTp) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		return bf, errors.New("unexpected length of args and argTps")
 	}

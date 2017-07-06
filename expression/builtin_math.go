@@ -28,6 +28,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -848,11 +849,11 @@ type cosFunctionClass struct {
 }
 
 func (c *cosFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, tpReal, ctx, tpReal)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen = 23
+	bf.tp.Flen = mysql.MaxRealWidth
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinCosSig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
@@ -1072,11 +1073,11 @@ type tanFunctionClass struct {
 }
 
 func (c *tanFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, tpReal, ctx, tpReal)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen = 23
+	bf.tp.Flen = mysql.MaxRealWidth
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinTanSig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))

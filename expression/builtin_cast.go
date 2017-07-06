@@ -171,7 +171,6 @@ type castAsRealFunctionClass struct {
 func (b *castAsRealFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
 	bf := baseRealBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
 	bf.tp = b.tp
-	bf.tp.Flen, bf.tp.Decimal = 23, types.UnspecifiedLength
 	if IsHybridType(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
