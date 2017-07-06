@@ -346,6 +346,7 @@ func (s *session) isRetryableError(err error) bool {
 }
 
 func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
+	log.Warnf("retry")
 	connID := s.sessionVars.ConnectionID
 	if s.sessionVars.TxnCtx.ForUpdate {
 		return errors.Errorf("[%d] can not retry select for update statement", connID)

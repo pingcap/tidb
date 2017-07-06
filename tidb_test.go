@@ -36,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// Do nothing, it's used for running CI.
+
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
 
 func TestT(t *testing.T) {
