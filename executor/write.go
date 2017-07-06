@@ -1138,7 +1138,6 @@ func (e *UpdateExec) Next() (*Row, error) {
 	if e.updatedRowKeys == nil {
 		e.updatedRowKeys = make(map[table.Table]map[int64]struct{})
 	}
-	// We need to iterate the slice reversely to make the behavior correct.
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
 	for _, entry := range row.RowKeys {
