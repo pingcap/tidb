@@ -140,8 +140,19 @@ func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
 	c.Assert(sender.regionCache.getRegionByIDFromCache(s.region), NotNil)
 }
 
+// cancelContextClient wraps rpcClient and always cancels context before sending requests.
+type cancelContextClient struct {
+	Client
+}
+
+func (c *cancelContextClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	childCtx, cancel := goctx.WithCancel(ctx)
+	cancel()
+	return c.Client.SendReq(childCtx, addr, req)
+}
+
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
-	sender := NewRegionRequestSender(s.cache, newRPCClient(), kvrpcpb.IsolationLevel_SI)
+	sender := NewRegionRequestSender(s.cache, &cancelContextClient{newRPCClient()}, kvrpcpb.IsolationLevel_SI)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
 		RawPut: &kvrpcpb.RawPutRequest{
@@ -152,10 +163,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 
-	bo, cancel := s.bo.Fork()
-	cancel()
-	_, err = sender.SendReq(bo, req, region.Region, time.Millisecond)
-	// TODO: refactor this test case to get grpc client return codes.Canceled
-	c.Assert(grpc.Code(err), Equals, codes.Unknown)
+	_, err = sender.SendReq(s.bo, req, region.Region, time.Millisecond)
+	c.Assert(grpc.Code(errors.Cause(err)), Equals, codes.Canceled)
 	c.Assert(s.cache.getRegionByIDFromCache(s.region), NotNil)
 }
