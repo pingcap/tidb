@@ -449,10 +449,10 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 		{float64(1), float64(57.29577951308232), false, false},
 		{float64(math.Pi), float64(180), false, false},
 		{float64(-math.Pi / 2), float64(-90), false, false},
-		{"", float64(0), false, true},
+		{"", float64(0), false, false},
 		{"-2", float64(-114.59155902616465), false, false},
-		{"abc", float64(0), false, true},
-		{"+1abc", float64(0), false, true},
+		{"abc", float64(0), false, false},
+		{"+1abc", 57.29577951308232, false, false},
 	}
 
 	for _, t := range cases {
@@ -464,7 +464,6 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
 		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
 		c.Assert(tp.Flen, Equals, 23)
-
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
