@@ -129,33 +129,6 @@ func (v *typeInferrer) selectStmt(x *ast.SelectStmt) {
 	}
 }
 
-func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
-	name := strings.ToLower(x.F)
-	switch name {
-	case ast.AggFuncCount:
-		ft := types.NewFieldType(mysql.TypeLonglong)
-		ft.Flen = 21
-		types.SetBinChsClnFlag(ft)
-		x.SetType(ft)
-	case ast.AggFuncMax, ast.AggFuncMin:
-		x.SetType(x.Args[0].GetType())
-	case ast.AggFuncSum, ast.AggFuncAvg:
-		ft := types.NewFieldType(mysql.TypeNewDecimal)
-		types.SetBinChsClnFlag(ft)
-		ft.Decimal = x.Args[0].GetType().Decimal
-		x.SetType(ft)
-	case ast.AggFuncGroupConcat:
-		ft := types.NewFieldType(mysql.TypeVarString)
-		ft.Charset = v.defaultCharset
-		cln, err := charset.GetDefaultCollation(v.defaultCharset)
-		if err != nil {
-			v.err = err
-		}
-		ft.Collate = cln
-		x.SetType(ft)
-	}
-}
-
 func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 	switch x.Op {
 	case opcode.AndAnd, opcode.OrOr, opcode.LogicXor:
