@@ -404,6 +404,7 @@ func (sf *sumFunction) CalculateDefaultValue(schema *Schema, ctx context.Context
 func (sf *sumFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
 	types.SetBinChsClnFlag(ft)
+	ft.Flen = mysql.MaxRealWidth
 	ft.Decimal = sf.Args[0].GetType().Decimal
 	return ft
 }
