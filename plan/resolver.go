@@ -900,7 +900,7 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 		names = []string{"Database"}
 	case ast.ShowTables:
 		if s.DBName == "" {
-			nr.Err = ErrNoDB
+			nr.Err = errors.Trace(ErrNoDB)
 			return
 		}
 		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
@@ -909,7 +909,7 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 		}
 	case ast.ShowTableStatus:
 		if s.DBName == "" {
-			nr.Err = ErrNoDB
+			nr.Err = errors.Trace(ErrNoDB)
 			return
 		}
 		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
