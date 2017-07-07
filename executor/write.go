@@ -38,7 +38,7 @@ var (
 	_ Executor = &LoadData{}
 )
 
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, onDuplicateUpdate bool) error {
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, onDuplicateUpdate bool) (bool, error) {
 	cols := t.WritableCols()
 	touched := make(map[int]bool, len(cols))
 	assignExists := false
@@ -57,17 +57,17 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
-				return errors.Errorf("Column '%v' cannot be null", col.Name.O)
+				return false, errors.Errorf("Column '%v' cannot be null", col.Name.O)
 			}
 			val, err := newData[i].ToInt64(sc)
 			if err != nil {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 			t.RebaseAutoID(val, true)
 		}
 		casted, err := table.CastValue(ctx, newData[i], col.ToInfo())
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		newData[i] = casted
 		touched[i] = true
@@ -76,11 +76,11 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 	// If no assign list for this table, no need to update.
 	if !assignExists {
-		return nil
+		return false, nil
 	}
 
 	if err := table.CheckNotNull(cols, newData); err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
 	// If row is not changed, we should do nothing.
@@ -92,7 +92,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 		n, err := newData[i].CompareDatum(sc, oldData[i])
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		if n != 0 {
 			rowChanged = true
@@ -104,14 +104,14 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		return nil
+		return false, nil
 	}
 
 	var err error
 	if !newHandle.IsNull() {
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		_, err = t.AddRecord(ctx, newData)
 	} else {
@@ -119,7 +119,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		err = t.UpdateRecord(ctx, h, oldData, newData, touched)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	dirtyDB := getDirtyDB(ctx)
 	tid := t.Meta().ID
@@ -133,7 +133,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		sc.AddAffectedRows(2)
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
-	return nil
+	return true, nil
 }
 
 // DeleteExec represents a delete executor.
@@ -977,7 +977,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expre
 		newData[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
-	if err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true); err != nil {
+	if _, err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1157,11 +1157,13 @@ func (e *UpdateExec) Next() (*Row, error) {
 			continue
 		}
 		// Update row
-		err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+		changed, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		e.updatedRowKeys[tbl][handle] = struct{}{}
+		if changed {
+			e.updatedRowKeys[tbl][handle] = struct{}{}
+		}
 	}
 	e.cursor++
 	return &Row{}, nil
