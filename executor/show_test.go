@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
@@ -30,7 +31,17 @@ func (s *testSuite) TestShow(c *C) {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
+
 	tk := testkit.NewTestKit(c, s.store)
+
+	tk.Se = nil
+	_, err := tk.Exec("show tables;")
+	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+
+	tk.Se = nil
+	_, err = tk.Exec("show table status;")
+	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+
 	tk.MustExec("use test")
 	testSQL := `drop table if exists show_test`
 	tk.MustExec(testSQL)
