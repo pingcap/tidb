@@ -1292,6 +1292,11 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 
 		// refer generated columns non prior.
 		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, mysql.ErrGeneratedColumnNonPrior},
+
+		// virtual generated columns cannot be primary key.
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b) primary key)`, mysql.ErrUnsupportedOnGeneratedColumn},
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(c))`, mysql.ErrUnsupportedOnGeneratedColumn},
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(a, c))`, mysql.ErrUnsupportedOnGeneratedColumn},
 	}
 	for _, tt := range genExprTests {
 		s.testErrorCode(c, tt.stmt, tt.err)
