@@ -259,7 +259,7 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
 
-	// issue-3639
+	// SQL_MODE=NO_AUTO_VALUE_ON_ZERO
 	createSQL = `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
 	tk.MustExec(createSQL)
 	insertSQL = `insert into insert_autoinc_test(id, c1) values (5, 1)`
