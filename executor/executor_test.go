@@ -1255,9 +1255,7 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	tk.MustExec(`CREATE TABLE test_gc_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored)`)
 
 	// Insert only column a and b, leave c and d be calculated from them.
-	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (0, null)`)
-	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (1, 2)`)
-	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (3, 4)`)
+	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (0,null),(1,2),(3,4)`)
 	result := tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
 	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`))
 
@@ -1282,14 +1280,14 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
 	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
 
-	// Test where-conditions on virtual/stored generated column.
+	// Test where-conditions on virtual/stored generated columns.
 	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE c = 7`)
 	result.Check(testkit.Rows(`3 4 7 12`))
 
 	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE d = 64`)
 	result.Check(testkit.Rows(`8 8 16 64`))
 
-	// Test on-conditions on virtual/stored generated column.
+	// Test on-conditions on virtual/stored generated columns.
 	tk.MustExec(`CREATE TABLE test_gc_help(a int primary key, b int, c int, d int)`)
 	tk.MustExec(`INSERT INTO test_gc_help(a, b, c, d) SELECT * FROM test_gc_read`)
 
@@ -1299,12 +1297,17 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result = tk.MustQuery(`SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.d = t2.d ORDER BY t1.a`)
 	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
 
-	// Test aggregation on virtual/stored generated column.
+	// Test aggregation on virtual/stored generated columns.
 	result = tk.MustQuery(`SELECT c, sum(a) aa, max(d) dd FROM test_gc_read GROUP BY c ORDER BY aa`)
 	result.Check(testkit.Rows(`<nil> 0 <nil>`, `3 1 2`, `7 3 12`, `16 8 64`))
 
 	result = tk.MustQuery(`SELECT a, sum(c), sum(d) FROM test_gc_read GROUP BY a ORDER BY a`)
 	result.Check(testkit.Rows(`0 <nil> <nil>`, `1 3 2`, `3 7 12`, `8 16 64`))
+
+	// Test multi-update on generated columns.
+	tk.MustExec(`UPDATE test_gc_read m, test_gc_read n SET m.a = m.a + 10`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`10 <nil> <nil> <nil>`, `11 2 13 22`, `13 4 17 52`, `18 8 26 144`))
 
 	// Test not null generated columns.
 	tk.MustExec(`CREATE TABLE test_gc_read_1(a int primary key, b int, c int as (a+b) not null, d int as (a*b) stored)`)

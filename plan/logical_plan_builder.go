@@ -1310,10 +1310,12 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
 		modifyColumns[columnFullName] = struct{}{}
 	}
-	tableAsName := extractTableAsNameForUpdate(p)
+
 	// If columnes in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
+	tableAsName := make(map[*model.TableInfo][]model.CIStr)
+	extractTableAsNameForUpdate(p, tableAsName)
 	for _, tn := range tableList {
 		tableInfo := tn.TableInfo
 		table, _ := b.is.TableByID(tableInfo.ID)
@@ -1326,18 +1328,20 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
 				return nil, nil
 			}
-
-			var sName, tName model.CIStr
-			if asName, ok := tableAsName[tableInfo]; ok {
-				tName = asName
+			if asNames, ok := tableAsName[tableInfo]; ok {
+				// Because "UPDATE t m t n SET m.a = m.a+10, n.a = n.a+10" will set a to a+10.
+				for _, asName := range asNames {
+					virtualAssignments = append(virtualAssignments, &ast.Assignment{
+						Column: &ast.ColumnName{Table: asName, Name: colInfo.Name},
+						Expr:   table.Cols()[i].GeneratedExpr,
+					})
+				}
 			} else {
-				sName = tn.Schema
-				tName = tn.Name
+				virtualAssignments = append(virtualAssignments, &ast.Assignment{
+					Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
+					Expr:   table.Cols()[i].GeneratedExpr,
+				})
 			}
-			virtualAssignments = append(virtualAssignments, &ast.Assignment{
-				Column: &ast.ColumnName{Schema: sName, Table: tName, Name: colInfo.Name},
-				Expr:   table.Cols()[i].GeneratedExpr,
-			})
 		}
 	}
 
@@ -1379,18 +1383,16 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 }
 
 // extractTableAsNameForUpdate extracts tables' name alias for update.
-func extractTableAsNameForUpdate(p Plan) (asNames map[*model.TableInfo]model.CIStr) {
-	asNames = make(map[*model.TableInfo]model.CIStr)
-	if x, ok := p.(*DataSource); ok {
-		asNames[x.tableInfo] = *x.TableAsName
-	} else {
+func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]model.CIStr) {
+	switch x := p.(type) {
+	case *Projection: // We can skip memory table.
+	case *DataSource:
+		asNames[x.tableInfo] = append(asNames[x.tableInfo], *x.TableAsName)
+	default:
 		for _, child := range p.Children() {
-			for k, v := range extractTableAsNameForUpdate(child) {
-				asNames[k] = v
-			}
+			extractTableAsNameForUpdate(child, asNames)
 		}
 	}
-	return
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
