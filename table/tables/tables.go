@@ -84,6 +84,10 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			expr, err = parser.SimplyInferType(expr, tblInfo)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			col.GeneratedExpr = expr
 		}
 		columns = append(columns, col)
