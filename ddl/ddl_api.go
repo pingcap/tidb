@@ -1033,6 +1033,8 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return nil
 		}
+	case mysql.TypeEnum:
+		return errUnsupportedModifyColumn.GenByArgs("modify enum column is not supported")
 	default:
 		if origin.Tp == to.Tp {
 			return nil
