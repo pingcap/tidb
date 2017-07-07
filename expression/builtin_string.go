@@ -276,9 +276,8 @@ type leftFunctionClass struct {
 }
 
 func (c *leftFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
+	bf.tp.Flen = args[0].GetType().Flen
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -290,18 +289,16 @@ type builtinLeftSig struct {
 	baseStringBuiltinFunc
 }
 
-// eval evals a builtinLeftSig.
+// evalString evals a builtinLeftSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
 func (b *builtinLeftSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	var left int64
 
 	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		b.tp.Flen = fixLeftRightLength(d, 0, false)
 		return d, isNull, errors.Trace(err)
 	}
 	left, isNull, err = b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
-	b.tp.Flen = fixLeftRightLength(d, int(left), isNull)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
@@ -314,32 +311,13 @@ func (b *builtinLeftSig) evalString(row []types.Datum) (d string, isNull bool, e
 	return d[:l], false, nil
 }
 
-// The Flen field of the left and right function is related to the return value,
-// so we have to set the Flen field in eval stage.
-// This will be only used by Left and Right function.
-// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_strfunc.cc#L1668
-func fixLeftRightLength(str string, length int, isLengthNull bool) int {
-	strLength := len(str)
-	if isLengthNull {
-		return strLength
-	}
-	if length <= 0 {
-		return 0
-	}
-	if strLength > length {
-		return length
-	}
-	return strLength
-}
-
 type rightFunctionClass struct {
 	baseFunctionClass
 }
 
 func (c *rightFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
+	bf.tp.Flen = args[0].GetType().Flen
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -351,18 +329,16 @@ type builtinRightSig struct {
 	baseStringBuiltinFunc
 }
 
-// eval evals a builtinRightSig.
+// evalString evals a builtinRightSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_right
 func (b *builtinRightSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	var right int64
 
 	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		b.tp.Flen = fixLeftRightLength(d, 0, false)
 		return d, isNull, errors.Trace(err)
 	}
 	right, isNull, err = b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
-	b.tp.Flen = fixLeftRightLength(d, int(right), isNull)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
