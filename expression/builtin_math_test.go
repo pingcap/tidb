@@ -18,7 +18,6 @@ import (
 	"math/rand"
 	"runtime"
 
-	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -460,7 +459,6 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
 		c.Assert(tp.Flen, Equals, 23)
 		d, err := f.Eval(nil)
-		fmt.Println(t.args)
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
