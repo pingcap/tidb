@@ -225,6 +225,10 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 			}
 		}
 	}
+
+	f, err := funcs[ast.Log2].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
@@ -656,7 +660,6 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 			}
 		}
 	}
-
 }
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {
