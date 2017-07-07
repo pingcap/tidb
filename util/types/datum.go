@@ -1200,11 +1200,8 @@ func (d *Datum) convertToMysqlEnum(sc *variable.StatementContext, target *FieldT
 		}
 		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
-	if err != nil {
-		return invalidConv(d, target.Tp)
-	}
 	ret.SetValue(e)
-	return ret, nil
+	return ret, errors.Trace(err)
 }
 
 func (d *Datum) convertToMysqlSet(sc *variable.StatementContext, target *FieldType) (Datum, error) {
