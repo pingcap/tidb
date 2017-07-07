@@ -58,6 +58,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 		{"cos(c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"sin(c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"tan(c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
+		{"ascii(c_char)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
