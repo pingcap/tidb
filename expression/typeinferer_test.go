@@ -37,6 +37,7 @@ type testTypeInferrerSuite struct {
 }
 
 func (ts *testTypeInferrerSuite) TestInferType(c *C) {
+	c.Skip("we re-implement this test in plan/typeinfer_test.go")
 	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
