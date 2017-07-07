@@ -31,17 +31,7 @@ func (s *testSuite) TestShow(c *C) {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
-
 	tk := testkit.NewTestKit(c, s.store)
-
-	tk.Se = nil
-	_, err := tk.Exec("show tables;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
-
-	tk.Se = nil
-	_, err = tk.Exec("show table status;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
-
 	tk.MustExec("use test")
 	testSQL := `drop table if exists show_test`
 	tk.MustExec(testSQL)
@@ -284,4 +274,12 @@ func (s *testSuite) TestShowStatsMeta(c *C) {
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	c.Assert(len(result.Rows()), Equals, 1)
 	c.Assert(result.Rows()[0][1], Equals, "t")
+}
+
+func (s *testSuite) TestIssue3641(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	_, err := tk.Exec("show tables;")
+	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	_, err = tk.Exec("show table status;")
+	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 }
