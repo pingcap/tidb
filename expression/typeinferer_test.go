@@ -104,7 +104,6 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"now() + curtime()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"now() + now()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"now() + now(2)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
-		{"c_double + now()", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + 1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + 1.1", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + '1.1'", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
@@ -118,7 +117,6 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"1 > any (select 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"exists (select 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"1 in (2, 3)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
-		{"'abc' like 'abc'", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"'abc' rlike 'abc'", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"(1+1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 

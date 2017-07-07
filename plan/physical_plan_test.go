@@ -65,7 +65,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			sql:       "select max(b + c), min(case when b then 1 else 2 end) from t group by d + e, a",
 			best:      "Table(t)->HashAgg->Projection",
 			aggFuns:   "[max(plus(test.t.b, test.t.c)) min(case(test.t.b, 1, 2))]",
-			aggFields: "[blob bigint BINARY bigint(1) BINARY]",
+			aggFields: "[blob bigint BINARY bigint(1,0) BINARY]",
 			gbyItems:  "[plus(test.t.d, test.t.e) test.t.a]",
 		},
 	}
