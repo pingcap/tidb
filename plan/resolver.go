@@ -964,6 +964,11 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 	case ast.ShowStatsMeta:
 		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
+	case ast.ShowStatsBucket:
+		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Bucket_id", "Count",
+			"Repeats", "Lower_Bound", "Upper_Bound"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 	for i, name := range names {
 		f := &ast.ResultField{

@@ -29,10 +29,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -114,6 +116,8 @@ func (e *ShowExec) fetchAll() error {
 		// empty result
 	case ast.ShowStatsMeta:
 		return e.fetchShowStatsMeta()
+	case ast.ShowStatsBucket:
+		return e.fetchShowStatsBucket()
 	}
 	return nil
 }
@@ -652,4 +656,88 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 		}
 	}
 	return nil
+}
+
+func (e *ShowExec) fetchShowStatsBucket() error {
+	do := sessionctx.GetDomain(e.ctx)
+	h := do.StatsHandle()
+	dbs := do.InfoSchema().AllSchemas()
+	for _, db := range dbs {
+		for _, tbl := range db.Tables {
+			statsTbl := h.GetTableStats(tbl.ID)
+			if !statsTbl.Pseudo {
+				for _, col := range statsTbl.Columns {
+					rows, err := e.bucketsToRows(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					e.rows = append(e.rows, rows...)
+				}
+				for _, idx := range statsTbl.Indices {
+					rows, err := e.bucketsToRows(db.Name.O, tbl.Name.O, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					e.rows = append(e.rows, rows...)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int, hist statistics.Histogram) ([]*Row, error) {
+	isIndex := 0
+	if numOfCols > 0 {
+		isIndex = 1
+	}
+	var rows []*Row
+	for i, bkt := range hist.Buckets {
+		lowerBoundStr, err := e.valueToString(bkt.LowerBound, numOfCols)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		upperBoundStr, err := e.valueToString(bkt.UpperBound, numOfCols)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		row := &Row{
+			Data: types.MakeDatums(
+				dbName,
+				tblName,
+				colName,
+				isIndex,
+				i,
+				bkt.Count,
+				bkt.Repeats,
+				lowerBoundStr,
+				upperBoundStr,
+			),
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func (e *ShowExec) valueToString(value types.Datum, numOfCols int) (string, error) {
+	if numOfCols == 0 {
+		return value.ToString()
+	}
+	decodedVals, err := codec.Decode(value.GetBytes(), numOfCols)
+	if err != nil {
+		return "", nil
+	}
+	var strs []string
+	for _, val := range decodedVals {
+		str, err := val.ToString()
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		strs = append(strs, str)
+	}
+	if numOfCols > 1 {
+		strs[0] = "(" + strs[0]
+		strs[numOfCols-1] = strs[numOfCols-1] + ")"
+	}
+	return strings.Join(strs, ", "), nil
 }
