@@ -470,6 +470,9 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 			}
 		}
 	}
+	f, err := funcs[ast.Degrees].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSqrt(c *C) {
@@ -581,6 +584,10 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 			}
 		}
 	}
+
+	f, err := funcs[ast.Sin].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestCos(c *C) {
@@ -623,7 +630,9 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 			}
 		}
 	}
-
+	f, err := funcs[ast.Cos].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {
@@ -739,6 +748,10 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 			}
 		}
 	}
+
+	f, err := funcs[ast.Tan].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestCot(c *C) {
