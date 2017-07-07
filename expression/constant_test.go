@@ -54,7 +54,6 @@ func newFunction(funcName string, args ...Expression) Expression {
 }
 
 func (*testExpressionSuite) TestConstantPropagation(c *C) {
-	c.Skip("on `EXPLAIN` refactoring, reopen this case when it's completed.")
 	defer testleak.AfterTest(c)()
 	nullValue := &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 	tests := []struct {
@@ -69,7 +68,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn("d"), newLonglong(1)),
 				newFunction(ast.OrOr, newLonglong(1), newColumn("a")),
 			},
-			result: "eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, 1), eq(test.t.d, 1), or(1, 1)",
+			result: "eq(a.a(0), 1), eq(b.b(0), 1), eq(c.c(0), 1), eq(d.d(0), 1), or(1, 1)",
 		},
 		{
 			conditions: []Expression{
@@ -89,7 +88,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.NE, newColumn("c"), newLonglong(4)),
 				newFunction(ast.NE, newColumn("d"), newLonglong(5)),
 			},
-			result: "eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, test.t.d), ge(test.t.c, 2), ge(test.t.d, 2), ne(test.t.c, 4), ne(test.t.c, 5), ne(test.t.d, 4), ne(test.t.d, 5)",
+			result: "eq(a.a(0), 1), eq(b.b(0), 1), eq(c.c(0), d.d(0)), ge(c.c(0), 2), ge(d.d(0), 2), ne(c.c(0), 4), ne(c.c(0), 5), ne(d.d(0), 4), ne(d.d(0), 5)",
 		},
 		{
 			conditions: []Expression{
@@ -97,7 +96,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn("a"), newColumn("c")),
 				newFunction(ast.GE, newColumn("b"), newLonglong(0)),
 			},
-			result: "eq(test.t.a, test.t.b), eq(test.t.a, test.t.c), ge(test.t.a, 0), ge(test.t.b, 0), ge(test.t.c, 0)",
+			result: "eq(a.a(0), b.b(0)), eq(a.a(0), c.c(0)), ge(a.a(0), 0), ge(b.b(0), 0), ge(c.c(0), 0)",
 		},
 		{
 			conditions: []Expression{
@@ -107,7 +106,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.LT, newColumn("a"), newLonglong(1)),
 				newFunction(ast.GT, newLonglong(2), newColumn("b")),
 			},
-			result: "eq(test.t.a, test.t.b), gt(2, test.t.a), gt(2, test.t.b), gt(test.t.a, 2), gt(test.t.a, 3), gt(test.t.b, 2), gt(test.t.b, 3), lt(test.t.a, 1), lt(test.t.b, 1)",
+			result: "eq(a.a(0), b.b(0)), gt(2, a.a(0)), gt(2, b.b(0)), gt(a.a(0), 2), gt(a.a(0), 3), gt(b.b(0), 2), gt(b.b(0), 3), lt(a.a(0), 1), lt(b.b(0), 1)",
 		},
 		{
 			conditions: []Expression{
@@ -130,7 +129,6 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 }
 
 func (*testExpressionSuite) TestConstantFolding(c *C) {
-	c.Skip("on `EXPLAIN` refactoring, reopen this case when it's completed.")
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		condition Expression
@@ -138,19 +136,19 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 	}{
 		{
 			condition: newFunction(ast.LT, newColumn("a"), newFunction(ast.Plus, newLonglong(1), newLonglong(2))),
-			result:    "lt(test.t.a, 3)",
+			result:    "lt(a.a(0), 3)",
 		},
 		{
 			condition: newFunction(ast.LT, newColumn("a"), newFunction(ast.Greatest, newLonglong(1), newLonglong(2))),
-			result:    "lt(test.t.a, 2)",
+			result:    "lt(a.a(0), 2)",
 		},
 		{
 			condition: newFunction(ast.EQ, newColumn("a"), newFunction(ast.Rand)),
-			result:    "eq(test.t.a, rand())",
+			result:    "eq(a.a(0), rand())",
 		},
 		{
 			condition: newFunction(ast.In, newColumn("a"), newLonglong(1), newLonglong(2), newLonglong(3)),
-			result:    "in(test.t.a, 1, 2, 3)",
+			result:    "in(a.a(0), 1, 2, 3)",
 		},
 		{
 			condition: newFunction(ast.IsNull, newLonglong(1)),
@@ -158,11 +156,11 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 		},
 		{
 			condition: newFunction(ast.EQ, newColumn("a"), newFunction(ast.UnaryNot, newFunction(ast.Plus, newLonglong(1), newLonglong(1)))),
-			result:    "eq(test.t.a, 0)",
+			result:    "eq(a.a(0), 0)",
 		},
 		{
 			condition: newFunction(ast.LT, newColumn("a"), newFunction(ast.Plus, newColumn("b"), newFunction(ast.Plus, newLonglong(2), newLonglong(1)))),
-			result:    "lt(test.t.a, plus(test.t.b, 3))",
+			result:    "lt(a.a(0), plus(b.b(0), 3))",
 		},
 	}
 	for _, tt := range tests {

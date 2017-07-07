@@ -85,6 +85,7 @@ func (p *PhysicalTableReader) Copy() PhysicalPlan {
 	return &np
 }
 
+// MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalTableReader) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf("\"read data from\":\"%s\"", p.tablePlan.ID()))
@@ -113,6 +114,7 @@ func (p *PhysicalIndexReader) Copy() PhysicalPlan {
 	return &np
 }
 
+// MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalIndexReader) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf("\"read index from\":\"%s\"", p.indexPlan.ID()))
@@ -141,6 +143,7 @@ func (p *PhysicalIndexLookUpReader) Copy() PhysicalPlan {
 	return &np
 }
 
+// MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalIndexLookUpReader) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf("\"read index from\":\"%s\",", p.indexPlan.ID()))
@@ -314,9 +317,9 @@ func (p *physicalTableSource) MarshalJSON() ([]byte, error) {
 		}
 		buffer.WriteString(fmt.Sprintf("\"table filter conditions\":%s,", tableFilter))
 	}
-	currJson := buffer.Bytes()
-	if length := len(currJson); currJson[length-1] == ',' {
-		currJson[length-1] = '}'
+	currJSON := buffer.Bytes()
+	if length := len(currJSON); currJSON[length-1] == ',' {
+		currJSON[length-1] = '}'
 	} else {
 		buffer.WriteString("}")
 	}
@@ -357,6 +360,7 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 		Conditions: append(conditions, p.AccessCondition...),
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
+	resultPlan.SetParents(us)
 	us.SetSchema(resultPlan.Schema())
 	return us
 }
@@ -942,10 +946,9 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf(""+
-		" \"condition\": %s,\n"+
-		" \"scanController\": %v,"+
-		" \"child\": \"%s\"\n}", conds, p.controllerStatus != notController, p.children[0].ID()))
+	buffer.WriteString(fmt.Sprintf("\"conditions\":%s,", conds))
+	buffer.WriteString(fmt.Sprintf("\"scan controller\":%v", p.controllerStatus != notController))
+	buffer.WriteString("}")
 	return buffer.Bytes(), nil
 }
 

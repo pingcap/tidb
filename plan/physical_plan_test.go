@@ -32,7 +32,6 @@ import (
 )
 
 func (s *testPlanSuite) TestPushDownAggregation(c *C) {
-	c.Skip("on `EXPLAIN` refactoring, reopen this case when it's completed.")
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql       string
@@ -51,23 +50,23 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 		{
 			sql:       "select distinct a,b from t",
 			best:      "Table(t)->HashAgg",
-			aggFuns:   "[firstrow(test.t.a) firstrow(test.t.b)]",
+			aggFuns:   "[firstrow(t.a(0)) firstrow(t.b(1))]",
 			aggFields: "[blob int int]",
-			gbyItems:  "[test.t.a test.t.b]",
+			gbyItems:  "[t.a(0) t.b(1)]",
 		},
 		{
 			sql:       "select sum(b) from t group by c",
 			best:      "Table(t)->HashAgg->Projection",
-			aggFuns:   "[sum(test.t.b)]",
+			aggFuns:   "[sum(t.b(1))]",
 			aggFields: "[blob decimal BINARY]",
-			gbyItems:  "[test.t.c]",
+			gbyItems:  "[t.c(2)]",
 		},
 		{
 			sql:       "select max(b + c), min(case when b then 1 else 2 end) from t group by d + e, a",
 			best:      "Table(t)->HashAgg->Projection",
-			aggFuns:   "[max(plus(test.t.b, test.t.c)) min(case(test.t.b, 1, 2))]",
+			aggFuns:   "[max(plus(t.b(1), t.c(2))) min(case(t.b(1), 1, 2))]",
 			aggFields: "[blob bigint BINARY bigint(1) BINARY]",
-			gbyItems:  "[plus(test.t.d, test.t.e) test.t.a]",
+			gbyItems:  "[plus(t.d(3), t.e(4)) t.a(0)]",
 		},
 	}
 	for _, tt := range tests {
@@ -122,7 +121,6 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 }
 
 func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
-	c.Skip("on `EXPLAIN` refactoring, reopen this case when it's completed.")
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql          string
@@ -163,13 +161,13 @@ func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 		{
 			sql:          "select * from t order by d limit 1",
 			best:         "Table(t)->Sort + Limit(1) + Offset(0)",
-			orderByItmes: "[test.t.d]",
+			orderByItmes: "[t.d(3)]",
 			limit:        "1",
 		},
 		{
 			sql:          "select * from t where c > 0 order by d limit 1",
 			best:         "Index(t.c_d_e)[(0 +inf,+inf +inf]]->Sort + Limit(1) + Offset(0)",
-			orderByItmes: "[test.t.d]",
+			orderByItmes: "[t.d(3)]",
 			limit:        "1",
 		},
 		{
@@ -225,7 +223,6 @@ func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 
 // TestPushDownExpression tests whether expressions have been pushed down successfully.
 func (s *testPlanSuite) TestPushDownExpression(c *C) {
-	c.Skip("on `EXPLAIN` refactoring, reopen this case when it's completed.")
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql  string
@@ -233,76 +230,76 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 	}{
 		{
 			sql:  "a and b",
-			cond: "test.t.b",
+			cond: "t.b(1)",
 		},
 		{
 			sql:  "a or (b and c)",
-			cond: "or(test.t.a, and(test.t.b, test.t.c))",
+			cond: "or(t.a(0), and(t.b(1), t.c(2)))",
 		},
 		{
 			sql:  "c=1 and d =1 and e =1 and b=1",
-			cond: "eq(test.t.b, 1)",
+			cond: "eq(t.b(1), 1)",
 		},
 		{
 			sql:  "a or b",
-			cond: "or(test.t.a, test.t.b)",
+			cond: "or(t.a(0), t.b(1))",
 		},
 		{
 			sql:  "a and (b or c)",
-			cond: "or(test.t.b, test.t.c)",
+			cond: "or(t.b(1), t.c(2))",
 		},
 		{
 			sql:  "not a",
-			cond: "not(test.t.a)",
+			cond: "not(t.a(0))",
 		},
 		{
 			sql:  "a xor b",
-			cond: "xor(test.t.a, test.t.b)",
+			cond: "xor(t.a(0), t.b(1))",
 		},
 		{
 			sql:  "a & b",
-			cond: "bitand(test.t.a, test.t.b)",
+			cond: "bitand(t.a(0), t.b(1))",
 		},
 		{
 			sql:  "a | b",
-			cond: "bitor(test.t.a, test.t.b)",
+			cond: "bitor(t.a(0), t.b(1))",
 		},
 		{
 			sql:  "a ^ b",
-			cond: "bitxor(test.t.a, test.t.b)",
+			cond: "bitxor(t.a(0), t.b(1))",
 		},
 		{
 			sql:  "~a",
-			cond: "bitneg(test.t.a)",
+			cond: "bitneg(t.a(0))",
 		},
 		{
 			sql:  "a = case a when b then 1 when a then 0 end",
-			cond: "eq(test.t.a, case(eq(test.t.a, test.t.b), 1, eq(test.t.a, test.t.a), 0))",
+			cond: "eq(t.a(0), case(eq(t.a(0), t.b(1)), 1, eq(t.a(0), t.a(0)), 0))",
 		},
 		// if
 		{
 			sql:  "a = if(a, 1, 0)",
-			cond: "eq(test.t.a, if(test.t.a, 1, 0))",
+			cond: "eq(t.a(0), if(t.a(0), 1, 0))",
 		},
 		// nullif
 		{
 			sql:  "a = nullif(a, 1)",
-			cond: "eq(test.t.a, nullif(test.t.a, 1))",
+			cond: "eq(t.a(0), nullif(t.a(0), 1))",
 		},
 		// ifnull
 		{
 			sql:  "a = ifnull(null, a)",
-			cond: "eq(test.t.a, ifnull(<nil>, test.t.a))",
+			cond: "eq(t.a(0), ifnull(<nil>, t.a(0)))",
 		},
 		// coalesce
 		{
 			sql:  "a = coalesce(null, null, a, b)",
-			cond: "eq(test.t.a, coalesce(<nil>, <nil>, test.t.a, test.t.b))",
+			cond: "eq(t.a(0), coalesce(<nil>, <nil>, t.a(0), t.b(1)))",
 		},
 		// isnull
 		{
 			sql:  "b is null",
-			cond: "isnull(test.t.b)",
+			cond: "isnull(t.b(1))",
 		},
 	}
 	for _, tt := range tests {
@@ -350,7 +347,6 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 }
 
 func (s *testPlanSuite) TestCBO(c *C) {
-	c.Skip("on `EXPLAIN` refactoring, reopen this case when it's completed.")
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql  string
@@ -422,7 +418,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select sum(a.b), sum(b.b) from t a join t b on a.c = b.c group by a.d order by a.d",
-			best: "LeftHashJoin{Table(t)->Table(t)}(a.c,b.c)->HashAgg->Sort->Projection",
+			best: "LeftHashJoin{Table(t)->Table(t)}(t(a).c(2),t(b).c(2))->HashAgg->Sort->Projection",
 		},
 		{
 			sql:  "select * from t t1 left outer join t t2 on true where least(1,2,3,t1.a,t2.b) > 0 order by t2.a limit 10",
@@ -438,7 +434,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select sum(b.a) from t a, t b where a.c = b.c and cast(b.d as char) group by b.d",
-			best: "RightHashJoin{Index(t.c_d_e)[[<nil>,+inf]]->Selection->StreamAgg->Table(t)}(b.c,a.c)->HashAgg",
+			best: "RightHashJoin{Index(t.c_d_e)[[<nil>,+inf]]->Selection->StreamAgg->Table(t)}(t(b).c(2),t(a).c(2))->HashAgg",
 		},
 		{
 			sql:  "select count(*) from t group by e order by d limit 1",
@@ -475,7 +471,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 right join t t3 on t2.a = t3.b order by t1.a, t1.b, t2.a, t2.b, t3.a, t3.b",
-			best: "RightHashJoin{Table(t)->RightHashJoin{Table(t)->Table(t)}(t2.a,t3.b)}->Sort",
+			best: "RightHashJoin{Table(t)->RightHashJoin{Table(t)->Table(t)}(t(t2).a(0),t(t3).b(1))}->Sort",
 		},
 		{
 			sql:  "select * from t a where 1 = a.c and a.d > 1 order by a.d desc limit 2",
@@ -527,7 +523,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select t.c from t where 0 = (select count(b) from t t1 where t.a = t1.b)",
-			best: "LeftHashJoin{Table(t)->Table(t)->HashAgg}(test.t.a,t1.b)->Projection->Selection->Projection",
+			best: "LeftHashJoin{Table(t)->Table(t)->HashAgg}(t.a(0),t(t1).b(1))->Projection->Selection->Projection",
 		},
 	}
 	for _, tt := range tests {
@@ -706,7 +702,6 @@ func (s *testPlanSuite) TestCoveringIndex(c *C) {
 }
 
 func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
-	c.Skip("on `EXPLAIN` refactoring, reopen this case when it's completed.")
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql         string
@@ -722,21 +717,21 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 		},
 		{
 			sql:         "select * from t where t.c < 10000 and t.d = 1 and t.g > 1",
-			access:      "[lt(test.t.c, 10000)]",
-			indexFilter: "[eq(test.t.d, 1)]",
-			tableFilter: "[gt(test.t.g, 1)]",
+			access:      "[lt(t.c(2), 10000)]",
+			indexFilter: "[eq(t.d(3), 1)]",
+			tableFilter: "[gt(t.g(9), 1)]",
 		},
 		{
 			sql:         "select * from t where t.a < 1 and t.c < t.d",
-			access:      "[lt(test.t.a, 1)]",
+			access:      "[lt(t.a(0), 1)]",
 			indexFilter: "[]",
-			tableFilter: "[lt(test.t.c, test.t.d)]",
+			tableFilter: "[lt(t.c(2), t.d(3))]",
 		},
 		{
 			sql:         "select * from t use index(c_d_e) where t.a < 1 and t.c =1 and t.d < t.e and t.b > (t.a - t.d)",
-			access:      "[eq(test.t.c, 1)]",
-			indexFilter: "[lt(test.t.a, 1) lt(test.t.d, test.t.e)]",
-			tableFilter: "[gt(test.t.b, minus(test.t.a, test.t.d))]",
+			access:      "[eq(t.c(2), 1)]",
+			indexFilter: "[lt(t.a(0), 1) lt(t.d(3), t.e(4))]",
+			tableFilter: "[gt(t.b(1), minus(t.a(0), t.d(3)))]",
 		},
 	}
 	for _, tt := range tests {
@@ -784,7 +779,6 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 }
 
 func (s *testPlanSuite) TestAddCache(c *C) {
-	c.Skip("on `EXPLAIN` refactoring, reopen this case when it's completed.")
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql string
@@ -792,7 +786,7 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 	}{
 		{
 			sql: "select * from t t1 where t1.a=(select min(t2.a) from t t2, t t3 where t2.a=t3.a and t2.b > t1.b + t3.b)",
-			ans: "Apply{Table(t)->LeftHashJoin{Table(t)->Cache->Table(t)->Cache}(t2.a,t3.a)->StreamAgg->MaxOneRow}->Selection->Projection",
+			ans: "Apply{Table(t)->LeftHashJoin{Table(t)->Cache->Table(t)->Cache}(t(t2).a(0),t(t3).a(0))->StreamAgg->MaxOneRow}->Selection->Projection",
 		},
 	}
 	for _, tt := range tests {
@@ -878,7 +872,6 @@ func (s *testPlanSuite) TestScanController(c *C) {
 }
 
 func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
-	c.Skip("on `EXPLAIN` refactoring, reopen this case when it's completed.")
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql string
@@ -886,15 +879,15 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 	}{
 		{
 			sql: "select * from t t1 join t t2 on t1.a = t2.a",
-			ans: "LeftHashJoin{Table(t)->Table(t)}(t1.a,t2.a)",
+			ans: "LeftHashJoin{Table(t)->Table(t)}(t(t1).a(0),t(t2).a(0))",
 		},
 		{
 			sql: "select /*+ tidb_smj(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
-			ans: "MergeJoin{Table(t)->Table(t)}(t1.a,t2.a)",
+			ans: "MergeJoin{Table(t)->Table(t)}(t(t1).a(0),t(t2).a(0))",
 		},
 		{
 			sql: "select /*+ tidb_smj(t1) */ * from t t1 join t t2 on t1.a = t2.a",
-			ans: "MergeJoin{Table(t)->Table(t)}(t1.a,t2.a)",
+			ans: "MergeJoin{Table(t)->Table(t)}(t(t1).a(0),t(t2).a(0))",
 		},
 		{
 			sql: "select /*+ tidb_inlj(t2) */ * from t t1 join t t2 on t1.a = t2.a",
@@ -918,7 +911,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		},
 		{
 			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.e",
-			ans: "LeftHashJoin{Table(t)->Table(t)}(t1.a,t2.e)",
+			ans: "LeftHashJoin{Table(t)->Table(t)}(t(t1).a(0),t(t2).e(4))",
 		},
 		{
 			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.c",
@@ -946,7 +939,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		},
 		{
 			sql: "select /*+ TIDB_INLJ(t, t1) */ * from t left join (select * from t where t.b > 10) t1 on t.a=t1.a and t.b > 100",
-			ans: "LeftHashJoin{Table(t)->Table(t)}(test.t.a,t1.a)",
+			ans: "LeftHashJoin{Table(t)->Table(t)}(t.a(0),Projection_4.a(1))",
 		},
 	}
 	for _, tt := range tests {
@@ -973,7 +966,6 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 }
 
 func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
-	c.Skip("on `EXPLAIN` refactoring, reopen this case when it's completed.")
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql         string
@@ -986,7 +978,7 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		},
 		{
 			sql: "select * from (select * from t limit 0, 129) t1 join t t2 on t1.a = t2.a",
-			ans: "RightHashJoin{Table(t)->Limit->Table(t)}(t1.a,t2.a)",
+			ans: "RightHashJoin{Table(t)->Limit->Table(t)}(Projection_2.a(1),t(t2).a(0))",
 		},
 		{
 			sql: "select * from (select * from t limit 0, 10 union select * from t limit 10, 100) t1 join t t2 on t1.a = t2.a",
@@ -994,7 +986,7 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		},
 		{
 			sql: "select * from (select * from t limit 0, 29 union all select * from t limit 0, 100) t1 join t t2 on t1.a = t2.a",
-			ans: "RightHashJoin{UnionAll{Table(t)->Limit->Table(t)->Limit}->Table(t)}(t1.a,t2.a)",
+			ans: "RightHashJoin{UnionAll{Table(t)->Limit->Table(t)->Limit}->Table(t)}(Union_1.a(1),t(t2).a(0))",
 		},
 		{
 			sql:         "select * from t t1 join t t2 on t1.f = t2.f and t1.a < 5",
@@ -1003,7 +995,7 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		},
 		{
 			sql:         "select * from t t1 join t t2 on t1.f = t2.f and t1.a < 19",
-			ans:         "RightHashJoin{Table(t)->Table(t)}(t1.f,t2.f)",
+			ans:         "RightHashJoin{Table(t)->Table(t)}(t(t1).f(8),t(t2).f(8))",
 			genStatsTbl: true,
 		},
 	}

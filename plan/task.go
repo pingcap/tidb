@@ -368,6 +368,9 @@ func (p *Union) attach2Task(tasks ...task) task {
 		taskPlan.SetParents(np)
 	}
 	np.SetChildren(newChildren...)
+	for _, child := range newChildren {
+		child.SetParents(np)
+	}
 	return newTask
 }
 

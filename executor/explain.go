@@ -103,7 +103,7 @@ func (e *ExplainExec) prepareCopTaskInfo(plans []plan.PhysicalPlan) error {
 func (e *ExplainExec) prepareRootTaskInfo(p plan.Plan) error {
 	e.explainedPlans[p.ID()] = true
 	for _, child := range p.Children() {
-		if e.explainedPlans[child.ID()]{
+		if e.explainedPlans[child.ID()] {
 			continue
 		}
 		err := e.prepareRootTaskInfo(child)
