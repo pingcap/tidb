@@ -926,7 +926,7 @@ type builtinDegreesSig struct {
 	baseRealBuiltinFunc
 }
 
-// evalreal evals a builtinDegreesSig.
+// evalReal evals a builtinDegreesSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_degrees
 func (b *builtinDegreesSig) evalReal(row []types.Datum) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)

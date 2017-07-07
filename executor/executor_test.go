@@ -966,12 +966,6 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select sin('abcd')")
 	result.Check(testkit.Rows("0"))
 
-	//test degrees
-	result = tk.MustQuery("select degrees(0)")
-	result.Check(testkit.Rows("0"))
-	result = tk.MustQuery("select degrees(1)")
-	result.Check(testkit.Rows("57.29577951308232"))
-
 	// test cos
 	result = tk.MustQuery("select cos(0)")
 	result.Check(testkit.Rows("1"))
@@ -1093,6 +1087,21 @@ func (s *testSuite) TestBuiltin(c *C) {
 	tk.MustQuery("select count(*) from t") // Test ProjectionExec
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
+}
+
+func (s *testSuite) TestMathBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	//test degrees
+	result := tk.MustQuery("select degrees(0)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select degrees(1)")
+	result.Check(testkit.Rows("57.29577951308232"))
 }
 
 func (s *testSuite) TestJSON(c *C) {

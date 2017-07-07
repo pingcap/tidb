@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"runtime"
 
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -429,14 +430,8 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 
 func (s *testEvaluatorSuite) TestDegrees(c *C) {
 	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
-	defer func() {
-		sc.IgnoreTruncate = tmpIT
-	}()
-
+	sc.IgnoreTruncate = false
 	cases := []struct {
 		args     interface{}
 		expected float64
@@ -449,10 +444,10 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 		{float64(1), float64(57.29577951308232), false, false},
 		{float64(math.Pi), float64(180), false, false},
 		{float64(-math.Pi / 2), float64(-90), false, false},
-		{"", float64(0), false, false},
+		{"", float64(0), false, true},
 		{"-2", float64(-114.59155902616465), false, false},
-		{"abc", float64(0), false, false},
-		{"+1abc", 57.29577951308232, false, false},
+		{"abc", float64(0), false, true},
+		{"+1abc", 57.29577951308232, false, true},
 	}
 
 	for _, t := range cases {
@@ -465,6 +460,7 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
 		c.Assert(tp.Flen, Equals, 23)
 		d, err := f.Eval(nil)
+		fmt.Println(t.args)
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
