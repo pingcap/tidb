@@ -42,7 +42,6 @@ const (
 	ActionModifyColumn
 	ActionRenameTable
 	ActionSetDefaultValue
-	ActionAppendColumns
 )
 
 func (action ActionType) String() string {
