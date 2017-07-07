@@ -1239,9 +1239,12 @@ func (d *Datum) convertToMysqlJSON(sc *variable.StatementContext, target *FieldT
 		if j, err = json.ParseFromString(d.GetString()); err == nil {
 			ret.SetMysqlJSON(j)
 		}
-	case KindInt64, KindUint64:
+	case KindInt64:
 		i64 := d.GetInt64()
 		ret.SetMysqlJSON(json.CreateJSON(i64))
+	case KindUint64:
+		u64 := d.GetUint64()
+		ret.SetMysqlJSON(json.CreateJSON(u64))
 	case KindFloat32, KindFloat64:
 		f64 := d.GetFloat64()
 		ret.SetMysqlJSON(json.CreateJSON(f64))
@@ -1521,8 +1524,10 @@ func (d *Datum) ToMysqlJSON() (j json.JSON, err error) {
 	case KindMysqlJSON:
 		j = d.x.(json.JSON)
 		return
-	case KindInt64, KindUint64:
+	case KindInt64:
 		in = d.GetInt64()
+	case KindUint64:
+		in = d.GetUint64()
 	case KindFloat32, KindFloat64:
 		in = d.GetFloat64()
 	case KindMysqlDecimal:
