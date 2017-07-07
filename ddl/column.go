@@ -130,7 +130,7 @@ func checkHasDuplicateColumnName(columnsInfo []*model.ColumnInfo) error {
 func (d *ddl) getColumnInfos(columns []*model.ColumnInfo, positions []*ast.ColumnPosition, job *model.Job, tblInfo *model.TableInfo) ([]*model.ColumnInfo, error) {
 	columnsInfo := []*model.ColumnInfo{}
 	lastColOffset := len(tblInfo.Columns)
-	var err error = nil
+	var err error
 	for idx, col := range columns {
 		colInfo := findCol(tblInfo.Columns, col.Name.L)
 		pos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
