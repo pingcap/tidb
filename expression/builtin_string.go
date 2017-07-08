@@ -1995,7 +1995,7 @@ type builtinToBase64Sig struct {
 // base64NeededEncodedLength return the base64 encoded string length.
 func base64NeededEncodedLength(n int) int {
 	// Returns -1 indicate the result will overflow.
-	if strconv.IntSize == 8 {
+	if strconv.IntSize == 64 {
 		if n > 6827690988321067803 {
 			return -1
 		}
