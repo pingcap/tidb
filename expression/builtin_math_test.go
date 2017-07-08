@@ -429,40 +429,50 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 
 func (s *testEvaluatorSuite) TestDegrees(c *C) {
 	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
-	defer func() {
-		sc.IgnoreTruncate = tmpIT
-	}()
-
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+	sc.IgnoreTruncate = false
+	cases := []struct {
+		args     interface{}
+		expected float64
+		isNil    bool
+		getErr   bool
 	}{
-		{nil, nil},
-		{int64(0), float64(0)},
-		{int64(1), float64(57.29577951308232)},
-		{float64(1), float64(57.29577951308232)},
-		{float64(math.Pi), float64(180)},
-		{float64(-math.Pi / 2), float64(-90)},
-		{"", float64(0)},
-		{"-2", float64(-114.59155902616465)},
-		{"abc", float64(0)},
-		{"+1abc", float64(57.29577951308232)},
+		{nil, 0, true, false},
+		{int64(0), float64(0), false, false},
+		{int64(1), float64(57.29577951308232), false, false},
+		{float64(1), float64(57.29577951308232), false, false},
+		{float64(math.Pi), float64(180), false, false},
+		{float64(-math.Pi / 2), float64(-90), false, false},
+		{"", float64(0), false, true},
+		{"-2", float64(-114.59155902616465), false, false},
+		{"abc", float64(0), false, true},
+		{"+1abc", 57.29577951308232, false, true},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-
-	for _, t := range Dtbl {
-		fc := funcs[ast.Degrees]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Degrees, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["arg"]))
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeDouble)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, 23)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetFloat64(), Equals, t.expected)
+			}
+		}
 	}
+	f, err := funcs[ast.Degrees].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSqrt(c *C) {
@@ -574,6 +584,10 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 			}
 		}
 	}
+
+	f, err := funcs[ast.Sin].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestCos(c *C) {
@@ -616,7 +630,9 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 			}
 		}
 	}
-
+	f, err := funcs[ast.Cos].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {
@@ -732,6 +748,10 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 			}
 		}
 	}
+
+	f, err := funcs[ast.Tan].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestCot(c *C) {
