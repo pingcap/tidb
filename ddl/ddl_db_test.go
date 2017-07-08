@@ -825,6 +825,8 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	c.Assert(colC.Comment, Equals, "col c comment")
 	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
 	c.Assert(hasNotNull, IsFalse)
+	// for enum
+	s.mustExec(c, "alter table t3 add column en enum('a', 'b', 'c') not null default 'a'")
 
 	// for failing tests
 	sql := "alter table t3 change aa a bigint default ''"
@@ -834,6 +836,8 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	sql = "alter table t3 change t.a aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 	sql = "alter table t3 change aa a bigint not null"
+	s.testErrorCode(c, sql, tmysql.ErrUnknown)
+	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 }
 
@@ -1292,6 +1296,11 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 
 		// refer generated columns non prior.
 		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, mysql.ErrGeneratedColumnNonPrior},
+
+		// virtual generated columns cannot be primary key.
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b) primary key)`, mysql.ErrUnsupportedOnGeneratedColumn},
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(c))`, mysql.ErrUnsupportedOnGeneratedColumn},
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(a, c))`, mysql.ErrUnsupportedOnGeneratedColumn},
 	}
 	for _, tt := range genExprTests {
 		s.testErrorCode(c, tt.stmt, tt.err)

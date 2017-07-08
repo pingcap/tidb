@@ -1110,6 +1110,41 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
+func (s *testSuite) TestMathBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	//test degrees
+	result := tk.MustQuery("select degrees(0), degrees(1)")
+	result.Check(testkit.Rows("0 57.29577951308232"))
+	result = tk.MustQuery("select degrees(2), degrees(5)")
+	result.Check(testkit.Rows("114.59155902616465 286.4788975654116"))
+
+	// test sin
+	result = tk.MustQuery("select sin(0), sin(1.5707963267949)")
+	result.Check(testkit.Rows("0 1"))
+	result = tk.MustQuery("select sin(1), sin(100)")
+	result.Check(testkit.Rows("0.8414709848078965 -0.5063656411097588"))
+	result = tk.MustQuery("select sin('abcd')")
+	result.Check(testkit.Rows("0"))
+
+	// test cos
+	result = tk.MustQuery("select cos(0), cos(3.1415926535898)")
+	result.Check(testkit.Rows("1 -1"))
+	result = tk.MustQuery("select cos('abcd')")
+	result.Check(testkit.Rows("1"))
+
+	//for tan
+	result = tk.MustQuery("select tan(0.00), tan(PI()/4)")
+	result.Check(testkit.Rows("0 1"))
+	result = tk.MustQuery("select tan('abcd')")
+	result.Check(testkit.Rows("0"))
+}
+
 func (s *testSuite) TestJSON(c *C) {
 	// This will be opened after implementing cast as json.
 	origin := expression.TurnOnNewExprEval
