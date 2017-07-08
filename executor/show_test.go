@@ -155,6 +155,24 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	// The user can see t2 but not t1.
 	c.Assert(rows, HasLen, 1)
 
+	// After revoke, show database result should be empty.
+	tk.MustExec(`revoke select on showdatabase.t1 from 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
+	rs, err = se.Execute("show databases")
+	c.Assert(err, IsNil)
+	rows, err = tidb.GetRows(rs[0])
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 0)
+
+	// Grant any global privilege would make show databases available.
+	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
+	rs, err = se.Execute("show databases")
+	c.Assert(err, IsNil)
+	rows, err = tidb.GetRows(rs[0])
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), GreaterEqual, 1)
+
 	privileges.Enable = save
 	tk.MustExec(`drop user 'show'@'%'`)
 	tk.MustExec("drop database showdatabase")
