@@ -40,6 +40,8 @@ func (j JSON) Type() string {
 		}
 	case typeCodeInt64:
 		return "INTEGER"
+	case typeCodeUint64:
+		return "UNSIGNED INTEGER"
 	case typeCodeFloat64:
 		return "DOUBLE"
 	case typeCodeString:

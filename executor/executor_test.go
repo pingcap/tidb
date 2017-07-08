@@ -954,28 +954,6 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select substr('123', 1, null)")
 	result.Check(testkit.Rows("<nil>"))
 
-	// test sin
-	result = tk.MustQuery("select sin(0)")
-	result.Check(testkit.Rows("0"))
-	result = tk.MustQuery("select sin(1.5707963267949)")
-	result.Check(testkit.Rows("1"))
-	result = tk.MustQuery("select sin(1)")
-	result.Check(testkit.Rows("0.8414709848078965"))
-	result = tk.MustQuery("select sin(100)")
-	result.Check(testkit.Rows("-0.5063656411097588"))
-
-	// test cos
-	result = tk.MustQuery("select cos(0)")
-	result.Check(testkit.Rows("1"))
-	result = tk.MustQuery("select cos(3.1415926535898)")
-	result.Check(testkit.Rows("-1"))
-
-	//for tan
-	result = tk.MustQuery("select tan(0.00)")
-	result.Check(testkit.Rows("0"))
-	result = tk.MustQuery("select tan(PI()/4)")
-	result.Check(testkit.Rows("1"))
-
 	// for case
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(255), b int)")
@@ -1081,6 +1059,53 @@ func (s *testSuite) TestBuiltin(c *C) {
 	tk.MustQuery("select count(*) from t") // Test ProjectionExec
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
+}
+
+func (s *testSuite) TestMathBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	//test degrees
+	result := tk.MustQuery("select degrees(0), degrees(1)")
+	result.Check(testkit.Rows("0 57.29577951308232"))
+	result = tk.MustQuery("select degrees(2), degrees(5)")
+	result.Check(testkit.Rows("114.59155902616465 286.4788975654116"))
+
+	// test sin
+	result = tk.MustQuery("select sin(0), sin(1.5707963267949)")
+	result.Check(testkit.Rows("0 1"))
+	result = tk.MustQuery("select sin(1), sin(100)")
+	result.Check(testkit.Rows("0.8414709848078965 -0.5063656411097588"))
+	result = tk.MustQuery("select sin('abcd')")
+	result.Check(testkit.Rows("0"))
+
+	// test cos
+	result = tk.MustQuery("select cos(0), cos(3.1415926535898)")
+	result.Check(testkit.Rows("1 -1"))
+	result = tk.MustQuery("select cos('abcd')")
+	result.Check(testkit.Rows("1"))
+
+	//for tan
+	result = tk.MustQuery("select tan(0.00), tan(PI()/4)")
+	result.Check(testkit.Rows("0 1"))
+	result = tk.MustQuery("select tan('abcd')")
+	result.Check(testkit.Rows("0"))
+
+	//for log2
+	result = tk.MustQuery("select log2(0.0)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log2(4)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select log2('8.0abcd')")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("select log2(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log2(NULL)")
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuite) TestJSON(c *C) {
