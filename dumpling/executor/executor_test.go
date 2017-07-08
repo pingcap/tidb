@@ -1094,6 +1094,18 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("0 1"))
 	result = tk.MustQuery("select tan('abcd')")
 	result.Check(testkit.Rows("0"))
+
+	//for log2
+	result = tk.MustQuery("select log2(0.0)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log2(4)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select log2('8.0abcd')")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("select log2(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log2(NULL)")
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuite) TestJSON(c *C) {
