@@ -1591,6 +1591,10 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 			}
 		}
 	}
+
+	f, err := funcs[ast.ToBase64].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestStringRight(c *C) {

@@ -1992,8 +1992,19 @@ type builtinToBase64Sig struct {
 	baseStringBuiltinFunc
 }
 
-// base64NeededEncodedLength return the base64 encoded string length
+// base64NeededEncodedLength return the base64 encoded string length.
 func base64NeededEncodedLength(n int) int {
+	// Returns -1 indicate the result will overflow.
+	if strconv.IntSize == 8 {
+		if n > 6827690988321067803 {
+			return -1
+		}
+	} else {
+		if n > 1589695686 {
+			return -1
+		}
+	}
+
 	length := (n + 2) / 3 * 4
 	return length + (length-1)/76
 }
@@ -2007,7 +2018,7 @@ func (b *builtinToBase64Sig) evalString(row []types.Datum) (d string, isNull boo
 		return "", isNull, errors.Trace(err)
 	}
 
-	if b.tp.Flen > mysql.MaxBlobWidth {
+	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
 		return "", true, nil
 	}
 
