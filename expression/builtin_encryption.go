@@ -489,12 +489,17 @@ type sha2FunctionClass struct {
 }
 
 func (c *sha2FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinSHA2Sig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	types.SetBinChsClnFlag(bf.tp)
+	sig := &builtinSHA2Sig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSHA2Sig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // Supported hash length of SHA-2 family
@@ -508,26 +513,18 @@ const (
 
 // eval evals a builtinSHA2Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha2
-func (b *builtinSHA2Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	for _, arg := range args {
-		if arg.IsNull() {
-			return d, nil
-		}
-	}
+func (b *builtinSHA2Sig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	args := b.getArgs()
 	// Meaning of each argument:
 	// args[0]: the cleartext string to be hashed
 	// args[1]: desired bit length of result
-	bin, err := args[0].ToBytes()
-	if err != nil {
-		return d, errors.Trace(err)
+	bin, isNull, err := args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	hashLength, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
+	hashLength, isNull, err := args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
 	var hasher hash.Hash
 	switch int(hashLength) {
@@ -541,11 +538,11 @@ func (b *builtinSHA2Sig) eval(row []types.Datum) (d types.Datum, err error) {
 		hasher = sha512.New()
 	}
 	if hasher != nil {
-		hasher.Write(bin)
-		data := fmt.Sprintf("%x", hasher.Sum(nil))
-		d.SetString(data)
+		hasher.Write([]byte(bin))
+		d = fmt.Sprintf("%x", hasher.Sum(nil))
+		isNull = false
 	}
-	return d, nil
+	return d, isNull, nil
 }
 
 type uncompressFunctionClass struct {
