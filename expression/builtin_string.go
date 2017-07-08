@@ -277,10 +277,10 @@ type leftFunctionClass struct {
 
 func (c *leftFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
-	bf.tp.Flen = args[0].GetType().Flen
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = args[0].GetType().Flen
 	sig := &builtinLeftSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
@@ -317,10 +317,10 @@ type rightFunctionClass struct {
 
 func (c *rightFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
-	bf.tp.Flen = args[0].GetType().Flen
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = args[0].GetType().Flen
 	sig := &builtinRightSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
