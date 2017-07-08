@@ -165,7 +165,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	c.Assert(rows, HasLen, 0)
 
 	// Grant any global privilege would make show databases available.
-	tk.MustExec(`grant select on *.* to 'show'@'%'`)
+	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
 	tk.MustExec(`flush privileges`)
 	rs, err = se.Execute("show databases")
 	c.Assert(err, IsNil)
