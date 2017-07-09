@@ -1652,7 +1652,7 @@ type builtinOrdSig struct {
 	baseIntBuiltinFunc
 }
 
-// eval evals a builtinOrdSig.
+// evalInt evals a builtinOrdSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ord
 func (b *builtinOrdSig) evalInt(row []types.Datum) (int64, bool, error) {
 	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
