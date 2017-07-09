@@ -232,10 +232,23 @@ type concatWSFunctionClass struct {
 }
 
 func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	retType, argTps := inferType(args)
-	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps...)
+	argTps := make([]evalTp, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		argTps = append(argTps, tpString)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	for i := range args {
+		bf.tp.Flag |= mysql.BinaryFlag
+		bf.tp.Flen += args[i].GetType().Flen
+	}
+
+	if bf.tp.Flen >= mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 
 	sig := &builtinConcatWSSig{baseStringBuiltinFunc{bf}}
@@ -246,7 +259,7 @@ type builtinConcatWSSig struct {
 	baseStringBuiltinFunc
 }
 
-// eval evals a builtinConcatWSSig.
+// evalString evals a builtinConcatWSSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
 func (b *builtinConcatWSSig) evalString(row []types.Datum) (string, bool, error) {
 	args := b.getArgs()
