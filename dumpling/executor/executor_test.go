@@ -841,6 +841,15 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("-1 1 -1 <nil> <nil>"))
 	result = tk.MustQuery(`select strcmp("", "123"), strcmp("123", ""), strcmp("", ""), strcmp("", null), strcmp(null, "")`)
 	result.Check(testkit.Rows("-1 1 0 <nil> <nil>"))
+
+	// for ord
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb")`)
+	result = tk.MustQuery("select ord(a), ord(b), ord(c), ord(d), ord(e), ord(f), ord(g), ord(h), ord(i) from t")
+	result.Check(testkit.Rows("50 50 50 50 49 10 53 52 116"))
+	result = tk.MustQuery("select ord('123'), ord(123), ord(''), ord('你好'), ord(NULL), ord('👍')")
+	result.Check(testkit.Rows("49 49 0 14990752 <nil> 4036989325"))
 }
 
 func (s *testSuite) TestTimeBuiltin(c *C) {
