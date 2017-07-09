@@ -360,7 +360,6 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 		Conditions: append(conditions, p.AccessCondition...),
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
-	resultPlan.SetParents(us)
 	us.SetSchema(resultPlan.Schema())
 	return us
 }

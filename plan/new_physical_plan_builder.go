@@ -564,7 +564,6 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 		}.init(p.allocator, p.ctx)
 		sel.SetSchema(p.schema)
 		sel.SetChildren(memTable)
-		memTable.SetParents(sel)
 		retPlan = sel
 	}
 	task = &rootTask{p: retPlan}
@@ -747,7 +746,6 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask) {
 			indexSel := Selection{Conditions: indexConds}.init(is.allocator, is.ctx)
 			indexSel.SetSchema(is.schema)
 			indexSel.SetChildren(is)
-			is.SetParents(indexSel)
 			copTask.indexPlan = indexSel
 			copTask.cst += copTask.cnt * cpuFactor
 			copTask.cnt = copTask.cnt * selectionFactor
@@ -757,7 +755,6 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask) {
 			tableSel := Selection{Conditions: tableConds}.init(is.allocator, is.ctx)
 			tableSel.SetSchema(copTask.tablePlan.Schema())
 			tableSel.SetChildren(copTask.tablePlan)
-			copTask.tablePlan.SetParents(tableSel)
 			copTask.tablePlan = tableSel
 			copTask.cst += copTask.cnt * cpuFactor
 			copTask.cnt = copTask.cnt * selectionFactor
@@ -854,7 +851,6 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask) {
 		sel := Selection{Conditions: ts.filterCondition}.init(ts.allocator, ts.ctx)
 		sel.SetSchema(ts.schema)
 		sel.SetChildren(ts)
-		ts.SetParents(sel)
 		copTask.tablePlan = sel
 		copTask.cst += copTask.cnt * cpuFactor
 		copTask.cnt = copTask.cnt * selectionFactor
