@@ -448,33 +448,30 @@ type reverseFunctionClass struct {
 }
 
 func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinReverseSig{newBaseBuiltinFunc(args, ctx)}
+	retType := types.NewFieldType(mysql.TypeVarString)
+	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
+
+	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinReverseSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinReverseSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinReverseSig.
+// evalString evaluates a builtinReverseSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
-func (b *builtinReverseSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinReverseSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	x := args[0]
-	switch x.Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := x.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(stringutil.Reverse(s))
-		return d, nil
-	}
+
+	return stringutil.Reverse(d), false, nil
 }
 
 type spaceFunctionClass struct {

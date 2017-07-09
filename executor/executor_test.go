@@ -831,6 +831,16 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery("select password(c) from t")
 	result.Check(testkit.Rows("*0D3CED9BEC10A777AEC23CCC353A8C08A633045E"))
 
+
+	// for reverse
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f varchar(4))")
+	tk.MustExec(`insert into t values('25', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", "aBcd")`)
+	result = tk.MustQuery("select reverse(a), reverse(b), reverse(c), reverse(d), reverse(e), reverse(f) from t")
+	result.Check(testkit.Rows("52 2 3.2 10:10:21 10-10-7102 10:10:21 dcBa"))
+	result = tk.MustQuery("select reverse('123'), reverse(123), reverse(''), reverse('你好'), reverse(NULL)")
+	result.Check(testkit.Rows("321 321  好你 <nil>"))
+
 	// for strcmp
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time)")
