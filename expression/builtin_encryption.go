@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -386,16 +385,11 @@ type passwordFunctionClass struct {
 }
 
 func (c *passwordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Flen = mysql.PWDHashLen + 1
-
-	tp.Charset = charset.CharsetUTF8
-	tp.Collate = charset.CollationUTF8
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = mysql.PWDHashLen + 1
 	sig := &builtinPasswordSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }

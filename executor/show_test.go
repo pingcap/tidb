@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
@@ -154,6 +155,24 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	// The user can see t2 but not t1.
 	c.Assert(rows, HasLen, 1)
 
+	// After revoke, show database result should be empty.
+	tk.MustExec(`revoke select on showdatabase.t1 from 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
+	rs, err = se.Execute("show databases")
+	c.Assert(err, IsNil)
+	rows, err = tidb.GetRows(rs[0])
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 0)
+
+	// Grant any global privilege would make show databases available.
+	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
+	rs, err = se.Execute("show databases")
+	c.Assert(err, IsNil)
+	rows, err = tidb.GetRows(rs[0])
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), GreaterEqual, 1)
+
 	privileges.Enable = save
 	tk.MustExec(`drop user 'show'@'%'`)
 	tk.MustExec("drop database showdatabase")
@@ -258,4 +277,27 @@ func (s *testSuite) TestShowWarnings(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+}
+
+func (s *testSuite) TestShowStatsMeta(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("analyze table t, t1")
+	result := tk.MustQuery("show stats_meta")
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[0][1], Equals, "t")
+	c.Assert(result.Rows()[1][1], Equals, "t1")
+	result = tk.MustQuery("show stats_meta where table_name = 't'")
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(result.Rows()[0][1], Equals, "t")
+}
+
+func (s *testSuite) TestIssue3641(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	_, err := tk.Exec("show tables;")
+	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	_, err = tk.Exec("show table status;")
+	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 }

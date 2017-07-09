@@ -599,6 +599,16 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			continue
 		}
 		if constr.Tp == ast.ConstraintPrimaryKey {
+			for _, key := range constr.Keys {
+				col := table.FindCol(cols, key.Column.Name.O)
+				if col == nil {
+					return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
+				}
+				// Virtual columns cannot be used in primary key.
+				if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+					return nil, errUnsupportedOnGeneratedColumn.GenByArgs("Defining a virtual generated column as primary key")
+				}
+			}
 			if len(constr.Keys) == 1 {
 				key := constr.Keys[0]
 				col := table.FindCol(cols, key.Column.Name.O)
@@ -1023,6 +1033,8 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return nil
 		}
+	case mysql.TypeEnum:
+		return errUnsupportedModifyColumn.GenByArgs("modify enum column is not supported")
 	default:
 		if origin.Tp == to.Tp {
 			return nil

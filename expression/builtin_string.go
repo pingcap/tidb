@@ -132,13 +132,11 @@ type lengthFunctionClass struct {
 }
 
 func (c *lengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.Flen = 10
-	types.SetBinChsClnFlag(tp)
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 10
 	sig := &builtinLengthSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
@@ -162,15 +160,11 @@ type asciiFunctionClass struct {
 }
 
 func (c *asciiFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	// ascii function will always return Type BIGINT, Charset Binary, Size 3
-	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.Flen = 3
-	types.SetBinChsClnFlag(tp)
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 3
 	sig := &builtinASCIISig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
@@ -197,33 +191,23 @@ type concatFunctionClass struct {
 }
 
 func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	retType, argTps := c.inferType(args)
-	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps...)
+	argTps := make([]evalTp, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		argTps = append(argTps, tpString)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	for i := range args {
+		bf.tp.Flag |= mysql.BinaryFlag
+		bf.tp.Flen += args[i].GetType().Flen
+	}
+	if bf.tp.Flen >= mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
+	}
 	sig := &builtinConcatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-func (c *concatFunctionClass) inferType(args []Expression) (*types.FieldType, []argTp) {
-	tps := make([]argTp, len(args))
-	existsBinStr, tp := false, mysql.TypeVarString
-	for i := 0; i < len(args); i++ {
-		tps[i] = tpString
-		curArgTp := args[i].GetType()
-		tp = types.MergeFieldType(tp, curArgTp.Tp)
-		if types.IsBinaryStr(curArgTp) {
-			existsBinStr = true
-		}
-	}
-	retType := types.NewFieldType(tp)
-	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	if existsBinStr {
-		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
-		retType.Flag |= mysql.BinaryFlag
-	}
-	return retType, tps
 }
 
 type builtinConcatSig struct {
@@ -383,19 +367,13 @@ type repeatFunctionClass struct {
 }
 
 func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeLongBlob)
-	tp.Flen = mysql.MaxBlobWidth
-
-	if isBinary := mysql.HasBinaryFlag(args[0].GetType().Flag); isBinary {
-		types.SetBinChsClnFlag(tp)
-	} else {
-		tp.Charset = charset.CharsetUTF8
-		tp.Collate = charset.CollationUTF8
-	}
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = mysql.MaxBlobWidth
+	if mysql.HasBinaryFlag(args[0].GetType().Flag) {
+		types.SetBinChsClnFlag(bf.tp)
 	}
 	sig := &builtinRepeatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
@@ -586,13 +564,12 @@ type strcmpFunctionClass struct {
 }
 
 func (c *strcmpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.Flen = 2
-	types.SetBinChsClnFlag(tp)
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 2
+	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinStrcmpSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
@@ -1662,49 +1639,40 @@ type ordFunctionClass struct {
 }
 
 func (c *ordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinOrdSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 10
+	sig := &builtinOrdSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinOrdSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinOrdSig.
+// evalInt evals a builtinOrdSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ord
-func (b *builtinOrdSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinOrdSig) evalInt(row []types.Datum) (int64, bool, error) {
+	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-
-	str, err := arg.ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
 	if len(str) == 0 {
-		d.SetInt64(0)
-		return d, nil
+		return 0, false, nil
 	}
 
 	_, size := utf8.DecodeRuneInString(str)
 	leftMost := str[:size]
-
 	var result int64
 	var factor int64 = 1
 	for i := len(leftMost) - 1; i >= 0; i-- {
 		result += int64(leftMost[i]) * factor
 		factor *= 256
 	}
-	d.SetInt64(result)
 
-	return d, nil
+	return result, false, nil
 }
 
 type quoteFunctionClass struct {
