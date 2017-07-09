@@ -93,7 +93,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "default", "shared", "exclusive",
-		"always",
+		"always", "stats", "stats_meta",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -406,6 +406,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show create table
 		{"show create table test.t", true},
 		{"show create table t", true},
+		// for show stats_meta.
+		{"show stats_meta", true},
+		{"show stats_meta where table_name = 't'", true},
 
 		// set
 		// user defined
@@ -1145,7 +1148,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create schema xxx", true},
 		{"create schema if exists xxx", false},
 		{"create schema if not exists xxx", true},
-		// for drop database/schema/table
+		// for drop database/schema/table/stats
 		{"drop database xxx", true},
 		{"drop database if exists xxx", true},
 		{"drop database if not exists xxx", false},
@@ -1159,6 +1162,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop table if exists xxx", true},
 		{"drop table if not exists xxx", false},
 		{"drop view if exists xxx", true},
+		{"drop stats t", true},
 		// for issue 974
 		{`CREATE TABLE address (
 		id bigint(20) NOT NULL AUTO_INCREMENT,
@@ -1521,6 +1525,13 @@ func (s *testParserSuite) TestMysqlDump(c *C) {
 		{`LOCK TABLES t1 READ;`, true},
 		{`show table status like 't'`, true},
 		{`LOCK TABLES t2 WRITE`, true},
+
+		// for unlock table and lock table
+		{`UNLOCK TABLE;`, true},
+		{`LOCK TABLE t1 READ;`, true},
+		{`show table status like 't'`, true},
+		{`LOCK TABLE t2 WRITE`, true},
+		{`LOCK TABLE t1 WRITE, t3 READ`, true},
 	}
 	s.RunTest(c, table)
 }

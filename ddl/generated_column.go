@@ -76,7 +76,7 @@ func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map
 	return
 }
 
-// findColumnNamesInExpr returns a slice of ast.ColumnName which is refered in expr.
+// findColumnNamesInExpr returns a slice of ast.ColumnName which is referred in expr.
 func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	var c generatedColumnChecker
 	expr.Accept(&c)

@@ -519,14 +519,20 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 }
 
 // NewCastFunc creates a new cast function.
-func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *ScalarFunction {
-	// TODO: rewrite this function using buildCastFunction()
-	bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
-	return &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Cast),
-		RetType:  tp,
-		Function: bt.setSelf(bt),
+func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) (sf *ScalarFunction) {
+	// TODO: we do not support CastAsJson in new expression evaluation architecture now.
+	if tp.Tp == mysql.TypeJSON {
+		bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
+		return &ScalarFunction{
+			FuncName: model.NewCIStr(ast.Cast),
+			RetType:  tp,
+			Function: bt.setSelf(bt),
+		}
 	}
+	// We ignore error here because buildCastFunction will only get errIncorrectParameterCount
+	// which can be guaranteed to not happen.
+	sf, _ = buildCastFunction(arg, tp, ctx)
+	return
 }
 
 // NewValuesFunc creates a new values function.
