@@ -91,7 +91,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 				ColName:     model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, position)),
 				Position:    position,
 				IsAggOrSubq: true,
-				RetType:     aggFunc.GetType()})
+				RetType:     newFunc.GetType()})
 		}
 	}
 	for _, col := range p.Schema().Columns {
@@ -1148,7 +1148,9 @@ func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.init(b.allocator, b.ctx)
-
+	if tp == LeftOuterJoin {
+		ap.DefaultValues = make([]types.Datum, innerPlan.Schema().Len())
+	}
 	addChild(ap, outerPlan)
 	addChild(ap, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
