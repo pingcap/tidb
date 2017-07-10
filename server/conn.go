@@ -303,7 +303,6 @@ func (cc *clientConn) readHandshakeResponse() error {
 	// Open session and do auth
 	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname)
 	if err != nil {
-		cc.Close()
 		return errors.Trace(err)
 	}
 	if !cc.server.skipAuth() {
@@ -316,6 +315,12 @@ func (cc *clientConn) readHandshakeResponse() error {
 		user := fmt.Sprintf("%s@%s", cc.user, host)
 		if !cc.ctx.Auth(user, p.Auth, cc.salt) {
 			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, host, "Yes"))
+		}
+	}
+	if cc.dbname != "" {
+		_, err = cc.ctx.Execute("use " + cc.dbname)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 	cc.ctx.SetSessionManager(cc.server)
