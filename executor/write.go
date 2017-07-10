@@ -912,7 +912,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				return errors.Trace(err)
 			}
 			row[i].SetInt64(val)
-			if val != 0 {
+			if val != 0 || (e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero) > 0 {
 				e.ctx.GetSessionVars().InsertID = uint64(val)
 				e.Table.RebaseAutoID(val, true)
 				continue
