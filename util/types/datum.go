@@ -1191,7 +1191,7 @@ func (d *Datum) convertToMysqlEnum(sc *variable.StatementContext, target *FieldT
 	)
 	switch d.k {
 	case KindString, KindBytes:
-		e, err = ParseEnumName(target.Elems, d.GetString())
+		e, err = ParseEnumName(sc, target.Elems, d.GetString())
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)

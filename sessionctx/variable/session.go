@@ -321,6 +321,7 @@ type StatementContext struct {
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
 	InShowWarning        bool
+	StrictSQLMode        bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
