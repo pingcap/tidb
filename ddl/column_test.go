@@ -85,10 +85,9 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 	return job
 }
 
-func testAppendMultipleColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	colNames []string, defaultValues []interface{}) *model.Job {
+func testAddMultipleColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	colNames []string, defaultValues []interface{}, positions []*ast.ColumnPosition) *model.Job {
 	cols := []*model.ColumnInfo{}
-	positions := []*ast.ColumnPosition{}
 	tbllen := len(tblInfo.Columns)
 	for idx, colName := range colNames {
 		col := &model.ColumnInfo{
@@ -100,7 +99,6 @@ func testAppendMultipleColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.D
 		col.ID = allocateColumnID(tblInfo)
 		col.FieldType = *types.NewFieldType(mysql.TypeLong)
 		cols = append(cols, col)
-		positions = append(positions, &ast.ColumnPosition{Tp: ast.ColumnPositionNone})
 	}
 
 	job := &model.Job{
@@ -964,7 +962,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
-	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumn
+	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
 	col, _, err := buildColumnAndConstraint(nil, 0, colDef)
 	c.Assert(err, IsNil)
 	return &col.FieldType

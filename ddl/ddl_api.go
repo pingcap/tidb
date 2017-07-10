@@ -796,10 +796,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 
 	for _, spec := range validSpecs {
 		switch spec.Tp {
-		case ast.AlterTableAddColumn:
-			err = d.AddColumn(ctx, ident, spec)
-		case ast.AlterTableAppendColumns:
-			err = d.AppendColumns(ctx, ident, spec)
+		case ast.AlterTableAddColumns:
+			err = d.AddColumns(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
@@ -891,7 +889,7 @@ func (d *ddl) ValidColumnDef(column *ast.ColumnDef, t table.Table) error {
 	return nil
 }
 
-func (d *ddl) BuildColumnWithDefValue(ctx context.Context, t table.Table, column *ast.ColumnDef) (*table.Column, error) {
+func buildColumnWithDefValue(ctx context.Context, t table.Table, column *ast.ColumnDef) (*table.Column, error) {
 	// Ingore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
@@ -915,7 +913,7 @@ func (d *ddl) BuildColumnWithDefValue(ctx context.Context, t table.Table, column
 	return col, nil
 }
 
-func (d *ddl) AppendColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) AddColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -927,16 +925,16 @@ func (d *ddl) AppendColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTa
 	}
 
 	newColumns := []*table.Column{}
-	if err = checkDuplicateColumn(spec.AppendedColumns); err != nil {
+	if err = checkDuplicateColumn(spec.NewColumns); err != nil {
 		return errors.Trace(err)
 	}
-	for _, column := range spec.AppendedColumns {
+	for _, column := range spec.NewColumns {
 		err = d.ValidColumnDef(column, t)
 		if err != nil {
 			return err
 		}
 
-		col, err := d.BuildColumnWithDefValue(ctx, t, column)
+		col, err := buildColumnWithDefValue(ctx, t, column)
 		if err != nil {
 			return err
 		}
@@ -948,42 +946,7 @@ func (d *ddl) AppendColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTa
 		TableID:    t.Meta().ID,
 		Type:       model.ActionAddColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newColumns, []*ast.ColumnPosition{}, 0},
-	}
-
-	err = d.doDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
-}
-
-// AddColumn will add a new column to the table.
-func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoHandle.Get()
-	schema, ok := is.SchemaByName(ti.Schema)
-	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
-	}
-	t, err := is.TableByName(ti.Schema, ti.Name)
-	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
-	}
-
-	err = d.ValidColumnDef(spec.NewColumn, t)
-	if err != nil {
-		return err
-	}
-
-	col, err := d.BuildColumnWithDefValue(ctx, t, spec.NewColumn)
-	if err != nil {
-		return err
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		Type:       model.ActionAddColumns,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{[]*table.Column{col}, []*ast.ColumnPosition{spec.Position}, 0},
+		Args:       []interface{}{newColumns, spec.Positions, 0},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1185,18 +1148,19 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	if col == nil {
 		return nil, infoschema.ErrColumnNotExists.GenByArgs(originalColName, ident.Name)
 	}
-	if spec.Constraint != nil || spec.NewColumn.Tp == nil {
+	if spec.Constraint != nil || spec.NewColumns[0].Tp == nil {
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
+	newModifiedCol := spec.NewColumns[0]
 
 	newCol := table.ToColumn(&model.ColumnInfo{
 		ID:                 col.ID,
 		Offset:             col.Offset,
 		State:              col.State,
 		OriginDefaultValue: col.OriginDefaultValue,
-		FieldType:          *spec.NewColumn.Tp,
-		Name:               spec.NewColumn.Name.Name,
+		FieldType:          *newModifiedCol.Tp,
+		Name:               newModifiedCol.Name.Name,
 	})
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
 	if err != nil {
@@ -1206,7 +1170,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
+	if err := setDefaultAndComment(ctx, newCol, newModifiedCol.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 	// We don't support modifying the type definitions from 'null' to 'not null' now.
@@ -1223,7 +1187,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		TableID:    t.Meta().ID,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, originalColName, spec.Position},
+		Args:       []interface{}{&newCol, originalColName, spec.Positions[0]},
 	}
 	return job, nil
 }
@@ -1232,14 +1196,15 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 // currently we only support limited kind of changes
 // that do not need to change or check data on the table.
 func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	if len(spec.NewColumn.Name.Schema.O) != 0 && ident.Schema.L != spec.NewColumn.Name.Schema.L {
-		return errWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
+	changedNewColumn := spec.NewColumns[0]
+	if len(changedNewColumn.Name.Schema.O) != 0 && ident.Schema.L != changedNewColumn.Name.Schema.L {
+		return errWrongDBName.GenByArgs(changedNewColumn.Name.Schema.O)
 	}
 	if len(spec.OldColumnName.Schema.O) != 0 && ident.Schema.L != spec.OldColumnName.Schema.L {
 		return errWrongDBName.GenByArgs(spec.OldColumnName.Schema.O)
 	}
-	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
-		return ErrWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
+	if len(changedNewColumn.Name.Table.O) != 0 && ident.Name.L != changedNewColumn.Name.Table.L {
+		return ErrWrongTableName.GenByArgs(changedNewColumn.Name.Table.O)
 	}
 	if len(spec.OldColumnName.Table.O) != 0 && ident.Name.L != spec.OldColumnName.Table.L {
 		return ErrWrongTableName.GenByArgs(spec.OldColumnName.Table.O)
@@ -1258,14 +1223,15 @@ func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
 // that do not need to change or check data on the table.
 func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	if len(spec.NewColumn.Name.Schema.O) != 0 && ident.Schema.L != spec.NewColumn.Name.Schema.L {
-		return errWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
+	changedNewColumn := spec.NewColumns[0]
+	if len(changedNewColumn.Name.Schema.O) != 0 && ident.Schema.L != changedNewColumn.Name.Schema.L {
+		return errWrongDBName.GenByArgs(changedNewColumn.Name.Schema.O)
 	}
-	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
-		return ErrWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
+	if len(changedNewColumn.Name.Table.O) != 0 && ident.Name.L != changedNewColumn.Name.Table.L {
+		return ErrWrongTableName.GenByArgs(changedNewColumn.Name.Table.O)
 	}
 
-	originalColName := spec.NewColumn.Name.Name
+	originalColName := changedNewColumn.Name.Name
 	job, err := d.getModifiableColumnJob(ctx, ident, originalColName, spec)
 	if err != nil {
 		return errors.Trace(err)
@@ -1287,7 +1253,7 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 		return infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
 	}
 
-	colName := spec.NewColumn.Name.Name
+	colName := spec.NewColumns[0].Name.Name
 	// Check whether alter column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
@@ -1296,11 +1262,11 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 
 	// Clean the NoDefaultValueFlag value.
 	col.Flag &= (^uint(mysql.NoDefaultValueFlag))
-	if len(spec.NewColumn.Options) == 0 {
+	if len(spec.NewColumns[0].Options) == 0 {
 		col.DefaultValue = nil
 		setNoDefaultValueFlag(col, false)
 	} else {
-		err := setDefaultValue(ctx, col, spec.NewColumn.Options[0])
+		err := setDefaultValue(ctx, col, spec.NewColumns[0].Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -636,7 +636,7 @@ type AlterTableType int
 // AlterTable types.
 const (
 	AlterTableOption AlterTableType = iota + 1
-	AlterTableAddColumn
+	AlterTableAddColumns
 	AlterTableAddConstraint
 	AlterTableDropColumn
 	AlterTableDropPrimaryKey
@@ -647,7 +647,6 @@ const (
 	AlterTableRenameTable
 	AlterTableAlterColumn
 	AlterTableLock
-	AlterTableAppendColumns
 
 // TODO: Add more actions
 )
@@ -668,16 +667,15 @@ const (
 type AlterTableSpec struct {
 	node
 
-	Tp              AlterTableType
-	Name            string
-	Constraint      *Constraint
-	Options         []*TableOption
-	NewTable        *TableName
-	NewColumn       *ColumnDef
-	AppendedColumns []*ColumnDef
-	OldColumnName   *ColumnName
-	Position        *ColumnPosition
-	LockType        LockType
+	Tp            AlterTableType
+	Name          string
+	Constraint    *Constraint
+	Options       []*TableOption
+	NewTable      *TableName
+	NewColumns    []*ColumnDef
+	OldColumnName *ColumnName
+	Positions     []*ColumnPosition
+	LockType      LockType
 }
 
 // Accept implements Node Accept interface.
@@ -701,20 +699,13 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		}
 		n.NewTable = node.(*TableName)
 	}
-	if n.NewColumn != nil {
-		node, ok := n.NewColumn.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.NewColumn = node.(*ColumnDef)
-	}
-	if n.AppendedColumns != nil {
-		for i := range n.AppendedColumns {
-			node, ok := n.AppendedColumns[i].Accept(v)
+	if n.NewColumns != nil {
+		for i := range n.NewColumns {
+			node, ok := n.NewColumns[i].Accept(v)
 			if !ok {
 				return n, false
 			}
-			n.AppendedColumns[i] = node.(*ColumnDef)
+			n.NewColumns[i] = node.(*ColumnDef)
 		}
 	}
 	if n.OldColumnName != nil {
@@ -724,12 +715,14 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		}
 		n.OldColumnName = node.(*ColumnName)
 	}
-	if n.Position != nil {
-		node, ok := n.Position.Accept(v)
-		if !ok {
-			return n, false
+	if n.Positions != nil {
+		for i := range n.Positions {
+			node, ok := n.Positions[i].Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Positions[i] = node.(*ColumnPosition)
 		}
-		n.Position = node.(*ColumnPosition)
 	}
 	return v.Leave(n)
 }

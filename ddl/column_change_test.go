@@ -164,6 +164,7 @@ func (s *testColumnChangeSuite) testAppendColumns(c *C, ctx context.Context, d *
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
+
 		case model.StatePublic:
 			_, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
@@ -181,9 +182,17 @@ func (s *testColumnChangeSuite) testAppendColumns(c *C, ctx context.Context, d *
 	}
 	d.setHook(tc)
 	d.start(goctx.Background())
-	job := testAppendMultipleColumn(c, ctx, d, s.dbInfo, tblInfo, []string{"c3", "c4"}, []interface{}{1, 1})
+	positions := []*ast.ColumnPosition{
+		{Tp: ast.ColumnPositionNone},
+		{Tp: ast.ColumnPositionFirst},
+	}
+	job := testAddMultipleColumn(c, ctx, d, s.dbInfo, tblInfo, []string{"c3", "c4"}, []interface{}{1, 1}, positions)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	cols := t.Cols()
+	c.Assert(cols[0].Name.L, Equals, "c4")
+	c.Assert(cols[3].Name.L, Equals, "c3")
 }
 
 func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {
