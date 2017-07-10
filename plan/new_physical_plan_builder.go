@@ -125,8 +125,8 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child,
 // because we will swap the children of join when the right child is outer child.
-// First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or pk
-// column of inner child, we can apply the index join. Then we convert the inner child to table scan or index scan explicitly.
+// First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or PK
+// column of inner child, we can apply the index join.
 func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) PhysicalPlan {
 	innerChild := p.children[1-outerIdx].(LogicalPlan)
 	var (
@@ -174,7 +174,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) PhysicalPlan {
 	return nil
 }
 
-// For index join, we shouldn't require a root task which may let cbo framework select a sort operator in fact.
+// For index join, we shouldn't require a root task which may let CBO framework select a sort operator in fact.
 // We are not sure which way of index scanning we should choose, so we try both single read and double read and finally
 // it will result in a best one.
 func (p *PhysicalIndexJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
@@ -218,12 +218,10 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	}
 	plans := make([]PhysicalPlan, 0, 2)
 	leftOuter := (p.preferINLJ & preferLeftAsOuter) > 0
-	if leftOuter {
-		if p.JoinType != RightOuterJoin {
-			join := p.getIndexJoinByOuterIdx(0)
-			if join != nil {
-				plans = append(plans, join)
-			}
+	if leftOuter && p.JoinType != RightOuterJoin {
+		join := p.getIndexJoinByOuterIdx(0)
+		if join != nil {
+			plans = append(plans, join)
 		}
 	}
 	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
@@ -236,7 +234,7 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	if len(plans) > 0 {
 		return plans, true
 	}
-	if !leftOuter && p.JoinType != RightOuterJoin { // try left
+	if !leftOuter && p.JoinType != RightOuterJoin {
 		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
 			plans = append(plans, join)
