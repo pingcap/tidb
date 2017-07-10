@@ -63,6 +63,12 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 		return true
 	}
 
+	// Skip check for INFORMATION_SCHEMA database.
+	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
+	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+		return true
+	}
+
 	mysqlPriv := p.Handle.Get()
 	return mysqlPriv.RequestVerification(p.user, p.host, db, table, column, priv)
 }
