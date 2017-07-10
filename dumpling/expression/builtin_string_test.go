@@ -53,12 +53,6 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Length, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 10)
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -98,13 +92,6 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.ASCII, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 3)
 
 		d, err := f.Eval(nil)
 		if t.getErr {
@@ -168,13 +155,6 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, fcName, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		retType := f.GetType()
-		c.Assert(retType.Tp, Equals, t.retType.Tp)
-		c.Assert(retType.Charset, Equals, t.retType.Charset)
-		c.Assert(retType.Collate, Equals, t.retType.Collate)
-		c.Assert(retType.Flen, Equals, t.retType.Flen)
-		c.Assert(retType.Decimal, Equals, t.retType.Decimal)
-		c.Assert(retType.Flag, Equals, t.retType.Flag)
 		v, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -403,12 +383,6 @@ func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Strcmp, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 2)
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -1403,13 +1377,6 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Ord, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 10)
 
 		d, err := f.Eval(nil)
 		if t.getErr {
