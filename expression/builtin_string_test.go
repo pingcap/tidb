@@ -1378,13 +1378,6 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Ord, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 10)
-
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
