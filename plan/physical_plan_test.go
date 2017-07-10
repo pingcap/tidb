@@ -547,7 +547,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		c.Assert(ToString(EliminateProjection(info.p)), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(ToString(EliminateProjection(info.p, make(map[string]*expression.Column))), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
@@ -659,7 +659,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		p = EliminateProjection(info.p)
+		p = EliminateProjection(info.p, make(map[string]*expression.Column))
 		c.Assert(ToString(p), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
 }
@@ -813,7 +813,7 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p
-		pp = EliminateProjection(pp)
+		pp = EliminateProjection(pp, make(map[string]*expression.Column))
 		addCachePlan(pp, builder.allocator)
 		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
@@ -865,7 +865,7 @@ func (s *testPlanSuite) TestScanController(c *C) {
 		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p
-		pp = EliminateProjection(pp)
+		pp = EliminateProjection(pp, make(map[string]*expression.Column))
 		addCachePlan(pp, builder.allocator)
 		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}

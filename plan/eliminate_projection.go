@@ -18,22 +18,29 @@ import (
 )
 
 // EliminateProjection eliminates projection operator to avoid the cost of memory copy in the iterator of projection.
-func EliminateProjection(p PhysicalPlan) PhysicalPlan {
-	switch plan := p.(type) {
-	case *Projection:
-		if !projectionCanBeEliminated(plan) {
-			break
-		}
-		child := plan.children[0].(PhysicalPlan)
-		child.SetSchema(plan.Schema())
-		RemovePlan(p)
-		p = EliminateProjection(child)
-	}
+func EliminateProjection(p PhysicalPlan, replace map[string]*expression.Column) PhysicalPlan {
 	children := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		children = append(children, EliminateProjection(child.(PhysicalPlan)))
+		children = append(children, EliminateProjection(child.(PhysicalPlan), replace))
 	}
 	p.SetChildren(children...)
+	for _, dst := range p.Schema().Columns {
+		if src := replace[dst.String()]; src != nil {
+			dst = src
+		}
+	}
+	plan, ok := p.(*Projection)
+	if ok && projectionCanBeEliminated(plan) {
+		child := plan.children[0].(PhysicalPlan)
+		childColumns := child.Schema().Columns
+		for i, parentColumn := range plan.Schema().Columns {
+			replacedStr := parentColumn.String()
+			replace[replacedStr] = childColumns[i]
+		}
+		child.SetSchema(p.Schema())
+		RemovePlan(p)
+		return child
+	}
 	return p
 }
 

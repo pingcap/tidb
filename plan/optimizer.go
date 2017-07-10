@@ -148,7 +148,7 @@ func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := EliminateProjection(task.plan())
+	p := EliminateProjection(task.plan(), make(map[string]*expression.Column))
 	p.ResolveIndices()
 	return p, nil
 }
@@ -160,7 +160,7 @@ func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (P
 		return nil, errors.Trace(err)
 	}
 	pp := info.p
-	pp = EliminateProjection(pp)
+	pp = EliminateProjection(pp, make(map[string]*expression.Column))
 	if flag&(flagDecorrelate) > 0 {
 		addCachePlan(pp, allocator)
 	}
