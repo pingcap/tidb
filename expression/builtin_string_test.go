@@ -627,13 +627,6 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Space, primitiveValsToConstants([]interface{}{t.arg})...)
 		c.Assert(err, IsNil)
-
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeLongBlob)
-		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
-		c.Assert(tp.Collate, Equals, charset.CollationUTF8)
-		c.Assert(tp.Flen, Equals, mysql.MaxBlobWidth)
-
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
