@@ -15,6 +15,7 @@ package executor
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
@@ -27,9 +28,10 @@ import (
 type ExplainExec struct {
 	baseExecutor
 
-	StmtPlan plan.Plan
-	rows     []*Row
-	cursor   int
+	StmtPlan       plan.Plan
+	rows           []*Row
+	cursor         int
+	explainedPlans map[string]bool
 }
 
 // Schema implements the Executor Schema interface.
@@ -59,12 +61,87 @@ func (e *ExplainExec) prepareExplainInfo(p plan.Plan, parent plan.Plan) error {
 	return nil
 }
 
+// prepareExplainInfo4DAGTask prepares these informations for every plan in the directed acyclic plan graph:
+// ["id", "parents", "schema", "key info", "task type", "operator info"] for every plan
+func (e *ExplainExec) prepareExplainInfo4DAGTask(p plan.Plan, taskType string) error {
+	parents := p.Parents()
+	parentIDs := make([]string, 0, len(parents))
+	for _, parent := range parents {
+		parentIDs = append(parentIDs, parent.ID())
+	}
+	parentInfo := strings.Join(parentIDs, ",")
+	children := p.Children()
+	childrenIDs := make([]string, 0, len(children))
+	for _, child := range children {
+		childrenIDs = append(childrenIDs, child.ID())
+	}
+	childrenInfo := strings.Join(childrenIDs, ",")
+	columnInfo := p.Schema().ColumnInfo()
+	uniqueKeyInfo := p.Schema().KeyInfo()
+	operatorInfoBytes, err := json.Marshal(p)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	operatorInfo := string(operatorInfoBytes)
+	row := &Row{
+		Data: types.MakeDatums(p.ID(), parentInfo, childrenInfo, columnInfo, uniqueKeyInfo, taskType, operatorInfo),
+	}
+	e.rows = append(e.rows, row)
+	return nil
+}
+
+func (e *ExplainExec) prepareCopTaskInfo(plans []plan.PhysicalPlan) error {
+	for _, p := range plans {
+		err := e.prepareExplainInfo4DAGTask(p, "cop task")
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (e *ExplainExec) prepareRootTaskInfo(p plan.Plan) error {
+	e.explainedPlans[p.ID()] = true
+	for _, child := range p.Children() {
+		if e.explainedPlans[child.ID()] {
+			continue
+		}
+		err := e.prepareRootTaskInfo(child)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	switch copPlan := p.(type) {
+	case *plan.PhysicalTableReader:
+		e.prepareCopTaskInfo(copPlan.TablePlans)
+	case *plan.PhysicalIndexReader:
+		e.prepareCopTaskInfo(copPlan.IndexPlans)
+	case *plan.PhysicalIndexLookUpReader:
+		e.prepareCopTaskInfo(copPlan.IndexPlans)
+		e.prepareCopTaskInfo(copPlan.TablePlans)
+	}
+	err := e.prepareExplainInfo4DAGTask(p, "root task")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // Next implements Execution Next interface.
 func (e *ExplainExec) Next() (*Row, error) {
 	if e.cursor == 0 {
-		err := e.prepareExplainInfo(e.StmtPlan, nil)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if plan.UseDAGPlanBuilder(e.ctx) {
+			e.StmtPlan.SetParents()
+			e.explainedPlans = map[string]bool{}
+			err := e.prepareRootTaskInfo(e.StmtPlan)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			err := e.prepareExplainInfo(e.StmtPlan, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 	if e.cursor >= len(e.rows) {

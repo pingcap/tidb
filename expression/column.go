@@ -136,12 +136,9 @@ func (col *Column) Equal(expr Expression, _ context.Context) bool {
 
 // String implements Stringer interface.
 func (col *Column) String() string {
-	result := col.ColName.L
-	if col.TblName.L != "" {
-		result = col.TblName.L + "." + result
-	}
-	if col.DBName.L != "" {
-		result = col.DBName.L + "." + result
+	result := fmt.Sprintf("%s(%d)", col.ColName.L, col.Position)
+	if col.FromID != "" {
+		result = col.FromID + "." + result
 	}
 	return result
 }

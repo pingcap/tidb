@@ -68,7 +68,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		// Test analyze full table.
 		{
 			sql:  "select * from t where t.a <= 2",
-			best: "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
+			best: "TableReader(Table(t)->Sel([le(t.a(0), 2)]))",
 		},
 		{
 			sql:  "select * from t where t.a < 2",
@@ -76,7 +76,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		},
 		{
 			sql:  "select * from t where t.a = 1 and t.b <= 2",
-			best: "IndexLookUp(Index(t.b)[[-inf,2]], Table(t)->Sel([eq(test.t.a, 1)]))",
+			best: "IndexLookUp(Index(t.b)[[-inf,2]], Table(t)->Sel([eq(t.a(0), 1)]))",
 		},
 		// Test not analyzed table.
 		{
@@ -85,7 +85,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		},
 		{
 			sql:  "select * from t1 where t1.a = 1 and t1.b <= 2",
-			best: "IndexLookUp(Index(t1.a)[[1,1]], Table(t1)->Sel([le(test.t1.b, 2)]))",
+			best: "IndexLookUp(Index(t1.a)[[1,1]], Table(t1)->Sel([le(t1.b(1), 2)]))",
 		},
 		// Test analyze single index.
 		{
@@ -93,11 +93,11 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 			// This is not the best because the histogram for index b is pseudo, then the row count calculated for such
 			// a small table is always tableRowCount/3, so the cost is smaller.
 			// FIXME: Fix it after implementing selectivity estimation for normal column.
-			best: "IndexLookUp(Index(t2.b)[[<nil>,+inf]], Table(t2)->Sel([le(test.t2.a, 2)]))",
+			best: "IndexLookUp(Index(t2.b)[[<nil>,+inf]], Table(t2)->Sel([le(t2.a(0), 2)]))",
 		},
 		{
 			sql:  "select * from t2 where t2.a = 1 and t2.b <= 2",
-			best: "IndexLookUp(Index(t2.b)[[-inf,2]], Table(t2)->Sel([eq(test.t2.a, 1)]))",
+			best: "IndexLookUp(Index(t2.b)[[-inf,2]], Table(t2)->Sel([eq(t2.a(0), 1)]))",
 		},
 	}
 	for _, tt := range tests {

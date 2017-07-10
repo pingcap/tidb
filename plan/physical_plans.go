@@ -85,6 +85,14 @@ func (p *PhysicalTableReader) Copy() PhysicalPlan {
 	return &np
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalTableReader) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"read data from\":\"%s\"", p.tablePlan.ID()))
+	buffer.WriteString("}")
+	return buffer.Bytes(), nil
+}
+
 // PhysicalIndexReader is the index reader in tidb.
 type PhysicalIndexReader struct {
 	*basePlan
@@ -106,6 +114,14 @@ func (p *PhysicalIndexReader) Copy() PhysicalPlan {
 	return &np
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalIndexReader) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"read index from\":\"%s\"", p.indexPlan.ID()))
+	buffer.WriteString("}")
+	return buffer.Bytes(), nil
+}
+
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
 type PhysicalIndexLookUpReader struct {
 	*basePlan
@@ -125,6 +141,15 @@ func (p *PhysicalIndexLookUpReader) Copy() PhysicalPlan {
 	np.basePlan = p.basePlan.copy()
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalIndexLookUpReader) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"read index from\":\"%s\",", p.indexPlan.ID()))
+	buffer.WriteString(fmt.Sprintf("\"read data from\":\"%s\"", p.tablePlan.ID()))
+	buffer.WriteString("}")
+	return buffer.Bytes(), nil
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -247,46 +272,58 @@ type physicalTableSource struct {
 // MarshalJSON implements json.Marshaler interface.
 func (p *physicalTableSource) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
-	limit := 0
 	if p.LimitCount != nil {
-		limit = int(*p.LimitCount)
+		buffer.WriteString(fmt.Sprintf("\"limit\":%d,", *p.LimitCount))
 	}
-	buffer.WriteString(fmt.Sprintf("\"limit\": %d, \n", limit))
 	if p.Aggregated {
-		buffer.WriteString(fmt.Sprint("\"aggregated push down\": true, \n"))
-		gbyItems, err := json.Marshal(p.gbyItems)
-		if err != nil {
-			return nil, errors.Trace(err)
+		buffer.WriteString(fmt.Sprint("\"aggregate push down\":{"))
+		if p.gbyItems != nil {
+			gbyItems, err := json.Marshal(p.gbyItems)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			buffer.WriteString(fmt.Sprintf("\"group by\":%s,", gbyItems))
 		}
-		buffer.WriteString(fmt.Sprintf("\"gby items\": %s, \n", gbyItems))
 		aggFuncs, err := json.Marshal(p.aggFuncs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		buffer.WriteString(fmt.Sprintf("\"agg funcs\": %s, \n", aggFuncs))
+		buffer.WriteString(fmt.Sprintf("\"aggregate\":%s},", aggFuncs))
 	} else if len(p.sortItems) > 0 {
 		sortItems, err := json.Marshal(p.sortItems)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		buffer.WriteString(fmt.Sprintf("\"sort items\": %s, \n", sortItems))
+		buffer.WriteString(fmt.Sprintf("\"sort by\":%s,", sortItems))
 	}
-	access, err := json.Marshal(p.AccessCondition)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if p.AccessCondition != nil {
+		access, err := json.Marshal(p.AccessCondition)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"access conditions\":%s,", access))
 	}
-	indexFilter, err := json.Marshal(p.indexFilterConditions)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if p.indexFilterConditions != nil {
+		indexFilter, err := json.Marshal(p.indexFilterConditions)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"index filter conditions\":%s,", indexFilter))
 	}
-	tableFilter, err := json.Marshal(p.tableFilterConditions)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if p.tableFilterConditions != nil {
+		tableFilter, err := json.Marshal(p.tableFilterConditions)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"table filter conditions\":%s,", tableFilter))
+	}
+	currJSON := buffer.Bytes()
+	if length := len(currJSON); currJSON[length-1] == ',' {
+		currJSON[length-1] = '}'
+	} else {
+		buffer.WriteString("}")
 	}
 	// print condition infos
-	buffer.WriteString(fmt.Sprintf("\"access conditions\": %s, \n", access))
-	buffer.WriteString(fmt.Sprintf("\"index filter conditions\": %s, \n", indexFilter))
-	buffer.WriteString(fmt.Sprintf("\"table filter conditions\": %s}", tableFilter))
 	return buffer.Bytes(), nil
 }
 
@@ -689,18 +726,17 @@ func (p *PhysicalTableScan) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf("\"database\":\"%s\",", p.DBName.O))
+	buffer.WriteString(fmt.Sprintf("\"table\":\"%s\",", p.Table.Name.O))
+	buffer.WriteString(fmt.Sprintf("\"desc\":%v,", p.Desc))
+	buffer.WriteString(fmt.Sprintf("\"keep order\":%v,", p.KeepOrder))
 	pushDownInfo, err := json.Marshal(&p.physicalTableSource)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf(
-		" \"db\": \"%s\","+
-			"\n \"table\": \"%s\","+
-			"\n \"desc\": %v,"+
-			"\n \"keep order\": %v,"+
-			"\n \"push down info\": %s}",
-		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, pushDownInfo))
+	buffer.WriteString(fmt.Sprintf("\"push down info\":%s", pushDownInfo))
+	buffer.WriteString("}")
 	return buffer.Bytes(), nil
 }
 
@@ -819,34 +855,43 @@ func (p *PhysicalMergeJoin) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
-	leftChild := p.children[0].(PhysicalPlan)
-	rightChild := p.children[1].(PhysicalPlan)
-	eqConds, err := json.Marshal(p.EqualConditions)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	leftConds, err := json.Marshal(p.LeftConditions)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rightConds, err := json.Marshal(p.RightConditions)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	otherConds, err := json.Marshal(p.OtherConditions)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf(
-		"\"eqCond\": %s,\n "+
-			"\"leftCond\": %s,\n "+
-			"\"rightCond\": %s,\n "+
-			"\"otherCond\": %s,\n"+
-			"\"leftPlan\": \"%s\",\n "+
-			"\"rightPlan\": \"%s\""+
-			"}",
-		eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID()))
+	buffer.WriteString(fmt.Sprintf("\"small table\":\"%s\",", p.children[p.SmallTable].ID()))
+	buffer.WriteString(fmt.Sprintf("\"big table\":\"%s\",", p.children[1-p.SmallTable].ID()))
+	buffer.WriteString(fmt.Sprintf("\"join type\":\"%s\",", p.JoinType))
+
+	if p.EqualConditions != nil {
+		eqConds, err := json.Marshal(p.EqualConditions)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"equal condition\":%s,", eqConds))
+	}
+	if p.LeftConditions != nil {
+		leftConds, err := json.Marshal(p.LeftConditions)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"left condition\":%s,", leftConds))
+	}
+	if p.RightConditions != nil {
+		rightConds, err := json.Marshal(p.RightConditions)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"right condition\":%s,", rightConds))
+	}
+	if p.OtherConditions != nil {
+		otherConds, err := json.Marshal(p.OtherConditions)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"other condition\":%s,", otherConds))
+	}
+	buffer.WriteString(fmt.Sprintf("\"concurency\":\"%d\"", p.Concurrency))
+	buffer.WriteString("}")
+
 	return buffer.Bytes(), nil
 }
 
@@ -900,10 +945,9 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf(""+
-		" \"condition\": %s,\n"+
-		" \"scanController\": %v,"+
-		" \"child\": \"%s\"\n}", conds, p.controllerStatus != notController, p.children[0].ID()))
+	buffer.WriteString(fmt.Sprintf("\"conditions\":%s,", conds))
+	buffer.WriteString(fmt.Sprintf("\"scan controller\":%v", p.controllerStatus != notController))
+	buffer.WriteString("}")
 	return buffer.Bytes(), nil
 }
 
@@ -967,12 +1011,10 @@ func (p *Limit) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *Limit) MarshalJSON() ([]byte, error) {
-	child := p.children[0].(PhysicalPlan)
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf(
-		" \"limit\": %d,\n"+
-			" \"offset\": %d,\n"+
-			" \"child\": \"%s\"}", p.Count, p.Offset, child.ID()))
+	buffer.WriteString(fmt.Sprintf("\"offset\":%d,", p.Offset))
+	buffer.WriteString(fmt.Sprintf("\"count\":%d", p.Count))
+	buffer.WriteString("}")
 	return buffer.Bytes(), nil
 }
 
@@ -1053,18 +1095,19 @@ func (p *PhysicalAggregation) Copy() PhysicalPlan {
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
+	if p.GroupByItems != nil {
+		gbyExprs, err := json.Marshal(p.GroupByItems)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		buffer.WriteString(fmt.Sprintf("\"group by\":%s,", gbyExprs))
+	}
 	aggFuncs, err := json.Marshal(p.AggFuncs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	gbyExprs, err := json.Marshal(p.GroupByItems)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	buffer.WriteString(fmt.Sprintf(
-		"\"AggFuncs\": %s,\n"+
-			"\"GroupByItems\": %s,\n"+
-			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].ID()))
+	buffer.WriteString(fmt.Sprintf("\"aggregate function\":%s", aggFuncs))
+	buffer.WriteString("}")
 	return buffer.Bytes(), nil
 }
 

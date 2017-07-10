@@ -59,6 +59,23 @@ const (
 	LeftOuterSemiJoin
 )
 
+func (tp JoinType) String() string {
+	switch tp {
+	case InnerJoin:
+		return "inner join"
+	case LeftOuterJoin:
+		return "left outer join"
+	case RightOuterJoin:
+		return "right outer join"
+	case SemiJoin:
+		return "semi join"
+	case LeftOuterSemiJoin:
+		return "left outer semi join"
+	default:
+		return "unsupported join type"
+	}
+}
+
 const (
 	preferLeftAsOuter = 1 << iota
 	preferRightAsOuter
@@ -255,10 +272,11 @@ type DataSource struct {
 	*basePlan
 	baseLogicalPlan
 
-	indexHints []*ast.IndexHint
-	tableInfo  *model.TableInfo
-	Columns    []*model.ColumnInfo
-	DBName     model.CIStr
+	indexHints   []*ast.IndexHint
+	tableInfo    *model.TableInfo
+	Columns      []*model.ColumnInfo
+	DBName       model.CIStr
+	columnFromID string
 
 	TableAsName *model.CIStr
 

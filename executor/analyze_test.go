@@ -14,9 +14,6 @@
 package executor_test
 
 import (
-	"fmt"
-	"strings"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
@@ -35,22 +32,116 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create index ind_a on t1 (a)")
 	tk.MustExec("insert into t1 (a) values (1)")
-	result := tk.MustQuery("explain select * from t1 where t1.a = 1")
-	rowStr := fmt.Sprintf("%s", result.Rows())
-	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[IndexReader_8 ")
+	result := tk.MustQuery("explain select * from t1 where t1.a = 1").Rows()
+	expect := [][]string{
+		{
+			"IndexScan_7",
+			"",
+			"",
+			"t1.(0)",
+			"",
+			"cop task",
+			"{\"db\":\"test\",\"table\":\"t1\",\"index\":\"ind_a\",\"ranges\":\"[[1,1]]\",\"desc\":false,\"out of order\":true,\"double read\":false,\"push down info\":{\"access conditions\":[\"eq(t1.a(0), 1)\"]}}",
+		},
+		{
+			"IndexReader_8",
+			"",
+			"",
+			"Projection_3.a(1)",
+			"",
+			"root task",
+			"{\"read index from\":\"IndexScan_7\"}",
+		},
+	}
+	c.Check(len(result), Equals, len(expect))
+	for i := range result {
+		c.Check(len(result[i]), Equals, len(expect[i]))
+		for j := range result[i] {
+			c.Check(result[i][j], Equals, expect[i][j])
+		}
+	}
+
 	tk.MustExec("analyze table t1")
-	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
-	rowStr = fmt.Sprintf("%s", result.Rows())
-	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[TableReader_6 ")
+	result = tk.MustQuery("explain select * from t1 where t1.a = 1").Rows()
+	expect = [][]string{
+		{
+			"TableScan_4",
+			"Selection_5",
+			"",
+			"t1.a(0)",
+			"",
+			"cop task",
+			"{\"database\":\"test\",\"table\":\"t1\",\"desc\":false,\"keep order\":false,\"push down info\":{}}",
+		},
+		{
+			"Selection_5",
+			"",
+			"TableScan_4",
+			"t1.a(0)",
+			"",
+			"cop task",
+			"{\"conditions\":[\"eq(t1.a(0), 1)\"],\"scan controller\":false}",
+		},
+		{
+			"TableReader_6",
+			"",
+			"",
+			"Projection_3.a(1)",
+			"",
+			"root task",
+			"{\"read data from\":\"Selection_5\"}",
+		},
+	}
+	c.Check(len(result), Equals, len(expect))
+	for i := range result {
+		c.Check(len(result[i]), Equals, len(expect[i]))
+		for j := range result[i] {
+			c.Check(result[i][j], Equals, expect[i][j])
+		}
+	}
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create index ind_a on t1 (a)")
 	tk.MustExec("insert into t1 (a) values (1)")
 	tk.MustExec("analyze table t1 index ind_a")
-	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
-	rowStr = fmt.Sprintf("%s", result.Rows())
-	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[TableReader_6 ")
+	result = tk.MustQuery("explain select * from t1 where t1.a = 1").Rows()
+	expect = [][]string{
+		{
+			"TableScan_4",
+			"Selection_5",
+			"",
+			"t1.a(0)",
+			"",
+			"cop task",
+			"{\"database\":\"test\",\"table\":\"t1\",\"desc\":false,\"keep order\":false,\"push down info\":{}}",
+		},
+		{
+			"Selection_5",
+			"",
+			"TableScan_4",
+			"t1.a(0)",
+			"",
+			"cop task",
+			"{\"conditions\":[\"eq(t1.a(0), 1)\"],\"scan controller\":false}",
+		},
+		{
+			"TableReader_6",
+			"",
+			"",
+			"Projection_3.a(1)",
+			"",
+			"root task",
+			"{\"read data from\":\"Selection_5\"}",
+		},
+	}
+	c.Check(len(result), Equals, len(expect))
+	for i := range result {
+		c.Check(len(result[i]), Equals, len(expect[i]))
+		for j := range result[i] {
+			c.Check(result[i][j], Equals, expect[i][j])
+		}
+	}
 }
 
 type recordSet struct {

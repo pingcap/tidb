@@ -414,7 +414,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}{
 		{
 			sql:  "select count(*) from t a, t b where a.a = b.a",
-			best: "Join{DataScan(a)->DataScan(b)}(a.a,b.a)->Aggr(count(1))->Projection",
+			best: "Join{DataScan(a)->DataScan(b)}(t(a).a(0),t(b).a(0))->Aggr(count(1))->Projection",
 		},
 		{
 			sql:  "select a from (select a from t where d = 0) k where k.a = 5",
@@ -430,31 +430,31 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t ta, t tb where (ta.d, ta.a) = (tb.b, tb.c)",
-			best: "Join{DataScan(ta)->DataScan(tb)}(ta.d,tb.b)(ta.a,tb.c)->Projection",
+			best: "Join{DataScan(ta)->DataScan(tb)}(t(ta).d(3),t(tb).b(1))(t(ta).a(0),t(tb).c(2))->Projection",
 		},
 		{
 			sql:  "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
-			best: "Join{DataScan(t2)->Selection->DataScan(t1)->Selection}(t2.b,t1.a)(t2.d,t1.d)->Projection",
+			best: "Join{DataScan(t2)->Selection->DataScan(t1)->Selection}(t(t2).b(1),t(t1).a(0))(t(t2).d(3),t(t1).d(3))->Projection",
 		},
 		{
 			sql:  "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
-			best: "Join{DataScan(ta)->Selection->DataScan(tb)->Selection}(ta.d,tb.d)->Projection",
+			best: "Join{DataScan(ta)->Selection->DataScan(tb)->Selection}(t(ta).d(3),t(tb).d(3))->Projection",
 		},
 		{
 			sql:  "select * from t ta join t tb on ta.d = tb.d where ta.d > 1 and tb.a = 0",
-			best: "Join{DataScan(ta)->Selection->DataScan(tb)->Selection}(ta.d,tb.d)->Projection",
+			best: "Join{DataScan(ta)->Selection->DataScan(tb)->Selection}(t(ta).d(3),t(tb).d(3))->Projection",
 		},
 		{
 			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
-			best: "Join{DataScan(ta)->Selection->DataScan(tb)->Selection}(ta.d,tb.d)->Projection",
+			best: "Join{DataScan(ta)->Selection->DataScan(tb)->Selection}(t(ta).d(3),t(tb).d(3))->Projection",
 		},
 		{
 			sql:  "select * from t ta right outer join t tb on ta.d = tb.d and ta.a > 1 where tb.a = 0",
-			best: "Join{DataScan(ta)->Selection->DataScan(tb)->Selection}(ta.d,tb.d)->Projection",
+			best: "Join{DataScan(ta)->Selection->DataScan(tb)->Selection}(t(ta).d(3),t(tb).d(3))->Projection",
 		},
 		{
 			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ta.d = 0",
-			best: "Join{DataScan(ta)->Selection->DataScan(tb)}(ta.d,tb.d)->Projection",
+			best: "Join{DataScan(ta)->Selection->DataScan(tb)}(t(ta).d(3),t(tb).d(3))->Projection",
 		},
 		{
 			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where tb.d = 0",
@@ -462,31 +462,31 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where tb.c is not null and tb.c = 0 and ifnull(tb.d, 1)",
-			best: "Join{DataScan(ta)->Selection->DataScan(tb)->Selection}(ta.d,tb.d)->Projection",
+			best: "Join{DataScan(ta)->Selection->DataScan(tb)->Selection}(t(ta).d(3),t(tb).d(3))->Projection",
 		},
 		{
 			sql:  "select * from t ta left outer join t tb on ta.a = tb.a left outer join t tc on tb.b = tc.b where tc.c > 0",
-			best: "Join{Join{DataScan(ta)->DataScan(tb)}(ta.a,tb.a)->DataScan(tc)->Selection}(tb.b,tc.b)->Projection",
+			best: "Join{Join{DataScan(ta)->DataScan(tb)}(t(ta).a(0),t(tb).a(0))->DataScan(tc)->Selection}(t(tb).b(1),t(tc).b(1))->Projection",
 		},
 		{
 			sql:  "select * from t ta left outer join t tb on ta.a = tb.a left outer join t tc on tc.b = ta.b where tb.c > 0",
-			best: "Join{Join{DataScan(ta)->DataScan(tb)->Selection}(ta.a,tb.a)->DataScan(tc)}(ta.b,tc.b)->Projection",
+			best: "Join{Join{DataScan(ta)->DataScan(tb)->Selection}(t(ta).a(0),t(tb).a(0))->DataScan(tc)}(t(ta).b(1),t(tc).b(1))->Projection",
 		},
 		{
 			sql:  "select * from t as ta left outer join (t as tb left join t as tc on tc.b = tb.b) on tb.a = ta.a where tc.c > 0",
-			best: "Join{DataScan(ta)->Join{DataScan(tb)->DataScan(tc)->Selection}(tb.b,tc.b)}(ta.a,tb.a)->Projection",
+			best: "Join{DataScan(ta)->Join{DataScan(tb)->DataScan(tc)->Selection}(t(tb).b(1),t(tc).b(1))}(t(ta).a(0),t(tb).a(0))->Projection",
 		},
 		{
 			sql:  "select * from ( t as ta left outer join t as tb on ta.a = tb.a) join ( t as tc left join t as td on tc.b = td.b) on ta.c = td.c where tb.c = 2 and td.a = 1",
-			best: "Join{Join{DataScan(ta)->DataScan(tb)->Selection}(ta.a,tb.a)->Join{DataScan(tc)->DataScan(td)->Selection}(tc.b,td.b)}(ta.c,td.c)->Projection",
+			best: "Join{Join{DataScan(ta)->DataScan(tb)->Selection}(t(ta).a(0),t(tb).a(0))->Join{DataScan(tc)->DataScan(td)->Selection}(t(tc).b(1),t(td).b(1))}(t(ta).c(2),t(td).c(2))->Projection",
 		},
 		{
 			sql:  "select * from t ta left outer join (t tb left outer join t tc on tc.b = tb.b) on tb.a = ta.a and tc.c = ta.c where tc.d > 0 or ta.d > 0",
-			best: "Join{DataScan(ta)->Join{DataScan(tb)->DataScan(tc)}(tb.b,tc.b)}(ta.a,tb.a)(ta.c,tc.c)->Selection->Projection",
+			best: "Join{DataScan(ta)->Join{DataScan(tb)->DataScan(tc)}(t(tb).b(1),t(tc).b(1))}(t(ta).a(0),t(tb).a(0))(t(ta).c(2),t(tc).c(2))->Selection->Projection",
 		},
 		{
 			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ifnull(tb.d, null) or tb.d is null",
-			best: "Join{DataScan(ta)->DataScan(tb)}(ta.d,tb.d)->Selection->Projection",
+			best: "Join{DataScan(ta)->DataScan(tb)}(t(ta).d(3),t(tb).d(3))->Selection->Projection",
 		},
 		{
 			sql:  "select a, d from (select * from t union all select * from t union all select * from t) z where a < 10",
@@ -502,43 +502,43 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select a from t where exists(select 1 from t as x where x.a = t.a and t.a < 1 and x.a < 1)",
-			best: "Join{DataScan(t)->Selection->DataScan(x)->Selection}(test.t.a,x.a)->Projection",
+			best: "Join{DataScan(t)->Selection->DataScan(x)->Selection}(t.a(0),t(x).a(0))->Projection",
 		},
 		{
 			sql:  "select a from t where exists(select 1 from t as x where x.a = t.a and x.a < 1) and a < 1",
-			best: "Join{DataScan(t)->Selection->DataScan(x)->Selection}(test.t.a,x.a)->Projection",
+			best: "Join{DataScan(t)->Selection->DataScan(x)->Selection}(t.a(0),t(x).a(0))->Projection",
 		},
 		{
 			sql:  "select a from t where exists(select 1 from t as x where x.a = t.a) and exists(select 1 from t as x where x.a = t.a)",
-			best: "Join{Join{DataScan(t)->DataScan(x)}(test.t.a,x.a)->DataScan(x)}(test.t.a,x.a)->Projection",
+			best: "Join{Join{DataScan(t)->DataScan(x)}(t.a(0),t(x).a(0))->DataScan(x)}(t.a(0),t(x).a(0))->Projection",
 		},
 		{
 			sql:  "select * from (select a, b, sum(c) as s from t group by a, b) k where k.a > k.b * 2 + 1",
-			best: "DataScan(t)->Selection->Aggr(sum(test.t.c),firstrow(test.t.a),firstrow(test.t.b))->Projection->Projection",
+			best: "DataScan(t)->Selection->Aggr(sum(t.c(2)),firstrow(t.a(0)),firstrow(t.b(1)))->Projection->Projection",
 		},
 		{
 			sql:  "select * from (select a, b, sum(c) as s from t group by a, b) k where k.a > 1 and k.b > 2",
-			best: "DataScan(t)->Selection->Aggr(sum(test.t.c),firstrow(test.t.a),firstrow(test.t.b))->Projection->Projection",
+			best: "DataScan(t)->Selection->Aggr(sum(t.c(2)),firstrow(t.a(0)),firstrow(t.b(1)))->Projection->Projection",
 		},
 		{
 			sql:  "select * from (select k.a, sum(k.s) as ss from (select a, sum(b) as s from t group by a) k group by k.a) l where l.a > 2",
-			best: "DataScan(t)->Selection->Aggr(sum(test.t.b),firstrow(test.t.a))->Projection->Aggr(sum(k.s),firstrow(k.a))->Projection->Projection",
+			best: "DataScan(t)->Selection->Aggr(sum(t.b(1)),firstrow(t.a(0)))->Projection->Aggr(sum(Projection_3.s(2)),firstrow(Projection_3.a(1)))->Projection->Projection",
 		},
 		{
 			sql:  "select * from (select a, sum(b) as s from t group by a) k where a > s",
-			best: "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Selection->Projection->Projection",
+			best: "DataScan(t)->Aggr(sum(t.b(1)),firstrow(t.a(0)))->Selection->Projection->Projection",
 		},
 		{
 			sql:  "select * from (select a, sum(b) as s from t group by a + 1) k where a > 1",
-			best: "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Selection->Projection->Projection",
+			best: "DataScan(t)->Aggr(sum(t.b(1)),firstrow(t.a(0)))->Selection->Projection->Projection",
 		},
 		{
 			sql:  "select * from (select a, sum(b) as s from t group by a having 1 = 0) k where a > 1",
-			best: "DataScan(t)->Selection->Aggr(sum(test.t.b),firstrow(test.t.a))->Selection->Projection->Projection",
+			best: "DataScan(t)->Selection->Aggr(sum(t.b(1)),firstrow(t.a(0)))->Selection->Projection->Projection",
 		},
 		{
 			sql:  "select a, count(a) cnt from t group by a having cnt < 1",
-			best: "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Selection->Projection",
+			best: "DataScan(t)->Aggr(count(t.a(0)),firstrow(t.a(0)))->Selection->Projection",
 		},
 	}
 	for _, ca := range tests {
@@ -573,30 +573,30 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
-			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)}(t.a(0),t(s).a(0))->Projection",
 		},
 		{
 			sql:  "select count(c) ,(select b from t s where s.a = t.a) from t",
-			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Projection->Projection",
+			plan: "Join{DataScan(t)->Aggr(count(t.c(2)),firstrow(t.a(0)))->DataScan(s)}(t.a(0),t(s).a(0))->Projection->Projection",
 		},
 		{
 			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Aggr(firstrow(aggregation_2_col_0),firstrow(test.t.a),count(s.b))->Projection->Projection",
+			plan: "Join{DataScan(t)->Aggr(count(t.c(2)),firstrow(t.a(0)))->DataScan(s)}(t.a(0),t(s).a(0))->Aggr(firstrow(Aggregation_2.aggregation_2_col_0(0)),firstrow(t.a(0)),count(t(s).b(1)))->Projection->Projection",
 		},
 		{
 			// Semi-join with agg cannot decorrelate.
 			sql:  "select t.c in (select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Aggr(count(s.b))}->Projection",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Aggr(count(t(s).b(1)))}->Projection",
 		},
 		{
 			// Theta-join with agg cannot decorrelate.
 			sql:  "select (select count(s.b) k from t s where s.a = t.a having k != 0) from t",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Aggr(count(s.b))}->Projection->Projection",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Aggr(count(t(s).b(1)))}->Projection->Projection",
 		},
 		{
 			// Relation without keys cannot decorrelate.
 			sql:  "select (select count(s.b) k from t s where s.a = t1.a) from t t1, t t2",
-			plan: "Apply{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Selection->Aggr(count(s.b))}->Projection->Projection",
+			plan: "Apply{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Selection->Aggr(count(t(s).b(1)))}->Projection->Projection",
 		},
 		{
 			// Aggregate function like count(1) cannot decorrelate.
@@ -605,26 +605,26 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "select a from t where a in (select a from t s group by t.b)",
-			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a))->Projection}(test.t.a,a)->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(t(s).a(0)))->Projection}(t.a(0),Projection_5.a(1))->Projection",
 		},
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
-			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)}(t.a(0),t(s).a(0))->Projection",
 		},
 		{
 			// This will be resolved as in function.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
-			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection->Selection->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)}(t.a(0),t(s).a(0))->Projection->Selection->Projection",
 		},
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)->Aggr(sum(t(s).a(0)))->Projection}(t.a(0),Projection_5.sel_agg_1(2))->Projection",
 		},
 		{
 			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
+			plan: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(t(s).d(3),t(k).d(3))(t(s).c(2),t(k).c(2))->Aggr(sum(t(s).a(0)))->Projection}(t.a(0),Projection_11.sel_agg_1(2))->Projection",
 		},
 		{
 			sql:  "select * from t for update",
@@ -694,15 +694,15 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 	}{
 		{
 			sql:  "select * from t t1, t t2, t t3, t t4, t t5, t t6 where t1.a = t2.b and t2.a = t3.b and t3.c = t4.a and t4.d = t2.c and t5.d = t6.d",
-			best: "Join{Join{Join{Join{DataScan(t1)->DataScan(t2)}(t1.a,t2.b)->DataScan(t3)}(t2.a,t3.b)->DataScan(t4)}(t3.c,t4.a)(t2.c,t4.d)->Join{DataScan(t5)->DataScan(t6)}(t5.d,t6.d)}->Projection",
+			best: "Join{Join{Join{Join{DataScan(t1)->DataScan(t2)}(t(t1).a(0),t(t2).b(1))->DataScan(t3)}(t(t2).a(0),t(t3).b(1))->DataScan(t4)}(t(t3).c(2),t(t4).a(0))(t(t2).c(2),t(t4).d(3))->Join{DataScan(t5)->DataScan(t6)}(t(t5).d(3),t(t6).d(3))}->Projection",
 		},
 		{
 			sql:  "select * from t t1, t t2, t t3, t t4, t t5, t t6, t t7, t t8 where t1.a = t8.a",
-			best: "Join{Join{Join{Join{DataScan(t1)->DataScan(t8)}(t1.a,t8.a)->DataScan(t2)}->Join{DataScan(t3)->DataScan(t4)}}->Join{Join{DataScan(t5)->DataScan(t6)}->DataScan(t7)}}->Projection",
+			best: "Join{Join{Join{Join{DataScan(t1)->DataScan(t8)}(t(t1).a(0),t(t8).a(0))->DataScan(t2)}->Join{DataScan(t3)->DataScan(t4)}}->Join{Join{DataScan(t5)->DataScan(t6)}->DataScan(t7)}}->Projection",
 		},
 		{
 			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t5.b < 8",
-			best: "Join{Join{Join{Join{DataScan(t5)->Selection->DataScan(t1)}(t5.a,t1.a)->DataScan(t2)}(t1.a,t2.a)->DataScan(t3)}(t2.a,t3.a)(t1.a,t3.a)->DataScan(t4)}(t5.a,t4.a)(t3.a,t4.a)(t2.a,t4.a)->Projection",
+			best: "Join{Join{Join{Join{DataScan(t5)->Selection->DataScan(t1)}(t(t5).a(0),t(t1).a(0))->DataScan(t2)}(t(t1).a(0),t(t2).a(0))->DataScan(t3)}(t(t2).a(0),t(t3).a(0))(t(t1).a(0),t(t3).a(0))->DataScan(t4)}(t(t5).a(0),t(t4).a(0))(t(t3).a(0),t(t4).a(0))(t(t2).a(0),t(t4).a(0))->Projection",
 		},
 		{
 			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
@@ -710,7 +710,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t2)->Selection->DataScan(t3)}(t2.a,t3.a)->DataScan(t1)}(t3.a,t1.a)->Projection}->Projection",
+			best: "Apply{DataScan(o)->Join{Join{DataScan(t2)->Selection->DataScan(t3)}(t(t2).a(0),t(t3).a(0))->DataScan(t1)}(t(t3).a(0),t(t1).a(0))->Projection}->Projection",
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
@@ -748,79 +748,79 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 	}{
 		{
 			sql:  "select sum(t.a), sum(t.a+1), sum(t.a), count(t.a), sum(t.a) + count(t.a) from t",
-			best: "DataScan(t)->Aggr(sum(test.t.a),sum(plus(test.t.a, 1)),count(test.t.a))->Projection",
+			best: "DataScan(t)->Aggr(sum(t.a(0)),sum(plus(t.a(0), 1)),count(t.a(0)))->Projection",
 		},
 		{
 			sql:  "select sum(t.a + t.b), sum(t.a + t.c), sum(t.a + t.b), count(t.a) from t having sum(t.a + t.b) > 0 order by sum(t.a + t.c)",
-			best: "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Selection->Projection->Sort->Projection",
+			best: "DataScan(t)->Aggr(sum(plus(t.a(0), t.b(1))),sum(plus(t.a(0), t.c(2))),count(t.a(0)))->Selection->Projection->Sort->Projection",
 		},
 		{
 			sql:  "select sum(a.a) from t a, t b where a.c = b.c",
-			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
+			best: "Join{DataScan(a)->Aggr(sum(t(a).a(0)),firstrow(t(a).c(2)))->DataScan(b)}(t(a).c(2),t(b).c(2))->Aggr(sum(Aggregation_8.join_agg_0(0)))->Projection",
 		},
 		{
 			sql:  "select sum(b.a) from t a, t b where a.c = b.c",
-			best: "Join{DataScan(a)->DataScan(b)->Aggr(sum(b.a),firstrow(b.c))}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
+			best: "Join{DataScan(a)->DataScan(b)->Aggr(sum(t(b).a(0)),firstrow(t(b).c(2)))}(t(a).c(2),t(b).c(2))->Aggr(sum(Aggregation_8.join_agg_0(0)))->Projection",
 		},
 		{
 			sql:  "select sum(b.a), a.a from t a, t b where a.c = b.c",
-			best: "Join{DataScan(a)->DataScan(b)->Aggr(sum(b.a),firstrow(b.c))}(a.c,b.c)->Aggr(sum(join_agg_0),firstrow(a.a))->Projection",
+			best: "Join{DataScan(a)->DataScan(b)->Aggr(sum(t(b).a(0)),firstrow(t(b).c(2)))}(t(a).c(2),t(b).c(2))->Aggr(sum(Aggregation_8.join_agg_0(0)),firstrow(t(a).a(0)))->Projection",
 		},
 		{
 			sql:  "select sum(a.a), b.a from t a, t b where a.c = b.c",
-			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0),firstrow(b.a))->Projection",
+			best: "Join{DataScan(a)->Aggr(sum(t(a).a(0)),firstrow(t(a).c(2)))->DataScan(b)}(t(a).c(2),t(b).c(2))->Aggr(sum(Aggregation_8.join_agg_0(0)),firstrow(t(b).a(0)))->Projection",
 		},
 		{
 			sql:  "select sum(a.a), sum(b.a) from t a, t b where a.c = b.c",
-			best: "Join{DataScan(a)->DataScan(b)}(a.c,b.c)->Aggr(sum(a.a),sum(b.a))->Projection",
+			best: "Join{DataScan(a)->DataScan(b)}(t(a).c(2),t(b).c(2))->Aggr(sum(t(a).a(0)),sum(t(b).a(0)))->Projection",
 		},
 		{
 			sql:  "select sum(a.a), max(b.a) from t a, t b where a.c = b.c",
-			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0),max(b.a))->Projection",
+			best: "Join{DataScan(a)->Aggr(sum(t(a).a(0)),firstrow(t(a).c(2)))->DataScan(b)}(t(a).c(2),t(b).c(2))->Aggr(sum(Aggregation_8.join_agg_0(0)),max(t(b).a(0)))->Projection",
 		},
 		{
 			sql:  "select max(a.a), sum(b.a) from t a, t b where a.c = b.c",
-			best: "Join{DataScan(a)->DataScan(b)->Aggr(sum(b.a),firstrow(b.c))}(a.c,b.c)->Aggr(max(a.a),sum(join_agg_0))->Projection",
+			best: "Join{DataScan(a)->DataScan(b)->Aggr(sum(t(b).a(0)),firstrow(t(b).c(2)))}(t(a).c(2),t(b).c(2))->Aggr(max(t(a).a(0)),sum(Aggregation_8.join_agg_0(0)))->Projection",
 		},
 		{
 			sql:  "select sum(a.a) from t a, t b, t c where a.c = b.c and b.c = c.c",
-			best: "Join{Join{DataScan(a)->DataScan(b)}(a.c,b.c)->DataScan(c)}(b.c,c.c)->Aggr(sum(a.a))->Projection",
+			best: "Join{Join{DataScan(a)->DataScan(b)}(t(a).c(2),t(b).c(2))->DataScan(c)}(t(b).c(2),t(c).c(2))->Aggr(sum(t(a).a(0)))->Projection",
 		},
 		{
 			sql:  "select sum(b.a) from t a left join t b on a.c = b.c",
-			best: "Join{DataScan(a)->DataScan(b)->Aggr(sum(b.a),firstrow(b.c))}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
+			best: "Join{DataScan(a)->DataScan(b)->Aggr(sum(t(b).a(0)),firstrow(t(b).c(2)))}(t(a).c(2),t(b).c(2))->Aggr(sum(Aggregation_6.join_agg_0(0)))->Projection",
 		},
 		{
 			sql:  "select sum(a.a) from t a left join t b on a.c = b.c",
-			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
+			best: "Join{DataScan(a)->Aggr(sum(t(a).a(0)),firstrow(t(a).c(2)))->DataScan(b)}(t(a).c(2),t(b).c(2))->Aggr(sum(Aggregation_6.join_agg_0(0)))->Projection",
 		},
 		{
 			sql:  "select sum(a.a) from t a right join t b on a.c = b.c",
-			best: "Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0))->Projection",
+			best: "Join{DataScan(a)->Aggr(sum(t(a).a(0)),firstrow(t(a).c(2)))->DataScan(b)}(t(a).c(2),t(b).c(2))->Aggr(sum(Aggregation_6.join_agg_0(0)))->Projection",
 		},
 		{
 			sql:  "select sum(a) from (select * from t) x",
-			best: "DataScan(t)->Aggr(sum(test.t.a))->Projection",
+			best: "DataScan(t)->Aggr(sum(t.a(0)))->Projection",
 		},
 		{
 			sql:  "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b union all select b c1, e c2 from t c) x group by c2",
-			best: "UnionAll{DataScan(a)->Aggr(sum(a.c),firstrow(a.d))->DataScan(b)->Aggr(sum(b.a),firstrow(b.b))->DataScan(c)->Aggr(sum(c.b),firstrow(c.e))}->Aggr(sum(join_agg_0))->Projection",
+			best: "UnionAll{DataScan(a)->Aggr(sum(t(a).c(2)),firstrow(t(a).d(3)))->DataScan(b)->Aggr(sum(t(b).a(0)),firstrow(t(b).b(1)))->DataScan(c)->Aggr(sum(t(c).b(1)),firstrow(t(c).e(4)))}->Aggr(sum(Aggregation_10.join_agg_0(0)))->Projection",
 		},
 		{
 			sql:  "select max(a.b), max(b.b) from t a join t b on a.c = b.c group by a.a",
-			best: "Join{DataScan(a)->DataScan(b)->Aggr(max(b.b),firstrow(b.c))}(a.c,b.c)->Projection->Projection",
+			best: "Join{DataScan(a)->DataScan(b)->Aggr(max(t(b).b(1)),firstrow(t(b).c(2)))}(t(a).c(2),t(b).c(2))->Projection->Projection",
 		},
 		{
 			sql:  "select max(a.b), max(b.b) from t a join t b on a.a = b.a group by a.c",
-			best: "Join{DataScan(a)->DataScan(b)}(a.a,b.a)->Aggr(max(a.b),max(b.b))->Projection",
+			best: "Join{DataScan(a)->DataScan(b)}(t(a).a(0),t(b).a(0))->Aggr(max(t(a).b(1)),max(t(b).b(1)))->Projection",
 		},
 		{
 			sql:  "select max(c.b) from (select * from t a union all select * from t b) c group by c.a",
-			best: "UnionAll{DataScan(a)->Projection->Projection->DataScan(b)->Projection->Projection}->Aggr(max(join_agg_0))->Projection",
+			best: "UnionAll{DataScan(a)->Projection->Projection->DataScan(b)->Projection->Projection}->Aggr(max(Aggregation_8.join_agg_0(0)))->Projection",
 		},
 		{
 			sql:  "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",
-			best: "Join{DataScan(a)->DataScan(b)}(a.a,b.a)(a.b,b.b)->Aggr(max(a.c))->Projection",
+			best: "Join{DataScan(a)->DataScan(b)}(t(a).a(0),t(b).a(0))(t(a).b(1),t(b).b(1))->Aggr(max(t(a).c(2)))->Projection",
 		},
 	}
 	for _, tt := range tests {
@@ -1333,12 +1333,12 @@ func (s *testPlanSuite) TestValidate(c *C) {
 
 func checkUniqueKeys(p Plan, c *C, ans map[string][][]string, sql string) {
 	keyList, ok := ans[p.ID()]
-	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.ID()))
-	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
+	c.Assert(ok, IsTrue, Commentf("for \"%s\", \"%v\" not found", sql, p.ID()))
+	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for \"%s\", \"%v\", the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
 	for i, key := range keyList {
-		c.Assert(len(key), Equals, len(p.Schema().Keys[i]), Commentf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), key))
+		c.Assert(len(key), Equals, len(p.Schema().Keys[i]), Commentf("for \"%s\", \"%v\" \"%v\", the number of column doesn't match", sql, p.ID(), key))
 		for j, colName := range key {
-			c.Assert(colName, Equals, p.Schema().Keys[i][j].String(), Commentf("for %s, %v %v, column dosen't match", sql, p.ID(), key))
+			c.Assert(p.Schema().Keys[i][j].String(), Equals, colName, Commentf("for \"%s\", \"%v\" \"%v\", column dosen't match", sql, p.ID(), key))
 		}
 	}
 	for _, child := range p.Children() {
@@ -1355,61 +1355,61 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		{
 			sql: "select a, sum(e) from t group by b",
 			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}},
-				"Projection_3":  {{"a"}},
+				"TableScan_1":   {{"t.a(0)"}},
+				"Aggregation_2": {{"t.a(0)"}},
+				"Projection_3":  {{"Projection_3.a(1)"}},
 			},
 		},
 		{
 			sql: "select a, b, sum(f) from t group by b",
 			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}, {"test.t.b"}},
-				"Projection_3":  {{"a"}, {"b"}},
+				"TableScan_1":   {{"t.f(8)"}, {"t.a(0)"}},
+				"Aggregation_2": {{"t.a(0)"}, {"t.b(1)"}},
+				"Projection_3":  {{"Projection_3.a(1)"}, {"Projection_3.b(2)"}},
 			},
 		},
 		{
 			sql: "select c, d, e, sum(a) from t group by c, d, e",
 			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.a"}},
-				"Aggregation_2": {{"test.t.c", "test.t.d", "test.t.e"}},
-				"Projection_3":  {{"c", "d", "e"}},
+				"TableScan_1":   {{"t.a(0)"}},
+				"Aggregation_2": {{"t.c(2)", "t.d(3)", "t.e(4)"}},
+				"Projection_3":  {{"Projection_3.c(1)", "Projection_3.d(2)", "Projection_3.e(3)"}},
 			},
 		},
 		{
 			sql: "select f, g, sum(a) from t",
 			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}},
-				"Projection_3":  {{"f"}, {"g"}, {"f", "g"}},
+				"TableScan_1":   {{"t.f(8)"}, {"t.g(9)"}, {"t.f(8)", "t.g(9)"}, {"t.a(0)"}},
+				"Aggregation_2": {{"t.f(8)"}, {"t.g(9)"}, {"t.f(8)", "t.g(9)"}},
+				"Projection_3":  {{"Projection_3.f(1)"}, {"Projection_3.g(2)"}, {"Projection_3.f(1)", "Projection_3.g(2)"}},
 			},
 		},
 		{
 			sql: "select * from t t1 join t t2 on t1.a = t2.e",
 			ans: map[string][][]string{
-				"TableScan_1":  {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
-				"TableScan_2":  {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
-				"Join_3":       {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
-				"Projection_4": {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
+				"TableScan_2":  {{"t(t2).f(8)"}, {"t(t2).g(9)"}, {"t(t2).f(8)", "t(t2).g(9)"}, {"t(t2).a(0)"}},
+				"TableScan_1":  {{"t(t1).f(8)"}, {"t(t1).g(9)"}, {"t(t1).f(8)", "t(t1).g(9)"}, {"t(t1).a(0)"}},
+				"Join_3":       {{"t(t2).f(8)"}, {"t(t2).g(9)"}, {"t(t2).f(8)", "t(t2).g(9)"}, {"t(t2).a(0)"}},
+				"Projection_4": {{"Projection_4.f(19)"}, {"Projection_4.g(20)"}, {"Projection_4.f(19)", "Projection_4.g(20)"}, {"Projection_4.a(11)"}},
 			},
 		},
 		{
 			sql: "select f from t having sum(a) > 0",
 			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.f"}},
-				"Selection_6":   {{"test.t.f"}},
-				"Projection_3":  {{"f"}},
-				"Projection_5":  {{"f"}},
+				"TableScan_1":   {{"t.f(8)"}, {"t.a(0)"}},
+				"Aggregation_2": {{"t.f(8)"}},
+				"Selection_6":   {{"t.f(8)"}},
+				"Projection_3":  {{"Projection_3.f(1)"}},
+				"Projection_5":  {{"Projection_3.f(1)"}},
 			},
 		},
 		{
 			sql: "select * from t t1 left join t t2 on t1.a = t2.a",
 			ans: map[string][][]string{
-				"TableScan_1":  {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
-				"TableScan_2":  {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
-				"Join_3":       {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
-				"Projection_4": {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
+				"TableScan_1":  {{"t(t1).f(8)"}, {"t(t1).g(9)"}, {"t(t1).f(8)", "t(t1).g(9)"}, {"t(t1).a(0)"}},
+				"TableScan_2":  {{"t(t2).f(8)"}, {"t(t2).g(9)"}, {"t(t2).f(8)", "t(t2).g(9)"}, {"t(t2).a(0)"}},
+				"Join_3":       {{"t(t1).f(8)"}, {"t(t1).g(9)"}, {"t(t1).f(8)", "t(t1).g(9)"}, {"t(t1).a(0)"}},
+				"Projection_4": {{"Projection_4.f(9)"}, {"Projection_4.g(10)"}, {"Projection_4.f(9)", "Projection_4.g(10)"}, {"Projection_4.a(1)"}},
 			},
 		},
 	}
@@ -1447,11 +1447,11 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		},
 		{
 			sql:  "select sum(b) from t group by c, d, e",
-			best: "DataScan(t)->Aggr(sum(test.t.b))->Projection",
+			best: "DataScan(t)->Aggr(sum(t.b(1)))->Projection",
 		},
 		{
 			sql:  "select t1.a, count(t2.b) from t t1, t t2 where t1.a = t2.a group by t1.a",
-			best: "Join{DataScan(t1)->DataScan(t2)}(t1.a,t2.a)->Projection->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t(t1).a(0),t(t2).a(0))->Projection->Projection",
 		},
 		{
 			sql:  "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
