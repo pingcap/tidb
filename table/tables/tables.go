@@ -350,10 +350,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 				// Save storage space by not storing null value.
 				continue
 			}
-			if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
-				// Save storage space by not storing virtual column.
-				continue
-			}
 		}
 		colIDs = append(colIDs, col.ID)
 		row = append(row, value)
