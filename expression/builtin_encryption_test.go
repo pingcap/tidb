@@ -174,34 +174,48 @@ func (s *testEvaluatorSuite) TestSha2Encrypt(c *C) {
 	}
 }
 
-type md5Test struct {
-	out interface{}
-	in  interface{}
-}
-
-var md5Tests = []md5Test{
-	{"d41d8cd98f00b204e9800998ecf8427e", ""},
-	{"0cc175b9c0f1b6a831c399e269772661", "a"},
-	{"187ef4436122d1cc2f40dc2b92f0eba0", "ab"},
-	{"900150983cd24fb0d6963f7d28e17f72", "abc"},
-	{"202cb962ac59075b964b07152d234b70", 123},
-	{"202cb962ac59075b964b07152d234b70", "123"},
-	{"46ddc40585caa8abc07c460b3485781e", 123.123},
-	{nil, nil},
-}
-
 func (s *testEvaluatorSuite) TestMD5(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.MD5]
-	for _, tt := range md5Tests {
-		arg := types.NewDatum(tt.in)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
-		c.Assert(err, IsNil)
-		out, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(out, DeepEquals, types.NewDatum(tt.out))
+
+	cases := []struct {
+		args     interface{}
+		expected string
+		isNil    bool
+		getErr   bool
+	}{
+		{"", "d41d8cd98f00b204e9800998ecf8427e", false, false},
+		{"a", "0cc175b9c0f1b6a831c399e269772661", false, false},
+		{"ab", "187ef4436122d1cc2f40dc2b92f0eba0", false, false},
+		{"abc", "900150983cd24fb0d6963f7d28e17f72", false, false},
+		{123, "202cb962ac59075b964b07152d234b70", false, false},
+		{"123", "202cb962ac59075b964b07152d234b70", false, false},
+		{123.123, "46ddc40585caa8abc07c460b3485781e", false, false},
+		{nil, "", true, false},
 	}
-	s.testNullInput(c, ast.AesDecrypt)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.MD5, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
+		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
+		c.Assert(tp.Collate, Equals, charset.CollationUTF8)
+		c.Assert(tp.Flen, Equals, 32)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.expected)
+			}
+		}
+	}
+	f, err := funcs[ast.MD5].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+
 }
 
 type compressTest struct {

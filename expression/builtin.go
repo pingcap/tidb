@@ -23,14 +23,15 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
-// argTp indicates the specified types that arguments of a built-in function should be.
-type argTp byte
+// evalTp indicates the specified types that arguments and result of a built-in function should be.
+type evalTp byte
 
 const (
-	tpInt argTp = iota
+	tpInt evalTp = iota
 	tpReal
 	tpDecimal
 	tpString
@@ -63,7 +64,7 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(args []Expression, retType *types.FieldType, ctx context.Context, argTps ...argTp) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		return bf, errors.New("unexpected length of args and argTps")
 	}
@@ -86,12 +87,61 @@ func newBaseBuiltinFuncWithTp(args []Expression, retType *types.FieldType, ctx c
 			return bf, errors.Trace(err)
 		}
 	}
+	var fieldType *types.FieldType
+	switch retType {
+	case tpInt:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeLonglong,
+			Flen:    mysql.MaxIntWidth,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpReal:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeDouble,
+			Flen:    mysql.MaxRealWidth,
+			Decimal: types.UnspecifiedLength,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpDecimal:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeNewDecimal,
+			Flen:    11,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpString:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeVarString,
+			Flen:    0,
+			Decimal: types.UnspecifiedLength,
+		}
+	case tpTime:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeDatetime,
+			Flen:    mysql.MaxDatetimeWidthWithFsp,
+			Decimal: types.MaxFsp,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpDuration:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeDuration,
+			Flen:    mysql.MaxDurationWidthWithFsp,
+			Decimal: types.MaxFsp,
+			Flag:    mysql.BinaryFlag,
+		}
+	}
+	if mysql.HasBinaryFlag(fieldType.Flag) {
+		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
+	} else {
+		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
+	}
 	return baseBuiltinFunc{
 		args:          args,
 		argValues:     make([]types.Datum, len(args)),
 		ctx:           ctx,
 		deterministic: true,
-		tp:            retType}, nil
+		tp:            fieldType}, nil
 }
 
 func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
@@ -360,6 +410,21 @@ func (b *baseStringBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, e
 
 func (b *baseStringBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
 	panic("cannot get DURATION result from ClassString expression")
+}
+
+func (b *baseStringBuiltinFunc) getRetTp() *types.FieldType {
+	tp, flen := b.tp, b.tp.Flen
+	if flen >= mysql.MaxBlobWidth {
+		tp.Tp = mysql.TypeLongBlob
+	} else if flen >= 65536 {
+		tp.Tp = mysql.TypeMediumBlob
+	}
+	if mysql.HasBinaryFlag(tp.Flag) {
+		tp.Charset, tp.Collate = charset.CharsetBin, charset.CollationBin
+	} else {
+		tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	}
+	return tp
 }
 
 type baseTimeBuiltinFunc struct {
