@@ -839,6 +839,12 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("50 50 50 50 49 10 53 52 116"))
 	result = tk.MustQuery("select ord('123'), ord(123), ord(''), ord('你好'), ord(NULL), ord('👍')")
 	result.Check(testkit.Rows("49 49 0 14990752 <nil> 4036989325"))
+
+	// for space
+	result = tk.MustQuery(`select space(0), space(2), space(-1), space(1.1), space(1.9)`)
+	result.Check(testutil.RowsWithSep(",", ",  ,, ,  "))
+	result = tk.MustQuery(`select space("abc"), space("2"), space("1.1"), space(''), space(null)`)
+	result.Check(testutil.RowsWithSep(",", ",  , ,,<nil>"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {

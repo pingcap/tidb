@@ -19,8 +19,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -195,11 +193,6 @@ func (s *testEvaluatorSuite) TestMD5(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.MD5, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
-		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
-		c.Assert(tp.Collate, Equals, charset.CollationUTF8)
-		c.Assert(tp.Flen, Equals, 32)
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -335,11 +328,6 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.PasswordFunc, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
-		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
-		c.Assert(tp.Collate, Equals, charset.CollationUTF8)
-		c.Assert(tp.Flen, Equals, mysql.PWDHashLen+1)
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -352,4 +340,8 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 			}
 		}
 	}
+
+	f, err := funcs[ast.PasswordFunc].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
