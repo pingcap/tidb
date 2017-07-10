@@ -243,8 +243,11 @@ func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Conte
 	}
 
 	for i := range args {
-		bf.tp.Flag |= mysql.BinaryFlag
-		bf.tp.Flen += args[i].GetType().Flen
+		argType := args[i].GetType()
+		if types.IsBinaryStr(argType) {
+			bf.tp.Flag |= mysql.BinaryFlag
+		}
+		bf.tp.Flen += argType.Flen
 	}
 
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
@@ -288,6 +291,7 @@ func (b *builtinConcatWSSig) evalString(row []types.Datum) (string, bool, error)
 		strs = append(strs, val)
 	}
 
+	// TODO: check whether the length of result is larger than Flen
 	return strings.Join(strs, sep), false, nil
 }
 
