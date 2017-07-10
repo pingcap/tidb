@@ -303,7 +303,6 @@ func (cc *clientConn) readHandshakeResponse() error {
 	// Open session and do auth
 	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname)
 	if err != nil {
-		cc.Close()
 		return errors.Trace(err)
 	}
 	if !cc.server.skipAuth() {
