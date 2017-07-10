@@ -54,7 +54,7 @@ type builtinLikeSig struct {
 	baseIntBuiltinFunc
 }
 
-// eval evals a builtinLikeSig.
+// evalInt evals a builtinLikeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
 func (b *builtinLikeSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
