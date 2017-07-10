@@ -101,89 +101,17 @@ func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int
 	return matchOffsets
 }
 
-// convertToIndexJoin will generate index join by required properties and outerIndex. OuterIdx points out the outer child,
-// because we will swap the children of join when the right child is outer child.
-// First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or pk
-// column of inner child, we can apply the index join. Then we convert the inner child to table scan or index scan explicitly.
-func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task, error) {
-	outerChild := p.children[outerIdx].(LogicalPlan)
-	innerChild := p.children[1-outerIdx].(LogicalPlan)
-	var (
-		useTableScan  bool
-		usedIndexInfo *model.IndexInfo
-		rightConds    expression.CNFExprs
-		leftConds     expression.CNFExprs
-		innerTask     task
-		innerJoinKeys []*expression.Column
-		outerJoinKeys []*expression.Column
-	)
-	outerTask, err := outerChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int) *PhysicalIndexJoin {
+	var rightConds, leftConds expression.CNFExprs
 	if outerIdx == 0 {
 		rightConds = p.RightConditions.Clone()
 		leftConds = p.LeftConditions.Clone()
-		outerJoinKeys = p.LeftJoinKeys
-		innerJoinKeys = p.RightJoinKeys
 	} else {
 		rightConds = p.LeftConditions.Clone()
 		leftConds = p.RightConditions.Clone()
-		innerJoinKeys = p.LeftJoinKeys
-		outerJoinKeys = p.RightJoinKeys
-	}
-	for {
-		switch x := innerChild.(type) {
-		case *DataSource:
-			indices, includeTableScan := availableIndices(x.indexHints, x.tableInfo)
-			if includeTableScan && len(innerJoinKeys) == 1 {
-				pkCol := x.getPKIsHandleCol()
-				if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
-					useTableScan = true
-				}
-			}
-			if useTableScan {
-				innerTask, err = x.convertToTableScan(&requiredProp{taskTp: rootTaskType})
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				break
-			}
-			for _, indexInfo := range indices {
-				matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo)
-				if matchedOffsets == nil {
-					continue
-				}
-				usedIndexInfo = indexInfo
-				newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
-				newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
-				for i, offset := range matchedOffsets {
-					newOuterJoinKeys[i] = outerJoinKeys[offset]
-					newInnerJoinKeys[i] = innerJoinKeys[offset]
-				}
-				outerJoinKeys = newOuterJoinKeys
-				innerJoinKeys = newInnerJoinKeys
-				break
-			}
-			if usedIndexInfo != nil {
-				innerTask, err = x.convertToIndexScan(&requiredProp{taskTp: rootTaskType}, usedIndexInfo)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				break
-			}
-			return nil, nil
-		case *Selection:
-			rightConds = append(rightConds, x.Conditions...)
-			innerChild = innerChild.Children()[0].(LogicalPlan)
-		default:
-			return nil, nil
-		}
-		if innerTask != nil {
-			break
-		}
 	}
 	join := PhysicalIndexJoin{
+		outerIndex:      outerIdx,
 		LeftConditions:  leftConds,
 		RightConditions: rightConds,
 		OtherConditions: p.OtherConditions,
@@ -192,81 +120,171 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 		InnerJoinKeys:   innerJoinKeys,
 		DefaultValues:   p.DefaultValues,
 	}.init(p.allocator, p.ctx, p.children[outerIdx], p.children[1-outerIdx])
-	task := join.attach2Task(outerTask, innerTask)
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
-	return task, nil
+	return join
 }
 
-// tryToGetIndexJoin tries to get index join plan. If fails, it returns nil.
-// Currently we only check by hint. If we prefer the left index join but the join type is right outer, it will fail to return.
-func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) (bestTask task, err error) {
-	if len(p.EqualConditions) == 0 {
-		return nil, nil
+// getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child,
+// because we will swap the children of join when the right child is outer child.
+// First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or PK
+// column of inner child, we can apply the index join.
+func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) PhysicalPlan {
+	innerChild := p.children[1-outerIdx].(LogicalPlan)
+	var (
+		usedIndexInfo *model.IndexInfo
+		innerJoinKeys []*expression.Column
+		outerJoinKeys []*expression.Column
+	)
+	if outerIdx == 0 {
+		outerJoinKeys = p.LeftJoinKeys
+		innerJoinKeys = p.RightJoinKeys
+	} else {
+		innerJoinKeys = p.LeftJoinKeys
+		outerJoinKeys = p.RightJoinKeys
+	}
+	x, ok := innerChild.(*DataSource)
+	if !ok {
+		return nil
+	}
+	indices, includeTableScan := availableIndices(x.indexHints, x.tableInfo)
+	if includeTableScan && len(innerJoinKeys) == 1 {
+		pkCol := x.getPKIsHandleCol()
+		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
+			return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx)
+		}
+	}
+	for _, indexInfo := range indices {
+		matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo)
+		if matchedOffsets == nil {
+			continue
+		}
+		usedIndexInfo = indexInfo
+		newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
+		newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
+		for i, offset := range matchedOffsets {
+			newOuterJoinKeys[i] = outerJoinKeys[offset]
+			newInnerJoinKeys[i] = innerJoinKeys[offset]
+		}
+		outerJoinKeys = newOuterJoinKeys
+		innerJoinKeys = newInnerJoinKeys
+		break
+	}
+	if usedIndexInfo != nil {
+		return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx)
+	}
+	return nil
+}
+
+// For index join, we shouldn't require a root task which may let CBO framework select a sort operator in fact.
+// We are not sure which way of index scanning we should choose, so we try both single read and double read and finally
+// it will result in a best one.
+func (p *PhysicalIndexJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	if !prop.isEmpty() {
+		return nil
+	}
+	requiredProps1 := make([]*requiredProp, 2)
+	requiredProps1[p.outerIndex] = &requiredProp{taskTp: rootTaskType}
+	requiredProps1[1-p.outerIndex] = &requiredProp{taskTp: copSingleReadTaskType, cols: p.InnerJoinKeys}
+	requiredProps2 := make([]*requiredProp, 2)
+	requiredProps2[p.outerIndex] = &requiredProp{taskTp: rootTaskType}
+	requiredProps2[1-p.outerIndex] = &requiredProp{taskTp: copDoubleReadTaskType, cols: p.InnerJoinKeys}
+	return [][]*requiredProp{requiredProps1, requiredProps2}
+}
+
+func (p *PhysicalMergeJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	leftKey := p.EqualConditions[0].GetArgs()[0].(*expression.Column)
+	rightKey := p.EqualConditions[0].GetArgs()[1].(*expression.Column)
+	lProp := &requiredProp{taskTp: rootTaskType, cols: []*expression.Column{leftKey}}
+	rProp := &requiredProp{taskTp: rootTaskType, cols: []*expression.Column{rightKey}}
+	if !prop.isEmpty() {
+		if !prop.equal(lProp) && !prop.equal(rProp) {
+			return nil
+		}
+		if prop.equal(rProp) && p.JoinType == LeftOuterJoin {
+			return nil
+		}
+		if prop.equal(lProp) && p.JoinType == RightOuterJoin {
+			return nil
+		}
 	}
 
+	return [][]*requiredProp{{lProp, rProp}}
+}
+
+// tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
+// will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
+func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
+	if len(p.EqualConditions) == 0 {
+		return nil, false
+	}
+	plans := make([]PhysicalPlan, 0, 2)
 	leftOuter := (p.preferINLJ & preferLeftAsOuter) > 0
-	if leftOuter {
-		if p.JoinType != RightOuterJoin {
-			bestTask, err = p.convertToIndexJoin(prop, 0)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+	if leftOuter && p.JoinType != RightOuterJoin {
+		join := p.getIndexJoinByOuterIdx(0)
+		if join != nil {
+			plans = append(plans, join)
 		}
 	}
 	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
-	if rightOuter {
-		if p.JoinType != LeftOuterJoin {
-			task, err := p.convertToIndexJoin(prop, 1)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if bestTask == nil || bestTask.cost() > task.cost() {
-				bestTask = task
-			}
+	if rightOuter && p.JoinType != LeftOuterJoin {
+		join := p.getIndexJoinByOuterIdx(1)
+		if join != nil {
+			plans = append(plans, join)
 		}
 	}
-	return
+	if len(plans) > 0 {
+		return plans, true
+	}
+	// We try to choose join without considering hints.
+	if p.JoinType != RightOuterJoin {
+		join := p.getIndexJoinByOuterIdx(0)
+		if join != nil {
+			plans = append(plans, join)
+		}
+	}
+	if p.JoinType != LeftOuterJoin {
+		join := p.getIndexJoinByOuterIdx(1)
+		if join != nil {
+			plans = append(plans, join)
+		}
+	}
+	return plans, false
 }
 
-// convert2NewPhysicalPlan implements PhysicalPlan interface.
-// Join has three physical operators: Hash Join, Merge Join and Index Look Up Join. We implement Hash Join at first.
-func (p *LogicalJoin) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if task != nil {
-		return task, nil
-	}
-	if prop.taskTp != rootTaskType {
-		// Join cannot be pushed down currently, it can only return rootTask.
-		return invalidTask, p.storeTask(prop, invalidTask)
-	}
+func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin:
-		task, err = p.convert2SemiJoin(prop)
+		return []PhysicalPlan{p.getSemiJoin()}
 	default:
+		mj := p.getMergeJoin()
 		if p.preferUseMergeJoin() {
-			task, err = p.convert2MergeJoin(prop)
-		} else if task, err = p.tryToGetIndexJoin(prop); task == nil && err == nil {
-			task, err = p.convert2HashJoin(prop)
+			return []PhysicalPlan{mj}
 		}
+		joins := make([]PhysicalPlan, 0, 5)
+		if len(p.EqualConditions) == 1 {
+			joins = append(joins, mj)
+		}
+		idxJoins, forced := p.tryToGetIndexJoin()
+		if forced {
+			return idxJoins
+		}
+		joins = append(joins, idxJoins...)
+		if p.JoinType != RightOuterJoin {
+			leftJoin := p.getHashJoin(1)
+			joins = append(joins, leftJoin)
+		}
+		if p.JoinType != LeftOuterJoin {
+			rightJoin := p.getHashJoin(0)
+			joins = append(joins, rightJoin)
+		}
+		return joins
 	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return task, p.storeTask(prop, task)
 }
 
 func (p *LogicalJoin) preferUseMergeJoin() bool {
 	return p.preferMergeJoin && len(p.EqualConditions) == 1
 }
 
-// convert2MergeJoin ...
-// TODO: Now we only process the case that the join has only one equal condition.
-func (p *LogicalJoin) convert2MergeJoin(prop *requiredProp) (task, error) {
-	lChild := p.children[0].(LogicalPlan)
-	rChild := p.children[1].(LogicalPlan)
+func (p *LogicalJoin) getMergeJoin() PhysicalPlan {
 	mergeJoin := PhysicalMergeJoin{
 		JoinType:        p.JoinType,
 		EqualConditions: p.EqualConditions,
@@ -276,32 +294,10 @@ func (p *LogicalJoin) convert2MergeJoin(prop *requiredProp) (task, error) {
 		DefaultValues:   p.DefaultValues,
 	}.init(p.allocator, p.ctx)
 	mergeJoin.SetSchema(p.schema)
-	lJoinKey := p.EqualConditions[0].GetArgs()[0].(*expression.Column)
-	lProp := &requiredProp{cols: []*expression.Column{lJoinKey}, taskTp: rootTaskType}
-	lTask, err := lChild.convert2NewPhysicalPlan(lProp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rJoinKey := p.EqualConditions[0].GetArgs()[1].(*expression.Column)
-	rProp := &requiredProp{cols: []*expression.Column{rJoinKey}, taskTp: rootTaskType}
-	rTask, err := rChild.convert2NewPhysicalPlan(rProp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	task := mergeJoin.attach2Task(lTask, rTask)
-	if prop.equal(lProp) && p.JoinType != RightOuterJoin {
-		return task, nil
-	}
-	if prop.equal(rProp) && p.JoinType != LeftOuterJoin {
-		return task, nil
-	}
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
-	return task, nil
+	return mergeJoin
 }
 
-func (p *LogicalJoin) convert2SemiJoin(prop *requiredProp) (task, error) {
-	lChild := p.children[0].(LogicalPlan)
-	rChild := p.children[1].(LogicalPlan)
+func (p *LogicalJoin) getSemiJoin() PhysicalPlan {
 	semiJoin := PhysicalHashSemiJoin{
 		WithAux:         LeftOuterSemiJoin == p.JoinType,
 		EqualConditions: p.EqualConditions,
@@ -311,24 +307,10 @@ func (p *LogicalJoin) convert2SemiJoin(prop *requiredProp) (task, error) {
 		Anti:            p.anti,
 	}.init(p.allocator, p.ctx)
 	semiJoin.SetSchema(p.schema)
-	lTask, err := lChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rTask, err := rChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	task := semiJoin.attach2Task(lTask, rTask)
-	// Because hash join is executed by multiple goroutines, it will not propagate physical property any more.
-	// TODO: We will consider the problem of property again for parallel execution.
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
-	return task, nil
+	return semiJoin
 }
 
-func (p *LogicalJoin) convert2HashJoin(prop *requiredProp) (task, error) {
-	lChild := p.children[0].(LogicalPlan)
-	rChild := p.children[1].(LogicalPlan)
+func (p *LogicalJoin) getHashJoin(smallTable int) PhysicalPlan {
 	hashJoin := PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -337,30 +319,10 @@ func (p *LogicalJoin) convert2HashJoin(prop *requiredProp) (task, error) {
 		JoinType:        p.JoinType,
 		Concurrency:     JoinConcurrency,
 		DefaultValues:   p.DefaultValues,
+		SmallTable:      smallTable,
 	}.init(p.allocator, p.ctx)
 	hashJoin.SetSchema(p.schema)
-	lTask, err := lChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rTask, err := rChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	switch p.JoinType {
-	case LeftOuterJoin:
-		hashJoin.SmallTable = 1
-	case RightOuterJoin:
-		hashJoin.SmallTable = 0
-	case InnerJoin:
-		// We will use right table as small table.
-		if lTask.count() >= rTask.count() {
-			hashJoin.SmallTable = 1
-		}
-	}
-	task := hashJoin.attach2Task(lTask, rTask)
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
-	return task, nil
+	return hashJoin
 }
 
 // getPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
@@ -617,6 +579,7 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
+	task = invalidTask
 	if includeTableScan {
 		task, err = p.convertToTableScan(prop)
 		if err != nil {
@@ -628,7 +591,7 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if task == nil || idxTask.cost() < task.cost() {
+		if idxTask.cost() < task.cost() {
 			task = idxTask
 		}
 	}
@@ -729,6 +692,8 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)
+	} else if _, ok := task.(*rootTask); ok {
+		return invalidTask, nil
 	}
 	return task, nil
 }
@@ -841,6 +806,8 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)
+	} else if _, ok := task.(*rootTask); ok {
+		return invalidTask, nil
 	}
 	return task, nil
 }
@@ -872,40 +839,19 @@ func splitConditionsByIndexColumns(conditions []expression.Expression, schema *e
 	return
 }
 
-func (p *LogicalApply) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if task != nil {
-		return task, nil
-	}
-	if prop.taskTp != rootTaskType {
-		// Apply can only return rootTask.
-		return invalidTask, p.storeTask(prop, invalidTask)
-	}
-	// TODO: Refine this code.
+func (p *LogicalApply) generatePhysicalPlans() []PhysicalPlan {
+	var join PhysicalPlan
 	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin {
-		task, err = p.convert2SemiJoin(&requiredProp{taskTp: rootTaskType})
+		join = p.getSemiJoin()
 	} else {
-		task, err = p.convert2HashJoin(&requiredProp{taskTp: rootTaskType})
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
+		join = p.getHashJoin(1)
 	}
 	apply := PhysicalApply{
-		PhysicalJoin: task.plan(),
+		PhysicalJoin: join,
 		OuterSchema:  p.corCols,
 	}.init(p.allocator, p.ctx)
 	apply.SetSchema(p.schema)
-	newTask := task.(*rootTask)
-	apply.children = newTask.p.Children()
-	newTask.p = apply
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	task = prop.enforceProperty(newTask, p.ctx, p.allocator)
-	return task, p.storeTask(prop, task)
+	return []PhysicalPlan{apply}
 }
 
 func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
@@ -920,6 +866,35 @@ func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*req
 		props = append(props, prop)
 	}
 	return [][]*requiredProp{props}
+}
+
+func (p *PhysicalHashJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	if !prop.isEmpty() {
+		return nil
+	}
+	return [][]*requiredProp{{&requiredProp{taskTp: rootTaskType}, &requiredProp{taskTp: rootTaskType}}}
+}
+
+func (p *PhysicalHashSemiJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols}
+	for _, col := range lProp.cols {
+		// FIXME: This condition may raise a panic, fix it in the future.
+		if p.children[0].Schema().ColumnIndex(col) == -1 {
+			return nil
+		}
+	}
+	return [][]*requiredProp{{&requiredProp{taskTp: rootTaskType}, &requiredProp{taskTp: rootTaskType}}}
+}
+
+func (p *PhysicalApply) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols}
+	for _, col := range lProp.cols {
+		// FIXME: This condition may raise a panic, fix it in the future.
+		if p.children[0].Schema().ColumnIndex(col) == -1 {
+			return nil
+		}
+	}
+	return [][]*requiredProp{{lProp, &requiredProp{taskTp: rootTaskType}}}
 }
 
 func (p *Limit) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {

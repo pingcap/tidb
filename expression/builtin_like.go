@@ -37,48 +37,50 @@ type likeFunctionClass struct {
 }
 
 func (c *likeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLikeSig{newBaseBuiltinFunc(args, ctx)}
+	argTp := []evalTp{tpString, tpString}
+	if len(args) == 3 {
+		argTp = append(argTp, tpInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 1
+	sig := &builtinLikeSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLikeSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinLikeSig.
+// evalInt evals a builtinLikeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
-func (b *builtinLikeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return
-	}
-
-	valStr, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinLikeSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	valStr, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
-	if args[1].IsNull() {
-		return
-	}
-	patternStr, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	patternStr, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 	var escape byte = '\\'
 	// If this function is called by mock tikv, the args len will be 2 and the escape will be `\\`.
 	// TODO: Remove this after remove old evaluator logic.
-	if len(args) >= 3 {
-		escape = byte(args[2].GetInt64())
+	if len(b.args) >= 3 {
+		val, isNull, err := b.args[2].EvalInt(row, sc)
+		if isNull || err != nil {
+			return 0, isNull, errors.Trace(err)
+		}
+		escape = byte(val)
 	}
 	patChars, patTypes := stringutil.CompilePattern(patternStr, escape)
 	match := stringutil.DoMatch(valStr, patChars, patTypes)
-	d.SetInt64(boolToInt64(match))
-	return
+	return boolToInt64(match), false, nil
 }
 
 type regexpFunctionClass struct {
