@@ -144,5 +144,5 @@ func (ts *TidbTestSuite) TestIssue3680(c *C) {
 	// is valid, call Ping."
 	err = db.Ping()
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: Yes)")
+	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: YES)")
 }
