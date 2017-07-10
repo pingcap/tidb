@@ -84,6 +84,10 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			expr, err = parser.SimplyInferType(expr, tblInfo)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			col.GeneratedExpr = expr
 		}
 		columns = append(columns, col)
@@ -344,6 +348,10 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 			value = r[col.Offset]
 			if col.DefaultValue == nil && r[col.Offset].IsNull() {
 				// Save storage space by not storing null value.
+				continue
+			}
+			if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+				// Save storage space by not storing virtual column.
 				continue
 			}
 		}
