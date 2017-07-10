@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"strings"
-
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -52,8 +50,6 @@ func (v *typeInferrer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 
 func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
-	case *ast.AggregateFuncExpr:
-		v.aggregateFunc(x)
 	case *ast.BetweenExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		types.SetBinChsClnFlag(&x.Type)
@@ -128,33 +124,6 @@ func (v *typeInferrer) selectStmt(x *ast.SelectStmt) {
 		if val.Column.ID == 0 && val.Expr.GetType() != nil {
 			val.Column.FieldType = *(val.Expr.GetType())
 		}
-	}
-}
-
-func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
-	name := strings.ToLower(x.F)
-	switch name {
-	case ast.AggFuncCount:
-		ft := types.NewFieldType(mysql.TypeLonglong)
-		ft.Flen = 21
-		types.SetBinChsClnFlag(ft)
-		x.SetType(ft)
-	case ast.AggFuncMax, ast.AggFuncMin:
-		x.SetType(x.Args[0].GetType())
-	case ast.AggFuncSum, ast.AggFuncAvg:
-		ft := types.NewFieldType(mysql.TypeNewDecimal)
-		types.SetBinChsClnFlag(ft)
-		ft.Decimal = x.Args[0].GetType().Decimal
-		x.SetType(ft)
-	case ast.AggFuncGroupConcat:
-		ft := types.NewFieldType(mysql.TypeVarString)
-		ft.Charset = v.defaultCharset
-		cln, err := charset.GetDefaultCollation(v.defaultCharset)
-		if err != nil {
-			v.err = err
-		}
-		ft.Collate = cln
-		x.SetType(ft)
 	}
 }
 

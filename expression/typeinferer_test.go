@@ -124,7 +124,6 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 
 		// Functions
 		{"version()", mysql.TypeVarString, charset.CharsetUTF8, 0},
-		{"count(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs(1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs(1.1)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},

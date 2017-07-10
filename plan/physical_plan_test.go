@@ -58,7 +58,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			sql:       "select sum(b) from t group by c",
 			best:      "Table(t)->HashAgg->Projection",
 			aggFuns:   "[sum(test.t.b)]",
-			aggFields: "[blob decimal BINARY]",
+			aggFields: "[blob decimal(23) BINARY]",
 			gbyItems:  "[test.t.c]",
 		},
 		{
