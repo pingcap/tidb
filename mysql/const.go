@@ -195,10 +195,22 @@ const AllPrivMask = AllPriv - 1
 
 // MySQL type maximum length.
 const (
-	// MaxDateWidth YYYY-MM-DD.
-	MaxDateWidth = 10
-	MaxBlobWidth = 16777216
+	// For arguments that have no fixed number of decimals, the decimals value is set to 31,
+	// which is 1 more than the maximum number of decimals permitted for the DECIMAL, FLOAT, and DOUBLE data types.
+	NotFixedDec = 31
+
+	MaxIntWidth             = 20
+	MaxRealWidth            = 23
+	MaxDateWidth            = 10 // YYYY-MM-DD.
+	MaxDatetimeWidthNoFsp   = 19 // YYYY-MM-DD HH:MM:SS
+	MaxDatetimeWidthWithFsp = 26 // YYYY-MM-DD HH:MM:SS[.fraction]
+	MaxDurationWidthNoFsp   = 9  // HH:MM:SS
+	MaxDurationWidthWithFsp = 15 // HH:MM:SS[.fraction]
+	MaxBlobWidth            = 16777216
 )
+
+// PWDHashLen is the length of password's hash.
+const PWDHashLen = 40
 
 // Priv2UserCol is the privilege to mysql.user table column name.
 var Priv2UserCol = map[PrivilegeType]string{

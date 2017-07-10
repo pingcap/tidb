@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -659,14 +660,19 @@ type builtinCastStringAsRealSig struct {
 }
 
 func (b *builtinCastStringAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
 	if IsHybridType(b.args[0]) {
-		return b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
+		return b.args[0].EvalReal(row, sc)
 	}
-	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
+	val, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = strconv.ParseFloat(val, 64)
+	res, err = types.StrToFloat(sc, val)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	res, err = types.ProduceFloatWithSpecifiedTp(res, b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -940,6 +946,8 @@ func WrapWithCastAsInt(expr Expression, ctx context.Context) (Expression, error)
 		return expr, nil
 	}
 	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.Flen, tp.Decimal = expr.GetType().Flen, 0
+	types.SetBinChsClnFlag(tp)
 	return buildCastFunction(expr, tp, ctx)
 }
 
@@ -951,6 +959,8 @@ func WrapWithCastAsReal(expr Expression, ctx context.Context) (Expression, error
 		return expr, nil
 	}
 	tp := types.NewFieldType(mysql.TypeDouble)
+	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+	types.SetBinChsClnFlag(tp)
 	return buildCastFunction(expr, tp, ctx)
 }
 
@@ -962,6 +972,8 @@ func WrapWithCastAsDecimal(expr Expression, ctx context.Context) (Expression, er
 		return expr, nil
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
+	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
+	types.SetBinChsClnFlag(tp)
 	return buildCastFunction(expr, tp, ctx)
 }
 
@@ -973,7 +985,8 @@ func WrapWithCastAsString(expr Expression, ctx context.Context) (Expression, err
 		return expr, nil
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset, tp.Collate = expr.GetType().Charset, expr.GetType().Collate
+	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
 	return buildCastFunction(expr, tp, ctx)
 }
 
@@ -990,6 +1003,16 @@ func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Contex
 	default:
 		tp.Decimal = types.MaxFsp
 	}
+	switch tp.Tp {
+	case mysql.TypeDate:
+		tp.Flen = mysql.MaxDateWidth
+	case mysql.TypeDatetime, mysql.TypeTimestamp:
+		tp.Flen = mysql.MaxDatetimeWidthNoFsp
+		if tp.Decimal > 0 {
+			tp.Flen = tp.Flen + 1 + tp.Decimal
+		}
+	}
+	types.SetBinChsClnFlag(tp)
 	return buildCastFunction(expr, tp, ctx)
 }
 
@@ -1006,6 +1029,10 @@ func WrapWithCastAsDuration(expr Expression, ctx context.Context) (Expression, e
 		tp.Decimal = x.Decimal
 	default:
 		tp.Decimal = types.MaxFsp
+	}
+	tp.Flen = mysql.MaxDurationWidthNoFsp
+	if tp.Decimal > 0 {
+		tp.Flen = tp.Flen + 1 + tp.Decimal
 	}
 	return buildCastFunction(expr, tp, ctx)
 }

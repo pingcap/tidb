@@ -117,7 +117,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {
-	store, err := tikv.NewMockTikvStore("")
+	store, err := tikv.NewMockTikvStore()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

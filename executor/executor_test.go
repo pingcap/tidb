@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -51,7 +52,9 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	store kv.Storage
+	cluster   *mocktikv.Cluster
+	mvccStore *mocktikv.MvccStore
+	store     kv.Storage
 	*parser.Parser
 }
 
@@ -63,7 +66,13 @@ func (s *testSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		store, err := tikv.NewMockTikvStore("")
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.NewMvccStore()
+		store, err := tikv.NewMockTikvStore(
+			tikv.WithCluster(s.cluster),
+			tikv.WithMVCCStore(s.mvccStore),
+		)
 		c.Assert(err, IsNil)
 		s.store = store
 		tidb.SetSchemaLease(0)
@@ -810,6 +819,37 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("50 50 50 50 49 10"))
 	result = tk.MustQuery("select ascii('123'), ascii(123), ascii(''), ascii('你好'), ascii(NULL)")
 	result.Check(testkit.Rows("49 49 0 228 <nil>"))
+
+	// for password
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(41), b char(41), c char(41))")
+	tk.MustExec(`insert into t values(NULL, '', 'abc')`)
+	result = tk.MustQuery("select password(a) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select password(b) from t")
+	result.Check(testkit.Rows(""))
+	result = tk.MustQuery("select password(c) from t")
+	result.Check(testkit.Rows("*0D3CED9BEC10A777AEC23CCC353A8C08A633045E"))
+
+	// for strcmp
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values("123", 123, 12.34, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery(`select strcmp(a, "123"), strcmp(b, "123"), strcmp(c, "12.34"), strcmp(d, "2017-01-01 12:01:01"), strcmp(e, "12:01:01") from t`)
+	result.Check(testkit.Rows("0 0 0 0 0"))
+	result = tk.MustQuery(`select strcmp("1", "123"), strcmp("123", "1"), strcmp("123", "45"), strcmp("123", null), strcmp(null, "123")`)
+	result.Check(testkit.Rows("-1 1 -1 <nil> <nil>"))
+	result = tk.MustQuery(`select strcmp("", "123"), strcmp("123", ""), strcmp("", ""), strcmp("", null), strcmp(null, "")`)
+	result.Check(testkit.Rows("-1 1 0 <nil> <nil>"))
+
+	// for ord
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb")`)
+	result = tk.MustQuery("select ord(a), ord(b), ord(c), ord(d), ord(e), ord(f), ord(g), ord(h), ord(i) from t")
+	result.Check(testkit.Rows("50 50 50 50 49 10 53 52 116"))
+	result = tk.MustQuery("select ord('123'), ord(123), ord(''), ord('你好'), ord(NULL), ord('👍')")
+	result.Check(testkit.Rows("49 49 0 14990752 <nil> 4036989325"))
 }
 
 func (s *testSuite) TestTimeBuiltin(c *C) {
@@ -1028,6 +1068,53 @@ func (s *testSuite) TestBuiltin(c *C) {
 	tk.MustQuery("select count(*) from t") // Test ProjectionExec
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
+}
+
+func (s *testSuite) TestMathBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	//test degrees
+	result := tk.MustQuery("select degrees(0), degrees(1)")
+	result.Check(testkit.Rows("0 57.29577951308232"))
+	result = tk.MustQuery("select degrees(2), degrees(5)")
+	result.Check(testkit.Rows("114.59155902616465 286.4788975654116"))
+
+	// test sin
+	result = tk.MustQuery("select sin(0), sin(1.5707963267949)")
+	result.Check(testkit.Rows("0 1"))
+	result = tk.MustQuery("select sin(1), sin(100)")
+	result.Check(testkit.Rows("0.8414709848078965 -0.5063656411097588"))
+	result = tk.MustQuery("select sin('abcd')")
+	result.Check(testkit.Rows("0"))
+
+	// test cos
+	result = tk.MustQuery("select cos(0), cos(3.1415926535898)")
+	result.Check(testkit.Rows("1 -1"))
+	result = tk.MustQuery("select cos('abcd')")
+	result.Check(testkit.Rows("1"))
+
+	//for tan
+	result = tk.MustQuery("select tan(0.00), tan(PI()/4)")
+	result.Check(testkit.Rows("0 1"))
+	result = tk.MustQuery("select tan('abcd')")
+	result.Check(testkit.Rows("0"))
+
+	//for log2
+	result = tk.MustQuery("select log2(0.0)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log2(4)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select log2('8.0abcd')")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("select log2(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log2(NULL)")
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuite) TestJSON(c *C) {
