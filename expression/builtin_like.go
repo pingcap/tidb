@@ -60,13 +60,13 @@ func (b *builtinLikeSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	valStr, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, isNull, errors.Trace(err)
 	}
 
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
 	patternStr, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, isNull, errors.Trace(err)
 	}
 	var escape byte = '\\'
 	// If this function is called by mock tikv, the args len will be 2 and the escape will be `\\`.
@@ -74,7 +74,7 @@ func (b *builtinLikeSig) evalInt(row []types.Datum) (int64, bool, error) {
 	if len(b.args) >= 3 {
 		val, isNull, err := b.args[2].EvalInt(row, sc)
 		if isNull || err != nil {
-			return 0, true, errors.Trace(err)
+			return 0, isNull, errors.Trace(err)
 		}
 		escape = byte(val)
 	}
