@@ -243,6 +243,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
 			best: "Apply{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->HashAgg}->Projection",
 		},
+		// TODO: Still have some problems. Reopen it in the future.
+		//{
+		//	sql:  "select (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
+		//	best: "Apply{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->HashAgg}->Projection",
+		//},
 		// Test Index Join + TableScan.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",

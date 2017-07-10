@@ -211,7 +211,7 @@ func (p *PhysicalMergeJoin) getChildrenPossibleProps(prop *requiredProp) [][]*re
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
-// will be true, which means we are forced to choose this index join. Otherwise we will select a join algorithm with min-cost.
+// will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	if len(p.EqualConditions) == 0 {
 		return nil, false
@@ -234,13 +234,14 @@ func (p *LogicalJoin) tryToGetIndexJoin() ([]PhysicalPlan, bool) {
 	if len(plans) > 0 {
 		return plans, true
 	}
-	if !leftOuter && p.JoinType != RightOuterJoin {
+	// We try to choose join without considering hints.
+	if p.JoinType != RightOuterJoin {
 		join := p.getIndexJoinByOuterIdx(0)
 		if join != nil {
 			plans = append(plans, join)
 		}
 	}
-	if !rightOuter && p.JoinType != LeftOuterJoin {
+	if p.JoinType != LeftOuterJoin {
 		join := p.getIndexJoinByOuterIdx(1)
 		if join != nil {
 			plans = append(plans, join)
@@ -875,8 +876,12 @@ func (p *PhysicalHashJoin) getChildrenPossibleProps(prop *requiredProp) [][]*req
 }
 
 func (p *PhysicalHashSemiJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
-	if !prop.isEmpty() {
-		return nil
+	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols}
+	for _, col := range lProp.cols {
+		// FIXME: This condition may raise a panic, fix it in the future.
+		if p.children[0].Schema().ColumnIndex(col) == -1 {
+			return nil
+		}
 	}
 	return [][]*requiredProp{{&requiredProp{taskTp: rootTaskType}, &requiredProp{taskTp: rootTaskType}}}
 }
@@ -884,9 +889,9 @@ func (p *PhysicalHashSemiJoin) getChildrenPossibleProps(prop *requiredProp) [][]
 func (p *PhysicalApply) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols}
 	for _, col := range lProp.cols {
+		// FIXME: This condition may raise a panic, fix it in the future.
 		if p.children[0].Schema().ColumnIndex(col) == -1 {
-			lProp.cols = nil
-			break
+			return nil
 		}
 	}
 	return [][]*requiredProp{{lProp, &requiredProp{taskTp: rootTaskType}}}
