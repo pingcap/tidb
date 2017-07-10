@@ -239,6 +239,10 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 			}
 		}
 	}
+
+	fn, err := funcs[ast.ConcatWS].getFunction(primitiveValsToConstants([]interface{}{nil, nil}), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(fn.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLeft(c *C) {

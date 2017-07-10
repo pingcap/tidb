@@ -200,8 +200,12 @@ func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context
 		return nil, errors.Trace(err)
 	}
 	for i := range args {
-		bf.tp.Flag |= mysql.BinaryFlag
-		bf.tp.Flen += args[i].GetType().Flen
+		argType := args[i].GetType()
+		if types.IsBinaryStr(argType) {
+			bf.tp.Flag |= mysql.BinaryFlag
+		}
+
+		bf.tp.Flen += argType.Flen
 	}
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
@@ -247,8 +251,16 @@ func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Conte
 		if types.IsBinaryStr(argType) {
 			bf.tp.Flag |= mysql.BinaryFlag
 		}
-		bf.tp.Flen += argType.Flen
+
+		// skip seperator param
+		if i != 0 {
+			bf.tp.Flen += argType.Flen
+		}
 	}
+
+	// add seperator
+	argsLen := len(args) - 1
+	bf.tp.Flen += argsLen - 1
 
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
