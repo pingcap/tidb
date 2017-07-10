@@ -134,12 +134,14 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 }
 
 func (ts *TidbTestSuite) TestIssue3662(c *C) {
-	db, _ := sql.Open("mysql", "root@tcp(localhost:4001)/a_database_not_exist")
+	db, err := sql.Open("mysql", "root@tcp(localhost:4001)/a_database_not_exist")
+	c.Assert(err, IsNil)
 	defer db.Close()
+
 	// According to documentation, "Open may just validate its arguments without
 	// creating a connection to the database. To verify that the data source name
 	// is valid, call Ping."
-	err := db.Ping()
+	err = db.Ping()
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Error 1049: Unknown database 'a_database_not_exist'")
 }
