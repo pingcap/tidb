@@ -974,7 +974,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		c.Assert(strRes, Equals, t.stringRes)
 	}
 
-	unsignedIntExpr := &Column{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}, Index: 0}
+	unsignedIntExpr := &Column{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag, Flen: mysql.MaxIntWidth, Decimal: 0}, Index: 0}
 
 	// test cast unsigned int as string.
 	strExpr, err := WrapWithCastAsString(unsignedIntExpr, ctx)

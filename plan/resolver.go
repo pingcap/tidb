@@ -899,11 +899,19 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 	case ast.ShowDatabases:
 		names = []string{"Database"}
 	case ast.ShowTables:
+		if s.DBName == "" {
+			nr.Err = errors.Trace(ErrNoDB)
+			return
+		}
 		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
 		if s.Full {
 			names = append(names, "Table_type")
 		}
 	case ast.ShowTableStatus:
+		if s.DBName == "" {
+			nr.Err = errors.Trace(ErrNoDB)
+			return
+		}
 		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
 			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",
 			"Create_time", "Update_time", "Check_time", "Collation", "Checksum",
@@ -953,6 +961,9 @@ func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
 		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+	case ast.ShowStatsMeta:
+		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
 	}
 	for i, name := range names {
 		f := &ast.ResultField{

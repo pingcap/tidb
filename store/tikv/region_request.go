@@ -120,7 +120,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
 	// If it failed because the context is canceled, don't retry on this error.
-	if errors.Cause(err) == goctx.Canceled || grpc.Code(err) == codes.Canceled {
+	if errors.Cause(err) == goctx.Canceled || grpc.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
 	}
 
