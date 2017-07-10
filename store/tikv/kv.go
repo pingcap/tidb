@@ -91,7 +91,7 @@ func (d MockDriver) Open(path string) (kv.Storage, error) {
 	if !strings.EqualFold(u.Scheme, "mocktikv") {
 		return nil, errors.Errorf("Uri scheme expected(mocktikv) but found (%s)", u.Scheme)
 	}
-	return NewMockTikvStore(u.Path)
+	return NewMockTikvStore()
 }
 
 // update oracle's lastTS every 2000ms.
@@ -137,33 +137,79 @@ func (s *tikvStore) EtcdAddrs() []string {
 	return s.etcdAddrs
 }
 
-// NewMockTikvStore creates a mocked tikv store, the path is the file path to store the data.
-// If path is an empty string, a memory storage will be created.
-func NewMockTikvStore(path string) (kv.Storage, error) {
-	if path != "" {
-		return nil, errors.New("persistent mockTiKV is not supported yet")
-	}
-	cluster := mocktikv.NewCluster()
-	return NewMockTikvStoreWithCluster(cluster)
+type mockOptions struct {
+	cluster        *mocktikv.Cluster
+	mvccStore      *mocktikv.MvccStore
+	clientHijack   func(Client) Client
+	pdClientHijack func(pd.Client) pd.Client
 }
 
-// NewMockTikvStoreWithCluster creates a mocked tikv store with cluster.
-func NewMockTikvStoreWithCluster(cluster *mocktikv.Cluster) (kv.Storage, error) {
-	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.NewMvccStore()
-	client := mocktikv.NewRPCClient(cluster, mvccStore)
+// MockTiKVStoreOption is used to control some behavior of mock tikv.
+type MockTiKVStoreOption func(*mockOptions)
+
+// WithHijackClient hijacks KV client's behavior, makes it easy to simulate the network
+// problem between TiDB and TiKV.
+func WithHijackClient(wrap func(Client) Client) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.clientHijack = wrap
+	}
+}
+
+// WithHijackPDClient hijacks PD client's behavior, makes it easy to simulate the network
+// problem between TiDB and PD, such as GetTS too slow, GetStore or GetRegion fail.
+func WithHijackPDClient(wrap func(pd.Client) pd.Client) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.pdClientHijack = wrap
+	}
+}
+
+// WithCluster provides the customized cluster.
+func WithCluster(cluster *mocktikv.Cluster) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.cluster = cluster
+	}
+}
+
+// WithMVCCStore provides the customized mvcc store.
+func WithMVCCStore(store *mocktikv.MvccStore) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.mvccStore = store
+	}
+}
+
+// NewMockTikvStore creates a mocked tikv store, the path is the file path to store the data.
+// If path is an empty string, a memory storage will be created.
+func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
+	var opt mockOptions
+	for _, f := range options {
+		f(&opt)
+	}
+
+	cluster := opt.cluster
+	if cluster == nil {
+		cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(cluster)
+	}
+
+	mvccStore := opt.mvccStore
+	if mvccStore == nil {
+		mvccStore = mocktikv.NewMvccStore()
+	}
+
+	client := Client(mocktikv.NewRPCClient(cluster, mvccStore))
+	if opt.clientHijack != nil {
+		client = opt.clientHijack(client)
+	}
+
 	// Make sure the uuid is unique.
 	partID := fmt.Sprintf("%05d", rand.Intn(100000))
 	uuid := fmt.Sprintf("mock-tikv-store-%v-%v", time.Now().Unix(), partID)
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
-	return newTikvStore(uuid, pdCli, client, false)
-}
+	pdCli := pd.Client(&codecPDClient{mocktikv.NewPDClient(cluster)})
+	if opt.pdClientHijack != nil {
+		pdCli = opt.pdClientHijack(pdCli)
+	}
 
-// GetMockTiKVClient gets the *mocktikv.RPCClient from a mocktikv store.
-// Used for test.
-func GetMockTiKVClient(store kv.Storage) *mocktikv.RPCClient {
-	s := store.(*tikvStore)
-	return s.client.(*mocktikv.RPCClient)
+	return newTikvStore(uuid, pdCli, client, false)
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {

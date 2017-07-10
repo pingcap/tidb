@@ -75,7 +75,7 @@ type testBinlogSuite struct {
 func (s *testBinlogSuite) SetUpSuite(c *C) {
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
-	store, err := tikv.NewMockTikvStore("")
+	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store
 	tidb.SetSchemaLease(0)

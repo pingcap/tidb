@@ -80,6 +80,9 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
+	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified {
+		retType = builtinRetTp
+	}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,

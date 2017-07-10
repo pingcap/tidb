@@ -48,6 +48,7 @@ func (s *testJSONSuite) TestParseFromString(c *C) {
 func (s *testJSONSuite) TestSerializeAndDeserialize(c *C) {
 	var jsonNilValue = CreateJSON(nil)
 	var jsonBoolValue = CreateJSON(true)
+	var jsonUintValue = CreateJSON(uint64(1 << 63))
 	var jsonDoubleValue = CreateJSON(3.24)
 	var jsonStringValue = CreateJSON("hello, 世界")
 	j1 := mustParseFromString(`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.0], "bbbbbbbbbb": true, "ccccccccc": "d"}`)
@@ -60,6 +61,7 @@ func (s *testJSONSuite) TestSerializeAndDeserialize(c *C) {
 	}{
 		{In: jsonNilValue, Out: jsonNilValue, size: 2},
 		{In: jsonBoolValue, Out: jsonBoolValue, size: 2},
+		{In: jsonUintValue, Out: jsonUintValue, size: 9},
 		{In: jsonDoubleValue, Out: jsonDoubleValue, size: 9},
 		{In: jsonStringValue, Out: jsonStringValue, size: 15},
 		{In: j1, Out: j1, size: 144},
@@ -86,7 +88,7 @@ func (s *testJSONSuite) TestCompareJSON(c *C) {
 	jNull := mustParseFromString(`null`)
 	jBoolTrue := mustParseFromString(`true`)
 	jBoolFalse := mustParseFromString(`false`)
-	jIntegerLarge := mustParseFromString(`5`)
+	jIntegerLarge := CreateJSON(uint64(1 << 63))
 	jIntegerSmall := mustParseFromString(`3`)
 	jStringLarge := mustParseFromString(`"hello, world"`)
 	jStringSmall := mustParseFromString(`"hello"`)

@@ -126,14 +126,16 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 func (s *testEvaluatorSuite) TestConcat(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		args   []interface{}
-		isNil  bool
-		getErr bool
-		res    string
+		args    []interface{}
+		isNil   bool
+		getErr  bool
+		res     string
+		retType *types.FieldType
 	}{
 		{
 			[]interface{}{nil},
 			true, false, "",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: 0, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{"a", "b",
@@ -149,20 +151,30 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 					Fsp:      types.DefaultFsp},
 			},
 			false, false, "ab121.11.21.12000-01-01 12:01:0112:01:01",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: 40, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{"a", "b", nil, "c"},
 			true, false, "",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: 3, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{errors.New("must error")},
 			false, true, "",
+			&types.FieldType{Tp: mysql.TypeVarString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 	}
 	fcName := ast.Concat
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, fcName, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
+		retType := f.GetType()
+		c.Assert(retType.Tp, Equals, t.retType.Tp)
+		c.Assert(retType.Charset, Equals, t.retType.Charset)
+		c.Assert(retType.Collate, Equals, t.retType.Collate)
+		c.Assert(retType.Flen, Equals, t.retType.Flen)
+		c.Assert(retType.Decimal, Equals, t.retType.Decimal)
+		c.Assert(retType.Flag, Equals, t.retType.Flag)
 		v, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -174,36 +186,6 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 				c.Assert(v.GetString(), Equals, t.res)
 			}
 		}
-	}
-
-	typeCases := []struct {
-		args    []Expression
-		retType *types.FieldType
-	}{
-		{
-			[]Expression{int8Con, decimalCon, charCon, floatCon, doubleCon},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
-		},
-		{
-			[]Expression{varcharCon, binaryCon},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
-		},
-		{
-			[]Expression{int8Con, blobCon, charCon},
-			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
-		},
-		{
-			[]Expression{varbinaryCon, textCon},
-			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
-		},
-	}
-	fc := funcs[fcName].(*concatFunctionClass)
-	for _, t := range typeCases {
-		retType, _ := fc.inferType(t.args)
-		c.Assert(retType.Tp, Equals, t.retType.Tp)
-		c.Assert(retType.Charset, Equals, t.retType.Charset)
-		c.Assert(retType.Collate, Equals, t.retType.Collate)
-		c.Assert(retType.Flag, Equals, t.retType.Flag)
 	}
 }
 
@@ -286,6 +268,20 @@ func (s *testEvaluatorSuite) TestRepeat(c *C) {
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "aa")
+
+	args = []interface{}{"a", uint64(16777217)}
+	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+
+	args = []interface{}{"a", uint64(16777216)}
+	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsFalse)
 
 	args = []interface{}{"a", int64(-1)}
 	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
@@ -415,33 +411,48 @@ func (s *testEvaluatorSuite) TestReverse(c *C) {
 
 func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Input  []interface{}
-		Expect interface{}
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    int64
 	}{
-		{[]interface{}{"1", "2"}, -1},
-		{[]interface{}{"2", "1"}, 1},
-		{[]interface{}{"123", "2"}, -1},
-		{[]interface{}{"1", "213"}, -1},
-		{[]interface{}{"123", "123"}, 0},
-		{[]interface{}{"", "123"}, -1},
-		{[]interface{}{"123", ""}, 1},
-		{[]interface{}{"", ""}, 0},
-		{[]interface{}{nil, "123"}, nil},
-		{[]interface{}{"123", nil}, nil},
-		{[]interface{}{nil, nil}, nil},
-		{[]interface{}{"", nil}, nil},
-		{[]interface{}{nil, ""}, nil},
+		{[]interface{}{"123", "123"}, false, false, 0},
+		{[]interface{}{"123", "1"}, false, false, 1},
+		{[]interface{}{"1", "123"}, false, false, -1},
+		{[]interface{}{"123", "45"}, false, false, -1},
+		{[]interface{}{123, "123"}, false, false, 0},
+		{[]interface{}{"12.34", 12.34}, false, false, 0},
+		{[]interface{}{nil, "123"}, true, false, 0},
+		{[]interface{}{"123", nil}, true, false, 0},
+		{[]interface{}{"", "123"}, false, false, -1},
+		{[]interface{}{"123", ""}, false, false, 1},
+		{[]interface{}{"", ""}, false, false, 0},
+		{[]interface{}{"", nil}, true, false, 0},
+		{[]interface{}{nil, ""}, true, false, 0},
+		{[]interface{}{nil, nil}, true, false, 0},
+		{[]interface{}{"123", errors.New("must err")}, false, true, 0},
 	}
-
-	dtbl := tblToDtbl(tbl)
-	for _, t := range dtbl {
-		fc := funcs[ast.Strcmp]
-		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Strcmp, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, 2)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.res)
+			}
+		}
 	}
 }
 
@@ -1402,45 +1413,52 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 
 func (s *testEvaluatorSuite) TestOrd(c *C) {
 	defer testleak.AfterTest(c)()
-	ordTests := []struct {
-		origin interface{}
-		ret    int64
+
+	cases := []struct {
+		args     interface{}
+		expected int64
+		isNil    bool
+		getErr   bool
 	}{
-		// ASCII test cases
-		{"", 0},
-		{"A", 65},
-		{"你好", 14990752},
-		{1, 49},
-		{1.2, 49},
-		{true, 49},
-		{false, 48},
-
-		{2, 50},
-		{-1, 45},
-		{"-1", 45},
-		{"2", 50},
-		{"PingCap", 80},
-		{"中国", 14989485},
-		{"にほん", 14909867},
-		{"한국", 15570332},
+		{"2", 50, false, false},
+		{2, 50, false, false},
+		{"23", 50, false, false},
+		{23, 50, false, false},
+		{2.3, 50, false, false},
+		{nil, 0, true, false},
+		{"", 0, false, false},
+		{"你好", 14990752, false, false},
+		{"にほん", 14909867, false, false},
+		{"한국", 15570332, false, false},
+		{"👍", 4036989325, false, false},
+		{"א", 55184, false, false},
 	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Ord, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
 
-	fc := funcs[ast.Ord]
-	for _, tt := range ordTests {
-		in := types.NewDatum(tt.origin)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
-		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v.GetInt64(), Equals, tt.ret)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, 10)
+
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.expected)
+			}
+		}
 	}
-	// test NULL input for sha
-	var argNull types.Datum
-	f, err := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	f, err := funcs[ast.Ord].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	r, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(r.IsNull(), IsTrue)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestElt(c *C) {
