@@ -193,11 +193,6 @@ func (s *testEvaluatorSuite) TestMD5(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.MD5, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
-		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
-		c.Assert(tp.Collate, Equals, charset.CollationUTF8)
-		c.Assert(tp.Flen, Equals, 32)
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
