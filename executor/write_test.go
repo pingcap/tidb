@@ -258,6 +258,56 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	r = tk.MustQuery("select * from insert_autoinc_test;")
 	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
+
+	// SQL_MODE=NO_AUTO_VALUE_ON_ZERO
+	createSQL = `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
+	tk.MustExec(createSQL)
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (5, 1)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr1 = fmt.Sprintf("%v %v", "5", "1")
+	r.Check(testkit.Rows(rowStr1))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0, 2)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr2 = fmt.Sprintf("%v %v", "6", "2")
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0, 3)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr3 = fmt.Sprintf("%v %v", "7", "3")
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	tk.MustExec("set SQL_MODE=NO_AUTO_VALUE_ON_ZERO")
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0, 4)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr4 = fmt.Sprintf("%v %v", "0", "4")
+	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0, 5)`
+	_, err := tk.Exec(insertSQL)
+	// ERROR 1062 (23000): Duplicate entry '0' for key 'PRIMARY'
+	c.Assert(err, NotNil)
+	insertSQL = `insert into insert_autoinc_test(c1) values (6)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr5 = fmt.Sprintf("%v %v", "8", "6")
+	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3, rowStr5))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (null, 7)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr6 = fmt.Sprintf("%v %v", "9", "7")
+	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3, rowStr5, rowStr6))
+	tk.MustExec("set SQL_MODE='';")
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0, 8)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr7 := fmt.Sprintf("%v %v", "10", "8")
+	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3, rowStr5, rowStr6, rowStr7))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (null, 9)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr8 := fmt.Sprintf("%v %v", "11", "9")
+	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3, rowStr5, rowStr6, rowStr7, rowStr8))
 }
 
 func (s *testSuite) TestInsertIgnore(c *C) {

@@ -115,7 +115,7 @@ func (e *ShowExec) fetchAll() error {
 		// empty result
 	case ast.ShowStatsMeta:
 		return e.fetchShowStatsMeta()
-	case ast.ShowStatsHistogram:
+	case ast.ShowStatsHistograms:
 		return e.fetchShowStatsHistogram()
 	}
 	return nil

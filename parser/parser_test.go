@@ -409,9 +409,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show stats_meta.
 		{"show stats_meta", true},
 		{"show stats_meta where table_name = 't'", true},
-		// for show stats_histogram
-		{"show stats_histogram", true},
-		{"show stats_histogram where col_name = 'a'", true},
+		// for show stats_histograms
+		{"show stats_histograms", true},
+		{"show stats_histograms where col_name = 'a'", true},
 
 		// set
 		// user defined

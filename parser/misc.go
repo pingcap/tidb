@@ -429,7 +429,7 @@ var tokenMap = map[string]int{
 	"START":                      start,
 	"STARTING":                   starting,
 	"STATS":                      stats,
-	"STATS_HISTOGRAM":            statsHistogram,
+	"STATS_HISTOGRAMS":           statsHistograms,
 	"STATS_META":                 statsMeta,
 	"STATS_PERSISTENT":           statsPersistent,
 	"STATUS":                     status,

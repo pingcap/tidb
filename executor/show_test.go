@@ -155,6 +155,24 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	// The user can see t2 but not t1.
 	c.Assert(rows, HasLen, 1)
 
+	// After revoke, show database result should be empty.
+	tk.MustExec(`revoke select on showdatabase.t1 from 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
+	rs, err = se.Execute("show databases")
+	c.Assert(err, IsNil)
+	rows, err = tidb.GetRows(rs[0])
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 0)
+
+	// Grant any global privilege would make show databases available.
+	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
+	rs, err = se.Execute("show databases")
+	c.Assert(err, IsNil)
+	rows, err = tidb.GetRows(rs[0])
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), GreaterEqual, 1)
+
 	privileges.Enable = save
 	tk.MustExec(`drop user 'show'@'%'`)
 	tk.MustExec("drop database showdatabase")
@@ -285,17 +303,17 @@ func (s *testSuite) TestIssue3641(c *C) {
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 }
 
-func (s *testSuite) TestShowStatsHistogram(c *C) {
+func (s *testSuite) TestShowStatsHistograms(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("analyze table t")
-	result := tk.MustQuery("show stats_histogram").Sort()
+	result := tk.MustQuery("show stats_histograms").Sort()
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[0][2], Equals, "a")
 	c.Assert(result.Rows()[1][2], Equals, "b")
-	result = tk.MustQuery("show stats_histogram where column_name = 'a'")
+	result = tk.MustQuery("show stats_histograms where column_name = 'a'")
 	c.Assert(len(result.Rows()), Equals, 1)
 	c.Assert(result.Rows()[0][2], Equals, "a")
 }
