@@ -261,6 +261,10 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 		c.Assert(retType.Collate, Equals, t.retType.Collate)
 		c.Assert(retType.Flag, Equals, t.retType.Flag)
 	}
+
+	f, err := funcs[ast.Left].getFunction([]Expression{varcharCon, int8Con}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestRight(c *C) {
@@ -329,6 +333,10 @@ func (s *testEvaluatorSuite) TestRight(c *C) {
 		c.Assert(retType.Collate, Equals, t.retType.Collate)
 		c.Assert(retType.Flag, Equals, t.retType.Flag)
 	}
+
+	f, err := funcs[ast.Right].getFunction([]Expression{varcharCon, int8Con}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestRepeat(c *C) {

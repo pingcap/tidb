@@ -294,11 +294,12 @@ type builtinLeftSig struct {
 func (b *builtinLeftSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	var left int64
 
-	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	d, isNull, err = b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	left, isNull, err = b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	left, isNull, err = b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
@@ -334,11 +335,12 @@ type builtinRightSig struct {
 func (b *builtinRightSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	var right int64
 
-	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	d, isNull, err = b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	right, isNull, err = b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	right, isNull, err = b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
