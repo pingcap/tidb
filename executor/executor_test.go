@@ -820,17 +820,6 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery("select ascii('123'), ascii(123), ascii(''), ascii('你好'), ascii(NULL)")
 	result.Check(testkit.Rows("49 49 0 228 <nil>"))
 
-	// for password
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a char(41), b char(41), c char(41))")
-	tk.MustExec(`insert into t values(NULL, '', 'abc')`)
-	result = tk.MustQuery("select password(a) from t")
-	result.Check(testkit.Rows("<nil>"))
-	result = tk.MustQuery("select password(b) from t")
-	result.Check(testkit.Rows(""))
-	result = tk.MustQuery("select password(c) from t")
-	result.Check(testkit.Rows("*0D3CED9BEC10A777AEC23CCC353A8C08A633045E"))
-
 	// for strcmp
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time)")
@@ -850,6 +839,35 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("50 50 50 50 49 10 53 52 116"))
 	result = tk.MustQuery("select ord('123'), ord(123), ord(''), ord('你好'), ord(NULL), ord('👍')")
 	result.Check(testkit.Rows("49 49 0 14990752 <nil> 4036989325"))
+}
+
+func (s *testSuite) TestEncryptionBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for password
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(41), b char(41), c char(41))")
+	tk.MustExec(`insert into t values(NULL, '', 'abc')`)
+	result := tk.MustQuery("select password(a) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select password(b) from t")
+	result.Check(testkit.Rows(""))
+	result = tk.MustQuery("select password(c) from t")
+	result.Check(testkit.Rows("*0D3CED9BEC10A777AEC23CCC353A8C08A633045E"))
+
+	// for md5
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb")`)
+	result = tk.MustQuery("select md5(a), md5(b), md5(c), md5(d), md5(e), md5(f), md5(g), md5(h), md5(i) from t")
+	result.Check(testkit.Rows("c81e728d9d4c2f636f067f89cc14862c c81e728d9d4c2f636f067f89cc14862c 1a18da63cbbfb49cb9616e6bfd35f662 bad2fa88e1f35919ec7584cc2623a310 991f84d41d7acff6471e536caa8d97db 68b329da9893e34099c7d8ad5cb9c940 5c9f0e9b3b36276731bfba852a73ccc6 642e92efb79421734881b53e1e1b18b6 c337e11bfca9f12ae9b1342901e04379"))
+	result = tk.MustQuery("select md5('123'), md5(123), md5(''), md5('你好'), md5(NULL), md5('👍')")
+	result.Check(testkit.Rows(`202cb962ac59075b964b07152d234b70 202cb962ac59075b964b07152d234b70 d41d8cd98f00b204e9800998ecf8427e 7eca689f0d3389d9dea66ae112e5cfd7 <nil> 0215ac4dab1ecaf71d83f98af5726984`))
 }
 
 func (s *testSuite) TestTimeBuiltin(c *C) {
