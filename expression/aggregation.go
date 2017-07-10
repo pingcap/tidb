@@ -556,7 +556,7 @@ func (af *avgFunction) Clone() AggregationFunction {
 func (af *avgFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
 	types.SetBinChsClnFlag(ft)
-	ft.Decimal = af.Args[0].GetType().Decimal
+	ft.Flen, ft.Decimal = mysql.MaxRealWidth, af.Args[0].GetType().Decimal
 	return ft
 }
 
