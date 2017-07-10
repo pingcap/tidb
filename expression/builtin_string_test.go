@@ -208,28 +208,26 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 		isNil  bool
 		getErr bool
 		res    string
-		flen   int
 	}{
-		{[]interface{}{"abcde", 3}, false, false, "abc", 5},
-		{[]interface{}{"abcde", 0}, false, false, "", 5},
-		{[]interface{}{"abcde", 1.2}, false, false, "a", 5},
-		{[]interface{}{"abcde", 1.9}, false, false, "ab", 5},
-		{[]interface{}{"abcde", -1}, false, false, "", 5},
-		{[]interface{}{"abcde", 100}, false, false, "abcde", 5},
-		{[]interface{}{"abcde", nil}, true, false, "", 5},
-		{[]interface{}{nil, 3}, true, false, "", 0},
-		{[]interface{}{"abcde", "3"}, false, false, "abc", 5},
-		{[]interface{}{"abcde", "a"}, false, false, "", 5},
-		{[]interface{}{1234, 3}, false, false, "123", 4},
-		{[]interface{}{12.34, 3}, false, false, "12.", 5},
-		{[]interface{}{types.Bit{Value: 0x0102, Width: 16}, 1}, false, false, string([]byte{0x01}), 18},
-		{[]interface{}{errors.New("must err"), 0}, false, true, "", -1},
+		{[]interface{}{"abcde", 3}, false, false, "abc"},
+		{[]interface{}{"abcde", 0}, false, false, ""},
+		{[]interface{}{"abcde", 1.2}, false, false, "a"},
+		{[]interface{}{"abcde", 1.9}, false, false, "ab"},
+		{[]interface{}{"abcde", -1}, false, false, ""},
+		{[]interface{}{"abcde", 100}, false, false, "abcde"},
+		{[]interface{}{"abcde", nil}, true, false, ""},
+		{[]interface{}{nil, 3}, true, false, ""},
+		{[]interface{}{"abcde", "3"}, false, false, "abc"},
+		{[]interface{}{"abcde", "a"}, false, false, ""},
+		{[]interface{}{1234, 3}, false, false, "123"},
+		{[]interface{}{12.34, 3}, false, false, "12."},
+		{[]interface{}{types.Bit{Value: 0x0102, Width: 16}, 1}, false, false, string([]byte{0x01})},
+		{[]interface{}{errors.New("must err"), 0}, false, true, ""},
 	}
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Left, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		v, err := f.Eval(nil)
-		c.Assert(f.GetType().Flen, Equals, t.flen)
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -240,26 +238,6 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 				c.Assert(v.GetString(), Equals, t.res)
 			}
 		}
-	}
-
-	typecases := []struct {
-		args    []Expression
-		retType *types.FieldType
-	}{
-		{
-			[]Expression{varcharCon, int8Con},
-			&types.FieldType{Tp: mysql.TypeVarString, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
-		},
-	}
-	fc := funcs[ast.Left].(*leftFunctionClass)
-	for _, t := range typecases {
-		f, err := fc.getFunction(t.args, s.ctx)
-		c.Assert(err, IsNil)
-		retType := f.getRetTp()
-		c.Assert(retType.Tp, Equals, t.retType.Tp)
-		c.Assert(retType.Charset, Equals, t.retType.Charset)
-		c.Assert(retType.Collate, Equals, t.retType.Collate)
-		c.Assert(retType.Flag, Equals, t.retType.Flag)
 	}
 
 	f, err := funcs[ast.Left].getFunction([]Expression{varcharCon, int8Con}, s.ctx)
@@ -281,28 +259,26 @@ func (s *testEvaluatorSuite) TestRight(c *C) {
 		isNil  bool
 		getErr bool
 		res    string
-		flen   int
 	}{
-		{[]interface{}{"abcde", 3}, false, false, "cde", 5},
-		{[]interface{}{"abcde", 0}, false, false, "", 5},
-		{[]interface{}{"abcde", 1.2}, false, false, "e", 5},
-		{[]interface{}{"abcde", 1.9}, false, false, "de", 5},
-		{[]interface{}{"abcde", -1}, false, false, "", 5},
-		{[]interface{}{"abcde", 100}, false, false, "abcde", 5},
-		{[]interface{}{"abcde", nil}, true, false, "", 5},
-		{[]interface{}{nil, 1}, true, false, "", 0},
-		{[]interface{}{"abcde", "3"}, false, false, "cde", 5},
-		{[]interface{}{"abcde", "a"}, false, false, "", 5},
-		{[]interface{}{1234, 3}, false, false, "234", 4},
-		{[]interface{}{12.34, 3}, false, false, ".34", 5},
-		{[]interface{}{types.Bit{Value: 0x0102, Width: 16}, 1}, false, false, string([]byte{0x02}), 18},
-		{[]interface{}{errors.New("must err"), 0}, false, true, "", -1},
+		{[]interface{}{"abcde", 3}, false, false, "cde"},
+		{[]interface{}{"abcde", 0}, false, false, ""},
+		{[]interface{}{"abcde", 1.2}, false, false, "e"},
+		{[]interface{}{"abcde", 1.9}, false, false, "de"},
+		{[]interface{}{"abcde", -1}, false, false, ""},
+		{[]interface{}{"abcde", 100}, false, false, "abcde"},
+		{[]interface{}{"abcde", nil}, true, false, ""},
+		{[]interface{}{nil, 1}, true, false, ""},
+		{[]interface{}{"abcde", "3"}, false, false, "cde"},
+		{[]interface{}{"abcde", "a"}, false, false, ""},
+		{[]interface{}{1234, 3}, false, false, "234"},
+		{[]interface{}{12.34, 3}, false, false, ".34"},
+		{[]interface{}{types.Bit{Value: 0x0102, Width: 16}, 1}, false, false, string([]byte{0x02})},
+		{[]interface{}{errors.New("must err"), 0}, false, true, ""},
 	}
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Right, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		v, err := f.Eval(nil)
-		c.Assert(f.GetType().Flen, Equals, t.flen)
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -313,25 +289,6 @@ func (s *testEvaluatorSuite) TestRight(c *C) {
 				c.Assert(v.GetString(), Equals, t.res)
 			}
 		}
-	}
-	typecases := []struct {
-		args    []Expression
-		retType *types.FieldType
-	}{
-		{
-			[]Expression{varcharCon, int8Con},
-			&types.FieldType{Tp: mysql.TypeVarString, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
-		},
-	}
-	fc := funcs[ast.Right].(*rightFunctionClass)
-	for _, t := range typecases {
-		f, err := fc.getFunction(t.args, s.ctx)
-		c.Assert(err, IsNil)
-		retType := f.getRetTp()
-		c.Assert(retType.Tp, Equals, t.retType.Tp)
-		c.Assert(retType.Charset, Equals, t.retType.Charset)
-		c.Assert(retType.Collate, Equals, t.retType.Collate)
-		c.Assert(retType.Flag, Equals, t.retType.Flag)
 	}
 
 	f, err := funcs[ast.Right].getFunction([]Expression{varcharCon, int8Con}, s.ctx)
