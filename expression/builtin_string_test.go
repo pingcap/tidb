@@ -1380,45 +1380,52 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 
 func (s *testEvaluatorSuite) TestOrd(c *C) {
 	defer testleak.AfterTest(c)()
-	ordTests := []struct {
-		origin interface{}
-		ret    int64
+
+	cases := []struct {
+		args     interface{}
+		expected int64
+		isNil    bool
+		getErr   bool
 	}{
-		// ASCII test cases
-		{"", 0},
-		{"A", 65},
-		{"你好", 14990752},
-		{1, 49},
-		{1.2, 49},
-		{true, 49},
-		{false, 48},
-
-		{2, 50},
-		{-1, 45},
-		{"-1", 45},
-		{"2", 50},
-		{"PingCap", 80},
-		{"中国", 14989485},
-		{"にほん", 14909867},
-		{"한국", 15570332},
+		{"2", 50, false, false},
+		{2, 50, false, false},
+		{"23", 50, false, false},
+		{23, 50, false, false},
+		{2.3, 50, false, false},
+		{nil, 0, true, false},
+		{"", 0, false, false},
+		{"你好", 14990752, false, false},
+		{"にほん", 14909867, false, false},
+		{"한국", 15570332, false, false},
+		{"👍", 4036989325, false, false},
+		{"א", 55184, false, false},
 	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Ord, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
 
-	fc := funcs[ast.Ord]
-	for _, tt := range ordTests {
-		in := types.NewDatum(tt.origin)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
-		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v.GetInt64(), Equals, tt.ret)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, 10)
+
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.expected)
+			}
+		}
 	}
-	// test NULL input for sha
-	var argNull types.Datum
-	f, err := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	f, err := funcs[ast.Ord].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	r, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(r.IsNull(), IsTrue)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestElt(c *C) {

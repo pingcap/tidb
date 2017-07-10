@@ -41,11 +41,13 @@ const (
 
 // Table represents statistics for a table.
 type Table struct {
-	TableID int64
-	Columns map[int64]*Column
-	Indices map[int64]*Index
-	Count   int64 // Total row count in a table.
-	Pseudo  bool
+	TableID     int64
+	Columns     map[int64]*Column
+	Indices     map[int64]*Index
+	Count       int64 // Total row count in a table.
+	ModifyCount int64 // Total modify count in a table.
+	Version     uint64
+	Pseudo      bool
 }
 
 func (t *Table) copy() *Table {
@@ -66,7 +68,7 @@ func (t *Table) copy() *Table {
 }
 
 // tableStatsFromStorage loads table stats info from storage.
-func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) (*Table, error) {
+func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok {
 		table = &Table{
@@ -78,8 +80,6 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		// We copy it before writing to avoid race.
 		table = table.copy()
 	}
-	table.Count = count
-
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count from mysql.stats_histograms where table_id = %d", tableInfo.ID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {

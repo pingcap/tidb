@@ -1639,49 +1639,40 @@ type ordFunctionClass struct {
 }
 
 func (c *ordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinOrdSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 10
+	sig := &builtinOrdSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinOrdSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinOrdSig.
+// evalInt evals a builtinOrdSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ord
-func (b *builtinOrdSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinOrdSig) evalInt(row []types.Datum) (int64, bool, error) {
+	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-
-	str, err := arg.ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
 	if len(str) == 0 {
-		d.SetInt64(0)
-		return d, nil
+		return 0, false, nil
 	}
 
 	_, size := utf8.DecodeRuneInString(str)
 	leftMost := str[:size]
-
 	var result int64
 	var factor int64 = 1
 	for i := len(leftMost) - 1; i >= 0; i-- {
 		result += int64(leftMost[i]) * factor
 		factor *= 256
 	}
-	d.SetInt64(result)
 
-	return d, nil
+	return result, false, nil
 }
 
 type quoteFunctionClass struct {

@@ -38,7 +38,7 @@ var (
 	_ Executor = &LoadData{}
 )
 
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, onDuplicateUpdate bool) error {
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, onDuplicateUpdate bool) (bool, error) {
 	cols := t.WritableCols()
 	touched := make(map[int]bool, len(cols))
 	assignExists := false
@@ -57,17 +57,17 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
-				return errors.Errorf("Column '%v' cannot be null", col.Name.O)
+				return false, errors.Errorf("Column '%v' cannot be null", col.Name.O)
 			}
 			val, err := newData[i].ToInt64(sc)
 			if err != nil {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 			t.RebaseAutoID(val, true)
 		}
 		casted, err := table.CastValue(ctx, newData[i], col.ToInfo())
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		newData[i] = casted
 		touched[i] = true
@@ -76,11 +76,11 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 	// If no assign list for this table, no need to update.
 	if !assignExists {
-		return nil
+		return false, nil
 	}
 
 	if err := table.CheckNotNull(cols, newData); err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
 	// If row is not changed, we should do nothing.
@@ -92,7 +92,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 		n, err := newData[i].CompareDatum(sc, oldData[i])
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		if n != 0 {
 			rowChanged = true
@@ -104,14 +104,14 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		return nil
+		return false, nil
 	}
 
 	var err error
 	if !newHandle.IsNull() {
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		_, err = t.AddRecord(ctx, newData)
 	} else {
@@ -119,7 +119,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		err = t.UpdateRecord(ctx, h, oldData, newData, touched)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	dirtyDB := getDirtyDB(ctx)
 	tid := t.Meta().ID
@@ -133,7 +133,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		sc.AddAffectedRows(2)
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
-	return nil
+	return true, nil
 }
 
 // DeleteExec represents a delete executor.
@@ -890,8 +890,6 @@ func (e *InsertValues) filterErr(err error, ignoreErr bool) error {
 func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
 	var defaultValueCols []*table.Column
 	strictSQL := e.ctx.GetSessionVars().StrictSQLMode
-	sc := e.ctx.GetSessionVars().StmtCtx
-	retryInfo := e.ctx.GetSessionVars().RetryInfo
 
 	for i, c := range e.Table.Cols() {
 		var needDefaultValue bool
@@ -904,7 +902,6 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 		if mysql.HasAutoIncrementFlag(c.Flag) {
 			needDefaultValue = false // handle it later.
 		}
-
 		if needDefaultValue {
 			var err error
 			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
@@ -916,39 +913,8 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 
 		// Adjust the value if this column has auto increment flag.
 		if mysql.HasAutoIncrementFlag(c.Flag) {
-			if retryInfo.Retrying {
-				id, err := retryInfo.GetCurrAutoIncrementID()
-				if err != nil {
-					return errors.Trace(err)
-				}
-				row[i].SetInt64(id)
-			} else {
-				var err error
-				var recordID int64
-				if !row[i].IsNull() {
-					recordID, err = row[i].ToInt64(sc)
-					if e.filterErr(errors.Trace(err), ignoreErr) != nil {
-						return errors.Trace(err)
-					}
-				}
-				// Use the value if it's not null and not 0, otherwise alloc new id.
-				// TODO: Consider NoAutoValueOnZero SQL mode and change the behavior here.
-				if recordID != 0 {
-					e.Table.RebaseAutoID(recordID, true)
-					e.ctx.GetSessionVars().InsertID = uint64(recordID)
-				} else {
-					recordID, err = e.Table.AllocAutoID()
-					if e.filterErr(errors.Trace(err), ignoreErr) != nil {
-						return errors.Trace(err)
-					}
-					// It's compatible with mysql. So it sets last insert id to the first row.
-					if e.currRow == 0 {
-						e.lastInsertID = uint64(recordID)
-					}
-				}
-
-				row[i].SetInt64(recordID)
-				retryInfo.AddAutoIncrementID(recordID)
+			if err := e.adjustAutoIncrementDatum(row, i, c, ignoreErr); err != nil {
+				return errors.Trace(err)
 			}
 		}
 	}
@@ -956,6 +922,52 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 		return errors.Trace(err)
 	}
 
+	return nil
+}
+
+func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *table.Column, ignoreErr bool) error {
+	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	if retryInfo.Retrying {
+		id, err := retryInfo.GetCurrAutoIncrementID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		row[i].SetInt64(id)
+		return nil
+	}
+
+	var err error
+	var recordID int64
+	if !row[i].IsNull() {
+		recordID, err = row[i].ToInt64(e.ctx.GetSessionVars().StmtCtx)
+		if e.filterErr(errors.Trace(err), ignoreErr) != nil {
+			return errors.Trace(err)
+		}
+	}
+	// Use the value if it's not null and not 0.
+	if recordID != 0 {
+		e.Table.RebaseAutoID(recordID, true)
+		e.ctx.GetSessionVars().InsertID = uint64(recordID)
+		row[i].SetInt64(recordID)
+		retryInfo.AddAutoIncrementID(recordID)
+		return nil
+	}
+
+	// Change NULL to auto id.
+	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+	if row[i].IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		recordID, err = e.Table.AllocAutoID()
+		if e.filterErr(errors.Trace(err), ignoreErr) != nil {
+			return errors.Trace(err)
+		}
+		// It's compatible with mysql. So it sets last insert id to the first row.
+		if e.currRow == 0 {
+			e.lastInsertID = uint64(recordID)
+		}
+	}
+
+	row[i].SetInt64(recordID)
+	retryInfo.AddAutoIncrementID(recordID)
 	return nil
 }
 
@@ -981,7 +993,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expre
 		newData[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
-	if err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true); err != nil {
+	if _, err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1161,11 +1173,13 @@ func (e *UpdateExec) Next() (*Row, error) {
 			continue
 		}
 		// Update row
-		err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+		changed, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		e.updatedRowKeys[tbl][handle] = struct{}{}
+		if changed {
+			e.updatedRowKeys[tbl][handle] = struct{}{}
+		}
 	}
 	e.cursor++
 	return &Row{}, nil
