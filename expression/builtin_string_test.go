@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,12 +54,6 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Length, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 10)
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -98,13 +93,6 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.ASCII, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 3)
 
 		d, err := f.Eval(nil)
 		if t.getErr {
@@ -168,13 +156,6 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, fcName, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		retType := f.GetType()
-		c.Assert(retType.Tp, Equals, t.retType.Tp)
-		c.Assert(retType.Charset, Equals, t.retType.Charset)
-		c.Assert(retType.Collate, Equals, t.retType.Collate)
-		c.Assert(retType.Flen, Equals, t.retType.Flen)
-		c.Assert(retType.Decimal, Equals, t.retType.Decimal)
-		c.Assert(retType.Flag, Equals, t.retType.Flag)
 		v, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -403,12 +384,6 @@ func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Strcmp, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 2)
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -626,52 +601,49 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 
 func (s *testEvaluatorSuite) TestSpace(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.Space]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
-	c.Assert(err, IsNil)
-	d, err := f.eval(nil)
-	c.Assert(d.Kind(), Equals, types.KindNull)
+	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+	origin := stmtCtx.IgnoreTruncate
+	stmtCtx.IgnoreTruncate = true
+	defer func() {
+		stmtCtx.IgnoreTruncate = origin
+	}()
 
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(8888888888)), s.ctx)
-	c.Assert(err, IsNil)
-	d, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.Kind(), Equals, types.KindNull)
-
-	tbl := []struct {
-		Input  interface{}
-		Expect string
+	cases := []struct {
+		arg    interface{}
+		isNil  bool
+		getErr bool
+		res    string
 	}{
-		{5, "     "},
-		{0, ""},
-		{-1, ""},
-		{"5", "     "},
+		{0, false, false, ""},
+		{3, false, false, "   "},
+		{mysql.MaxBlobWidth + 1, true, false, ""},
+		{-1, false, false, ""},
+		{"abc", false, false, ""},
+		{"3", false, false, "   "},
+		{1.2, false, false, " "},
+		{1.9, false, false, "  "},
+		{nil, true, false, ""},
+		{errors.New("must error"), false, true, ""},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Space, primitiveValsToConstants([]interface{}{t.arg})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
 	}
 
-	dtbl := tblToDtbl(tbl)
-	for _, t := range dtbl {
-		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
-		c.Assert(err, IsNil)
-		d, err = f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
-	}
-
-	// TODO: the error depends on statement context, add those back when statement context is supported.
-	//wrong := []struct {
-	//	Input string
-	//}{
-	//	{"abc"},
-	//	{"3.3"},
-	//	{""},
-	//}
-
-	//
-	//dwrong := tblToDtbl(wrong)
-	//for _, t := range dwrong {
-	//	_, err = builtinSpace(t["Input"], s.ctx)
-	//	c.Assert(err, NotNil)
-	//}
+	f, err := funcs[ast.Space].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLocate(c *C) {
@@ -1380,45 +1352,45 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 
 func (s *testEvaluatorSuite) TestOrd(c *C) {
 	defer testleak.AfterTest(c)()
-	ordTests := []struct {
-		origin interface{}
-		ret    int64
+
+	cases := []struct {
+		args     interface{}
+		expected int64
+		isNil    bool
+		getErr   bool
 	}{
-		// ASCII test cases
-		{"", 0},
-		{"A", 65},
-		{"你好", 14990752},
-		{1, 49},
-		{1.2, 49},
-		{true, 49},
-		{false, 48},
-
-		{2, 50},
-		{-1, 45},
-		{"-1", 45},
-		{"2", 50},
-		{"PingCap", 80},
-		{"中国", 14989485},
-		{"にほん", 14909867},
-		{"한국", 15570332},
+		{"2", 50, false, false},
+		{2, 50, false, false},
+		{"23", 50, false, false},
+		{23, 50, false, false},
+		{2.3, 50, false, false},
+		{nil, 0, true, false},
+		{"", 0, false, false},
+		{"你好", 14990752, false, false},
+		{"にほん", 14909867, false, false},
+		{"한국", 15570332, false, false},
+		{"👍", 4036989325, false, false},
+		{"א", 55184, false, false},
 	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Ord, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
 
-	fc := funcs[ast.Ord]
-	for _, tt := range ordTests {
-		in := types.NewDatum(tt.origin)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
-		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v.GetInt64(), Equals, tt.ret)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.expected)
+			}
+		}
 	}
-	// test NULL input for sha
-	var argNull types.Datum
-	f, err := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	f, err := funcs[ast.Ord].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	r, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(r.IsNull(), IsTrue)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestElt(c *C) {
@@ -1572,22 +1544,32 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 		},
 		{nil, "", true, false},
 	}
+	if strconv.IntSize == 32 {
+		tests = append(tests, struct {
+			args   interface{}
+			expect string
+			isNil  bool
+			getErr bool
+		}{
+			strings.Repeat("a", 1589695687),
+			"",
+			true,
+			false,
+		})
+	}
+
 	for _, test := range tests {
 		f, err := newFunctionForTest(s.ctx, ast.ToBase64, primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
-		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
-		c.Assert(tp.Collate, Equals, charset.CollationUTF8)
-		result, err := f.Eval(nil)
+		d, err := f.Eval(nil)
 		if test.getErr {
 			c.Assert(err, NotNil)
 		} else {
 			c.Assert(err, IsNil)
 			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
+				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(result.GetString(), Equals, test.expect)
+				c.Assert(d.GetString(), Equals, test.expect)
 			}
 		}
 	}

@@ -21,7 +21,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -185,6 +184,44 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
+}
+
+func (s *testEvaluatorSuite) TestLog2(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tests := []struct {
+		args   interface{}
+		expect float64
+		isNil  bool
+		getErr bool
+	}{
+		{nil, 0, true, false},
+		{int64(16), 4, false, false},
+		{float64(16), 4, false, false},
+		{int64(5), 2.321928094887362, false, false},
+		{int64(-1), 0, true, false},
+		{"4abc", 0, false, true},
+	}
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Log2, primitiveValsToConstants([]interface{}{test.args})...)
+		c.Assert(err, IsNil)
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
+	}
+
+	f, err := funcs[ast.Log2].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
@@ -452,12 +489,6 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Degrees, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeDouble)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 23)
 		d, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -565,12 +596,6 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Sin, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeDouble)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 23)
 
 		d, err := f.Eval(nil)
 		if t.getErr {
@@ -611,12 +636,6 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Cos, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeDouble)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 23)
 
 		d, err := f.Eval(nil)
 		if t.getErr {
@@ -630,6 +649,7 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 			}
 		}
 	}
+
 	f, err := funcs[ast.Cos].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsTrue)
@@ -729,12 +749,6 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Tan, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeDouble)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
-		c.Assert(tp.Flen, Equals, 23)
 
 		d, err := f.Eval(nil)
 		if t.getErr {
