@@ -482,47 +482,35 @@ type spaceFunctionClass struct {
 }
 
 func (c *spaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinSpaceSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = mysql.MaxBlobWidth
+	sig := &builtinSpaceSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSpaceSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinSpaceSig.
+// evalString evals a builtinSpaceSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_space
-func (b *builtinSpaceSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	x := args[0]
-	if x.IsNull() {
-		return d, nil
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if x.Kind() == types.KindString || x.Kind() == types.KindBytes {
-		if _, e := types.StrToInt(sc, x.GetString()); e != nil {
-			return d, errors.Trace(e)
-		}
-	}
+func (b *builtinSpaceSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var x int64
 
-	v, err := x.ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
+	x, isNull, err = b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-
-	if v < 0 {
-		v = 0
+	if x > mysql.MaxBlobWidth {
+		return d, true, nil
 	}
-
-	if v > math.MaxInt32 {
-		d.SetNull()
-	} else {
-		d.SetString(strings.Repeat(" ", int(v)))
+	if x < 0 {
+		x = 0
 	}
-	return d, nil
+	return strings.Repeat(" ", int(x)), false, nil
 }
 
 type upperFunctionClass struct {
