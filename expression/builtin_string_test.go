@@ -324,15 +324,15 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 	}{
 		{
 			[]Expression{blobCon},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			&types.FieldType{Tp: mysql.TypeVarString, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
 		},
 		{
 			[]Expression{varcharCon},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
+			&types.FieldType{Tp: mysql.TypeVarString, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
 		},
 		{
 			[]Expression{varcharCon},
-			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
+			&types.FieldType{Tp: mysql.TypeVarString, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
 		},
 	}
 

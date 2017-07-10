@@ -414,14 +414,7 @@ type lowerFunctionClass struct {
 }
 
 func (c *lowerFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeVarchar)
-	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	argTp := args[0].GetType()
-	if types.IsBinaryStr(argTp) || argTp.Tp == mysql.TypeNull {
-		types.SetBinChsClnFlag(tp)
-	}
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -436,12 +429,15 @@ type builtinLowerSig struct {
 // evalString evals a builtinLowerSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
 func (b *builtinLowerSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	args := b.getArgs()
-	x := args[0]
-	d, isNull, err = x.EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
+
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		return d, false, nil
+	}
+
 	return strings.ToLower(d), false, nil
 }
 
@@ -532,14 +528,7 @@ type upperFunctionClass struct {
 }
 
 func (c *upperFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeVarchar)
-	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	argTp := args[0].GetType()
-	if types.IsBinaryStr(argTp) || argTp.Tp == mysql.TypeNull {
-		types.SetBinChsClnFlag(tp)
-	}
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -554,12 +543,15 @@ type builtinUpperSig struct {
 // evalString evals a builtinUpperSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
 func (b *builtinUpperSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	args := b.getArgs()
-	x := args[0]
-	d, isNull, err = x.EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
+
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		return d, false, nil
+	}
+
 	return strings.ToUpper(d), false, nil
 }
 
