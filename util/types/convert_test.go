@@ -277,7 +277,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	_, err = Convert("d", ft)
 	c.Assert(err, NotNil)
 	v, err = Convert(4, ft)
-	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
 	c.Assert(v, DeepEquals, Enum{})
 
 	ft = NewFieldType(mysql.TypeSet)
