@@ -161,6 +161,20 @@ func (ts *TidbTestSuite) TestIssue3680(c *C) {
 	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: YES)")
 }
 
+func (ts *TidbTestSuite) TestDBNameEscape(c *C) {
+	c.Parallel()
+	runTests(c, dsn, func(dbt *DBTest) {
+		dbt.mustExec("create database `aa-a`;")
+	})
+	// The database name is aa-a, '-' is not permitted as identifier, it should be `aa-a` to be a legal sql.
+	db, err := sql.Open("mysql", "root@tcp(127.0.0.1:4001)/aa-a")
+	c.Assert(err, IsNil)
+	defer db.Close()
+	c.Assert(db.Ping(), IsNil)
+	_, err = db.Exec("drop database `aa-a`")
+	c.Assert(err, IsNil)
+}
+
 func (ts *TidbTestSuite) TestIssue3682(c *C) {
 	runTestIssue3682(c)
 }
