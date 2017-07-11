@@ -264,6 +264,7 @@ func (s *testSuite) TestShowWarnings(c *C) {
 func (s *testSuite) TestShowStatsMeta(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("analyze table t, t1")
@@ -282,4 +283,37 @@ func (s *testSuite) TestIssue3641(c *C) {
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 	_, err = tk.Exec("show table status;")
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+}
+
+func (s *testSuite) TestShowStatsHistograms(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("analyze table t")
+	result := tk.MustQuery("show stats_histograms").Sort()
+	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(result.Rows()[0][2], Equals, "a")
+	c.Assert(result.Rows()[1][2], Equals, "b")
+	result = tk.MustQuery("show stats_histograms where column_name = 'a'")
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(result.Rows()[0][2], Equals, "a")
+}
+
+func (s *testSuite) TestShowStatsBuckets(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create index idx on t(a,b)")
+	tk.MustExec("insert into t values (1,1)")
+	tk.MustExec("analyze table t")
+	result := tk.MustQuery("show stats_buckets").Sort()
+	c.Assert(len(result.Rows()), Equals, 3)
+	c.Assert(result.Rows()[0][2], Equals, "a")
+	c.Assert(result.Rows()[1][2], Equals, "b")
+	c.Assert(result.Rows()[2][2], Equals, "idx")
+	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(result.Rows()[0][7], Equals, "(1, 1)")
 }

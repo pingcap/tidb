@@ -116,8 +116,10 @@ func (e *ShowExec) fetchAll() error {
 		// empty result
 	case ast.ShowStatsMeta:
 		return e.fetchShowStatsMeta()
-	case ast.ShowStatsBucket:
-		return e.fetchShowStatsBucket()
+	case ast.ShowStatsHistograms:
+		return e.fetchShowStatsHistogram()
+	case ast.ShowStatsBuckets:
+		return e.fetchShowStatsBuckets()
 	}
 	return nil
 }
@@ -641,12 +643,11 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 		for _, tbl := range db.Tables {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
-				t := time.Unix(0, oracle.ExtractPhysical(statsTbl.Version)*int64(time.Millisecond))
 				row := &Row{
 					Data: types.MakeDatums(
 						db.Name.O,
 						tbl.Name.O,
-						types.Time{Time: types.FromGoTime(t), Type: mysql.TypeDatetime},
+						e.versionToTime(statsTbl.Version),
 						statsTbl.ModifyCount,
 						statsTbl.Count,
 					),
@@ -658,7 +659,46 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowStatsBucket() error {
+func (e *ShowExec) fetchShowStatsHistogram() error {
+	do := sessionctx.GetDomain(e.ctx)
+	h := do.StatsHandle()
+	dbs := do.InfoSchema().AllSchemas()
+	for _, db := range dbs {
+		for _, tbl := range db.Tables {
+			statsTbl := h.GetTableStats(tbl.ID)
+			if !statsTbl.Pseudo {
+				for _, col := range statsTbl.Columns {
+					e.rows = append(e.rows, e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram))
+				}
+				for _, idx := range statsTbl.Indices {
+					e.rows = append(e.rows, e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram) *Row {
+	return &Row{
+		Data: types.MakeDatums(
+			dbName,
+			tblName,
+			colName,
+			isIndex,
+			e.versionToTime(hist.LastUpdateVersion),
+			hist.NDV,
+			hist.NullCount,
+		),
+	}
+}
+
+func (e *ShowExec) versionToTime(version uint64) types.Time {
+	t := time.Unix(0, oracle.ExtractPhysical(version)*int64(time.Millisecond))
+	return types.Time{Time: types.FromGoTime(t), Type: mysql.TypeDatetime}
+}
+
+func (e *ShowExec) fetchShowStatsBuckets() error {
 	do := sessionctx.GetDomain(e.ctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
@@ -686,6 +726,8 @@ func (e *ShowExec) fetchShowStatsBucket() error {
 	return nil
 }
 
+// bucketsToRows converts histogram buckets to rows. If the histogram is built from index, then numOfCols equals to number
+// of index columns, else numOfCols is 0.
 func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int, hist statistics.Histogram) ([]*Row, error) {
 	isIndex := 0
 	if numOfCols > 0 {
@@ -719,13 +761,13 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 	return rows, nil
 }
 
-func (e *ShowExec) valueToString(value types.Datum, numOfCols int) (string, error) {
-	if numOfCols == 0 {
+func (e *ShowExec) valueToString(value types.Datum, size int) (string, error) {
+	if size == 0 {
 		return value.ToString()
 	}
-	decodedVals, err := codec.Decode(value.GetBytes(), numOfCols)
+	decodedVals, err := codec.Decode(value.GetBytes(), size)
 	if err != nil {
-		return "", nil
+		return "", errors.Trace(err)
 	}
 	var strs []string
 	for _, val := range decodedVals {
@@ -735,9 +777,9 @@ func (e *ShowExec) valueToString(value types.Datum, numOfCols int) (string, erro
 		}
 		strs = append(strs, str)
 	}
-	if numOfCols > 1 {
+	if size > 1 {
 		strs[0] = "(" + strs[0]
-		strs[numOfCols-1] = strs[numOfCols-1] + ")"
+		strs[size - 1] = strs[size - 1] + ")"
 	}
 	return strings.Join(strs, ", "), nil
 }
