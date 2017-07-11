@@ -63,8 +63,7 @@ var (
 	_ builtinFunc = &builtinInet6NtoaSig{}
 	_ builtinFunc = &builtinIsFreeLockSig{}
 	_ builtinFunc = &builtinIsIPv4Sig{}
-	_ builtinFunc = &builtinIsIPv4CompatSig{}
-	_ builtinFunc = &builtinIsIPv4MappedSig{}
+	_ builtinFunc = &builtinIsIPv4PrefixedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
 	_ builtinFunc = &builtinIsUsedLockSig{}
 	_ builtinFunc = &builtinMasterPosWaitSig{}
@@ -534,36 +533,24 @@ type isIPv4CompatFunctionClass struct {
 }
 
 func (c *isIPv4CompatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsIPv4CompatSig{newBaseBuiltinFunc(args, ctx)}
+	sig := &builtinIsIPv4PrefixedSig{newBaseBuiltinFunc(args, ctx), false}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinIsIPv4CompatSig struct {
+type builtinIsIPv4PrefixedSig struct {
 	baseBuiltinFunc
+	// true for `Is_IPv4_Mapped`, false for `Is_IPv4_Compat`
+	isIPv4MappedPrefix bool
 }
 
-// eval evals a builtinIsIPv4CompatSig.
+// eval evals Is_IPv4_Mapped or Is_IPv4_Compat
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
-func (b *builtinIsIPv4CompatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_IPV4_COMPAT")
-}
-
-type isIPv4MappedFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *isIPv4MappedFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsIPv4MappedSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinIsIPv4MappedSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinIsIPv4MappedSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
-func (b *builtinIsIPv4MappedSig) eval(row []types.Datum) (d types.Datum, err error) {
+func (b *builtinIsIPv4PrefixedSig) eval(row []types.Datum) (d types.Datum, err error) {
+	var (
+		prefixMapped = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
+		prefixCompat = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	)
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return d, errors.Trace(err)
@@ -585,13 +572,28 @@ func (b *builtinIsIPv4MappedSig) eval(row []types.Datum) (d types.Datum, err err
 		return
 	}
 
-	var v4InV6Prefix = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
-	if !bytes.HasPrefix(ipAddress, v4InV6Prefix) {
-		return
+	if b.isIPv4MappedPrefix {
+		if !bytes.HasPrefix(ipAddress, prefixMapped) {
+			return
+		}
+	} else {
+		if !bytes.HasPrefix(ipAddress, prefixCompat) {
+			return
+		}
 	}
 
 	d.SetInt64(1)
+
 	return
+}
+
+type isIPv4MappedFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *isIPv4MappedFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	sig := &builtinIsIPv4PrefixedSig{newBaseBuiltinFunc(args, ctx), true}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type isIPv6FunctionClass struct {

@@ -38,7 +38,6 @@ var (
 	_ StmtNode = &SetPwdStmt{}
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
-	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &FlushStmt{}
 	_ StmtNode = &KillStmt{}
 
@@ -414,6 +413,20 @@ type UserSpec struct {
 	AuthOpt *AuthOption
 }
 
+// SecurityString formats the UserSpec without password information.
+func (u *UserSpec) SecurityString() string {
+	withPassword := false
+	if opt := u.AuthOpt; opt != nil {
+		if len(opt.AuthString) > 0 || len(opt.HashString) > 0 {
+			withPassword = true
+		}
+	}
+	if withPassword {
+		return fmt.Sprintf("{%s password = ***}", u.User)
+	}
+	return u.User
+}
+
 // CreateUserStmt creates user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
@@ -668,36 +681,12 @@ func (i Ident) String() string {
 	return fmt.Sprintf("%s.%s", i.Schema, i.Name)
 }
 
-// AnalyzeTableStmt is used to create table statistics.
-type AnalyzeTableStmt struct {
-	stmtNode
-
-	TableNames []*TableName
-	IndexNames []model.CIStr
-}
-
-// Accept implements Node Accept interface.
-func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AnalyzeTableStmt)
-	for i, val := range n.TableNames {
-		node, ok := val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.TableNames[i] = node.(*TableName)
-	}
-	return v.Leave(n)
-}
-
 // SelectStmtOpts wrap around select hints and switches
 type SelectStmtOpts struct {
 	Distinct      bool
 	SQLCache      bool
 	CalcFoundRows bool
+	Priority      mysql.PriorityEnum
 	TableHints    []*TableOptimizerHint
 }
 

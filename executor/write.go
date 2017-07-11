@@ -38,7 +38,7 @@ var (
 	_ Executor = &LoadData{}
 )
 
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, onDuplicateUpdate bool) error {
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, onDuplicateUpdate bool) (bool, error) {
 	cols := t.WritableCols()
 	touched := make(map[int]bool, len(cols))
 	assignExists := false
@@ -57,17 +57,17 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
-				return errors.Errorf("Column '%v' cannot be null", col.Name.O)
+				return false, errors.Errorf("Column '%v' cannot be null", col.Name.O)
 			}
 			val, err := newData[i].ToInt64(sc)
 			if err != nil {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 			t.RebaseAutoID(val, true)
 		}
 		casted, err := table.CastValue(ctx, newData[i], col.ToInfo())
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		newData[i] = casted
 		touched[i] = true
@@ -76,11 +76,11 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 	// If no assign list for this table, no need to update.
 	if !assignExists {
-		return nil
+		return false, nil
 	}
 
 	if err := table.CheckNotNull(cols, newData); err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
 	// If row is not changed, we should do nothing.
@@ -92,7 +92,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 		n, err := newData[i].CompareDatum(sc, oldData[i])
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		if n != 0 {
 			rowChanged = true
@@ -104,14 +104,14 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		return nil
+		return false, nil
 	}
 
 	var err error
 	if !newHandle.IsNull() {
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		_, err = t.AddRecord(ctx, newData)
 	} else {
@@ -119,7 +119,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		err = t.UpdateRecord(ctx, h, oldData, newData, touched)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	dirtyDB := getDirtyDB(ctx)
 	tid := t.Meta().ID
@@ -133,7 +133,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		sc.AddAffectedRows(2)
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
-	return nil
+	return true, nil
 }
 
 // DeleteExec represents a delete executor.
@@ -604,7 +604,7 @@ type InsertExec struct {
 
 	OnDuplicate []*expression.Assignment
 
-	Priority int
+	Priority mysql.PriorityEnum
 	Ignore   bool
 
 	finished bool
@@ -632,7 +632,6 @@ func (e *InsertExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	toUpdateColumns, err := getOnDuplicateUpdateColumns(e.OnDuplicate, e.Table)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -680,7 +679,7 @@ func (e *InsertExec) Next() (*Row, error) {
 				continue
 			}
 			if len(e.OnDuplicate) > 0 {
-				if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
+				if err = e.onDuplicateUpdate(row, h, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
 				}
 				continue
@@ -913,7 +912,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				return errors.Trace(err)
 			}
 			row[i].SetInt64(val)
-			if val != 0 {
+			if val != 0 || (e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero) > 0 {
 				e.ctx.GetSessionVars().InsertID = uint64(val)
 				e.Table.RebaseAutoID(val, true)
 				continue
@@ -958,38 +957,27 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 
 // onDuplicateUpdate updates the duplicate row.
 // TODO: Report rows affected and last insert id.
-func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]*expression.Assignment) error {
+func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expression.Assignment) error {
 	data, err := e.Table.Row(e.ctx, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.ctx.GetSessionVars().CurrInsertValues = row
+
 	// evaluate assignment
+	assignFlag := make([]bool, len(e.Table.Cols()))
 	newData := make([]types.Datum, len(data))
-	for i, c := range row {
-		asgn, ok := cols[i]
-		if !ok {
-			newData[i] = c
-			continue
-		}
-		val, err1 := asgn.Expr.Eval(data)
+	copy(newData, data)
+	for _, col := range cols {
+		val, err1 := col.Expr.Eval(newData)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		newData[i] = val
+		newData[col.Col.Index] = val
+		assignFlag[col.Col.Index] = true
 	}
-
-	assignFlag := make([]bool, len(e.Table.Cols()))
-	for i, asgn := range cols {
-		if asgn != nil {
-			assignFlag[i] = true
-		} else {
-			assignFlag[i] = false
-		}
-	}
-	if err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true); err != nil {
+	if _, err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1005,20 +993,6 @@ func findColumnByName(t table.Table, tableName, colName string) (*table.Column, 
 		return nil, errors.Errorf("unknown field %s", colName)
 	}
 	return c, nil
-}
-
-func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Table) (map[int]*expression.Assignment, error) {
-	m := make(map[int]*expression.Assignment, len(assignList))
-
-	for _, v := range assignList {
-		col := v.Col
-		c, err := findColumnByName(t, col.TblName.L, col.ColName.L)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		m[c.Offset] = v
-	}
-	return m, nil
 }
 
 // ReplaceExec represents a replace executor.
@@ -1154,7 +1128,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		e.fetched = true
 	}
 
-	assignFlag, err := getUpdateColumns(e.OrderedList)
+	assignFlag, err := getUpdateColumns(e.OrderedList, e.SelectExec.Schema().Len())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1183,23 +1157,24 @@ func (e *UpdateExec) Next() (*Row, error) {
 			continue
 		}
 		// Update row
-		err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+		changed, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		e.updatedRowKeys[tbl][handle] = struct{}{}
+		if changed {
+			e.updatedRowKeys[tbl][handle] = struct{}{}
+		}
 	}
 	e.cursor++
 	return &Row{}, nil
 }
 
-func getUpdateColumns(assignList []*expression.Assignment) ([]bool, error) {
-	assignFlag := make([]bool, len(assignList))
-	for i, v := range assignList {
+func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
+	assignFlag := make([]bool, schemaLen)
+	for _, v := range assignList {
+		idx := v.Col.Index
 		if v != nil {
-			assignFlag[i] = true
-		} else {
-			assignFlag[i] = false
+			assignFlag[idx] = true
 		}
 	}
 	return assignFlag, nil
@@ -1214,23 +1189,17 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		l := len(e.OrderedList)
-		data := make([]types.Datum, l)
-		newData := make([]types.Datum, l)
-		for i := 0; i < l; i++ {
-			data[i] = row.Data[i]
-			newData[i] = data[i]
-			if e.OrderedList[i] != nil {
-				val, err := e.OrderedList[i].Expr.Eval(row.Data)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				newData[i] = val
+		newRowData := make([]types.Datum, len(row.Data))
+		copy(newRowData, row.Data)
+		for _, assign := range e.OrderedList {
+			val, err := assign.Expr.Eval(newRowData)
+			if err != nil {
+				return errors.Trace(err)
 			}
+			newRowData[assign.Col.Index] = val
 		}
-		row.Data = data
 		e.rows = append(e.rows, row)
-		e.newRowsData = append(e.newRowsData, newData)
+		e.newRowsData = append(e.newRowsData, newRowData)
 	}
 }
 

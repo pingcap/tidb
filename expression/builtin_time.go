@@ -638,7 +638,20 @@ func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err err
 		}
 	}
 
-	t, err := convertTimeToMysqlTime(time.Now(), fsp)
+	// This would consider "timestamp" session variable.
+	now, err := getSystemTimestamp(ctx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	t, err := convertTimeToMysqlTime(now, fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// Now() is a strange function, you can view it as timestamp converted datetime, so
+	// it also consider "time_zone" session variable.
+	err = t.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -1205,7 +1218,20 @@ func (b *builtinSysDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
 	// But here we can just think they are the same because we don't support stored function
 	// and trigger now.
-	return builtinNow(args, b.ctx)
+	fsp := 0
+	sc := b.ctx.GetSessionVars().StmtCtx
+	if len(args) == 1 && !args[0].IsNull() {
+		if fsp, err = checkFsp(sc, args[0]); err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+
+	t, err := convertTimeToMysqlTime(time.Now(), fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlTime(t)
+	return
 }
 
 type currentDateFunctionClass struct {
@@ -2023,35 +2049,36 @@ type makeDateFunctionClass struct {
 }
 
 func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinMakeDateSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tp := bf.tp
+	tp.Tp, tp.Flen, tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, 0
+	sig := &builtinMakeDateSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMakeDateSig struct {
-	baseBuiltinFunc
+	baseTimeBuiltinFunc
 }
 
-// eval evals a builtinMakeDateSig.
+// evalTime evaluates a builtinMakeDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
-func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if args[0].IsNull() || args[1].IsNull() {
-		return
-	}
+func (b *builtinMakeDateSig) evalTime(row []types.Datum) (d types.Time, isNull bool, err error) {
+	args := b.getArgs()
 	sc := b.ctx.GetSessionVars().StmtCtx
-	year, err := args[0].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	var year, dayOfYear int64
+	year, isNull, err = args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return d, true, errors.Trace(err)
 	}
-	dayOfYear, err := args[1].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	dayOfYear, isNull, err = args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return d, true, errors.Trace(err)
 	}
 	if dayOfYear <= 0 || year < 0 || year > 9999 {
-		return
+		return d, true, nil
 	}
 	if year < 70 {
 		year += 2000
@@ -2065,14 +2092,13 @@ func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) 
 	}
 	retTimestamp := types.TimestampDiff("DAY", types.ZeroDate, startTime)
 	if retTimestamp == 0 {
-		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
+		return d, true, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
 	}
 	ret := types.TimeFromDays(retTimestamp + dayOfYear - 1)
 	if ret.IsZero() || ret.Time.Year() > 9999 {
-		return
+		return d, true, nil
 	}
-	d.SetMysqlTime(ret)
-	return
+	return ret, false, nil
 }
 
 type makeTimeFunctionClass struct {

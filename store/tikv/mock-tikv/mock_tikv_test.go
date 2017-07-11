@@ -56,19 +56,25 @@ func (s *testMockTiKVSuite) SetUpTest(c *C) {
 }
 
 func (s *testMockTiKVSuite) mustGetNone(c *C, key string, ts uint64) {
-	val, err := s.store.Get([]byte(key), ts)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
 	c.Assert(err, IsNil)
 	c.Assert(val, IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetErr(c *C, key string, ts uint64) {
-	val, err := s.store.Get([]byte(key), ts)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
 	c.Assert(err, NotNil)
 	c.Assert(val, IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetOK(c *C, key string, ts uint64, expect string) {
-	val, err := s.store.Get([]byte(key), ts)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
+	c.Assert(err, IsNil)
+	c.Assert(string(val), Equals, expect)
+}
+
+func (s *testMockTiKVSuite) mustGetRC(c *C, key string, ts uint64, expect string) {
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_RC)
 	c.Assert(err, IsNil)
 	c.Assert(string(val), Equals, expect)
 }
@@ -98,7 +104,7 @@ func (s *testMockTiKVSuite) mustDeleteOK(c *C, key string, startTS, commitTS uin
 }
 
 func (s *testMockTiKVSuite) mustScanOK(c *C, start string, limit int, ts uint64, expect ...string) {
-	pairs := s.store.Scan([]byte(start), nil, limit, ts)
+	pairs := s.store.Scan([]byte(start), nil, limit, ts, kvrpcpb.IsolationLevel_SI)
 	c.Assert(len(pairs)*2, Equals, len(expect))
 	for i := 0; i < len(pairs); i++ {
 		c.Assert(pairs[i].Err, IsNil)
@@ -275,4 +281,12 @@ func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {
 func (s *testMockTiKVSuite) mustWriteWriteConflict(c *C, errs []error, i int) {
 	c.Assert(errs[i], NotNil)
 	c.Assert(strings.Contains(errs[i].Error(), "write conflict"), IsTrue)
+}
+
+func (s *testMockTiKVSuite) TestRC(c *C) {
+	s.mustPutOK(c, "key", "v1", 5, 10)
+	s.mustPrewriteOK(c, putMutations("key", "v2"), "key", 15)
+	s.mustGetErr(c, "key", 20)
+	s.mustGetRC(c, "key", 12, "v1")
+	s.mustGetRC(c, "key", 20, "v1")
 }

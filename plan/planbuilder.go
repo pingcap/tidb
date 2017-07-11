@@ -71,8 +71,8 @@ type visitInfo struct {
 }
 
 type tableHintInfo struct {
-	INLJTables          []model.CIStr
-	sortMergeJoinTables []model.CIStr
+	indexNestedLoopJoinTables []model.CIStr
+	sortMergeJoinTables       []model.CIStr
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
@@ -101,7 +101,7 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 		if tableName == nil {
 			continue
 		}
-		for _, curEntry := range info.INLJTables {
+		for _, curEntry := range info.indexNestedLoopJoinTables {
 			if curEntry.L == tableName.L {
 				return true
 			}
@@ -164,7 +164,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
-		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt:
+		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
@@ -457,6 +457,7 @@ func buildShowDDLFields() *expression.Schema {
 	schema.Append(buildColumn("", "BG_SCHEMA_VER", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "BG_OWNER", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "BG_JOB", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "SELF_ID", mysql.TypeVarchar, 64))
 
 	return schema
 }
@@ -1070,6 +1071,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+	case ast.ShowStatsMeta:
+		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
 	}
 	return composeShowSchema(names, ftypes)
 }

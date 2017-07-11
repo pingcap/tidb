@@ -37,6 +37,7 @@ type testTypeInferrerSuite struct {
 }
 
 func (ts *testTypeInferrerSuite) TestInferType(c *C) {
+	c.Skip("we re-implement this test in plan/typeinfer_test.go")
 	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -104,7 +105,6 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"now() + curtime()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"now() + now()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"now() + now(2)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
-		{"c_double + now()", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + 1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + 1.1", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + '1.1'", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
@@ -118,13 +118,11 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"1 > any (select 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"exists (select 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"1 in (2, 3)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
-		{"'abc' like 'abc'", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"'abc' rlike 'abc'", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"(1+1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 
 		// Functions
 		{"version()", mysql.TypeVarString, charset.CharsetUTF8, 0},
-		{"count(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs(1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs(1.1)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
@@ -336,6 +334,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`inet6_ntoa(inet6_aton('FE80::AAAA:0000:00C2:0002'))`, mysql.TypeVarString,
 			charset.CharsetUTF8, 0},
 		{`is_ipv4_mapped(c_varbinary)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{`is_ipv4_compat(c_varbinary)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`password("abc")`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`json_type('3')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`json_extract('{"a": 1}', '$.a')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
