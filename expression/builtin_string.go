@@ -727,72 +727,78 @@ type substringFunctionClass struct {
 }
 
 func (c *substringFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinSubstringSig{newBaseBuiltinFunc(args, ctx)}
+	var (
+		bf  baseBuiltinFunc
+		err error
+	)
+	if len(args) == 3 {
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpInt)
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	if mysql.HasBinaryFlag(argType.Flag) {
+		types.SetBinChsClnFlag(bf.tp)
+	}
+	sig := &builtinSubstringSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSubstringSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-func (b *builtinSubstringSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// The meaning of the elements of args.
-	// arg[0] -> StrExpr
-	// arg[1] -> Pos
-	// arg[2] -> Len (Optional)
-	if args[0].IsNull() || args[1].IsNull() {
-		return
-	}
+// evalString evals a builtinSubstringSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
+func (b *builtinSubstringSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var (
+		str         string
+		pos, length int64
+		hasLen      bool
+	)
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Errorf("Substring invalid args, need string but get %T", args[0].GetValue())
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-
-	if args[1].Kind() != types.KindInt64 {
-		return d, errors.Errorf("Substring invalid pos args, need int but get %T", args[1].GetValue())
+	pos, isNull, err = b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	pos := args[1].GetInt64()
-
-	length, hasLen := int64(-1), false
-	if len(args) == 3 {
-		if args[2].IsNull() {
-			return
+	if len(b.args) == 3 {
+		length, isNull, err = b.args[2].EvalInt(row, sc)
+		if isNull || err != nil {
+			return d, isNull, errors.Trace(err)
 		}
-		if args[2].Kind() != types.KindInt64 {
-			return d, errors.Errorf("Substring invalid pos args, need int but get %T", args[2].GetValue())
-		}
-		length, hasLen = args[2].GetInt64(), true
+		hasLen = true
 	}
 	// The forms without a len argument return a substring from string str starting at position pos.
 	// The forms with a len argument return a substring len characters long from string str, starting at position pos.
 	// The forms that use FROM are standard SQL syntax. It is also possible to use a negative value for pos.
 	// In this case, the beginning of the substring is pos characters from the end of the string, rather than the beginning.
 	// A negative value may be used for pos in any of the forms of this function.
+	strLen := int64(len(str))
 	if pos < 0 {
-		pos = int64(len(str)) + pos
+		pos += strLen
 	} else {
 		pos--
 	}
-	if pos > int64(len(str)) || pos < int64(0) {
-		pos = int64(len(str))
+	if pos > strLen || pos < 0 {
+		pos = strLen
 	}
 	if hasLen {
 		if end := pos + length; end < pos {
-			d.SetString("")
-		} else if end > int64(len(str)) {
-			d.SetString(str[pos:])
-		} else {
-			d.SetString(str[pos:end])
+			return "", false, nil
+		} else if end < strLen {
+			return str[pos:end], false, nil
 		}
-	} else {
-		d.SetString(str[pos:])
 	}
-	return d, nil
+	return str[pos:], false, nil
 }
 
 type substringIndexFunctionClass struct {
