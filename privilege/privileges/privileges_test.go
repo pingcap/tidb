@@ -15,10 +15,8 @@ package privileges_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
