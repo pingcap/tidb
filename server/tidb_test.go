@@ -15,6 +15,7 @@
 package server
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/ngaut/log"
