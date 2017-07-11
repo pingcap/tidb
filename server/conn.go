@@ -319,7 +319,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 		}
 	}
 	if cc.dbname != "" {
-		_, err = cc.ctx.Execute("use " + cc.dbname)
+		err = cc.useDB(cc.dbname)
 		if err != nil {
 			return errors.Trace(err)
 		}
