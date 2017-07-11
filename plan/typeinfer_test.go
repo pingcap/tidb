@@ -87,6 +87,8 @@ func (s *testPlanSuite) TestInferType(c *C) {
 		{"space(c_int)", mysql.TypeLongBlob, charset.CharsetUTF8, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"left(c_int, c_int)", mysql.TypeVarString, charset.CharsetUTF8, 0, 11, types.UnspecifiedLength},
 		{"right(c_int, c_int)", mysql.TypeVarString, charset.CharsetUTF8, 0, 11, types.UnspecifiedLength},
+		{"lower(c_int)", mysql.TypeVarString, charset.CharsetUTF8, 0, 0, types.UnspecifiedLength},
+		{"upper(c_int)", mysql.TypeVarString, charset.CharsetUTF8, 0, 0, types.UnspecifiedLength},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
