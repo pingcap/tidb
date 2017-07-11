@@ -23,6 +23,13 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
+var (
+	// MaxRawKVScanLimit is the maximum scan limit for rawkv Scan.
+	MaxRawKVScanLimit = 10240
+	// ErrMaxScanLimitExceeded is returned when the limit for rawkv Scan is to large.
+	ErrMaxScanLimitExceeded = errors.New("limit should be less than MaxRawKVScanLimit")
+)
+
 // RawKVClient is a client of TiKV server which is used as a key-value storage,
 // only GET/PUT/DELETE commands are supported.
 type RawKVClient struct {
@@ -139,6 +146,10 @@ func (c *RawKVClient) Delete(key []byte) error {
 func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
 	defer func() { rawkvCmdHistogram.WithLabelValues("raw_scan").Observe(time.Since(start).Seconds()) }()
+
+	if limit > MaxRawKVScanLimit {
+		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
+	}
 
 	for len(keys) < limit {
 		req := &tikvrpc.Request{
