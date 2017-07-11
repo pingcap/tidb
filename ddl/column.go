@@ -37,7 +37,7 @@ func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.I
 		for i := 0; i < len(columns); i++ {
 			colOffset := columns[i].Offset
 			if colOffset != i {
-				if colOffset != lastColOffset { // column before the add action,
+				if colOffset < lastColOffset { // column before the add action,
 					offsetChanged[colOffset] = i
 				}
 				columns[i].Offset = i
@@ -65,7 +65,7 @@ func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.I
 	}
 }
 
-func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition, lastColOffset int) (*model.ColumnInfo, int, error) {
+func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition, markedOffset int) (*model.ColumnInfo, int, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
 	position := len(cols)
@@ -84,9 +84,9 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	}
 	colInfo.ID = allocateColumnID(tblInfo)
 	colInfo.State = model.StateNone
-	// To support add column asynchronous, we should mark its offset as the last column.
+	// To support add column asynchronous, we should mark its offset as the last column added idx.
 	// So that we can use origin column offset to get value from row.
-	colInfo.Offset = lastColOffset
+	colInfo.Offset = markedOffset
 
 	// Insert col into the right place of the column list.
 	newCols := make([]*model.ColumnInfo, 0, len(cols)+1)
@@ -145,7 +145,8 @@ func (d *ddl) getColumnInfos(columns []*model.ColumnInfo, positions []*ast.Colum
 				return nil, infoschema.ErrColumnExists.GenByArgs(col.Name)
 			}
 		} else {
-			colInfo, _, err = d.createColumnInfo(tblInfo, col, pos, lastColOffset)
+			// mark sequentially the offset of new column as the last column added idx
+			colInfo, _, err = d.createColumnInfo(tblInfo, col, pos, lastColOffset+idx)
 			if err != nil {
 				job.State = model.JobCancelled
 				return nil, errors.Trace(err)
@@ -219,7 +220,6 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 
-		// Append column at the end of table, it does not need to adjust column offset.
 		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, 0, lastColOffset, true)
 		changeAllColumnsState(columnsInfo, model.StatePublic)
 		job.SchemaState = model.StatePublic

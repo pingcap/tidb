@@ -852,7 +852,7 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 	return nil
 }
 
-func (d *ddl) ValidColumnDef(column *ast.ColumnDef, t table.Table) error {
+func validColumnDef(column *ast.ColumnDef, t table.Table) error {
 	// Check whether the added column constraints are supported.
 	err := checkColumnConstraint(column.Options)
 	if err != nil {
@@ -929,7 +929,7 @@ func (d *ddl) AddColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTable
 		return errors.Trace(err)
 	}
 	for _, column := range spec.NewColumns {
-		err = d.ValidColumnDef(column, t)
+		err = validColumnDef(column, t)
 		if err != nil {
 			return err
 		}
