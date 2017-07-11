@@ -895,6 +895,15 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testutil.RowsWithSep(",", ",  ,, ,  "))
 	result = tk.MustQuery(`select space("abc"), space("2"), space("1.1"), space(''), space(null)`)
 	result.Check(testutil.RowsWithSep(",", ",  , ,,<nil>"))
+
+	// for reverse
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f varchar(4))")
+	tk.MustExec(`insert into t values('25', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", "aBcd")`)
+	result = tk.MustQuery("select reverse(a), reverse(b), reverse(c), reverse(d), reverse(e), reverse(f) from t")
+	result.Check(testkit.Rows("52 2 3.2 10:10:21 10-10-7102 10:10:21 dcBa"))
+	result = tk.MustQuery("select reverse('123'), reverse(123), reverse(''), reverse('你好'), reverse(NULL)")
+	result.Check(testkit.Rows("321 321  好你 <nil>"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {
