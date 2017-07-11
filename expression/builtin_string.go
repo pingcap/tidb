@@ -97,7 +97,8 @@ var (
 	_ builtinFunc = &builtinStrcmpSig{}
 	_ builtinFunc = &builtinReplaceSig{}
 	_ builtinFunc = &builtinConvertSig{}
-	_ builtinFunc = &builtinSubstringSig{}
+	_ builtinFunc = &builtinSubstring2ArgsSig{}
+	_ builtinFunc = &builtinSubstring3ArgsSig{}
 	_ builtinFunc = &builtinSubstringIndexSig{}
 	_ builtinFunc = &builtinLocateSig{}
 	_ builtinFunc = &builtinHexSig{}
@@ -731,7 +732,9 @@ func (c *substringFunctionClass) getFunction(args []Expression, ctx context.Cont
 		bf  baseBuiltinFunc
 		err error
 	)
-	if len(args) == 3 {
+
+	hasLen := len(args) == 3
+	if hasLen {
 		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpInt)
 	} else {
 		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
@@ -744,21 +747,24 @@ func (c *substringFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if mysql.HasBinaryFlag(argType.Flag) {
 		types.SetBinChsClnFlag(bf.tp)
 	}
-	sig := &builtinSubstringSig{baseStringBuiltinFunc{bf}}
+	if hasLen {
+		sig := &builtinSubstring3ArgsSig{baseStringBuiltinFunc{bf}}
+		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	}
+	sig := &builtinSubstring2ArgsSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinSubstringSig struct {
+type builtinSubstring2ArgsSig struct {
 	baseStringBuiltinFunc
 }
 
-// evalString evals a builtinSubstringSig.
+// evalString evals a builtinSubstring2ArgsSig, corresponding to substr(str, pos).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
-func (b *builtinSubstringSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+func (b *builtinSubstring2ArgsSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	var (
-		str         string
-		pos, length int64
-		hasLen      bool
+		str string
+		pos int64
 	)
 
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -770,18 +776,6 @@ func (b *builtinSubstringSig) evalString(row []types.Datum) (d string, isNull bo
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	if len(b.args) == 3 {
-		length, isNull, err = b.args[2].EvalInt(row, sc)
-		if isNull || err != nil {
-			return d, isNull, errors.Trace(err)
-		}
-		hasLen = true
-	}
-	// The forms without a len argument return a substring from string str starting at position pos.
-	// The forms with a len argument return a substring len characters long from string str, starting at position pos.
-	// The forms that use FROM are standard SQL syntax. It is also possible to use a negative value for pos.
-	// In this case, the beginning of the substring is pos characters from the end of the string, rather than the beginning.
-	// A negative value may be used for pos in any of the forms of this function.
 	strLen := int64(len(str))
 	if pos < 0 {
 		pos += strLen
@@ -791,12 +785,47 @@ func (b *builtinSubstringSig) evalString(row []types.Datum) (d string, isNull bo
 	if pos > strLen || pos < 0 {
 		pos = strLen
 	}
-	if hasLen {
-		if end := pos + length; end < pos {
-			return "", false, nil
-		} else if end < strLen {
-			return str[pos:end], false, nil
-		}
+	return str[pos:], false, nil
+}
+
+type builtinSubstring3ArgsSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinSubstring3ArgsSig, corresponding to substr(str, pos, len).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
+func (b *builtinSubstring3ArgsSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var (
+		str         string
+		pos, length int64
+	)
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	pos, isNull, err = b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	length, isNull, err = b.args[2].EvalInt(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	strLen := int64(len(str))
+	if pos < 0 {
+		pos += strLen
+	} else {
+		pos--
+	}
+	if pos > strLen || pos < 0 {
+		pos = strLen
+	}
+	if end := pos + length; end < pos {
+		return "", false, nil
+	} else if end < strLen {
+		return str[pos:end], false, nil
 	}
 	return str[pos:], false, nil
 }
