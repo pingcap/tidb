@@ -174,3 +174,7 @@ func (ts *TidbTestSuite) TestDBNameEscape(c *C) {
 	_, err = db.Exec("drop database `aa-a`")
 	c.Assert(err, IsNil)
 }
+
+func (ts *TidbTestSuite) TestIssue3682(c *C) {
+	runTestIssue3682(c)
+}
