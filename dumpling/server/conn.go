@@ -310,11 +310,11 @@ func (cc *clientConn) readHandshakeResponse() error {
 		addr := cc.conn.RemoteAddr().String()
 		host, _, err1 := net.SplitHostPort(addr)
 		if err1 != nil {
-			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, addr, "Yes"))
+			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
 		}
 		user := fmt.Sprintf("%s@%s", cc.user, host)
 		if !cc.ctx.Auth(user, p.Auth, cc.salt) {
-			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, host, "Yes"))
+			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
 		}
 	}
 	cc.ctx.SetSessionManager(cc.server)
