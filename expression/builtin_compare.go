@@ -280,10 +280,12 @@ func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if cmpType == types.ClassString && (types.IsTypeTime(ft0.Tp) || types.IsTypeTime(ft1.Tp)) {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
+		// compare as time
 		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime, tpTime)
 		sig = &builtinCompareTimeSig{baseIntBuiltinFunc{bf}, c.op}
 	} else if ft0.Tp == mysql.TypeDuration && ft1.Tp == mysql.TypeDuration {
 		// duration <cmp> duration
+		// compare as duration
 		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration, tpDuration)
 		sig = &builtinCompareDurationSig{baseIntBuiltinFunc{bf}, c.op}
 	} else if cmpType == types.ClassReal {
