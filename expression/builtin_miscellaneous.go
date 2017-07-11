@@ -539,7 +539,7 @@ func (c *isIPv4CompatFunctionClass) getFunction(args []Expression, ctx context.C
 
 type builtinIsIPv4PrefixedSig struct {
 	baseBuiltinFunc
-	// true for `Is_IPv4_Mapped`, false for `Is_IPv4_Compat`
+	// isIPv4MappedPrefix true for `Is_IPv4_Mapped`, false for `Is_IPv4_Compat`
 	isIPv4MappedPrefix bool
 }
 
