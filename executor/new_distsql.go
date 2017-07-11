@@ -308,6 +308,8 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 		return errors.Trace(err)
 	}
 	e.result.Fetch(goCtx)
+	e.taskChan = make(chan *lookupTableTask, LookupTableTaskChannelSize)
+	go e.fetchHandlesAndStartWorkers()
 	return nil
 }
 

@@ -126,52 +126,34 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk.MustExec(`create user 'show'@'%'`)
 	tk.MustExec(`flush privileges`)
 
+	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
 	c.Assert(se.Auth(`show@%`, nil, nil), IsTrue)
+	tk1.Se = se
 
-	// No ShowDatabases privilege, this user would see nothing.
-	rs, err := se.Execute("show databases")
-	c.Assert(err, IsNil)
-	rows, err := tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 0)
+	// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA.
+	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// After grant, the user can see the database.
 	tk.MustExec(`grant select on showdatabase.t1 to 'show'@'%'`)
 	tk.MustExec(`flush privileges`)
-	rs, err = se.Execute("show databases")
-	c.Assert(err, IsNil)
-	rows, err = tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 1)
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "showdatabase"))
 
-	_, err = se.Execute("use showdatabase")
-	c.Assert(err, IsNil)
-	rs, err = se.Execute("show tables")
-	c.Assert(err, IsNil)
-	rows, err = tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	// The user can see t2 but not t1.
-	c.Assert(rows, HasLen, 1)
+	// The user can see t1 but not t2.
+	tk1.MustExec("use showdatabase")
+	tk1.MustQuery("show tables").Check(testkit.Rows("t1"))
 
-	// After revoke, show database result should be empty.
+	// After revoke, show database result should be just except INFORMATION_SCHEMA.
 	tk.MustExec(`revoke select on showdatabase.t1 from 'show'@'%'`)
 	tk.MustExec(`flush privileges`)
-	rs, err = se.Execute("show databases")
-	c.Assert(err, IsNil)
-	rows, err = tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 0)
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Grant any global privilege would make show databases available.
 	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
 	tk.MustExec(`flush privileges`)
-	rs, err = se.Execute("show databases")
-	c.Assert(err, IsNil)
-	rows, err = tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	c.Assert(len(rows), GreaterEqual, 1)
+	rows := tk1.MustQuery("show databases").Rows()
+	c.Assert(len(rows), GreaterEqual, 2) // At least INFORMATION_SCHEMA and showdatabase
 
 	privileges.Enable = save
 	tk.MustExec(`drop user 'show'@'%'`)
