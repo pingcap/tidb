@@ -148,18 +148,17 @@ func (cc *clientConn) writeInitialHandshake() error {
 	data = append(data, byte(defaultCapability), byte(defaultCapability>>8))
 	// charset, utf-8 default
 	data = append(data, uint8(mysql.DefaultCollationID))
-	//status
+	// status
 	data = append(data, dumpUint16(mysql.ServerStatusAutocommit)...)
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
 	data = append(data, byte(defaultCapability>>16), byte(defaultCapability>>24))
-	// filler [0x15], for wireshark dump, value is 0x15
-	data = append(data, 0x15)
+	// length of auth-plugin-data
+	data = append(data, byte(len(cc.salt)+1))
 	// reserved 10 [00]
 	data = append(data, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 	// auth-plugin-data-part-2
 	data = append(data, cc.salt[8:]...)
-	// filler [00]
 	data = append(data, 0)
 	err := cc.writePacket(data)
 	if err != nil {
