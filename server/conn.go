@@ -318,6 +318,12 @@ func (cc *clientConn) readHandshakeResponse() error {
 			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, host, "Yes"))
 		}
 	}
+	if cc.dbname != "" {
+		_, err = cc.ctx.Execute("use " + cc.dbname)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	cc.ctx.SetSessionManager(cc.server)
 	return nil
 }
