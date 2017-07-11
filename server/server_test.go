@@ -492,17 +492,17 @@ func runTestIssue3682(c *C) {
 		dbt.mustExec(`CREATE USER 'abc'@'%' IDENTIFIED BY '123';`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
-	newDsn := "abc:123@tcp(localhost:4001)/test?strict=true"
+	newDsn := "abc:123@tcp(127.0.0.1:4001)/test?strict=true"
 	runTests(c, newDsn, func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
-	wrongDsn := "abc:456@tcp(localhost:4001)/a_database_not_exist?strict=true"
+	wrongDsn := "abc:456@tcp(127.0.0.1:4001)/a_database_not_exist?strict=true"
 	db, err := sql.Open("mysql", wrongDsn)
 	c.Assert(err, IsNil)
 	defer db.Close()
 	err = db.Ping()
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Error 1105: ERROR 1045 (28000): Access denied for user 'abc'@'::1' (using password: Yes)")
+	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'abc'@'127.0.0.1' (using password: YES)")
 }
 
 func runTestIssues(c *C) {
