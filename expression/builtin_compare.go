@@ -265,8 +265,13 @@ func isTemporalColumn(expr Expression) bool {
 
 // getFunction sets compare built-in function signatures for various types.
 func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	// TODO: we do not support JSON in new expression evaluation architecture now.
 	if args[0].GetType().Tp == mysql.TypeJSON || args[1].GetType().Tp == mysql.TypeJSON {
-		return
+		bf := newBaseBuiltinFunc(args, ctx)
+		bf.tp = &types.FieldType{Tp: mysql.TypeLonglong, Flen: 1, Decimal: 0}
+		types.SetBinChsClnFlag(bf.tp)
+		sig = &builtinCompareSig{bf, c.op}
+		return sig.setSelf(sig), c.verifyArgs(args)
 	}
 	ft0, ft1 := args[0].GetType(), args[1].GetType()
 	tc0, tc1 := ft0.ToClass(), ft1.ToClass()
@@ -331,6 +336,71 @@ func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Contex
 	}
 	bf.tp.Flen = 1
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCompareSig struct {
+	baseBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := s.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	sc := s.ctx.GetSessionVars().StmtCtx
+	var a, b = args[0], args[1]
+
+	if a.IsNull() || b.IsNull() {
+		// For <=>, if a and b are both nil, return true.
+		// If a or b is nil, return false.
+		if s.op == opcode.NullEQ {
+			if a.IsNull() && b.IsNull() {
+				d.SetInt64(oneI64)
+			} else {
+				d.SetInt64(zeroI64)
+			}
+		}
+		return
+	}
+
+	if s.op != opcode.NullEQ {
+		if aa, bb, err := types.CoerceDatum(sc, a, b); err == nil {
+			a = aa
+			b = bb
+		}
+	}
+
+	n, err := a.CompareDatum(sc, b)
+	if err != nil {
+		// TODO: should deal with error here.
+		return d, errors.Trace(err)
+	}
+	var result bool
+	switch s.op {
+	case opcode.LT:
+		result = n < 0
+	case opcode.LE:
+		result = n <= 0
+	case opcode.EQ, opcode.NullEQ:
+		result = n == 0
+	case opcode.GT:
+		result = n > 0
+	case opcode.GE:
+		result = n >= 0
+	case opcode.NE:
+		result = n != 0
+	default:
+		return d, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	if result {
+		d.SetInt64(oneI64)
+	} else {
+		d.SetInt64(zeroI64)
+	}
+	return
 }
 
 // resOfCmp returns the results of different compare built-in functions.
