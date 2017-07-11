@@ -56,10 +56,11 @@ type packetIO struct {
 	sequence uint8
 }
 
-func newPacketIO(conn net.Conn) *packetIO {
+func newPacketIO(conn net.Conn, sequence uint8) *packetIO {
 	p := &packetIO{
-		rb: bufio.NewReaderSize(conn, defaultReaderSize),
-		wb: bufio.NewWriterSize(conn, defaultWriterSize),
+		rb:       bufio.NewReaderSize(conn, defaultReaderSize),
+		wb:       bufio.NewWriterSize(conn, defaultWriterSize),
+		sequence: sequence,
 	}
 
 	return p

@@ -14,8 +14,10 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"os"
 	"os/signal"
@@ -23,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"crypto/x509"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/ngaut/systimemon"
@@ -50,6 +53,10 @@ var (
 	logLevel        = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
 	host            = flag.String("host", "0.0.0.0", "tidb server host")
 	port            = flag.String("P", "4000", "tidb server port")
+	sslEnabled      = flag.Bool("ssl", false, "Enable secure connection")
+	sslCAPath       = flag.String("ssl-ca", "", "Path of file that contains list of trusted SSL CAs")
+	sslCertPath     = flag.String("ssl-cert", "", "Path of file that contains X509 certificate in PEM format")
+	sslKeyPath      = flag.String("ssl-key", "", "Path of file that contains X509 key in PEM format")
 	statusPort      = flag.String("status", "10080", "tidb server status port")
 	ddlLease        = flag.String("lease", "10s", "schema lease duration, very dangerous to change only if you know what you do")
 	statsLease      = flag.String("statsLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
@@ -108,6 +115,14 @@ func main() {
 		ReportStatus: *reportStatus,
 		Store:        *store,
 		StorePath:    *storePath,
+		SSLEnabled:   *sslEnabled,
+		SSLCAPath:    *sslCAPath,
+		SSLCertPath:  *sslCertPath,
+		SSLKeyPath:   *sslKeyPath,
+	}
+	if len(*sslCAPath) > 0 || len(*sslCertPath) > 0 || len(*sslKeyPath) > 0 {
+		// assigning sslCertPath or sslKeyPath implies sslEnabled=true
+		cfg.SSLEnabled = true
 	}
 
 	// set log options
@@ -127,6 +142,44 @@ func main() {
 	// Call this before setting log level to make sure that TiDB info could be printed.
 	printer.PrintTiDBInfo()
 	log.SetLevelByString(cfg.LogLevel)
+
+	var tlsConfig *tls.Config
+
+	// try loading TLS certificates
+	if cfg.SSLEnabled {
+		tlsCert, err := tls.LoadX509KeyPair(*sslCertPath, *sslKeyPath)
+		if err != nil {
+			log.Fatal(errors.ErrorStack(err))
+		}
+		log.Info("Loaded SSL certificates")
+
+		// try loading CA cert
+		clientAuthPolicy := tls.NoClientCert
+		var certPool *x509.CertPool
+		if len(*sslCAPath) > 0 {
+			caCert, err := ioutil.ReadFile(*sslCAPath)
+			if err != nil {
+				log.Fatal(errors.ErrorStack(err))
+			}
+			certPool = x509.NewCertPool()
+			if certPool.AppendCertsFromPEM(caCert) {
+				log.Info("Loaded CA certificate")
+				clientAuthPolicy = tls.RequireAndVerifyClientCert
+			}
+		}
+
+		tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{tlsCert},
+			ClientCAs:    certPool,
+			ClientAuth:   clientAuthPolicy,
+		}
+	}
+
+	if cfg.SSLEnabled {
+		log.Info("SSL connection is enabled")
+	} else {
+		log.Info("SSL connection is disabled")
+	}
 
 	store := createStore()
 
@@ -148,7 +201,7 @@ func main() {
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)
 	var svr *server.Server
-	svr, err = server.NewServer(cfg, driver)
+	svr, err = server.NewServer(cfg, tlsConfig, driver)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}

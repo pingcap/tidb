@@ -23,4 +23,8 @@ type Config struct {
 	ReportStatus bool   `json:"report_status" toml:"report_status"`
 	StorePath    string `json:"store_path" toml:"store_path"`
 	Store        string `json:"store" toml:"store"`
+	SSLEnabled   bool   `json:"ssl_enabled" toml:"ssl_enabled"`
+	SSLCAPath    string `json:"ssl_ca_path" toml:"ssl_ca_path"`
+	SSLCertPath  string `json:"ssl_cert_path" toml:"ssl_cert_path"`
+	SSLKeyPath   string `json:"ssl_key_path" toml:"ssl_key_path"`
 }

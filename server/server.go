@@ -29,6 +29,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"math/rand"
 	"net"
 	"sync"
@@ -61,6 +62,7 @@ var (
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *Config
+	tlsConfig         *tls.Config
 	driver            IDriver
 	listener          net.Listener
 	rwlock            *sync.RWMutex
@@ -108,13 +110,13 @@ func randomBuf(size int) []byte {
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := &clientConn{
 		conn:         conn,
-		pkt:          newPacketIO(conn),
 		server:       s,
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
 	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
+	cc.BuildPacketIO(0)
 	cc.salt = randomBuf(20)
 	return cc
 }
@@ -126,9 +128,10 @@ func (s *Server) skipAuth() bool {
 const tokenLimit = 1000
 
 // NewServer creates a new Server.
-func NewServer(cfg *Config, driver IDriver) (*Server, error) {
+func NewServer(cfg *Config, tlsConfig *tls.Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
+		tlsConfig:         tlsConfig, // tlsConfig will be NotNil only if SSLEnabled and valid certs are provided
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(tokenLimit),
 		rwlock:            &sync.RWMutex{},
@@ -211,6 +214,8 @@ func (s *Server) onConn(c net.Conn) {
 		log.Infof("[%d] close connection", conn.connectionID)
 	}()
 
+	// Notice: `conn.conn` may be upgraded to `tls.Conn` after `handshake()`,
+	// so that it may not always equal to `c`
 	if err := conn.handshake(); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we use info log level.
