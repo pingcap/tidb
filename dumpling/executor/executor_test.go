@@ -895,6 +895,15 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testutil.RowsWithSep(",", ",  ,, ,  "))
 	result = tk.MustQuery(`select space("abc"), space("2"), space("1.1"), space(''), space(null)`)
 	result.Check(testutil.RowsWithSep(",", ",  , ,,<nil>"))
+
+	// for replace
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values('www.mysql.com', 1234, 12.34, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery(`select replace(a, 'mysql', 'pingcap'), replace(b, 2, 55), replace(c, 34, 0), replace(d, '-', '/'), replace(e, '01', '22') from t`)
+	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,15534,12.0,2017/01/01 12:01:01,12:22:22"))
+	result = tk.MustQuery(`select replace('aaa', 'a', ''), replace(null, 'a', 'b'), replace('a', null, 'b'), replace('a', 'b', null)`)
+	result.Check(testkit.Rows(" <nil> <nil> <nil>"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {
