@@ -30,7 +30,6 @@ func (p *basePhysicalPlan) statsProfile() *statsProfile {
 	return p.basePlan.profile
 }
 
-// Sort will call this.
 func (p *baseLogicalPlan) prepareStatsProfile() *statsProfile {
 	if len(p.basePlan.children) == 0 {
 		profile := &statsProfile{
