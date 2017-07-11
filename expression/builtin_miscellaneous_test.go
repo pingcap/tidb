@@ -91,20 +91,21 @@ func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
 
 func (s *testEvaluatorSuite) TestUUID(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.UUID]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums()), s.ctx)
-	r, err := f.eval(nil)
+
+	f, err := newFunctionForTest(s.ctx, ast.UUID)
 	c.Assert(err, IsNil)
-	parts := strings.Split(r.GetString(), "-")
+	d, err := f.Eval(nil)
+	c.Assert(err, IsNil)
+	parts := strings.Split(d.GetString(), "-")
 	c.Assert(len(parts), Equals, 5)
 	for i, p := range parts {
 		switch i {
 		case 0:
 			c.Assert(len(p), Equals, 8)
 		case 1:
-			fallthrough
+			c.Assert(len(p), Equals, 4)
 		case 2:
-			fallthrough
+			c.Assert(len(p), Equals, 4)
 		case 3:
 			c.Assert(len(p), Equals, 4)
 		case 4:
