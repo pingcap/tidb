@@ -761,11 +761,13 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 	return rows, nil
 }
 
-func (e *ShowExec) valueToString(value types.Datum, numOfCols int) (string, error) {
-	if numOfCols == 0 {
+// valueToString converts a possible encoded value to a formatted string. If the value is encoded, then
+// size equals to number of origin values, else size is 0.
+func (e *ShowExec) valueToString(value types.Datum, size int) (string, error) {
+	if size == 0 {
 		return value.ToString()
 	}
-	decodedVals, err := codec.Decode(value.GetBytes(), numOfCols)
+	decodedVals, err := codec.Decode(value.GetBytes(), size)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -777,9 +779,9 @@ func (e *ShowExec) valueToString(value types.Datum, numOfCols int) (string, erro
 		}
 		strs = append(strs, str)
 	}
-	if numOfCols > 1 {
+	if size > 1 {
 		strs[0] = "(" + strs[0]
-		strs[numOfCols - 1] = strs[numOfCols - 1] + ")"
+		strs[size -1] = strs[size -1] + ")"
 	}
 	return strings.Join(strs, ", "), nil
 }
