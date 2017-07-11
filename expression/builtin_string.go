@@ -634,7 +634,6 @@ func (c *replaceFunctionClass) getFunction(args []Expression, ctx context.Contex
 }
 
 // fixLength calculate the Flen of the return type.
-// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_strfunc.cc#L1478
 func (c *replaceFunctionClass) fixLength(args []Expression) int {
 	charLen := args[0].GetType().Flen
 	oldStrLen := args[1].GetType().Flen
