@@ -91,16 +91,12 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		types.SetBinChsClnFlag(&x.Type)
 		v.convertValueToColumnTypeIfNeeded(x)
-	case *ast.PatternLikeExpr:
-		v.handleLikeExpr(x)
 	case *ast.PatternRegexpExpr:
 		v.handleRegexpExpr(x)
 	case *ast.SelectStmt:
 		v.selectStmt(x)
 	case *ast.UnaryOperationExpr:
 		v.unaryOperation(x)
-	case *ast.ValueExpr:
-		v.handleValueExpr(x)
 	case *ast.ValuesExpr:
 		v.handleValuesExpr(x)
 	case *ast.VariableExpr:
@@ -244,18 +240,6 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 		}
 	}
 	types.SetBinChsClnFlag(&x.Type)
-}
-
-func fixDecimals(value interface{}, tp *types.FieldType) {
-	switch x := value.(type) {
-	case *types.MyDecimal:
-		tp.Decimal = int(x.GetDigitsFrac())
-	}
-}
-
-func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
-	types.DefaultTypeForValue(x.GetValue(), x.GetType())
-	fixDecimals(x.GetValue(), x.GetType())
 }
 
 func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {
@@ -476,14 +460,6 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 		types.SetBinChsClnFlag(tp)
 	}
 	x.SetType(tp)
-}
-
-// handleLikeExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.
-func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
-	x.SetType(types.NewFieldType(mysql.TypeLonglong))
-	types.SetBinChsClnFlag(&x.Type)
-	x.Expr = v.addCastToString(x.Expr)
-	x.Pattern = v.addCastToString(x.Pattern)
 }
 
 // handleRegexpExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.

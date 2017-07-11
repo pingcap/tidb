@@ -190,18 +190,18 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case int:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flen = len(strconv.FormatInt(int64(x), 10))
-		tp.Decimal = UnspecifiedLength
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case int64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flen = len(strconv.FormatInt(int64(x), 10))
-		tp.Decimal = UnspecifiedLength
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
 		tp.Flen = len(strconv.FormatUint(uint64(x), 10))
-		tp.Decimal = UnspecifiedLength
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case string:
 		tp.Tp = mysql.TypeVarString
