@@ -77,6 +77,9 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if f.getRetTp() != nil {
+		retType = f.getRetTp()
+	}
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}

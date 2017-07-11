@@ -139,7 +139,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		},
 		{
 			exprStr:   "a not between null and 0",
-			resultStr: "[[1,+inf)]",
+			resultStr: "[(-inf,+inf)]",
 		},
 		{
 			exprStr:   "a between 2 and 1",
