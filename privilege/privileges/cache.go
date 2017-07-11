@@ -435,6 +435,11 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 		}
 	}
 
+	// INFORMATION_SCHEMA is visible to all users.
+	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+		return true
+	}
+
 	if record := p.matchDB(user, host, db); record != nil {
 		if record.Privileges > 0 {
 			return true

@@ -199,8 +199,12 @@ func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context
 		return nil, errors.Trace(err)
 	}
 	for i := range args {
-		bf.tp.Flag |= mysql.BinaryFlag
-		bf.tp.Flen += args[i].GetType().Flen
+		argType := args[i].GetType()
+		if types.IsBinaryStr(argType) {
+			bf.tp.Flag |= mysql.BinaryFlag
+		}
+
+		bf.tp.Flen += argType.Flen
 	}
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
@@ -231,44 +235,75 @@ type concatWSFunctionClass struct {
 }
 
 func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinConcatWSSig{newBaseBuiltinFunc(args, ctx)}
+	argTps := make([]evalTp, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		argTps = append(argTps, tpString)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for i := range args {
+		argType := args[i].GetType()
+		if types.IsBinaryStr(argType) {
+			bf.tp.Flag |= mysql.BinaryFlag
+		}
+
+		// skip seperator param
+		if i != 0 {
+			bf.tp.Flen += argType.Flen
+		}
+	}
+
+	// add seperator
+	argsLen := len(args) - 1
+	bf.tp.Flen += argsLen - 1
+
+	if bf.tp.Flen >= mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
+	}
+
+	sig := &builtinConcatWSSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinConcatWSSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinConcatWSSig.
+// evalString evals a builtinConcatWSSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
-func (b *builtinConcatWSSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
+func (b *builtinConcatWSSig) evalString(row []types.Datum) (string, bool, error) {
+	args := b.getArgs()
+	strs := make([]string, 0, len(args))
 	var sep string
-	s := make([]string, 0, len(args))
-	for i, a := range args {
-		if a.IsNull() {
-			if i == 0 {
-				return d, nil
-			}
-			continue
-		}
-		ss, err := a.ToString()
+	for i, arg := range args {
+		val, isNull, err := arg.EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return d, errors.Trace(err)
+			return val, isNull, errors.Trace(err)
+		}
+
+		if isNull {
+			// If the separator is NULL, the result is NULL.
+			if i == 0 {
+				return val, isNull, nil
+			}
+			// CONCAT_WS() does not skip empty strings. However,
+			// it does skip any NULL values after the separator argument.
+			continue
 		}
 
 		if i == 0 {
-			sep = ss
+			sep = val
 			continue
 		}
-		s = append(s, ss)
+		strs = append(strs, val)
 	}
 
-	d.SetString(strings.Join(s, sep))
-	return d, nil
+	// TODO: check whether the length of result is larger than Flen
+	return strings.Join(strs, sep), false, nil
 }
 
 type leftFunctionClass struct {
@@ -406,33 +441,32 @@ type lowerFunctionClass struct {
 }
 
 func (c *lowerFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLowerSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = args[0].GetType().Flen
+	sig := &builtinLowerSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLowerSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinLowerSig.
+// evalString evals a builtinLowerSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
-func (b *builtinLowerSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinLowerSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	x := args[0]
-	switch x.Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := x.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(strings.ToLower(s))
-		return d, nil
+
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		return d, false, nil
 	}
+
+	return strings.ToLower(d), false, nil
 }
 
 type reverseFunctionClass struct {
@@ -510,33 +544,32 @@ type upperFunctionClass struct {
 }
 
 func (c *upperFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinUpperSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = args[0].GetType().Flen
+	sig := &builtinUpperSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUpperSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinUpperSig.
+// evalString evals a builtinUpperSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
-func (b *builtinUpperSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinUpperSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	x := args[0]
-	switch x.Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := x.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(strings.ToUpper(s))
-		return d, nil
+
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		return d, false, nil
 	}
+
+	return strings.ToUpper(d), false, nil
 }
 
 type strcmpFunctionClass struct {
