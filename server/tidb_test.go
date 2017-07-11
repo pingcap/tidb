@@ -160,3 +160,7 @@ func (ts *TidbTestSuite) TestIssue3680(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: YES)")
 }
+
+func (ts *TidbTestSuite) TestIssue3682(c *C) {
+	runTestIssue3682(c)
+}

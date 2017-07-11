@@ -317,6 +317,12 @@ func (cc *clientConn) readHandshakeResponse() error {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
 		}
 	}
+	if cc.dbname != "" {
+		_, err = cc.ctx.Execute("use " + cc.dbname)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	cc.ctx.SetSessionManager(cc.server)
 	return nil
 }
