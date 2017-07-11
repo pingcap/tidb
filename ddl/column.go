@@ -127,9 +127,9 @@ func checkHasDuplicateColumnName(columnsInfo []*model.ColumnInfo) error {
 }
 
 // getColumnInfos get all columnInfos correspond to column
-func (d *ddl) getColumnInfos(columns []*model.ColumnInfo, positions []*ast.ColumnPosition, job *model.Job, tblInfo *model.TableInfo) ([]*model.ColumnInfo, error) {
+func (d *ddl) getColumnInfos(columns []*model.ColumnInfo, positions []*ast.ColumnPosition, job *model.Job, tblInfo *model.TableInfo,
+	lastColOffset int) ([]*model.ColumnInfo, error) {
 	columnsInfo := []*model.ColumnInfo{}
-	lastColOffset := len(tblInfo.Columns)
 	var err error
 	for idx, col := range columns {
 		colInfo := findCol(tblInfo.Columns, col.Name.L)
@@ -180,7 +180,7 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, err
 	}
 
-	columnsInfo, err := d.getColumnInfos(columns, positions, job, tblInfo)
+	columnsInfo, err := d.getColumnInfos(columns, positions, job, tblInfo, lastColOffset)
 	if err != nil {
 		return ver, err
 	}
