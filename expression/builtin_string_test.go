@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -351,42 +350,59 @@ func (s *testEvaluatorSuite) TestRepeat(c *C) {
 
 func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 	defer testleak.AfterTest(c)()
-	lower := funcs[ast.Lower]
-	f, err := lower.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
-	c.Assert(err, IsNil)
-	d, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.Kind(), Equals, types.KindNull)
 
-	upper := funcs[ast.Upper]
-	f, err = upper.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
-	c.Assert(err, IsNil)
-	d, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.Kind(), Equals, types.KindNull)
-
-	tbl := []struct {
-		Input  interface{}
-		Expect string
+	cases := []struct {
+		args          interface{}
+		expectedLower string
+		expectedUpper string
+		isNil         bool
+		getErr        bool
 	}{
-		{"abc", "abc"},
-		{1, "1"},
+		{nil, "", "", true, false},
+		{"tidb", "tidb", "TIDB", false, false},
+		{"Tidb", "tidb", "TIDB", false, false},
+		{"TIdb", "tidb", "TIDB", false, false},
+		{"TIDb", "tidb", "TIDB", false, false},
+		{"TIDB", "tidb", "TIDB", false, false},
+		{"你好", "你好", "你好", false, false},
+		{"你好，TIdb", "你好，tidb", "你好，TIDB", false, false},
+		{"👍", "👍", "👍", false, false},
+		{"👍，TIdb", "👍，tidb", "👍，TIDB", false, false},
+		{"👍，TIdb,你好", "👍，tidb,你好", "👍，TIDB,你好", false, false},
 	}
+	for _, t := range cases {
+		{
+			f, err := newFunctionForTest(s.ctx, ast.Lower, primitiveValsToConstants([]interface{}{t.args})...)
+			c.Assert(err, IsNil)
 
-	dtbl := tblToDtbl(tbl)
+			d, err := f.Eval(nil)
+			if t.getErr {
+				c.Assert(err, NotNil)
+			} else {
+				c.Assert(err, IsNil)
+				if t.isNil {
+					c.Assert(d.Kind(), Equals, types.KindNull)
+				} else {
+					c.Assert(d.GetString(), Equals, t.expectedLower)
+				}
+			}
+		}
+		{
+			f, err := newFunctionForTest(s.ctx, ast.Upper, primitiveValsToConstants([]interface{}{t.args})...)
+			c.Assert(err, IsNil)
 
-	for _, t := range dtbl {
-		f, err = lower.getFunction(datumsToConstants(t["Input"]), s.ctx)
-		c.Assert(err, IsNil)
-		d, err = f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
-
-		f, err = upper.getFunction(datumsToConstants(t["Input"]), s.ctx)
-		c.Assert(err, IsNil)
-		d, err = f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d.GetString(), Equals, strings.ToUpper(t["Expect"][0].GetString()))
+			d, err := f.Eval(nil)
+			if t.getErr {
+				c.Assert(err, NotNil)
+			} else {
+				c.Assert(err, IsNil)
+				if t.isNil {
+					c.Assert(d.Kind(), Equals, types.KindNull)
+				} else {
+					c.Assert(d.GetString(), Equals, t.expectedUpper)
+				}
+			}
+		}
 	}
 }
 

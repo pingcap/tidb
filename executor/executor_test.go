@@ -863,6 +863,18 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testutil.RowsWithSep(",", ",  ,, ,  "))
 	result = tk.MustQuery(`select space("abc"), space("2"), space("1.1"), space(''), space(null)`)
 	result.Check(testutil.RowsWithSep(",", ",  , ,,<nil>"))
+
+	// for lower and upper
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b binary(20), c varbinary(20), d blob(20), e bit(4), f char(20))")
+	tk.MustExec(`insert into t values(1, "hElLo", "wOrd", "PingCap", 0b1010, "TiDB")`)
+	// For show result, hex to binary, varbinary, blob
+	// lower() (and upper()) are ineffective when applied to binary strings (binary, varbinary, blob)
+	// it is effective in this test case
+	result = tk.MustQuery("select lower(null), upper(null), lower(a), upper(a), hex(lower(b)), hex(upper(b)), hex(lower(c)), hex(upper(c)), hex(lower(d)), hex(upper(d)), hex(lower(e)), hex(upper(e)), lower(f), upper(f) from t")
+	result.Check(testkit.Rows("<nil> <nil> 1 1 68656C6C6F000000000000000000000000000000 48454C4C4F000000000000000000000000000000 776F7264 574F5244 70696E67636170 50494E47434150 0A 0A tidb TIDB"))
+	result = tk.MustQuery("select lower('💎S1'), upper('😂Q2'), upper('👍l3'), lower(NULL)")
+	result.Check(testkit.Rows("💎s1 😂Q2 👍L3 <nil>"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {
