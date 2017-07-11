@@ -623,6 +623,12 @@ func (c *replaceFunctionClass) getFunction(args []Expression, ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = c.fixLength(args)
+	for _, a := range args {
+		if mysql.HasBinaryFlag(a.GetType().Flag) {
+			types.SetBinChsClnFlag(bf.tp)
+			break
+		}
+	}
 	sig := &builtinReplaceSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
@@ -643,7 +649,7 @@ type builtinReplaceSig struct {
 	baseStringBuiltinFunc
 }
 
-// eval evals a builtinReplaceSig.
+// evalString evals a builtinReplaceSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
 func (b *builtinReplaceSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	var str, oldStr, newStr string
