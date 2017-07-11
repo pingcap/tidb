@@ -32,7 +32,6 @@ func EncodeDecimal(b []byte, d types.Datum) []byte {
 	if err != nil {
 		log.Errorf("should not happen, precision %d, frac %d %v", precision, frac, err)
 		panic("expected error happened during codec")
-		return b
 	}
 	b = append(b, bin...)
 	return b
