@@ -618,46 +618,58 @@ type replaceFunctionClass struct {
 }
 
 func (c *replaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinReplaceSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = c.fixLength(args)
+	for _, a := range args {
+		if mysql.HasBinaryFlag(a.GetType().Flag) {
+			types.SetBinChsClnFlag(bf.tp)
+			break
+		}
+	}
+	sig := &builtinReplaceSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinReplaceSig struct {
-	baseBuiltinFunc
+// fixLength calculate the Flen of the return type.
+func (c *replaceFunctionClass) fixLength(args []Expression) int {
+	charLen := args[0].GetType().Flen
+	oldStrLen := args[1].GetType().Flen
+	diff := args[2].GetType().Flen - oldStrLen
+	if diff > 0 && oldStrLen > 0 {
+		charLen += (charLen / oldStrLen) * diff
+	}
+	return charLen
 }
 
-// eval evals a builtinReplaceSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
-func (b *builtinReplaceSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	for _, arg := range args {
-		if arg.IsNull() {
-			return d, nil
-		}
-	}
+type builtinReplaceSig struct {
+	baseStringBuiltinFunc
+}
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+// evalString evals a builtinReplaceSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
+func (b *builtinReplaceSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var str, oldStr, newStr string
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	oldStr, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	oldStr, isNull, err = b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	newStr, err := args[2].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	newStr, isNull, err = b.args[2].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
 	if oldStr == "" {
-		d.SetString(str)
-		return d, nil
+		return str, false, nil
 	}
-	d.SetString(strings.Replace(str, oldStr, newStr, -1))
-
-	return d, nil
+	return strings.Replace(str, oldStr, newStr, -1), false, nil
 }
 
 type convertFunctionClass struct {

@@ -541,29 +541,45 @@ func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 
 func (s *testEvaluatorSuite) TestReplace(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Input  []interface{}
-		Expect interface{}
+
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    string
+		flen   int
 	}{
-		{[]interface{}{nil, nil, nil}, nil},
-		{[]interface{}{1, nil, 2}, nil},
-		{[]interface{}{1, 1, nil}, nil},
-		{[]interface{}{"12345", 2, 222}, "1222345"},
-		{[]interface{}{"12325", 2, "a"}, "1a3a5"},
-		{[]interface{}{12345, 2, "aa"}, "1aa345"},
-		{[]interface{}{"www.mysql.com", "", "tidb"}, "www.mysql.com"},
+		{[]interface{}{"www.mysql.com", "mysql", "pingcap"}, false, false, "www.pingcap.com", 17},
+		{[]interface{}{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 13},
+		{[]interface{}{1234, 2, 55}, false, false, "15534", 8},
+		{[]interface{}{"", "a", "b"}, false, false, "", 0},
+		{[]interface{}{"abc", "", "d"}, false, false, "abc", 3},
+		{[]interface{}{"aaa", "a", ""}, false, false, "", 3},
+		{[]interface{}{nil, "a", "b"}, true, false, "", 0},
+		{[]interface{}{"a", nil, "b"}, true, false, "", 1},
+		{[]interface{}{"a", "b", nil}, true, false, "", 1},
+		{[]interface{}{errors.New("must err"), "a", "b"}, false, true, "", -1},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Replace, primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		c.Assert(f.GetType().Flen, Equals, t.flen)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
 	}
 
-	dtbl := tblToDtbl(tbl)
-
-	for _, t := range dtbl {
-		fc := funcs[ast.Replace]
-		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
-		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
-	}
+	f, err := funcs[ast.Replace].getFunction([]Expression{Zero, Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSubstring(c *C) {
