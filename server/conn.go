@@ -193,7 +193,7 @@ type handshakeResponse41 struct {
 
 // SSLRequest and HandshakeResponse41 shares a common header.
 // The function parses this header.
-func handshakeResponseHeaderFromData(packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
+func parseHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
@@ -202,24 +202,24 @@ func handshakeResponseHeaderFromData(packet *handshakeResponse41, data []byte) (
 		}
 	}()
 
-	pos := 0
+	offset := 0
 	// capability
 	capability := binary.LittleEndian.Uint32(data[:4])
 	packet.Capability = capability
-	pos += 4
+	offset += 4
 	// skip max packet size
-	pos += 4
+	offset += 4
 	// charset, skip, if you want to use another charset, use set names
-	packet.Collation = data[pos]
-	pos++
+	packet.Collation = data[offset]
+	offset++
 	// skip reserved 23[00]
-	pos += 23
+	offset += 23
 
-	return pos, nil
+	return offset, nil
 }
 
 // Parse the HandshakeResponse (except the common header part)
-func handshakeResponseBodyFromData(beginPos int, packet *handshakeResponse41, data []byte) (err error) {
+func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset int) (err error) {
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
@@ -228,62 +228,60 @@ func handshakeResponseBodyFromData(beginPos int, packet *handshakeResponse41, da
 		}
 	}()
 
-	pos := beginPos
-
 	// user name
-	packet.User = string(data[pos : pos+bytes.IndexByte(data[pos:], 0)])
-	pos += len(packet.User) + 1
+	packet.User = string(data[offset : offset+bytes.IndexByte(data[offset:], 0)])
+	offset += len(packet.User) + 1
 
 	if packet.Capability&mysql.ClientPluginAuthLenencClientData > 0 {
 		// MySQL client sets the wrong capability, it will set this bit even server doesn't
 		// support ClientPluginAuthLenencClientData.
 		// https://github.com/mysql/mysql-server/blob/5.7/sql-common/client.c#L3478
-		num, null, off := parseLengthEncodedInt(data[pos:])
-		pos += off
+		num, null, off := parseLengthEncodedInt(data[offset:])
+		offset += off
 		if !null {
-			packet.Auth = data[pos : pos+int(num)]
-			pos += int(num)
+			packet.Auth = data[offset : offset+int(num)]
+			offset += int(num)
 		}
 	} else if packet.Capability&mysql.ClientSecureConnection > 0 {
 		// auth length and auth
-		authLen := int(data[pos])
-		pos++
-		packet.Auth = data[pos : pos+authLen]
-		pos += authLen
+		authLen := int(data[offset])
+		offset++
+		packet.Auth = data[offset : offset+authLen]
+		offset += authLen
 	} else {
-		packet.Auth = data[pos : pos+bytes.IndexByte(data[pos:], 0)]
-		pos += len(packet.Auth) + 1
+		packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
+		offset += len(packet.Auth) + 1
 	}
 
 	if packet.Capability&mysql.ClientConnectWithDB > 0 {
-		if len(data[pos:]) > 0 {
-			idx := bytes.IndexByte(data[pos:], 0)
-			packet.DBName = string(data[pos : pos+idx])
-			pos = pos + idx + 1
+		if len(data[offset:]) > 0 {
+			idx := bytes.IndexByte(data[offset:], 0)
+			packet.DBName = string(data[offset : offset+idx])
+			offset = offset + idx + 1
 		}
 	}
 
 	if packet.Capability&mysql.ClientPluginAuth > 0 {
 		// TODO: Support mysql.ClientPluginAuth, skip it now
-		idx := bytes.IndexByte(data[pos:], 0)
-		pos = pos + idx + 1
+		idx := bytes.IndexByte(data[offset:], 0)
+		offset = offset + idx + 1
 	}
 
 	if packet.Capability&mysql.ClientConnectAtts > 0 {
-		if len(data[pos:]) == 0 {
+		if len(data[offset:]) == 0 {
 			// Defend some ill-formated packet, connection attribute is not important and can be ignored.
 			return nil
 		}
-		if num, null, off := parseLengthEncodedInt(data[pos:]); !null {
-			pos += off
-			kv := data[pos : pos+int(num)]
+		if num, null, off := parseLengthEncodedInt(data[offset:]); !null {
+			offset += off
+			kv := data[offset : offset+int(num)]
 			attrs, err := parseAttrs(kv)
 			if err != nil {
 				log.Warn("parse attrs error:", errors.ErrorStack(err))
 				return nil
 			}
 			packet.Attrs = attrs
-			pos += int(num)
+			offset += int(num)
 		}
 	}
 
@@ -317,15 +315,15 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 		return errors.Trace(err)
 	}
 
-	var p handshakeResponse41
+	var resp handshakeResponse41
 
-	pos, err := handshakeResponseHeaderFromData(&p, data)
+	pos, err := parseHandshakeResponseHeader(&resp, data)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// The packet is a SSLRequest, let's switch to TLS
-	if (p.Capability&mysql.ClientSSL > 0) && cc.server.cfg.SSLEnabled {
+	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.cfg.SSLEnabled {
 		if err := cc.UpgradeToTLS(cc.server.tlsConfig); err != nil {
 			return errors.Trace(err)
 		}
@@ -334,22 +332,22 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		pos, err = handshakeResponseHeaderFromData(&p, data)
+		pos, err = parseHandshakeResponseHeader(&resp, data)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
 	// Read the remaining part of the packet
-	if err := handshakeResponseBodyFromData(pos, &p, data); err != nil {
+	if err := parseHandshakeResponseBody(&resp, data, pos); err != nil {
 		return errors.Trace(err)
 	}
 
-	cc.capability = p.Capability & defaultCapability
-	cc.user = p.User
-	cc.dbname = p.DBName
-	cc.collation = p.Collation
-	cc.attrs = p.Attrs
+	cc.capability = resp.Capability & defaultCapability
+	cc.user = resp.User
+	cc.dbname = resp.DBName
+	cc.collation = resp.Collation
+	cc.attrs = resp.Attrs
 
 	// Open session and do auth
 	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname)
@@ -364,7 +362,7 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
 		}
 		user := fmt.Sprintf("%s@%s", cc.user, host)
-		if !cc.ctx.Auth(user, p.Auth, cc.salt) {
+		if !cc.ctx.Auth(user, resp.Auth, cc.salt) {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
 		}
 	}
@@ -393,7 +391,7 @@ func (cc *clientConn) Run() {
 		data, err := cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				log.Error("[%d] read packet error, close this connection %s",
+				log.Errorf("[%d] read packet error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
 			}
 			return

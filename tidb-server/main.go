@@ -121,7 +121,7 @@ func main() {
 		SSLKeyPath:   *sslKeyPath,
 	}
 	if len(*sslCAPath) > 0 || len(*sslCertPath) > 0 || len(*sslKeyPath) > 0 {
-		// assigning sslCertPath or sslKeyPath implies sslEnabled=true
+		// assigning sslCAPath, sslCertPath or sslKeyPath implies sslEnabled=true
 		cfg.SSLEnabled = true
 	}
 
