@@ -135,53 +135,54 @@ func (s *testEvaluatorSuite) TestShaEncrypt(c *C) {
 func (s *testEvaluatorSuite) TestSha2Encrypt(c *C) {
 	defer testleak.AfterTest(c)()
 	var cases = []struct {
-		args     []interface{}
-		expected string
-		isNil    bool
-		getErr   bool
+		args           []interface{}
+		expected       string
+		expectedLength int
+		isNil          bool
+		getErr         bool
 	}{
 		{
 			[]interface{}{"pingcap", 0},
-			"2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", false, false,
+			"2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", 64, false, false,
 		},
 		{
 			[]interface{}{"pingcap", 224},
-			"cd036dc9bec69e758401379c522454ea24a6327b48724b449b40c6b7", false, false,
+			"cd036dc9bec69e758401379c522454ea24a6327b48724b449b40c6b7", 56, false, false,
 		},
 		{
 			[]interface{}{"pingcap", 256},
-			"2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", false, false,
+			"2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", 64, false, false,
 		},
 		{
 			[]interface{}{"pingcap", 384},
-			"c50955b6b0c7b9919740d956849eedcb0f0f90bf8a34e8c1f4e071e3773f53bd6f8f16c04425ff728bed04de1b63db51", false, false,
+			"c50955b6b0c7b9919740d956849eedcb0f0f90bf8a34e8c1f4e071e3773f53bd6f8f16c04425ff728bed04de1b63db51", 96, false, false,
 		},
 		{
 			[]interface{}{"pingcap", 512},
-			"ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80", false, false,
+			"ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80", 128, false, false,
 		},
 		{
 			[]interface{}{13572468, 0},
-			"1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", false, false,
+			"1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", 64, false, false,
 		},
 		{
 			[]interface{}{13572468, 224},
-			"8ad67735bbf49576219f364f4640d595357a440358d15bf6815a16e4", false, false,
+			"8ad67735bbf49576219f364f4640d595357a440358d15bf6815a16e4", 56, false, false,
 		},
 		{
 			[]interface{}{13572468, 256},
-			"1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", false, false,
+			"1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", 64, false, false,
 		},
 		{
 			[]interface{}{13572468.123, 384},
-			"3b4ee302435dc1e15251efd9f3982b1ca6fe4ac778d3260b7bbf3bea613849677eda830239420e448e4c6dc7c2649d89", false, false,
+			"3b4ee302435dc1e15251efd9f3982b1ca6fe4ac778d3260b7bbf3bea613849677eda830239420e448e4c6dc7c2649d89", 96, false, false,
 		},
 		{
 			[]interface{}{13572468.123, 512},
-			"4820aa3f2760836557dc1f2d44a0ba7596333fdb60c8a1909481862f4ab0921c00abb23d57b7e67a970363cc3fcb78b25b6a0d45cdcac0e87aa0c96bc51f7f96", false, false,
+			"4820aa3f2760836557dc1f2d44a0ba7596333fdb60c8a1909481862f4ab0921c00abb23d57b7e67a970363cc3fcb78b25b6a0d45cdcac0e87aa0c96bc51f7f96", 128, false, false,
 		},
 		{
-			[]interface{}{"pingcap", 123}, "", false, false,
+			[]interface{}{"pingcap", 123}, "", 0, false, false,
 		},
 	}
 	fcName := ast.SHA2
@@ -189,9 +190,8 @@ func (s *testEvaluatorSuite) TestSha2Encrypt(c *C) {
 		f, err := newFunctionForTest(s.ctx, fcName, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		tp := f.GetType()
-		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flen, Equals, t.expectedLength)
+		c.Assert(tp.Flag, Equals, uint(0))
 		v, err := f.Eval(nil)
 		if t.getErr {
 			c.Assert(err, NotNil)

@@ -2035,11 +2035,15 @@ func (s *testSuite) TestEncyptionBuiltin(c *C) {
 	tk.MustExec(`insert t values ("pingcap", 0)`)
 	tk.MustExec(`insert t values ("pingcap", 224)`)
 	tk.MustExec(`insert t values ("pingcap", 256)`)
+	tk.MustExec(`insert t values ("pingcap", 384)`)
 	tk.MustExec(`insert t values ("pingcap", 512)`)
+	tk.MustExec(`insert t values ("pingcap", 123)`)
 	result := tk.MustQuery("select sha2(origin, len) from t")
 	result.Check(testkit.Rows(
 		"2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a",
 		"cd036dc9bec69e758401379c522454ea24a6327b48724b449b40c6b7",
 		"2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a",
-		"ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80"))
+		"c50955b6b0c7b9919740d956849eedcb0f0f90bf8a34e8c1f4e071e3773f53bd6f8f16c04425ff728bed04de1b63db51",
+		"ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80",
+		""))
 }
