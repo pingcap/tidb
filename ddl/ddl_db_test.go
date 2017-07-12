@@ -1269,3 +1269,16 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(21) YES  <nil> `))
 }
+
+func (s *testDBSuite) TestChangePK(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table change_column_pk (id int primary key not null, c int)")
+	s.tk.MustExec("insert into change_column_pk values(1,2)")
+	s.tk.MustExec("alter table change_column_pk modify column id int not null")
+	sql := "alter table change_column_pk add index idx(id)"
+	_, err := s.tk.Exec(sql)
+	c.Assert(terror.ErrorEqual(err, table.ErrMissColumn), IsTrue)
+	s.tk.MustExec("drop table change_column_pk")
+}

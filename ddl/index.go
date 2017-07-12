@@ -260,6 +260,8 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
 				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo)
+			} else if terror.ErrorEqual(err, table.ErrMissColumn) {
+				job.State = model.JobCancelled
 			}
 			return ver, errors.Trace(err)
 		}

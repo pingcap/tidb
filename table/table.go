@@ -55,6 +55,8 @@ var (
 	ErrInvalidRecordKey = terror.ClassTable.New(codeInvalidRecordKey, "invalid record key")
 	// ErrTruncateWrongValue returns for truncate wrong value for field.
 	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "Incorrect value")
+	// ErrMissColumn returns for column missed.
+	ErrMissColumn = terror.ClassTable.New(codeMissColumn, "Miss column")
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -138,6 +140,7 @@ const (
 	codeColumnStateNonPublic = 7
 	codeIndexStateCantNone   = 8
 	codeInvalidRecordKey     = 9
+	codeMissColumn           = 10
 
 	codeColumnCantNull     = 1048
 	codeUnknownColumn      = 1054
