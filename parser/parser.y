@@ -5184,7 +5184,7 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
 	}
-|	CharsetSym
+|	CharsetKw
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowCharset}
 	}
@@ -5351,9 +5351,6 @@ ShowTableAliasOpt:
 	{
 		$$ = $2.(*ast.TableName)
 	}
-
-CharsetSym:
-"CHARSET" | "CHARACTER" "SET"
 
 FlushStmt:
 	"FLUSH" NoWriteToBinLogAliasOpt FlushOption
