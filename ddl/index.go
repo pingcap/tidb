@@ -260,6 +260,8 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
 				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo)
+			} else if terror.ErrorEqual(err, table.ErrMissColumn) {
+				job.State = model.JobCancelled
 			}
 			return ver, errors.Trace(err)
 		}
@@ -572,9 +574,6 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		if err != nil {
 			log.Warnf("[ddl] total added index for %d rows, this task add index for %d failed, take time %v",
 				addedCount, taskAddedCount, sub)
-			if terror.ErrorEqual(err, table.ErrMissColumn) {
-				job.State = model.JobCancelled
-			}
 			return errors.Trace(err)
 		}
 		d.setReorgRowCount(addedCount)
