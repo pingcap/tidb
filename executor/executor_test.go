@@ -1872,6 +1872,7 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode=''")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (e enum('Y', 'N'))")
 	tk.MustExec("insert into t values (0)")
 	tk.MustQuery("select * from t").Check(testkit.Rows(""))
