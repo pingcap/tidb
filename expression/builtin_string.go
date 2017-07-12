@@ -1264,7 +1264,7 @@ func (b *builtinBitLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
 	}
 
 	ft := b.args[0].GetType()
-	if mysql.HasBinaryFlag(ft.Flag) && types.IsTypeChar(ft.Tp) {
+	if mysql.HasBinaryFlag(ft.Flag) && ft.Tp == mysql.TypeString {
 		return int64(ft.Flen * 8), false, nil
 	}
 
