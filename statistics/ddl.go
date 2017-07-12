@@ -36,7 +36,7 @@ func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
 		for i := 0; i < len(t.ColumnsInfo); i++ {
 			err := h.insertColStats2KV(t.TableInfo.ID, t.ColumnsInfo[i])
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 		}
 	case model.ActionDropColumn:
