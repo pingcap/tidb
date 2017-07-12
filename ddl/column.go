@@ -238,7 +238,7 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = ErrInvalidColumnState.Gen("invalid column state %v", originalState)
 	}
 
-	return ver, nil
+	return ver, errors.Trace(err)
 }
 
 func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {

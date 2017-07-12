@@ -140,6 +140,10 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 }
 
 func (s *testColumnChangeSuite) testAddMultipleColumns(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {
+	// CREATE INDEX c1_idx ON $tblInfo.Name (c1);
+	job := testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, false, "c1_idx", "c1")
+	testCheckJobDone(c, d, job, true)
+
 	d.Stop()
 	tc := &testDDLCallback{}
 	// set up hook
@@ -188,12 +192,17 @@ func (s *testColumnChangeSuite) testAddMultipleColumns(c *C, ctx context.Context
 		{Tp: ast.ColumnPositionFirst},
 		{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c1")}},
 	}
-	job := testAddMultipleColumn(c, ctx, d, s.dbInfo, tblInfo, []string{"c3", "c4", "c5", "c6"},
+	job = testAddMultipleColumn(c, ctx, d, s.dbInfo, tblInfo, []string{"c3", "c4", "c5", "c6"},
 		[]interface{}{1, 1, 1, 1}, positions)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	assertEqualColumnNames(c, t.Cols(), []string{"c5", "c4", "c1", "c6", "c2", "c3"})
+	indiceMeta := t.Indices()[0].Meta()
+	c.Assert(indiceMeta.Name.L, Equals, "c1_idx")
+	indexCol := indiceMeta.Columns[0]
+	c.Assert(indexCol.Name.L, Equals, "c1")
+	c.Assert(indexCol.Offset, Equals, 2)
 }
 
 func assertEqualColumnNames(c *C, columns []*table.Column, names []string) {
