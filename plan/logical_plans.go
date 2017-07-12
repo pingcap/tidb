@@ -264,6 +264,11 @@ type DataSource struct {
 
 	LimitCount *int64
 
+	// inUpdate indicates the plan is in update or not.
+	// If it's true, its schema will contain writable columns,
+	// otherwise it will contain public columns.
+	inUpdate bool
+
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 
