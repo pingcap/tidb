@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -114,6 +115,8 @@ func (e *ShowExec) fetchAll() error {
 		// empty result
 	case ast.ShowStatsMeta:
 		return e.fetchShowStatsMeta()
+	case ast.ShowStatsHistograms:
+		return e.fetchShowStatsHistogram()
 	}
 	return nil
 }
@@ -637,12 +640,11 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 		for _, tbl := range db.Tables {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
-				t := time.Unix(0, oracle.ExtractPhysical(statsTbl.Version)*int64(time.Millisecond))
 				row := &Row{
 					Data: types.MakeDatums(
 						db.Name.O,
 						tbl.Name.O,
-						types.Time{Time: types.FromGoTime(t), Type: mysql.TypeDatetime},
+						e.versionToTime(statsTbl.Version),
 						statsTbl.ModifyCount,
 						statsTbl.Count,
 					),
@@ -652,4 +654,43 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 		}
 	}
 	return nil
+}
+
+func (e *ShowExec) fetchShowStatsHistogram() error {
+	do := sessionctx.GetDomain(e.ctx)
+	h := do.StatsHandle()
+	dbs := do.InfoSchema().AllSchemas()
+	for _, db := range dbs {
+		for _, tbl := range db.Tables {
+			statsTbl := h.GetTableStats(tbl.ID)
+			if !statsTbl.Pseudo {
+				for _, col := range statsTbl.Columns {
+					e.rows = append(e.rows, e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram))
+				}
+				for _, idx := range statsTbl.Indices {
+					e.rows = append(e.rows, e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram) *Row {
+	return &Row{
+		Data: types.MakeDatums(
+			dbName,
+			tblName,
+			colName,
+			isIndex,
+			e.versionToTime(hist.LastUpdateVersion),
+			hist.NDV,
+			hist.NullCount,
+		),
+	}
+}
+
+func (e *ShowExec) versionToTime(version uint64) types.Time {
+	t := time.Unix(0, oracle.ExtractPhysical(version)*int64(time.Millisecond))
+	return types.Time{Time: types.FromGoTime(t), Type: mysql.TypeDatetime}
 }
