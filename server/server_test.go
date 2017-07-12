@@ -401,7 +401,7 @@ func runTestConcurrentUpdate(c *C) {
 }
 
 func runTestErrorCode(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
+	runTestsOnNewDB(c, "ErrorCode", func(dbt *DBTest) {
 		dbt.mustExec("create table test (c int PRIMARY KEY);")
 		dbt.mustExec("insert into test values (1);")
 		txn1, err := dbt.db.Begin()
@@ -458,6 +458,7 @@ func runTestErrorCode(c *C) {
 func checkErrorCode(c *C, e error, code uint16) {
 	me, ok := e.(*mysql.MySQLError)
 	c.Assert(ok, IsTrue, Commentf("err: %v", e))
+	// c.Assert(me.Number, Equals, code))
 	c.Assert(me.Number, Equals, code)
 }
 
@@ -488,7 +489,7 @@ func runTestAuth(c *C) {
 }
 
 func runTestIssue3682(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
+	runTestsOnNewDB(c, "issue3682", func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'abc'@'%' IDENTIFIED BY '123';`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
