@@ -36,8 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
-
-	"fmt"
 )
 
 // Table implements table.Table interface.
@@ -334,17 +332,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	if skipCheck {
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
-
-	wcols := ""
-	for _, c := range t.writableColumns {
-		wcols += fmt.Sprintf("(%s,%d),", c.Name.O, c.Offset)
-	}
-	log.Errorf("wcols: %s", wcols)
-	ds := ""
-	for _, d := range r {
-		ds += fmt.Sprintf("(%d,%v),", d.Kind(), d.GetValue())
-	}
-	log.Errorf("datums: %s", ds)
 
 	r = t.remapDataFromWritable(r)
 

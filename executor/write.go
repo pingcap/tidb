@@ -859,8 +859,8 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 	marked := make(map[int]struct{}, len(e.Table.WritableCols()))
 	for i, wc := range e.Table.WritableCols() {
 		// Here we must iterate on vals not cols, because vals maybe is empty.
-		for ii, v := range vals {
-			if cols[ii] == wc {
+		for j, v := range vals {
+			if cols[j] == wc {
 				row[i] = v
 				if !ignoreErr {
 					marked[i] = struct{}{}
