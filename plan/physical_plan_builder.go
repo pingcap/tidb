@@ -35,6 +35,7 @@ const (
 	descScanFactor  = 5 * scanFactor
 	memoryFactor    = 5.0
 	selectionFactor = 0.8
+	distinctFactor  = 0.8
 	cpuFactor       = 0.9
 	aggFactor       = 0.1
 	joinFactor      = 0.3
