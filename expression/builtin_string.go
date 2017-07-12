@@ -618,46 +618,58 @@ type replaceFunctionClass struct {
 }
 
 func (c *replaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinReplaceSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = c.fixLength(args)
+	for _, a := range args {
+		if mysql.HasBinaryFlag(a.GetType().Flag) {
+			types.SetBinChsClnFlag(bf.tp)
+			break
+		}
+	}
+	sig := &builtinReplaceSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinReplaceSig struct {
-	baseBuiltinFunc
+// fixLength calculate the Flen of the return type.
+func (c *replaceFunctionClass) fixLength(args []Expression) int {
+	charLen := args[0].GetType().Flen
+	oldStrLen := args[1].GetType().Flen
+	diff := args[2].GetType().Flen - oldStrLen
+	if diff > 0 && oldStrLen > 0 {
+		charLen += (charLen / oldStrLen) * diff
+	}
+	return charLen
 }
 
-// eval evals a builtinReplaceSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
-func (b *builtinReplaceSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	for _, arg := range args {
-		if arg.IsNull() {
-			return d, nil
-		}
-	}
+type builtinReplaceSig struct {
+	baseStringBuiltinFunc
+}
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+// evalString evals a builtinReplaceSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
+func (b *builtinReplaceSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var str, oldStr, newStr string
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	oldStr, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	oldStr, isNull, err = b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	newStr, err := args[2].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	newStr, isNull, err = b.args[2].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
 	if oldStr == "" {
-		d.SetString(str)
-		return d, nil
+		return str, false, nil
 	}
-	d.SetString(strings.Replace(str, oldStr, newStr, -1))
-
-	return d, nil
+	return strings.Replace(str, oldStr, newStr, -1), false, nil
 }
 
 type convertFunctionClass struct {
@@ -1983,25 +1995,55 @@ type toBase64FunctionClass struct {
 }
 
 func (c *toBase64FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinToBase64Sig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
+	sig := &builtinToBase64Sig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinToBase64Sig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinToBase64Sig.
+// base64NeededEncodedLength return the base64 encoded string length.
+func base64NeededEncodedLength(n int) int {
+	// Returns -1 indicate the result will overflow.
+	if strconv.IntSize == 64 {
+		// len(arg)            -> len(to_base64(arg))
+		// 6827690988321067803 -> 9223372036854775804
+		// 6827690988321067804 -> -9223372036854775808
+		if n > 6827690988321067803 {
+			return -1
+		}
+	} else {
+		// len(arg)   -> len(to_base64(arg))
+		// 1589695686 -> 2147483645
+		// 1589695687 -> -2147483646
+		if n > 1589695686 {
+			return -1
+		}
+	}
+
+	length := (n + 2) / 3 * 4
+	return length + (length-1)/76
+}
+
+// evalString evals a builtinToBase64Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_to-base64
-func (b *builtinToBase64Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinToBase64Sig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+
+	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
+		return "", true, nil
 	}
+
 	//encode
 	strBytes := []byte(str)
 	result := base64.StdEncoding.EncodeToString(strBytes)
@@ -2011,9 +2053,8 @@ func (b *builtinToBase64Sig) eval(row []types.Datum) (d types.Datum, err error) 
 		resultArr := splitToSubN(result, 76)
 		result = strings.Join(resultArr, "\n")
 	}
-	// Set the result to be of type string
-	d.SetString(result)
-	return d, nil
+
+	return result, false, nil
 }
 
 // splitToSubN splits a string every n runes into a string[]

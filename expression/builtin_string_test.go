@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -541,29 +542,45 @@ func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 
 func (s *testEvaluatorSuite) TestReplace(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Input  []interface{}
-		Expect interface{}
+
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    string
+		flen   int
 	}{
-		{[]interface{}{nil, nil, nil}, nil},
-		{[]interface{}{1, nil, 2}, nil},
-		{[]interface{}{1, 1, nil}, nil},
-		{[]interface{}{"12345", 2, 222}, "1222345"},
-		{[]interface{}{"12325", 2, "a"}, "1a3a5"},
-		{[]interface{}{12345, 2, "aa"}, "1aa345"},
-		{[]interface{}{"www.mysql.com", "", "tidb"}, "www.mysql.com"},
+		{[]interface{}{"www.mysql.com", "mysql", "pingcap"}, false, false, "www.pingcap.com", 17},
+		{[]interface{}{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 13},
+		{[]interface{}{1234, 2, 55}, false, false, "15534", 8},
+		{[]interface{}{"", "a", "b"}, false, false, "", 0},
+		{[]interface{}{"abc", "", "d"}, false, false, "abc", 3},
+		{[]interface{}{"aaa", "a", ""}, false, false, "", 3},
+		{[]interface{}{nil, "a", "b"}, true, false, "", 0},
+		{[]interface{}{"a", nil, "b"}, true, false, "", 1},
+		{[]interface{}{"a", "b", nil}, true, false, "", 1},
+		{[]interface{}{errors.New("must err"), "a", "b"}, false, true, "", -1},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Replace, primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		c.Assert(f.GetType().Flen, Equals, t.flen)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
 	}
 
-	dtbl := tblToDtbl(tbl)
-
-	for _, t := range dtbl {
-		fc := funcs[ast.Replace]
-		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
-		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
-	}
+	f, err := funcs[ast.Replace].getFunction([]Expression{Zero, Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSubstring(c *C) {
@@ -1649,42 +1666,75 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestToBase64(c *C) {
+	defer testleak.AfterTest(c)()
+
 	tests := []struct {
 		args   interface{}
-		expect interface{}
+		expect string
+		isNil  bool
+		getErr bool
 	}{
-		{string(""), string("")},
-		{string("abc"), string("YWJj")},
-		{string("ab c"), string("YWIgYw==")},
-		{string("ab\nc"), string("YWIKYw==")},
-		{string("ab\tc"), string("YWIJYw==")},
-		{string("qwerty123456"), string("cXdlcnR5MTIzNDU2")},
+		{"", "", false, false},
+		{"abc", "YWJj", false, false},
+		{"ab c", "YWIgYw==", false, false},
+		{1, "MQ==", false, false},
+		{1.1, "MS4x", false, false},
+		{"ab\nc", "YWIKYw==", false, false},
+		{"ab\tc", "YWIJYw==", false, false},
+		{"qwerty123456", "cXdlcnR5MTIzNDU2", false, false},
 		{
-			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
-			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw=="),
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw==",
+			false,
+			false,
 		},
 		{
-			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
-			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv"),
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv",
+			false,
+			false,
 		},
 		{
-			string("ABCD  EFGHI\nJKLMNOPQRSTUVWXY\tZabcdefghijklmnopqrstuv  wxyz012\r3456789+/"),
-			string("QUJDRCAgRUZHSEkKSktMTU5PUFFSU1RVVldYWQlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1diAgd3h5\nejAxMg0zNDU2Nzg5Ky8="),
+			"ABCD  EFGHI\nJKLMNOPQRSTUVWXY\tZabcdefghijklmnopqrstuv  wxyz012\r3456789+/",
+			"QUJDRCAgRUZHSEkKSktMTU5PUFFSU1RVVldYWQlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1diAgd3h5\nejAxMg0zNDU2Nzg5Ky8=",
+			false,
+			false,
 		},
+		{nil, "", true, false},
 	}
-	fc := funcs[ast.ToBase64]
+	if strconv.IntSize == 32 {
+		tests = append(tests, struct {
+			args   interface{}
+			expect string
+			isNil  bool
+			getErr bool
+		}{
+			strings.Repeat("a", 1589695687),
+			"",
+			true,
+			false,
+		})
+	}
+
 	for _, test := range tests {
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args)), s.ctx)
+		f, err := newFunctionForTest(s.ctx, ast.ToBase64, primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
-		result, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		if test.expect == nil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
+		d, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
 		} else {
-			expect, _ := test.expect.(string)
-			c.Assert(result.GetString(), Equals, expect)
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, test.expect)
+			}
 		}
 	}
+
+	f, err := funcs[ast.ToBase64].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestStringRight(c *C) {
