@@ -163,6 +163,41 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 }
 
+func (s *testSuite) TestAlterTableAddMultipleColumns(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists addcols_test (c1 int)")
+	tk.MustExec("insert into addcols_test values(1)")
+	tk.MustExec("alter table addcols_test add column (c2 timestamp default current_timestamp," +
+		"c3 varchar(50) default 'CURRENT_TIMESTAMP')")
+	time.Sleep(1 * time.Second)
+	now := time.Now().Add(-time.Duration(1 * time.Second)).Format(types.TimeFormat)
+	r, err := tk.Exec("select c2 from addcols_test")
+	c.Assert(err, IsNil)
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(len(row.Data), Equals, 1)
+	t := row.Data[0].GetMysqlTime()
+	c.Assert(now, GreaterEqual, t.String())
+	tk.MustQuery("select c3 from addcols_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
+
+	tk.MustExec("alter table addcols_test add column (c4 int default -1, c5 int)")
+	tbl, err := sessionctx.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("addcols_test"))
+	c.Assert(err, IsNil)
+	col3 := tbl.Meta().Columns[3]
+	c.Assert(col3.DefaultValue, Equals, "-1")
+	tk.MustExec("insert addcols_test (c4, c5) values (3, 3)")
+	tk.MustQuery("select c4,c5 from addcols_test").Check(
+		testkit.Rows("-1 <nil>", "3 3"))
+
+	// Add duplicate columns
+	_, err = tk.Exec("alter table addcols_test add column(c5 int default -1, c6 varchar(50))")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("alter table addcols_test add column(c6 int default -1, c7 varchar(50), c6 varchar(10))")
+	c.Assert(err, NotNil)
+}
+
 func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)

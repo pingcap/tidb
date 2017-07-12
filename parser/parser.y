@@ -576,7 +576,7 @@ import (
 	CastType		"Cast function target type"
 	CharsetName		"Character set name"
 	ColumnDef		"table column definition"
-	ColumnDefList   "table column definition list"
+	ColumnDefList       "table column definition list"
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
 	ColumnNameListOpt	"column name list opt"

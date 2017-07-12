@@ -931,12 +931,12 @@ func (d *ddl) AddColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTable
 	for _, column := range spec.NewColumns {
 		err = validColumnDef(column, t)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 
 		col, err := buildColumnWithDefValue(ctx, t, column)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		newColumns = append(newColumns, col)
 	}
@@ -1152,15 +1152,15 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
-	newModifiedCol := spec.NewColumns[0]
+	modifiedNewCol := spec.NewColumns[0]
 
 	newCol := table.ToColumn(&model.ColumnInfo{
 		ID:                 col.ID,
 		Offset:             col.Offset,
 		State:              col.State,
 		OriginDefaultValue: col.OriginDefaultValue,
-		FieldType:          *newModifiedCol.Tp,
-		Name:               newModifiedCol.Name.Name,
+		FieldType:          *modifiedNewCol.Tp,
+		Name:               modifiedNewCol.Name.Name,
 	})
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
 	if err != nil {
@@ -1170,7 +1170,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := setDefaultAndComment(ctx, newCol, newModifiedCol.Options); err != nil {
+	if err := setDefaultAndComment(ctx, newCol, modifiedNewCol.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 	// We don't support modifying the type definitions from 'null' to 'not null' now.
@@ -1252,8 +1252,8 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
 	}
-
-	colName := spec.NewColumns[0].Name.Name
+	changedNewColumn := spec.NewColumns[0]
+	colName := changedNewColumn.Name.Name
 	// Check whether alter column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
@@ -1262,11 +1262,11 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 
 	// Clean the NoDefaultValueFlag value.
 	col.Flag &= (^uint(mysql.NoDefaultValueFlag))
-	if len(spec.NewColumns[0].Options) == 0 {
+	if len(changedNewColumn.Options) == 0 {
 		col.DefaultValue = nil
 		setNoDefaultValueFlag(col, false)
 	} else {
-		err := setDefaultValue(ctx, col, spec.NewColumns[0].Options[0])
+		err := setDefaultValue(ctx, col, changedNewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1520,14 +1520,14 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 	return errors.Trace(err)
 }
 
-// findCol finds column in cols by name.
-func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
+// findCol finds column and index in columns in cols by name.
+func findCol(cols []*model.ColumnInfo, name string) (*model.ColumnInfo, int) {
 	name = strings.ToLower(name)
-	for _, col := range cols {
+	for idx, col := range cols {
 		if col.Name.L == name {
-			return col
+			return col, idx
 		}
 	}
 
-	return nil
+	return nil, -1
 }

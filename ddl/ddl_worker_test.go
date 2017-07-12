@@ -180,12 +180,13 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	col.ID = allocateColumnID(tblInfo)
 	col.FieldType = *types.NewFieldType(mysql.TypeLong)
 	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c5")}}
-
+	cols := &[]*model.ColumnInfo{col}
+	addpos := &[]*ast.ColumnPosition{pos}
 	// for adding column
-	doDDLJobErr(c, -1, tblInfo.ID, model.ActionAddColumns, []interface{}{col, pos, 0}, ctx, d)
-	doDDLJobErr(c, dbInfo.ID, -1, model.ActionAddColumns, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(c, -1, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, addpos, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, -1, model.ActionAddColumns, []interface{}{cols, addpos, 0}, ctx, d)
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{0}, ctx, d)
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, addpos, 0}, ctx, d)
 
 	// for dropping column
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionDropColumn, []interface{}{col, pos, 0}, ctx, d)
@@ -194,14 +195,29 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{model.NewCIStr("c5")}, ctx, d)
 
 	// for appending column
-	cols := &[]*model.ColumnInfo{col}
+
 	// argument invalid err
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, pos, 0}, ctx, d)
 	doDDLJobErr(c, dbInfo.ID, -1, model.ActionAddColumns, []interface{}{cols, pos, 0}, ctx, d)
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{0}, ctx, d)
-	cols = &[]*model.ColumnInfo{col, col} // duplicate coloumn err
+	// Duplicate coloumn err.
+	cols = &[]*model.ColumnInfo{col, col}
 	nonpos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
 	positions := &[]*ast.ColumnPosition{nonpos, nonpos}
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
+	// Add column after not exist column named c6.
+	colc5 := &model.ColumnInfo{
+		Name:         model.NewCIStr("c5"),
+		Offset:       len(tblInfo.Columns),
+		DefaultValue: 0,
+	}
+	cols = &[]*model.ColumnInfo{col, colc5}
+	afterpos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c6")}}
+	positions = &[]*ast.ColumnPosition{afterpos, nonpos}
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
+	// Add column c5 after c4 that is not exist but is added in this job.
+	afterpos = &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c4")}}
+	positions = &[]*ast.ColumnPosition{nonpos, afterpos}
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
 }
 

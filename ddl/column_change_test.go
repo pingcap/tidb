@@ -136,10 +136,10 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	s.testColumnDrop(c, ctx, d, tb) // delete 3rd column
 	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
 	s.testColumnDrop(c, ctx, d, tb) // delete 3rd column
-	s.testAppendColumns(c, ctx, d, tblInfo)
+	s.testAddMultipleColumns(c, ctx, d, tblInfo)
 }
 
-func (s *testColumnChangeSuite) testAppendColumns(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {
+func (s *testColumnChangeSuite) testAddMultipleColumns(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {
 	d.Stop()
 	tc := &testDDLCallback{}
 	// set up hook
@@ -185,14 +185,21 @@ func (s *testColumnChangeSuite) testAppendColumns(c *C, ctx context.Context, d *
 	positions := []*ast.ColumnPosition{
 		{Tp: ast.ColumnPositionNone},
 		{Tp: ast.ColumnPositionFirst},
+		{Tp: ast.ColumnPositionFirst},
+		{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c1")}},
 	}
-	job := testAddMultipleColumn(c, ctx, d, s.dbInfo, tblInfo, []string{"c3", "c4"}, []interface{}{1, 1}, positions)
+	job := testAddMultipleColumn(c, ctx, d, s.dbInfo, tblInfo, []string{"c3", "c4", "c5", "c6"},
+		[]interface{}{1, 1, 1, 1}, positions)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	cols := t.Cols()
-	c.Assert(cols[0].Name.L, Equals, "c4")
-	c.Assert(cols[3].Name.L, Equals, "c3")
+	assertEqualColumnNames(c, t.Cols(), []string{"c5", "c4", "c1", "c6", "c2", "c3"})
+}
+
+func assertEqualColumnNames(c *C, columns []*table.Column, names []string) {
+	for idx, col := range columns {
+		c.Assert(col.Name.L, Equals, names[idx])
+	}
 }
 
 func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {
