@@ -498,15 +498,16 @@ func (e *SelectionExec) Open() error {
 type TableScanExec struct {
 	baseExecutor
 
-	t          table.Table
-	asName     *model.CIStr
-	ctx        context.Context
-	ranges     []types.IntColumnRange
-	seekHandle int64
-	iter       kv.Iterator
-	cursor     int
-	schema     *expression.Schema
-	columns    []*model.ColumnInfo
+	t             table.Table
+	asName        *model.CIStr
+	ctx           context.Context
+	ranges        []types.IntColumnRange
+	seekHandle    int64
+	iter          kv.Iterator
+	cursor        int
+	schema        *expression.Schema
+	columns       []*model.ColumnInfo
+	needColHandel bool
 
 	isInfoSchema     bool
 	infoSchemaRows   [][]types.Datum
@@ -614,6 +615,9 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 	row.Data, err = e.t.RowWithCols(e.ctx, handle, columns)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if e.needColHandel {
+		row.Data = append(row.Data, types.NewIntDatum(handle))
 	}
 
 	// Put rowKey to the tail of record row.

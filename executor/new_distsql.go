@@ -51,7 +51,8 @@ type TableReaderExecutor struct {
 	ctx       context.Context
 	schema    *expression.Schema
 	// columns are only required by union scan.
-	columns []*model.ColumnInfo
+	columns       []*model.ColumnInfo
+	needColHandle bool
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -98,7 +99,11 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		err = codec.SetRawValues(rowData, values)
+		if e.needColHandle {
+			err = codec.SetRawValues(rowData, values[:len(values)-1])
+		} else {
+			err = codec.SetRawValues(rowData, values)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -106,7 +111,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle), nil
 	}
 }
 
@@ -146,16 +151,17 @@ func (e *TableReaderExecutor) doRequestForDatums(datums [][]types.Datum, goCtx g
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
-	asName    *model.CIStr
-	table     table.Table
-	index     *model.IndexInfo
-	tableID   int64
-	keepOrder bool
-	desc      bool
-	ranges    []*types.IndexRange
-	dagPB     *tipb.DAGRequest
-	ctx       context.Context
-	schema    *expression.Schema
+	asName        *model.CIStr
+	table         table.Table
+	index         *model.IndexInfo
+	tableID       int64
+	keepOrder     bool
+	desc          bool
+	ranges        []*types.IndexRange
+	dagPB         *tipb.DAGRequest
+	ctx           context.Context
+	schema        *expression.Schema
+	needColHandle bool
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -204,7 +210,11 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		err = codec.SetRawValues(rowData, values)
+		if e.needColHandle {
+			err = codec.SetRawValues(rowData, values[:len(values)-1])
+		} else {
+			err = codec.SetRawValues(rowData, values)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -212,7 +222,7 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle), nil
 	}
 }
 
@@ -250,16 +260,17 @@ func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
-	asName    *model.CIStr
-	table     table.Table
-	index     *model.IndexInfo
-	tableID   int64
-	keepOrder bool
-	desc      bool
-	ranges    []*types.IndexRange
-	dagPB     *tipb.DAGRequest
-	ctx       context.Context
-	schema    *expression.Schema
+	asName        *model.CIStr
+	table         table.Table
+	index         *model.IndexInfo
+	tableID       int64
+	keepOrder     bool
+	desc          bool
+	ranges        []*types.IndexRange
+	dagPB         *tipb.DAGRequest
+	ctx           context.Context
+	schema        *expression.Schema
+	needColHandle bool
 
 	// result returns one or more distsql.PartialResult.
 	result distsql.SelectResult
@@ -319,12 +330,13 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		task.doneCh <- errors.Trace(err)
 	}()
 	tableReader := &TableReaderExecutor{
-		asName:  e.asName,
-		table:   e.table,
-		tableID: e.tableID,
-		dagPB:   e.tableRequest,
-		schema:  e.schema,
-		ctx:     e.ctx,
+		asName:        e.asName,
+		table:         e.table,
+		tableID:       e.tableID,
+		dagPB:         e.tableRequest,
+		schema:        e.schema,
+		ctx:           e.ctx,
+		needColHandle: e.needColHandle,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {

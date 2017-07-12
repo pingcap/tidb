@@ -41,7 +41,8 @@ const (
 	minLogDuration = 50 * time.Millisecond
 )
 
-func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *model.CIStr) *Row {
+// TODO: This should be updated after.
+func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *model.CIStr, needHandle bool) *Row {
 	entry := &RowKeyEntry{
 		Handle: h,
 		Tbl:    t,
@@ -50,6 +51,9 @@ func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *mod
 		entry.TableName = tableAsName.L
 	} else {
 		entry.TableName = t.Meta().Name.L
+	}
+	if needHandle {
+		data[len(data)-1].SetInt64(h)
 	}
 	return &Row{Data: data, RowKeys: []*RowKeyEntry{entry}}
 }
@@ -379,6 +383,7 @@ type XSelectIndexExec struct {
 	desc                 bool
 	outOfOrder           bool
 	indexConditionPBExpr *tipb.Expr
+	needColHandle        bool
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -485,7 +490,11 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			schema = e.idxColsSchema
 		}
 		values := make([]types.Datum, schema.Len())
-		err = codec.SetRawValues(rowData, values)
+		if e.needColHandle {
+			err = codec.SetRawValues(rowData, values[:len(values)-1])
+		} else {
+			err = codec.SetRawValues(rowData, values)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -497,7 +506,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			return &Row{Data: values}, nil
 		}
 		values = e.indexRowToTableRow(h, values)
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle), nil
 	}
 }
 
@@ -515,7 +524,11 @@ func decodeRawValues(values []types.Datum, schema *expression.Schema, loc *time.
 }
 
 func (e *XSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Datum) []types.Datum {
-	tableRow := make([]types.Datum, len(e.columns))
+	rowLen := len(e.columns)
+	if e.needColHandle {
+		rowLen++
+	}
+	tableRow := make([]types.Datum, rowLen)
 	for i, tblCol := range e.columns {
 		if table.ToColumn(tblCol).IsPKHandleColumn(e.tableInfo) {
 			if mysql.HasUnsignedFlag(tblCol.FieldType.Flag) {
@@ -770,7 +783,11 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 			break
 		}
 		values := make([]types.Datum, e.Schema().Len())
-		err = codec.SetRawValues(rowData, values)
+		if e.needColHandle {
+			err = codec.SetRawValues(rowData, values[:len(values)-1])
+		} else {
+			err = codec.SetRawValues(rowData, values)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -778,7 +795,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row := resultRowToRow(t, h, values, e.asName)
+		row := resultRowToRow(t, h, values, e.asName, e.needColHandle)
 		rows = append(rows, row)
 	}
 	return rows, nil
@@ -831,16 +848,17 @@ type XSelectTableExec struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 
-	where        *tipb.Expr
-	Columns      []*model.ColumnInfo
-	schema       *expression.Schema
-	ranges       []types.IntColumnRange
-	desc         bool
-	limitCount   *int64
-	returnedRows uint64 // returned rowCount
-	keepOrder    bool
-	startTS      uint64
-	orderByList  []*tipb.ByItem
+	where         *tipb.Expr
+	Columns       []*model.ColumnInfo
+	schema        *expression.Schema
+	ranges        []types.IntColumnRange
+	desc          bool
+	limitCount    *int64
+	returnedRows  uint64 // returned rowCount
+	keepOrder     bool
+	startTS       uint64
+	orderByList   []*tipb.ByItem
+	needColHandle bool
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -961,7 +979,11 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		e.returnedRows++
 		values := make([]types.Datum, e.schema.Len())
-		err = codec.SetRawValues(rowData, values)
+		if e.needColHandle {
+			err = codec.SetRawValues(rowData, values[:len(values)-1])
+		} else {
+			err = codec.SetRawValues(rowData, values)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -973,7 +995,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			// compose aggregate row
 			return &Row{Data: values}, nil
 		}
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle), nil
 	}
 }
 

@@ -50,7 +50,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		Columns:             p.Columns,
 		TableAsName:         p.TableAsName,
 		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{client: client},
+		physicalTableSource: physicalTableSource{client: client, NeedColHandle: p.NeedColHandle},
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.Schema())
 	if p.ctx.Txn() != nil {
@@ -115,7 +115,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		TableAsName:         p.TableAsName,
 		OutOfOrder:          true,
 		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{client: client},
+		physicalTableSource: physicalTableSource{client: client, NeedColHandle: p.NeedColHandle},
 	}.init(p.allocator, p.ctx)
 	is.SetSchema(p.schema)
 	if p.ctx.Txn() != nil {
@@ -150,7 +150,6 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			if !terror.ErrorEqual(err, types.ErrTruncated) {
 				return nil, errors.Trace(err)
 			}
-			log.Warn("truncate error in buildIndexRange")
 		}
 		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
 		if err != nil {
@@ -216,10 +215,11 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
 	if !isDistReq {
 		memTable := PhysicalMemTable{
-			DBName:      p.DBName,
-			Table:       p.tableInfo,
-			Columns:     p.Columns,
-			TableAsName: p.TableAsName,
+			DBName:        p.DBName,
+			Table:         p.tableInfo,
+			Columns:       p.Columns,
+			TableAsName:   p.TableAsName,
+			NeedColHandle: p.NeedColHandle,
 		}.init(p.allocator, p.ctx)
 		memTable.SetSchema(p.schema)
 		memTable.Ranges = ranger.FullIntRange()

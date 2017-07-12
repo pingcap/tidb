@@ -1109,6 +1109,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		statisticTable: statisticTable,
 		DBName:         schemaName,
 		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
+		NeedColHandle:  b.needColHandle,
 	}.init(b.allocator, b.ctx)
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
@@ -1130,6 +1131,21 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			RetType:  &col.FieldType,
 			Position: i,
 			ID:       col.ID})
+	}
+	if p.NeedColHandle {
+		p.Columns = append(p.Columns, &model.ColumnInfo{
+			ID:   -1,
+			Name: model.NewCIStr(""),
+		})
+		schema.Append(&expression.Column{
+			FromID:   p.id,
+			DBName:   schemaName,
+			TblName:  tableInfo.Name,
+			ColName:  model.NewCIStr("_rowid"),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Position: len(schema.Columns),
+			ID:       -1,
+		})
 	}
 	p.SetSchema(schema)
 	return p
@@ -1239,6 +1255,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	b.inUpdateStmt = true
+	b.needColHandle = true
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
@@ -1331,6 +1348,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
+	b.needColHandle = true
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {

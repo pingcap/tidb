@@ -193,6 +193,7 @@ func (e *DeleteExec) deleteMultiTables() error {
 			break
 		}
 
+		log.Warnf("joinedRow len: %v", len(joinedRow.Data))
 		for _, entry := range joinedRow.RowKeys {
 			if !isMatchTableName(entry, tblMap) {
 				continue
@@ -201,8 +202,11 @@ func (e *DeleteExec) deleteMultiTables() error {
 				tblRowMap[entry.Tbl] = make(map[int64][]types.Datum)
 			}
 			offset := getTableOffset(e.SelectExec.Schema(), entry)
-			data := joinedRow.Data[offset : offset+len(entry.Tbl.WritableCols())]
-			tblRowMap[entry.Tbl][entry.Handle] = data
+			end := offset + len(entry.Tbl.WritableCols())
+			data := joinedRow.Data[offset:end]
+			handle := joinedRow.Data[end].GetInt64()
+			log.Warnf("handle1: %v, handle2: %v", handle, entry.Handle)
+			tblRowMap[entry.Tbl][handle] = data
 		}
 	}
 	for t, rowMap := range tblRowMap {
@@ -240,7 +244,9 @@ func (e *DeleteExec) deleteSingleTable() error {
 			break
 		}
 		rowKey := row.RowKeys[0]
-		err = e.removeRow(e.ctx, rowKey.Tbl, rowKey.Handle, row.Data)
+		end := len(row.Data) - 1
+		handle := row.Data[end].GetInt64()
+		err = e.removeRow(e.ctx, rowKey.Tbl, handle, row.Data[:end])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1147,7 +1153,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		}
 		offset := getTableOffset(e.SelectExec.Schema(), entry)
 		end := offset + len(tbl.WritableCols())
-		handle := entry.Handle
+		handle := row.Data[end].GetInt64()
 		oldData := row.Data[offset:end]
 		newTableData := newData[offset:end]
 		flags := assignFlag[offset:end]

@@ -91,10 +91,11 @@ type UnionScanExec struct {
 
 	dirty *dirtyTable
 	// usedIndex is the column offsets of the index which Src executor has used.
-	usedIndex  []int
-	desc       bool
-	conditions []expression.Expression
-	columns    []*model.ColumnInfo
+	usedIndex     []int
+	desc          bool
+	conditions    []expression.Expression
+	columns       []*model.ColumnInfo
+	needColHandle bool
 
 	addedRows   []*Row
 	cursor      int
@@ -128,6 +129,9 @@ func (us *UnionScanExec) Next() (*Row, error) {
 			us.snapshotRow = nil
 		} else {
 			us.cursor++
+		}
+		if !us.needColHandle {
+			row.Data = row.Data[:len(row.Data)-1]
 		}
 		return row, nil
 	}
@@ -209,8 +213,11 @@ func (us *UnionScanExec) compare(a, b *Row) (int, error) {
 			return cmp, nil
 		}
 	}
-	aHandle := a.RowKeys[0].Handle
-	bHandle := b.RowKeys[0].Handle
+	// aHandle := a.RowKeys[0].Handle
+	// bHandle := b.RowKeys[0].Handle
+	dataLen := len(a.Data)
+	aHandle := a.Data[dataLen-1].GetInt64()
+	bHandle := b.Data[dataLen-1].GetInt64()
 	var cmp int
 	if aHandle == bHandle {
 		cmp = 0
@@ -229,8 +236,15 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 		if us.schema.Len() == len(data) {
 			newData = data
 		} else {
-			newData = make([]types.Datum, 0, us.schema.Len())
+			newLen := us.schema.Len()
+			if us.needColHandle {
+				newLen--
+			}
+			newData = make([]types.Datum, 0, newLen)
 			for _, col := range us.columns {
+				if col.ID == -1 && us.needColHandle {
+					continue
+				}
 				newData = append(newData, data[col.Offset])
 			}
 		}
@@ -242,6 +256,7 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 			continue
 		}
 		rowKeyEntry := &RowKeyEntry{Handle: h, Tbl: t}
+		newData = append(newData, types.NewIntDatum(h))
 		if asName != nil && asName.L != "" {
 			rowKeyEntry.TableName = asName.L
 		} else {

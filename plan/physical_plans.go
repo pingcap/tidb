@@ -75,6 +75,9 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -96,6 +99,9 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -117,6 +123,9 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -164,6 +173,9 @@ type PhysicalMemTable struct {
 	Columns     []*model.ColumnInfo
 	Ranges      []types.IntColumnRange
 	TableAsName *model.CIStr
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -242,6 +254,9 @@ type physicalTableSource struct {
 
 	// filterCondition is only used by new planner.
 	filterCondition []expression.Expression
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -320,10 +335,21 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := PhysicalUnionScan{
-		Conditions: append(conditions, p.AccessCondition...),
+		Conditions:    append(conditions, p.AccessCondition...),
+		NeedColHandle: p.NeedColHandle,
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.Schema())
+	// This table source must read handle.
+	if !p.NeedColHandle {
+		p.NeedColHandle = true
+		resultPlan.SetSchema(resultPlan.Schema().Clone())
+		resultPlan.Schema().Append(&expression.Column{
+			FromID:  resultPlan.ID(),
+			ColName: model.NewCIStr("_rowid"),
+			ID:      -1,
+		})
+	}
 	return us
 }
 
@@ -538,7 +564,8 @@ type PhysicalUnionScan struct {
 	*basePlan
 	basePhysicalPlan
 
-	Conditions []expression.Expression
+	NeedColHandle bool
+	Conditions    []expression.Expression
 }
 
 // Cache plan is a physical plan which stores the result of its child node.

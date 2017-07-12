@@ -376,7 +376,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	if b.err != nil {
 		return nil
 	}
-	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src)}
+	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src), needColHandle: v.NeedColHandle}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc
@@ -605,14 +605,15 @@ func (b *executorBuilder) getStartTS() uint64 {
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	ts := &TableScanExec{
-		t:            table,
-		asName:       v.TableAsName,
-		ctx:          b.ctx,
-		columns:      v.Columns,
-		schema:       v.Schema(),
-		seekHandle:   math.MinInt64,
-		ranges:       v.Ranges,
-		isInfoSchema: strings.EqualFold(v.DBName.L, infoschema.Name),
+		t:             table,
+		asName:        v.TableAsName,
+		ctx:           b.ctx,
+		columns:       v.Columns,
+		schema:        v.Schema(),
+		seekHandle:    math.MinInt64,
+		ranges:        v.Ranges,
+		isInfoSchema:  strings.EqualFold(v.DBName.L, infoschema.Name),
+		needColHandel: v.NeedColHandle,
 	}
 	return ts
 }
@@ -626,23 +627,24 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	client := b.ctx.GetClient()
 	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	e := &XSelectTableExec{
-		tableInfo:   v.Table,
-		ctx:         b.ctx,
-		startTS:     startTS,
-		supportDesc: supportDesc,
-		asName:      v.TableAsName,
-		table:       table,
-		schema:      v.Schema(),
-		Columns:     v.Columns,
-		ranges:      v.Ranges,
-		desc:        v.Desc,
-		limitCount:  v.LimitCount,
-		keepOrder:   v.KeepOrder,
-		where:       v.TableConditionPBExpr,
-		aggregate:   v.Aggregated,
-		aggFuncs:    v.AggFuncsPB,
-		byItems:     v.GbyItemsPB,
-		orderByList: v.SortItemsPB,
+		tableInfo:     v.Table,
+		ctx:           b.ctx,
+		startTS:       startTS,
+		supportDesc:   supportDesc,
+		asName:        v.TableAsName,
+		table:         table,
+		schema:        v.Schema(),
+		Columns:       v.Columns,
+		ranges:        v.Ranges,
+		desc:          v.Desc,
+		limitCount:    v.LimitCount,
+		keepOrder:     v.KeepOrder,
+		where:         v.TableConditionPBExpr,
+		aggregate:     v.Aggregated,
+		aggFuncs:      v.AggFuncsPB,
+		byItems:       v.GbyItemsPB,
+		orderByList:   v.SortItemsPB,
+		needColHandle: v.NeedColHandle,
 	}
 	return e
 }
@@ -676,6 +678,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggregate:            v.Aggregated,
 		aggFuncs:             v.AggFuncsPB,
 		byItems:              v.GbyItemsPB,
+		needColHandle:        v.NeedColHandle,
 	}
 	vars := b.ctx.GetSessionVars()
 	if v.OutOfOrder {
@@ -695,6 +698,12 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 				ColName: col.Name,
 				RetType: &colInfo.FieldType,
 			}
+		}
+		if e.needColHandle {
+			schemaColumns = append(schemaColumns, &expression.Column{
+				FromID: v.ID(),
+				ID:     -1,
+			})
 		}
 		e.idxColsSchema = expression.NewSchema(schemaColumns...)
 	}
@@ -1006,20 +1015,24 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
 	e := &TableReaderExecutor{
-		ctx:       b.ctx,
-		schema:    v.Schema(),
-		dagPB:     dagReq,
-		asName:    ts.TableAsName,
-		tableID:   ts.Table.ID,
-		table:     table,
-		keepOrder: ts.KeepOrder,
-		desc:      ts.Desc,
-		ranges:    ts.Ranges,
-		columns:   ts.Columns,
+		ctx:           b.ctx,
+		schema:        v.Schema(),
+		dagPB:         dagReq,
+		asName:        ts.TableAsName,
+		tableID:       ts.Table.ID,
+		table:         table,
+		keepOrder:     ts.KeepOrder,
+		desc:          ts.Desc,
+		ranges:        ts.Ranges,
+		columns:       ts.Columns,
+		needColHandle: v.NeedColHandle,
 	}
 
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
+	}
+	if e.needColHandle {
+		dagReq.OutputOffsets = dagReq.OutputOffsets[:len(dagReq.OutputOffsets)-1]
 	}
 
 	return e
@@ -1033,21 +1046,25 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
 	e := &IndexReaderExecutor{
-		ctx:       b.ctx,
-		schema:    v.Schema(),
-		dagPB:     dagReq,
-		asName:    is.TableAsName,
-		tableID:   is.Table.ID,
-		table:     table,
-		index:     is.Index,
-		keepOrder: !is.OutOfOrder,
-		desc:      is.Desc,
-		ranges:    is.Ranges,
-		columns:   is.Columns,
+		ctx:           b.ctx,
+		schema:        v.Schema(),
+		dagPB:         dagReq,
+		asName:        is.TableAsName,
+		tableID:       is.Table.ID,
+		table:         table,
+		index:         is.Index,
+		keepOrder:     !is.OutOfOrder,
+		desc:          is.Desc,
+		ranges:        is.Ranges,
+		columns:       is.Columns,
+		needColHandle: v.NeedColHandle,
 	}
 
 	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
+	}
+	if e.needColHandle {
+		dagReq.OutputOffsets = dagReq.OutputOffsets[:len(dagReq.OutputOffsets)-1]
 	}
 
 	return e
@@ -1068,20 +1085,24 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	for i := range v.Schema().Columns {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
+	if v.NeedColHandle {
+		tableReq.OutputOffsets = tableReq.OutputOffsets[:len(tableReq.OutputOffsets)-1]
+	}
 
 	e := &IndexLookUpExecutor{
-		ctx:          b.ctx,
-		schema:       v.Schema(),
-		dagPB:        indexReq,
-		asName:       is.TableAsName,
-		tableID:      is.Table.ID,
-		table:        table,
-		index:        is.Index,
-		keepOrder:    !is.OutOfOrder,
-		desc:         is.Desc,
-		ranges:       is.Ranges,
-		tableRequest: tableReq,
-		columns:      is.Columns,
+		ctx:           b.ctx,
+		schema:        v.Schema(),
+		dagPB:         indexReq,
+		asName:        is.TableAsName,
+		tableID:       is.Table.ID,
+		table:         table,
+		index:         is.Index,
+		keepOrder:     !is.OutOfOrder,
+		desc:          is.Desc,
+		ranges:        is.Ranges,
+		tableRequest:  tableReq,
+		columns:       is.Columns,
+		needColHandle: v.NeedColHandle,
 	}
 	return e
 }

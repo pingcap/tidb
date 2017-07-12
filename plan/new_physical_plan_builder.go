@@ -529,15 +529,16 @@ func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp Phys
 	return bestTask, nil
 }
 
-func tryToAddUnionScan(cop *copTask, conds []expression.Expression, ctx context.Context, allocator *idAllocator) task {
-	if ctx.Txn() == nil || ctx.Txn().IsReadOnly() {
-		return cop
-	}
+func addUnionScan(ctx context.Context, cop *copTask, conds []expression.Expression, needColHandle bool, allocator *idAllocator) task {
 	task := finishCopTask(cop, ctx, allocator)
 	us := PhysicalUnionScan{
-		Conditions: conds,
+		Conditions:    conds,
+		NeedColHandle: needColHandle,
 	}.init(allocator, ctx)
-	us.SetSchema(task.plan().Schema())
+	us.SetSchema(task.plan().Schema().Clone())
+	if !us.NeedColHandle {
+		us.schema.Columns = us.schema.Columns[:us.schema.Len()-1]
+	}
 	return us.attach2Task(task)
 }
 
@@ -550,10 +551,11 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 		return nil, nil
 	}
 	memTable := PhysicalMemTable{
-		DBName:      p.DBName,
-		Table:       p.tableInfo,
-		Columns:     p.Columns,
-		TableAsName: p.TableAsName,
+		DBName:        p.DBName,
+		Table:         p.tableInfo,
+		Columns:       p.Columns,
+		TableAsName:   p.TableAsName,
+		NeedColHandle: p.NeedColHandle,
 	}.init(p.allocator, p.ctx)
 	memTable.SetSchema(p.schema)
 	memTable.Ranges = ranger.FullIntRange()
@@ -637,14 +639,27 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo) (task task, err error) {
+	needUnionScan := p.ctx.Txn() != nil && !p.ctx.Txn().IsReadOnly()
 	is := PhysicalIndexScan{
-		Table:            p.tableInfo,
-		TableAsName:      p.TableAsName,
-		DBName:           p.DBName,
-		Columns:          p.Columns,
-		Index:            idx,
-		dataSourceSchema: p.schema,
+		Table:               p.tableInfo,
+		TableAsName:         p.TableAsName,
+		DBName:              p.DBName,
+		Columns:             p.Columns,
+		Index:               idx,
+		dataSourceSchema:    p.schema.Clone(),
+		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle || needUnionScan},
 	}.init(p.allocator, p.ctx)
+	if needUnionScan && !p.NeedColHandle {
+		is.dataSourceSchema.Append(&expression.Column{
+			FromID:   p.id,
+			DBName:   is.DBName,
+			TblName:  *is.TableAsName,
+			ColName:  model.NewCIStr("_rowid"),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Position: len(is.dataSourceSchema.Columns),
+			ID:       -1,
+		})
+	}
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
@@ -678,7 +693,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
 		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
-		cop.tablePlan.SetSchema(p.schema)
+		cop.tablePlan.SetSchema(is.dataSourceSchema)
 		// If it's parent requires single read task, return max cost.
 		if prop.taskTp == copSingleReadTaskType {
 			return &copTask{cst: math.MaxFloat64}, nil
@@ -714,17 +729,22 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			}
 		}
 	}
+	task = cop
 	if matchProperty && !prop.isEmpty() {
 		if prop.desc {
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
 		is.addPushedDownSelection(cop)
-		task = tryToAddUnionScan(cop, p.pushedDownConds, p.ctx, p.allocator)
+		if needUnionScan {
+			task = addUnionScan(p.ctx, cop, p.pushedDownConds, p.NeedColHandle, p.allocator)
+		}
 	} else {
 		is.OutOfOrder = true
 		is.addPushedDownSelection(cop)
-		task = tryToAddUnionScan(cop, p.pushedDownConds, p.ctx, p.allocator)
+		if needUnionScan {
+			task = addUnionScan(p.ctx, cop, p.pushedDownConds, p.NeedColHandle, p.allocator)
+		}
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	if prop.taskTp == rootTaskType {
@@ -779,13 +799,26 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	if prop.taskTp == copDoubleReadTaskType {
 		return &copTask{cst: math.MaxFloat64}, nil
 	}
+	needUnionScan := p.ctx.Txn() != nil && !p.ctx.Txn().IsReadOnly()
 	ts := PhysicalTableScan{
-		Table:       p.tableInfo,
-		Columns:     p.Columns,
-		TableAsName: p.TableAsName,
-		DBName:      p.DBName,
+		Table:               p.tableInfo,
+		Columns:             p.Columns,
+		TableAsName:         p.TableAsName,
+		DBName:              p.DBName,
+		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle || needUnionScan},
 	}.init(p.allocator, p.ctx)
-	ts.SetSchema(p.schema)
+	ts.SetSchema(p.schema.Clone())
+	if ts.NeedColHandle && !p.NeedColHandle {
+		ts.schema.Append(&expression.Column{
+			FromID:   p.id,
+			DBName:   ts.DBName,
+			TblName:  *ts.TableAsName,
+			ColName:  model.NewCIStr(""),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Position: len(ts.schema.Columns),
+			ID:       -1,
+		})
+	}
 	sc := p.ctx.GetSessionVars().StmtCtx
 	ts.Ranges = ranger.FullIntRange()
 	var pkCol *expression.Column
@@ -833,10 +866,14 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		}
 		ts.KeepOrder = true
 		ts.addPushedDownSelection(copTask)
-		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
+		if needUnionScan {
+			task = addUnionScan(p.ctx, copTask, p.pushedDownConds, p.NeedColHandle, p.allocator)
+		}
 	} else {
 		ts.addPushedDownSelection(copTask)
-		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
+		if needUnionScan {
+			task = addUnionScan(p.ctx, copTask, p.pushedDownConds, p.NeedColHandle, p.allocator)
+		}
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	if prop.taskTp == rootTaskType {
