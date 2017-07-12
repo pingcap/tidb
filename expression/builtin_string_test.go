@@ -586,78 +586,52 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 func (s *testEvaluatorSuite) TestSubstring(c *C) {
 	defer testleak.AfterTest(c)()
 
-	fc := funcs[ast.Substring]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums("hello", 2, -1)), s.ctx)
-	c.Assert(err, IsNil)
-	d, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.GetString(), Equals, "")
-
-	tbl := []struct {
-		str    string
-		pos    int64
-		slen   int64
-		result string
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    string
 	}{
-		{"Quadratically", 5, -1, "ratically"},
-		{"foobarbar", 4, -1, "barbar"},
-		{"Sakila", 1, -1, "Sakila"},
-		{"Sakila", 2, -1, "akila"},
-		{"Sakila", -3, -1, "ila"},
-		{"Sakila", -5, 3, "aki"},
-		{"Sakila", -4, 2, "ki"},
-		{"Quadratically", 5, 6, "ratica"},
-		{"Sakila", 1, 4, "Saki"},
-		{"Sakila", -6, 4, "Saki"},
-		{"Sakila", 2, 1000, "akila"},
-		{"Sakila", -5, 1000, "akila"},
-		{"Sakila", 2, -2, ""},
-		{"Sakila", -5, -2, ""},
-		{"Sakila", 2, 0, ""},
-		{"Sakila", -5, -3, ""},
-		{"Sakila", -1000, 3, ""},
-		{"Sakila", 1000, 2, ""},
-		{"", 2, 3, ""},
+		{[]interface{}{"Quadratically", 5}, false, false, "ratically"},
+		{[]interface{}{"Sakila", 1}, false, false, "Sakila"},
+		{[]interface{}{"Sakila", 2}, false, false, "akila"},
+		{[]interface{}{"Sakila", -3}, false, false, "ila"},
+		{[]interface{}{"Sakila", 0}, false, false, ""},
+		{[]interface{}{"Sakila", 100}, false, false, ""},
+		{[]interface{}{"Sakila", -100}, false, false, ""},
+		{[]interface{}{"Quadratically", 5, 6}, false, false, "ratica"},
+		{[]interface{}{"Sakila", -5, 3}, false, false, "aki"},
+		{[]interface{}{"Sakila", 2, 0}, false, false, ""},
+		{[]interface{}{"Sakila", 2, -1}, false, false, ""},
+		{[]interface{}{"Sakila", 2, 100}, false, false, "akila"},
+		{[]interface{}{nil, 2, 3}, true, false, ""},
+		{[]interface{}{"Sakila", nil, 3}, true, false, ""},
+		{[]interface{}{"Sakila", 2, nil}, true, false, ""},
+		{[]interface{}{errors.New("must error"), 2, 3}, false, true, ""},
 	}
-	for _, v := range tbl {
-		datums := types.MakeDatums(v.str, v.pos)
-		if v.slen != -1 {
-			datums = append(datums, types.NewDatum(v.slen))
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Substring, primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
 		}
-		args := datumsToConstants(datums)
-		f, err := fc.getFunction(args, s.ctx)
-		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(r.Kind(), Equals, types.KindString)
-		c.Assert(r.GetString(), Equals, v.result)
+	}
 
-		r1, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(r1.Kind(), Equals, types.KindString)
-		c.Assert(r.GetString(), Equals, r1.GetString())
-	}
-	errTbl := []struct {
-		str    interface{}
-		pos    interface{}
-		len    interface{}
-		result string
-	}{
-		{"foobarbar", "4", -1, "barbar"},
-		{"Quadratically", 5, "6", "ratica"},
-	}
-	for _, v := range errTbl {
-		fc := funcs[ast.Substring]
-		datums := types.MakeDatums(v.str, v.pos)
-		if v.len != -1 {
-			datums = append(datums, types.NewDatum(v.len))
-		}
-		args := datumsToConstants(datums)
-		f, err := fc.getFunction(args, s.ctx)
-		c.Assert(err, IsNil)
-		_, err = f.eval(nil)
-		c.Assert(err, NotNil)
-	}
+	f, err := funcs[ast.Substring].getFunction([]Expression{Zero, Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+
+	f, err = funcs[ast.Substring].getFunction([]Expression{Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestConvert(c *C) {

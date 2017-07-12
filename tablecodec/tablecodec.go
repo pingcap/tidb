@@ -416,10 +416,8 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetValue(dur)
 		return datum, nil
 	case mysql.TypeEnum:
-		enum, err := types.ParseEnumValue(ft.Elems, datum.GetUint64())
-		if err != nil {
-			return datum, errors.Trace(err)
-		}
+		// ignore error deliberately, to read empty enum value.
+		enum, _ := types.ParseEnumValue(ft.Elems, datum.GetUint64())
 		datum.SetValue(enum)
 		return datum, nil
 	case mysql.TypeSet:
