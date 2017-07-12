@@ -458,7 +458,6 @@ func runTestErrorCode(c *C) {
 func checkErrorCode(c *C, e error, code uint16) {
 	me, ok := e.(*mysql.MySQLError)
 	c.Assert(ok, IsTrue, Commentf("err: %v", e))
-	// c.Assert(me.Number, Equals, code))
 	c.Assert(me.Number, Equals, code)
 }
 
