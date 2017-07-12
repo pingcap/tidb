@@ -900,7 +900,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 			// TODO: Append Warning ErrColumnCantNull.
 		}
 		if mysql.HasAutoIncrementFlag(c.Flag) {
-			needDefaultValue = false // handle it later.
+			needDefaultValue = false
 		}
 		if needDefaultValue {
 			var err error
