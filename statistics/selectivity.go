@@ -59,6 +59,9 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 	if t.Pseudo || len(exprs) > 63 {
 		return selectionFactor, nil
 	}
+	if len(exprs) == 0 {
+		return 1.0, nil
+	}
 	var sets []*exprSet
 	sc := ctx.GetSessionVars().StmtCtx
 	extractedCols := expression.ExtractColumns(expression.ComposeCNFCondition(ctx, exprs...))
