@@ -228,11 +228,11 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 	for _, t := range cases {
 		f, err = newFunctionForTest(s.ctx, fcName, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		val, err := f.Eval(nil)
+		val, err1 := f.Eval(nil)
 		if t.getErr {
-			c.Assert(err, NotNil)
+			c.Assert(err1, NotNil)
 		} else {
-			c.Assert(err, IsNil)
+			c.Assert(err1, IsNil)
 			if t.isNil {
 				c.Assert(val.Kind(), Equals, types.KindNull)
 			} else {
