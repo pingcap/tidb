@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -162,17 +161,9 @@ func (e *ShowExec) valueToString(value types.Datum, size int) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	var strs []string
-	for _, val := range decodedVals {
-		str, err := val.ToString()
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		strs = append(strs, str)
+	str, err := types.DatumsToString(decodedVals)
+	if err != nil {
+		return "", errors.Trace(err)
 	}
-	if size > 1 {
-		strs[0] = "(" + strs[0]
-		strs[size-1] = strs[size-1] + ")"
-	}
-	return strings.Join(strs, ", "), nil
+	return str, nil
 }
