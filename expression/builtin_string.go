@@ -822,7 +822,8 @@ func (b *builtinSubstring3ArgsSig) evalString(row []types.Datum) (d string, isNu
 	if pos > strLen || pos < 0 {
 		pos = strLen
 	}
-	if end := pos + length; end < pos {
+	end := pos + length
+	if end < pos {
 		return "", false, nil
 	} else if end < strLen {
 		return str[pos:end], false, nil
