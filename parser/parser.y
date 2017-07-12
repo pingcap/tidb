@@ -5158,6 +5158,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowCharset}
 	}
+|	"CHARSET"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowCharset}
+	}
 |	OptFull "TABLES" ShowDatabaseNameOpt
 	{
 		$$ = &ast.ShowStmt{
