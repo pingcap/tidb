@@ -1813,7 +1813,7 @@ func DatumsToString(datums []Datum) (string, error) {
 	size := len(datums)
 	if size > 1 {
 		strs[0] = "(" + strs[0]
-		strs[size] = strs[size-1] + ")"
+		strs[size-1] = strs[size-1] + ")"
 	}
 	return strings.Join(strs, ", "), nil
 }
