@@ -1006,3 +1006,19 @@ func (s *testSuite) TestBatchInsert(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 }
+
+func (s *testSuite) TestNullDefault(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists test_null_default;")
+	tk.MustExec("set timestamp = 1234")
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustExec("create table test_null_default (ts timestamp null default current_timestamp)")
+	tk.MustExec("insert into test_null_default values (null)")
+	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into test_null_default values ()")
+	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
+}
