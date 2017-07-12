@@ -261,41 +261,10 @@ func (s *testSuite) TestShowWarnings(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 }
 
-func (s *testSuite) TestShowStatsMeta(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1")
-	tk.MustExec("create table t (a int, b int)")
-	tk.MustExec("create table t1 (a int, b int)")
-	tk.MustExec("analyze table t, t1")
-	result := tk.MustQuery("show stats_meta")
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][1], Equals, "t")
-	c.Assert(result.Rows()[1][1], Equals, "t1")
-	result = tk.MustQuery("show stats_meta where table_name = 't'")
-	c.Assert(len(result.Rows()), Equals, 1)
-	c.Assert(result.Rows()[0][1], Equals, "t")
-}
-
 func (s *testSuite) TestIssue3641(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 	_, err = tk.Exec("show table status;")
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
-}
-
-func (s *testSuite) TestShowStatsHistograms(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int)")
-	tk.MustExec("analyze table t")
-	result := tk.MustQuery("show stats_histograms").Sort()
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][2], Equals, "a")
-	c.Assert(result.Rows()[1][2], Equals, "b")
-	result = tk.MustQuery("show stats_histograms where column_name = 'a'")
-	c.Assert(len(result.Rows()), Equals, 1)
-	c.Assert(result.Rows()[0][2], Equals, "a")
 }
