@@ -274,7 +274,7 @@ func (p *DataSource) getPKIsHandleCol() *expression.Column {
 	if !p.tableInfo.PKIsHandle {
 		return nil
 	}
-	for i, col := range p.tableInfo.Columns {
+	for i, col := range p.Columns {
 		if mysql.HasPriKeyFlag(col.Flag) {
 			return p.schema.Columns[i]
 		}

@@ -470,7 +470,7 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("create table t(id int primary key, v int)")
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
 	result = tk.MustQuery("select (select t.id from t where s.id < 2 and t.id = s.id) from t s")
-	result.Check(testkit.Rows("1", "<nil>", "<nil>"))
+	result.Sort().Check(testkit.Rows("1", "<nil>", "<nil>"))
 	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
 	c.Check(err, IsNil)
 	_, err = tidb.GetRows(rs)

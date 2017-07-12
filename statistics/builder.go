@@ -74,6 +74,9 @@ func build4SortedColumn(ctx context.Context, numBuckets, id int64, records ast.R
 			hg.Buckets[bucketIdx].Count++
 			hg.Buckets[bucketIdx].UpperBound = data
 			hg.Buckets[bucketIdx].Repeats = 1
+			if bucketIdx == 0 && hg.Buckets[0].Count == 1 {
+				hg.Buckets[0].LowerBound = data
+			}
 			hg.NDV++
 		} else {
 			// All buckets are full, we should merge buckets.
@@ -137,6 +140,7 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int
 	}
 	bucketIdx := 0
 	var lastCount int64
+	hg.Buckets[0].LowerBound = samples[0]
 	for i := int64(0); i < int64(len(samples)); i++ {
 		cmp, err := hg.Buckets[bucketIdx].UpperBound.CompareDatum(sc, samples[i])
 		if err != nil {
@@ -158,9 +162,6 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int
 			hg.Buckets[bucketIdx].Count = int64(totalCount)
 			hg.Buckets[bucketIdx].UpperBound = samples[i]
 			hg.Buckets[bucketIdx].Repeats = int64(ndvFactor)
-			if bucketIdx == 0 {
-				hg.Buckets[bucketIdx].LowerBound = samples[i]
-			}
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.

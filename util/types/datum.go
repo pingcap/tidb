@@ -18,6 +18,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -1201,10 +1202,10 @@ func (d *Datum) convertToMysqlEnum(sc *variable.StatementContext, target *FieldT
 		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
-		return invalidConv(d, target.Tp)
+		err = errors.Wrap(err, ErrTruncated)
 	}
 	ret.SetValue(e)
-	return ret, nil
+	return ret, err
 }
 
 func (d *Datum) convertToMysqlSet(sc *variable.StatementContext, target *FieldType) (Datum, error) {
@@ -1797,4 +1798,22 @@ func handleTruncateError(sc *variable.StatementContext) error {
 	}
 	sc.AppendWarning(ErrTruncated)
 	return nil
+}
+
+// DatumsToString converts several datums to formatted string.
+func DatumsToString(datums []Datum) (string, error) {
+	var strs []string
+	for _, datum := range datums {
+		str, err := datum.ToString()
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		strs = append(strs, str)
+	}
+	size := len(datums)
+	if size > 1 {
+		strs[0] = "(" + strs[0]
+		strs[size-1] = strs[size-1] + ")"
+	}
+	return strings.Join(strs, ", "), nil
 }
