@@ -572,6 +572,9 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		if err != nil {
 			log.Warnf("[ddl] total added index for %d rows, this task add index for %d failed, take time %v",
 				addedCount, taskAddedCount, sub)
+			if terror.ErrorEqual(errors.Cause(err), table.ErrMissColumn) {
+				job.State = model.JobCancelled
+			}
 			return errors.Trace(err)
 		}
 		d.setReorgRowCount(addedCount)

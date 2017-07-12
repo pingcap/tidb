@@ -663,7 +663,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
 	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
-		return colVal, errors.New("Miss column")
+		return colVal, errors.Trace(table.ErrMissColumn)
 	}
 	if col.State != model.StatePublic {
 		return colVal, nil
