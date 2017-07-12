@@ -190,9 +190,6 @@ func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
 func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
-	if p.profile != nil {
-		return p.profile
-	}
 	leftProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	rightProfile := p.children[1].(LogicalPlan).prepareStatsProfile()
 	if p.JoinType == SemiJoin {
