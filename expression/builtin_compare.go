@@ -268,19 +268,14 @@ func getCmpType(a types.TypeClass, b types.TypeClass) types.TypeClass {
 	return types.ClassReal
 }
 
-// isTemporalTypeWithDate checks if ft is temporal type and has date part.
-func isTemporalTypeWithDate(ft *types.FieldType) bool {
-	return types.IsTypeTime(ft.Tp)
-}
-
 // isTemporalColumn checks if a expression is a temporal column,
 // temporal column indicates time column or duration column.
 func isTemporalColumn(expr Expression) bool {
 	ft := expr.GetType()
-	if !isTemporalTypeWithDate(ft) && ft.Tp != mysql.TypeDuration {
+	if _, isCol := expr.(*Column); !isCol {
 		return false
 	}
-	if _, isCol := expr.(*Column); !isCol {
+	if !types.IsTypeTime(ft.Tp) && ft.Tp != mysql.TypeDuration {
 		return false
 	}
 	return true
@@ -474,7 +469,7 @@ type builtinLTIntSig struct {
 }
 
 func (s *builtinLTIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareInt(opcode.LT, s.args, row, s.ctx)
+	return resOfLT(compareInt(opcode.LT, s.args, row, s.ctx))
 }
 
 type builtinLTRealSig struct {
@@ -482,7 +477,7 @@ type builtinLTRealSig struct {
 }
 
 func (s *builtinLTRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareReal(opcode.LT, s.args, row, s.ctx)
+	return resOfLT(compareReal(opcode.LT, s.args, row, s.ctx))
 }
 
 type builtinLTDecimalSig struct {
@@ -490,7 +485,7 @@ type builtinLTDecimalSig struct {
 }
 
 func (s *builtinLTDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDecimal(opcode.LT, s.args, row, s.ctx)
+	return resOfLT(compareDecimal(opcode.LT, s.args, row, s.ctx))
 }
 
 type builtinLTStringSig struct {
@@ -498,7 +493,7 @@ type builtinLTStringSig struct {
 }
 
 func (s *builtinLTStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareString(opcode.LT, s.args, row, s.ctx)
+	return resOfLT(compareString(opcode.LT, s.args, row, s.ctx))
 }
 
 type builtinLTDurationSig struct {
@@ -506,7 +501,7 @@ type builtinLTDurationSig struct {
 }
 
 func (s *builtinLTDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDuration(opcode.LT, s.args, row, s.ctx)
+	return resOfLT(compareDuration(opcode.LT, s.args, row, s.ctx))
 }
 
 type builtinLTTimeSig struct {
@@ -514,7 +509,7 @@ type builtinLTTimeSig struct {
 }
 
 func (s *builtinLTTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareTime(opcode.LT, s.args, row, s.ctx)
+	return resOfLT(compareTime(opcode.LT, s.args, row, s.ctx))
 }
 
 type builtinLEIntSig struct {
@@ -522,7 +517,7 @@ type builtinLEIntSig struct {
 }
 
 func (s *builtinLEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareInt(opcode.LE, s.args, row, s.ctx)
+	return resOfLE(compareInt(opcode.LE, s.args, row, s.ctx))
 }
 
 type builtinLERealSig struct {
@@ -530,7 +525,7 @@ type builtinLERealSig struct {
 }
 
 func (s *builtinLERealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareReal(opcode.LE, s.args, row, s.ctx)
+	return resOfLE(compareReal(opcode.LE, s.args, row, s.ctx))
 }
 
 type builtinLEDecimalSig struct {
@@ -538,7 +533,7 @@ type builtinLEDecimalSig struct {
 }
 
 func (s *builtinLEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDecimal(opcode.LE, s.args, row, s.ctx)
+	return resOfLE(compareDecimal(opcode.LE, s.args, row, s.ctx))
 }
 
 type builtinLEStringSig struct {
@@ -546,7 +541,7 @@ type builtinLEStringSig struct {
 }
 
 func (s *builtinLEStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareString(opcode.LE, s.args, row, s.ctx)
+	return resOfLE(compareString(opcode.LE, s.args, row, s.ctx))
 }
 
 type builtinLEDurationSig struct {
@@ -554,7 +549,7 @@ type builtinLEDurationSig struct {
 }
 
 func (s *builtinLEDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDuration(opcode.LE, s.args, row, s.ctx)
+	return resOfLE(compareDuration(opcode.LE, s.args, row, s.ctx))
 }
 
 type builtinLETimeSig struct {
@@ -562,7 +557,7 @@ type builtinLETimeSig struct {
 }
 
 func (s *builtinLETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareTime(opcode.LE, s.args, row, s.ctx)
+	return resOfLE(compareTime(opcode.LE, s.args, row, s.ctx))
 }
 
 type builtinGTIntSig struct {
@@ -570,7 +565,7 @@ type builtinGTIntSig struct {
 }
 
 func (s *builtinGTIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareInt(opcode.GT, s.args, row, s.ctx)
+	return resOfGT(compareInt(opcode.GT, s.args, row, s.ctx))
 }
 
 type builtinGTRealSig struct {
@@ -578,7 +573,7 @@ type builtinGTRealSig struct {
 }
 
 func (s *builtinGTRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareReal(opcode.GT, s.args, row, s.ctx)
+	return resOfGT(compareReal(opcode.GT, s.args, row, s.ctx))
 }
 
 type builtinGTDecimalSig struct {
@@ -586,7 +581,7 @@ type builtinGTDecimalSig struct {
 }
 
 func (s *builtinGTDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDecimal(opcode.GT, s.args, row, s.ctx)
+	return resOfGT(compareDecimal(opcode.GT, s.args, row, s.ctx))
 }
 
 type builtinGTStringSig struct {
@@ -594,7 +589,7 @@ type builtinGTStringSig struct {
 }
 
 func (s *builtinGTStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareString(opcode.GT, s.args, row, s.ctx)
+	return resOfGT(compareString(opcode.GT, s.args, row, s.ctx))
 }
 
 type builtinGTDurationSig struct {
@@ -602,7 +597,7 @@ type builtinGTDurationSig struct {
 }
 
 func (s *builtinGTDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDuration(opcode.GT, s.args, row, s.ctx)
+	return resOfGT(compareDuration(opcode.GT, s.args, row, s.ctx))
 }
 
 type builtinGTTimeSig struct {
@@ -610,7 +605,7 @@ type builtinGTTimeSig struct {
 }
 
 func (s *builtinGTTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareTime(opcode.GT, s.args, row, s.ctx)
+	return resOfGT(compareTime(opcode.GT, s.args, row, s.ctx))
 }
 
 type builtinGEIntSig struct {
@@ -618,7 +613,7 @@ type builtinGEIntSig struct {
 }
 
 func (s *builtinGEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareInt(opcode.GE, s.args, row, s.ctx)
+	return resOfGE(compareInt(opcode.GE, s.args, row, s.ctx))
 }
 
 type builtinGERealSig struct {
@@ -626,7 +621,7 @@ type builtinGERealSig struct {
 }
 
 func (s *builtinGERealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareReal(opcode.GE, s.args, row, s.ctx)
+	return resOfGE(compareReal(opcode.GE, s.args, row, s.ctx))
 }
 
 type builtinGEDecimalSig struct {
@@ -634,7 +629,7 @@ type builtinGEDecimalSig struct {
 }
 
 func (s *builtinGEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDecimal(opcode.GE, s.args, row, s.ctx)
+	return resOfGE(compareDecimal(opcode.GE, s.args, row, s.ctx))
 }
 
 type builtinGEStringSig struct {
@@ -642,7 +637,7 @@ type builtinGEStringSig struct {
 }
 
 func (s *builtinGEStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareString(opcode.GE, s.args, row, s.ctx)
+	return resOfGE(compareString(opcode.GE, s.args, row, s.ctx))
 }
 
 type builtinGEDurationSig struct {
@@ -650,7 +645,7 @@ type builtinGEDurationSig struct {
 }
 
 func (s *builtinGEDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDuration(opcode.GE, s.args, row, s.ctx)
+	return resOfGE(compareDuration(opcode.GE, s.args, row, s.ctx))
 }
 
 type builtinGETimeSig struct {
@@ -658,7 +653,7 @@ type builtinGETimeSig struct {
 }
 
 func (s *builtinGETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareTime(opcode.GE, s.args, row, s.ctx)
+	return resOfGE(compareTime(opcode.GE, s.args, row, s.ctx))
 }
 
 type builtinEQIntSig struct {
@@ -666,7 +661,7 @@ type builtinEQIntSig struct {
 }
 
 func (s *builtinEQIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareInt(opcode.EQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareInt(opcode.EQ, s.args, row, s.ctx))
 }
 
 type builtinEQRealSig struct {
@@ -674,7 +669,7 @@ type builtinEQRealSig struct {
 }
 
 func (s *builtinEQRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareReal(opcode.EQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareReal(opcode.EQ, s.args, row, s.ctx))
 }
 
 type builtinEQDecimalSig struct {
@@ -682,7 +677,7 @@ type builtinEQDecimalSig struct {
 }
 
 func (s *builtinEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDecimal(opcode.EQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareDecimal(opcode.EQ, s.args, row, s.ctx))
 }
 
 type builtinEQStringSig struct {
@@ -690,7 +685,7 @@ type builtinEQStringSig struct {
 }
 
 func (s *builtinEQStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareString(opcode.EQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareString(opcode.EQ, s.args, row, s.ctx))
 }
 
 type builtinEQDurationSig struct {
@@ -698,7 +693,7 @@ type builtinEQDurationSig struct {
 }
 
 func (s *builtinEQDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDuration(opcode.EQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareDuration(opcode.EQ, s.args, row, s.ctx))
 }
 
 type builtinEQTimeSig struct {
@@ -706,7 +701,7 @@ type builtinEQTimeSig struct {
 }
 
 func (s *builtinEQTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareTime(opcode.EQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareTime(opcode.EQ, s.args, row, s.ctx))
 }
 
 type builtinNEIntSig struct {
@@ -714,7 +709,7 @@ type builtinNEIntSig struct {
 }
 
 func (s *builtinNEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareInt(opcode.NE, s.args, row, s.ctx)
+	return resOfNE(compareInt(opcode.NE, s.args, row, s.ctx))
 }
 
 type builtinNERealSig struct {
@@ -722,7 +717,7 @@ type builtinNERealSig struct {
 }
 
 func (s *builtinNERealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareReal(opcode.NE, s.args, row, s.ctx)
+	return resOfNE(compareReal(opcode.NE, s.args, row, s.ctx))
 }
 
 type builtinNEDecimalSig struct {
@@ -730,7 +725,7 @@ type builtinNEDecimalSig struct {
 }
 
 func (s *builtinNEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDecimal(opcode.NE, s.args, row, s.ctx)
+	return resOfNE(compareDecimal(opcode.NE, s.args, row, s.ctx))
 }
 
 type builtinNEStringSig struct {
@@ -738,7 +733,7 @@ type builtinNEStringSig struct {
 }
 
 func (s *builtinNEStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareString(opcode.NE, s.args, row, s.ctx)
+	return resOfNE(compareString(opcode.NE, s.args, row, s.ctx))
 }
 
 type builtinNEDurationSig struct {
@@ -746,7 +741,7 @@ type builtinNEDurationSig struct {
 }
 
 func (s *builtinNEDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDuration(opcode.NE, s.args, row, s.ctx)
+	return resOfNE(compareDuration(opcode.NE, s.args, row, s.ctx))
 }
 
 type builtinNETimeSig struct {
@@ -754,7 +749,7 @@ type builtinNETimeSig struct {
 }
 
 func (s *builtinNETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareTime(opcode.NE, s.args, row, s.ctx)
+	return resOfNE(compareTime(opcode.NE, s.args, row, s.ctx))
 }
 
 type builtinNullEQIntSig struct {
@@ -762,7 +757,7 @@ type builtinNullEQIntSig struct {
 }
 
 func (s *builtinNullEQIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareInt(opcode.NullEQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareInt(opcode.NullEQ, s.args, row, s.ctx))
 }
 
 type builtinNullEQRealSig struct {
@@ -770,7 +765,7 @@ type builtinNullEQRealSig struct {
 }
 
 func (s *builtinNullEQRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareReal(opcode.NullEQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareReal(opcode.NullEQ, s.args, row, s.ctx))
 }
 
 type builtinNullEQDecimalSig struct {
@@ -778,7 +773,7 @@ type builtinNullEQDecimalSig struct {
 }
 
 func (s *builtinNullEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDecimal(opcode.NullEQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareDecimal(opcode.NullEQ, s.args, row, s.ctx))
 }
 
 type builtinNullEQStringSig struct {
@@ -786,7 +781,7 @@ type builtinNullEQStringSig struct {
 }
 
 func (s *builtinNullEQStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareString(opcode.NullEQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareString(opcode.NullEQ, s.args, row, s.ctx))
 }
 
 type builtinNullEQDurationSig struct {
@@ -794,7 +789,7 @@ type builtinNullEQDurationSig struct {
 }
 
 func (s *builtinNullEQDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareDuration(opcode.NullEQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareDuration(opcode.NullEQ, s.args, row, s.ctx))
 }
 
 type builtinNullEQTimeSig struct {
@@ -802,7 +797,7 @@ type builtinNullEQTimeSig struct {
 }
 
 func (s *builtinNullEQTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return compareTime(opcode.NullEQ, s.args, row, s.ctx)
+	return resOfEQAndNullEQ(compareTime(opcode.NullEQ, s.args, row, s.ctx))
 }
 
 type builtinCompareSig struct {
@@ -870,30 +865,76 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return
 }
 
-// resOfCmp returns the results of different compare built-in functions.
-func resOfCmp(res int, op opcode.Op) int64 {
-	var ret bool
-	switch op {
-	case opcode.LT:
-		ret = res < 0
-	case opcode.LE:
-		ret = res <= 0
-	case opcode.EQ, opcode.NullEQ:
-		ret = res == 0
-	case opcode.GT:
-		ret = res > 0
-	case opcode.GE:
-		ret = res >= 0
-	case opcode.NE:
-		ret = res != 0
-	default:
-		return -1
+func resOfLT(val int64, isNull bool, err error) (int64, bool, error) {
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	res = 1
-	if !ret {
-		res = 0
+	if val < 0 {
+		val = 1
+	} else {
+		val = 0
 	}
-	return int64(res)
+	return val, false, nil
+}
+
+func resOfLE(val int64, isNull bool, err error) (int64, bool, error) {
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if val <= 0 {
+		val = 1
+	} else {
+		val = 0
+	}
+	return val, false, nil
+}
+
+func resOfGT(val int64, isNull bool, err error) (int64, bool, error) {
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if val > 0 {
+		val = 1
+	} else {
+		val = 0
+	}
+	return val, false, nil
+}
+
+func resOfGE(val int64, isNull bool, err error) (int64, bool, error) {
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if val >= 0 {
+		val = 1
+	} else {
+		val = 0
+	}
+	return val, false, nil
+}
+
+func resOfEQAndNullEQ(val int64, isNull bool, err error) (int64, bool, error) {
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if val == 0 {
+		val = 1
+	} else {
+		val = 0
+	}
+	return val, false, nil
+}
+
+func resOfNE(val int64, isNull bool, err error) (int64, bool, error) {
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if val != 0 {
+		val = 1
+	} else {
+		val = 0
+	}
+	return val, false, nil
 }
 
 func compareInt(op opcode.Op, args []Expression, row []types.Datum, ctx context.Context) (val int64, isNull bool, err error) {
@@ -909,11 +950,11 @@ func compareInt(op opcode.Op, args []Expression, row []types.Datum, ctx context.
 	if isNull0 || isNull1 {
 		if op == opcode.NullEQ {
 			if isNull0 && isNull1 {
-				return oneI64, false, nil
+				return 0, false, nil
 			}
-			return zeroI64, false, nil
+			return -1, false, nil
 		}
-		return zeroI64, true, nil
+		return -1, true, nil
 	}
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(args[0].GetType().Flag), mysql.HasUnsignedFlag(args[1].GetType().Flag)
 	var res int
@@ -935,11 +976,7 @@ func compareInt(op opcode.Op, args []Expression, row []types.Datum, ctx context.
 	case !isUnsigned0 && !isUnsigned1:
 		res = types.CompareInt64(arg0, arg1)
 	}
-	ret := resOfCmp(res, op)
-	if ret == -1 {
-		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", op)
-	}
-	return ret, false, nil
+	return int64(res), false, nil
 }
 
 func compareString(op opcode.Op, args []Expression, row []types.Datum, ctx context.Context) (val int64, isNull bool, err error) {
@@ -955,17 +992,13 @@ func compareString(op opcode.Op, args []Expression, row []types.Datum, ctx conte
 	if isNull0 || isNull1 {
 		if op == opcode.NullEQ {
 			if isNull0 && isNull1 {
-				return oneI64, false, nil
+				return 0, false, nil
 			}
-			return zeroI64, false, nil
+			return -1, false, nil
 		}
-		return zeroI64, true, nil
+		return -1, true, nil
 	}
-	ret := resOfCmp(types.CompareString(arg0, arg1), op)
-	if ret == -1 {
-		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", op)
-	}
-	return ret, false, nil
+	return int64(types.CompareString(arg0, arg1)), false, nil
 }
 
 func compareReal(op opcode.Op, args []Expression, row []types.Datum, ctx context.Context) (val int64, isNull bool, err error) {
@@ -981,17 +1014,13 @@ func compareReal(op opcode.Op, args []Expression, row []types.Datum, ctx context
 	if isNull0 || isNull1 {
 		if op == opcode.NullEQ {
 			if isNull0 && isNull1 {
-				return oneI64, false, nil
+				return 0, false, nil
 			}
-			return zeroI64, false, nil
+			return -1, false, nil
 		}
-		return zeroI64, true, nil
+		return -1, true, nil
 	}
-	ret := resOfCmp(types.CompareFloat64(arg0, arg1), op)
-	if ret == -1 {
-		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", op)
-	}
-	return ret, false, nil
+	return int64(types.CompareFloat64(arg0, arg1)), false, nil
 }
 
 func compareDecimal(op opcode.Op, args []Expression, row []types.Datum, ctx context.Context) (val int64, isNull bool, err error) {
@@ -1007,17 +1036,13 @@ func compareDecimal(op opcode.Op, args []Expression, row []types.Datum, ctx cont
 	if isNull || isNull1 {
 		if op == opcode.NullEQ {
 			if isNull && isNull1 {
-				return oneI64, false, nil
+				return 0, false, nil
 			}
-			return zeroI64, false, nil
+			return -1, false, nil
 		}
-		return zeroI64, true, nil
+		return -1, true, nil
 	}
-	ret := resOfCmp(arg0.Compare(arg1), op)
-	if ret == -1 {
-		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", op)
-	}
-	return ret, false, nil
+	return int64(arg0.Compare(arg1)), false, nil
 }
 
 func compareTime(op opcode.Op, args []Expression, row []types.Datum, ctx context.Context) (int64, bool, error) {
@@ -1033,17 +1058,13 @@ func compareTime(op opcode.Op, args []Expression, row []types.Datum, ctx context
 	if isNull || isNull1 {
 		if op == opcode.NullEQ {
 			if isNull && isNull1 {
-				return oneI64, false, nil
+				return 0, false, nil
 			}
-			return zeroI64, false, nil
+			return -1, false, nil
 		}
-		return zeroI64, true, nil
+		return -1, true, nil
 	}
-	ret := resOfCmp(arg0.Compare(arg1), op)
-	if ret == -1 {
-		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", op)
-	}
-	return ret, false, nil
+	return int64(arg0.Compare(arg1)), false, nil
 }
 
 func compareDuration(op opcode.Op, args []Expression, row []types.Datum, ctx context.Context) (int64, bool, error) {
@@ -1059,15 +1080,11 @@ func compareDuration(op opcode.Op, args []Expression, row []types.Datum, ctx con
 	if isNull || isNull1 {
 		if op == opcode.NullEQ {
 			if isNull && isNull1 {
-				return oneI64, false, nil
+				return 0, false, nil
 			}
-			return zeroI64, false, nil
+			return -1, false, nil
 		}
-		return zeroI64, true, nil
+		return -1, true, nil
 	}
-	ret := resOfCmp(arg0.Compare(arg1), op)
-	if ret == -1 {
-		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", op)
-	}
-	return ret, false, nil
+	return int64(arg0.Compare(arg1)), false, nil
 }
