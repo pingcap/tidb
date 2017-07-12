@@ -26,11 +26,8 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
@@ -117,6 +114,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowStatsMeta()
 	case ast.ShowStatsHistograms:
 		return e.fetchShowStatsHistogram()
+	case ast.ShowStatsBuckets:
+		return e.fetchShowStatsBuckets()
 	}
 	return nil
 }
@@ -630,67 +629,4 @@ func (e *ShowExec) getTable() (table.Table, error) {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}
 	return tb, nil
-}
-
-func (e *ShowExec) fetchShowStatsMeta() error {
-	do := sessionctx.GetDomain(e.ctx)
-	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemas()
-	for _, db := range dbs {
-		for _, tbl := range db.Tables {
-			statsTbl := h.GetTableStats(tbl.ID)
-			if !statsTbl.Pseudo {
-				row := &Row{
-					Data: types.MakeDatums(
-						db.Name.O,
-						tbl.Name.O,
-						e.versionToTime(statsTbl.Version),
-						statsTbl.ModifyCount,
-						statsTbl.Count,
-					),
-				}
-				e.rows = append(e.rows, row)
-			}
-		}
-	}
-	return nil
-}
-
-func (e *ShowExec) fetchShowStatsHistogram() error {
-	do := sessionctx.GetDomain(e.ctx)
-	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemas()
-	for _, db := range dbs {
-		for _, tbl := range db.Tables {
-			statsTbl := h.GetTableStats(tbl.ID)
-			if !statsTbl.Pseudo {
-				for _, col := range statsTbl.Columns {
-					e.rows = append(e.rows, e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram))
-				}
-				for _, idx := range statsTbl.Indices {
-					e.rows = append(e.rows, e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram))
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram) *Row {
-	return &Row{
-		Data: types.MakeDatums(
-			dbName,
-			tblName,
-			colName,
-			isIndex,
-			e.versionToTime(hist.LastUpdateVersion),
-			hist.NDV,
-			hist.NullCount,
-		),
-	}
-}
-
-func (e *ShowExec) versionToTime(version uint64) types.Time {
-	t := time.Unix(0, oracle.ExtractPhysical(version)*int64(time.Millisecond))
-	return types.Time{Time: types.FromGoTime(t), Type: mysql.TypeDatetime}
 }
