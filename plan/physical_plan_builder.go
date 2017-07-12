@@ -190,7 +190,7 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 }
 
 func (p *DataSource) need2ConsiderIndex(prop *requiredProperty) bool {
-	if (len(p.parents) == 0) {
+	if len(p.parents) == 0 {
 		return len(prop.props) > 0
 	}
 	if _, ok := p.parents[0].(*Selection); ok || len(prop.props) > 0 {
