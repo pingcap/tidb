@@ -93,11 +93,11 @@ type Table interface {
 	// RecordKey returns the key in KV storage for the row.
 	RecordKey(h int64) kv.Key
 
-	// AddRecord inserts a row into the table.
+	// AddRecord inserts a row which should contain only writable columns.
 	AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error)
 
-	// UpdateRecord updates a row in the table.
-	UpdateRecord(ctx context.Context, h int64, currData []types.Datum, newData []types.Datum, touched map[int]bool) error
+	// UpdateRecord updates a row which should contain only writable columns.
+	UpdateRecord(ctx context.Context, h int64, currData []types.Datum, newData []types.Datum, touched []bool) error
 
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx context.Context, h int64, r []types.Datum) error

@@ -107,9 +107,9 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 // CastValues casts values based on columns type.
 func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreErr bool) (err error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	for _, c := range cols {
+	for i, c := range cols {
 		var converted types.Datum
-		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo())
+		converted, err = CastValue(ctx, rec[i], c.ToInfo())
 		if err != nil {
 			if ignoreErr {
 				sc.AppendWarning(err)
@@ -118,7 +118,7 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 				return errors.Trace(err)
 			}
 		}
-		rec[c.Offset] = converted
+		rec[i] = converted
 	}
 	return nil
 }
@@ -268,8 +268,8 @@ func (c *Column) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
 
 // CheckNotNull checks if row has nil value set to a column with NotNull flag set.
 func CheckNotNull(cols []*Column, row []types.Datum) error {
-	for _, c := range cols {
-		if err := c.CheckNotNull(row[c.Offset]); err != nil {
+	for i, c := range cols {
+		if err := c.CheckNotNull(row[i]); err != nil {
 			return errors.Trace(err)
 		}
 	}

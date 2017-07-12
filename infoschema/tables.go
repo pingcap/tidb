@@ -1140,7 +1140,7 @@ func (it *infoschemaTable) RemoveRecord(ctx context.Context, h int64, r []types.
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum, newData []types.Datum, touched map[int]bool) error {
+func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 

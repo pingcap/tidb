@@ -181,7 +181,7 @@ func (t *BoundedTable) Truncate() {
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (t *BoundedTable) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum, newData []types.Datum, touched map[int]bool) error {
+func (t *BoundedTable) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	for i := int64(0); i < t.capacity; i++ {
 		record := (*boundedItem)(atomic.LoadPointer(&t.records[i]))
 		if record == nil {

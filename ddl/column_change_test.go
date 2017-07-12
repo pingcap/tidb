@@ -251,7 +251,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, d
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = writeOnlyTable.UpdateRecord(ctx, h, types.MakeDatums(1, 2), types.MakeDatums(2, 2), touchedMap(writeOnlyTable))
+	err = writeOnlyTable.UpdateRecord(ctx, h, types.MakeDatums(1, 2, nil), types.MakeDatums(2, 2, nil), touchedSlice(writeOnlyTable))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -278,10 +278,10 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, d
 	return errors.Trace(err)
 }
 
-func touchedMap(t table.Table) map[int]bool {
-	touched := make(map[int]bool)
-	for _, col := range t.Cols() {
-		touched[col.Offset] = true
+func touchedSlice(t table.Table) []bool {
+	touched := make([]bool, 0, len(t.WritableCols()))
+	for _ = range t.WritableCols() {
+		touched = append(touched, true)
 	}
 	return touched
 }
@@ -309,7 +309,7 @@ func (s *testColumnChangeSuite) checkAddPublic(d *ddl, ctx context.Context, writ
 		return errors.Errorf("%v", oldRow)
 	}
 	newRow := types.MakeDatums(3, 4, oldRow[2].GetValue())
-	err = writeOnlyTable.UpdateRecord(ctx, h, oldRow, newRow, touchedMap(writeOnlyTable))
+	err = writeOnlyTable.UpdateRecord(ctx, h, oldRow, newRow, touchedSlice(writeOnlyTable))
 	if err != nil {
 		return errors.Trace(err)
 	}

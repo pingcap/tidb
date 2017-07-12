@@ -1109,13 +1109,14 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		statisticTable: statisticTable,
 		DBName:         schemaName,
 		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
+		inUpdate:       b.inUpdateStmt,
 	}.init(b.allocator, b.ctx)
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	var columns []*table.Column
-	if b.inUpdateStmt {
+	if p.inUpdate {
 		columns = tbl.WritableCols()
 	} else {
 		columns = tbl.Cols()

@@ -38,23 +38,24 @@ var (
 	_ Executor = &LoadData{}
 )
 
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, onDuplicateUpdate bool) (bool, error) {
-	cols := t.WritableCols()
-	touched := make(map[int]bool, len(cols))
-	assignExists := false
-	sc := ctx.GetSessionVars().StmtCtx
-	var newHandle types.Datum
-	for i, hasSetExpr := range assignFlag {
-		if !hasSetExpr {
-			if onDuplicateUpdate {
-				newData[i] = oldData[i]
-			}
-			continue
+// 1. fill values into on-update-now fields;
+// 2. rebase auto increment id if the field is changed;
+// 3. cast changed fields with respective columns;
+// 4. calculate it updates the record really or not;
+// 5. check not-null constraints.
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool, t table.Table, onDup bool) (bool, error) {
+	var cols = t.WritableCols()
+	var sc = ctx.GetSessionVars().StmtCtx
+
+	var changed = false
+	var handleChanged = false
+	for i, col := range cols {
+		v, err := table.CastValue(ctx, newData[i], col.ToInfo())
+		if err != nil {
+			return false, errors.Trace(err)
 		}
-		col := cols[i]
-		if col.IsPKHandleColumn(t.Meta()) {
-			newHandle = newData[i]
-		}
+		newData[i] = v
+
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
 				return false, errors.Errorf("Column '%v' cannot be null", col.Name.O)
@@ -65,41 +66,41 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			}
 			t.RebaseAutoID(val, true)
 		}
-		casted, err := table.CastValue(ctx, newData[i], col.ToInfo())
+		cmp, err := newData[i].CompareDatum(sc, oldData[i])
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		newData[i] = casted
-		touched[i] = true
-		assignExists = true
+		if cmp != 0 {
+			changed = true
+			touched[i] = true
+			if col.IsPKHandleColumn(t.Meta()) {
+				handleChanged = true
+			}
+		} else {
+			touched[i] = false
+		}
+	}
+	for i, col := range cols {
+		if !touched[i] {
+			if mysql.HasOnUpdateNowFlag(col.Flag) {
+				v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				newData[i] = v
+				touched[i] = true
+			} else {
+				continue
+			}
+		}
 	}
 
-	// If no assign list for this table, no need to update.
-	if !assignExists {
-		return false, nil
-	}
-
-	if err := table.CheckNotNull(cols, newData); err != nil {
+	err := table.CheckNotNull(cols, newData)
+	if err != nil {
 		return false, errors.Trace(err)
 	}
 
-	// If row is not changed, we should do nothing.
-	rowChanged := false
-	for i := range oldData {
-		if !touched[i] {
-			continue
-		}
-
-		n, err := newData[i].CompareDatum(sc, oldData[i])
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if n != 0 {
-			rowChanged = true
-			break
-		}
-	}
-	if !rowChanged {
+	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
@@ -107,8 +108,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		return false, nil
 	}
 
-	var err error
-	if !newHandle.IsNull() {
+	if handleChanged {
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
 			return false, errors.Trace(err)
@@ -121,17 +121,18 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+
 	dirtyDB := getDirtyDB(ctx)
 	tid := t.Meta().ID
 	dirtyDB.deleteRow(tid, h)
 	dirtyDB.addRow(tid, h, newData)
 
-	// Record affected rows.
-	if !onDuplicateUpdate {
-		sc.AddAffectedRows(1)
+	if onDup {
+		ctx.GetSessionVars().StmtCtx.AddAffectedRows(2)
 	} else {
-		sc.AddAffectedRows(2)
+		ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
+
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
 	return true, nil
 }
@@ -624,7 +625,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	if e.finished {
 		return nil, nil
 	}
-	cols, err := e.getColumns(e.Table.Cols())
+	cols, err := e.getColumns(e.Table.WritableCols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -854,23 +855,28 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 }
 
 func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ignoreErr bool) ([]types.Datum, error) {
-	row := make([]types.Datum, len(e.Table.Cols()))
-	marked := make(map[int]struct{}, len(vals))
-	for i, v := range vals {
-		offset := cols[i].Offset
-		row[offset] = v
-		if !ignoreErr {
-			marked[offset] = struct{}{}
+	row := make([]types.Datum, len(e.Table.WritableCols()))
+	marked := make(map[int]struct{}, len(e.Table.WritableCols()))
+	for i, wc := range e.Table.WritableCols() {
+		// Here we must iterate on vals not cols, because vals maybe is empty.
+		for ii, v := range vals {
+			if cols[ii] == wc {
+				row[i] = v
+				if !ignoreErr {
+					marked[i] = struct{}{}
+				}
+				break
+			}
 		}
 	}
 	err := e.initDefaultValues(row, marked, ignoreErr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
+	if err = table.CastValues(e.ctx, row, e.Table.WritableCols(), ignoreErr); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
+	if err = table.CheckNotNull(e.Table.WritableCols(), row); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return row, nil
@@ -890,9 +896,8 @@ func (e *InsertValues) filterErr(err error, ignoreErr bool) error {
 }
 
 func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}, ignoreErr bool) error {
-	var defaultValueCols []*table.Column
 	sc := e.ctx.GetSessionVars().StmtCtx
-	for i, c := range e.Table.Cols() {
+	for i, c := range e.Table.WritableCols() {
 		// It's used for retry.
 		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].IsNull() &&
 			e.ctx.GetSessionVars().RetryInfo.Retrying {
@@ -946,10 +951,12 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			}
 		}
 
-		defaultValueCols = append(defaultValueCols, c)
-	}
-	if err := table.CastValues(e.ctx, row, defaultValueCols, ignoreErr); err != nil {
-		return errors.Trace(err)
+		// The value should be casted.
+		casted, err := table.CastValue(e.ctx, row[i], c.ToInfo())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		row[i] = casted
 	}
 
 	return nil
@@ -966,7 +973,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expre
 	e.ctx.GetSessionVars().CurrInsertValues = row
 
 	// evaluate assignment
-	assignFlag := make([]bool, len(e.Table.Cols()))
+	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	newData := make([]types.Datum, len(data))
 	copy(newData, data)
 	for _, col := range cols {
@@ -977,7 +984,8 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expre
 		newData[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
-	if _, err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true); err != nil {
+	_, err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true)
+	if err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -988,7 +996,7 @@ func findColumnByName(t table.Table, tableName, colName string) (*table.Column, 
 		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
 	}
 
-	c := table.FindCol(t.Cols(), colName)
+	c := table.FindCol(t.WritableCols(), colName)
 	if c == nil {
 		return nil, errors.Errorf("unknown field %s", colName)
 	}
@@ -1028,7 +1036,7 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	if e.finished {
 		return nil, nil
 	}
-	cols, err := e.getColumns(e.Table.Cols())
+	cols, err := e.getColumns(e.Table.WritableCols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1127,17 +1135,18 @@ func (e *UpdateExec) Next() (*Row, error) {
 		}
 		e.fetched = true
 	}
-
-	assignFlag, err := getUpdateColumns(e.OrderedList, e.SelectExec.Schema().Len())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	if e.cursor >= len(e.rows) {
 		return nil, nil
 	}
 	if e.updatedRowKeys == nil {
 		e.updatedRowKeys = make(map[table.Table]map[int64]struct{})
 	}
+
+	assignFlag, err := getUpdateColumns(e.OrderedList, e.SelectExec.Schema().Len())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
 	for _, entry := range row.RowKeys {
@@ -1151,8 +1160,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		oldData := row.Data[offset:end]
 		newTableData := newData[offset:end]
 		flags := assignFlag[offset:end]
-		_, ok := e.updatedRowKeys[tbl][handle]
-		if ok {
+		if _, ok := e.updatedRowKeys[tbl][handle]; ok {
 			// Each matched row is updated once, even if it matches the conditions multiple times.
 			continue
 		}

@@ -163,7 +163,7 @@ func (t *MemoryTable) Truncate() {
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum, newData []types.Datum, touched map[int]bool) error {
+func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	item := t.tree.Get(itemKey(h))
