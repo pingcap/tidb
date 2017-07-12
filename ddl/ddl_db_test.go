@@ -1279,6 +1279,6 @@ func (s *testDBSuite) TestChangePK(c *C) {
 	s.tk.MustExec("alter table change_column_pk modify column id int not null")
 	sql := "alter table change_column_pk add index idx(id)"
 	_, err := s.tk.Exec(sql)
-	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, table.ErrMissColumn), IsTrue)
 	s.tk.MustExec("drop table change_column_pk")
 }
