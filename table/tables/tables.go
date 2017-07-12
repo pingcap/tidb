@@ -767,7 +767,7 @@ func (t *Table) getMutation(ctx context.Context) *binlog.TableMutation {
 	return &bin.Mutations[idx]
 }
 
-// For these cases, we can skip the columns in encoded row:
+// CanSkip is for these cases, we can skip the columns in encoded row:
 // 1. the column is included in primary key;
 // 2. the column's default value is null, and the value equals to that;
 // 3. the column is virtual generated.
@@ -784,8 +784,7 @@ func (t *Table) CanSkip(col *table.Column, value types.Datum) bool {
 	return false
 }
 
-// For these cases, we can skip the columns when write update binlog:
-// 1. the column is virtual generated.
+// CanSkipUpdateBinlog checks whether the column can be skiped or not.
 func (t *Table) CanSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
 	if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
 		return true

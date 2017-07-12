@@ -280,7 +280,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, d
 
 func touchedSlice(t table.Table) []bool {
 	touched := make([]bool, 0, len(t.WritableCols()))
-	for _ = range t.WritableCols() {
+	for range t.WritableCols() {
 		touched = append(touched, true)
 	}
 	return touched
