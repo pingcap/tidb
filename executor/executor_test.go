@@ -912,7 +912,7 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery("select to_base64(a), to_base64(b), to_base64(c), to_base64(d), to_base64(e), to_base64(f), to_base64(g), to_base64(h), to_base64(null) from t")
 	result.Check(testkit.Rows("MQ== MS4x MjAxNy0wMS0wMSAxMjowMTowMQ== MTI6MDE6MDE= YWJjZGVm ABU= NTEyAAAAAAAAAAAAAAAAAAAAAAA= YWJj <nil>"))
 
-	// for bitlength
+	// for bit_length
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10))")
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
