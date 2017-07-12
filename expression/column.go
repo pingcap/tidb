@@ -146,6 +146,10 @@ func (col *Column) String() string {
 	return result
 }
 
+func (col *Column) Identify() string {
+	return fmt.Sprintf("%s.%v", col.FromID, col.Position)
+}
+
 // MarshalJSON implements json.Marshaler interface.
 func (col *Column) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString(fmt.Sprintf("\"%s\"", col))

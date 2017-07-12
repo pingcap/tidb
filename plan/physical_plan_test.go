@@ -547,7 +547,8 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		c.Assert(ToString(EliminateProjection(info.p, make(map[string]*expression.Column))), Equals, tt.best, Commentf("for %s", tt.sql))
+		info.p = eliminateRootProjection(info.p).(PhysicalPlan)
+		c.Assert(ToString(info.p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
@@ -656,11 +657,11 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan), builder.ctx, builder.allocator)
+		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate|flagEliminateProjection, p.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		p = EliminateProjection(info.p, make(map[string]*expression.Column))
-		c.Assert(ToString(p), Equals, tt.ans, Commentf("for %s", tt.sql))
+		info.p = eliminateRootProjection(info.p).(PhysicalPlan)
+		c.Assert(ToString(info.p), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
 }
 
@@ -811,9 +812,10 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 		c.Assert(err, IsNil)
 		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndices()
+		lp, err = (&nonRootProjectionEliminater{}).optimize(lp, nil, nil)
+		c.Assert(err, IsNil)
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p
-		pp = EliminateProjection(pp, make(map[string]*expression.Column))
 		addCachePlan(pp, builder.allocator)
 		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
@@ -863,9 +865,10 @@ func (s *testPlanSuite) TestScanController(c *C) {
 		lp, err = dSolver.optimize(lp, mockContext(), new(idAllocator))
 		c.Assert(err, IsNil)
 		lp.ResolveIndices()
+		lp, err = (&nonRootProjectionEliminater{}).optimize(lp, nil, nil)
+		c.Assert(err, IsNil)
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p
-		pp = EliminateProjection(pp, make(map[string]*expression.Column))
 		addCachePlan(pp, builder.allocator)
 		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
@@ -939,7 +942,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		},
 		{
 			sql: "select /*+ TIDB_INLJ(t, t1) */ * from t left join (select * from t where t.b > 10) t1 on t.a=t1.a and t.b > 100",
-			ans: "LeftHashJoin{Table(t)->Table(t)}(test.t.a,t1.a)",
+			ans: "Apply{Table(t)->Table(t)->Selection}",
 		},
 	}
 	for _, tt := range tests {
@@ -978,7 +981,7 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		},
 		{
 			sql: "select * from (select * from t limit 0, 129) t1 join t t2 on t1.a = t2.a",
-			ans: "RightHashJoin{Table(t)->Limit->Table(t)}(t1.a,t2.a)",
+			ans: "RightHashJoin{Table(t)->Limit->Table(t)}(test.t.a,t2.a)",
 		},
 		{
 			sql: "select * from (select * from t limit 0, 10 union select * from t limit 10, 100) t1 join t t2 on t1.a = t2.a",

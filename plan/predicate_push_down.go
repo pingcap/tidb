@@ -74,9 +74,11 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 			e := joinReOrderSolver{allocator: p.allocator, ctx: p.ctx}
 			e.reorderJoin(groups, predicates)
 			newJoin := e.resultJoin
-			parent := p.parents[0]
-			newJoin.SetParents(parent)
-			parent.ReplaceChild(p, newJoin)
+			if len(p.parents) > 0 {
+				parent := p.parents[0]
+				newJoin.SetParents(parent)
+				parent.ReplaceChild(p, newJoin)
+			}
 			return newJoin.PredicatePushDown(predicates)
 		}
 	}

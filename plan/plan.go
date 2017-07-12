@@ -207,6 +207,9 @@ type LogicalPlan interface {
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
 
+	// replaceEpxrColumns replace all the column reference in the plan's expression node
+	replaceExprColumns(replace map[string]*expression.Column)
+
 	// convert2PhysicalPlan converts the logical plan to the physical plan.
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
@@ -417,6 +420,10 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.basePlan.children[0].(LogicalPlan)
 	child.PruneColumns(parentUsedCols)
 	p.basePlan.SetSchema(child.Schema())
+}
+
+func (p *baseLogicalPlan) replaceExprColumns(replace map[string]*expression.Column) {
+	return
 }
 
 // basePlan implements base Plan interface.

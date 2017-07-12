@@ -29,6 +29,7 @@ var AllowCartesianProduct = true
 
 const (
 	flagPrunColumns uint64 = 1 << iota
+	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagPredicatePushDown
@@ -38,6 +39,7 @@ const (
 
 var optRuleList = []logicalOptRule{
 	&columnPruner{},
+	&nonRootProjectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&ppdSolver{},
@@ -148,7 +150,7 @@ func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := EliminateProjection(task.plan(), make(map[string]*expression.Column))
+	p := eliminateRootProjection(task.plan()).(PhysicalPlan)
 	p.ResolveIndices()
 	return p, nil
 }
@@ -159,12 +161,11 @@ func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (P
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	pp := info.p
-	pp = EliminateProjection(pp, make(map[string]*expression.Column))
+	p := eliminateRootProjection(info.p).(PhysicalPlan)
 	if flag&(flagDecorrelate) > 0 {
-		addCachePlan(pp, allocator)
+		addCachePlan(p, allocator)
 	}
-	return pp, nil
+	return p, nil
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {
