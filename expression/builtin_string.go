@@ -1262,6 +1262,12 @@ func (b *builtinBitLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
+
+	ft := b.args[0].GetType()
+	if types.IsBinaryStr(ft) {
+		return int64(ft.Flen * 8), false, nil
+	}
+
 	return int64(len(val) * 8), false, nil
 }
 
