@@ -14,9 +14,18 @@
 package parser
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
+
+var _ = Suite(&testParserSuite{})
 
 type testParserSuite struct{}
 

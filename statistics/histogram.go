@@ -238,7 +238,7 @@ func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Dat
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if c < 0 {
+	if c <= 0 {
 		return prevCount, nil
 	}
 	return (prevCount + lessThanBucketValueCount) / 2, nil
