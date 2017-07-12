@@ -1984,3 +1984,27 @@ func (s *testSuite) TestFuncREPEAT(c *C) {
 	r = tk.MustQuery("SELECT REPEAT(a, 16777217), REPEAT(b, 16777217), REPEAT(c, 16777217), REPEAT(d, 16777217), REPEAT(e, 16777217), REPEAT(f, 16777217) FROM table_string;")
 	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
 }
+
+func (s *testSuite) TestEmptyEnum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (e enum('Y', 'N'))")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
+	_, err := tk.Exec("insert into t values (0)")
+	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+	_, err = tk.Exec("insert into t values ('abc')")
+	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("insert into t values (0)")
+	tk.MustQuery("select * from t").Check(testkit.Rows(""))
+	tk.MustExec("insert into t values ('abc')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("", ""))
+	tk.MustExec("insert into t values (null)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
+}
