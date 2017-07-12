@@ -27,7 +27,7 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg []interface{}
-		Ret  interface{}
+		Ret interface{}
 	}{
 		{[]interface{}{true, 1, true, 2, 3}, 1},
 		{[]interface{}{false, 1, true, 2, 3}, 2},
