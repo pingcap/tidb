@@ -53,7 +53,7 @@ func canProjectionBeEliminated(p *Projection) bool {
 }
 
 func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
-	dst := replace[string((*origin).HashCode())]
+	dst := replace[string(origin.HashCode())]
 	if dst != nil {
 		*origin = *dst
 	}
@@ -149,16 +149,6 @@ func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) 
 			resolveColumnAndReplace(prop, replace)
 		}
 	}
-	if p.redundantSchema != nil {
-		for _, redundantCol := range p.redundantSchema.Columns {
-			resolveColumnAndReplace(redundantCol, replace)
-		}
-		for _, redundantKey := range p.redundantSchema.Keys {
-			for _, keyCol := range redundantKey {
-				resolveColumnAndReplace(keyCol, replace)
-			}
-		}
-	}
 }
 
 func (p *Projection) replaceExprColumns(replace map[string]*expression.Column) {
@@ -176,14 +166,7 @@ func (p *LogicalAggregation) replaceExprColumns(replace map[string]*expression.C
 	for _, gbyItem := range p.GroupByItems {
 		resolveExprAndReplace(gbyItem, replace)
 	}
-	for _, gbyCol := range p.groupByCols {
-		resolveColumnAndReplace(gbyCol, replace)
-	}
-	for _, prop := range p.possibleProperties {
-		for _, col := range prop {
-			resolveColumnAndReplace(col, replace)
-		}
-	}
+	p.collectGroupByColumns()
 }
 
 func (p *Selection) replaceExprColumns(replace map[string]*expression.Column) {
@@ -202,12 +185,6 @@ func (p *LogicalApply) replaceExprColumns(replace map[string]*expression.Column)
 	}
 }
 
-func (p *DataSource) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, expr := range p.pushedDownConds {
-		resolveExprAndReplace(expr, replace)
-	}
-}
-
 func (p *Sort) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range p.ByItems {
 		resolveExprAndReplace(byItem.Expr, replace)
@@ -217,12 +194,5 @@ func (p *Sort) replaceExprColumns(replace map[string]*expression.Column) {
 func (p *TopN) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range p.ByItems {
 		resolveExprAndReplace(byItem.Expr, replace)
-	}
-}
-
-func (p *Update) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, assign := range p.OrderedList {
-		resolveColumnAndReplace(assign.Col, replace)
-		resolveExprAndReplace(assign.Expr, replace)
 	}
 }
