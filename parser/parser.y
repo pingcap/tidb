@@ -504,6 +504,7 @@ import (
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
 	stats		"STATS"
+	statsHistograms	"STATS_HISTOGRAMS"
 	statsMeta	"STATS_META"
 	status		"STATUS"
 	super		"SUPER"
@@ -2365,7 +2366,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE" | "STATS" | "STATS_META"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -5122,6 +5123,20 @@ ShowStmt:
 	{
 		stmt := &ast.ShowStmt{
 			Tp: ast.ShowStatsMeta,
+		}
+		if $3 != nil {
+			if x, ok := $3.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $3.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
+|	"SHOW" "STATS_HISTOGRAMS" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowStatsHistograms,
 		}
 		if $3 != nil {
 			if x, ok := $3.(*ast.PatternLikeExpr); ok {
