@@ -59,7 +59,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	originTable := GetTableInTest(c, d.store, s.dbInfo.ID, tblInfo.ID)
 
 	// insert t values (1, 1), (2, 2), (3, 3)
 	_, err = originTable.AddRecord(ctx, types.MakeDatums(1, 1))
@@ -72,7 +72,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
 	var (
@@ -117,7 +117,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			}
 		}
 	}
-	d.setHook(tc)
+	d.SetHook(tc)
 	testCreateIndex(c, ctx, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(ctx.Txn().Commit(), IsNil)

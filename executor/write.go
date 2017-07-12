@@ -39,6 +39,7 @@ var (
 )
 
 func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, onDuplicateUpdate bool) (bool, error) {
+	log.Warnf("update")
 	cols := t.WritableCols()
 	touched := make(map[int]bool, len(cols))
 	assignExists := false

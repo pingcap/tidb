@@ -132,14 +132,14 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	var mu sync.Mutex
 	checkOK := false
 	var hookErr error
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
 		if job.State != model.JobDone {
 			return
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		t, err := GetTableWithError(d.store, s.dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -151,7 +151,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 		checkOK = true
 	}
-	d.setHook(tc)
+	d.SetHook(tc)
 
 	d.Stop()
 	d.start(goctx.Background())
@@ -178,7 +178,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		t, err := GetTableWithError(d.store, s.dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return

@@ -147,6 +147,7 @@ type DDL interface {
 	OwnerManager() OwnerManager
 	// WorkerVars gets the session variables for DDL worker.
 	WorkerVars() *variable.SessionVars
+	SetHook(h Callback)
 }
 
 // Event is an event that a ddl operation happened.
@@ -204,6 +205,11 @@ type ddl struct {
 	workerVars *variable.SessionVars
 }
 
+// MockDDL mocks the ddl. It's used for testing. The ddl isn't exported so add this structure.
+type MockDDL struct {
+	*ddl
+}
+
 // RegisterEventCh registers passed channel for ddl Event.
 func (d *ddl) RegisterEventCh(ch chan<- *Event) {
 	d.ddlEventCh = ch
@@ -238,6 +244,12 @@ func NewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
 	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease)
 }
+
+//// NewMockDDL is used for testing.
+//func NewMockDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+//	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *MockDDL {
+//	return &MockDDL{ddl: newDDL(ctx, etcdCli, store, infoHandle, hook, lease)}
+//}
 
 func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
@@ -451,7 +463,7 @@ func (d *ddl) callHookOnChanged(err error) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) setHook(h Callback) {
+func (d *ddl) SetHook(h Callback) {
 	d.hookMu.Lock()
 	defer d.hookMu.Unlock()
 

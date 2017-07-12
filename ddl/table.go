@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -292,8 +293,10 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 
 func updateTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, originalState model.SchemaState) (
 	ver int64, err error) {
+	log.Warnf("original state %s, job state %v", originalState, job.SchemaState)
 	if originalState != job.SchemaState {
 		ver, err = updateSchemaVersion(t, job)
+		log.Errorf("original state %s, job state %v, ver %d", originalState, job.SchemaState, ver)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

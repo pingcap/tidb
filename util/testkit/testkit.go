@@ -126,7 +126,7 @@ func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	_, err := tk.Exec(sql, args...)
-	tk.c.Assert(err, check.IsNil, check.Commentf("sql:%s, %v", sql, args))
+	tk.c.Assert(err, check.IsNil, check.Commentf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err)))
 }
 
 // MustQuery query the statements and returns result rows.

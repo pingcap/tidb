@@ -194,7 +194,7 @@ func (s *testDBSuite) TestIndex(c *C) {
 	s.testAddIndexWithDupCols(c)
 }
 
-func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
+func (s *testDBSuite) GetTableInTest(c *C, name string) table.Table {
 	ctx := s.s.(context.Context)
 	domain := sessionctx.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
@@ -265,7 +265,7 @@ LOOP:
 		}
 	}
 
-	t := s.testGetTable(c, "t1")
+	t := s.GetTableInTest(c, "t1")
 	for _, tidx := range t.Indices() {
 		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
 	}
@@ -287,13 +287,13 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 	c.Assert(err, NotNil)
 	// The index name is c1 when adding index (c1, c2).
 	s.mustExec(c, "alter table t_anonymous_index drop index c1")
-	t := s.testGetTable(c, "t_anonymous_index")
+	t := s.GetTableInTest(c, "t_anonymous_index")
 	c.Assert(t.Indices(), HasLen, 0)
 	// for adding some indices that the first column name is c1
 	s.mustExec(c, "alter table t_anonymous_index add index (c1)")
 	_, err = s.tk.Exec("alter table t_anonymous_index add index c1 (c2)")
 	c.Assert(err, NotNil)
-	t = s.testGetTable(c, "t_anonymous_index")
+	t = s.GetTableInTest(c, "t_anonymous_index")
 	c.Assert(t.Indices(), HasLen, 1)
 	idx := t.Indices()[0].Meta().Name.L
 	c.Assert(idx, Equals, "c1")
@@ -302,7 +302,7 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 	s.mustExec(c, "alter table t_anonymous_index add index (c1, c2, C3)")
 	// The MySQL will be a warning.
 	s.mustExec(c, "alter table t_anonymous_index add index (c1)")
-	t = s.testGetTable(c, "t_anonymous_index")
+	t = s.GetTableInTest(c, "t_anonymous_index")
 	c.Assert(t.Indices(), HasLen, 4)
 	s.mustExec(c, "alter table t_anonymous_index drop index c1")
 	s.mustExec(c, "alter table t_anonymous_index drop index c1_2")
@@ -396,7 +396,7 @@ LOOP:
 	// get all row handles
 	ctx := s.s.(context.Context)
 	c.Assert(ctx.NewTxn(), IsNil)
-	t := s.testGetTable(c, "t1")
+	t := s.GetTableInTest(c, "t1")
 	handles := make(map[int64]struct{})
 	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -449,7 +449,7 @@ func (s *testDBSuite) testDropIndex(c *C) {
 	for i := 0; i < num; i++ {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
-	t := s.testGetTable(c, "t1")
+	t := s.GetTableInTest(c, "t1")
 	var c3idx table.Index
 	for _, tidx := range t.Indices() {
 		if tidx.Meta().Name.L == "c3_index" {
@@ -491,7 +491,7 @@ LOOP:
 
 	handles := make(map[int64]struct{})
 
-	t = s.testGetTable(c, "t1")
+	t = s.GetTableInTest(c, "t1")
 	var nidx table.Index
 	for _, tidx := range t.Indices() {
 		if tidx.Meta().Name.L == "c3_index" {
@@ -683,7 +683,7 @@ LOOP:
 	}
 
 	ctx := s.s.(context.Context)
-	t := s.testGetTable(c, "t2")
+	t := s.GetTableInTest(c, "t2")
 	i := 0
 	j := 0
 	ctx.NewTxn()

@@ -96,6 +96,7 @@ func FindCols(cols []*Column, names []string) ([]*Column, error) {
 func FindOnUpdateCols(cols []*Column) []*Column {
 	var rcols []*Column
 	for _, col := range cols {
+		log.Warnf("col %v, flag %v", col, mysql.HasOnUpdateNowFlag(col.Flag))
 		if mysql.HasOnUpdateNowFlag(col.Flag) {
 			rcols = append(rcols, col)
 		}
