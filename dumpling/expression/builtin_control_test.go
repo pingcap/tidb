@@ -23,6 +23,34 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg []interface{}
+		Ret interface{}
+	}{
+		{[]interface{}{true, 1, true, 2, 3}, 1},
+		{[]interface{}{false, 1, true, 2, 3}, 2},
+		{[]interface{}{nil, 1, true, 2, 3}, 2},
+		{[]interface{}{false, 1, false, 2, 3}, 3},
+		{[]interface{}{nil, 1, nil, 2, 3}, 3},
+		{[]interface{}{false, 1, nil, 2, 3}, 3},
+		{[]interface{}{nil, 1, false, 2, 3}, 3},
+	}
+	fc := funcs[ast.Case]
+	for _, t := range tbl {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg...)), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
+	}
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+}
+
 func (s *testEvaluatorSuite) TestIf(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
