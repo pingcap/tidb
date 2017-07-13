@@ -112,6 +112,9 @@ func (s *testEvaluatorSuite) TestUUID(c *C) {
 			c.Assert(len(p), Equals, 12)
 		}
 	}
+	bf, err := funcs[ast.UUID].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(bf.isDeterministic(), IsFalse)
 }
 
 func (s *testEvaluatorSuite) TestAnyValue(c *C) {

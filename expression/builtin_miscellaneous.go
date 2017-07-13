@@ -721,6 +721,7 @@ func (c *uuidFunctionClass) getFunction(args []Expression, ctx context.Context) 
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = 36
+	bf.deterministic = false
 	sig := &builtinUUIDSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
