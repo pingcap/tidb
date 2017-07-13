@@ -211,11 +211,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			best: "SemiJoinWithAux{TableReader(Table(t))->TableReader(Table(t))}->Projection",
 		},
 		// Test Single Merge Join.
-		// Merge Join will no longer enforce a sort.
-		//{
-		//	sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.b",
-		//	best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))->Sort}(t1.a,t2.b)",
-		//},
+		// Merge Join will no longer enforce a sort. If a hint doesn't take effect, we will choose other types of join.
+		{
+			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.b",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t2.b,t1.a)->Projection",
+		},
 		// Test Single Merge Join + Sort.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a",

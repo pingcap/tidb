@@ -333,7 +333,6 @@ func (p *LogicalJoin) getEqAndOtherCondsByOffsets(offsets []int) ([]*expression.
 }
 
 func (p *LogicalJoin) getMergeJoin() []PhysicalPlan {
-	//	log.Warnf("")
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties))
 	for _, leftCols := range p.leftProperties {
 		offsets, leftKeys := getPermutation(leftCols, p.LeftJoinKeys)
