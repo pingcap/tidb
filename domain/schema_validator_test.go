@@ -55,6 +55,9 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	valid = validator.Check(ts, item.schemaVer)
 	c.Assert(valid, IsFalse)
 
+	validator.Stop()
+	validator.Restart()
+
 	reload(validator, leaseGrantCh)
 	valid = validator.Check(ts, item.schemaVer)
 	c.Assert(valid, IsFalse)
