@@ -396,6 +396,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		// for show character set
 		{"show character set;", true},
+		{"show charset", true},
 		// for show collation
 		{"show collation", true},
 		{"show collation like 'utf8%'", true},
