@@ -172,6 +172,7 @@ func main() {
 			Certificates: []tls.Certificate{tlsCert},
 			ClientCAs:    certPool,
 			ClientAuth:   clientAuthPolicy,
+			MinVersion:   0,
 		}
 	}
 
