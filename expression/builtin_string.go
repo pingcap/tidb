@@ -85,6 +85,7 @@ var (
 
 var (
 	_ builtinFunc = &builtinLengthSig{}
+	_ builtinFunc = &builtinLength4BinarySig{}
 	_ builtinFunc = &builtinASCIISig{}
 	_ builtinFunc = &builtinConcatSig{}
 	_ builtinFunc = &builtinConcatWSSig{}
@@ -132,16 +133,30 @@ type lengthFunctionClass struct {
 }
 
 func (c *lengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := c.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = 10
-	sig := &builtinLengthSig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	var sig builtinFunc
+	argTp := args[0].GetType()
+	if argTp.Tp == mysql.TypeString && mysql.HasBinaryFlag(argTp.Flag) {
+		sig = &builtinLength4BinarySig{baseIntBuiltinFunc{bf}}
+	} else {
+		sig = &builtinLengthSig{baseIntBuiltinFunc{bf}}
+	}
+	return sig.setSelf(sig), nil
 }
 
 type builtinLengthSig struct {
+	baseIntBuiltinFunc
+}
+
+type builtinLength4BinarySig struct {
 	baseIntBuiltinFunc
 }
 
@@ -153,6 +168,14 @@ func (b *builtinLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
 		return 0, isNull, errors.Trace(err)
 	}
 	return int64(len([]byte(val))), false, nil
+}
+
+func (b *builtinLength4BinarySig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return int64(b.args[0].GetType().Flen), false, nil
 }
 
 type asciiFunctionClass struct {
