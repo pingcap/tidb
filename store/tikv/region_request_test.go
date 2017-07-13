@@ -212,6 +212,12 @@ func (s *mockTikvGrpcServer) Raft(tikvpb.Tikv_RaftServer) error {
 func (s *mockTikvGrpcServer) Snapshot(tikvpb.Tikv_SnapshotServer) error {
 	return errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) MvccGetByKey(goctx.Context, *kvrpcpb.MvccGetByKeyRequest) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	return nil, errors.New("unreachable")
+}
+func (s *mockTikvGrpcServer) MvccGetByStartTs(goctx.Context, *kvrpcpb.MvccGetByStartTsRequest) (*kvrpcpb.MvccGetByStartTsResponse, error) {
+	return nil, errors.New("unreachable")
+}
 
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
 	// prepare a mock tikv grpc server

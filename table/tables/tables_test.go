@@ -134,7 +134,7 @@ func countEntriesWithPrefix(ctx context.Context, prefix []byte) (int, error) {
 }
 
 func (ts *testSuite) TestTypes(c *C) {
-	_, err := ts.se.Execute("CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp not null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
+	_, err := ts.se.Execute("CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(context.Context)
 	dom := sessionctx.GetDomain(ctx)

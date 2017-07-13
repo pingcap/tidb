@@ -401,7 +401,7 @@ func runTestConcurrentUpdate(c *C) {
 }
 
 func runTestErrorCode(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
+	runTestsOnNewDB(c, "ErrorCode", func(dbt *DBTest) {
 		dbt.mustExec("create table test (c int PRIMARY KEY);")
 		dbt.mustExec("insert into test values (1);")
 		txn1, err := dbt.db.Begin()
@@ -485,6 +485,24 @@ func runTestAuth(c *C) {
 	runTests(c, newDsn, func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
+}
+
+func runTestIssue3682(c *C) {
+	runTestsOnNewDB(c, "issue3682", func(dbt *DBTest) {
+		dbt.mustExec(`CREATE USER 'abc'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`FLUSH PRIVILEGES;`)
+	})
+	newDsn := "abc:123@tcp(127.0.0.1:4001)/test?strict=true"
+	runTests(c, newDsn, func(dbt *DBTest) {
+		dbt.mustExec(`USE mysql;`)
+	})
+	wrongDsn := "abc:456@tcp(127.0.0.1:4001)/a_database_not_exist?strict=true"
+	db, err := sql.Open("mysql", wrongDsn)
+	c.Assert(err, IsNil)
+	defer db.Close()
+	err = db.Ping()
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'abc'@'127.0.0.1' (using password: YES)")
 }
 
 func runTestIssues(c *C) {
