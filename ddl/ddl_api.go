@@ -1162,6 +1162,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	newCol.FieldType.Flag |= indexFlags
 	if mysql.HasPriKeyFlag(col.FieldType.Flag) {
 		newCol.FieldType.Flag |= mysql.NotNullFlag
+		// TODO: if user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull
 	}
 
 	// We don't support modifying column from not_auto_increment to auto_increment
