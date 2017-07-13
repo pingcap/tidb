@@ -1283,6 +1283,7 @@ func (c *bitLengthFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 10
 	sig := &builtinBitLengthSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
