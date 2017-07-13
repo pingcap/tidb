@@ -206,18 +206,33 @@ func (e *mvccEntry) addValue(v mvccValue) {
 	}
 }
 
+type rawEntry struct {
+	key   []byte
+	value []byte
+}
+
+func newRawEntry(key []byte) *rawEntry {
+	return &rawEntry{
+		key: key,
+	}
+}
+
+func (e *rawEntry) Less(than llrb.Item) bool {
+	return bytes.Compare(e.key, than.(*rawEntry).key) < 0
+}
+
 // MvccStore is an in-memory, multi-versioned, transaction-supported kv storage.
 type MvccStore struct {
 	sync.RWMutex
 	tree  *llrb.LLRB
-	rawkv map[string][]byte
+	rawkv *llrb.LLRB
 }
 
 // NewMvccStore creates a MvccStore.
 func NewMvccStore() *MvccStore {
 	return &MvccStore{
 		tree:  llrb.New(),
-		rawkv: make(map[string][]byte),
+		rawkv: llrb.New(),
 	}
 }
 
@@ -475,7 +490,12 @@ func (s *MvccStore) ResolveLock(startKey, endKey []byte, startTS, commitTS uint6
 func (s *MvccStore) RawGet(key []byte) []byte {
 	s.RLock()
 	defer s.RUnlock()
-	return s.rawkv[string(key)]
+
+	entry := s.rawkv.Get(newRawEntry(key))
+	if entry == nil {
+		return nil
+	}
+	return entry.(*rawEntry).value
 }
 
 // RawPut stores a key-value pair.
@@ -485,14 +505,46 @@ func (s *MvccStore) RawPut(key, value []byte) {
 	if value == nil {
 		value = []byte{}
 	}
-	s.rawkv[string(key)] = value
+	entry := s.rawkv.Get(newRawEntry(key))
+	if entry != nil {
+		entry.(*rawEntry).value = value
+	} else {
+		s.rawkv.ReplaceOrInsert(&rawEntry{
+			key:   key,
+			value: value,
+		})
+	}
 }
 
 // RawDelete deletes a key-value pair.
 func (s *MvccStore) RawDelete(key []byte) {
 	s.Lock()
 	defer s.Unlock()
-	delete(s.rawkv, string(key))
+	s.rawkv.Delete(newRawEntry(key))
+}
+
+// RawScan reads up to a limited number of rawkv Pairs.
+func (s *MvccStore) RawScan(startKey, endKey []byte, limit int) []Pair {
+	s.RLock()
+	defer s.RUnlock()
+
+	var pairs []Pair
+	iterator := func(item llrb.Item) bool {
+		if len(pairs) >= limit {
+			return false
+		}
+		k := item.(*rawEntry).key
+		if !regionContains(startKey, endKey, k) {
+			return false
+		}
+		pairs = append(pairs, Pair{
+			Key:   k,
+			Value: item.(*rawEntry).value,
+		})
+		return true
+	}
+	s.rawkv.AscendGreaterOrEqual(newRawEntry(startKey), iterator)
+	return pairs
 }
 
 // MvccKey is the encoded key type.
