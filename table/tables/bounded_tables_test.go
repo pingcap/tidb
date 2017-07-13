@@ -69,6 +69,10 @@ func (ts *testBoundedTableSuite) SetUpSuite(c *C) {
 	}
 	alloc := autoid.NewMemoryAllocator(int64(10))
 	ts.tbl = tables.BoundedTableFromMeta(alloc, tblInfo, 1024)
+
+	tblInfo.Columns[0].Flag |= mysql.PriKeyFlag
+	tblInfo.PKIsHandle = true
+	ts.tbl = tables.BoundedTableFromMeta(alloc, tblInfo, 1024)
 }
 
 func (ts *testBoundedTableSuite) TestBoundedBasic(c *C) {
@@ -116,4 +120,14 @@ func (ts *testBoundedTableSuite) TestBoundedBasic(c *C) {
 	tb.(*tables.BoundedTable).Truncate()
 	_, err = tb.Row(ctx, rid)
 	c.Assert(err, NotNil)
+
+	// Basic test for BoundedTable
+	tb.(*tables.BoundedTable).Seek(nil, 0)
+	tb.(*tables.BoundedTable).WritableCols()
+	tb.(*tables.BoundedTable).IndexPrefix()
+	tb.(*tables.BoundedTable).UpdateRecord(nil, 0, nil, nil, nil)
+	tb.(*tables.BoundedTable).RemoveRecord(nil, 0, nil)
+	tb.(*tables.BoundedTable).Allocator()
+	tb.(*tables.BoundedTable).AllocAutoID()
+	tb.(*tables.BoundedTable).RebaseAutoID(0, false)
 }

@@ -117,4 +117,12 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	tb.(*tables.MemoryTable).Truncate()
 	_, err = tb.Row(ctx, rid)
 	c.Assert(err, NotNil)
+
+	// Basic test for MemoryTable
+	tb.(*tables.MemoryTable).Seek(nil, 0)
+	tb.(*tables.MemoryTable).WritableCols()
+	tb.(*tables.MemoryTable).IndexPrefix()
+	tb.(*tables.MemoryTable).UpdateRecord(nil, 0, nil, nil, nil)
+	tb.(*tables.MemoryTable).Allocator()
+	tb.(*tables.MemoryTable).RebaseAutoID(0, false)
 }

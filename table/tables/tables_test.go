@@ -122,6 +122,11 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(indexCnt(), Greater, 0)
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
+
+	table.MockTableFromMeta(tb.Meta())
+	tb.Allocator()
+	tb.RebaseAutoID(0, false)
+	tb.Seek(nil, 0)
 }
 
 func countEntriesWithPrefix(ctx context.Context, prefix []byte) (int, error) {

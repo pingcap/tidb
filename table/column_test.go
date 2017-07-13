@@ -46,6 +46,14 @@ func (s *testColumnSuite) TestString(c *C) {
 	col.Collate = mysql.DefaultCollationName
 	col.Flag |= mysql.ZerofillFlag | mysql.UnsignedFlag | mysql.BinaryFlag | mysql.AutoIncrementFlag | mysql.NotNullFlag
 
+	c.Assert(col.GetTypeDesc(), Equals, "tinyint(2,1) UNSIGNED")
+	col.ToInfo()
+	tbInfo := &model.TableInfo{}
+	c.Assert(col.IsPKHandleColumn(tbInfo), Equals, false)
+	tbInfo.PKIsHandle = true
+	col.Flag |= mysql.PriKeyFlag
+	c.Assert(col.IsPKHandleColumn(tbInfo), Equals, true)
+
 	cs := col.String()
 	c.Assert(len(cs), Greater, 0)
 
@@ -100,6 +108,7 @@ func (s *testColumnSuite) TestCheck(c *C) {
 	CheckNotNull(cols, types.MakeDatums(nil))
 	cols[0].Flag |= mysql.NotNullFlag
 	CheckNotNull(cols, types.MakeDatums(nil))
+	CheckOnce([]*Column{})
 }
 
 func (s *testColumnSuite) TestDesc(c *C) {
@@ -109,6 +118,17 @@ func (s *testColumnSuite) TestDesc(c *C) {
 	NewColDesc(col)
 	col.Flag = mysql.MultipleKeyFlag
 	NewColDesc(col)
+	col.Flag = mysql.UniqueKeyFlag | mysql.OnUpdateNowFlag
+	desc := NewColDesc(col)
+	c.Assert(desc.Extra, Equals, "on update CURRENT_TIMESTAMP")
+	col.Flag = 0
+	col.GeneratedExprString = "test"
+	col.GeneratedStored = true
+	desc = NewColDesc(col)
+	c.Assert(desc.Extra, Equals, "STORED GENERATED")
+	col.GeneratedStored = false
+	desc = NewColDesc(col)
+	c.Assert(desc.Extra, Equals, "VIRTUAL GENERATED")
 	ColDescFieldNames(false)
 	ColDescFieldNames(true)
 }
@@ -187,6 +207,36 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
+}
+
+func (s *testColumnSuite) TestCastValue(c *C) {
+	ctx := mock.NewContext()
+	colInfo := model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeLong),
+		State:     model.StatePublic,
+	}
+	colInfo.Charset = mysql.UTF8Charset
+	val, err := CastValue(ctx, types.Datum{}, &colInfo)
+	c.Assert(err, Equals, nil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	val, err = CastValue(ctx, types.NewDatum("test"), &colInfo)
+	c.Assert(err, Not(Equals), nil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	col := ToColumn(&model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeTiny),
+		State:     model.StatePublic,
+	})
+
+	CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col}, false)
+	CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col}, true)
+
+	colInfoS := model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeString),
+		State:     model.StatePublic,
+	}
+	CastValue(ctx, types.NewDatum("test"), &colInfoS)
 }
 
 func (s *testColumnSuite) TestGetDefaultValue(c *C) {
