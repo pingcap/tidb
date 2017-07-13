@@ -833,7 +833,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 		return false
 	}
 	// Get user password.
-	name := strings.Join(strs[:len(strs)-1] ,"@")
+	name := strings.Join(strs[:len(strs)-1], "@")
 	host := strs[len(strs)-1]
 	pm := privilege.GetPrivilegeManager(s)
 
