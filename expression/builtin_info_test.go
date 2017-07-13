@@ -111,3 +111,48 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
 }
+
+func (s *testEvaluatorSuite) TestBenchMark(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Benchmark]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil, nil)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, ErrorMatches, "*FUNCTION BENCHMARK does not exist")
+}
+
+func (s *testEvaluatorSuite) TestCharset(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Charset]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, ErrorMatches, "*FUNCTION CHARSET does not exist")
+}
+
+func (s *testEvaluatorSuite) TestCoercibility(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Coercibility]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, ErrorMatches, "*FUNCTION COERCIBILITY does not exist")
+}
+
+func (s *testEvaluatorSuite) TestCollation(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Collation]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, ErrorMatches, "*FUNCTION COLLATION does not exist")
+}
+
+func (s *testEvaluatorSuite) TestRowCount(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.RowCount]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums()), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, ErrorMatches, "*FUNCTION ROW_COUNT does not exist")
+}

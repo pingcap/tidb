@@ -173,6 +173,10 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 			types.NewFieldType(mysql.TypeSet),
 			types.NewDatum(types.Set{}),
 		},
+		{
+			types.NewFieldType(mysql.TypeEnum),
+			types.NewDatum(types.Enum{}),
+		},
 	}
 	sc := new(variable.StatementContext)
 	for _, tt := range tests {

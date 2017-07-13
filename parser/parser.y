@@ -504,6 +504,7 @@ import (
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
 	stats		"STATS"
+	statsBuckets	"STATS_BUCKETS"
 	statsHistograms	"STATS_HISTOGRAMS"
 	statsMeta	"STATS_META"
 	status		"STATUS"
@@ -2366,7 +2367,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -5147,6 +5148,20 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|	"SHOW" "STATS_BUCKETS" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowStatsBuckets,
+		}
+		if $3 != nil {
+			if x, ok := $3.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $3.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
 
 ShowIndexKwd:
 	"INDEX"
@@ -5169,7 +5184,7 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
 	}
-|	"CHARACTER" "SET"
+|	CharsetKw
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowCharset}
 	}
