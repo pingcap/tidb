@@ -30,7 +30,7 @@ func (s *testMiscSuite) SetUpSuite(c *C) {
 func (s *testMiscSuite) TearDownSuite(c *C) {
 }
 
-func (s testMiscSuite) TestRunWithRetry(c *C) {
+func (s *testMiscSuite) TestRunWithRetry(c *C) {
 	defer testleak.AfterTest(c)()
 	// Run succ.
 	cnt := 0
@@ -67,4 +67,11 @@ func (s testMiscSuite) TestRunWithRetry(c *C) {
 	})
 	c.Assert(err, NotNil)
 	c.Assert(cnt, Equals, 1)
+}
+
+func (s *testMiscSuite) TestReserveStack(c *C) {
+	go func() {
+		ReserveStack()
+		// TODO: How to check it take effect?
+	}()
 }

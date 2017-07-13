@@ -23,6 +23,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	goctx "golang.org/x/net/context"
 )
 
@@ -103,6 +104,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 	ch := make(chan error)
 	for _, batch := range batches {
 		go func(batch batchKeys) {
+			util.ReserveStack()
 			backoffer, cancel := bo.Fork()
 			defer cancel()
 			ch <- s.batchGetSingleRegion(backoffer, batch, collectF)

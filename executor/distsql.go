@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -592,6 +593,7 @@ func (e *XSelectIndexExec) addWorker(workCh chan *lookupTableTask, concurrency *
 }
 
 func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<- *lookupTableTask) {
+	util.ReserveStack()
 	workCh := make(chan *lookupTableTask, 1)
 	defer func() {
 		close(ch)
@@ -709,6 +711,7 @@ func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
 // pickAndExecTask is a worker function, the common usage is
 // go e.pickAndExecTask(ch)
 func (e *XSelectIndexExec) pickAndExecTask(ch <-chan *lookupTableTask) {
+	util.ReserveStack()
 	for task := range ch {
 		err := e.executeTask(task)
 		task.doneCh <- err
