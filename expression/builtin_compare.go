@@ -757,7 +757,40 @@ type builtinNullEQIntSig struct {
 }
 
 func (s *builtinNullEQIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return resOfNullEQ(compareInt(s.args, row, s.ctx))
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isNull0, err := s.args[0].EvalInt(row, sc)
+	if err != nil {
+		return zeroI64, isNull0, errors.Trace(err)
+	}
+	arg1, isNull1, err := s.args[1].EvalInt(row, sc)
+	if err != nil {
+		return zeroI64, isNull1, errors.Trace(err)
+	}
+	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(s.args[0].GetType().Flag), mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+	var res int64
+	switch {
+	case isNull0 && isNull1:
+		res = 1
+	case isUnsigned0 && isUnsigned1 && types.CompareUint64(uint64(arg0), uint64(arg1)) == 0:
+		res = 1
+	case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(arg0, arg1) == 0:
+		res = 1
+	case isUnsigned0 && !isUnsigned1:
+		if arg1 < 0 || arg0 > math.MaxInt64 {
+			break
+		}
+		if types.CompareInt64(arg0, arg1) == 0 {
+			res = 1
+		}
+	case !isUnsigned0 && isUnsigned1:
+		if arg0 < 0 || arg1 > math.MaxInt64 {
+			break
+		}
+		if types.CompareInt64(arg0, arg1) == 0 {
+			res = 1
+		}
+	}
+	return res, false, nil
 }
 
 type builtinNullEQRealSig struct {
@@ -765,7 +798,22 @@ type builtinNullEQRealSig struct {
 }
 
 func (s *builtinNullEQRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return resOfNullEQ(compareReal(s.args, row, s.ctx))
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isNull0, err := s.args[0].EvalReal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isNull1, err := s.args[1].EvalReal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	var res int64
+	if isNull0 && isNull1 {
+		res = 1
+	} else if types.CompareFloat64(arg0, arg1) == 0 {
+		res = 1
+	}
+	return res, false, nil
 }
 
 type builtinNullEQDecimalSig struct {
@@ -773,7 +821,22 @@ type builtinNullEQDecimalSig struct {
 }
 
 func (s *builtinNullEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return resOfNullEQ(compareDecimal(s.args, row, s.ctx))
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isNull0, err := s.args[0].EvalDecimal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isNull1, err := s.args[1].EvalDecimal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	var res int64
+	if isNull0 && isNull1 {
+		res = 1
+	} else if arg0.Compare(arg1) == 0 {
+		res = 1
+	}
+	return res, false, nil
 }
 
 type builtinNullEQStringSig struct {
@@ -781,7 +844,22 @@ type builtinNullEQStringSig struct {
 }
 
 func (s *builtinNullEQStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return resOfNullEQ(compareString(s.args, row, s.ctx))
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isNull0, err := s.args[0].EvalString(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isNull1, err := s.args[1].EvalString(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	var res int64
+	if isNull0 && isNull1 {
+		res = 1
+	} else if types.CompareString(arg0, arg1) == 0 {
+		res = 1
+	}
+	return res, false, nil
 }
 
 type builtinNullEQDurationSig struct {
@@ -789,7 +867,22 @@ type builtinNullEQDurationSig struct {
 }
 
 func (s *builtinNullEQDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return resOfNullEQ(compareDuration(s.args, row, s.ctx))
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isNull0, err := s.args[0].EvalDuration(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isNull1, err := s.args[1].EvalDuration(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	var res int64
+	if isNull0 && isNull1 {
+		res = 1
+	} else if arg0.Compare(arg1) == 0 {
+		res = 1
+	}
+	return res, false, nil
 }
 
 type builtinNullEQTimeSig struct {
@@ -797,7 +890,22 @@ type builtinNullEQTimeSig struct {
 }
 
 func (s *builtinNullEQTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	return resOfNullEQ(compareTime(s.args, row, s.ctx))
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isNull0, err := s.args[0].EvalTime(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isNull1, err := s.args[1].EvalTime(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	var res int64
+	if isNull0 && isNull1 {
+		res = 1
+	} else if arg0.Compare(arg1) == 0 {
+		res = 1
+	}
+	return res, false, nil
 }
 
 type builtinCompareSig struct {
@@ -925,25 +1033,6 @@ func resOfEQ(val int64, isNull bool, err error) (int64, bool, error) {
 	return val, false, nil
 }
 
-func resOfNullEQ(val int64, isNull bool, err error) (int64, bool, error) {
-	if err != nil {
-		return 0, false, errors.Trace(err)
-	}
-	if isNull {
-		if val == 0 {
-			return 1, false, nil
-		} else if val == -1 {
-			return 0, false, nil
-		}
-	}
-	if val == 0 {
-		val = 1
-	} else {
-		val = 0
-	}
-	return val, false, nil
-}
-
 func resOfNE(val int64, isNull bool, err error) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -959,21 +1048,12 @@ func resOfNE(val int64, isNull bool, err error) (int64, bool, error) {
 func compareInt(args []Expression, row []types.Datum, ctx context.Context) (val int64, isNull bool, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalInt(row, sc)
-	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+	if isNull0 || err != nil {
+		return zeroI64, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalInt(row, sc)
-	if err != nil {
-		return zeroI64, false, errors.Trace(err)
-	}
-	if isNull0 {
-		if isNull1 {
-			return 0, true, nil // `0 && true` indicates two args are all `null`, thus NullEQ returns 1 in this case.
-		}
-		return -1, true, nil // `-1 && true` indicates only one of the two args is `null`, NullEQ returns 0 in this case.
-	}
-	if isNull1 {
-		return -1, true, nil
+	if isNull1 || err != nil {
+		return zeroI64, isNull1, errors.Trace(err)
 	}
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(args[0].GetType().Flag), mysql.HasUnsignedFlag(args[1].GetType().Flag)
 	var res int
@@ -1001,21 +1081,12 @@ func compareInt(args []Expression, row []types.Datum, ctx context.Context) (val 
 func compareString(args []Expression, row []types.Datum, ctx context.Context) (val int64, isNull bool, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalString(row, sc)
-	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+	if isNull0 || err != nil {
+		return zeroI64, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalString(row, sc)
-	if err != nil {
-		return zeroI64, false, errors.Trace(err)
-	}
-	if isNull0 {
-		if isNull1 {
-			return 0, true, nil // `0 && true` indicates two args are all `null`, NullEQ returns 1 in this case.
-		}
-		return -1, true, nil // `-1 && true` indicates only one of the two args is `null`, NullEQ returns 0 in this case.
-	}
-	if isNull1 {
-		return -1, true, nil
+	if isNull1 || err != nil {
+		return zeroI64, isNull1, errors.Trace(err)
 	}
 	return int64(types.CompareString(arg0, arg1)), false, nil
 }
@@ -1023,21 +1094,12 @@ func compareString(args []Expression, row []types.Datum, ctx context.Context) (v
 func compareReal(args []Expression, row []types.Datum, ctx context.Context) (val int64, isNull bool, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalReal(row, sc)
-	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+	if isNull0 || err != nil {
+		return zeroI64, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalReal(row, sc)
-	if err != nil {
-		return zeroI64, false, errors.Trace(err)
-	}
-	if isNull0 {
-		if isNull1 {
-			return 0, true, nil // `0 && true` indicates two args are all `null`, NullEQ returns 1 in this case.
-		}
-		return -1, true, nil // `-1 && true` indicates only one of the two args is `null`, NullEQ returns 0 in this case.
-	}
-	if isNull1 {
-		return -1, true, nil
+	if isNull1 || err != nil {
+		return zeroI64, isNull1, errors.Trace(err)
 	}
 	return int64(types.CompareFloat64(arg0, arg1)), false, nil
 }
@@ -1045,21 +1107,15 @@ func compareReal(args []Expression, row []types.Datum, ctx context.Context) (val
 func compareDecimal(args []Expression, row []types.Datum, ctx context.Context) (val int64, isNull bool, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalDecimal(row, sc)
-	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+	if isNull0 || err != nil {
+		return zeroI64, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalDecimal(row, sc)
 	if err != nil {
 		return zeroI64, false, errors.Trace(err)
 	}
-	if isNull0 {
-		if isNull1 {
-			return 0, true, nil // `0 && true` indicates two args are all `null`, NullEQ returns 1 in this case.
-		}
-		return -1, true, nil // `-1 && true` indicates only one of the two args is `null`, NullEQ returns 0 in this case.
-	}
-	if isNull1 {
-		return -1, true, nil
+	if isNull1 || err != nil {
+		return zeroI64, isNull1, errors.Trace(err)
 	}
 	return int64(arg0.Compare(arg1)), false, nil
 }
@@ -1067,21 +1123,12 @@ func compareDecimal(args []Expression, row []types.Datum, ctx context.Context) (
 func compareTime(args []Expression, row []types.Datum, ctx context.Context) (int64, bool, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalTime(row, sc)
-	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+	if isNull0 || err != nil {
+		return zeroI64, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalTime(row, sc)
-	if err != nil {
-		return zeroI64, false, errors.Trace(err)
-	}
-	if isNull0 {
-		if isNull1 {
-			return 0, true, nil // `0 && true` indicates two args are all `null`, NullEQ returns 1 in this case.
-		}
-		return -1, true, nil // `-1 && true` indicates only one of the two args is `null`, NullEQ returns 0 in this case.
-	}
-	if isNull1 {
-		return -1, true, nil
+	if isNull1 || err != nil {
+		return zeroI64, isNull1, errors.Trace(err)
 	}
 	return int64(arg0.Compare(arg1)), false, nil
 }
@@ -1089,21 +1136,12 @@ func compareTime(args []Expression, row []types.Datum, ctx context.Context) (int
 func compareDuration(args []Expression, row []types.Datum, ctx context.Context) (int64, bool, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalDuration(row, sc)
-	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+	if isNull0 || err != nil {
+		return zeroI64, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalDuration(row, sc)
-	if err != nil {
-		return zeroI64, false, errors.Trace(err)
-	}
-	if isNull0 {
-		if isNull1 {
-			return 0, true, nil // `0 && true` indicates two args are all `null`, NullEQ returns 1 in this case.
-		}
-		return -1, true, nil // `-1 && true` indicates only one of the two args is `null`, NullEQ returns 0 in this case.
-	}
-	if isNull1 {
-		return -1, true, nil
+	if isNull1 || err != nil {
+		return zeroI64, isNull1, errors.Trace(err)
 	}
 	return int64(arg0.Compare(arg1)), false, nil
 }
