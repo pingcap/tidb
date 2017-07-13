@@ -22,10 +22,9 @@ type ConnTestSuite struct{}
 
 var _ = Suite(ConnTestSuite{})
 
-func (ts ConnTestSuite) TestHandshakeResponseFromData(c *C) {
+func (ts ConnTestSuite) TestParseHandshakeResponse(c *C) {
 	c.Parallel()
 	// test data from http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse41
-	var p handshakeResponse41
 	data := []byte{
 		0x85, 0xa2, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x40, 0x08, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -40,9 +39,12 @@ func (ts ConnTestSuite) TestHandshakeResponseFromData(c *C) {
 		0x6c, 0x61, 0x74, 0x66, 0x6f, 0x72, 0x6d, 0x06, 0x78, 0x38, 0x36, 0x5f, 0x36, 0x34, 0x03, 0x66,
 		0x6f, 0x6f, 0x03, 0x62, 0x61, 0x72,
 	}
-	err := handshakeResponseFromData(&p, data)
+	var p handshakeResponse41
+	offset, err := parseHandshakeResponseHeader(&p, data)
 	c.Assert(err, IsNil)
 	c.Assert(p.Capability&mysql.ClientConnectAtts, Equals, mysql.ClientConnectAtts)
+	err = parseHandshakeResponseBody(&p, data, offset)
+	c.Assert(err, IsNil)
 	eq := mapIdentical(p.Attrs, map[string]string{
 		"_client_version": "5.6.6-m9",
 		"_platform":       "x86_64",
@@ -61,13 +63,15 @@ func (ts ConnTestSuite) TestHandshakeResponseFromData(c *C) {
 		0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x00,
 	}
 	p = handshakeResponse41{}
-	err = handshakeResponseFromData(&p, data)
+	offset, err = parseHandshakeResponseHeader(&p, data)
 	c.Assert(err, IsNil)
 	capability := mysql.ClientProtocol41 |
 		mysql.ClientPluginAuth |
 		mysql.ClientSecureConnection |
 		mysql.ClientConnectWithDB
 	c.Assert(p.Capability&capability, Equals, capability)
+	err = parseHandshakeResponseBody(&p, data, offset)
+	c.Assert(err, IsNil)
 	c.Assert(p.User, Equals, "pam")
 	c.Assert(p.DBName, Equals, "test")
 }
@@ -91,9 +95,11 @@ func (ts ConnTestSuite) TestIssue1768(c *C) {
 		0x79, 0x73, 0x71, 0x6c,
 	}
 	p := handshakeResponse41{}
-	err := handshakeResponseFromData(&p, data)
+	offset, err := parseHandshakeResponseHeader(&p, data)
 	c.Assert(err, IsNil)
 	c.Assert(p.Capability&mysql.ClientPluginAuthLenencClientData, Equals, mysql.ClientPluginAuthLenencClientData)
+	err = parseHandshakeResponseBody(&p, data, offset)
+	c.Assert(err, IsNil)
 	c.Assert(len(p.Auth) > 0, IsTrue)
 }
 

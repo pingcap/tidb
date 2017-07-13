@@ -181,7 +181,7 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 		ReportStatus: true,
 		Store:        "tikv",
 	}
-	server, err := NewServer(cfg, tidbdrv)
+	server, err := NewServer(cfg, nil, tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
 	once.Do(func() {

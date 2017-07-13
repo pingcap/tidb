@@ -43,7 +43,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 		StatusAddr:   ":10090",
 		ReportStatus: true,
 	}
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := NewServer(cfg, nil, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
@@ -122,7 +122,7 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 		StatusAddr: ":10091",
 		Socket:     "/tmp/tidbtest.sock",
 	}
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := NewServer(cfg, nil, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
