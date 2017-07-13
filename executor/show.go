@@ -26,10 +26,8 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
@@ -114,6 +112,10 @@ func (e *ShowExec) fetchAll() error {
 		// empty result
 	case ast.ShowStatsMeta:
 		return e.fetchShowStatsMeta()
+	case ast.ShowStatsHistograms:
+		return e.fetchShowStatsHistogram()
+	case ast.ShowStatsBuckets:
+		return e.fetchShowStatsBuckets()
 	}
 	return nil
 }
@@ -627,29 +629,4 @@ func (e *ShowExec) getTable() (table.Table, error) {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}
 	return tb, nil
-}
-
-func (e *ShowExec) fetchShowStatsMeta() error {
-	do := sessionctx.GetDomain(e.ctx)
-	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemas()
-	for _, db := range dbs {
-		for _, tbl := range db.Tables {
-			statsTbl := h.GetTableStats(tbl.ID)
-			if !statsTbl.Pseudo {
-				t := time.Unix(0, oracle.ExtractPhysical(statsTbl.Version)*int64(time.Millisecond))
-				row := &Row{
-					Data: types.MakeDatums(
-						db.Name.O,
-						tbl.Name.O,
-						types.Time{Time: types.FromGoTime(t), Type: mysql.TypeDatetime},
-						statsTbl.ModifyCount,
-						statsTbl.Count,
-					),
-				}
-				e.rows = append(e.rows, row)
-			}
-		}
-	}
-	return nil
 }
