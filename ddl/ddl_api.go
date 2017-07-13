@@ -1075,6 +1075,10 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			col.Flag |= mysql.NotNullFlag
 		case ast.ColumnOptionNull:
 			col.Flag &= ^uint(mysql.NotNullFlag)
+		case ast.ColumnOptionAutoIncrement:
+			col.Flag |= mysql.AutoIncrementFlag
+		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
+			return errUnsupportedModifyColumn.Gen("unsupported modify column constraint - %v", opt.Tp)
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if !expression.IsCurrentTimeExpr(opt.Expr) {
@@ -1089,11 +1093,9 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			for _, colName := range findColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
-		case ast.ColumnOptionAutoIncrement:
-			col.Flag |= mysql.AutoIncrementFlag
 		default:
 			// TODO: Support other types.
-			return errors.Trace(errUnsupportedModifyColumn)
+			return errors.Trace(errUnsupportedModifyColumn.GenByArgs(opt.Tp))
 		}
 	}
 
