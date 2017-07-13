@@ -292,34 +292,29 @@ type log10FunctionClass struct {
 }
 
 func (c *log10FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLog10Sig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinLog10Sig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLog10Sig struct {
-	baseBuiltinFunc
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinLog10Sig.
+// evalReal evals a builtinLog10Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log10
-func (b *builtinLog10Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinLog10Sig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	x, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	if val <= 0 {
+		return 0, true, nil
 	}
-
-	if x <= 0 {
-		return
-	}
-
-	d.SetFloat64(math.Log10(x))
-	return
-
+	return math.Log10(val), false, nil
 }
 
 type randFunctionClass struct {
