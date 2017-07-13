@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
 )
@@ -219,7 +220,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
 		go func() {
-			reserveStack(false)
+			util.ReserveStack()
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
 				log.Debugf("2PC async doActionOnBatches %s err: %v", action, e)
@@ -229,17 +230,6 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		err = c.doActionOnBatches(bo, action, batches)
 	}
 	return errors.Trace(err)
-}
-
-// reserveStack reserves 4KB memory on the stack to avoid runtime.morestack, call it after new a goroutine if necessary.
-func reserveStack(dummy bool) {
-	var buf [8 << 10]byte
-	// avoid compiler optimize the buf out.
-	if dummy {
-		for i := range buf {
-			buf[i] = byte(i)
-		}
-	}
 }
 
 // doActionOnBatches does action to batches in parallel.
@@ -275,7 +265,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	ch := make(chan error, len(batches))
 	for _, batch := range batches {
 		go func(batch batchKeys) {
-			reserveStack(false)
+			util.ReserveStack()
 			if action == actionCommit {
 				// Because the secondary batches of the commit actions are implemented to be
 				// committed asynchronously in background goroutines, we should not
@@ -540,7 +530,7 @@ func (c *twoPhaseCommitter) execute() error {
 		c.mu.RUnlock()
 		if !committed && !undetermined {
 			go func() {
-				reserveStack(false)
+				util.ReserveStack()
 				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, goctx.Background()), writtenKeys)
 				if err != nil {
 					log.Infof("2PC cleanup err: %v, tid: %d", err, c.startTS)

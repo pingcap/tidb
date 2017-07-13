@@ -36,3 +36,17 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 	}
 	return errors.Trace(err)
 }
+
+var dummy = false
+
+// ReserveStack reserves 16KB memory on the stack to avoid runtime.morestack,
+// call it after new a goroutine if necessary.
+func ReserveStack() {
+	var buf [16 << 10]byte
+	// avoid compiler optimize the buf out.
+	if dummy {
+		for i := range buf {
+			buf[i] = byte(i)
+		}
+	}
+}

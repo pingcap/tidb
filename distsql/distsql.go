@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -75,6 +76,7 @@ func (r *selectResult) Fetch(ctx goctx.Context) {
 }
 
 func (r *selectResult) fetch(ctx goctx.Context) {
+	util.ReserveStack()
 	startTime := time.Now()
 	defer func() {
 		close(r.results)

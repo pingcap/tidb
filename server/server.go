@@ -206,6 +206,7 @@ func (s *Server) Close() {
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
+	util.ReserveStack()
 	conn := s.newConn(c)
 	defer func() {
 		log.Infof("[%d] close connection", conn.connectionID)
