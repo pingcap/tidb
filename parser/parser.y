@@ -5184,7 +5184,7 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
 	}
-|	"CHARACTER" "SET"
+|	CharsetKw
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowCharset}
 	}
