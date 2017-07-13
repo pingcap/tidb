@@ -981,9 +981,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 
+	/*
 	if sel.LockTp == ast.SelectLockForUpdate {
 		b.needColHandle = true
 	}
+	*/
 
 	hasAgg := b.detectSelectAgg(sel)
 	var (
@@ -1068,7 +1070,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 	sel.Fields.Fields = originalFields
-	b.needColHandle = false
+	// b.needColHandle = false
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.allocator, b.ctx)
 		addChild(proj, p)
