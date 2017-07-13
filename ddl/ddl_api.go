@@ -1089,6 +1089,8 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			for _, colName := range findColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
+		case ast.ColumnOptionAutoIncrement:
+			col.Flag |= mysql.AutoIncrementFlag
 		default:
 			// TODO: Support other types.
 			return errors.Trace(errUnsupportedModifyColumn)
@@ -1141,13 +1143,6 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		Name:               spec.NewColumn.Name.Name,
 	})
 
-	// copy index related options to the new spec
-	indexFlags := col.FieldType.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
-	newCol.FieldType.Flag |= indexFlags
-	if mysql.HasPriKeyFlag(col.FieldType.Flag) {
-		newCol.FieldType.Flag |= mysql.NotNullFlag
-	}
-
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1159,6 +1154,19 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	if err := setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// copy index related options to the new spec
+	indexFlags := col.FieldType.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
+	newCol.FieldType.Flag |= indexFlags
+	if mysql.HasPriKeyFlag(col.FieldType.Flag) {
+		newCol.FieldType.Flag |= mysql.NotNullFlag
+	}
+
+	// We don't support modifying column from not_auto_increment to auto_increment
+	if !mysql.HasAutoIncrementFlag(col.Flag) && mysql.HasAutoIncrementFlag(newCol.Flag) {
+		return nil, errUnsupportedModifyColumn.GenByArgs("set auto_increment")
+	}
+
 	// We don't support modifying the type definitions from 'null' to 'not null' now.
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		return nil, errUnsupportedModifyColumn.GenByArgs("null to not null")
