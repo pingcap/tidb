@@ -26,6 +26,7 @@ type statsProfile struct {
 	cardinality []float64
 }
 
+// collapse receives a selectivity and multiple it with count and cardinality.
 func (s *statsProfile) collapse(selectivity float64) *statsProfile {
 	profile := &statsProfile{
 		count:       s.count * selectivity,

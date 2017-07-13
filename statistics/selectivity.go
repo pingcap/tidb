@@ -46,6 +46,7 @@ const (
 	colType
 )
 
+// checkColumnConstant receives two expressions and makes sure one of them is column and another is constant.
 func checkColumnConstant(e []expression.Expression) bool {
 	if len(e) != 2 {
 		return false
