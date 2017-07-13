@@ -771,7 +771,7 @@ func (s *builtinNullEQIntSig) evalInt(row []types.Datum) (val int64, isNull bool
 	switch {
 	case isNull0 && isNull1:
 		res = 1
-	case isNull0 && !isNull1 || !isNull0 && isNull1:
+	case (isNull0 && !isNull1) || (!isNull0 && isNull1):
 		res = 0
 	case isUnsigned0 && isUnsigned1 && types.CompareUint64(uint64(arg0), uint64(arg1)) == 0:
 		res = 1
@@ -810,11 +810,12 @@ func (s *builtinNullEQRealSig) evalInt(row []types.Datum) (val int64, isNull boo
 		return zeroI64, false, errors.Trace(err)
 	}
 	var res int64
-	if isNull0 && isNull1 {
+	switch {
+	case isNull0 && isNull1:
 		res = 1
-	} else if isNull0 && !isNull1 || !isNull0 && isNull1 {
+	case (isNull0 && !isNull1) || (!isNull0 && isNull1):
 		res = 0
-	} else if types.CompareFloat64(arg0, arg1) == 0 {
+	case types.CompareFloat64(arg0, arg1) == 0:
 		res = 1
 	}
 	return res, false, nil
@@ -835,11 +836,12 @@ func (s *builtinNullEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull 
 		return zeroI64, false, errors.Trace(err)
 	}
 	var res int64
-	if isNull0 && isNull1 {
+	switch {
+	case isNull0 && isNull1:
 		res = 1
-	} else if isNull0 && !isNull1 || !isNull0 && isNull1 {
+	case (isNull0 && !isNull1) || (!isNull0 && isNull1):
 		res = 0
-	} else if arg0.Compare(arg1) == 0 {
+	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
 	return res, false, nil
@@ -860,11 +862,12 @@ func (s *builtinNullEQStringSig) evalInt(row []types.Datum) (val int64, isNull b
 		return zeroI64, false, errors.Trace(err)
 	}
 	var res int64
-	if isNull0 && isNull1 {
+	switch {
+	case isNull0 && isNull1:
 		res = 1
-	} else if isNull0 && !isNull1 || !isNull0 && isNull1 {
+	case (isNull0 && !isNull1) || (!isNull0 && isNull1):
 		res = 0
-	} else if types.CompareString(arg0, arg1) == 0 {
+	case types.CompareString(arg0, arg1) == 0:
 		res = 1
 	}
 	return res, false, nil
@@ -885,11 +888,12 @@ func (s *builtinNullEQDurationSig) evalInt(row []types.Datum) (val int64, isNull
 		return zeroI64, false, errors.Trace(err)
 	}
 	var res int64
-	if isNull0 && isNull1 {
+	switch {
+	case isNull0 && isNull1:
 		res = 1
-	} else if isNull0 && !isNull1 || !isNull0 && isNull1 {
+	case (isNull0 && !isNull1) || (!isNull0 && isNull1):
 		res = 0
-	} else if arg0.Compare(arg1) == 0 {
+	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
 	return res, false, nil
@@ -910,11 +914,12 @@ func (s *builtinNullEQTimeSig) evalInt(row []types.Datum) (val int64, isNull boo
 		return zeroI64, false, errors.Trace(err)
 	}
 	var res int64
-	if isNull0 && isNull1 {
+	switch {
+	case isNull0 && isNull1:
 		res = 1
-	} else if isNull0 && !isNull1 || !isNull0 && isNull1 {
+	case (isNull0 && !isNull1) || (!isNull0 && isNull1):
 		res = 0
-	} else if arg0.Compare(arg1) == 0 {
+	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
 	return res, false, nil
