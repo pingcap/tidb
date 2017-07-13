@@ -15,6 +15,7 @@ package types
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -35,8 +36,11 @@ func (s *testEnumSuite) TestEnum(c *C) {
 		{[]string{"a"}, "1", 1},
 	}
 
+	sc := new(variable.StatementContext)
+	sc.StrictSQLMode = true
+
 	for _, t := range tbl {
-		e, err := ParseEnumName(t.Elems, t.Name)
+		e, err := ParseEnumName(sc, t.Elems, t.Name)
 		if t.Expected == 0 {
 			c.Assert(err, NotNil)
 			c.Assert(e.ToNumber(), Equals, float64(0))
@@ -60,12 +64,27 @@ func (s *testEnumSuite) TestEnum(c *C) {
 
 	for _, t := range tblNumber {
 		e, err := ParseEnumValue(t.Elems, t.Number)
-		if t.Expected == 0 {
-			c.Assert(err, NotNil)
-			continue
-		}
-
 		c.Assert(err, IsNil)
+		c.Assert(e.ToNumber(), Equals, float64(t.Expected))
+	}
+
+	sc.StrictSQLMode = false
+	tbl = []struct {
+		Elems    []string
+		Name     string
+		Expected int
+	}{
+		{[]string{"a", "b"}, "a", 1},
+		{[]string{"a", "b"}, "", 0},
+	}
+	for _, t := range tbl {
+		e, err := ParseEnumName(sc, t.Elems, t.Name)
+		c.Assert(err, IsNil)
+		if t.Expected == 0 {
+			c.Assert(e.String(), Equals, "")
+		} else {
+			c.Assert(e.String(), Equals, t.Elems[t.Expected-1])
+		}
 		c.Assert(e.ToNumber(), Equals, float64(t.Expected))
 	}
 }

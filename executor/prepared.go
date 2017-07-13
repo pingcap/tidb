@@ -333,6 +333,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(variable.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
+	sc.StrictSQLMode = sessVars.StrictSQLMode
 	switch s.(type) {
 	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
 		sc.IgnoreTruncate = false

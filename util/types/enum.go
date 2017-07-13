@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // Enum is for MySQL enum type.
@@ -37,11 +38,15 @@ func (e Enum) ToNumber() float64 {
 }
 
 // ParseEnumName creates a Enum with item name.
-func ParseEnumName(elems []string, name string) (Enum, error) {
+func ParseEnumName(sc *variable.StatementContext, elems []string, name string) (Enum, error) {
 	for i, n := range elems {
 		if strings.EqualFold(n, name) {
 			return Enum{Name: n, Value: uint64(i) + 1}, nil
 		}
+	}
+
+	if !sc.StrictSQLMode && name == "" {
+		return Enum{Name: "", Value: 0}, nil
 	}
 
 	// name doesn't exist, maybe an integer?
@@ -54,8 +59,12 @@ func ParseEnumName(elems []string, name string) (Enum, error) {
 
 // ParseEnumValue creates a Enum with special number.
 func ParseEnumValue(elems []string, number uint64) (Enum, error) {
-	if number == 0 || number > uint64(len(elems)) {
+	if number > uint64(len(elems)) {
 		return Enum{}, errors.Errorf("number %d overflow enum boundary [1, %d]", number, len(elems))
+	}
+
+	if number == 0 {
+		return Enum{Name: "", Value: 0}, nil
 	}
 
 	return Enum{Name: elems[number-1], Value: number}, nil
