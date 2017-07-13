@@ -26,6 +26,18 @@ type statsProfile struct {
 	cardinality []float64
 }
 
+// collapse receives a selectivity and multiple it with count and cardinality.
+func (s *statsProfile) collapse(selectivity float64) *statsProfile {
+	profile := &statsProfile{
+		count:       s.count * selectivity,
+		cardinality: make([]float64, len(s.cardinality)),
+	}
+	for i := range profile.cardinality {
+		profile.cardinality[i] = s.cardinality[i] * selectivity
+	}
+	return profile
+}
+
 func (p *basePhysicalPlan) statsProfile() *statsProfile {
 	return p.basePlan.profile
 }
@@ -46,40 +58,35 @@ func (p *baseLogicalPlan) prepareStatsProfile() *statsProfile {
 	return p.basePlan.profile
 }
 
-func (p *DataSource) prepareStatsProfile() *statsProfile {
-	p.profile = &statsProfile{
+func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsProfile {
+	profile := &statsProfile{
 		count:       float64(p.statisticTable.Count),
 		cardinality: make([]float64, len(p.Columns)),
 	}
 	for i, col := range p.Columns {
 		hist, ok := p.statisticTable.Columns[col.ID]
 		if ok {
-			p.profile.cardinality[i] = float64(hist.NDV)
+			profile.cardinality[i] = float64(hist.NDV)
 		} else {
-			p.profile.cardinality[i] = p.profile.count * distinctFactor
+			profile.cardinality[i] = profile.count * distinctFactor
 		}
 	}
+	selectivity, err := p.statisticTable.Selectivity(p.ctx, conds)
+	if err != nil {
+		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
+		selectivity = selectionFactor
+	}
+	return profile.collapse(selectivity)
+}
+
+func (p *DataSource) prepareStatsProfile() *statsProfile {
+	p.profile = p.getStatsProfileByFilter(p.pushedDownConds)
 	return p.profile
 }
 
 func (p *Selection) prepareStatsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
-	selectivity := selectionFactor
-	if ds, ok := p.children[0].(*DataSource); ok && ds.statisticTable != nil {
-		var err error
-		selectivity, err = ds.statisticTable.Selectivity(p.ctx, p.Conditions)
-		if err != nil {
-			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
-			selectivity = selectionFactor
-		}
-	}
-	p.profile = &statsProfile{
-		count:       childProfile.count * selectivity,
-		cardinality: make([]float64, len(childProfile.cardinality)),
-	}
-	for i := range p.profile.cardinality {
-		p.profile.cardinality[i] = childProfile.cardinality[i] * selectivity
-	}
+	p.profile = childProfile.collapse(selectionFactor)
 	return p.profile
 }
 
