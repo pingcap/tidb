@@ -198,11 +198,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select * from t t1 left outer join t t2 on t1.a = t2.a right outer join t t3 on t1.a = t3.a",
 			best: "RightHashJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
 		},
-		// TODO: Still have some problems, fix it in next pr.
-		//{
-		//	sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
-		//	best: "LeftHashJoin{RightHashJoin{TableReader(Table(t)->Sel([eq(t1.b, 1)]))->TableReader(Table(t))}(t1.a,t2.a)->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(t1.a,t3.a)",
-		//},
+		// TODO: Maybe not the best plan, fix it in the future.
+		{
+			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
+			best: "IndexJoin{IndexJoin{TableReader(Table(t)->Sel([eq(t1.b, 1)]))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t)->Sel([eq(t3.c, 1)]))}(t1.a,t3.a)",
+		},
 		{
 			sql:  "select * from t where t.c in (select b from t s where s.a = t.a)",
 			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}",
