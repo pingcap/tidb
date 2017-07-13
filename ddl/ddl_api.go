@@ -1129,7 +1129,8 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		return nil, infoschema.ErrColumnNotExists.GenByArgs(originalColName, ident.Name)
 	}
 
-	// constraints of the new column should be ignored in CHANGE / MODIFY COLUMN
+	// constraints in the new column means adding new constraints. Errors should thrown,
+	// which will be done by `setDefaultAndComment` later.
 
 	if spec.NewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
