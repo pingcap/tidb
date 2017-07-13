@@ -5023,13 +5023,18 @@ UserVariable:
 	}
 
 Username:
-	stringLit
+	StringName
 	{
-		$$ = $1 + "@%"
+		$$ = $1.(string) + "@%"
 	}
-|	stringLit "AT" stringLit
+|	StringName "AT" StringName
 	{
-		$$ = $1 + "@" + $3
+		$$ = $1.(string) + "@" + $3.(string)
+	}
+|	StringName "USER_VAR"
+	{
+		// hack: `@identifier` will be recognized as a USER_VAR token
+		$$ = $1.(string) + $2.(string)
 	}
 
 UsernameList:
