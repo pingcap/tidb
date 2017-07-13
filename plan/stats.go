@@ -26,54 +26,76 @@ type statsProfile struct {
 	cardinality []float64
 }
 
-// Sort will call this.
-func (p *baseLogicalPlan) statsProfile() *statsProfile {
-	if p.profile != nil {
-		return p.profile
+// collapse receives a selectivity and multiple it with count and cardinality.
+func (s *statsProfile) collapse(selectivity float64) *statsProfile {
+	profile := &statsProfile{
+		count:       s.count * selectivity,
+		cardinality: make([]float64, len(s.cardinality)),
 	}
-	p.profile = p.basePlan.children[0].(LogicalPlan).statsProfile()
-	return p.profile
+	for i := range profile.cardinality {
+		profile.cardinality[i] = s.cardinality[i] * selectivity
+	}
+	return profile
 }
 
-func (p *DataSource) statsProfile() *statsProfile {
-	if p.profile != nil {
-		return p.profile
+func (p *basePhysicalPlan) statsProfile() *statsProfile {
+	return p.basePlan.profile
+}
+
+func (p *baseLogicalPlan) prepareStatsProfile() *statsProfile {
+	if len(p.basePlan.children) == 0 {
+		profile := &statsProfile{
+			count:       float64(1),
+			cardinality: make([]float64, p.basePlan.schema.Len()),
+		}
+		for i := range profile.cardinality {
+			profile.cardinality[i] = float64(1)
+		}
+		p.basePlan.profile = profile
+		return profile
 	}
-	p.profile = &statsProfile{
+	p.basePlan.profile = p.basePlan.children[0].(LogicalPlan).prepareStatsProfile()
+	return p.basePlan.profile
+}
+
+func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsProfile {
+	profile := &statsProfile{
 		count:       float64(p.statisticTable.Count),
-		cardinality: make([]float64, len(p.statisticTable.Columns)),
+		cardinality: make([]float64, len(p.Columns)),
 	}
 	for i, col := range p.Columns {
-		p.profile.cardinality[i] = float64(p.statisticTable.Columns[col.ID].NDV)
+		hist, ok := p.statisticTable.Columns[col.ID]
+		if ok {
+			profile.cardinality[i] = float64(hist.NDV)
+		} else {
+			profile.cardinality[i] = profile.count * distinctFactor
+		}
 	}
+	selectivity, err := p.statisticTable.Selectivity(p.ctx, conds)
+	if err != nil {
+		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
+		selectivity = selectionFactor
+	}
+	return profile.collapse(selectivity)
+}
+
+func (p *DataSource) prepareStatsProfile() *statsProfile {
+	p.profile = p.getStatsProfileByFilter(p.pushedDownConds)
 	return p.profile
 }
 
-func (p *Selection) statsProfile() *statsProfile {
-	if p.profile != nil {
-		return p.profile
-	}
-	childProfile := p.children[0].(LogicalPlan).statsProfile()
-	// TODO: estimate it by histogram.
-	p.profile = &statsProfile{
-		count:       childProfile.count * selectionFactor,
-		cardinality: make([]float64, len(childProfile.cardinality)),
-	}
-	for i := range p.profile.cardinality {
-		p.profile.cardinality[i] = childProfile.cardinality[i] * selectionFactor
-	}
+func (p *Selection) prepareStatsProfile() *statsProfile {
+	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
+	p.profile = childProfile.collapse(selectionFactor)
 	return p.profile
 }
 
-func (p *Union) statsProfile() *statsProfile {
-	if p.profile != nil {
-		return p.profile
-	}
+func (p *Union) prepareStatsProfile() *statsProfile {
 	p.profile = &statsProfile{
 		cardinality: make([]float64, p.schema.Len()),
 	}
 	for _, child := range p.children {
-		childProfile := child.(LogicalPlan).statsProfile()
+		childProfile := child.(LogicalPlan).prepareStatsProfile()
 		p.profile.count += childProfile.count
 		for i := range p.profile.cardinality {
 			p.profile.cardinality[i] += childProfile.cardinality[i]
@@ -82,11 +104,8 @@ func (p *Union) statsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *Limit) statsProfile() *statsProfile {
-	if p.profile != nil {
-		return p.profile
-	}
-	childProfile := p.children[0].(LogicalPlan).statsProfile()
+func (p *Limit) prepareStatsProfile() *statsProfile {
+	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       float64(p.Count),
 		cardinality: make([]float64, len(childProfile.cardinality)),
@@ -103,11 +122,8 @@ func (p *Limit) statsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *TopN) statsProfile() *statsProfile {
-	if p.profile != nil {
-		return p.profile
-	}
-	childProfile := p.children[0].(LogicalPlan).statsProfile()
+func (p *TopN) prepareStatsProfile() *statsProfile {
+	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       float64(p.Count),
 		cardinality: make([]float64, len(childProfile.cardinality)),
@@ -142,14 +158,11 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	return cardinality
 }
 
-func (p *Projection) statsProfile() *statsProfile {
-	if p.profile != nil {
-		return p.profile
-	}
-	childProfile := p.children[0].(LogicalPlan).statsProfile()
+func (p *Projection) prepareStatsProfile() *statsProfile {
+	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	p.profile = &statsProfile{
 		count:       childProfile.count,
-		cardinality: make([]float64, p.schema.Len()),
+		cardinality: make([]float64, len(p.Exprs)),
 	}
 	for i, expr := range p.Exprs {
 		cols := expression.ExtractColumns(expr)
@@ -158,11 +171,8 @@ func (p *Projection) statsProfile() *statsProfile {
 	return p.profile
 }
 
-func (p *LogicalAggregation) statsProfile() *statsProfile {
-	if p.profile != nil {
-		return p.profile
-	}
-	childProfile := p.children[0].(LogicalPlan).statsProfile()
+func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
+	childProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
 	var gbyCols []*expression.Column
 	for _, gbyExpr := range p.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
@@ -186,12 +196,9 @@ func (p *LogicalAggregation) statsProfile() *statsProfile {
 // N(s) stands for the number of rows in relation s. V(s.key) means the cardinality of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
-func (p *LogicalJoin) statsProfile() *statsProfile {
-	if p.profile != nil {
-		return p.profile
-	}
-	leftProfile := p.children[0].(LogicalPlan).statsProfile()
-	rightProfile := p.children[1].(LogicalPlan).statsProfile()
+func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
+	leftProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
+	rightProfile := p.children[1].(LogicalPlan).prepareStatsProfile()
 	if p.JoinType == SemiJoin {
 		p.profile = &statsProfile{
 			count:       leftProfile.count * selectionFactor,
