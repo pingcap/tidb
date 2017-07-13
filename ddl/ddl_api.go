@@ -282,20 +282,6 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
 				constraints = append(constraints, constraint)
 				col.Flag |= mysql.PriKeyFlag
-			case ast.ColumnOptionUniq:
-				constraint := &ast.Constraint{Tp: ast.ConstraintUniq, Name: colDef.Name.Name.O, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.UniqueKeyFlag
-			case ast.ColumnOptionIndex:
-				constraint := &ast.Constraint{Tp: ast.ConstraintIndex, Name: colDef.Name.Name.O, Keys: keys}
-				constraints = append(constraints, constraint)
-			case ast.ColumnOptionUniqIndex:
-				constraint := &ast.Constraint{Tp: ast.ConstraintUniqIndex, Name: colDef.Name.Name.O, Keys: keys}
-				constraints = append(constraints, constraint)
-				col.Flag |= mysql.UniqueKeyFlag
-			case ast.ColumnOptionKey:
-				constraint := &ast.Constraint{Tp: ast.ConstraintKey, Name: colDef.Name.Name.O, Keys: keys}
-				constraints = append(constraints, constraint)
 			case ast.ColumnOptionUniqKey:
 				constraint := &ast.Constraint{Tp: ast.ConstraintUniqKey, Name: colDef.Name.Name.O, Keys: keys}
 				constraints = append(constraints, constraint)
@@ -854,7 +840,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 	for _, constraint := range constraints {
 		switch constraint.Tp {
-		case ast.ColumnOptionAutoIncrement, ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniq, ast.ColumnOptionUniqKey:
+		case ast.ColumnOptionAutoIncrement, ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
 			return errUnsupportedAddColumn.Gen("unsupported add column constraint - %v", constraint.Tp)
 		}
 	}
