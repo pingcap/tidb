@@ -1221,6 +1221,18 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select log2(NULL)")
 	result.Check(testkit.Rows("<nil>"))
+
+	//for log10
+	result = tk.MustQuery("select log10(0.0)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log10(100)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select log10('1000.0abcd')")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("select log10(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log10(NULL)")
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuite) TestJSON(c *C) {
@@ -1584,8 +1596,6 @@ func (s *testSuite) TestPointGet(c *C) {
 }
 
 func (s *testSuite) TestRow(c *C) {
-	// There exists a constant folding problem when the arguments of compare functions are Rows,
-	// the switch will be opened after the problem be fixed.
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
