@@ -1124,7 +1124,10 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	if col == nil {
 		return nil, infoschema.ErrColumnNotExists.GenByArgs(originalColName, ident.Name)
 	}
-	if spec.Constraint != nil || spec.NewColumn.Tp == nil {
+
+	// constraints of the new column should be ignored in CHANGE / MODIFY COLUMN
+
+	if spec.NewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
@@ -1137,6 +1140,14 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		FieldType:          *spec.NewColumn.Tp,
 		Name:               spec.NewColumn.Name.Name,
 	})
+
+	// copy index related options to the new spec
+	indexFlags := col.FieldType.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
+	newCol.FieldType.Flag |= indexFlags
+	if mysql.HasPriKeyFlag(col.FieldType.Flag) {
+		newCol.FieldType.Flag |= mysql.NotNullFlag
+	}
+
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
 	if err != nil {
 		return nil, errors.Trace(err)
