@@ -47,6 +47,7 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context, allocator
 		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
 	}
 	sort.SetSchema(task.plan().Schema())
+	sort.profile = task.plan().statsProfile()
 	return sort.attach2Task(task)
 }
 
@@ -120,6 +121,7 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 		InnerJoinKeys:   innerJoinKeys,
 		DefaultValues:   p.DefaultValues,
 	}.init(p.allocator, p.ctx, p.children[outerIdx], p.children[1-outerIdx])
+	join.profile = p.profile
 	return join
 }
 
@@ -294,6 +296,7 @@ func (p *LogicalJoin) getMergeJoin() PhysicalPlan {
 		DefaultValues:   p.DefaultValues,
 	}.init(p.allocator, p.ctx)
 	mergeJoin.SetSchema(p.schema)
+	mergeJoin.profile = p.profile
 	return mergeJoin
 }
 
@@ -307,6 +310,7 @@ func (p *LogicalJoin) getSemiJoin() PhysicalPlan {
 		Anti:            p.anti,
 	}.init(p.allocator, p.ctx)
 	semiJoin.SetSchema(p.schema)
+	semiJoin.profile = p.profile
 	return semiJoin
 }
 
@@ -322,6 +326,7 @@ func (p *LogicalJoin) getHashJoin(smallTable int) PhysicalPlan {
 		SmallTable:      smallTable,
 	}.init(p.allocator, p.ctx)
 	hashJoin.SetSchema(p.schema)
+	hashJoin.profile = p.profile
 	return hashJoin
 }
 
@@ -411,6 +416,7 @@ func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 			}
 			limit := Limit{Offset: p.Offset, Count: p.Count}.init(p.allocator, p.ctx)
 			limit.SetSchema(p.schema)
+			limit.profile = p.profile
 			orderedTask = limit.attach2Task(orderedTask)
 			if orderedTask.cost() < optTask.cost() {
 				optTask = orderedTask
@@ -500,6 +506,7 @@ func tryToAddUnionScan(cop *copTask, conds []expression.Expression, ctx context.
 		Conditions: conds,
 	}.init(allocator, ctx)
 	us.SetSchema(task.plan().Schema())
+	us.profile = task.plan().statsProfile()
 	return us.attach2Task(task)
 }
 
@@ -519,6 +526,7 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 	}.init(p.allocator, p.ctx)
 	memTable.SetSchema(p.schema)
 	memTable.Ranges = ranger.FullIntRange()
+	memTable.profile = p.profile
 	var retPlan PhysicalPlan = memTable
 	if len(p.pushedDownConds) > 0 {
 		sel := Selection{
@@ -526,6 +534,7 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 		}.init(p.allocator, p.ctx)
 		sel.SetSchema(p.schema)
 		sel.SetChildren(memTable)
+		sel.profile = p.profile
 		retPlan = sel
 	}
 	task = &rootTask{p: retPlan}
@@ -544,6 +553,7 @@ func (p *DataSource) tryToGetDualTask() (task, error) {
 			if !result {
 				dual := TableDual{}.init(p.allocator, p.ctx)
 				dual.SetSchema(p.schema)
+				dual.profile = p.profile
 				return &rootTask{
 					p: dual,
 				}, nil
@@ -633,8 +643,8 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.filterCondition = conds
 		}
 	}
+	is.profile = p.getStatsProfileByFilter(p.pushedDownConds)
 	cop := &copTask{
-		cnt:       rowCount,
 		cst:       rowCount * scanFactor,
 		indexPlan: is,
 	}
@@ -682,11 +692,11 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
-		is.addPushedDownSelection(cop)
+		is.addPushedDownSelection(cop, p)
 		task = tryToAddUnionScan(cop, p.pushedDownConds, p.ctx, p.allocator)
 	} else {
 		is.OutOfOrder = true
-		is.addPushedDownSelection(cop)
+		is.addPushedDownSelection(cop, p)
 		task = tryToAddUnionScan(cop, p.pushedDownConds, p.ctx, p.allocator)
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
@@ -698,12 +708,12 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	return task, nil
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask) {
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource) {
 	// Add filter condition to table plan now.
 	if len(is.filterCondition) > 0 {
 		var indexConds, tableConds []expression.Expression
 		if copTask.tablePlan != nil {
-			tableConds, indexConds = splitConditionsByIndexColumns(is.filterCondition, is.schema)
+			tableConds, indexConds = is.splitConditionsByIndexColumns()
 		} else {
 			indexConds = is.filterCondition
 		}
@@ -711,18 +721,18 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask) {
 			indexSel := Selection{Conditions: indexConds}.init(is.allocator, is.ctx)
 			indexSel.SetSchema(is.schema)
 			indexSel.SetChildren(is)
+			indexSel.profile = p.getStatsProfileByFilter(append(is.AccessCondition, indexConds...))
 			copTask.indexPlan = indexSel
-			copTask.cst += copTask.cnt * cpuFactor
-			copTask.cnt = copTask.cnt * selectionFactor
+			copTask.cst += copTask.count() * cpuFactor
 		}
 		if tableConds != nil {
 			copTask.finishIndexPlan()
 			tableSel := Selection{Conditions: tableConds}.init(is.allocator, is.ctx)
 			tableSel.SetSchema(copTask.tablePlan.Schema())
 			tableSel.SetChildren(copTask.tablePlan)
+			tableSel.profile = p.profile
 			copTask.tablePlan = tableSel
-			copTask.cst += copTask.cnt * cpuFactor
-			copTask.cnt = copTask.cnt * selectionFactor
+			copTask.cst += copTask.count() * cpuFactor
 		}
 	}
 }
@@ -775,6 +785,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 			ts.filterCondition = conds
 		}
 	}
+	ts.profile = p.getStatsProfileByFilter(p.pushedDownConds)
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
 	if pkCol != nil {
@@ -785,7 +796,6 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}
 	cost := rowCount * scanFactor
 	copTask := &copTask{
-		cnt:               rowCount,
 		tablePlan:         ts,
 		cst:               cost,
 		indexPlanFinished: true,
@@ -797,10 +807,10 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 			copTask.cst = rowCount * descScanFactor
 		}
 		ts.KeepOrder = true
-		ts.addPushedDownSelection(copTask)
+		ts.addPushedDownSelection(copTask, p.profile)
 		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
 	} else {
-		ts.addPushedDownSelection(copTask)
+		ts.addPushedDownSelection(copTask, p.profile)
 		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
@@ -812,24 +822,24 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	return task, nil
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask) {
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, profile *statsProfile) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
 		sel := Selection{Conditions: ts.filterCondition}.init(ts.allocator, ts.ctx)
 		sel.SetSchema(ts.schema)
 		sel.SetChildren(ts)
+		sel.profile = profile
 		copTask.tablePlan = sel
-		copTask.cst += copTask.cnt * cpuFactor
-		copTask.cnt = copTask.cnt * selectionFactor
+		copTask.cst += copTask.count() * cpuFactor
 	}
 }
 
 // splitConditionsByIndexColumns splits the conditions by index schema. If some condition only contain the index
 // columns, it will be pushed to index plan.
-func splitConditionsByIndexColumns(conditions []expression.Expression, schema *expression.Schema) (tableConds []expression.Expression, indexConds []expression.Expression) {
-	for _, cond := range conditions {
+func (is *PhysicalIndexScan) splitConditionsByIndexColumns() (tableConds, indexConds expression.CNFExprs) {
+	for _, cond := range is.filterCondition {
 		cols := expression.ExtractColumns(cond)
-		indices := schema.ColumnsIndices(cols)
+		indices := is.schema.ColumnsIndices(cols)
 		if len(indices) == 0 {
 			tableConds = append(tableConds, cond)
 		} else {
@@ -851,6 +861,7 @@ func (p *LogicalApply) generatePhysicalPlans() []PhysicalPlan {
 		OuterSchema:  p.corCols,
 	}.init(p.allocator, p.ctx)
 	apply.SetSchema(p.schema)
+	apply.profile = p.profile
 	return []PhysicalPlan{apply}
 }
 
@@ -916,6 +927,7 @@ func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
 		AggType:      CompleteAgg,
 	}.init(p.allocator, p.ctx)
 	ha.SetSchema(p.schema)
+	ha.profile = p.profile
 	return []PhysicalPlan{ha}
 }
 

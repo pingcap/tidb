@@ -171,8 +171,6 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 		}
 	}
 	h.startKey, h.endKey = region.StartKey, region.EndKey
-	h.rawStartKey = MvccKey(h.startKey).Raw()
-	h.rawEndKey = MvccKey(h.endKey).Raw()
 	h.isolationLevel = ctx.IsolationLevel
 	return nil
 }
@@ -331,6 +329,13 @@ func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.R
 	return &kvrpcpb.RawDeleteResponse{}
 }
 
+func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawScanResponse {
+	pairs := h.mvccStore.RawScan(req.GetStartKey(), h.endKey, int(req.GetLimit()))
+	return &kvrpcpb.RawScanResponse{
+		Kvs: convertToPbPairs(pairs),
+	}
+}
+
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
 	Cluster   *Cluster
@@ -483,12 +488,21 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 			return resp, nil
 		}
 		resp.RawDelete = handler.handleKvRawDelete(r)
+	case tikvrpc.CmdRawScan:
+		r := req.RawScan
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.RawScan = &kvrpcpb.RawScanResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.RawScan = handler.handleKvRawScan(r)
 	case tikvrpc.CmdCop:
 		r := req.Cop
 		if err := handler.checkRequestContext(reqCtx); err != nil {
 			resp.Cop = &coprocessor.Response{RegionError: err}
 			return resp, nil
 		}
+		handler.rawStartKey = MvccKey(handler.startKey).Raw()
+		handler.rawEndKey = MvccKey(handler.endKey).Raw()
 		res, err := handler.handleCopRequest(r)
 		if err != nil {
 			return nil, err

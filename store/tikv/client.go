@@ -278,6 +278,13 @@ func (c *rpcClient) callRPC(ctx goctx.Context, client tikvpb.TikvClient, req *ti
 		}
 		resp.RawDelete = r
 		return resp, nil
+	case tikvrpc.CmdRawScan:
+		r, err := client.RawScan(ctx, req.RawScan)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.RawScan = r
+		return resp, nil
 	case tikvrpc.CmdCop:
 		r, err := client.Coprocessor(ctx, req.Cop)
 		if err != nil {
