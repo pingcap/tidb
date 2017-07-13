@@ -276,8 +276,9 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v, DeepEquals, Enum{Name: "b", Value: 2})
 	_, err = Convert("d", ft)
 	c.Assert(err, NotNil)
-	_, err = Convert(4, ft)
-	c.Assert(err, NotNil)
+	v, err = Convert(4, ft)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(v, DeepEquals, Enum{})
 
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"a", "b", "c"}
