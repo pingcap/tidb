@@ -655,3 +655,16 @@ func waitUntilServerOnline(statusAddr string) {
 		log.Fatalf("Failed to connect http status for %d retries in every 10 ms", retryTime)
 	}
 }
+
+func runTestIssue3740(c *C) {
+	runTestsOnNewDB(c, "issue3740", func(dbt *DBTest) {
+		dbt.mustExec(`CREATE USER 'test@example.com'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`FLUSH PRIVILEGES;`)
+	})
+	newDsn := "test@example.com:123@tcp(127.0.0.1:4001)/test?strict=true"
+	db, err := sql.Open("mysql", newDsn)
+	c.Assert(err, IsNil)
+	defer db.Close()
+	err = db.Ping()
+	c.Assert(err, IsNil)
+}

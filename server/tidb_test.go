@@ -178,3 +178,7 @@ func (ts *TidbTestSuite) TestDBNameEscape(c *C) {
 func (ts *TidbTestSuite) TestIssue3682(c *C) {
 	runTestIssue3682(c)
 }
+
+func (ts *TidbTestSuite) TestIssue3740(c *C) {
+	runTestIssue3740(c)
+}

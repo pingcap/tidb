@@ -258,7 +258,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 // root@localhost -> root, localhost
 func parseUser(user string) (string, string) {
 	strs := strings.Split(user, "@")
-	return strs[0], strs[1]
+	return strings.Join(strs[:len(strs)-1], "@"), strs[len(strs)-1]
 }
 
 func userExists(ctx context.Context, name string, host string) (bool, error) {
