@@ -1596,8 +1596,6 @@ func (s *testSuite) TestPointGet(c *C) {
 }
 
 func (s *testSuite) TestRow(c *C) {
-	// There exists a constant folding problem when the arguments of compare functions are Rows,
-	// the switch will be opened after the problem be fixed.
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
