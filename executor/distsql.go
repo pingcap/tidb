@@ -102,8 +102,8 @@ type rowsSorter struct {
 }
 
 func (s *rowsSorter) Less(i, j int) bool {
-	x := s.order[s.rows[i].RowKeys[0].Handle]
-	y := s.order[s.rows[j].RowKeys[0].Handle]
+	x := s.order[s.rows[i].Data[len(s.rows[i].Data) - 1].GetInt64()]
+	y := s.order[s.rows[j].Data[len(s.rows[i].Data) - 1].GetInt64()]
 	return x < y
 }
 

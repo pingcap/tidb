@@ -247,6 +247,19 @@ func (p *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) {
 	p.mergeSchema()
 }
 
+// This will be uncommented after remove the table info from rowMeta.
+/*
+func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
+	for _, col := range p.schema.Columns {
+		if col.ID == -1 && col.ColName.L == "_rowid" {
+			parentUsedCols = append(parentUsedCols, col)
+		}
+	}
+	p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
+	p.SetSchema(p.children[0].Schema())
+}
+*/
+
 // PruneColumns implements LogicalPlan interface.
 func (p *Update) PruneColumns(parentUsedCols []*expression.Column) {
 	p.baseLogicalPlan.PruneColumns(p.children[0].Schema().Columns)

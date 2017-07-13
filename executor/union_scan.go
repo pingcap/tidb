@@ -154,7 +154,7 @@ func (us *UnionScanExec) getSnapshotRow() (*Row, error) {
 			if len(us.snapshotRow.RowKeys) != 1 {
 				return nil, ErrRowKeyCount
 			}
-			snapshotHandle := us.snapshotRow.RowKeys[0].Handle
+			snapshotHandle := us.snapshotRow.Data[len(us.snapshotRow.Data) - 1].GetInt64()
 			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
 				continue
 			}
@@ -213,8 +213,6 @@ func (us *UnionScanExec) compare(a, b *Row) (int, error) {
 			return cmp, nil
 		}
 	}
-	// aHandle := a.RowKeys[0].Handle
-	// bHandle := b.RowKeys[0].Handle
 	dataLen := len(a.Data)
 	aHandle := a.Data[dataLen-1].GetInt64()
 	bHandle := b.Data[dataLen-1].GetInt64()
