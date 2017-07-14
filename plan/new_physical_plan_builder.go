@@ -193,10 +193,8 @@ func (p *PhysicalIndexJoin) getChildrenPossibleProps(prop *requiredProp) [][]*re
 }
 
 func (p *PhysicalMergeJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
-	leftKey := p.EqualConditions[0].GetArgs()[0].(*expression.Column)
-	rightKey := p.EqualConditions[0].GetArgs()[1].(*expression.Column)
-	lProp := &requiredProp{taskTp: rootTaskType, cols: []*expression.Column{leftKey}}
-	rProp := &requiredProp{taskTp: rootTaskType, cols: []*expression.Column{rightKey}}
+	lProp := &requiredProp{taskTp: rootTaskType, cols: p.leftKeys}
+	rProp := &requiredProp{taskTp: rootTaskType, cols: p.rightKeys}
 	if !prop.isEmpty() {
 		if !prop.equal(lProp) && !prop.equal(rProp) {
 			return nil
@@ -258,12 +256,12 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 		return []PhysicalPlan{p.getSemiJoin()}
 	default:
 		mj := p.getMergeJoin()
-		if p.preferUseMergeJoin() {
-			return []PhysicalPlan{mj}
+		if p.preferMergeJoin && len(mj) > 0 {
+			return mj
 		}
 		joins := make([]PhysicalPlan, 0, 5)
 		if len(p.EqualConditions) == 1 {
-			joins = append(joins, mj)
+			joins = append(joins, mj...)
 		}
 		idxJoins, forced := p.tryToGetIndexJoin()
 		if forced {
@@ -282,22 +280,89 @@ func (p *LogicalJoin) generatePhysicalPlans() []PhysicalPlan {
 	}
 }
 
-func (p *LogicalJoin) preferUseMergeJoin() bool {
-	return p.preferMergeJoin && len(p.EqualConditions) == 1
+func getPermutation(cols1, cols2 []*expression.Column) ([]int, []*expression.Column) {
+	tmpSchema := expression.NewSchema(cols2...)
+	permutation := make([]int, 0, len(cols1))
+	for i, col1 := range cols1 {
+		offset := tmpSchema.ColumnIndex(col1)
+		if offset == -1 {
+			return permutation, cols1[:i]
+		}
+		permutation = append(permutation, offset)
+	}
+	return permutation, cols1
 }
 
-func (p *LogicalJoin) getMergeJoin() PhysicalPlan {
-	mergeJoin := PhysicalMergeJoin{
-		JoinType:        p.JoinType,
-		EqualConditions: p.EqualConditions,
-		LeftConditions:  p.LeftConditions,
-		RightConditions: p.RightConditions,
-		OtherConditions: p.OtherConditions,
-		DefaultValues:   p.DefaultValues,
-	}.init(p.allocator, p.ctx)
-	mergeJoin.SetSchema(p.schema)
-	mergeJoin.profile = p.profile
-	return mergeJoin
+func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Column) int {
+	maxLen := 0
+	for _, candidateKeys := range candidates {
+		matchedLen := 0
+		for i := range keys {
+			if i < len(candidateKeys) && keys[i].Equal(candidateKeys[i], nil) {
+				matchedLen++
+			} else {
+				break
+			}
+		}
+		if matchedLen > maxLen {
+			maxLen = matchedLen
+		}
+	}
+	return maxLen
+}
+
+func (p *LogicalJoin) getEqAndOtherCondsByOffsets(offsets []int) ([]*expression.ScalarFunction, []expression.Expression) {
+	var (
+		eqConds    = make([]*expression.ScalarFunction, 0, len(p.EqualConditions))
+		otherConds = make([]expression.Expression, len(p.OtherConditions))
+	)
+	copy(otherConds, p.OtherConditions)
+	for i, eqCond := range p.EqualConditions {
+		match := false
+		for _, offset := range offsets {
+			if i == offset {
+				match = true
+				break
+			}
+		}
+		if !match {
+			otherConds = append(otherConds, eqCond)
+		} else {
+			eqConds = append(eqConds, eqCond)
+		}
+	}
+	return eqConds, otherConds
+}
+
+func (p *LogicalJoin) getMergeJoin() []PhysicalPlan {
+	joins := make([]PhysicalPlan, 0, len(p.leftProperties))
+	for _, leftCols := range p.leftProperties {
+		offsets, leftKeys := getPermutation(leftCols, p.LeftJoinKeys)
+		if len(offsets) == 0 {
+			continue
+		}
+		rightKeys := expression.NewSchema(p.RightJoinKeys...).ColumnsByIndices(offsets)
+		prefixLen := findMaxPrefixLen(p.rightProperties, rightKeys)
+		if prefixLen == 0 {
+			continue
+		}
+		leftKeys = leftKeys[:prefixLen]
+		rightKeys = rightKeys[:prefixLen]
+		offsets = offsets[:prefixLen]
+		mergeJoin := PhysicalMergeJoin{
+			JoinType:        p.JoinType,
+			LeftConditions:  p.LeftConditions,
+			RightConditions: p.RightConditions,
+			DefaultValues:   p.DefaultValues,
+			leftKeys:        leftKeys,
+			rightKeys:       rightKeys,
+		}.init(p.allocator, p.ctx)
+		mergeJoin.SetSchema(p.schema)
+		mergeJoin.profile = p.profile
+		mergeJoin.EqualConditions, mergeJoin.OtherConditions = p.getEqAndOtherCondsByOffsets(offsets)
+		joins = append(joins, mergeJoin)
+	}
+	return joins
 }
 
 func (p *LogicalJoin) getSemiJoin() PhysicalPlan {
