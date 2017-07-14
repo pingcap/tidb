@@ -27,6 +27,7 @@ type Config struct {
 	Store          string `json:"store" toml:"store"`
 	SlowThreshold  int    `json:"slow_threshold" toml:"slow_threshold"`
 	QueryLogMaxlen int    `json:"query_log_max_len" toml:"query_log_max_len"`
+	ProxyProtocol  string `json:"proxy_protocol" toml:"proxy_protocol"`
 }
 
 var cfg *Config
