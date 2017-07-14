@@ -139,7 +139,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		},
 		{
 			exprStr:   "a not between null and 0",
-			resultStr: "[[1,+inf)]",
+			resultStr: "[(-inf,+inf)]",
 		},
 		{
 			exprStr:   "a between 2 and 1",
@@ -396,10 +396,11 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			exprStr:   "a not between 1 and 2",
 			resultStr: "[[-inf,1) (2,+inf]]",
 		},
-		{
-			exprStr:   "a not between null and 0",
-			resultStr: "[(0,+inf]]",
-		},
+		//{
+		// `a > null` will be converted to `castAsString(a) > null` which can not be extracted as access condition.
+		//	exprStr:   "a not between null and 0",
+		//	resultStr[(0,+inf]]
+		//},
 		{
 			exprStr:   "a between 2 and 1",
 			resultStr: "[]",

@@ -123,6 +123,17 @@ func (s *testSuite) TestSetVar(c *C) {
 	c.Assert(vars.SkipConstraintCheck, IsTrue)
 	tk.MustExec("set @@tidb_skip_constraint_check = '0'")
 	c.Assert(vars.SkipConstraintCheck, IsFalse)
+
+	tk.MustExec("set global avoid_temporal_upgrade = on")
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("ON"))
+	tk.MustExec("set @@global.avoid_temporal_upgrade = off")
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("off"))
+	tk.MustExec("set session sql_log_bin = on")
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
+	tk.MustExec("set sql_log_bin = off")
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("off"))
+	tk.MustExec("set @@sql_log_bin = on")
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
