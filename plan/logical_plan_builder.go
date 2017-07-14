@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -491,9 +492,10 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			 * | bbbbbbbbbb    |
 			 * +---------------+
 			 */
-			if col.RetType.Flen > firstSchema.Columns[i].RetType.Flen {
-				firstSchema.Columns[i].RetType.Flen = col.RetType.Flen
-			}
+			schemaTp := firstSchema.Columns[i].RetType
+			colTp := col.RetType
+			schemaTp.Decimal = mathutil.Max(schemaTp.Decimal, colTp.Decimal)
+			schemaTp.Flen = mathutil.Max(colTp.Flen-colTp.Decimal, schemaTp.Flen-schemaTp.Flen) + schemaTp.Decimal
 			// For select nul union select "abc", we should not convert "abc" to nil.
 			// And the result field type should be VARCHAR.
 			if firstSchema.Columns[i].RetType.Tp == 0 || firstSchema.Columns[i].RetType.Tp == mysql.TypeNull {
