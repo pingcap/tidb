@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -1603,8 +1604,6 @@ func (s *testSuite) TestPointGet(c *C) {
 }
 
 func (s *testSuite) TestRow(c *C) {
-	// There exists a constant folding problem when the arguments of compare functions are Rows,
-	// the switch will be opened after the problem be fixed.
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
@@ -2039,4 +2038,29 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("", ""))
 	tk.MustExec("insert into t values (null)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
+}
+
+func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// for uuid
+	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
+	for _, it := range r.Rows() {
+		for _, item := range it {
+			uuid, ok := item.(string)
+			c.Assert(ok, Equals, true)
+			list := strings.Split(uuid, "-")
+			c.Assert(len(list), Equals, 5)
+			c.Assert(len(list[0]), Equals, 8)
+			c.Assert(len(list[1]), Equals, 4)
+			c.Assert(len(list[2]), Equals, 4)
+			c.Assert(len(list[3]), Equals, 4)
+			c.Assert(len(list[4]), Equals, 12)
+		}
+	}
 }
