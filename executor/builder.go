@@ -309,7 +309,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		return nil
 	}
 	insertVal := &InsertValues{ctx: b.ctx, Table: tbl, Columns: v.Columns}
-	tableCols := tbl.WritableCols()
+	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {
 		b.err = errors.Trace(err)

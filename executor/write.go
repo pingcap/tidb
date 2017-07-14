@@ -38,23 +38,22 @@ var (
 	_ Executor = &LoadData{}
 )
 
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, onDuplicateUpdate bool) (bool, error) {
-	cols := t.WritableCols()
-	touched := make(map[int]bool, len(cols))
-	assignExists := false
-	sc := ctx.GetSessionVars().StmtCtx
-	var newHandle types.Datum
-	for i, hasSetExpr := range assignFlag {
-		if !hasSetExpr {
-			if onDuplicateUpdate {
-				newData[i] = oldData[i]
-			}
-			continue
+// 1. fill values into on-update-now fields;
+// 2. rebase auto increment id if the field is changed;
+// 3. cast changed fields with respective columns;
+// 4. calculate it updates the record really or not;
+// 5. check not-null constraints.
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool, t table.Table, onDup bool) (bool, error) {
+	var sc = ctx.GetSessionVars().StmtCtx
+	var changed = false
+	var handleChanged = false
+	for i, col := range t.Cols() {
+		v, err := table.CastValue(ctx, newData[i], col.ToInfo())
+		if err != nil {
+			return false, errors.Trace(err)
 		}
-		col := cols[i]
-		if col.IsPKHandleColumn(t.Meta()) {
-			newHandle = newData[i]
-		}
+		newData[i] = v
+
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
 				return false, errors.Errorf("Column '%v' cannot be null", col.Name.O)
@@ -65,41 +64,40 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			}
 			t.RebaseAutoID(val, true)
 		}
-		casted, err := table.CastValue(ctx, newData[i], col.ToInfo())
+		cmp, err := newData[i].CompareDatum(sc, oldData[i])
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		newData[i] = casted
-		touched[i] = true
-		assignExists = true
+		if cmp != 0 {
+			changed = true
+			touched[i] = true
+			if col.IsPKHandleColumn(t.Meta()) {
+				handleChanged = true
+			}
+		} else {
+			touched[i] = false
+		}
+	}
+	for i, col := range t.Cols() {
+		if !touched[i] {
+			if mysql.HasOnUpdateNowFlag(col.Flag) {
+				v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				newData[i] = v
+				touched[i] = true
+			} else {
+				continue
+			}
+		}
 	}
 
-	// If no assign list for this table, no need to update.
-	if !assignExists {
-		return false, nil
-	}
-
-	if err := table.CheckNotNull(cols, newData); err != nil {
+	if err := table.CheckNotNull(t.Cols(), newData); err != nil {
 		return false, errors.Trace(err)
 	}
 
-	// If row is not changed, we should do nothing.
-	rowChanged := false
-	for i := range oldData {
-		if !touched[i] {
-			continue
-		}
-
-		n, err := newData[i].CompareDatum(sc, oldData[i])
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if n != 0 {
-			rowChanged = true
-			break
-		}
-	}
-	if !rowChanged {
+	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
@@ -107,8 +105,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		return false, nil
 	}
 
-	var err error
-	if !newHandle.IsNull() {
+	if handleChanged {
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
 			return false, errors.Trace(err)
@@ -121,17 +118,18 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+
 	dirtyDB := getDirtyDB(ctx)
 	tid := t.Meta().ID
 	dirtyDB.deleteRow(tid, h)
 	dirtyDB.addRow(tid, h, newData)
 
-	// Record affected rows.
-	if !onDuplicateUpdate {
-		sc.AddAffectedRows(1)
+	if onDup {
+		ctx.GetSessionVars().StmtCtx.AddAffectedRows(2)
 	} else {
-		sc.AddAffectedRows(2)
+		ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
+
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
 	return true, nil
 }
@@ -201,7 +199,7 @@ func (e *DeleteExec) deleteMultiTables() error {
 				tblRowMap[entry.Tbl] = make(map[int64][]types.Datum)
 			}
 			offset := getTableOffset(e.SelectExec.Schema(), entry)
-			data := joinedRow.Data[offset : offset+len(entry.Tbl.WritableCols())]
+			data := joinedRow.Data[offset : offset+len(entry.Tbl.Cols())]
 			tblRowMap[entry.Tbl][entry.Handle] = data
 		}
 	}
@@ -602,6 +600,10 @@ type InsertValues struct {
 type InsertExec struct {
 	*InsertValues
 
+	// When the statement contains on-duplicate-update,
+	// it'll be writable columns, otherwise public columns.
+	FetchColumns []*table.Column
+
 	OnDuplicate []*expression.Assignment
 
 	Priority mysql.PriorityEnum
@@ -628,13 +630,6 @@ func (e *InsertExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txn := e.ctx.Txn()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
@@ -649,17 +644,15 @@ func (e *InsertExec) Next() (*Row, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	batchInsert := e.ctx.GetSessionVars().BatchInsert && !e.ctx.GetSessionVars().InTxn()
 	rowCount := 0
-
 	for _, row := range rows {
 		if batchInsert && rowCount >= BatchInsertSize {
-			err = e.ctx.NewTxn()
-			if err != nil {
+			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
 			}
-			txn = e.ctx.Txn()
 			rowCount = 0
 		}
+		txn := e.ctx.Txn()
 		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
@@ -974,15 +967,16 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 // onDuplicateUpdate updates the duplicate row.
 // TODO: Report rows affected and last insert id.
 func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expression.Assignment) error {
-	data, err := e.Table.Row(e.ctx, h)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.ctx.GetSessionVars().CurrInsertValues = row
 
+	data, err := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// evaluate assignment
-	assignFlag := make([]bool, len(e.Table.Cols()))
+	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	newData := make([]types.Datum, len(data))
 	copy(newData, data)
 	for _, col := range cols {
