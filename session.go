@@ -828,13 +828,13 @@ func (s *session) getPassword(name, host string) (string, error) {
 
 func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	strs := strings.Split(user, "@")
-	if len(strs) != 2 {
+	if len(strs) < 2 {
 		log.Warnf("Invalid format for user: %s", user)
 		return false
 	}
 	// Get user password.
-	name := strs[0]
-	host := strs[1]
+	name := strings.Join(strs[:len(strs)-1], "@")
+	host := strs[len(strs)-1]
 	pm := privilege.GetPrivilegeManager(s)
 
 	// Check IP.
