@@ -547,6 +547,12 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t (a int, b int)")
 	tk.MustExec("INSERT INTO t VALUES ('1', '1')")
 	r = tk.MustQuery("select b from (SELECT * FROM t UNION ALL SELECT a, b FROM t order by a) t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a DECIMAL(4,2))")
+	tk.MustExec("INSERT INTO t VALUE(12.34)")
+	r = tk.MustQuery("SELECT 1 AS c UNION select a FROM t")
+	r.Check(testkit.Rows("1.00", "12.34"))
 }
 
 func (s *testSuite) TestIn(c *C) {
