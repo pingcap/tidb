@@ -198,11 +198,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select * from t t1 left outer join t t2 on t1.a = t2.a right outer join t t3 on t1.a = t3.a",
 			best: "RightHashJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
 		},
-		// TODO: Still have some problems, fix it in next pr.
-		//{
-		//	sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
-		//	best: "LeftHashJoin{RightHashJoin{TableReader(Table(t)->Sel([eq(t1.b, 1)]))->TableReader(Table(t))}(t1.a,t2.a)->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(t1.a,t3.a)",
-		//},
+		// TODO: Maybe not the best plan, fix it in the future.
+		{
+			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
+			best: "IndexJoin{IndexJoin{TableReader(Table(t)->Sel([eq(t1.b, 1)]))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t)->Sel([eq(t3.c, 1)]))}(t1.a,t3.a)",
+		},
 		{
 			sql:  "select * from t where t.c in (select b from t s where s.a = t.a)",
 			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}",
@@ -212,9 +212,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			best: "SemiJoinWithAux{TableReader(Table(t))->TableReader(Table(t))}->Projection",
 		},
 		// Test Single Merge Join.
+		// Merge Join will no longer enforce a sort. If a hint doesn't take effect, we will choose other types of join.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.b",
-			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))->Sort}(t1.a,t2.b)",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t2.b,t1.a)->Projection",
 		},
 		// Test Single Merge Join + Sort.
 		{
@@ -225,6 +226,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
 			best: "MergeJoin{MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t2.a,t3.a)",
+		},
+		// Test Multi Merge Join with multi keys.
+		// TODO: More tests should be added.
+		{
+			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d",
+			best: "MergeJoin{MergeJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)(t1.d,t2.d)->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t3.c)(t1.d,t3.d)",
 		},
 		// Test Multi Merge Join + Outer Join.
 		{
