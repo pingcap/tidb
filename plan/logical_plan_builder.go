@@ -982,9 +982,9 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	}
 
 	/*
-	if sel.LockTp == ast.SelectLockForUpdate {
-		b.needColHandle = true
-	}
+		if sel.LockTp == ast.SelectLockForUpdate {
+			b.needColHandle = true
+		}
 	*/
 
 	hasAgg := b.detectSelectAgg(sel)

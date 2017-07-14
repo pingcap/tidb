@@ -508,7 +508,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			return &Row{Data: values}, nil
 		}
 		values = e.indexRowToTableRow(h, values)
-		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle), nil
+		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle || !e.outOfOrder), nil
 	}
 }
 
@@ -749,6 +749,11 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 		} else {
 			sort.Sort(sorter)
 		}
+		if !e.needColHandle {
+			for _, row := range task.rows {
+				row.Data = row.Data[:len(row.Data)-1]
+			}
+		}
 	}
 	return nil
 }
@@ -784,8 +789,12 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if rowData == nil {
 			break
 		}
-		values := make([]types.Datum, e.Schema().Len())
-		if e.needColHandle {
+		length := e.Schema().Len()
+		if !e.needColHandle && !e.outOfOrder {
+			length++
+		}
+		values := make([]types.Datum, length)
+		if e.needColHandle || !e.outOfOrder {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 		} else {
 			err = codec.SetRawValues(rowData, values)
@@ -797,7 +806,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row := resultRowToRow(t, h, values, e.asName, e.needColHandle)
+		row := resultRowToRow(t, h, values, e.asName, e.needColHandle || !e.outOfOrder)
 		rows = append(rows, row)
 	}
 	return rows, nil
