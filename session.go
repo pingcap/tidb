@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"crypto/tls"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/ngaut/pools"
@@ -71,6 +72,7 @@ type Session interface {
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
+	SetTLSState(*tls.ConnectionState)
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user string, auth []byte, salt []byte) bool
@@ -106,6 +108,9 @@ func (h *stmtHistory) add(stmtID uint32, st ast.Statement, stmtCtx *variable.Sta
 }
 
 type session struct {
+	// TLS connection state
+	tlsState *tls.ConnectionState // nil if not using TLS
+
 	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
 	txn         kv.Transaction // current transaction
@@ -177,6 +182,13 @@ func (s *session) SetClientCapability(capability uint32) {
 
 func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
+}
+
+func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
+	// if user is not connected via TLS, tlsState == nil
+	if tlsState != nil {
+		s.tlsState = tlsState
+	}
 }
 
 func (s *session) SetSessionManager(sm util.SessionManager) {

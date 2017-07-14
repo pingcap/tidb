@@ -350,7 +350,12 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 	cc.attrs = resp.Attrs
 
 	// Open session and do auth
-	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname)
+	var tlsStatePtr *tls.ConnectionState
+	if cc.tlsConn != nil {
+		tlsState := cc.tlsConn.ConnectionState()
+		tlsStatePtr = &tlsState
+	}
+	cc.ctx, err = cc.server.driver.OpenCtx(tlsStatePtr, uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname)
 	if err != nil {
 		return errors.Trace(err)
 	}
