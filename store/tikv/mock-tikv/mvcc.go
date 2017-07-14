@@ -206,6 +206,57 @@ func (e *mvccEntry) addValue(v mvccValue) {
 	}
 }
 
+func (e *mvccEntry) containsStartTS(startTS uint64) bool {
+	if e.lock != nil && e.lock.startTS == startTS {
+		return true
+	}
+	for _, item := range e.values {
+		if item.startTS == startTS {
+			return true
+		}
+		if item.commitTS < startTS {
+			return false
+		}
+	}
+	return false
+}
+
+func (e *mvccEntry) dumpMvccInfo() *kvrpcpb.MvccInfo {
+	info := &kvrpcpb.MvccInfo{}
+	if e.lock != nil {
+		info.Lock = &kvrpcpb.LockInfo{
+			Key:         e.key,
+			PrimaryLock: e.lock.primary,
+			LockVersion: e.lock.startTS,
+			LockTtl:     e.lock.ttl,
+		}
+	}
+
+	info.Writes = make([]*kvrpcpb.WriteInfo, len(e.values), len(e.values))
+	info.Values = make([]*kvrpcpb.ValueInfo, len(e.values), len(e.values))
+
+	for id, item := range e.values {
+		tp := kvrpcpb.Op_Put
+		switch item.valueType {
+		case typeDelete:
+			tp = kvrpcpb.Op_Del
+		case typeRollback:
+			tp = kvrpcpb.Op_Rollback
+		}
+		info.Writes[id] = &kvrpcpb.WriteInfo{
+			StartTs:  item.startTS,
+			Type:     tp,
+			CommitTs: item.commitTS,
+		}
+
+		info.Values[id] = &kvrpcpb.ValueInfo{
+			Value: item.value,
+			Ts:    item.startTS,
+		}
+	}
+	return info
+}
+
 type rawEntry struct {
 	key   []byte
 	value []byte
@@ -545,6 +596,35 @@ func (s *MvccStore) RawScan(startKey, endKey []byte, limit int) []Pair {
 	}
 	s.rawkv.AscendGreaterOrEqual(newRawEntry(startKey), iterator)
 	return pairs
+}
+
+// MvccGetByStartTS gets mvcc info for the primary key with startTS
+func (s MvccStore) MvccGetByStartTS(starTS uint64) *kvrpcpb.MvccInfo {
+	startKey := NewMvccKey([]byte(""))
+	var info *kvrpcpb.MvccInfo
+	iterator := func(item llrb.Item) bool {
+		k := item.(*mvccEntry)
+		if k.containsStartTS(starTS) {
+			info = k.dumpMvccInfo()
+			return false
+		}
+		return true
+	}
+	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
+	return info
+}
+
+// MvccGetByKey gets mvcc info for the key
+func (s MvccStore) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
+	s.RLock()
+	defer s.RUnlock()
+
+	resp := s.tree.Get(newEntry(NewMvccKey(key)))
+	if resp == nil {
+		return nil
+	}
+	entry := resp.(*mvccEntry)
+	return entry.dumpMvccInfo()
 }
 
 // MvccKey is the encoded key type.

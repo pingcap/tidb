@@ -20,9 +20,12 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
@@ -31,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	goctx "golang.org/x/net/context"
@@ -40,6 +44,8 @@ const (
 	pDBName    = "db"
 	pTableName = "table"
 	pRegionID  = "regionID"
+	pRecordID  = "recordID"
+	pStartTS   = "startTS"
 )
 
 const (
@@ -160,6 +166,7 @@ type regionHandlerTool struct {
 	bo          *tikv.Backoffer
 	infoSchema  infoschema.InfoSchema
 	regionCache *tikv.RegionCache
+	store       kvStore
 }
 
 func (s *Server) newRegionHandler(pdClient pd.Client) RegionHandler {
@@ -305,6 +312,11 @@ func (rh RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	rh.writeData(w, regionDetail)
 }
 
+type kvStore interface {
+	LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.KeyLocation, error)
+	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
+}
+
 // prepare checks and prepares for region request. It returns
 // regionHandlerTool on success while return an err on any
 // error happens.
@@ -318,7 +330,8 @@ func (rh *RegionHandler) prepare() (tool *regionHandlerTool, err error) {
 	// create regionCache.
 	regionCache := tikv.NewRegionCache(rh.pdClient)
 	var session tidb.Session
-	session, err = tidb.CreateSession(rh.server.driver.(*TiDBDriver).store)
+	store := rh.server.driver.(*TiDBDriver).store
+	session, err = tidb.CreateSession(store)
 	if err != nil {
 		err = errors.Trace(err)
 		return
@@ -332,6 +345,7 @@ func (rh *RegionHandler) prepare() (tool *regionHandlerTool, err error) {
 		regionCache: regionCache,
 		bo:          backOffer,
 		infoSchema:  infoSchema,
+		store:       store.(kvStore),
 	}
 	return
 }
@@ -479,4 +493,150 @@ func (ir RegionFrameRange) firstTableID() int64 {
 
 func (ir RegionFrameRange) lastTableID() int64 {
 	return ir.last.TableID
+}
+
+// MvccTxnHandler is the handler for txn debugger
+type MvccTxnHandler struct {
+	RegionHandler
+	op string
+}
+
+const (
+	opMvccGetByKey = "key"
+	opMvccGetByTXN = "txn"
+)
+
+func (s *Server) newMvccTxnHandler(pdClient pd.Client, op string) MvccTxnHandler {
+	return MvccTxnHandler{
+		s.newRegionHandler(pdClient),
+		op,
+	}
+}
+
+// ServeHTTP handles request of list a table's regions.
+func (rh MvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	var data interface{}
+	var err error
+	params := mux.Vars(req)
+	if rh.op == opMvccGetByKey {
+		data, err = rh.handleMvccGetByKey(params)
+	}
+	if err != nil {
+		rh.writeError(w, err)
+	} else {
+		rh.writeData(w, data)
+	}
+
+}
+func (rh MvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{}, error) {
+	recordID, err := strconv.ParseInt(params[pRecordID], 0, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	// check and prepare tools
+	tool, err := rh.prepare()
+	if err != nil {
+		return nil, err
+	}
+
+	tableID, err := tool.getTableID(params[pDBName], params[pTableName])
+	if err != nil {
+		return nil, err
+	}
+	return tool.getMvccByRecordID(tableID, recordID)
+}
+
+func (rh MvccTxnHandler) handleMvccGetByTXN(params map[string]string) (interface{}, error) {
+	startTS, err := strconv.ParseInt(params[pStartTS], 0, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	// check and prepare tools
+	tool, err := rh.prepare()
+	if err != nil {
+		return nil, err
+	}
+
+	startKey := []byte("")
+	endKey := []byte("")
+	dbName := params[pDBName]
+	if len(dbName) > 0 {
+		tableID, err := tool.getTableID(params[pDBName], params[pTableName])
+		if err != nil {
+			return nil, err
+		}
+		startKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MinInt64)
+		endKey = tablecodec.EncodeTableIndexPrefix(tableID, math.MaxInt64)
+	}
+	return tool.getMvccByStartTs(uint64(startTS), startKey, endKey)
+}
+
+func (tool *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	encodeKey := tablecodec.EncodeRowKeyWithHandle(tableID, recordID)
+	keyLocation, err := tool.store.LocateKey(tool.bo, encodeKey)
+	if err != nil {
+		return nil, err
+	}
+
+	tikvReq := &tikvrpc.Request{
+		Type:     tikvrpc.CmdMvccGetByKey,
+		Priority: kvrpcpb.CommandPri_Normal,
+		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
+			Key: encodeKey,
+		},
+	}
+	kvResp, err := tool.store.SendReq(tool.bo, tikvReq, keyLocation.Region, time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	return kvResp.MvccGetByKey, nil
+}
+
+func (tool *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
+	for {
+		curRegion, err := tool.store.LocateKey(tool.bo, startKey)
+		if err != nil {
+			log.Error(startTS, startKey, err)
+			return nil, errors.Trace(err)
+		}
+
+		tikvReq := &tikvrpc.Request{
+			Type:     tikvrpc.CmdMvccGetByStartTs,
+			Priority: kvrpcpb.CommandPri_Normal,
+			MvccGetByStartTs: &kvrpcpb.MvccGetByStartTsRequest{
+				StartTs: startTS,
+			},
+		}
+		kvResp, err := tool.store.SendReq(tool.bo, tikvReq, curRegion.Region, time.Minute)
+		log.Info(startTS, startKey, curRegion, kvResp)
+		if err != nil {
+			log.Error(startTS, startKey, curRegion, err)
+			return nil, err
+		}
+		data := kvResp.MvccGetByStartTS
+		if err := data.GetRegionError(); err != nil {
+			log.Warn(startTS, startKey, curRegion, err)
+			continue
+		}
+
+		info := data.GetInfo()
+		if info != nil && (info.Lock != nil || len(info.Writes) > 0) {
+			return data, nil
+		}
+
+		if len(endKey) > 0 && curRegion.Contains(endKey) {
+			return nil, nil
+		}
+		startKey = curRegion.EndKey
+	}
+}
+
+func (tool *regionHandlerTool) getTableID(dbName, tableName string) (int64, error) {
+	table, err := tool.infoSchema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	if err != nil {
+		return 0, err
+	}
+	return table.Meta().ID, nil
 }

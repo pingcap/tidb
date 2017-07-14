@@ -43,27 +43,32 @@ const (
 	CmdRawScan
 
 	CmdCop CmdType = 512 + iota
+
+	CmdMvccGetByKey CmdType = 1024 + iota
+	CmdMvccGetByStartTs
 )
 
 // Request wraps all kv/coprocessor requests.
 type Request struct {
-	Type          CmdType
-	Priority      kvrpcpb.CommandPri
-	Get           *kvrpcpb.GetRequest
-	Scan          *kvrpcpb.ScanRequest
-	Prewrite      *kvrpcpb.PrewriteRequest
-	Commit        *kvrpcpb.CommitRequest
-	Cleanup       *kvrpcpb.CleanupRequest
-	BatchGet      *kvrpcpb.BatchGetRequest
-	BatchRollback *kvrpcpb.BatchRollbackRequest
-	ScanLock      *kvrpcpb.ScanLockRequest
-	ResolveLock   *kvrpcpb.ResolveLockRequest
-	GC            *kvrpcpb.GCRequest
-	RawGet        *kvrpcpb.RawGetRequest
-	RawPut        *kvrpcpb.RawPutRequest
-	RawDelete     *kvrpcpb.RawDeleteRequest
-	RawScan       *kvrpcpb.RawScanRequest
-	Cop           *coprocessor.Request
+	Type             CmdType
+	Priority         kvrpcpb.CommandPri
+	Get              *kvrpcpb.GetRequest
+	Scan             *kvrpcpb.ScanRequest
+	Prewrite         *kvrpcpb.PrewriteRequest
+	Commit           *kvrpcpb.CommitRequest
+	Cleanup          *kvrpcpb.CleanupRequest
+	BatchGet         *kvrpcpb.BatchGetRequest
+	BatchRollback    *kvrpcpb.BatchRollbackRequest
+	ScanLock         *kvrpcpb.ScanLockRequest
+	ResolveLock      *kvrpcpb.ResolveLockRequest
+	GC               *kvrpcpb.GCRequest
+	RawGet           *kvrpcpb.RawGetRequest
+	RawPut           *kvrpcpb.RawPutRequest
+	RawDelete        *kvrpcpb.RawDeleteRequest
+	RawScan          *kvrpcpb.RawScanRequest
+	Cop              *coprocessor.Request
+	MvccGetByKey     *kvrpcpb.MvccGetByKeyRequest
+	MvccGetByStartTs *kvrpcpb.MvccGetByStartTsRequest
 }
 
 // GetContext returns the rpc context for the underlying concrete request.
@@ -100,6 +105,10 @@ func (req *Request) GetContext() (*kvrpcpb.Context, error) {
 		c = req.RawScan.GetContext()
 	case CmdCop:
 		c = req.Cop.GetContext()
+	case CmdMvccGetByKey:
+		c = req.MvccGetByKey.GetContext()
+	case CmdMvccGetByStartTs:
+		c = req.MvccGetByStartTs.GetContext()
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -108,22 +117,24 @@ func (req *Request) GetContext() (*kvrpcpb.Context, error) {
 
 // Response wraps all kv/coprocessor responses.
 type Response struct {
-	Type          CmdType
-	Get           *kvrpcpb.GetResponse
-	Scan          *kvrpcpb.ScanResponse
-	Prewrite      *kvrpcpb.PrewriteResponse
-	Commit        *kvrpcpb.CommitResponse
-	Cleanup       *kvrpcpb.CleanupResponse
-	BatchGet      *kvrpcpb.BatchGetResponse
-	BatchRollback *kvrpcpb.BatchRollbackResponse
-	ScanLock      *kvrpcpb.ScanLockResponse
-	ResolveLock   *kvrpcpb.ResolveLockResponse
-	GC            *kvrpcpb.GCResponse
-	RawGet        *kvrpcpb.RawGetResponse
-	RawPut        *kvrpcpb.RawPutResponse
-	RawDelete     *kvrpcpb.RawDeleteResponse
-	RawScan       *kvrpcpb.RawScanResponse
-	Cop           *coprocessor.Response
+	Type             CmdType
+	Get              *kvrpcpb.GetResponse
+	Scan             *kvrpcpb.ScanResponse
+	Prewrite         *kvrpcpb.PrewriteResponse
+	Commit           *kvrpcpb.CommitResponse
+	Cleanup          *kvrpcpb.CleanupResponse
+	BatchGet         *kvrpcpb.BatchGetResponse
+	BatchRollback    *kvrpcpb.BatchRollbackResponse
+	ScanLock         *kvrpcpb.ScanLockResponse
+	ResolveLock      *kvrpcpb.ResolveLockResponse
+	GC               *kvrpcpb.GCResponse
+	RawGet           *kvrpcpb.RawGetResponse
+	RawPut           *kvrpcpb.RawPutResponse
+	RawDelete        *kvrpcpb.RawDeleteResponse
+	RawScan          *kvrpcpb.RawScanResponse
+	Cop              *coprocessor.Response
+	MvccGetByKey     *kvrpcpb.MvccGetByKeyResponse
+	MvccGetByStartTS *kvrpcpb.MvccGetByStartTsResponse
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
@@ -160,6 +171,10 @@ func SetContext(req *Request, ctx *kvrpcpb.Context) error {
 		req.RawScan.Context = ctx
 	case CmdCop:
 		req.Cop.Context = ctx
+	case CmdMvccGetByKey:
+		req.MvccGetByKey.Context = ctx
+	case CmdMvccGetByStartTs:
+		req.MvccGetByStartTs.Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -232,6 +247,14 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.Cop = &coprocessor.Response{
 			RegionError: e,
 		}
+	case CmdMvccGetByKey:
+		resp.MvccGetByKey = &kvrpcpb.MvccGetByKeyResponse{
+			RegionError: e,
+		}
+	case CmdMvccGetByStartTs:
+		resp.MvccGetByStartTS = &kvrpcpb.MvccGetByStartTsResponse{
+			RegionError: e,
+		}
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -272,6 +295,10 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.RawScan.GetRegionError()
 	case CmdCop:
 		e = resp.Cop.GetRegionError()
+	case CmdMvccGetByKey:
+		e = resp.MvccGetByKey.GetRegionError()
+	case CmdMvccGetByStartTs:
+		e = resp.MvccGetByStartTS.GetRegionError()
 	default:
 		return nil, fmt.Errorf("invalid response type %v", resp.Type)
 	}

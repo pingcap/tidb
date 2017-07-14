@@ -295,6 +295,10 @@ func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID Region
 	return sender.SendReq(bo, req, regionID, timeout)
 }
 
+func (s *tikvStore) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
+	return s.regionCache.LocateKey(bo, key)
+}
+
 // ParseEtcdAddr parses path to etcd address list
 func ParseEtcdAddr(path string) (etcdAddrs []string, err error) {
 	etcdAddrs, _, err = parsePath(path)
