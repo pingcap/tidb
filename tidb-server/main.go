@@ -162,7 +162,7 @@ func main() {
 				} else {
 					certPool = x509.NewCertPool()
 					if certPool.AppendCertsFromPEM(caCert) {
-						clientAuthPolicy = tls.RequireAndVerifyClientCert
+						clientAuthPolicy = tls.VerifyClientCertIfGiven
 					}
 				}
 			}
