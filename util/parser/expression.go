@@ -75,8 +75,8 @@ func ParseExpression(expr string) (node ast.ExprNode, err error) {
 	return node, errors.Trace(err)
 }
 
-// SimplyInferType resolves names of table and column in node, and then infer type on them.
-func SimplyInferType(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNode, error) {
+// SimpleResolveName resolves all column names in the expression node.
+func SimpleResolveName(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNode, error) {
 	nr := nameResolver{tblInfo, nil}
 	if _, ok := node.Accept(&nr); !ok {
 		return nil, errors.Trace(nr.err)
