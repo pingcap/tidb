@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package server
 
 import (
@@ -23,21 +24,21 @@ import (
 )
 
 const (
-	ProxyProtocolV1MaxHeaderLen = 108
+	proxyProtocolV1MaxHeaderLen = 108
 )
 
 var (
 	errProxyProtocolV1HeaderNotValid = errors.New("PROXY Protocol header not valid")
 )
 
-type ProxyProtocolEncoder struct {
+type proxyProtocolDecoder struct {
 	allowAll    bool
 	allowedNets []*net.IPNet
 }
 
-func NewProxyProtocolEncoder(allowedIPs string) (*ProxyProtocolEncoder, error) {
-	var allowAll bool = false
-	var allowedNets []*net.IPNet = []*net.IPNet{}
+func newProxyProtocolDecoder(allowedIPs string) (*proxyProtocolDecoder, error) {
+	allowAll := false
+	allowedNets := []*net.IPNet{}
 	if allowedIPs == "*" {
 		allowAll = true
 	} else {
@@ -56,13 +57,13 @@ func NewProxyProtocolEncoder(allowedIPs string) (*ProxyProtocolEncoder, error) {
 			allowedNets = append(allowedNets, ipnet)
 		}
 	}
-	return &ProxyProtocolEncoder{
+	return &proxyProtocolDecoder{
 		allowAll:    allowAll,
 		allowedNets: allowedNets,
 	}, nil
 }
 
-func (e *ProxyProtocolEncoder) checkAllowed(raddr net.Addr) bool {
+func (e *proxyProtocolDecoder) checkAllowed(raddr net.Addr) bool {
 	if e.allowAll {
 		return true
 	}
@@ -79,7 +80,7 @@ func (e *ProxyProtocolEncoder) checkAllowed(raddr net.Addr) bool {
 	return false
 }
 
-func (e *ProxyProtocolEncoder) GetRealClientAddr(conn net.Conn) net.Addr {
+func (e *proxyProtocolDecoder) getRealClientAddr(conn net.Conn) net.Addr {
 	connRemoteAddr := conn.RemoteAddr()
 	allowed := e.checkAllowed(connRemoteAddr)
 	if !allowed {
@@ -93,7 +94,7 @@ func (e *ProxyProtocolEncoder) GetRealClientAddr(conn net.Conn) net.Addr {
 	return raddr
 }
 
-func (e *ProxyProtocolEncoder) parseHeaderV1(conn io.Reader) (net.Addr, error) {
+func (e *proxyProtocolDecoder) parseHeaderV1(conn io.Reader) (net.Addr, error) {
 	buffer, err := e.readHeaderV1(conn)
 	if err != nil {
 		return nil, err
@@ -105,7 +106,7 @@ func (e *ProxyProtocolEncoder) parseHeaderV1(conn io.Reader) (net.Addr, error) {
 	return raddr, nil
 }
 
-func (e *ProxyProtocolEncoder) extractClientIPV1(buffer []byte) (net.Addr, error) {
+func (e *proxyProtocolDecoder) extractClientIPV1(buffer []byte) (net.Addr, error) {
 	header := string(buffer)
 	parts := strings.Split(header, " ")
 	if len(parts) < 5 {
@@ -125,11 +126,11 @@ func (e *ProxyProtocolEncoder) extractClientIPV1(buffer []byte) (net.Addr, error
 	}
 }
 
-func (e *ProxyProtocolEncoder) readHeaderV1(conn io.Reader) ([]byte, error) {
-	buf := make([]byte, ProxyProtocolV1MaxHeaderLen)
+func (e *proxyProtocolDecoder) readHeaderV1(conn io.Reader) ([]byte, error) {
+	buf := make([]byte, proxyProtocolV1MaxHeaderLen)
 	var pre, cur byte
 	var i int
-	for i = 0; i < ProxyProtocolV1MaxHeaderLen; i++ {
+	for i = 0; i < proxyProtocolV1MaxHeaderLen; i++ {
 		_, err := conn.Read(buf[i : i+1])
 		if err != nil {
 			return nil, err

@@ -20,41 +20,41 @@ import (
 	. "github.com/pingcap/check"
 )
 
-type ProxyProtocolEncoderTestSuite struct{}
+type ProxyProtocolDecoderTestSuite struct{}
 
-var _ = Suite(ProxyProtocolEncoderTestSuite{})
+var _ = Suite(ProxyProtocolDecoderTestSuite{})
 
-func (ts ProxyProtocolEncoderTestSuite) TestProxyProtocolCheckAllowed(c *C) {
-	ppe, _ := NewProxyProtocolEncoder("*")
+func (ts ProxyProtocolDecoderTestSuite) TestProxyProtocolCheckAllowed(c *C) {
+	ppd, _ := newProxyProtocolDecoder("*")
 	raddr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.100:8080")
-	c.Assert(ppe.checkAllowed(raddr), IsTrue)
-	ppe, _ = NewProxyProtocolEncoder("192.168.1.0/24,192.168.2.0/24")
+	c.Assert(ppd.checkAllowed(raddr), IsTrue)
+	ppd, _ = newProxyProtocolDecoder("192.168.1.0/24,192.168.2.0/24")
 	for _, ipstr := range []string{"192.168.1.100:8080", "192.168.2.100:8080"} {
 		raddr, _ := net.ResolveTCPAddr("tcp4", ipstr)
-		c.Assert(ppe.checkAllowed(raddr), IsTrue)
+		c.Assert(ppd.checkAllowed(raddr), IsTrue)
 	}
 	for _, ipstr := range []string{"192.168.3.100:8080", "192.168.4.100:8080"} {
 		raddr, _ := net.ResolveTCPAddr("tcp4", ipstr)
-		c.Assert(ppe.checkAllowed(raddr), IsFalse)
+		c.Assert(ppd.checkAllowed(raddr), IsFalse)
 	}
 }
 
-func (ts ProxyProtocolEncoderTestSuite) TestProxyProtocolV1ReadHeader(c *C) {
+func (ts ProxyProtocolDecoderTestSuite) TestProxyProtocolV1ReadHeader(c *C) {
 	buffer := []byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\nOther Data")
 	expectHeader := []byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\n")
 	reader := bytes.NewBuffer(buffer)
-	ppe, _ := NewProxyProtocolEncoder("*")
-	header, err := ppe.readHeaderV1(reader)
+	ppd, _ := newProxyProtocolDecoder("*")
+	header, err := ppd.readHeaderV1(reader)
 	c.Assert(err, IsNil)
 	c.Assert(string(header), Equals, string(expectHeader))
 }
 
-func (ts ProxyProtocolEncoderTestSuite) TestProxyProtocolV1ExtractClientIP(c *C) {
+func (ts ProxyProtocolDecoderTestSuite) TestProxyProtocolV1ExtractClientIP(c *C) {
 	buffer := []byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\nOther Data")
 	expectClientIP := "192.168.1.100:5678"
 	reader := bytes.NewBuffer(buffer)
-	ppe, _ := NewProxyProtocolEncoder("*")
-	clientIP, err := ppe.parseHeaderV1(reader)
+	ppd, _ := newProxyProtocolDecoder("*")
+	clientIP, err := ppd.parseHeaderV1(reader)
 	c.Assert(err, IsNil)
 	c.Assert(clientIP.String(), Equals, expectClientIP)
 }

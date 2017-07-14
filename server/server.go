@@ -72,7 +72,7 @@ type Server struct {
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
 
-	proxyProtocolEncoder *ProxyProtocolEncoder
+	ppDecoder *proxyProtocolDecoder
 }
 
 // ConnectionCount gets current connection count.
@@ -106,11 +106,10 @@ func randomBuf(size int) []byte {
 }
 
 func (s *Server) getRealRemoteAddr(conn net.Conn) net.Addr {
-	if s.proxyProtocolEncoder == nil {
+	if s.ppDecoder == nil {
 		return conn.RemoteAddr()
-	} else {
-		return s.proxyProtocolEncoder.GetRealClientAddr(conn)
 	}
+	return s.ppDecoder.getRealClientAddr(conn)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -138,21 +137,21 @@ const tokenLimit = 1000
 // NewServer creates a new Server.
 func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 	var err error
-	var ppe *ProxyProtocolEncoder = nil
+	var ppd *proxyProtocolDecoder
 	if cfg.ProxyProtocol != "" {
-		ppe, err = NewProxyProtocolEncoder(cfg.ProxyProtocol)
+		ppd, err = newProxyProtocolDecoder(cfg.ProxyProtocol)
 		if err != nil {
 			log.Infof("ProxyProtocol parameter is not valid")
 		}
 	}
 	s := &Server{
-		cfg:                  cfg,
-		driver:               driver,
-		concurrentLimiter:    NewTokenLimiter(tokenLimit),
-		rwlock:               &sync.RWMutex{},
-		clients:              make(map[uint32]*clientConn),
-		stopListenerCh:       make(chan struct{}, 1),
-		proxyProtocolEncoder: ppe,
+		cfg:               cfg,
+		driver:            driver,
+		concurrentLimiter: NewTokenLimiter(tokenLimit),
+		rwlock:            &sync.RWMutex{},
+		clients:           make(map[uint32]*clientConn),
+		stopListenerCh:    make(chan struct{}, 1),
+		ppDecoder:         ppd,
 	}
 
 	if cfg.Socket != "" {
