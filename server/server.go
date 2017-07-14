@@ -71,6 +71,8 @@ type Server struct {
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
+
+	proxyProtocolEncoder *ProxyProtocolEncoder
 }
 
 // ConnectionCount gets current connection count.
@@ -103,6 +105,14 @@ func randomBuf(size int) []byte {
 	return buf
 }
 
+func (s *Server) getRealRemoteAddr(conn net.Conn) net.Addr {
+	if s.proxyProtocolEncoder == nil {
+		return conn.RemoteAddr()
+	} else {
+		return s.proxyProtocolEncoder.GetRealClientAddr(conn)
+	}
+}
+
 // newConn creates a new *clientConn from a net.Conn.
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
@@ -127,16 +137,24 @@ const tokenLimit = 1000
 
 // NewServer creates a new Server.
 func NewServer(cfg *Config, driver IDriver) (*Server, error) {
+	var err error
+	var ppe *ProxyProtocolEncoder = nil
+	if cfg.ProxyProtocol != "" {
+		ppe, err = NewProxyProtocolEncoder(cfg.ProxyProtocol)
+		if err != nil {
+			log.Infof("ProxyProtocol parameter is not valid")
+		}
+	}
 	s := &Server{
-		cfg:               cfg,
-		driver:            driver,
-		concurrentLimiter: NewTokenLimiter(tokenLimit),
-		rwlock:            &sync.RWMutex{},
-		clients:           make(map[uint32]*clientConn),
-		stopListenerCh:    make(chan struct{}, 1),
+		cfg:                  cfg,
+		driver:               driver,
+		concurrentLimiter:    NewTokenLimiter(tokenLimit),
+		rwlock:               &sync.RWMutex{},
+		clients:              make(map[uint32]*clientConn),
+		stopListenerCh:       make(chan struct{}, 1),
+		proxyProtocolEncoder: ppe,
 	}
 
-	var err error
 	if cfg.Socket != "" {
 		cfg.SkipAuth = true
 		s.listener, err = net.Listen("unix", cfg.Socket)

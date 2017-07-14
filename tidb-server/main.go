@@ -66,6 +66,7 @@ var (
 	runDDL          = flag.Bool("run-ddl", true, "run ddl worker on this tidb-server")
 	retryLimit      = flag.Int("retry-limit", 10, "the maximum number of retries when commit a transaction")
 	skipGrantTable  = flag.Bool("skip-grant-table", false, "This option causes the server to start without using the privilege system at all.")
+	proxyProtocol   = flag.String("proxy-protocol", "", "proxy protocol allowed IP or *, empty mean do not use proxy protocol")
 
 	timeJumpBackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -101,13 +102,14 @@ func main() {
 	tidb.SetCommitRetryLimit(*retryLimit)
 
 	cfg := &server.Config{
-		Addr:         fmt.Sprintf("%s:%s", *host, *port),
-		LogLevel:     *logLevel,
-		StatusAddr:   fmt.Sprintf(":%s", *statusPort),
-		Socket:       *socket,
-		ReportStatus: *reportStatus,
-		Store:        *store,
-		StorePath:    *storePath,
+		Addr:          fmt.Sprintf("%s:%s", *host, *port),
+		LogLevel:      *logLevel,
+		StatusAddr:    fmt.Sprintf(":%s", *statusPort),
+		Socket:        *socket,
+		ReportStatus:  *reportStatus,
+		Store:         *store,
+		StorePath:     *storePath,
+		ProxyProtocol: *proxyProtocol,
 	}
 
 	// set log options
