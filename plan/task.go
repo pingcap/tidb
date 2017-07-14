@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
-	"math"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
