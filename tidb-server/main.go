@@ -149,37 +149,36 @@ func main() {
 	if cfg.SSLEnabled {
 		tlsCert, err := tls.LoadX509KeyPair(*sslCertPath, *sslKeyPath)
 		if err != nil {
-			log.Fatal(errors.ErrorStack(err))
-		}
-		log.Info("Loaded SSL certificates")
-
-		// try loading CA cert
-		clientAuthPolicy := tls.NoClientCert
-		var certPool *x509.CertPool
-		if len(*sslCAPath) > 0 {
-			caCert, err := ioutil.ReadFile(*sslCAPath)
-			if err != nil {
-				log.Fatal(errors.ErrorStack(err))
+			log.Warn(errors.ErrorStack(err))
+			cfg.SSLEnabled = false
+		} else {
+			// try loading CA cert
+			clientAuthPolicy := tls.NoClientCert
+			var certPool *x509.CertPool
+			if len(*sslCAPath) > 0 {
+				caCert, err := ioutil.ReadFile(*sslCAPath)
+				if err != nil {
+					log.Warn(errors.ErrorStack(err))
+				} else {
+					certPool = x509.NewCertPool()
+					if certPool.AppendCertsFromPEM(caCert) {
+						clientAuthPolicy = tls.RequireAndVerifyClientCert
+					}
+				}
 			}
-			certPool = x509.NewCertPool()
-			if certPool.AppendCertsFromPEM(caCert) {
-				log.Info("Loaded CA certificate")
-				clientAuthPolicy = tls.RequireAndVerifyClientCert
+			tlsConfig = &tls.Config{
+				Certificates: []tls.Certificate{tlsCert},
+				ClientCAs:    certPool,
+				ClientAuth:   clientAuthPolicy,
+				MinVersion:   0,
 			}
-		}
-
-		tlsConfig = &tls.Config{
-			Certificates: []tls.Certificate{tlsCert},
-			ClientCAs:    certPool,
-			ClientAuth:   clientAuthPolicy,
-			MinVersion:   0,
 		}
 	}
 
 	if cfg.SSLEnabled {
-		log.Info("SSL connection is enabled")
+		log.Info("Secure connection is enabled")
 	} else {
-		log.Info("SSL connection is disabled")
+		log.Warn("Secure connection is NOT ENABLED")
 	}
 
 	store := createStore()
