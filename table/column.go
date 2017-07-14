@@ -360,6 +360,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetMysqlBit(types.Bit{Value: 0, Width: types.MinBitWidth})
 	case mysql.TypeSet:
 		d.SetMysqlSet(types.Set{})
+	case mysql.TypeEnum:
+		d.SetMysqlEnum(types.Enum{})
 	}
 	return d
 }
