@@ -601,10 +601,6 @@ type InsertValues struct {
 type InsertExec struct {
 	*InsertValues
 
-	// When the statement contains on-duplicate-update,
-	// it'll be writable columns, otherwise public columns.
-	FetchColumns []*table.Column
-
 	OnDuplicate []*expression.Assignment
 
 	Priority mysql.PriorityEnum
