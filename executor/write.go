@@ -47,6 +47,10 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed = false
 	var handleChanged = false
+	var onUpdate = make([]bool, len(touched))
+
+	// We can iterate on public columns not writable columns,
+	// because all writable columns are after public columns.
 	for i, col := range t.Cols() {
 		v, err := table.CastValue(ctx, newData[i], col.ToInfo())
 		if err != nil {
@@ -75,21 +79,23 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 				handleChanged = true
 			}
 		} else {
+			if mysql.HasOnUpdateNowFlag(col.Flag) && touched[i] {
+				// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
+				onUpdate[i] = true
+			}
 			touched[i] = false
+
 		}
 	}
 	for i, col := range t.Cols() {
-		if !touched[i] {
-			if mysql.HasOnUpdateNowFlag(col.Flag) {
-				v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
-				if err != nil {
-					return false, errors.Trace(err)
-				}
-				newData[i] = v
-				touched[i] = true
-			} else {
-				continue
+		if mysql.HasOnUpdateNowFlag(col.Flag) && !touched[i] && !onUpdate[i] {
+			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
+			if err != nil {
+				return false, errors.Trace(err)
 			}
+			newData[i] = v
+		} else {
+			continue
 		}
 	}
 
