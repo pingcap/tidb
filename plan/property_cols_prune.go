@@ -13,7 +13,9 @@
 
 package plan
 
-import "github.com/pingcap/tidb/expression"
+import (
+	"github.com/pingcap/tidb/expression"
+)
 
 func (p *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
 	indices, includeTS := availableIndices(p.indexHints, p.tableInfo)
@@ -37,6 +39,9 @@ func (p *Selection) preparePossibleProperties() (result [][]*expression.Column) 
 }
 
 func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
+	if len(p.basePlan.children) > 0 {
+		p.basePlan.children[0].(LogicalPlan).preparePossibleProperties()
+	}
 	return nil
 }
 
