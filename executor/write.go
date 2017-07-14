@@ -93,7 +93,8 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		}
 	}
 
-	if err := table.CheckNotNull(t.Cols(), newData); err != nil {
+	err := table.CheckNotNull(t.Cols(), newData)
+	if err != nil {
 		return false, errors.Trace(err)
 	}
 
