@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -34,6 +35,8 @@ var (
 	_ SelectResult  = &selectResult{}
 	_ PartialResult = &partialResult{}
 )
+
+var selectResultGP = gp.New(2 * time.Minute)
 
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
@@ -71,7 +74,9 @@ type resultWithErr struct {
 }
 
 func (r *selectResult) Fetch(ctx goctx.Context) {
-	go r.fetch(ctx)
+	selectResultGP.Go(func() {
+		r.fetch(ctx)
+	})
 }
 
 func (r *selectResult) fetch(ctx goctx.Context) {

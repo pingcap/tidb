@@ -23,6 +23,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	goctx "golang.org/x/net/context"
 )
 
@@ -42,6 +43,8 @@ type tikvSnapshot struct {
 	isolationLevel kv.IsoLevel
 	priority       pb.CommandPri
 }
+
+var snapshotGP = gp.New(time.Minute)
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
 func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
@@ -101,12 +104,13 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		return errors.Trace(s.batchGetSingleRegion(bo, batches[0], collectF))
 	}
 	ch := make(chan error)
-	for _, batch := range batches {
-		go func(batch batchKeys) {
+	for _, batch1 := range batches {
+		batch := batch1
+		snapshotGP.Go(func() {
 			backoffer, cancel := bo.Fork()
 			defer cancel()
 			ch <- s.batchGetSingleRegion(backoffer, batch, collectF)
-		}(batch)
+		})
 	}
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
