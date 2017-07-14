@@ -272,12 +272,17 @@ func (c *Cluster) GiveUpLeader(regionID uint64) {
 	c.ChangeLeader(regionID, 0)
 }
 
-// Split splits a Region at the key and creates new Region.
+// Split splits a Region at the key (encoded) and creates new Region.
 func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, peerIDs []uint64, leaderPeerID uint64) {
+	c.SplitRaw(regionID, newRegionID, NewMvccKey(key), peerIDs, leaderPeerID)
+}
+
+// SplitRaw splits a Region at the key (not encoded) and creates new Region.
+func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) {
 	c.Lock()
 	defer c.Unlock()
 
-	newRegion := c.regions[regionID].split(newRegionID, []byte(NewMvccKey(key)), peerIDs, leaderPeerID)
+	newRegion := c.regions[regionID].split(newRegionID, []byte(rawKey), peerIDs, leaderPeerID)
 	c.regions[newRegionID] = newRegion
 }
 

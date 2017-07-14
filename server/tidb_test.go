@@ -15,6 +15,7 @@
 package server
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/ngaut/log"
@@ -130,4 +131,50 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 	runTestRegression(c, "SocketRegression")
 	dsn = tcpDsn
 	server.Close()
+}
+
+func (ts *TidbTestSuite) TestIssue3662(c *C) {
+	c.Parallel()
+	db, err := sql.Open("mysql", "root@tcp(localhost:4001)/a_database_not_exist")
+	c.Assert(err, IsNil)
+	defer db.Close()
+
+	// According to documentation, "Open may just validate its arguments without
+	// creating a connection to the database. To verify that the data source name
+	// is valid, call Ping."
+	err = db.Ping()
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Error 1049: Unknown database 'a_database_not_exist'")
+}
+
+func (ts *TidbTestSuite) TestIssue3680(c *C) {
+	c.Parallel()
+	db, err := sql.Open("mysql", "non_existing_user@tcp(127.0.0.1:4001)/")
+	c.Assert(err, IsNil)
+	defer db.Close()
+
+	// According to documentation, "Open may just validate its arguments without
+	// creating a connection to the database. To verify that the data source name
+	// is valid, call Ping."
+	err = db.Ping()
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: YES)")
+}
+
+func (ts *TidbTestSuite) TestDBNameEscape(c *C) {
+	c.Parallel()
+	runTests(c, dsn, func(dbt *DBTest) {
+		dbt.mustExec("create database `aa-a`;")
+	})
+	// The database name is aa-a, '-' is not permitted as identifier, it should be `aa-a` to be a legal sql.
+	db, err := sql.Open("mysql", "root@tcp(127.0.0.1:4001)/aa-a")
+	c.Assert(err, IsNil)
+	defer db.Close()
+	c.Assert(db.Ping(), IsNil)
+	_, err = db.Exec("drop database `aa-a`")
+	c.Assert(err, IsNil)
+}
+
+func (ts *TidbTestSuite) TestIssue3682(c *C) {
+	runTestIssue3682(c)
 }

@@ -317,7 +317,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		GenColumns: v.GenCols.Columns,
 		GenExprs:   v.GenCols.Exprs,
 	}
-	tableCols := tbl.WritableCols()
+	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {
 		b.err = errors.Trace(err)

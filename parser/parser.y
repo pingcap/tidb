@@ -504,6 +504,8 @@ import (
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
 	stats		"STATS"
+	statsBuckets	"STATS_BUCKETS"
+	statsHistograms	"STATS_HISTOGRAMS"
 	statsMeta	"STATS_META"
 	status		"STATUS"
 	super		"SUPER"
@@ -728,6 +730,7 @@ import (
 	SelectStmtLimit		"SELECT statement optional LIMIT clause"
 	SelectStmtOpts		"Select statement options"
 	SelectStmtGroup		"SELECT statement optional GROUP BY clause"
+	SetExpr			"Set variable statement value's expression"
 	SetStmt			"Set variable statement"
 	ShowStmt		"Show engines/databases/tables/columns/warnings/status statement"
 	ShowTargetFilterable    "Show target that can be filtered by WHERE or LIKE"
@@ -2365,7 +2368,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE" | "STATS" | "STATS_META"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -4900,16 +4903,23 @@ IsolationLevel:
 |	"READ"	"UNCOMMITTED"
 |	"SERIALIZABLE"
 
+SetExpr:
+    "ON"
+    {
+		$$ = ast.NewValueExpr("ON")
+    }
+|   Expression
+
 VariableAssignment:
-	Identifier eq Expression
+	Identifier eq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $1, Value: $3.(ast.ExprNode), IsSystem: true}
 	}
-|	"GLOBAL" Identifier eq Expression
+|	"GLOBAL" Identifier eq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4.(ast.ExprNode), IsGlobal: true, IsSystem: true}
 	}
-|	"SESSION" Identifier eq Expression
+|	"SESSION" Identifier eq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4.(ast.ExprNode), IsSystem: true}
 	}
@@ -4917,7 +4927,7 @@ VariableAssignment:
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4.(ast.ExprNode), IsSystem: true}
 	}
-|	"SYS_VAR" eq Expression
+|	"SYS_VAR" eq SetExpr
 	{
 		v := strings.ToLower($1.(string))
 		var isGlobal bool
@@ -5132,6 +5142,34 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|	"SHOW" "STATS_HISTOGRAMS" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowStatsHistograms,
+		}
+		if $3 != nil {
+			if x, ok := $3.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $3.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
+|	"SHOW" "STATS_BUCKETS" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowStatsBuckets,
+		}
+		if $3 != nil {
+			if x, ok := $3.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $3.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
 
 ShowIndexKwd:
 	"INDEX"
@@ -5154,7 +5192,7 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
 	}
-|	"CHARACTER" "SET"
+|	CharsetKw
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowCharset}
 	}

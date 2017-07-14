@@ -482,6 +482,7 @@ type PhysicalIndexJoin struct {
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
+	outerIndex      int
 
 	DefaultValues []types.Datum
 }
@@ -500,6 +501,9 @@ type PhysicalMergeJoin struct {
 
 	DefaultValues []types.Datum
 	Desc          bool
+
+	leftKeys  []*expression.Column
+	rightKeys []*expression.Column
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.
