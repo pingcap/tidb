@@ -539,7 +539,7 @@ func (c *isIPv4CompatFunctionClass) getFunction(args []Expression, ctx context.C
 
 type builtinIsIPv4PrefixedSig struct {
 	baseBuiltinFunc
-	// true for `Is_IPv4_Mapped`, false for `Is_IPv4_Compat`
+	// isIPv4MappedPrefix true for `Is_IPv4_Mapped`, false for `Is_IPv4_Compat`
 	isIPv4MappedPrefix bool
 }
 
@@ -716,21 +716,24 @@ type uuidFunctionClass struct {
 }
 
 func (c *uuidFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinUUIDSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 36
+	bf.deterministic = false
+	sig := &builtinUUIDSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUUIDSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinUUIDSig.
+// evalString evals a builtinUUIDSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
-func (b *builtinUUIDSig) eval(_ []types.Datum) (d types.Datum, err error) {
-	d.SetString(uuid.NewV1().String())
-	return
+func (b *builtinUUIDSig) evalString(_ []types.Datum) (d string, isNull bool, err error) {
+	return uuid.NewV1().String(), false, nil
 }
 
 type uuidShortFunctionClass struct {
