@@ -263,7 +263,11 @@ func (b *baseIntBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil || isNull {
 		return d, errors.Trace(err)
 	}
-	d.SetInt64(res)
+	if mysql.HasUnsignedFlag(b.tp.Flag) {
+		d.SetUint64(uint64(res))
+	} else {
+		d.SetInt64(res)
+	}
 	return
 }
 
