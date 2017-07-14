@@ -1126,7 +1126,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			TblName:  tableInfo.Name,
 			DBName:   schemaName,
 			RetType:  &col.FieldType,
-			Position: i, // NOTE: Position can be discontinuous?
+			Position: i,
 			ID:       col.ID})
 	}
 	p.SetSchema(schema)
@@ -1135,7 +1135,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		idx := col.Position
 		colInfo := tableInfo.Columns[idx]
 		if len(colInfo.GeneratedExprString) != 0 && !colInfo.GeneratedStored {
-			column := tbl.Cols()[idx]
+			column := columns[idx]
 			expr, _, err := b.rewrite(column.GeneratedExpr, p, nil, true)
 			if err != nil {
 				b.err = errors.Trace(err)

@@ -918,10 +918,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 			needDefaultValue = true
 			// TODO: Append Warning ErrColumnCantNull.
 		}
-		if mysql.HasAutoIncrementFlag(c.Flag) {
-			needDefaultValue = false
-		}
-    if mysql.HasAutoIncrementFlag(c.Flag) || len(c.GeneratedExprString) != 0 {
+		if mysql.HasAutoIncrementFlag(c.Flag) || len(c.GeneratedExprString) != 0 {
 			// Just leave generated column as null. It will be calculated later
 			// but before we check whether the column can be null or not.
 			needDefaultValue = false
