@@ -65,7 +65,8 @@ var (
 	_ builtinFunc = &builtinAbsSig{}
 	_ builtinFunc = &builtinCeilSig{}
 	_ builtinFunc = &builtinFloorSig{}
-	_ builtinFunc = &builtinLogSig{}
+	_ builtinFunc = &builtinLog1ArgSig{}
+	_ builtinFunc = &builtinLog2ArgsSig{}
 	_ builtinFunc = &builtinLog2Sig{}
 	_ builtinFunc = &builtinLog10Sig{}
 	_ builtinFunc = &builtinRandSig{}
@@ -206,55 +207,73 @@ type logFunctionClass struct {
 }
 
 func (c *logFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLogSig{newBaseBuiltinFunc(args, ctx)}
+	var (
+		sig     builtinFunc
+		bf      baseBuiltinFunc
+		err     error
+		argsLen = len(args)
+	)
+
+	if argsLen == 1 {
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
+	}
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if argsLen == 1 {
+		sig = &builtinLog1ArgSig{baseRealBuiltinFunc{bf}}
+	} else {
+		sig = &builtinLog2ArgsSig{baseRealBuiltinFunc{bf}}
+	}
+
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinLogSig struct {
-	baseBuiltinFunc
+type builtinLog1ArgSig struct {
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinLogSig.
+// evalReal evals a builtinLog1ArgSig, corresponding to log(x).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log
-func (b *builtinLogSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinLog1ArgSig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
+	if val <= 0 {
+		return 0, true, nil
+	}
+	return math.Log(val), false, nil
+}
+
+type builtinLog2ArgsSig struct {
+	baseRealBuiltinFunc
+}
+
+// evalReal evals a builtinLog2ArgsSig, corresponding to log(b, x).
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log
+func (b *builtinLog2ArgsSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
-	switch len(args) {
-	case 1:
-		x, err := args[0].ToFloat64(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-		if x <= 0 {
-			return d, nil
-		}
-
-		d.SetFloat64(math.Log(x))
-		return d, nil
-	case 2:
-		b, err := args[0].ToFloat64(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-		x, err := args[1].ToFloat64(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-		if b <= 1 || x <= 0 {
-			return d, nil
-		}
-
-		d.SetFloat64(math.Log(x) / math.Log(b))
-		return d, nil
+	val1, isNull, err := b.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	return
+
+	val2, isNull, err := b.args[1].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	if val1 <= 0 || val1 == 1 || val2 <= 0 {
+		return 0, true, nil
+	}
+
+	return math.Log(val2) / math.Log(val1), false, nil
 }
 
 type log2FunctionClass struct {
