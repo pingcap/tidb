@@ -267,7 +267,7 @@ type builtinTiDBVersionSig struct {
 	baseStringBuiltinFunc
 }
 
-// eval evals a builtinTiDBVersionSig.
+// evalString evals a builtinTiDBVersionSig.
 // This will show git hash and build time for tidb-server.
 func (b *builtinTiDBVersionSig) evalString(_ []types.Datum) (string, bool, error) {
 	return printer.GetTiDBInfo(), false, nil
