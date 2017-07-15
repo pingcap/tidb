@@ -3739,6 +3739,7 @@ FunctionCallNonKeyword:
 |	"JSON_ARRAY" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
 |	"TIDB_VERSION" '(' ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
