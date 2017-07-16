@@ -939,10 +939,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	var err error
 	var recordID int64
 	if !row[i].IsNull() {
-		recordID, err = row[i].ToInt64(e.ctx.GetSessionVars().StmtCtx)
+		casted, err := table.CastValue(e.ctx, row[i], c.ColumnInfo)
 		if e.filterErr(errors.Trace(err), ignoreErr) != nil {
 			return errors.Trace(err)
 		}
+		recordID = casted.GetInt64()
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
