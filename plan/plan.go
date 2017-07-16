@@ -61,6 +61,8 @@ type Plan interface {
 	SetParents(...Plan)
 	// SetChildren sets the children for the plan.
 	SetChildren(...Plan)
+	// replaceEpxrColumns replace all the column reference in the plan's expression node
+	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() context.Context
 
@@ -206,9 +208,6 @@ type LogicalPlan interface {
 
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
-
-	// replaceEpxrColumns replace all the column reference in the plan's expression node
-	replaceExprColumns(replace map[string]*expression.Column)
 
 	// convert2PhysicalPlan converts the logical plan to the physical plan.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -424,10 +423,6 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 	p.basePlan.SetSchema(child.Schema())
 }
 
-func (p *baseLogicalPlan) replaceExprColumns(replace map[string]*expression.Column) {
-	return
-}
-
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
@@ -446,6 +441,10 @@ type basePlan struct {
 func (p *basePlan) copy() *basePlan {
 	np := *p
 	return &np
+}
+
+func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
+	return
 }
 
 // MarshalJSON implements json.Marshaler interface.

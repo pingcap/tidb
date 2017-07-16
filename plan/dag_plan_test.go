@@ -88,12 +88,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test TopN to Limit in table single read.
 		{
 			sql:  "select c from t order by t.a limit 1",
-			best: "TableReader(Table(t)->Limit)->Limit->Projection->Projection",
+			best: "TableReader(Table(t)->Limit)->Limit->Projection",
 		},
 		// Test TopN push down in table single read.
 		{
 			sql:  "select c from t order by t.a + t.b limit 1",
-			best: "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->TopN([plus(test.t.a, test.t.b)],0,1)->Projection->Projection",
+			best: "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->TopN([plus(test.t.a, test.t.b)],0,1)->Projection",
 		},
 		// Test Limit push down in table single read.
 		{

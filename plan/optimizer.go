@@ -29,22 +29,22 @@ var AllowCartesianProduct = true
 
 const (
 	flagPrunColumns uint64 = 1 << iota
-	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagPredicatePushDown
 	flagAggregationOptimize
 	flagPushDownTopN
+	flagEliminateProjection
 )
 
 var optRuleList = []logicalOptRule{
 	&columnPruner{},
-	&nonRootProjectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&ppdSolver{},
 	&aggregationOptimizer{},
 	&pushDownTopNOptimizer{},
+	&projectionEliminater{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -121,10 +121,17 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
+	var finalPlan PhysicalPlan
 	if UseDAGPlanBuilder(ctx) {
-		return dagPhysicalOptimize(logic)
+		finalPlan, err = dagPhysicalOptimize(logic)
+	} else {
+		finalPlan, err = physicalOptimize(flag, logic, allocator)
 	}
-	return physicalOptimize(flag, logic, allocator)
+	finalPlan = eliminatePhysicalProjection(finalPlan, make(map[string]*expression.Column)).(PhysicalPlan)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return finalPlan, nil
 }
 
 func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
@@ -151,7 +158,7 @@ func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := eliminateRootProjection(task.plan()).(PhysicalPlan)
+	p := task.plan()
 	p.ResolveIndices()
 	return p, nil
 }
@@ -162,7 +169,7 @@ func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (P
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := eliminateRootProjection(info.p).(PhysicalPlan)
+	p := info.p
 	if flag&(flagDecorrelate) > 0 {
 		addCachePlan(p, allocator)
 	}
