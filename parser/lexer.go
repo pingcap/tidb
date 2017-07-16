@@ -346,7 +346,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
 		// Convert "/*!VersionNumber MySQL-specific-code */" to "MySQL-specific-code".
 		if strings.HasPrefix(comment, "/*!") {
-			sql := specCodePattern.ReplaceAllStringFunc(comment, trimComment)
+			sql := specCodePattern.ReplaceAllStringFunc(comment, TrimComment)
 			s.specialComment = &mysqlSpecificCodeScanner{
 				Scanner: NewScanner(sql),
 				Pos: Pos{
