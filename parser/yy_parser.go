@@ -40,11 +40,12 @@ const (
 var (
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
-	specCodePattern = regexp.MustCompile(`\/\*!(M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
-	specCodeStart   = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6})?[ \t]*`)
-	specCodeEnd     = regexp.MustCompile(`[ \t]*\*\/$`)
+	specCodePattern  = regexp.MustCompile(`\/\*!(M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
+	specCodeStart    = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6})?[ \t]*`)
+	specCodeEnd      = regexp.MustCompile(`[ \t]*\*\/$`)
 )
 
+// TrimComment trim comment for special comment code of MySQL
 func TrimComment(txt string) string {
 	txt = specCodeStart.ReplaceAllString(txt, "")
 	return specCodeEnd.ReplaceAllString(txt, "")
