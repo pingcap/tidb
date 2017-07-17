@@ -1211,13 +1211,13 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	//test degrees
+	// for degrees
 	result := tk.MustQuery("select degrees(0), degrees(1)")
 	result.Check(testkit.Rows("0 57.29577951308232"))
 	result = tk.MustQuery("select degrees(2), degrees(5)")
 	result.Check(testkit.Rows("114.59155902616465 286.4788975654116"))
 
-	// test sin
+	// for sin
 	result = tk.MustQuery("select sin(0), sin(1.5707963267949)")
 	result.Check(testkit.Rows("0 1"))
 	result = tk.MustQuery("select sin(1), sin(100)")
@@ -1225,19 +1225,19 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("select sin('abcd')")
 	result.Check(testkit.Rows("0"))
 
-	// test cos
+	// for cos
 	result = tk.MustQuery("select cos(0), cos(3.1415926535898)")
 	result.Check(testkit.Rows("1 -1"))
 	result = tk.MustQuery("select cos('abcd')")
 	result.Check(testkit.Rows("1"))
 
-	//for tan
+	// for tan
 	result = tk.MustQuery("select tan(0.00), tan(PI()/4)")
 	result.Check(testkit.Rows("0 1"))
 	result = tk.MustQuery("select tan('abcd')")
 	result.Check(testkit.Rows("0"))
 
-	//for log2
+	// for log2
 	result = tk.MustQuery("select log2(0.0)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select log2(4)")
@@ -1249,7 +1249,7 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("select log2(NULL)")
 	result.Check(testkit.Rows("<nil>"))
 
-	//for log10
+	// for log10
 	result = tk.MustQuery("select log10(0.0)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select log10(100)")
@@ -1260,6 +1260,32 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select log10(NULL)")
 	result.Check(testkit.Rows("<nil>"))
+
+	//for log
+	result = tk.MustQuery("select log(0.0)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(100)")
+	result.Check(testkit.Rows("4.605170185988092"))
+	result = tk.MustQuery("select log('100.0abcd')")
+	result.Check(testkit.Rows("4.605170185988092"))
+	result = tk.MustQuery("select log(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(NULL, NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(1, 100)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(0.5, 0.25)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select log(-1, 0.25)")
+	result.Check(testkit.Rows("<nil>"))
+
+	// for asin
+	result = tk.MustQuery("select asin(0), asin(-2), asin(2), asin(1)")
+	result.Check(testkit.Rows("0 <nil> <nil> 1.5707963267948966"))
+	result = tk.MustQuery("select asin('tidb')")
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestJSON(c *C) {
@@ -1704,10 +1730,9 @@ func (s *testSuite) TestSelectVar(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
 	tk.MustExec("insert into t values(1), (2), (1)")
+	// This behavior is different from MySQL.
 	result := tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("<nil> 2", "<nil> 3", "<nil> 2"))
-	result = tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("2 2", "2 3", "3 2"))
+	result.Check(testkit.Rows("<nil> 2", "2 3", "3 2"))
 }
 
 func (s *testSuite) TestHistoryRead(c *C) {
