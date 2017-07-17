@@ -146,44 +146,44 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 func (s *testEvaluatorSuite) TestLog(c *C) {
 	defer testleak.AfterTest(c)()
 
-	tbl := []struct {
-		Arg []interface{}
-		Ret interface{}
+	tests := []struct {
+		args   []interface{}
+		expect float64
+		isNil  bool
+		getErr bool
 	}{
-		{[]interface{}{int64(2)}, float64(0.6931471805599453)},
-
-		{[]interface{}{int64(2), int64(65536)}, float64(16)},
-		{[]interface{}{int64(10), int64(100)}, float64(2)},
+		{[]interface{}{nil}, 0, true, false},
+		{[]interface{}{nil, nil}, 0, true, false},
+		{[]interface{}{int64(100)}, 4.605170185988092, false, false},
+		{[]interface{}{float64(100)}, 4.605170185988092, false, false},
+		{[]interface{}{int64(10), int64(100)}, 2, false, false},
+		{[]interface{}{float64(10), float64(100)}, 2, false, false},
+		{[]interface{}{float64(-1)}, 0, true, false},
+		{[]interface{}{float64(1), float64(2)}, 0, true, false},
+		{[]interface{}{float64(0.5), float64(0.25)}, 2, false, false},
+		{[]interface{}{"abc"}, 0, false, true},
 	}
 
-	Dtbl := tblToDtbl(tbl)
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Log, primitiveValsToConstants(test.args)...)
+		c.Assert(err, IsNil)
 
-	for _, t := range Dtbl {
-		fc := funcs[ast.Log]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
-		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
 	}
 
-	nullTbl := []struct {
-		Arg []interface{}
-	}{
-		{[]interface{}{int64(-2)}},
-		{[]interface{}{int64(1), int64(100)}},
-	}
-
-	nullDtbl := tblToDtbl(nullTbl)
-
-	for _, t := range nullDtbl {
-		fc := funcs[ast.Log]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
-		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v.Kind(), Equals, types.KindNull)
-	}
+	f, err := funcs[ast.Log].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLog2(c *C) {
