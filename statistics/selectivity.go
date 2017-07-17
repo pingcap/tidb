@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
@@ -45,6 +46,37 @@ const (
 	colType
 )
 
+// checkColumnConstant receives two expressions and makes sure one of them is column and another is constant.
+func checkColumnConstant(e []expression.Expression) bool {
+	if len(e) != 2 {
+		return false
+	}
+	_, ok1 := e[0].(*expression.Column)
+	_, ok2 := e[1].(*expression.Constant)
+	if ok1 && ok2 {
+		return true
+	}
+	_, ok1 = e[1].(*expression.Column)
+	_, ok2 = e[0].(*expression.Constant)
+	return ok1 && ok2
+}
+
+func pseudoSelectivity(exprs []expression.Expression) float64 {
+	minFactor := selectionFactor
+	for _, expr := range exprs {
+		if fun, ok := expr.(*expression.ScalarFunction); ok && checkColumnConstant(fun.GetArgs()) {
+			switch fun.FuncName.L {
+			case ast.EQ, ast.NullEQ:
+				minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
+			case ast.GE, ast.GT, ast.LE, ast.LT:
+				minFactor = math.Min(minFactor, 1.0/pseudoLessRate)
+				// FIXME: To resolve the between case.
+			}
+		}
+	}
+	return minFactor
+}
+
 // Selectivity is a function calculate the selectivity of the expressions.
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
@@ -56,8 +88,11 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 	}
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
-	if t.Pseudo || len(exprs) > 63 {
-		return selectionFactor, nil
+	if t.Pseudo || len(exprs) > 63 || (len(t.Columns) == 0 && len(t.Indices) == 0) {
+		return pseudoSelectivity(exprs), nil
+	}
+	if len(exprs) == 0 {
+		return 1.0, nil
 	}
 	var sets []*exprSet
 	sc := ctx.GetSessionVars().StmtCtx

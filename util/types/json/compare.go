@@ -39,25 +39,29 @@ func compareFloat64PrecisionLoss(x, y float64) int {
 // jsonTypePrecedences is for comparing two json.
 // See: https://dev.mysql.com/doc/refman/5.7/en/json.html#json-comparison
 var jsonTypePrecedences = map[string]int{
-	"BLOB":     -1,
-	"BIT":      -2,
-	"OPAQUE":   -3,
-	"DATETIME": -4,
-	"TIME":     -5,
-	"DATE":     -6,
-	"BOOLEAN":  -7,
-	"ARRAY":    -8,
-	"OBJECT":   -9,
-	"STRING":   -10,
-	"INTEGER":  -11,
-	"DOUBLE":   -11,
-	"NULL":     -12,
+	"BLOB":             -1,
+	"BIT":              -2,
+	"OPAQUE":           -3,
+	"DATETIME":         -4,
+	"TIME":             -5,
+	"DATE":             -6,
+	"BOOLEAN":          -7,
+	"ARRAY":            -8,
+	"OBJECT":           -9,
+	"STRING":           -10,
+	"INTEGER":          -11,
+	"UNSIGNED INTEGER": -11,
+	"DOUBLE":           -11,
+	"NULL":             -12,
 }
 
 func i64AsFloat64(i64 int64, typeCode TypeCode) float64 {
 	switch typeCode {
 	case typeCodeLiteral, typeCodeInt64:
 		return float64(i64)
+	case typeCodeUint64:
+		u64 := *(*uint64)(unsafe.Pointer(&i64))
+		return float64(u64)
 	case typeCodeFloat64:
 		return *(*float64)(unsafe.Pointer(&i64))
 	default:

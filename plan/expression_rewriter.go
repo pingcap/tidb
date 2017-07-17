@@ -675,7 +675,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
 	case *ast.ValueExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
+		tp := &types.FieldType{}
+		types.DefaultTypeForValue(v.GetValue(), tp)
+		value := &expression.Constant{Value: v.Datum, RetType: tp}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
@@ -745,21 +747,16 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				er.ctxStack[stkLen-1])
 			return
 		}
-		if _, ok := sessionVars.Users[name]; ok {
-			f, err := expression.NewFunction(er.ctx,
-				ast.GetVar,
-				// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
-				types.NewFieldType(mysql.TypeString),
-				datumToConstant(types.NewStringDatum(name), mysql.TypeString))
-			if err != nil {
-				er.err = errors.Trace(err)
-				return
-			}
-			er.ctxStack = append(er.ctxStack, f)
-		} else {
-			// select null user vars is permitted.
-			er.ctxStack = append(er.ctxStack, &expression.Constant{RetType: types.NewFieldType(mysql.TypeNull)})
+		f, err := expression.NewFunction(er.ctx,
+			ast.GetVar,
+			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
+			types.NewFieldType(mysql.TypeString),
+			datumToConstant(types.NewStringDatum(name), mysql.TypeString))
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
 		}
+		er.ctxStack = append(er.ctxStack, f)
 		return
 	}
 	var val string
@@ -951,8 +948,10 @@ func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	if er.err != nil {
 		return
 	}
+	escapeTp := &types.FieldType{}
+	types.DefaultTypeForValue(int(v.Escape), escapeTp)
 	function := er.notToExpression(v.Not, ast.Like, &v.Type,
-		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape))})
+		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: escapeTp})
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
 }
