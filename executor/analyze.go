@@ -253,5 +253,4 @@ func CollectSamplesAndEstimateNDVs(ctx context.Context, e ast.RecordSet, numCols
 			}
 		}
 	}
-	return collectors, pkBuilder, nil
 }
