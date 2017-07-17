@@ -129,12 +129,6 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	}
 	session.SetClientCapability(capability)
 	session.SetConnectionID(connID)
-	if dbname != "" {
-		_, err = session.Execute("use " + dbname)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
 	tc := &TiDBContext{
 		session:   session,
 		currentDB: dbname,
@@ -334,7 +328,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		ci.ColumnLength = uint32(fld.Column.Flen)
 	}
 	if fld.Column.Decimal == types.UnspecifiedLength {
-		ci.Decimal = 0
+		ci.Decimal = mysql.NotFixedDec
 	} else {
 		ci.Decimal = uint8(fld.Column.Decimal)
 	}

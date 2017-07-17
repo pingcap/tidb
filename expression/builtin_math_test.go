@@ -186,6 +186,84 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestLog2(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tests := []struct {
+		args   interface{}
+		expect float64
+		isNil  bool
+		getErr bool
+	}{
+		{nil, 0, true, false},
+		{int64(16), 4, false, false},
+		{float64(16), 4, false, false},
+		{int64(5), 2.321928094887362, false, false},
+		{int64(-1), 0, true, false},
+		{"4abc", 0, false, true},
+	}
+
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Log2, primitiveValsToConstants([]interface{}{test.args})...)
+		c.Assert(err, IsNil)
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
+	}
+
+	f, err := funcs[ast.Log2].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestLog10(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tests := []struct {
+		args   interface{}
+		expect float64
+		isNil  bool
+		getErr bool
+	}{
+		{nil, 0, true, false},
+		{int64(100), 2, false, false},
+		{float64(100), 2, false, false},
+		{int64(101), 2.0043213737826426, false, false},
+		{int64(-1), 0, true, false},
+		{"100abc", 0, false, true},
+	}
+
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Log10, primitiveValsToConstants([]interface{}{test.args})...)
+		c.Assert(err, IsNil)
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
+	}
+
+	f, err := funcs[ast.Log10].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestRand(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Rand]
@@ -428,40 +506,44 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 
 func (s *testEvaluatorSuite) TestDegrees(c *C) {
 	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
-	defer func() {
-		sc.IgnoreTruncate = tmpIT
-	}()
-
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+	sc.IgnoreTruncate = false
+	cases := []struct {
+		args     interface{}
+		expected float64
+		isNil    bool
+		getErr   bool
 	}{
-		{nil, nil},
-		{int64(0), float64(0)},
-		{int64(1), float64(57.29577951308232)},
-		{float64(1), float64(57.29577951308232)},
-		{float64(math.Pi), float64(180)},
-		{float64(-math.Pi / 2), float64(-90)},
-		{"", float64(0)},
-		{"-2", float64(-114.59155902616465)},
-		{"abc", float64(0)},
-		{"+1abc", float64(57.29577951308232)},
+		{nil, 0, true, false},
+		{int64(0), float64(0), false, false},
+		{int64(1), float64(57.29577951308232), false, false},
+		{float64(1), float64(57.29577951308232), false, false},
+		{float64(math.Pi), float64(180), false, false},
+		{float64(-math.Pi / 2), float64(-90), false, false},
+		{"", float64(0), false, true},
+		{"-2", float64(-114.59155902616465), false, false},
+		{"abc", float64(0), false, true},
+		{"+1abc", 57.29577951308232, false, true},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-
-	for _, t := range Dtbl {
-		fc := funcs[ast.Degrees]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Degrees, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["arg"]))
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetFloat64(), Equals, t.expected)
+			}
+		}
 	}
+	f, err := funcs[ast.Degrees].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSqrt(c *C) {
@@ -532,58 +614,85 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 
 func (s *testEvaluatorSuite) TestSin(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+	cases := []struct {
+		args     interface{}
+		expected float64
+		isNil    bool
+		getErr   bool
 	}{
-		{nil, nil},
-		{int64(0), float64(0)},
-		{math.Pi, float64(math.Sin(math.Pi))}, // Pie ==> 0
-		{-math.Pi, float64(math.Sin(-math.Pi))},
-		{math.Pi / 2, float64(math.Sin(math.Pi / 2))}, // Pie/2 ==> 1
-		{-math.Pi / 2, float64(math.Sin(-math.Pi / 2))},
-		{math.Pi / 6, float64(math.Sin(math.Pi / 6))}, // Pie/6(30 degrees) ==> 0.5
-		{-math.Pi / 6, float64(math.Sin(-math.Pi / 6))},
-		{math.Pi * 2, float64(math.Sin(math.Pi * 2))},
-		{"0.000", float64(0)}, // string value case
+		{nil, 0, true, false},
+		{int64(0), float64(0), false, false},
+		{math.Pi, float64(math.Sin(math.Pi)), false, false}, // Pie ==> 0
+		{-math.Pi, float64(math.Sin(-math.Pi)), false, false},
+		{math.Pi / 2, float64(math.Sin(math.Pi / 2)), false, false}, // Pie/2 ==> 1
+		{-math.Pi / 2, float64(math.Sin(-math.Pi / 2)), false, false},
+		{math.Pi / 6, float64(math.Sin(math.Pi / 6)), false, false}, // Pie/6(30 degrees) ==> 0.5
+		{-math.Pi / 6, float64(math.Sin(-math.Pi / 6)), false, false},
+		{math.Pi * 2, float64(math.Sin(math.Pi * 2)), false, false},
+		{string("adfsdfgs"), 0, false, true},
+		{"0.000", 0, false, false},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-	for _, t := range Dtbl {
-		fc := funcs[ast.Sin]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Sin, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetFloat64(), Equals, t.expected)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Sin].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestCos(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+	cases := []struct {
+		args     interface{}
+		expected float64
+		isNil    bool
+		getErr   bool
 	}{
-		{nil, nil},
-		{int64(0), float64(1)},
-		{math.Pi, float64(-1)}, // cos pi equals -1
-		{-math.Pi, float64(-1)},
-		{math.Pi / 2, float64(math.Cos(math.Pi / 2))}, // Pi/2 is some near 0 (6.123233995736766e-17) but not 0. Even in math it is 0.
-		{-math.Pi / 2, float64(math.Cos(-math.Pi / 2))},
-		{"0.000", float64(1)}, // string value case
+		{nil, 0, true, false},
+		{int64(0), float64(1), false, false},
+		{math.Pi, float64(-1), false, false}, // cos pi equals -1
+		{-math.Pi, float64(-1), false, false},
+		{math.Pi / 2, float64(math.Cos(math.Pi / 2)), false, false}, // Pi/2 is some near 0 (6.123233995736766e-17) but not 0. Even in math it is 0.
+		{-math.Pi / 2, float64(math.Cos(-math.Pi / 2)), false, false},
+		{"0.000", float64(1), false, false}, // string value case
+		{"sdfgsfsdf", float64(0), false, true},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-	for _, t := range Dtbl {
-		fc := funcs[ast.Cos]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Cos, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Log(t)
-		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetFloat64(), Equals, t.expected)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Cos].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {
@@ -611,27 +720,41 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 
 func (s *testEvaluatorSuite) TestAsin(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+
+	tests := []struct {
+		args   interface{}
+		expect float64
+		isNil  bool
+		getErr bool
 	}{
-		{nil, nil},
-		{int64(0), float64(0)},
-		{float64(1.0001), nil},
-		{"0", float64(0)},
-		{"1.0", math.Pi / 2},
+		{nil, 0, true, false},
+		{float64(1), 1.5707963267948966, false, false},
+		{float64(2), 0, true, false},
+		{float64(-1), -1.5707963267948966, false, false},
+		{float64(-2), 0, true, false},
+		{"tidb", 0, false, true},
 	}
 
-	Dtbl := tblToDtbl(tbl)
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Asin, primitiveValsToConstants([]interface{}{test.args})...)
+		c.Assert(err, IsNil)
 
-	for _, t := range Dtbl {
-		fc := funcs[ast.Asin]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
-		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Asin].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAtan(c *C) {
@@ -662,28 +785,41 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 
 func (s *testEvaluatorSuite) TestTan(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+	cases := []struct {
+		args     interface{}
+		expected float64
+		isNil    bool
+		getErr   bool
 	}{
-		{nil, nil},
-		{int64(0), float64(0)},
-		{math.Pi / 4, float64(1)},
-		{-math.Pi / 4, float64(-1)},
-		{math.Pi * 3 / 4, math.Tan(math.Pi * 3 / 4)}, //in mysql and golang, it equals -1.0000000000000002, not -1
-		{"0.000", float64(0)},
+		{nil, 0, true, false},
+		{int64(0), float64(0), false, false},
+		{math.Pi / 4, float64(1), false, false},
+		{-math.Pi / 4, float64(-1), false, false},
+		{math.Pi * 3 / 4, math.Tan(math.Pi * 3 / 4), false, false}, //in mysql and golang, it equals -1.0000000000000002, not -1
+		{"0.000", float64(0), false, false},
+		{"sdfgsdfg", 0, false, true},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-	for _, t := range Dtbl {
-		fc := funcs[ast.Tan]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Tan, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Log(t)
-		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetFloat64(), Equals, t.expected)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Tan].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestCot(c *C) {

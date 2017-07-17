@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -70,7 +71,11 @@ func (r *recordSet) Close() error {
 func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.count = 100000
 	samples := make([]types.Datum, 10000)
-	start := 1000 // 1000 values is null
+	start := 1000
+	samples[0].SetInt64(0)
+	for i := 1; i < start; i++ {
+		samples[i].SetInt64(2)
+	}
 	for i := start; i < len(samples); i++ {
 		samples[i].SetInt64(int64(i))
 	}
@@ -89,6 +94,10 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 		data:   make([]types.Datum, s.count),
 		count:  s.count,
 		cursor: 0,
+	}
+	rc.data[0].SetInt64(0)
+	for i := 1; i < start; i++ {
+		rc.data[i].SetInt64(2)
 	}
 	for i := int64(start); i < rc.count; i++ {
 		rc.data[i].SetInt64(int64(i))
@@ -152,6 +161,9 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	count, err = col.betweenRowCount(sc, types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 5075)
+	count, err = col.lessRowCount(sc, types.NewIntDatum(1))
+	c.Check(err, IsNil)
+	c.Check(int(count), Equals, 9)
 
 	tblCount, col, err := BuildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
 	c.Check(err, IsNil)
@@ -165,7 +177,11 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	count, err = col.betweenRowCount(sc, encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 4618)
+	count, err = col.lessRowCount(sc, encodeKey(types.NewIntDatum(0)))
+	c.Check(err, IsNil)
+	c.Check(int(count), Equals, 0)
 
+	s.pk.(*recordSet).cursor = 0
 	tblCount, col, err = BuildPK(ctx, bucketCount, 4, ast.RecordSet(s.pk))
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
@@ -186,7 +202,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 100000)
 	count, err = col.lessAndEqRowCount(sc, types.Datum{})
 	c.Check(err, IsNil)
-	c.Check(int(count), Equals, 256)
+	c.Check(int(count), Equals, 0)
 	count, err = col.greaterRowCount(sc, types.NewIntDatum(1001))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 99231)
@@ -252,6 +268,10 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 2500)
+	ran[0].Low = ran[0].High
+	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 100)
 
 	tbl.Columns[0] = col
 	ran[0].Low = types.Datum{}
@@ -271,4 +291,68 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 9965)
+	ran[0].Low = ran[0].High
+	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 1)
+}
+
+func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
+	bucketCount := int64(256)
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+
+	s.pk.(*recordSet).cursor = 0
+	rowCount, hg, err := build4SortedColumn(ctx, bucketCount, 0, s.pk, true)
+	c.Check(err, IsNil)
+	c.Check(rowCount, Equals, int64(100000))
+	col := &Column{Histogram: *hg}
+	tbl := &Table{
+		Count:   int64(col.totalRowCount()),
+		Columns: make(map[int64]*Column),
+	}
+	ran := []types.IntColumnRange{{
+		LowVal:  math.MinInt64,
+		HighVal: math.MaxInt64,
+	}}
+	count, err := tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 100000)
+	ran[0].LowVal = 1000
+	ran[0].HighVal = 2000
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 1000)
+	ran[0].LowVal = 1001
+	ran[0].HighVal = 1999
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 998)
+	ran[0].LowVal = 1000
+	ran[0].HighVal = 1000
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 100)
+
+	tbl.Columns[0] = col
+	ran[0].LowVal = math.MinInt64
+	ran[0].HighVal = math.MaxInt64
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 100000)
+	ran[0].LowVal = 1000
+	ran[0].HighVal = 2000
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 1000)
+	ran[0].LowVal = 1001
+	ran[0].HighVal = 1999
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 998)
+	ran[0].LowVal = 1000
+	ran[0].HighVal = 1000
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 1)
 }

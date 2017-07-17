@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
@@ -47,7 +48,7 @@ func (s *testSuite) TestShow(c *C) {
 	row := result.Rows()[0]
 	// For issue https://github.com/pingcap/tidb/issues/1061
 	expectedRow := []interface{}{
-		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
+		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -66,7 +67,7 @@ func (s *testSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -125,34 +126,34 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk.MustExec(`create user 'show'@'%'`)
 	tk.MustExec(`flush privileges`)
 
+	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
 	c.Assert(se.Auth(`show@%`, nil, nil), IsTrue)
+	tk1.Se = se
 
-	// No ShowDatabases privilege, this user would see nothing.
-	rs, err := se.Execute("show databases")
-	c.Assert(err, IsNil)
-	rows, err := tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 0)
+	// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA.
+	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// After grant, the user can see the database.
 	tk.MustExec(`grant select on showdatabase.t1 to 'show'@'%'`)
 	tk.MustExec(`flush privileges`)
-	rs, err = se.Execute("show databases")
-	c.Assert(err, IsNil)
-	rows, err = tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 1)
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "showdatabase"))
 
-	_, err = se.Execute("use showdatabase")
-	c.Assert(err, IsNil)
-	rs, err = se.Execute("show tables")
-	c.Assert(err, IsNil)
-	rows, err = tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	// The user can see t2 but not t1.
-	c.Assert(rows, HasLen, 1)
+	// The user can see t1 but not t2.
+	tk1.MustExec("use showdatabase")
+	tk1.MustQuery("show tables").Check(testkit.Rows("t1"))
+
+	// After revoke, show database result should be just except INFORMATION_SCHEMA.
+	tk.MustExec(`revoke select on showdatabase.t1 from 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
+
+	// Grant any global privilege would make show databases available.
+	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
+	rows := tk1.MustQuery("show databases").Rows()
+	c.Assert(len(rows), GreaterEqual, 2) // At least INFORMATION_SCHEMA and showdatabase
 
 	privileges.Enable = save
 	tk.MustExec(`drop user 'show'@'%'`)
@@ -188,7 +189,7 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 	sqlLines := []string{
 		"CREATE TABLE `show_test` (",
 		"  `id` int(11) NOT NULL AUTO_INCREMENT,",
-		" PRIMARY KEY (`id`),",
+		"  PRIMARY KEY (`id`),",
 		"  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE",
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	}
@@ -228,7 +229,7 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -240,7 +241,7 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n PRIMARY KEY (`id`),\n  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`id`),\n  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -258,4 +259,12 @@ func (s *testSuite) TestShowWarnings(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+}
+
+func (s *testSuite) TestIssue3641(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	_, err := tk.Exec("show tables;")
+	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	_, err = tk.Exec("show table status;")
+	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 }

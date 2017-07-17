@@ -133,6 +133,17 @@ func (s *testSuite) TestSetVar(c *C) {
 
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+
+	tk.MustExec("set global avoid_temporal_upgrade = on")
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("ON"))
+	tk.MustExec("set @@global.avoid_temporal_upgrade = off")
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("off"))
+	tk.MustExec("set session sql_log_bin = on")
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
+	tk.MustExec("set sql_log_bin = off")
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("off"))
+	tk.MustExec("set @@sql_log_bin = on")
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {

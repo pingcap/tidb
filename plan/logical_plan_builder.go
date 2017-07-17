@@ -17,11 +17,13 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -91,7 +93,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 				ColName:     model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, position)),
 				Position:    position,
 				IsAggOrSubq: true,
-				RetType:     aggFunc.GetType()})
+				RetType:     newFunc.GetType()})
 		}
 	}
 	for _, col := range p.Schema().Columns {
@@ -423,7 +425,8 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
 					colName = model.NewCIStr(innerExpr.Text())
 				} else {
-					colName = model.NewCIStr(field.Text())
+					// Remove special comment code for field part, see issue #3739 for detail.
+					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
 				}
 			}
 		}
@@ -491,14 +494,12 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			 * | bbbbbbbbbb    |
 			 * +---------------+
 			 */
-			if col.RetType.Flen > firstSchema.Columns[i].RetType.Flen {
-				firstSchema.Columns[i].RetType.Flen = col.RetType.Flen
-			}
-			// For select nul union select "abc", we should not convert "abc" to nil.
-			// And the result field type should be VARCHAR.
-			if firstSchema.Columns[i].RetType.Tp == 0 || firstSchema.Columns[i].RetType.Tp == mysql.TypeNull {
-				firstSchema.Columns[i].RetType.Tp = col.RetType.Tp
-			}
+			schemaTp := firstSchema.Columns[i].RetType
+			colTp := col.RetType
+			schemaTp.Decimal = mathutil.Max(colTp.Decimal, schemaTp.Decimal)
+			// `Flen - Decimal` is the fraction before '.'
+			schemaTp.Flen = mathutil.Max(colTp.Flen-colTp.Decimal, schemaTp.Flen-schemaTp.Decimal) + schemaTp.Decimal
+			schemaTp.Tp = types.MergeFieldType(schemaTp.Tp, colTp.Tp)
 		}
 		sel.SetParents(u)
 	}
@@ -1148,7 +1149,9 @@ func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.init(b.allocator, b.ctx)
-
+	if tp == LeftOuterJoin {
+		ap.DefaultValues = make([]types.Datum, innerPlan.Schema().Len())
+	}
 	addChild(ap, outerPlan)
 	addChild(ap, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))

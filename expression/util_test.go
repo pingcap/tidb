@@ -52,7 +52,9 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	corCol1 := &CorrelatedColumn{Data: &One.Value}
+	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
 	corCol2 := &CorrelatedColumn{Data: &One.Value}
+	corCol2.RetType = types.NewFieldType(mysql.TypeLonglong)
 	cast := NewCastFunc(types.NewFieldType(mysql.TypeLonglong), corCol1, ctx)
 	plus := newFunction(ast.Plus, cast, corCol2)
 	plus2 := newFunction(ast.Plus, plus, One)
@@ -75,7 +77,7 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-	col := &Column{Index: 1}
+	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
 	eqFunc := newFunction(ast.EQ, col, One)
 	orFunc := newFunction(ast.OrOr, eqFunc, eqFunc)
