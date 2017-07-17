@@ -25,16 +25,12 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-var _ = Suite(&testColumnSuite{})
-
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	TestingT(t)
 }
 
-type testColumnSuite struct{}
-
-func (s *testColumnSuite) TestString(c *C) {
+func (s *testTableSuite) TestString(c *C) {
 	defer testleak.AfterTest(c)()
 	col := ToColumn(&model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeTiny),
@@ -85,7 +81,7 @@ func (s *testColumnSuite) TestString(c *C) {
 	c.Assert(col.GetTypeDesc(), Equals, "datetime")
 }
 
-func (s *testColumnSuite) TestFind(c *C) {
+func (s *testTableSuite) TestFind(c *C) {
 	defer testleak.AfterTest(c)()
 	cols := []*Column{
 		newCol("a"),
@@ -98,7 +94,7 @@ func (s *testColumnSuite) TestFind(c *C) {
 	FindOnUpdateCols(cols)
 }
 
-func (s *testColumnSuite) TestCheck(c *C) {
+func (s *testTableSuite) TestCheck(c *C) {
 	defer testleak.AfterTest(c)()
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag
@@ -111,7 +107,7 @@ func (s *testColumnSuite) TestCheck(c *C) {
 	CheckOnce([]*Column{})
 }
 
-func (s *testColumnSuite) TestDesc(c *C) {
+func (s *testTableSuite) TestDesc(c *C) {
 	defer testleak.AfterTest(c)()
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag | mysql.NotNullFlag | mysql.PriKeyFlag
@@ -133,7 +129,7 @@ func (s *testColumnSuite) TestDesc(c *C) {
 	ColDescFieldNames(true)
 }
 
-func (s *testColumnSuite) TestGetZeroValue(c *C) {
+func (s *testTableSuite) TestGetZeroValue(c *C) {
 	tests := []struct {
 		ft    *types.FieldType
 		value types.Datum
@@ -209,7 +205,7 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 	}
 }
 
-func (s *testColumnSuite) TestCastValue(c *C) {
+func (s *testTableSuite) TestCastValue(c *C) {
 	ctx := mock.NewContext()
 	colInfo := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeLong),
@@ -243,7 +239,7 @@ func (s *testColumnSuite) TestCastValue(c *C) {
 	c.Assert(val, NotNil)
 }
 
-func (s *testColumnSuite) TestGetDefaultValue(c *C) {
+func (s *testTableSuite) TestGetDefaultValue(c *C) {
 	ctx := mock.NewContext()
 	zeroTimestamp := types.ZeroTimestamp
 	zeroTimestamp.TimeZone = ctx.GetSessionVars().GetTimeZone()

@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package table_test
+package table
 
 import (
 	. "github.com/pingcap/check"
@@ -22,18 +22,17 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testSuite{})
+var _ = Suite(&testTableSuite{})
 
-type testSuite struct {
+type testTableSuite struct {
 	store kv.Storage
 	se    tidb.Session
 }
 
-func (ts *testSuite) SetUpSuite(c *C) {
+func (ts *testTableSuite) SetUpSuite(c *C) {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Check(err, IsNil)
@@ -44,7 +43,7 @@ func (ts *testSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (ts *testSuite) TestSlice(c *C) {
+func (ts *testTableSuite) TestSlice(c *C) {
 	defer testleak.AfterTest(c)()
 
 	_, err := ts.se.Execute("CREATE TABLE test.slice (a int primary key auto_increment, b varchar(255) unique)")
@@ -61,7 +60,7 @@ func (ts *testSuite) TestSlice(c *C) {
 	dom2 := sessionctx.GetDomain(ctx2)
 	tb2, err := dom2.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("slice2"))
 
-	sl := table.Slice{tb, tb2}
+	sl := Slice{tb, tb2}
 	len := sl.Len()
 	c.Assert(len, Equals, 2)
 	less := sl.Less(0, 1)
