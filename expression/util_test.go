@@ -77,7 +77,7 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-	col := &Column{Index: 1}
+	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
 	eqFunc := newFunction(ast.EQ, col, One)
 	orFunc := newFunction(ast.OrOr, eqFunc, eqFunc)

@@ -396,6 +396,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		// for show character set
 		{"show character set;", true},
+		{"show charset", true},
 		// for show collation
 		{"show collation", true},
 		{"show collation like 'utf8%'", true},
@@ -1411,6 +1412,24 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 	table := []testCase{
 		// for create user
 		{`CREATE USER 'test'`, true},
+		{`CREATE USER test`, true},
+		{"CREATE USER `test`", true},
+		{"CREATE USER test-user", false},
+		{"CREATE USER test.user", false},
+		{"CREATE USER 'test-user'", true},
+		{"CREATE USER `test-user`", true},
+		{"CREATE USER test.user", false},
+		{"CREATE USER 'test.user'", true},
+		{"CREATE USER `test.user`", true},
+		{"CREATE USER uesr1@localhost", true},
+		{"CREATE USER `uesr1`@localhost", true},
+		{"CREATE USER uesr1@`localhost`", true},
+		{"CREATE USER `uesr1`@`localhost`", true},
+		{"CREATE USER 'uesr1'@localhost", true},
+		{"CREATE USER uesr1@'localhost'", true},
+		{"CREATE USER 'uesr1'@'localhost'", true},
+		{"CREATE USER 'uesr1'@`localhost`", true},
+		{"CREATE USER `uesr1`@'localhost'", true},
 		{`CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},

@@ -202,6 +202,7 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		{int64(-1), 0, true, false},
 		{"4abc", 0, false, true},
 	}
+
 	for _, test := range tests {
 		f, err := newFunctionForTest(s.ctx, ast.Log2, primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
@@ -220,6 +221,45 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 	}
 
 	f, err := funcs[ast.Log2].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestLog10(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tests := []struct {
+		args   interface{}
+		expect float64
+		isNil  bool
+		getErr bool
+	}{
+		{nil, 0, true, false},
+		{int64(100), 2, false, false},
+		{float64(100), 2, false, false},
+		{int64(101), 2.0043213737826426, false, false},
+		{int64(-1), 0, true, false},
+		{"100abc", 0, false, true},
+	}
+
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Log10, primitiveValsToConstants([]interface{}{test.args})...)
+		c.Assert(err, IsNil)
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
+	}
+
+	f, err := funcs[ast.Log10].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsTrue)
 }
@@ -680,27 +720,41 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 
 func (s *testEvaluatorSuite) TestAsin(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+
+	tests := []struct {
+		args   interface{}
+		expect float64
+		isNil  bool
+		getErr bool
 	}{
-		{nil, nil},
-		{int64(0), float64(0)},
-		{float64(1.0001), nil},
-		{"0", float64(0)},
-		{"1.0", math.Pi / 2},
+		{nil, 0, true, false},
+		{float64(1), 1.5707963267948966, false, false},
+		{float64(2), 0, true, false},
+		{float64(-1), -1.5707963267948966, false, false},
+		{float64(-2), 0, true, false},
+		{"tidb", 0, false, true},
 	}
 
-	Dtbl := tblToDtbl(tbl)
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Asin, primitiveValsToConstants([]interface{}{test.args})...)
+		c.Assert(err, IsNil)
 
-	for _, t := range Dtbl {
-		fc := funcs[ast.Asin]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
-		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Asin].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAtan(c *C) {

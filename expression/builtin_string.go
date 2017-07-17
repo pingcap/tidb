@@ -446,7 +446,11 @@ func (c *lowerFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen = args[0].GetType().Flen
+	argTp := args[0].GetType()
+	bf.tp.Flen = argTp.Flen
+	if mysql.HasBinaryFlag(argTp.Flag) {
+		types.SetBinChsClnFlag(bf.tp)
+	}
 	sig := &builtinLowerSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
@@ -549,7 +553,11 @@ func (c *upperFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen = args[0].GetType().Flen
+	argTp := args[0].GetType()
+	bf.tp.Flen = argTp.Flen
+	if mysql.HasBinaryFlag(argTp.Flag) {
+		types.SetBinChsClnFlag(bf.tp)
+	}
 	sig := &builtinUpperSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
@@ -1279,31 +1287,28 @@ type bitLengthFunctionClass struct {
 }
 
 func (c *bitLengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinBitLengthSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 10
+	sig := &builtinBitLengthSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinBitLengthSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinBitLengthSig.
+// evalInt evaluates a builtinBitLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bit-length
-func (b *builtinBitLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return d, nil
+func (b *builtinBitLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetInt64(int64(len(str) * 8))
-	return d, nil
+	return int64(len(val) * 8), false, nil
 }
 
 type charFunctionClass struct {
