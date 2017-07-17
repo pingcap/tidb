@@ -40,6 +40,7 @@ func FoldConstant(expr Expression) Expression {
 		log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", scalarFunc.FuncName, args)
 		return expr
 	}
+
 	return &Constant{
 		Value:   value,
 		RetType: scalarFunc.RetType,

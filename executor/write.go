@@ -855,15 +855,13 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 
 func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ignoreErr bool) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
-	marked := make(map[int]struct{}, len(vals))
+	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
 		offset := cols[i].Offset
 		row[offset] = v
-		if !ignoreErr {
-			marked[offset] = struct{}{}
-		}
+		hasValue[offset] = true
 	}
-	err := e.initDefaultValues(row, marked, ignoreErr)
+	err := e.initDefaultValues(row, hasValue, ignoreErr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -889,69 +887,87 @@ func (e *InsertValues) filterErr(err error, ignoreErr bool) error {
 	return nil
 }
 
-func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}, ignoreErr bool) error {
+func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
 	var defaultValueCols []*table.Column
-	sc := e.ctx.GetSessionVars().StmtCtx
+	strictSQL := e.ctx.GetSessionVars().StrictSQLMode
+
 	for i, c := range e.Table.Cols() {
-		// It's used for retry.
-		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].IsNull() &&
-			e.ctx.GetSessionVars().RetryInfo.Retrying {
-			id, err := e.ctx.GetSessionVars().RetryInfo.GetCurrAutoIncrementID()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			row[i].SetInt64(id)
+		var needDefaultValue bool
+		if !hasValue[i] {
+			needDefaultValue = true
+		} else if mysql.HasNotNullFlag(c.Flag) && row[i].IsNull() && !strictSQL {
+			needDefaultValue = true
+			// TODO: Append Warning ErrColumnCantNull.
 		}
-		if !row[i].IsNull() {
-			// Column value isn't nil and column isn't auto-increment, continue.
-			if !mysql.HasAutoIncrementFlag(c.Flag) {
-				continue
-			}
-			val, err := row[i].ToInt64(sc)
-			if e.filterErr(errors.Trace(err), ignoreErr) != nil {
-				return errors.Trace(err)
-			}
-			row[i].SetInt64(val)
-			if val != 0 || (e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero) > 0 {
-				e.ctx.GetSessionVars().InsertID = uint64(val)
-				e.Table.RebaseAutoID(val, true)
-				continue
-			}
-		}
-
-		// If the nil value is evaluated in insert list, we will use nil except auto increment column.
-		if _, ok := marked[i]; ok && !mysql.HasAutoIncrementFlag(c.Flag) && !mysql.HasTimestampFlag(c.Flag) {
-			continue
-		}
-
 		if mysql.HasAutoIncrementFlag(c.Flag) {
-			recordID, err := e.Table.AllocAutoID()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			row[i].SetInt64(recordID)
-			// It's compatible with mysql. So it sets last insert id to the first row.
-			if e.currRow == 0 {
-				e.lastInsertID = uint64(recordID)
-			}
-			// It's used for retry.
-			if !e.ctx.GetSessionVars().RetryInfo.Retrying {
-				e.ctx.GetSessionVars().RetryInfo.AddAutoIncrementID(recordID)
-			}
-		} else {
+			needDefaultValue = false
+		}
+		if needDefaultValue {
 			var err error
 			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
 			if e.filterErr(err, ignoreErr) != nil {
 				return errors.Trace(err)
 			}
+			defaultValueCols = append(defaultValueCols, c)
 		}
 
-		defaultValueCols = append(defaultValueCols, c)
+		// Adjust the value if this column has auto increment flag.
+		if mysql.HasAutoIncrementFlag(c.Flag) {
+			if err := e.adjustAutoIncrementDatum(row, i, c, ignoreErr); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	if err := table.CastValues(e.ctx, row, defaultValueCols, ignoreErr); err != nil {
 		return errors.Trace(err)
 	}
 
+	return nil
+}
+
+func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *table.Column, ignoreErr bool) error {
+	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	if retryInfo.Retrying {
+		id, err := retryInfo.GetCurrAutoIncrementID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		row[i].SetInt64(id)
+		return nil
+	}
+
+	var err error
+	var recordID int64
+	if !row[i].IsNull() {
+		recordID, err = row[i].ToInt64(e.ctx.GetSessionVars().StmtCtx)
+		if e.filterErr(errors.Trace(err), ignoreErr) != nil {
+			return errors.Trace(err)
+		}
+	}
+	// Use the value if it's not null and not 0.
+	if recordID != 0 {
+		e.Table.RebaseAutoID(recordID, true)
+		e.ctx.GetSessionVars().InsertID = uint64(recordID)
+		row[i].SetInt64(recordID)
+		retryInfo.AddAutoIncrementID(recordID)
+		return nil
+	}
+
+	// Change NULL to auto id.
+	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+	if row[i].IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		recordID, err = e.Table.AllocAutoID()
+		if e.filterErr(errors.Trace(err), ignoreErr) != nil {
+			return errors.Trace(err)
+		}
+		// It's compatible with mysql. So it sets last insert id to the first row.
+		if e.currRow == 0 {
+			e.lastInsertID = uint64(recordID)
+		}
+	}
+
+	row[i].SetInt64(recordID)
+	retryInfo.AddAutoIncrementID(recordID)
 	return nil
 }
 

@@ -184,6 +184,7 @@ func bootstrap(s Session) {
 	}
 	if b {
 		upgrade(s)
+		return
 	}
 	doDDLWorks(s)
 	doDMLWorks(s)
