@@ -19,6 +19,9 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
+// canProjectionBeEliminatedLoose checks whether a projection can be eliminated, returns true if:
+// 1. the projection changes the order of its child's output columns, or:
+// 2. the projection just copy its child's output but set a different name for every column.
 func canProjectionBeEliminatedLoose(p *Projection) bool {
 	child := p.Children()[0]
 	if p.Schema().Len() != child.Schema().Len() {
@@ -33,6 +36,10 @@ func canProjectionBeEliminatedLoose(p *Projection) bool {
 	return true
 }
 
+// canProjectionBeEliminatedStrict checks whether a projection can be eliminated, returns true if:
+// 1. the projection just copy its child's output but set a different name for every column.
+// Unlike canProjectionBeEliminatedLoose, it will return false when the projection changes the order
+// of its child's output columns.
 func canProjectionBeEliminatedStrict(p *Projection) bool {
 	child := p.Children()[0]
 	if p.Schema().Len() != child.Schema().Len() {
@@ -65,6 +72,9 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 	}
 }
 
+// eliminatePhysicalProjection should be called after physical optimization to eliminate the redundant projection
+// left after logical projection elimination.
+// After logical and physical optimization, the redundant projection can be the parents of aggregation or join.
 func eliminatePhysicalProjection(p Plan, replace map[string]*expression.Column) Plan {
 	children := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
@@ -104,27 +114,30 @@ func eliminatePhysicalProjection(p Plan, replace map[string]*expression.Column) 
 type projectionEliminater struct {
 }
 
+// optimize implements the logicalOptRule interface
 func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false)
 	return root.(LogicalPlan), nil
 }
 
-func (pe *projectionEliminater) eliminate(p Plan, replace map[string]*expression.Column, hasOrderKeeper bool) Plan {
+// eliminate eliminates the redundant projection in a logical plan.
+// The order of output plan's schema columns can be changed if "haveOrderKeeper" is true.
+func (pe *projectionEliminater) eliminate(p Plan, replace map[string]*expression.Column, haveOrderKeeper bool) Plan {
 	proj, isProj := p.(*Projection)
 	_, isJoin := p.(*LogicalJoin)
 	_, isAggr := p.(*LogicalAggregation)
+	isOrderKeeper := isProj || isJoin || isAggr
+
 	_, isUnion := p.(*Union)
 	_, isSort := p.(*Sort)
-
-	canChangeOrder := isProj || isJoin || isAggr
-	haveToKeepOrder := isUnion || isSort
+	childMustKeepOrder := isUnion || isSort
 
 	children := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		if haveToKeepOrder {
+		if childMustKeepOrder {
 			children = append(children, pe.eliminate(child, replace, false))
 		} else {
-			children = append(children, pe.eliminate(child, replace, hasOrderKeeper || canChangeOrder))
+			children = append(children, pe.eliminate(child, replace, haveOrderKeeper || isOrderKeeper))
 		}
 
 	}
@@ -145,17 +158,17 @@ func (pe *projectionEliminater) eliminate(p Plan, replace map[string]*expression
 	}
 	child := p.Children()[0]
 
-	_, isChildJoin := child.(*LogicalJoin)
-	if !hasOrderKeeper && isChildJoin {
+	_, childIsJoin := child.(*LogicalJoin)
+	if !haveOrderKeeper && childIsJoin {
 		return p
 	}
 
-	changeOrder := false
+	isOrderChanger := false
 	if isProj && !canProjectionBeEliminatedStrict(proj) && canProjectionBeEliminatedLoose(proj) {
-		changeOrder = true
+		isOrderChanger = true
 	}
 
-	if (changeOrder && hasOrderKeeper) || canProjectionBeEliminatedStrict(proj) {
+	if (isOrderChanger && haveOrderKeeper) || canProjectionBeEliminatedStrict(proj) {
 		colNameMap := make(map[string]model.CIStr)
 		exprs := proj.Exprs
 		for i, parentColumn := range proj.Schema().Columns {
