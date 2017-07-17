@@ -65,7 +65,9 @@ func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
 		ID:      100,
 		Name:    model.NewCIStr("t"),
 		Columns: []*model.ColumnInfo{col1, col2},
+		PKIsHandle: true,
 	}
+	tblInfo.Columns[0].Flag |= mysql.PriKeyFlag
 	alloc := autoid.NewMemoryAllocator(int64(10))
 	ts.tbl, _ = tables.MemoryTableFromMeta(alloc, tblInfo)
 }
@@ -80,6 +82,23 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	c.Assert(string(tb.FirstKey()), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 
+	// Basic test for MemoryTable
+	handle, found, err := tb.Seek(nil, 0)
+	c.Assert(handle, Equals, int64(0))
+	c.Assert(found, Equals, false)
+	c.Assert(err, IsNil)
+	cols := tb.WritableCols()
+	c.Assert(cols, NotNil)
+
+	key := tb.IndexPrefix()
+	c.Assert(key, IsNil)
+	err = tb.UpdateRecord(nil, 0, nil, nil, nil)
+	c.Assert(err, NotNil)
+	alc := tb.Allocator()
+	c.Assert(alc, NotNil)
+	err = tb.RebaseAutoID(0, false)
+	c.Assert(err, IsNil)
+
 	autoid, err := tb.AllocAutoID()
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
@@ -92,7 +111,7 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	c.Assert(row[0].GetInt64(), Equals, int64(1))
 
 	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"))
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
 	c.Assert(err, IsNil)
 
@@ -105,7 +124,7 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
 	c.Assert(vals[0].GetInt64(), Equals, int64(1))
-	cols := []*table.Column{tb.Cols()[1]}
+	cols = []*table.Column{tb.Cols()[1]}
 	vals, err = tb.RowWithCols(ctx, rid, cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
@@ -117,12 +136,4 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	tb.(*tables.MemoryTable).Truncate()
 	_, err = tb.Row(ctx, rid)
 	c.Assert(err, NotNil)
-
-	// Basic test for MemoryTable
-	tb.(*tables.MemoryTable).Seek(nil, 0)
-	tb.(*tables.MemoryTable).WritableCols()
-	tb.(*tables.MemoryTable).IndexPrefix()
-	tb.(*tables.MemoryTable).UpdateRecord(nil, 0, nil, nil, nil)
-	tb.(*tables.MemoryTable).Allocator()
-	tb.(*tables.MemoryTable).RebaseAutoID(0, false)
 }

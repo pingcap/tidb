@@ -229,14 +229,18 @@ func (s *testColumnSuite) TestCastValue(c *C) {
 		State:     model.StatePublic,
 	})
 
-	CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col}, false)
-	CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col}, true)
+	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col}, false)
+	c.Assert(err, NotNil)
+	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col}, true)
+	c.Assert(err, IsNil)
 
 	colInfoS := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeString),
 		State:     model.StatePublic,
 	}
-	CastValue(ctx, types.NewDatum("test"), &colInfoS)
+	val, err = CastValue(ctx, types.NewDatum("test"), &colInfoS)
+	c.Assert(err, IsNil)
+	c.Assert(val, NotNil)
 }
 
 func (s *testColumnSuite) TestGetDefaultValue(c *C) {
@@ -255,6 +259,7 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 					Tp:   mysql.TypeLonglong,
 					Flag: mysql.NotNullFlag,
 				},
+				OriginDefaultValue: 1.0,
 				DefaultValue: 1.0,
 			},
 			false,
@@ -300,6 +305,7 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 					Tp:   mysql.TypeTimestamp,
 					Flag: mysql.TimestampFlag,
 				},
+				OriginDefaultValue: "0000-00-00 00:00:00",
 				DefaultValue: "0000-00-00 00:00:00",
 			},
 			false,
@@ -333,6 +339,16 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 	for _, tt := range tests {
 		ctx.GetSessionVars().StrictSQLMode = tt.strict
 		val, err := GetColDefaultValue(ctx, tt.colInfo)
+		if err != nil {
+			c.Assert(tt.err, NotNil, Commentf("%v", err))
+			continue
+		}
+		c.Assert(val, DeepEquals, tt.val)
+	}
+
+	for _, tt := range tests {
+		ctx.GetSessionVars().StrictSQLMode = tt.strict
+		val, err := GetColOriginDefaultValue(ctx, tt.colInfo)
 		if err != nil {
 			c.Assert(tt.err, NotNil, Commentf("%v", err))
 			continue
