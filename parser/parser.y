@@ -47,6 +47,8 @@ import (
 %token	<ident>
 	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
+	singleAtIdentifier		"identifier with single leading at"
+	doubleAtIdentifier		"identifier with double leading at"
 	invalid		"a special token never used by parser, used by lexer to indicate error"
 	hintBegin	"hintBegin is a virtual token for optimizer hint grammar"
 	hintEnd		"hintEnd is a virtual token for optimizer hint grammar"
@@ -98,6 +100,7 @@ import (
 	distinct		"DISTINCT"
 	tidbSMJ			"TIDB_SMJ"
 	tidbINLJ		"TIDB_INLJ"
+	tidbVersion		"TIDB_VERSION"
 	div 			"DIV"
 	doubleType		"DOUBLE"
 	drop			"DROP"
@@ -557,8 +560,6 @@ import (
 	nulleq		"<=>"
 	placeholder	"PLACEHOLDER"
 	rsh		">>"
-	sysVar		"SYS_VAR"
-	userVar		"USER_VAR"
 
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
@@ -1914,9 +1915,9 @@ NUM:
 	intLit
 
 Expression:
-	"USER_VAR" assignmentEq Expression %prec assignmentEq
+	singleAtIdentifier assignmentEq Expression %prec assignmentEq
 	{
-		v := $1.(string)
+		v := $1
 		v = strings.TrimPrefix(v, "@")
 		$$ = &ast.VariableExpr{
 				Name: 	  v,
@@ -1988,9 +1989,9 @@ Factor:
 	{
 		$$ = &ast.BinaryOperationExpr{Op: $2.(opcode.Op), L: $1.(ast.ExprNode), R: $3.(ast.ExprNode)}
 	}
-|	Factor CompareOp "USER_VAR" assignmentEq PredicateExpr %prec assignmentEq
+|	Factor CompareOp singleAtIdentifier assignmentEq PredicateExpr %prec assignmentEq
 	{
-		v := $3.(string)
+		v := $3
 		v = strings.TrimPrefix(v, "@")
 		variable := &ast.VariableExpr{
 				Name: 	  v,
@@ -2406,7 +2407,7 @@ NotKeywordToken:
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
 |	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
-|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY"
+|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY" | "TIDB_VERSION"
 
 /************************************************************************************
  *
@@ -3739,6 +3740,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"TIDB_VERSION" '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
+	}
 
 GetFormatSelector:
 	"DATE"
@@ -4927,9 +4932,9 @@ VariableAssignment:
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4.(ast.ExprNode), IsSystem: true}
 	}
-|	"SYS_VAR" eq SetExpr
+|	doubleAtIdentifier eq SetExpr
 	{
-		v := strings.ToLower($1.(string))
+		v := strings.ToLower($1)
 		var isGlobal bool
 		if strings.HasPrefix(v, "@@global.") {
 			isGlobal = true
@@ -4943,15 +4948,15 @@ VariableAssignment:
 		}
 		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode), IsGlobal: isGlobal, IsSystem: true}
 	}
-|	"USER_VAR" eq Expression
+|	singleAtIdentifier eq Expression
 	{
-		v := $1.(string)
+		v := $1
 		v = strings.TrimPrefix(v, "@")
 		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode)}
 	}
-|	"USER_VAR" assignmentEq Expression
+|	singleAtIdentifier assignmentEq Expression
 	{
-		v := $1.(string)
+		v := $1
 		v = strings.TrimPrefix(v, "@")
 		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode)}
 	}
@@ -5005,9 +5010,9 @@ Variable:
 	SystemVariable | UserVariable
 
 SystemVariable:
-	"SYS_VAR"
+	doubleAtIdentifier
 	{
-		v := strings.ToLower($1.(string))
+		v := strings.ToLower($1)
 		var isGlobal bool
 		if strings.HasPrefix(v, "@@global.") {
 			isGlobal = true
@@ -5023,21 +5028,25 @@ SystemVariable:
 	}
 
 UserVariable:
-	"USER_VAR"
+	singleAtIdentifier
 	{
-		v := $1.(string)
+		v := $1
 		v = strings.TrimPrefix(v, "@")
 		$$ = &ast.VariableExpr{Name: v, IsGlobal: false, IsSystem: false}
 	}
 
 Username:
-	stringLit
+	StringName
 	{
-		$$ = $1 + "@%"
+		$$ = $1.(string) + "@%"
 	}
-|	stringLit "AT" stringLit
+|	StringName "AT" StringName
 	{
-		$$ = $1 + "@" + $3
+		$$ = $1.(string) + "@" + $3.(string)
+	}
+|	StringName singleAtIdentifier
+	{
+		$$ = $1.(string) + $2
 	}
 
 UsernameList:
