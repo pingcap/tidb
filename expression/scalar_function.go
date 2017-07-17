@@ -187,7 +187,8 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 			}
 			d, err = sf.Function.eval(row)
 			// change return type
-			types.DefaultTypeForValue(d, sf.RetType)
+			decVal, _ := d.ToDecimal(sc)
+			types.DefaultTypeForValue(decVal, sf.RetType)
 		}
 		return
 	}
