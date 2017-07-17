@@ -45,7 +45,7 @@ var (
 	specCodeEnd      = regexp.MustCompile(`[ \t]*\*\/$`)
 )
 
-// TrimComment trim comment for special comment code of MySQL
+// TrimComment trim comment for special comment code of MySQL.
 func TrimComment(txt string) string {
 	txt = specCodeStart.ReplaceAllString(txt, "")
 	return specCodeEnd.ReplaceAllString(txt, "")

@@ -626,13 +626,6 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		}
 		sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
 		if r != nil {
-			fields, err := r.Fields()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			for i, f := range fields {
-				fields[i].ColumnAsName.O = parser.SpecFieldPattern.ReplaceAllStringFunc(f.ColumnAsName.O, parser.TrimComment)
-			}
 			rs = append(rs, r)
 		}
 
