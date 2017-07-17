@@ -50,12 +50,17 @@ type TableReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
-	// columns are only required by union scan.
-	columns []*model.ColumnInfo
+	columns   []*model.ColumnInfo
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
+
+	// aggregate indicates whether it contains Aggregation executors or not.
+	aggregate bool
+
+	// genValues is for calculating virtual generated columns.
+	genValues map[int]expression.Expression
 }
 
 // Schema implements the Executor Schema interface.
@@ -105,6 +110,11 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if !e.aggregate {
+			if calculateGeneratedColumns(e.columns, e.genValues, values) != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		return resultRowToRow(e.table, h, values, e.asName), nil
 	}
@@ -271,6 +281,9 @@ type IndexLookUpExecutor struct {
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
+
+	// genValues is for calculating virtual generated columns.
+	genValues map[int]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -321,12 +334,14 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		task.doneCh <- errors.Trace(err)
 	}()
 	tableReader := &TableReaderExecutor{
-		asName:  e.asName,
-		table:   e.table,
-		tableID: e.tableID,
-		dagPB:   e.tableRequest,
-		schema:  e.schema,
-		ctx:     e.ctx,
+		asName:    e.asName,
+		table:     e.table,
+		tableID:   e.tableID,
+		dagPB:     e.tableRequest,
+		schema:    e.schema,
+		ctx:       e.ctx,
+		genValues: e.genValues,
+		columns:   e.columns,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {

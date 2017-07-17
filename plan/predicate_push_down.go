@@ -32,6 +32,32 @@ func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression,
 	return InsertPlan(p, child, selection)
 }
 
+// replaceColumnByGenerationExpression replaces all virtual generated columns
+// in expr by their generation expressions. Returns a new Expression, maybe not
+// changed. It can be called only in pushdown optimizations of DataSource.
+func (p *DataSource) replaceColumnByGenerationExpression(expr expression.Expression) expression.Expression {
+	switch v := expr.(type) {
+	case *expression.Column:
+		for i, colInfo := range p.tableInfo.Columns {
+			if colInfo.Name.L == v.ColName.L {
+				if len(colInfo.GeneratedExprString) != 0 && !colInfo.GeneratedStored {
+					return p.GenValues[i]
+				}
+				break
+			}
+		}
+		return v
+	case *expression.ScalarFunction:
+		args := v.GetArgs()
+		for i, arg := range args {
+			args[i] = p.replaceColumnByGenerationExpression(arg)
+		}
+		return v
+	default:
+		return v
+	}
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *Selection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
 	retConditions, child, err := p.children[0].(LogicalPlan).PredicatePushDown(append(p.Conditions, predicates...))
@@ -51,6 +77,9 @@ func (p *Selection) PredicatePushDown(predicates []expression.Expression) ([]exp
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	for i, expr := range predicates {
+		predicates[i] = p.replaceColumnByGenerationExpression(expr)
+	}
 	if UseDAGPlanBuilder(p.ctx) {
 		_, p.pushedDownConds, predicates = expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, predicates, p.ctx.GetClient())
 	}

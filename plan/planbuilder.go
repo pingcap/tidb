@@ -626,6 +626,44 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 	return nil, ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
 }
 
+func (b *planBuilder) calculateGeneratedColumns(columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns) {
+	for _, column := range columns {
+		if len(column.GeneratedExprString) == 0 {
+			continue
+		}
+		columnName := &ast.ColumnName{Name: column.Name}
+		columnName.SetText(column.Name.O)
+		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return
+		}
+		igc.Columns = append(igc.Columns, columnName)
+		igc.Exprs = append(igc.Exprs, expr)
+		if onDups == nil {
+			continue
+		}
+		for dep := range column.Dependences {
+			if _, ok := onDups[dep]; ok {
+				expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
+				if err != nil {
+					b.err = errors.Trace(err)
+					return
+				}
+				col, _, err := mockPlan.findColumn(columnName)
+				if err != nil {
+					b.err = errors.Trace(err)
+					return
+				}
+				assign := &expression.Assignment{Col: col, Expr: expr}
+				igc.OnDups = append(igc.OnDups, assign)
+				break
+			}
+		}
+	}
+	return
+}
+
 func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
@@ -759,18 +797,17 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 
 	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 	mockTablePlan.SetSchema(schema)
+
+	onDupCols := make(map[string]struct{}, len(insert.OnDuplicate))
 	for _, assign := range insert.OnDuplicate {
-		col, err := schema.FindColumn(assign.Column)
+		col, _, err := mockTablePlan.findColumn(assign.Column)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		if col == nil {
-			b.err = errors.Errorf("Can't find column %s", assign.Column)
-			return nil
-		}
+		column := columnByName[assign.Column.Name.L]
 		// Check "on duplicate set list" contains generated column or not.
-		if len(columnByName[assign.Column.Name.L].GeneratedExprString) != 0 {
+		if len(column.GeneratedExprString) != 0 {
 			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
@@ -783,7 +820,9 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Col:  col,
 			Expr: expr,
 		})
+		onDupCols[column.Name.L] = struct{}{}
 	}
+
 	if insert.Select != nil {
 		selectPlan := b.build(insert.Select)
 		if b.err != nil {
@@ -805,6 +844,12 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		addChild(insertPlan, selectPlan)
 	}
+
+	// Calculate generated columns.
+	insertPlan.GenCols = b.calculateGeneratedColumns(insertPlan.Table.Cols(), onDupCols, mockTablePlan)
+	if b.err != nil {
+		return nil
+	}
 	insertPlan.SetSchema(expression.NewSchema())
 	return insertPlan
 }
@@ -818,6 +863,16 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 		FieldsInfo: ld.FieldsInfo,
 		LinesInfo:  ld.LinesInfo,
 	}
+	tableInfo := p.Table.TableInfo
+	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
+		return nil
+	}
+	schema := expression.TableInfo2Schema(tableInfo)
+	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+	mockTablePlan.SetSchema(schema)
+	p.GenCols = b.calculateGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
 	p.SetSchema(expression.NewSchema())
 	return p
 }

@@ -54,6 +54,22 @@ func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *mod
 	return &Row{Data: data, RowKeys: []*RowKeyEntry{entry}}
 }
 
+// calculateGeneratedColumns calculates all virtual generated columns, with such arguments:
+//  cols is the collection of columns of vs;
+//  gvs's keys are index in cols, and the values are generation expressions.
+func calculateGeneratedColumns(cols []*model.ColumnInfo, gvs map[int]expression.Expression, vs []types.Datum) error {
+	for i, col := range cols {
+		if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+			val, err := gvs[col.Offset].Eval(vs)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			vs[i] = val
+		}
+	}
+	return nil
+}
+
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
 var LookupTableTaskChannelSize = 50
 
@@ -381,6 +397,9 @@ type XSelectIndexExec struct {
 	desc                 bool
 	outOfOrder           bool
 	indexConditionPBExpr *tipb.Expr
+
+	// genValues is for calculating virtual generated columns.
+	genValues map[int]expression.Expression
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -780,6 +799,10 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		// Calculate generated columns here.
+		if err := calculateGeneratedColumns(e.columns, e.genValues, values); err != nil {
+			return nil, errors.Trace(err)
+		}
 		row := resultRowToRow(t, h, values, e.asName)
 		rows = append(rows, row)
 	}
@@ -843,6 +866,9 @@ type XSelectTableExec struct {
 	keepOrder    bool
 	startTS      uint64
 	orderByList  []*tipb.ByItem
+
+	// genValues is for calculating virtual generated columns.
+	genValues map[int]expression.Expression
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -974,6 +1000,10 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		if e.aggregate {
 			// compose aggregate row
 			return &Row{Data: values}, nil
+		}
+		// Calculate generated columns here.
+		if err := calculateGeneratedColumns(e.Columns, e.genValues, values); err != nil {
+			return nil, errors.Trace(err)
 		}
 		return resultRowToRow(e.table, h, values, e.asName), nil
 	}

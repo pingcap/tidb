@@ -157,6 +157,23 @@ func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
+
+	// Resolve all virtual generated columns.
+	var name2Offset = make(map[string]int, len(p.schema.Columns))
+	for i, column := range p.schema.Columns {
+		name2Offset[column.ColName.L] = i
+	}
+	for _, colInfo := range p.tableInfo.Columns {
+		if _, ok := name2Offset[colInfo.Name.L]; !ok {
+			continue
+		}
+		if len(colInfo.GeneratedExprString) != 0 && !colInfo.GeneratedStored {
+			for key := range colInfo.Dependences {
+				used[name2Offset[key]] = true
+			}
+		}
+	}
+
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)

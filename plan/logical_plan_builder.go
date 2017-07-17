@@ -1088,9 +1088,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		statisticTable = handle.GetTableStats(tn.TableInfo.ID)
 	}
-	if b.err != nil {
-		return nil
-	}
+
 	schemaName := tn.Schema
 	if schemaName.L == "" {
 		schemaName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -1107,20 +1105,20 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		tableInfo:      tableInfo,
 		statisticTable: statisticTable,
 		DBName:         schemaName,
-		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
+		GenValues:      make(map[int]expression.Expression, 0),
 	}.init(b.allocator, b.ctx)
-
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	var columns []*table.Column
 	if b.inUpdateStmt {
 		columns = tbl.WritableCols()
 	} else {
 		columns = tbl.Cols()
 	}
+	p.Columns = make([]*model.ColumnInfo, 0, len(columns))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
-		p.Columns = append(p.Columns, col.ColumnInfo)
+		p.Columns = append(p.Columns, col.ToInfo())
 		schema.Append(&expression.Column{
 			FromID:   p.id,
 			ColName:  col.Name,
@@ -1131,6 +1129,20 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			ID:       col.ID})
 	}
 	p.SetSchema(schema)
+	// for not stored generated column
+	for _, col := range schema.Columns {
+		idx := col.Position
+		colInfo := tableInfo.Columns[idx]
+		if len(colInfo.GeneratedExprString) != 0 && !colInfo.GeneratedStored {
+			column := columns[idx]
+			expr, _, err := b.rewrite(column.GeneratedExpr, p, nil, true)
+			if err != nil {
+				b.err = errors.Trace(err)
+				return nil
+			}
+			p.GenValues[idx] = expr
+		}
+	}
 	return p
 }
 
@@ -1279,7 +1291,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		return nil
 	}
 	p = np
-	updt := Update{OrderedList: orderedList}.init(b.allocator, b.ctx)
+	updt := Update{OrderedList: orderedList, NormalAssignLength: len(update.List)}.init(b.allocator, b.ctx)
 	addChild(updt, p)
 	updt.SetSchema(p.Schema())
 	return updt
@@ -1296,10 +1308,16 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
 		modifyColumns[columnFullName] = struct{}{}
 	}
+
 	// If columnes in set list contains generated columns, raise error.
+	// And, fill virtualAssignments here; that's for generated columns.
+	virtualAssignments := make([]*ast.Assignment, 0)
+	tableAsName := make(map[*model.TableInfo][]model.CIStr)
+	extractTableAsNameForUpdate(p, tableAsName)
 	for _, tn := range tableList {
 		tableInfo := tn.TableInfo
-		for _, colInfo := range tableInfo.Columns {
+		table, _ := b.is.TableByID(tableInfo.ID)
+		for i, colInfo := range tableInfo.Columns {
 			if len(colInfo.GeneratedExprString) == 0 {
 				continue
 			}
@@ -1308,11 +1326,26 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
 				return nil, nil
 			}
+			if asNames, ok := tableAsName[tableInfo]; ok {
+				// Because "UPDATE t m t n SET m.a = m.a+10, n.a = n.a+10" will set a to a+10.
+				for _, asName := range asNames {
+					virtualAssignments = append(virtualAssignments, &ast.Assignment{
+						Column: &ast.ColumnName{Table: asName, Name: colInfo.Name},
+						Expr:   table.Cols()[i].GeneratedExpr,
+					})
+				}
+			} else {
+				virtualAssignments = append(virtualAssignments, &ast.Assignment{
+					Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
+					Expr:   table.Cols()[i].GeneratedExpr,
+				})
+			}
 		}
 	}
 
 	newList := make([]*expression.Assignment, 0, p.Schema().Len())
-	for _, assign := range list {
+	allAssignments := append(list, virtualAssignments...)
+	for i, assign := range allAssignments {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -1320,7 +1353,23 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		}
 		var newExpr expression.Expression
 		var np LogicalPlan
-		newExpr, np, err = b.rewrite(assign.Expr, p, nil, false)
+		if i < len(list) {
+			newExpr, np, err = b.rewrite(assign.Expr, p, nil, false)
+		} else {
+			// rewrite with generation expression
+			rewritePreprocess := func(expr ast.Node) ast.Node {
+				switch x := expr.(type) {
+				case *ast.ColumnName:
+					return &ast.ColumnName{
+						Schema: assign.Column.Schema,
+						Table:  assign.Column.Table,
+						Name:   x.Name,
+					}
+				}
+				return expr
+			}
+			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
+		}
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil
@@ -1329,6 +1378,19 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
 	}
 	return newList, p
+}
+
+// extractTableAsNameForUpdate extracts tables' name alias for update.
+func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]model.CIStr) {
+	switch x := p.(type) {
+	case *Projection: // We can skip memory table.
+	case *DataSource:
+		asNames[x.tableInfo] = append(asNames[x.tableInfo], *x.TableAsName)
+	default:
+		for _, child := range p.Children() {
+			extractTableAsNameForUpdate(child, asNames)
+		}
+	}
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {

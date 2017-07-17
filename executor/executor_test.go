@@ -1409,6 +1409,95 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 	}
 }
 
+// TestGeneratedColumnRead tests select generated columns from table.
+// They should be calculated from their generation expressions.
+func (s *testSuite) TestGeneratedColumnRead(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_gc_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored)`)
+
+	// Insert only column a and b, leave c and d be calculated from them.
+	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (0,null),(1,2),(3,4)`)
+	result := tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`))
+
+	tk.MustExec(`INSERT INTO test_gc_read SET a = 5, b = 6`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 6 11 30`))
+
+	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE b = 9`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 9 14 45`))
+
+	// Test select only-generated-column-without-dependences.
+	result = tk.MustQuery(`SELECT c, d FROM test_gc_read`)
+	result.Check(testkit.Rows(`<nil> <nil>`, `3 2`, `7 12`, `14 45`))
+
+	// Test order of on duplicate key update list.
+	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE a = 6, b = a`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `6 6 12 36`))
+
+	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (6, 8) ON DUPLICATE KEY UPDATE b = 8, a = b`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+
+	// Test where-conditions on virtual/stored generated columns.
+	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE c = 7`)
+	result.Check(testkit.Rows(`3 4 7 12`))
+
+	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE d = 64`)
+	result.Check(testkit.Rows(`8 8 16 64`))
+
+	// Test on-conditions on virtual/stored generated columns.
+	tk.MustExec(`CREATE TABLE test_gc_help(a int primary key, b int, c int, d int)`)
+	tk.MustExec(`INSERT INTO test_gc_help(a, b, c, d) SELECT * FROM test_gc_read`)
+
+	result = tk.MustQuery(`SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.c = t2.c ORDER BY t1.a`)
+	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+
+	result = tk.MustQuery(`SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.d = t2.d ORDER BY t1.a`)
+	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+
+	// Test aggregation on virtual/stored generated columns.
+	result = tk.MustQuery(`SELECT c, sum(a) aa, max(d) dd FROM test_gc_read GROUP BY c ORDER BY aa`)
+	result.Check(testkit.Rows(`<nil> 0 <nil>`, `3 1 2`, `7 3 12`, `16 8 64`))
+
+	result = tk.MustQuery(`SELECT a, sum(c), sum(d) FROM test_gc_read GROUP BY a ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil>`, `1 3 2`, `3 7 12`, `8 16 64`))
+
+	// Test multi-update on generated columns.
+	tk.MustExec(`UPDATE test_gc_read m, test_gc_read n SET m.a = m.a + 10`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`10 <nil> <nil> <nil>`, `11 2 13 22`, `13 4 17 52`, `18 8 26 144`))
+
+	// Test not null generated columns.
+	tk.MustExec(`CREATE TABLE test_gc_read_1(a int primary key, b int, c int as (a+b) not null, d int as (a*b) stored)`)
+	tk.MustExec(`CREATE TABLE test_gc_read_2(a int primary key, b int, c int as (a+b), d int as (a*b) stored not null)`)
+	tests := []struct {
+		stmt string
+		err  int
+	}{
+		// Can't insert these records, because generated columns are not null.
+		{`insert into test_gc_read_1(a, b) values (1, null)`, mysql.ErrBadNull},
+		{`insert into test_gc_read_2(a, b) values (1, null)`, mysql.ErrBadNull},
+	}
+	for _, tt := range tests {
+		_, err := tk.Exec(tt.stmt)
+		if tt.err != 0 {
+			c.Assert(err, NotNil)
+			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+		} else {
+			c.Assert(err, IsNil)
+		}
+	}
+}
+
 func (s *testSuite) TestToPBExpr(c *C) {
 	defer func() {
 		s.cleanEnv(c)

@@ -281,10 +281,12 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	ivs := &InsertValues{
-		ctx:     b.ctx,
-		Columns: v.Columns,
-		Lists:   v.Lists,
-		Setlist: v.Setlist,
+		ctx:        b.ctx,
+		Columns:    v.Columns,
+		Lists:      v.Lists,
+		Setlist:    v.Setlist,
+		GenColumns: v.GenCols.Columns,
+		GenExprs:   v.GenCols.Exprs,
 	}
 	if len(v.Children()) > 0 {
 		ivs.SelectExec = b.build(v.Children()[0])
@@ -295,7 +297,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	}
 	insert := &InsertExec{
 		InsertValues: ivs,
-		OnDuplicate:  v.OnDuplicate,
+		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDups...),
 		Priority:     v.Priority,
 		Ignore:       v.Ignore,
 	}
@@ -308,8 +310,14 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
-	insertVal := &InsertValues{ctx: b.ctx, Table: tbl, Columns: v.Columns}
-	tableCols := tbl.WritableCols()
+	insertVal := &InsertValues{
+		ctx:        b.ctx,
+		Table:      tbl,
+		Columns:    v.Columns,
+		GenColumns: v.GenCols.Columns,
+		GenExprs:   v.GenCols.Exprs,
+	}
+	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {
 		b.err = errors.Trace(err)
@@ -643,6 +651,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		aggFuncs:    v.AggFuncsPB,
 		byItems:     v.GbyItemsPB,
 		orderByList: v.SortItemsPB,
+		genValues:   v.GenValues,
 	}
 	return e
 }
@@ -676,6 +685,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggregate:            v.Aggregated,
 		aggFuncs:             v.AggFuncsPB,
 		byItems:              v.GbyItemsPB,
+		genValues:            v.GenValues,
 	}
 	vars := b.ctx.GetSessionVars()
 	if v.OutOfOrder {
@@ -1016,12 +1026,14 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		desc:      ts.Desc,
 		ranges:    ts.Ranges,
 		columns:   ts.Columns,
+		genValues: ts.GenValues,
 	}
-
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-
+	if dagReq.Executors[len(dagReq.Executors)-1].Tp == tipb.ExecType_TypeAggregation {
+		e.aggregate = true
+	}
 	return e
 }
 
@@ -1082,6 +1094,12 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		ranges:       is.Ranges,
 		tableRequest: tableReq,
 		columns:      is.Columns,
+	}
+	for _, p := range v.TablePlans {
+		if ts, ok := p.(*plan.PhysicalTableScan); ok {
+			e.genValues = ts.GenValues
+			break
+		}
 	}
 	return e
 }
