@@ -53,6 +53,79 @@ const (
 	contentTypeJSON   = "application/json"
 )
 
+type kvStore interface {
+	GetPDClient() pd.Client
+	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
+}
+
+type regionHandlerTool struct {
+	bo          *tikv.Backoffer
+	infoSchema  infoschema.InfoSchema
+	pdClient    pd.Client
+	regionCache *tikv.RegionCache
+	store       kvStore
+}
+
+// RegionHandler is the common field for http region handler. It contains
+// some common functions for all handlers.
+type RegionHandler struct {
+	s *Server
+}
+
+// TableRegionsHandler is the handler for list table's regions.
+type TableRegionsHandler struct {
+	*RegionHandler
+}
+
+// MvccTxnHandler is the handler for txn debugger
+type MvccTxnHandler struct {
+	*RegionHandler
+	op string
+}
+
+const (
+	opMvccGetByKey = "key"
+	opMvccGetByTXN = "txn"
+)
+
+// prepare checks and prepares for region request. It returns
+// regionHandlerTool on success while return an err on any
+// error happens.
+func (rh *RegionHandler) prepare() (tool *regionHandlerTool, err error) {
+	// check store
+	if rh.s.cfg.Store != "tikv" {
+		err = fmt.Errorf("only store tikv support,current store:%s", rh.s.cfg.Store)
+		return
+	}
+
+	store := rh.s.driver.(*TiDBDriver).store
+	tikvStore := store.(kvStore)
+	pdClient := tikvStore.GetPDClient()
+
+	// create regionCache.
+	regionCache := tikv.NewRegionCache(pdClient)
+	var session tidb.Session
+
+	session, err = tidb.CreateSession(store)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+
+	// init backOffer && infoSchema.
+	backOffer := tikv.NewBackoffer(500, goctx.Background())
+	infoSchema := sessionctx.GetDomain(session.(context.Context)).InfoSchema()
+
+	tool = &regionHandlerTool{
+		pdClient:    pdClient,
+		regionCache: regionCache,
+		bo:          backOffer,
+		infoSchema:  infoSchema,
+		store:       store.(kvStore),
+	}
+	return
+}
+
 // TableRegions is the response data for list table's regions.
 // It contains regions list for record and indices.
 type TableRegions struct {
@@ -147,45 +220,10 @@ type RegionFrameRange struct {
 	region *tikv.KeyLocation // the region
 }
 
-// RegionHandler is the common field for http region handler. It contains
-// some common functions which would be used in TableRegionsHandler and
-// HTTPGetRegionByIDHandler.
-type RegionHandler struct {
-	pdClient pd.Client
-	server   *Server
-}
-
-// TableRegionsHandler is the handler for list table's regions.
-type TableRegionsHandler struct {
-	RegionHandler
-}
-
-// regionHandlerTool contains some common tool which
-// would be used in each RegionHandler request.
-type regionHandlerTool struct {
-	bo          *tikv.Backoffer
-	infoSchema  infoschema.InfoSchema
-	regionCache *tikv.RegionCache
-	store       kvStore
-}
-
-func (s *Server) newRegionHandler(pdClient pd.Client) RegionHandler {
-	return RegionHandler{
-		pdClient: pdClient,
-		server:   s,
-	}
-}
-
-func (s *Server) newTableRegionsHandler(pdClient pd.Client) http.Handler {
-	return TableRegionsHandler{
-		s.newRegionHandler(pdClient),
-	}
-}
-
-func (rh TableRegionsHandler) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
+func (tool *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
-		meta, leader, err := rh.pdClient.GetRegionByID(goctx.TODO(), regionID)
+		meta, leader, err := tool.pdClient.GetRegionByID(goctx.TODO(), regionID)
 		if err != nil {
 			return nil, err
 		}
@@ -202,16 +240,15 @@ func (rh TableRegionsHandler) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, 
 
 // ServeHTTP handles request of list a table's regions.
 func (rh TableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// parse params
-	params := mux.Vars(req)
-	dbName := params[pDBName]
-	tableName := params[pTableName]
-	// check and prepare tools
 	tool, err := rh.prepare()
 	if err != nil {
 		rh.writeError(w, err)
 		return
 	}
+	// parse params
+	params := mux.Vars(req)
+	dbName := params[pDBName]
+	tableName := params[pTableName]
 	// get table's schema.
 	table, err := tool.infoSchema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
@@ -227,7 +264,7 @@ func (rh TableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		rh.writeError(w, err)
 		return
 	}
-	recordRegions, err := rh.getRegionsMeta(recordRegionIDs)
+	recordRegions, err := tool.getRegionsMeta(recordRegionIDs)
 	if err != nil {
 		rh.writeError(w, err)
 		return
@@ -245,7 +282,7 @@ func (rh TableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			rh.writeError(w, err)
 			return
 		}
-		indices[i].Regions, err = rh.getRegionsMeta(rIDs)
+		indices[i].Regions, err = tool.getRegionsMeta(rIDs)
 		if err != nil {
 			rh.writeError(w, err)
 			return
@@ -264,6 +301,11 @@ func (rh TableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 
 // ServeHTTP handles request of get region by ID.
 func (rh RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	tool, err := rh.prepare()
+	if err != nil {
+		rh.writeError(w, err)
+		return
+	}
 	// parse and check params
 	params := mux.Vars(req)
 	regionIDInt, err := strconv.ParseInt(params[pRegionID], 0, 64)
@@ -272,13 +314,6 @@ func (rh RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	regionID := uint64(regionIDInt)
-
-	// check and prepare tools
-	tool, err := rh.prepare()
-	if err != nil {
-		rh.writeError(w, err)
-		return
-	}
 
 	// locate region
 	region, err := tool.regionCache.LocateRegionByID(tool.bo, regionID)
@@ -310,44 +345,6 @@ func (rh RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	rh.writeData(w, regionDetail)
-}
-
-type kvStore interface {
-	LocateKey(bo *tikv.Backoffer, key []byte) (*tikv.KeyLocation, error)
-	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
-}
-
-// prepare checks and prepares for region request. It returns
-// regionHandlerTool on success while return an err on any
-// error happens.
-func (rh *RegionHandler) prepare() (tool *regionHandlerTool, err error) {
-	// check store
-	if rh.server.cfg.Store != "tikv" {
-		err = fmt.Errorf("only store tikv support,current store:%s", rh.server.cfg.Store)
-		return
-	}
-
-	// create regionCache.
-	regionCache := tikv.NewRegionCache(rh.pdClient)
-	var session tidb.Session
-	store := rh.server.driver.(*TiDBDriver).store
-	session, err = tidb.CreateSession(store)
-	if err != nil {
-		err = errors.Trace(err)
-		return
-	}
-
-	// init backOffer && infoSchema.
-	backOffer := tikv.NewBackoffer(500, goctx.Background())
-	infoSchema := sessionctx.GetDomain(session.(context.Context)).InfoSchema()
-
-	tool = &regionHandlerTool{
-		regionCache: regionCache,
-		bo:          backOffer,
-		infoSchema:  infoSchema,
-		store:       store.(kvStore),
-	}
-	return
 }
 
 func (rh *RegionHandler) writeError(w http.ResponseWriter, err error) {
@@ -495,33 +492,19 @@ func (ir RegionFrameRange) lastTableID() int64 {
 	return ir.last.TableID
 }
 
-// MvccTxnHandler is the handler for txn debugger
-type MvccTxnHandler struct {
-	RegionHandler
-	op string
-}
-
-const (
-	opMvccGetByKey = "key"
-	opMvccGetByTXN = "txn"
-)
-
-func (s *Server) newMvccTxnHandler(pdClient pd.Client, op string) MvccTxnHandler {
-	return MvccTxnHandler{
-		s.newRegionHandler(pdClient),
-		op,
-	}
-}
-
 // ServeHTTP handles request of list a table's regions.
 func (rh MvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	tool, err := rh.prepare()
+	if err != nil {
+		rh.writeError(w, err)
+		return
+	}
 	var data interface{}
-	var err error
 	params := mux.Vars(req)
 	if rh.op == opMvccGetByKey {
-		data, err = rh.handleMvccGetByKey(params)
+		data, err = rh.handleMvccGetByKey(tool, params)
 	} else {
-		data, err = rh.handleMvccGetByTXN(params)
+		data, err = rh.handleMvccGetByTXN(tool, params)
 	}
 	if err != nil {
 		rh.writeError(w, err)
@@ -530,14 +513,8 @@ func (rh MvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 }
-func (rh MvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{}, error) {
+func (rh MvccTxnHandler) handleMvccGetByKey(tool *regionHandlerTool, params map[string]string) (interface{}, error) {
 	recordID, err := strconv.ParseInt(params[pRecordID], 0, 64)
-	if err != nil {
-		return nil, err
-	}
-
-	// check and prepare tools
-	tool, err := rh.prepare()
 	if err != nil {
 		return nil, err
 	}
@@ -549,14 +526,8 @@ func (rh MvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface
 	return tool.getMvccByRecordID(tableID, recordID)
 }
 
-func (rh MvccTxnHandler) handleMvccGetByTXN(params map[string]string) (interface{}, error) {
+func (rh *MvccTxnHandler) handleMvccGetByTXN(tool *regionHandlerTool, params map[string]string) (interface{}, error) {
 	startTS, err := strconv.ParseInt(params[pStartTS], 0, 64)
-	if err != nil {
-		return nil, err
-	}
-
-	// check and prepare tools
-	tool, err := rh.prepare()
 	if err != nil {
 		return nil, err
 	}
@@ -577,7 +548,7 @@ func (rh MvccTxnHandler) handleMvccGetByTXN(params map[string]string) (interface
 
 func (tool *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	encodeKey := tablecodec.EncodeRowKeyWithHandle(tableID, recordID)
-	keyLocation, err := tool.store.LocateKey(tool.bo, encodeKey)
+	keyLocation, err := tool.regionCache.LocateKey(tool.bo, encodeKey)
 	if err != nil {
 		return nil, err
 	}
@@ -598,7 +569,7 @@ func (tool *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrp
 
 func (tool *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
 	for {
-		curRegion, err := tool.store.LocateKey(tool.bo, startKey)
+		curRegion, err := tool.regionCache.LocateKey(tool.bo, startKey)
 		if err != nil {
 			log.Error(startTS, startKey, err)
 			return nil, errors.Trace(err)
