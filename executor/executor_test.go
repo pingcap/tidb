@@ -1717,10 +1717,9 @@ func (s *testSuite) TestSelectVar(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
 	tk.MustExec("insert into t values(1), (2), (1)")
+	// This behavior is different from MySQL.
 	result := tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("<nil> 2", "<nil> 3", "<nil> 2"))
-	result = tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("2 2", "2 3", "3 2"))
+	result.Check(testkit.Rows("<nil> 2", "2 3", "3 2"))
 }
 
 func (s *testSuite) TestHistoryRead(c *C) {
