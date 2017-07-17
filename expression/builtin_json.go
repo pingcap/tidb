@@ -175,7 +175,10 @@ func JSONUnquote(args []types.Datum, sc *variable.StatementContext) (d types.Dat
 	}
 	djson, err := datum2JSON(args[0], sc)
 	if err != nil {
-		return d, errors.Trace(err)
+		djson, err = args[0].ToMysqlJSON()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 	}
 	unquoted, err := djson.Unquote()
 	if err != nil {
