@@ -59,10 +59,9 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 }
 
 // ParseExpression parses an ExprNode from a string.
-// Where should we use this?
-//   When TiDB bootstraps, it'll load infoschema from TiKV.
-//   Because some ColumnInfos have attribute `GeneratedExprString`,
-//   we need to parse that string into ast.ExprNode.
+// When TiDB loads infoschema from TiKV, `GeneratedExprString`
+// of `ColumnInfo` is a string field, so we need to parse
+// it into ast.ExprNode. This function is for that.
 func parseExpression(expr string) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := getDefaultCharsetAndCollate()
