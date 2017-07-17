@@ -253,12 +253,11 @@ type tidbVersionFunctionClass struct {
 }
 
 func (c *tidbVersionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeString)
-	tp.Flen = len(printer.GetTiDBInfo())
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = len(printer.GetTiDBInfo())
 	sig := &builtinTiDBVersionSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
