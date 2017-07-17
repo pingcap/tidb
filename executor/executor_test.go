@@ -553,6 +553,9 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("INSERT INTO t VALUE(12.34)")
 	r = tk.MustQuery("SELECT 1 AS c UNION select a FROM t")
 	r.Sort().Check(testkit.Rows("1.00", "12.34"))
+	// #issue3771
+	r = tk.MustQuery("SELECT 'a' UNION SELECT CONCAT('a', -4)")
+	r.Sort().Check(testkit.Rows("a", "a-4"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -1717,10 +1720,9 @@ func (s *testSuite) TestSelectVar(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
 	tk.MustExec("insert into t values(1), (2), (1)")
+	// This behavior is different from MySQL.
 	result := tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("<nil> 2", "<nil> 3", "<nil> 2"))
-	result = tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("2 2", "2 3", "3 2"))
+	result.Check(testkit.Rows("<nil> 2", "2 3", "3 2"))
 }
 
 func (s *testSuite) TestHistoryRead(c *C) {
