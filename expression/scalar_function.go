@@ -158,12 +158,39 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	return sf
 }
 
+func (sf *ScalarFunction) convertArgsToDecimal(sc *variable.StatementContext) error {
+	ft := types.NewFieldType(mysql.TypeNewDecimal)
+	for _, arg := range sf.GetArgs() {
+		if constArg, ok := arg.(*Constant); ok {
+			val, err := constArg.Value.ConvertTo(sc, ft)
+			if err != nil {
+				return err
+			}
+			constArg.Value = val
+		}
+	}
+
+	return nil
+}
+
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
-	if !TurnOnNewExprEval {
-		return sf.Function.eval(row)
-	}
 	sc := sf.GetCtx().GetSessionVars().StmtCtx
+	if !TurnOnNewExprEval {
+		d, err = sf.Function.eval(row)
+		// TODO: fix #3762, maybe better way
+		if err != nil && terror.ErrorEqual(err, types.ErrOverflow) && sf.GetTypeClass() == types.ClassInt &&
+			sf.FuncName.L == ast.UnaryMinus && !sc.InUpdateOrDeleteStmt {
+			err = sf.convertArgsToDecimal(sc)
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			d, err = sf.Function.eval(row)
+			// change return type
+			types.DefaultTypeForValue(d, sf.RetType)
+		}
+		return
+	}
 	var (
 		res    interface{}
 		isNull bool
@@ -173,15 +200,11 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 	case types.ClassInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(row, sc)
-		if err != nil && terror.ErrorEqual(err, types.ErrOverflow) && !sc.InUpdateOrDeleteStmt {
-			// TODO: overflow convert it to decimal
 
+		if mysql.HasUnsignedFlag(tp.Flag) {
+			res = uint64(intRes)
 		} else {
-			if mysql.HasUnsignedFlag(tp.Flag) {
-				res = uint64(intRes)
-			} else {
-				res = intRes
-			}
+			res = intRes
 		}
 	case types.ClassReal:
 		res, isNull, err = sf.EvalReal(row, sc)
@@ -197,6 +220,18 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 			res, isNull, err = sf.EvalString(row, sc)
 		}
 	}
+
+	if err != nil && terror.ErrorEqual(err, types.ErrOverflow) &&
+		sf.FuncName.L == ast.UnaryMinus && !sc.InUpdateOrDeleteStmt {
+		// TODO: fix #3762, overflow convert it to decimal
+		err = sf.convertArgsToDecimal(sc)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		res, isNull, err = sf.EvalDecimal(row, sc)
+		types.DefaultTypeForValue(res, sf.RetType)
+	}
+
 	if isNull || err != nil {
 		d.SetValue(nil)
 		return d, errors.Trace(err)
