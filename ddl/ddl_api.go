@@ -1129,9 +1129,8 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		return nil, infoschema.ErrColumnNotExists.GenByArgs(originalColName, ident.Name)
 	}
 
-	// constraints in the new column means adding new constraints. Errors should thrown,
+	// Constraints in the new column means adding new constraints. Errors should thrown,
 	// which will be done by `setDefaultAndComment` later.
-
 	if spec.NewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
@@ -1158,15 +1157,15 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		return nil, errors.Trace(err)
 	}
 
-	// copy index related options to the new spec
+	// Copy index related options to the new spec.
 	indexFlags := col.FieldType.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
 	newCol.FieldType.Flag |= indexFlags
 	if mysql.HasPriKeyFlag(col.FieldType.Flag) {
 		newCol.FieldType.Flag |= mysql.NotNullFlag
-		// TODO: if user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull
+		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
-	// We don't support modifying column from not_auto_increment to auto_increment
+	// We don't support modifying column from not_auto_increment to auto_increment.
 	if !mysql.HasAutoIncrementFlag(col.Flag) && mysql.HasAutoIncrementFlag(newCol.Flag) {
 		return nil, errUnsupportedModifyColumn.GenByArgs("set auto_increment")
 	}
