@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -37,6 +38,7 @@ var (
 	_ functionClass = &coercibilityFunctionClass{}
 	_ functionClass = &collationFunctionClass{}
 	_ functionClass = &rowCountFunctionClass{}
+	_ functionClass = &tidbVersionFunctionClass{}
 )
 
 var (
@@ -52,6 +54,7 @@ var (
 	_ builtinFunc = &builtinCoercibilitySig{}
 	_ builtinFunc = &builtinCollationSig{}
 	_ builtinFunc = &builtinRowCountSig{}
+	_ builtinFunc = &builtinTiDBVersionSig{}
 )
 
 type databaseFunctionClass struct {
@@ -243,6 +246,30 @@ type builtinVersionSig struct {
 func (b *builtinVersionSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	d.SetString(mysql.ServerVersion)
 	return d, nil
+}
+
+type tidbVersionFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbVersionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = len(printer.GetTiDBInfo())
+	sig := &builtinTiDBVersionSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTiDBVersionSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinTiDBVersionSig.
+// This will show git hash and build time for tidb-server.
+func (b *builtinTiDBVersionSig) evalString(_ []types.Datum) (string, bool, error) {
+	return printer.GetTiDBInfo(), false, nil
 }
 
 type benchmarkFunctionClass struct {
