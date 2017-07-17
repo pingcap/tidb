@@ -14,22 +14,15 @@
 package tables
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
+var _ = Suite(&testGenExprSuite{})
 
-var _ = Suite(&testParserSuite{})
+type testGenExprSuite struct{}
 
-type testParserSuite struct{}
-
-func (s *testParserSuite) TestParseExpression(c *C) {
+func (s *testGenExprSuite) TestParseExpression(c *C) {
 	tests := []struct {
 		input   string
 		output  string
