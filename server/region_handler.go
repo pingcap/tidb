@@ -623,6 +623,11 @@ func (tool *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey
 			continue
 		}
 
+		if len(data.GetError()) > 0 {
+			log.Error(startTS, startKey, curRegion, data.GetError())
+			return nil, errors.New(data.GetError())
+		}
+
 		info := data.GetInfo()
 		if info != nil && (info.Lock != nil || len(info.Writes) > 0) {
 			return data, nil
