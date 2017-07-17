@@ -62,9 +62,9 @@ func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
 	}
 
 	tblInfo := &model.TableInfo{
-		ID:      100,
-		Name:    model.NewCIStr("t"),
-		Columns: []*model.ColumnInfo{col1, col2},
+		ID:         100,
+		Name:       model.NewCIStr("t"),
+		Columns:    []*model.ColumnInfo{col1, col2},
 		PKIsHandle: true,
 	}
 	tblInfo.Columns[0].Flag |= mysql.PriKeyFlag
