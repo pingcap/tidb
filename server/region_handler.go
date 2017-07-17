@@ -520,6 +520,8 @@ func (rh MvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	if rh.op == opMvccGetByKey {
 		data, err = rh.handleMvccGetByKey(params)
+	} else {
+		data, err = rh.handleMvccGetByTXN(params)
 	}
 	if err != nil {
 		rh.writeError(w, err)
