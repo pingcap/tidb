@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -424,7 +425,8 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
 					colName = model.NewCIStr(innerExpr.Text())
 				} else {
-					colName = model.NewCIStr(field.Text())
+					// Remove special comment code for field part, see issue #3739 for detail.
+					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
 				}
 			}
 		}
