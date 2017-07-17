@@ -157,7 +157,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return toHex(s, v, lit)
 	case bitLit:
 		return toBit(s, v, lit)
-	case userVar, sysVar, cast, curDate, extract:
+	case singleAtIdentifier, doubleAtIdentifier, cast, curDate, extract:
 		v.item = lit
 		return tok
 	case null:
@@ -387,7 +387,7 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 	ch1 := s.r.peek()
 	if isIdentFirstChar(ch1) {
 		s.r.incAsLongAs(isIdentChar)
-		tok, lit = userVar, s.r.data(&pos)
+		tok, lit = singleAtIdentifier, s.r.data(&pos)
 	} else if ch1 == '@' {
 		s.r.inc()
 		stream := s.r.s[pos.Offset+2:]
@@ -401,7 +401,7 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 			}
 		}
 		s.r.incAsLongAs(isIdentChar)
-		tok, lit = sysVar, s.r.data(&pos)
+		tok, lit = doubleAtIdentifier, s.r.data(&pos)
 	} else {
 		tok = at
 	}
