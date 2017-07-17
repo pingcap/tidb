@@ -203,6 +203,9 @@ func (s *mockTikvGrpcServer) RawPut(goctx.Context, *kvrpcpb.RawPutRequest) (*kvr
 func (s *mockTikvGrpcServer) RawDelete(goctx.Context, *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
 	return nil, errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) RawScan(goctx.Context, *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {
+	return nil, errors.New("unreachable")
+}
 func (s *mockTikvGrpcServer) Coprocessor(goctx.Context, *coprocessor.Request) (*coprocessor.Response, error) {
 	return nil, errors.New("unreachable")
 }
@@ -211,6 +214,12 @@ func (s *mockTikvGrpcServer) Raft(tikvpb.Tikv_RaftServer) error {
 }
 func (s *mockTikvGrpcServer) Snapshot(tikvpb.Tikv_SnapshotServer) error {
 	return errors.New("unreachable")
+}
+func (s *mockTikvGrpcServer) MvccGetByKey(goctx.Context, *kvrpcpb.MvccGetByKeyRequest) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	return nil, errors.New("unreachable")
+}
+func (s *mockTikvGrpcServer) MvccGetByStartTs(goctx.Context, *kvrpcpb.MvccGetByStartTsRequest) (*kvrpcpb.MvccGetByStartTsResponse, error) {
+	return nil, errors.New("unreachable")
 }
 
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {

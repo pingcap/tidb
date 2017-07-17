@@ -30,15 +30,16 @@ import (
 )
 
 const (
-	netWorkFactor   = 1.5
-	scanFactor      = 2.0
-	descScanFactor  = 5 * scanFactor
-	memoryFactor    = 5.0
-	selectionFactor = 0.8
-	distinctFactor  = 0.8
-	cpuFactor       = 0.9
-	aggFactor       = 0.1
-	joinFactor      = 0.3
+	netWorkFactor      = 1.5
+	netWorkStartFactor = 5.0
+	scanFactor         = 2.0
+	descScanFactor     = 5 * scanFactor
+	memoryFactor       = 5.0
+	selectionFactor    = 0.8
+	distinctFactor     = 0.8
+	cpuFactor          = 0.9
+	aggFactor          = 0.1
+	joinFactor         = 0.3
 )
 
 // JoinConcurrency means the number of goroutines that participate in joining.
