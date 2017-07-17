@@ -102,7 +102,7 @@ var (
 	schemaLease = 1 * time.Second
 
 	// statsLease is the time for reload stats table.
-	statsLease = 1 * time.Second
+	statsLease = 3 * time.Second
 
 	// The maximum number of retries to recover from retryable errors.
 	commitRetryLimit = 10
