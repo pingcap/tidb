@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package parser
+package tables
 
 import (
 	"testing"
@@ -38,7 +38,7 @@ func (s *testParserSuite) TestParseExpression(c *C) {
 		{"json_extract(a, '$.a')", "json_extract", true},
 	}
 	for _, tt := range tests {
-		node, err := ParseExpression(tt.input)
+		node, err := parseExpression(tt.input)
 		if tt.success {
 			fc := node.(*ast.FuncCallExpr)
 			c.Assert(fc.FnName.L, Equals, tt.output)

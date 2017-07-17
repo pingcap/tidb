@@ -11,17 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package parser
+package tables
 
 import (
 	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // getDefaultCharsetAndCollate is copyed from ddl/ddl_api.go.
@@ -65,7 +63,7 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 //   When TiDB bootstraps, it'll load infoschema from TiKV.
 //   Because some ColumnInfos have attribute `GeneratedExprString`,
 //   we need to parse that string into ast.ExprNode.
-func ParseExpression(expr string) (node ast.ExprNode, err error) {
+func parseExpression(expr string) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := getDefaultCharsetAndCollate()
 	stmts, err := parser.New().Parse(expr, charset, collation)
@@ -76,12 +74,10 @@ func ParseExpression(expr string) (node ast.ExprNode, err error) {
 }
 
 // SimpleResolveName resolves all column names in the expression node.
-func SimpleResolveName(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNode, error) {
+func simpleResolveName(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNode, error) {
 	nr := nameResolver{tblInfo, nil}
 	if _, ok := node.Accept(&nr); !ok {
 		return nil, errors.Trace(nr.err)
 	}
-	sc := new(variable.StatementContext) // here we use the default StatementContext.
-	err := expression.InferType(sc, node)
-	return node, errors.Trace(err)
+	return node, nil
 }
