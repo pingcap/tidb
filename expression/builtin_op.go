@@ -353,6 +353,7 @@ func (b *builtinUnaryOpSig) eval(row []types.Datum) (d types.Datum, err error) {
 		case types.KindInt64:
 			d.SetInt64(-aDatum.GetInt64())
 		case types.KindUint64:
+			// TODO: aDatum.GetUint64() may overflow, MySQL convert it to decimal if overflow
 			d.SetInt64(-int64(aDatum.GetUint64()))
 		case types.KindFloat64:
 			d.SetFloat64(-aDatum.GetFloat64())

@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -74,6 +75,44 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(res.GetString()), Equals, 5)
 	c.Assert(res.GetString(), Equals, string([]byte{'a', 0x00, 0x00, 0x00, 0x00}))
+
+	// cast('18446744073709551616' as unsigned);
+	tp1 := types.NewFieldType(mysql.TypeLonglong)
+	tp1.Flag |= mysql.UnsignedFlag
+	tp1.Flen = mysql.MaxIntWidth
+	tp1.Charset = charset.CharsetBin
+	tp1.Collate = charset.CollationBin
+	tp1.Flag |= mysql.BinaryFlag
+	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(res.GetUint64() == math.MaxUint64, IsTrue)
+
+	warnings := sc.GetWarnings()
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+
+	// cast('18446744073709551616' as signed);
+	mask := ^mysql.UnsignedFlag
+	tp1.Flag &= uint(mask)
+	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Check(res.GetInt64(), Equals, int64(-1))
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+
+	// cast('18446744073709551614' as signed);
+	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("18446744073709551614"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Check(res.GetInt64(), Equals, int64(-2))
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrCastSignedOverflow, lastWarn), IsTrue)
 }
 
 var (

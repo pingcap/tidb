@@ -999,6 +999,44 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("3 2"))
 	result = tk.MustQuery("select cast(-1 as unsigned)")
 	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast(1 as signed int)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast('18446744073709551616' as unsigned);")
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast('18446744073709551615' as signed);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast('18446744073709551614' as signed);")
+	result.Check(testkit.Rows("-2"))
+	result = tk.MustQuery("select cast(18446744073709551615 as unsigned);")
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast(18446744073709551616 as unsigned);")
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast(18446744073709551616 as signed);")
+	result.Check(testkit.Rows("9223372036854775807"))
+	result = tk.MustQuery("select cast(18446744073709551617 as signed);")
+	result.Check(testkit.Rows("9223372036854775807"))
+	result = tk.MustQuery("select cast(18446744073709551615 as signed);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast(18446744073709551614 as signed);")
+	result.Check(testkit.Rows("-2"))
+	result = tk.MustQuery("select cast(-18446744073709551616 as signed);")
+	result.Check(testkit.Rows("-9223372036854775808"))
+	result = tk.MustQuery("select cast(18446744073709551614.9 as unsigned);") // Round up
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast(18446744073709551614.4 as unsigned);") // Round down
+	result.Check(testkit.Rows("18446744073709551614"))
+
+	// TODO: not pass yet
+	result = tk.MustQuery("select cast(-9223372036854775809 as signed);")
+	result.Check(testkit.Rows("-9223372036854775808"))
+	result = tk.MustQuery("select cast(-9223372036854775809 as unsigned);")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select cast(-9223372036854775808 as unsigned);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	result = tk.MustQuery("select cast('-9223372036854775809' as unsigned);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	result = tk.MustQuery("select cast('-2' as unsigned);")
+	result.Check(testkit.Rows("18446744073709551614"))
 
 	// fixed issue #3471
 	tk.MustExec("drop table if exists t")
@@ -1984,3 +2022,4 @@ func (s *testSuite) TestFuncREPEAT(c *C) {
 	r = tk.MustQuery("SELECT REPEAT(a, 16777217), REPEAT(b, 16777217), REPEAT(c, 16777217), REPEAT(d, 16777217), REPEAT(e, 16777217), REPEAT(f, 16777217) FROM table_string;")
 	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
 }
+``
