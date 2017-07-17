@@ -205,6 +205,10 @@ func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context
 			bf.tp.Flag |= mysql.BinaryFlag
 		}
 
+		if argType.Flen < 0 {
+			bf.tp.Flen = mysql.MaxBlobWidth
+			log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT is -1.", i)
+		}
 		bf.tp.Flen += argType.Flen
 	}
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
@@ -254,6 +258,10 @@ func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Conte
 
 		// skip seperator param
 		if i != 0 {
+			if argType.Flen < 0 {
+				bf.tp.Flen = mysql.MaxBlobWidth
+				log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT_WS is -1.", i)
+			}
 			bf.tp.Flen += argType.Flen
 		}
 	}
