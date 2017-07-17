@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -172,10 +173,15 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 	case types.ClassInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(row, sc)
-		if mysql.HasUnsignedFlag(tp.Flag) {
-			res = uint64(intRes)
+		if err != nil && terror.ErrorEqual(err, types.ErrOverflow) && !sc.InUpdateOrDeleteStmt {
+			// TODO: overflow convert it to decimal
+
 		} else {
-			res = intRes
+			if mysql.HasUnsignedFlag(tp.Flag) {
+				res = uint64(intRes)
+			} else {
+				res = intRes
+			}
 		}
 	case types.ClassReal:
 		res, isNull, err = sf.EvalReal(row, sc)

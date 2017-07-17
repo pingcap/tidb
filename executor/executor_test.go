@@ -1034,6 +1034,10 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(a as signed) from t")
 	result.Check(testkit.Rows("130000"))
 
+	// fixed issue #3762
+	result = tk.MustQuery("select -9223372036854775809;")
+	result.Check(testkit.Rows("-9223372036854775809"))
+
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
 	result.Check(testkit.Rows("MySQL"))

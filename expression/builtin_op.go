@@ -14,9 +14,14 @@
 package expression
 
 import (
+	"math"
+
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -353,7 +358,21 @@ func (b *builtinUnaryOpSig) eval(row []types.Datum) (d types.Datum, err error) {
 		case types.KindInt64:
 			d.SetInt64(-aDatum.GetInt64())
 		case types.KindUint64:
-			d.SetInt64(-int64(aDatum.GetUint64()))
+			// consider overflow, MySQL will convert it to Decimal when overflow occurred
+			uval := aDatum.GetUint64()
+			minInt64 := math.MinInt64
+			absMinInt64 := uint64(-minInt64) // 9223372036854775808
+			if uval > absMinInt64 {
+				// -uval will overflow
+				dval := new(types.MyDecimal)
+				sval := fmt.Sprintf("-%v", uval)
+				dval.FromString(hack.Slice(sval))
+				d.SetMysqlDecimal(dval)
+				types.DefaultTypeForValue(dval, b.tp)
+				// err = types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("-%v", uval))
+			} else {
+				d.SetInt64(-int64(uval))
+			}
 		case types.KindFloat64:
 			d.SetFloat64(-aDatum.GetFloat64())
 		case types.KindFloat32:

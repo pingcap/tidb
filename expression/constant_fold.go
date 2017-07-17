@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // FoldConstant does constant folding optimization on an expression.
@@ -39,6 +40,11 @@ func FoldConstant(expr Expression) Expression {
 	if err != nil {
 		log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", scalarFunc.FuncName, args)
 		return expr
+	}
+
+	// TODO: retType maybe changed after function executed
+	if builtinRetTp := scalarFunc.Function.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified {
+		scalarFunc.RetType = builtinRetTp
 	}
 	return &Constant{
 		Value:   value,
