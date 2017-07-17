@@ -304,6 +304,7 @@ const (
 	CharacterSetResults = "character_set_results"
 	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
+	TxnIsolation        = "tx_isolation"
 )
 
 // TableDelta stands for the changed count for one table.
