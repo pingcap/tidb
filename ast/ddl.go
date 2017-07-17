@@ -234,10 +234,6 @@ const (
 	ColumnOptionNotNull
 	ColumnOptionAutoIncrement
 	ColumnOptionDefaultValue
-	ColumnOptionUniq
-	ColumnOptionIndex
-	ColumnOptionUniqIndex
-	ColumnOptionKey
 	ColumnOptionUniqKey
 	ColumnOptionNull
 	ColumnOptionOnUpdate // For Timestamp and Datetime only.
