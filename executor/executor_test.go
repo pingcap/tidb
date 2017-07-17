@@ -1284,6 +1284,12 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("select log(-1, 0.25)")
 	result.Check(testkit.Rows("<nil>"))
 
+	// for atan
+	result = tk.MustQuery("select atan(0), atan(-1), atan(1), atan(1,2)")
+	result.Check(testkit.Rows("0 -0.7853981633974483 0.7853981633974483 0.4636476090008061"))
+	result = tk.MustQuery("select atan('tidb')")
+	result.Check(testkit.Rows("0"))
+
 	// for asin
 	result = tk.MustQuery("select asin(0), asin(-2), asin(2), asin(1)")
 	result.Check(testkit.Rows("0 <nil> <nil> 1.5707963267948966"))
