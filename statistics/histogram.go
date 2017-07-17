@@ -183,7 +183,7 @@ func (hg *Histogram) equalRowCount(sc *variable.StatementContext, value types.Da
 	if c < 0 {
 		return 0, nil
 	}
-	return hg.totalRowCount() / float64(hg.NDV), nil
+	return hg.TotalRowCount() / float64(hg.NDV), nil
 }
 
 // greaterRowCount estimates the row count where the column greater than value.
@@ -196,7 +196,7 @@ func (hg *Histogram) greaterRowCount(sc *variable.StatementContext, value types.
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	gtCount := hg.totalRowCount() - lessCount - eqCount
+	gtCount := hg.TotalRowCount() - lessCount - eqCount
 	if gtCount < 0 {
 		gtCount = 0
 	}
@@ -223,7 +223,7 @@ func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Dat
 		return 0, errors.Trace(err)
 	}
 	if index == len(hg.Buckets) {
-		return hg.totalRowCount(), nil
+		return hg.TotalRowCount(), nil
 	}
 	curCount := float64(hg.Buckets[index].Count)
 	prevCount := float64(0)
@@ -273,7 +273,8 @@ func (hg *Histogram) betweenRowCount(sc *variable.StatementContext, a, b types.D
 	return lessCountB - lessCountA, nil
 }
 
-func (hg *Histogram) totalRowCount() float64 {
+// TotalRowCount is the total row count of the original table.
+func (hg *Histogram) TotalRowCount() float64 {
 	if len(hg.Buckets) == 0 {
 		return 0
 	}
@@ -281,7 +282,7 @@ func (hg *Histogram) totalRowCount() float64 {
 }
 
 func (hg *Histogram) bucketRowCount() float64 {
-	return hg.totalRowCount() / float64(len(hg.Buckets))
+	return hg.TotalRowCount() / float64(len(hg.Buckets))
 }
 
 func (hg *Histogram) inBucketBetweenCount() float64 {
@@ -418,8 +419,8 @@ func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []*type
 		}
 		rowCount += cnt
 	}
-	if rowCount > c.totalRowCount() {
-		rowCount = c.totalRowCount()
+	if rowCount > c.TotalRowCount() {
+		rowCount = c.TotalRowCount()
 	} else if rowCount < 0 {
 		rowCount = 0
 	}
@@ -462,8 +463,8 @@ func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*type
 		}
 		totalCount += rowCount
 	}
-	if totalCount > idx.totalRowCount() {
-		totalCount = idx.totalRowCount()
+	if totalCount > idx.TotalRowCount() {
+		totalCount = idx.TotalRowCount()
 	}
 	return totalCount, nil
 }
