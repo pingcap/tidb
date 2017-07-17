@@ -115,6 +115,9 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
 	c.Assert(err, IsNil)
 
+	err = tb.UpdateRecord(ctx, 1, types.MakeDatums(1, "abc"), types.MakeDatums(3, "abe"), nil)
+	c.Assert(err, IsNil)
+
 	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
 	})
@@ -123,12 +126,12 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	vals, err := tb.RowWithCols(ctx, rid, tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
-	c.Assert(vals[0].GetInt64(), Equals, int64(1))
+	c.Assert(vals[0].GetInt64(), Equals, int64(3))
 	cols = []*table.Column{tb.Cols()[1]}
 	vals, err = tb.RowWithCols(ctx, rid, cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
-	c.Assert(vals[0].GetString(), Equals, "abc")
+	c.Assert(vals[0].GetString(), Equals, "abe")
 
 	c.Assert(tb.RemoveRecord(ctx, rid, types.MakeDatums(1, "cba")), IsNil)
 	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
