@@ -502,7 +502,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	if lease <= 0 {
 		return nil
 	}
-	deltaUpdateDuration := time.Minute
+	deltaUpdateDuration := lease * 5
 	go func(do *Domain) {
 		loadTicker := time.NewTicker(lease)
 		defer loadTicker.Stop()
