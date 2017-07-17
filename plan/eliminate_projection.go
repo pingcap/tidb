@@ -112,10 +112,11 @@ func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context, _ *i
 func (pe *projectionEliminater) eliminate(p Plan, replace map[string]*expression.Column, hasOrderKeeper bool) Plan {
 	proj, isProj := p.(*Projection)
 	_, isJoin := p.(*LogicalJoin)
+	_, isAggr := p.(*LogicalAggregation)
 	_, isUnion := p.(*Union)
 	_, isSort := p.(*Sort)
 
-	canChangeOrder := isProj || isJoin
+	canChangeOrder := isProj || isJoin || isAggr
 	haveToKeepOrder := isUnion || isSort
 
 	children := make([]Plan, 0, len(p.Children()))
