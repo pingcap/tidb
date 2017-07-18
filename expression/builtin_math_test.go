@@ -697,25 +697,41 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+
+	tests := []struct {
+		args   interface{}
+		expect float64
+		isNil  bool
+		getErr bool
 	}{
-		{nil, nil},
-		{int64(1), float64(0)},
-		{float64(1.0001), nil},
-		{"1", float64(0)},
+		{nil, 0, true, false},
+		{float64(1), 0, false, false},
+		{float64(2), 0, true, false},
+		{float64(-1), 3.141592653589793, false, false},
+		{float64(-2), 0, true, false},
+		{"tidb", 0, false, true},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-	for _, t := range Dtbl {
-		fc := funcs[ast.Acos]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Acos, primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Acos].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAsin(c *C) {
