@@ -184,7 +184,7 @@ type builtinFloorSig struct {
 	baseRealBuiltinFunc
 }
 
-// eval evals a builtinFloorSig.
+// evalReal evals a builtinFloorSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_floor
 func (b *builtinFloorSig) evalReal(row []types.Datum) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
