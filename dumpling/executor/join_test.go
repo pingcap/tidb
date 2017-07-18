@@ -166,14 +166,6 @@ func (s *testSuite) TestJoin(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 int,c2 double)")
-	tk.MustExec("create table t1(c1 double,c2 int)")
-	tk.MustExec("insert into t values (1, 2), (1, NULL)")
-	tk.MustExec("insert into t1 values (1, 2), (1, NULL)")
-	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
-	result.Check(testkit.Rows("1 2 1 2"))
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int, index k(c1))")
 	tk.MustExec("create table t1(c1 int)")
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7)")
@@ -194,14 +186,6 @@ func (s *testSuite) TestJoin(c *C) {
 	_, err = tk.Exec("select * from t right join t1 on 1")
 	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	plan.AllowCartesianProduct = true
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 int)")
-	tk.MustExec("create table t1(c1 int unsigned)")
-	tk.MustExec("insert into t values (1)")
-	tk.MustExec("insert into t1 values (1)")
-	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
-	result.Check(testkit.Rows("1"))
 	tk.MustExec("drop table if exists t,t2,t1")
 	tk.MustExec("create table t(c1 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
@@ -236,6 +220,42 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t values(1),(2), (3)")
 	tk.MustQuery("select @a := @a + 1 from t, (select @a := 0) b;").Check(testkit.Rows("1", "2", "3"))
 
+}
+
+func (s *testSuite) TestJoinCast(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("create table t1(c1 int unsigned)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t1 values (1)")
+	result := tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
+	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int,c2 double)")
+	tk.MustExec("create table t1(c1 double,c2 int)")
+	tk.MustExec("insert into t values (1, 2), (1, NULL)")
+	tk.MustExec("insert into t1 values (1, 2), (1, NULL)")
+	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
+	result.Check(testkit.Rows("1 2 1 2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("create table t1(c1 decimal(4,2))")
+	tk.MustExec("insert into t values(0), (2)")
+	tk.MustExec("insert into t1 values(0), (9)")
+	result = tk.MustQuery("select * from t left join t1 on t1.c1 = t.c1")
+	result.Sort().Check(testkit.Rows("0 0.00", "2 <nil>"))
 }
 
 func (s *testSuite) TestUsing(c *C) {
