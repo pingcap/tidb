@@ -170,8 +170,7 @@ func (v *validator) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 				hasAutoIncrement = true
 			}
 			switch op.Tp {
-			case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey, ast.ColumnOptionUniqIndex,
-				ast.ColumnOptionUniq, ast.ColumnOptionKey, ast.ColumnOptionIndex:
+			case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
 				isKey = true
 			}
 		}
