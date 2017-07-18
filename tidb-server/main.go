@@ -146,7 +146,7 @@ func main() {
 
 	var tlsConfig *tls.Config
 
-	// try loading TLS certificates
+	// Try loading TLS certificates.
 	if cfg.SSLEnabled {
 		tlsCert, err := tls.LoadX509KeyPair(*sslCertPath, *sslKeyPath)
 		if err != nil {
@@ -155,7 +155,7 @@ func main() {
 		} else {
 			variable.SysVars["ssl_cert"].Value = *sslCertPath
 			variable.SysVars["ssl_key"].Value = *sslKeyPath
-			// try loading CA cert
+			// Try loading CA cert.
 			clientAuthPolicy := tls.NoClientCert
 			var certPool *x509.CertPool
 			if len(*sslCAPath) > 0 {

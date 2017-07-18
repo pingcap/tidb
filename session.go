@@ -182,7 +182,7 @@ func (s *session) SetConnectionID(connectionID uint64) {
 }
 
 func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
-	// if user is not connected via TLS, tlsState == nil
+	// If user is not connected via TLS, then tlsState == nil.
 	if tlsState != nil {
 		s.sessionVars.TLSConnectionState = tlsState
 	}

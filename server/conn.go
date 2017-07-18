@@ -66,8 +66,8 @@ var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 // handles client query.
 type clientConn struct {
 	pkt          *packetIO         // a helper to read and write data in packet format.
-	conn         net.Conn          // net.Conn if not SSL or a TLS wrapped net.Conn
-	tlsConn      *tls.Conn         // nil if not SSL
+	conn         net.Conn          // net.Conn if not SSL or a TLS wrapped net.Conn.
+	tlsConn      *tls.Conn         // nil if not TLS connection.
 	server       *Server           // a reference of server instance.
 	capability   uint32            // client capability affects the way server handles client request.
 	connectionID uint32            // atomically allocated by a global variable, unique in process scope.
@@ -218,7 +218,7 @@ func parseHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (par
 	return offset, nil
 }
 
-// Parse the HandshakeResponse (except the common header part)
+// Parse the HandshakeResponse (except the common header part).
 func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset int) (err error) {
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
@@ -309,7 +309,7 @@ func parseAttrs(data []byte) (map[string]string, error) {
 }
 
 func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
-	// Read a packet. It may be a SSLRequest or HandshakeResponse
+	// Read a packet. It may be a SSLRequest or HandshakeResponse.
 	data, err := cc.readPacket()
 	if err != nil {
 		return errors.Trace(err)
@@ -322,12 +322,12 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 		return errors.Trace(err)
 	}
 
-	// The packet is a SSLRequest, let's switch to TLS
+	// The packet is a SSLRequest, let's switch to TLS.
 	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.cfg.SSLEnabled {
 		if err := cc.UpgradeToTLS(cc.server.tlsConfig); err != nil {
 			return errors.Trace(err)
 		}
-		// Read the following HandshakeResponse packet
+		// Read the following HandshakeResponse packet.
 		data, err = cc.readPacket()
 		if err != nil {
 			return errors.Trace(err)
@@ -338,7 +338,7 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 		}
 	}
 
-	// Read the remaining part of the packet
+	// Read the remaining part of the packet.
 	if err := parseHandshakeResponseBody(&resp, data, pos); err != nil {
 		return errors.Trace(err)
 	}
@@ -349,7 +349,7 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
 
-	// Open session and do auth
+	// Open session and do auth.
 	var tlsStatePtr *tls.ConnectionState
 	if cc.tlsConn != nil {
 		tlsState := cc.tlsConn.ConnectionState()
@@ -360,7 +360,7 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 		return errors.Trace(err)
 	}
 	if !cc.server.skipAuth() {
-		// Do Auth
+		// Do Auth.
 		addr := cc.conn.RemoteAddr().String()
 		host, _, err1 := net.SplitHostPort(addr)
 		if err1 != nil {

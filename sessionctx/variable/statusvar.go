@@ -64,7 +64,7 @@ func GetStatusVars(vars *SessionVars) (map[string]*StatusVal, error) {
 	return statusVars, nil
 }
 
-// Taken from https://golang.org/pkg/crypto/tls/#pkg-constants
+// Taken from https://golang.org/pkg/crypto/tls/#pkg-constants .
 var tlsCiphers = []uint16{
 	tls.TLS_RSA_WITH_RC4_128_SHA,
 	tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA,
@@ -92,7 +92,7 @@ var tlsCiphers = []uint16{
 
 var tlsSupportedCiphers string
 
-// Taken from https://github.com/openssl/openssl/blob/c784a838e0947fcca761ee62def7d077dc06d37f/include/openssl/ssl.h#L141
+// Taken from https://github.com/openssl/openssl/blob/c784a838e0947fcca761ee62def7d077dc06d37f/include/openssl/ssl.h#L141 .
 var tlsVersionString = map[uint16]string{
 	tls.VersionSSL30: "SSLv3",
 	tls.VersionTLS10: "TLSv1",
@@ -100,7 +100,7 @@ var tlsVersionString = map[uint16]string{
 	tls.VersionTLS12: "TLSv1.2",
 }
 
-// Taken from https://testssl.sh/openssl-rfc.mapping.html
+// Taken from https://testssl.sh/openssl-rfc.mapping.html .
 var tlsCipherString = map[uint16]string{
 	tls.TLS_RSA_WITH_RC4_128_SHA:                "RC4-SHA",
 	tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:           "DES-CBC3-SHA",
