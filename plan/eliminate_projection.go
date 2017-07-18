@@ -74,11 +74,6 @@ func doPhysicalProjectionElimination(p PhysicalPlan, replace map[string]*express
 	for _, dst := range p.Schema().Columns {
 		resolveColumnAndReplace(dst, replace)
 	}
-	for _, key := range p.Schema().Keys {
-		for _, keyCol := range key {
-			resolveColumnAndReplace(keyCol, replace)
-		}
-	}
 	p.replaceExprColumns(replace)
 
 	proj, isProj := p.(*Projection)
