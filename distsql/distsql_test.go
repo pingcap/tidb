@@ -33,25 +33,100 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testTableCodecSuite{})
+var _ = Suite(&testDistsqlSuite{})
 
-type testTableCodecSuite struct{}
+type testDistsqlSuite struct{}
 
 // TODO: add more tests.
-func (s *testTableCodecSuite) TestColumnToProto(c *C) {
+func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 	defer testleak.AfterTest(c)()
 	// Make sure the Flag is set in tipb.ColumnInfo
 	tp := types.NewFieldType(mysql.TypeLong)
 	tp.Flag = 10
+	tp.Collate = "utf8_bin"
 	col := &model.ColumnInfo{
 		FieldType: *tp,
 	}
 	pc := columnToProto(col)
 	c.Assert(pc.GetFlag(), Equals, int32(10))
+	ntp := FieldTypeFromPBColumn(pc)
+	c.Assert(ntp, DeepEquals, tp)
+
+	cols := []*model.ColumnInfo{col, col}
+	pcs := ColumnsToProto(cols, false)
+	for _, v := range pcs {
+		c.Assert(v.GetFlag(), Equals, int32(10))
+	}
+	pcs = ColumnsToProto(cols, true)
+	for _, v := range pcs {
+		c.Assert(v.GetFlag(), Equals, int32(10))
+	}
+}
+
+func (s *testDistsqlSuite) TestIndexToProto(c *C) {
+	defer testleak.AfterTest(c)()
+	cols := []*model.ColumnInfo{
+		{
+			ID:     1,
+			Name:   model.NewCIStr("col1"),
+			Offset: 1,
+		},
+		{
+			ID:     2,
+			Name:   model.NewCIStr("col2"),
+			Offset: 2,
+		},
+	}
+	cols[0].Flag |= mysql.PriKeyFlag
+
+	idxCols := []*model.IndexColumn{
+		{
+			Name:   model.NewCIStr("col1"),
+			Offset: 1,
+			Length: 1,
+		},
+		{
+			Name:   model.NewCIStr("col1"),
+			Offset: 1,
+			Length: 1,
+		},
+	}
+
+	idxInfos := []*model.IndexInfo{
+		{
+			ID:      1,
+			Name:    model.NewCIStr("idx1"),
+			Table:   model.NewCIStr("test"),
+			Columns: idxCols,
+			Unique:  true,
+			Primary: true,
+		},
+		{
+			ID:      2,
+			Name:    model.NewCIStr("idx2"),
+			Table:   model.NewCIStr("test"),
+			Columns: idxCols,
+			Unique:  true,
+			Primary: true,
+		},
+	}
+
+	tbInfo := model.TableInfo{
+		ID:         1,
+		Name:       model.NewCIStr("test"),
+		Columns:    cols,
+		Indices:    idxInfos,
+		PKIsHandle: true,
+	}
+
+	pIdx := IndexToProto(&tbInfo, idxInfos[0])
+	c.Assert(pIdx.TableId, Equals, int64(1))
+	c.Assert(pIdx.IndexId, Equals, int64(1))
+	c.Assert(pIdx.Unique, Equals, true)
 }
 
 // For issue 1791
-func (s *testTableCodecSuite) TestGoroutineLeak(c *C) {
+func (s *testDistsqlSuite) TestGoroutineLeak(c *C) {
 	var sr SelectResult
 	countBefore := runtime.NumGoroutine()
 
