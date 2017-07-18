@@ -205,6 +205,10 @@ func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context
 			bf.tp.Flag |= mysql.BinaryFlag
 		}
 
+		if argType.Flen < 0 {
+			bf.tp.Flen = mysql.MaxBlobWidth
+			log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT is -1.", i)
+		}
 		bf.tp.Flen += argType.Flen
 	}
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
@@ -254,6 +258,10 @@ func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Conte
 
 		// skip seperator param
 		if i != 0 {
+			if argType.Flen < 0 {
+				bf.tp.Flen = mysql.MaxBlobWidth
+				log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT_WS is -1.", i)
+			}
 			bf.tp.Flen += argType.Flen
 		}
 	}
@@ -844,49 +852,49 @@ type substringIndexFunctionClass struct {
 }
 
 func (c *substringIndexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinSubstringIndexSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	if mysql.HasBinaryFlag(argType.Flag) {
+		types.SetBinChsClnFlag(bf.tp)
+	}
+	sig := &builtinSubstringIndexSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSubstringIndexSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinSubstringIndexSig.
+// evalString evals a builtinSubstringIndexSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
-func (b *builtinSubstringIndexSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinSubstringIndexSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var (
+		str, delim string
+		count      int64
+	)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	// The meaning of the elements of args.
-	// args[0] -> StrExpr
-	// args[1] -> Delim
-	// args[2] -> Count
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Errorf("Substring_Index invalid args, need string but get %T", args[0].GetValue())
+	delim, isNull, err = b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-
-	delim, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Errorf("Substring_Index invalid delim, need string but get %T", args[1].GetValue())
+	count, isNull, err = b.args[2].EvalInt(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
 	if len(delim) == 0 {
-		d.SetString("")
-		return d, nil
+		return "", false, nil
 	}
 
-	c, err := args[2].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	count := int(c)
 	strs := strings.Split(str, delim)
-	var (
-		start = 0
-		end   = len(strs)
-	)
+	start, end := int64(0), int64(len(strs))
 	if count > 0 {
 		// If count is positive, everything to the left of the final delimiter (counting from the left) is returned.
 		if count < end {
@@ -900,8 +908,7 @@ func (b *builtinSubstringIndexSig) eval(row []types.Datum) (d types.Datum, err e
 		}
 	}
 	substrs := strs[start:end]
-	d.SetString(strings.Join(substrs, delim))
-	return d, nil
+	return strings.Join(substrs, delim), false, nil
 }
 
 type locateFunctionClass struct {
