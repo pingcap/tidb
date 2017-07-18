@@ -469,20 +469,17 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 
 func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
-	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
 		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
 		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
-		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashJoinExec{
 		schema:        v.Schema(),
 		otherFilter:   v.OtherConditions,
 		prepared:      false,
 		ctx:           b.ctx,
-		targetTypes:   targetTypes,
 		concurrency:   v.Concurrency,
 		defaultValues: v.DefaultValues,
 	}
@@ -526,13 +523,11 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 
 func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJoinExec {
 	var leftHashKey, rightHashKey []*expression.Column
-	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
 		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
 		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
-		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashSemiJoinExec{
 		schema:       v.Schema(),
@@ -547,7 +542,6 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJ
 		smallHashKey: rightHashKey,
 		auxMode:      v.WithAux,
 		anti:         v.Anti,
-		targetTypes:  targetTypes,
 	}
 	return e
 }
