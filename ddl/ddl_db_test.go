@@ -902,6 +902,45 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrBadField)
 	sql = "alter table test_alter_column alter column c set default null"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+
+	// The followings tests whether adding constraints via change / modify column
+	// is forbidden as expected.
+	s.mustExec(c, "drop table if exists mc")
+	s.mustExec(c, "create table mc(a int key, b int, c int)")
+	_, err = s.tk.Exec("alter table mc modify column a int key") // Adds a new primary key
+	c.Assert(err, NotNil)
+	_, err = s.tk.Exec("alter table mc modify column c int unique") // Adds a new unique key
+	c.Assert(err, NotNil)
+	result := s.tk.MustQuery("show create table mc")
+	createSQL := result.Rows()[0][1]
+	expected := "CREATE TABLE `mc` (\n  `a` int(11) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	c.Assert(createSQL, Equals, expected)
+
+	// Change / modify column should preserve index options.
+	s.mustExec(c, "drop table if exists mc")
+	s.mustExec(c, "create table mc(a int key, b int, c int unique)")
+	s.mustExec(c, "alter table mc modify column a bigint") // NOT NULL & PRIMARY KEY should be preserved
+	s.mustExec(c, "alter table mc modify column b bigint")
+	s.mustExec(c, "alter table mc modify column c bigint") // Unique should be preserved
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(21) NOT NULL,\n  `b` bigint(21) DEFAULT NULL,\n  `c` bigint(21) DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	c.Assert(createSQL, Equals, expected)
+
+	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
+	s.mustExec(c, "drop table if exists mc")
+	s.mustExec(c, "create table mc(a int key auto_increment, b int)")
+	s.mustExec(c, "alter table mc modify column a bigint auto_increment") // Keeps auto_increment
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(21) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	s.mustExec(c, "alter table mc modify column a bigint") // Drops auto_increment
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(21) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	c.Assert(createSQL, Equals, expected)
+	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
+	c.Assert(err, NotNil)
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
