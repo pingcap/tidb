@@ -20,7 +20,8 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
-func GenerateSchema(colCount int, dbName, tblName, fromID string) *Schema {
+// generateSchema will generate a schema for test. Used only in this file.
+func generateSchema(colCount int, dbName, tblName, fromID string) *Schema {
 	cols := make([]*Column, 0, colCount)
 	for i := 0; i < colCount; i++ {
 		cols = append(cols, &Column{
@@ -40,8 +41,9 @@ func GenerateSchema(colCount int, dbName, tblName, fromID string) *Schema {
 	return NewSchema(cols...)
 }
 
-func GenerateKeys4Schema(schema *Schema) {
-	keyCount := len(schema.Columns)-1
+// generateKeys4Schema will generate keys for a given schema. Used only in this file.
+func generateKeys4Schema(schema *Schema) {
+	keyCount := len(schema.Columns) - 1
 	keys := make([]KeyInfo, 0, keyCount)
 	for i := 0; i < keyCount; i++ {
 		keys = append(keys, []*Column{schema.Columns[i]})
@@ -50,14 +52,14 @@ func GenerateKeys4Schema(schema *Schema) {
 }
 
 func (s *testEvalSuite) TestSchemaString(c *C) {
-	schema := GenerateSchema(5, "T", "B", "FROMID")
+	schema := generateSchema(5, "T", "B", "FROMID")
 	c.Assert(schema.String(), Equals, "Column: [t.b.c0,t.b.c1,b.c2,c3,c4] Unique key: []")
-	GenerateKeys4Schema(schema)
+	generateKeys4Schema(schema)
 	c.Assert(schema.String(), Equals, "Column: [t.b.c0,t.b.c1,b.c2,c3,c4] Unique key: [[t.b.c0],[t.b.c1],[b.c2],[c3]]")
 }
 
 func (s *testEvalSuite) TestSchemaRetrieveColumn(c *C) {
-	schema := GenerateSchema(5, "T", "B", "FROMID")
+	schema := generateSchema(5, "T", "B", "FROMID")
 	colOutSchema := &Column{
 		FromID:   "dual",
 		Position: 100,
@@ -69,14 +71,14 @@ func (s *testEvalSuite) TestSchemaRetrieveColumn(c *C) {
 }
 
 func (s *testEvalSuite) TestSchemaIsUniqueKey(c *C) {
-	schema := GenerateSchema(5, "T", "B", "FROMID")
-	GenerateKeys4Schema(schema)
+	schema := generateSchema(5, "T", "B", "FROMID")
+	generateKeys4Schema(schema)
 	colOutSchema := &Column{
 		FromID:   "dual",
 		Position: 100,
 	}
 	for i, col := range schema.Columns {
-		if i < len(schema.Columns) - 1 {
+		if i < len(schema.Columns)-1 {
 			c.Assert(schema.IsUniqueKey(col), Equals, true)
 		} else {
 			c.Assert(schema.IsUniqueKey(col), Equals, false)
@@ -86,7 +88,7 @@ func (s *testEvalSuite) TestSchemaIsUniqueKey(c *C) {
 }
 
 func (s *testEvalSuite) TestSchemaContains(c *C) {
-	schema := GenerateSchema(5, "T", "B", "FROMID")
+	schema := generateSchema(5, "T", "B", "FROMID")
 	colOutSchema := &Column{
 		FromID:   "dual",
 		Position: 100,
@@ -98,7 +100,7 @@ func (s *testEvalSuite) TestSchemaContains(c *C) {
 }
 
 func (s *testEvalSuite) TestSchemaColumnsIndices(c *C) {
-	schema := GenerateSchema(5, "T", "B", "FROMID")
+	schema := generateSchema(5, "T", "B", "FROMID")
 	colOutSchema := &Column{
 		FromID:   "dual",
 		Position: 100,
@@ -113,7 +115,7 @@ func (s *testEvalSuite) TestSchemaColumnsIndices(c *C) {
 }
 
 func (s *testEvalSuite) TestSchemaColumnsByIndices(c *C) {
-	schema := GenerateSchema(5, "T", "B", "FROMID")
+	schema := generateSchema(5, "T", "B", "FROMID")
 	indices := []int{0, 1, 2, 3}
 	retCols := schema.ColumnsByIndices(indices)
 	for i, ret := range retCols {
@@ -122,11 +124,11 @@ func (s *testEvalSuite) TestSchemaColumnsByIndices(c *C) {
 }
 
 func (s *testEvalSuite) TestSchemaMergeSchema(c *C) {
-	lSchema := GenerateSchema(5, "T", "B", "LEFT")
-	GenerateKeys4Schema(lSchema)
+	lSchema := generateSchema(5, "T", "B", "LEFT")
+	generateKeys4Schema(lSchema)
 
-	rSchema := GenerateSchema(5, "T", "B", "RIGHT")
-	GenerateKeys4Schema(rSchema)
+	rSchema := generateSchema(5, "T", "B", "RIGHT")
+	generateKeys4Schema(rSchema)
 
 	c.Assert(MergeSchema(nil, nil), IsNil)
 	c.Assert(MergeSchema(lSchema, nil).String(), Equals, lSchema.String())
