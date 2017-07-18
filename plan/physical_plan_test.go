@@ -161,13 +161,13 @@ func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 		{
 			sql:          "select * from t order by d limit 1",
 			best:         "Table(t)->Sort + Limit(1) + Offset(0)",
-			orderByItmes: "[t.d]",
+			orderByItmes: "[test.t.d]",
 			limit:        "1",
 		},
 		{
 			sql:          "select * from t where c > 0 order by d limit 1",
 			best:         "Index(t.c_d_e)[(0 +inf,+inf +inf]]->Sort + Limit(1) + Offset(0)",
-			orderByItmes: "[t.d]",
+			orderByItmes: "[test.t.d]",
 			limit:        "1",
 		},
 		{
@@ -550,7 +550,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		lp, err = logicalOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
 		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		info.p = eliminatePhysicalProjection(info.p, make(map[string]*expression.Column))
+		info.p = eliminatePhysicalProjection(info.p)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(info.p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -664,7 +664,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate|flagEliminateProjection, p.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		info.p = eliminatePhysicalProjection(info.p, make(map[string]*expression.Column))
+		info.p = eliminatePhysicalProjection(info.p)
 		c.Assert(ToString(info.p), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
 }
@@ -985,7 +985,7 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		},
 		{
 			sql: "select * from (select * from t limit 0, 129) t1 join t t2 on t1.a = t2.a",
-			ans: "RightHashJoin{Table(t)->Limit->Table(t)}(t.a,t2.a)",
+			ans: "RightHashJoin{Table(t)->Limit->Table(t)}(test.t.a,t2.a)",
 		},
 		{
 			sql: "select * from (select * from t limit 0, 10 union select * from t limit 10, 100) t1 join t t2 on t1.a = t2.a",

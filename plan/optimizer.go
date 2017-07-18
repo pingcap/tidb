@@ -127,7 +127,14 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	} else {
 		finalPlan, err = physicalOptimize(flag, logic, allocator)
 	}
-	finalPlan = eliminatePhysicalProjection(finalPlan, make(map[string]*expression.Column))
+	oldRoot := finalPlan
+	finalPlan = eliminatePhysicalProjection(finalPlan)
+	if oldRoot.ID() != finalPlan.ID() {
+		newCols := finalPlan.Schema().Columns
+		for i, oldCol := range oldRoot.Schema().Columns {
+			newCols[i].ColName = oldCol.ColName
+		}
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
