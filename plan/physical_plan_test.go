@@ -550,7 +550,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		lp, err = logicalOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
 		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		info.p = eliminatePhysicalProjection(info.p, make(map[string]*expression.Column)).(PhysicalPlan)
+		info.p = eliminatePhysicalProjection(info.p, make(map[string]*expression.Column))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(info.p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -664,7 +664,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate|flagEliminateProjection, p.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		info.p = eliminatePhysicalProjection(info.p, make(map[string]*expression.Column)).(PhysicalPlan).(PhysicalPlan)
+		info.p = eliminatePhysicalProjection(info.p, make(map[string]*expression.Column))
 		c.Assert(ToString(info.p), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
 }

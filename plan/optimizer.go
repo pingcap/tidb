@@ -127,7 +127,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	} else {
 		finalPlan, err = physicalOptimize(flag, logic, allocator)
 	}
-	finalPlan = eliminatePhysicalProjection(finalPlan, make(map[string]*expression.Column)).(PhysicalPlan)
+	finalPlan = eliminatePhysicalProjection(finalPlan, make(map[string]*expression.Column))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
