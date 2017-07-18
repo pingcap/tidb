@@ -168,8 +168,8 @@ func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) analyzeResult {
 	}
 	result := analyzeResult{tableID: task.tableInfo.ID, isIndex: 0}
 	if task.PKInfo != nil {
-		result.count = int64(pkBuilder.Hist.TotalRowCount())
-		result.hist = append(result.hist, pkBuilder.Hist)
+		result.count = pkBuilder.Count
+		result.hist = []*statistics.Histogram{pkBuilder.Hist}
 	} else {
 		result.count = collectors[0].Count + collectors[0].NullCount
 	}
@@ -240,7 +240,7 @@ func CollectSamplesAndEstimateNDVs(ctx context.Context, e ast.RecordSet, numCols
 			return collectors, pkBuilder, nil
 		}
 		if pkInfo != nil {
-			err := pkBuilder.Insert(&ast.Row{Data: []types.Datum{row.Data[0]}})
+			err := pkBuilder.Iterate(row.Data)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

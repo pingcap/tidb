@@ -29,7 +29,7 @@ type SortedBuilder struct {
 	valuesPerBucket int64
 	lastNumber      int64
 	bucketIdx       int64
-	count           int64
+	Count           int64
 	isPK            bool
 	Hist            *Histogram
 }
@@ -48,13 +48,13 @@ func NewSortedBuilder(ctx context.Context, numBuckets, id int64, isPK bool) *Sor
 	}
 }
 
-// Insert inserts one row into the histogram.
-func (b *SortedBuilder) Insert(row *ast.Row) error {
+// Iterate inserts row into the histogram one by one.
+func (b *SortedBuilder) Iterate(datums []types.Datum) error {
 	var data types.Datum
 	if b.isPK {
-		data = row.Data[0]
+		data = datums[0]
 	} else {
-		bytes, err := codec.EncodeKey(nil, row.Data...)
+		bytes, err := codec.EncodeKey(nil, datums...)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -64,7 +64,7 @@ func (b *SortedBuilder) Insert(row *ast.Row) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b.count++
+	b.Count++
 	if cmp == 0 {
 		// The new item has the same value as current bucket value, to ensure that
 		// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
@@ -123,12 +123,12 @@ func BuildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet
 		if row == nil {
 			break
 		}
-		err = b.Insert(row)
+		err = b.Iterate(row.Data)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
 	}
-	return int64(b.Hist.TotalRowCount()), b.Hist, nil
+	return int64(b.Hist.totalRowCount()), b.Hist, nil
 }
 
 // BuildColumn builds histogram from samples for column.

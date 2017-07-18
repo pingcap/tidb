@@ -140,12 +140,12 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 		if row == nil {
 			break
 		}
-		err = b.Insert(row)
+		err = b.Iterate(row)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
 	}
-	return int64(b.Hist.TotalRowCount()), b.Hist, nil
+	return b.Count, b.Hist, nil
 }
 
 func (s *testStatisticsSuite) TestBuild(c *C) {
@@ -262,7 +262,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg}
 	tbl := &Table{
-		Count:   int64(col.TotalRowCount()),
+		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
 	}
 	ran := []*types.ColumnRange{{
@@ -328,7 +328,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	c.Check(rowCount, Equals, int64(100000))
 	col := &Column{Histogram: *hg}
 	tbl := &Table{
-		Count:   int64(col.TotalRowCount()),
+		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
 	}
 	ran := []types.IntColumnRange{{

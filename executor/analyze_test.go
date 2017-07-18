@@ -103,6 +103,6 @@ func (s *testSuite) TestCollectSamplesAndEstimateNDVs(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(collectors[0].NullCount+collectors[0].Count, Equals, int64(rs.count))
 	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(6624))
-	c.Assert(int64(pkBuilder.Hist.TotalRowCount()), Equals, int64(rs.count))
+	c.Assert(int64(pkBuilder.Count), Equals, int64(rs.count))
 	c.Assert(pkBuilder.Hist.NDV, Equals, int64(rs.count))
 }
