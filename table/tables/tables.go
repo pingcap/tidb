@@ -247,11 +247,11 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 		} else {
 			value = newData[col.Offset]
 		}
-		if !t.CanSkip(col, value) {
+		if !t.canSkip(col, value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
-		if shouldWriteBinlog(ctx) && !t.CanSkipUpdateBinlog(col, value) {
+		if shouldWriteBinlog(ctx) && !t.canSkipUpdateBinlog(col, value) {
 			binlogColIDs = append(binlogColIDs, col.ID)
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
 			binlogNewRow = append(binlogNewRow, value)
@@ -353,7 +353,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		} else {
 			value = r[col.Offset]
 		}
-		if !t.CanSkip(col, value) {
+		if !t.canSkip(col, value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
@@ -750,11 +750,11 @@ func (t *Table) getMutation(ctx context.Context) *binlog.TableMutation {
 	return &bin.Mutations[idx]
 }
 
-// CanSkip is for these cases, we can skip the columns in encoded row:
+// canSkip is for these cases, we can skip the columns in encoded row:
 // 1. the column is included in primary key;
 // 2. the column's default value is null, and the value equals to that;
 // 3. the column is virtual generated.
-func (t *Table) CanSkip(col *table.Column, value types.Datum) bool {
+func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
 	if col.IsPKHandleColumn(t.meta) {
 		return true
 	}
@@ -767,8 +767,8 @@ func (t *Table) CanSkip(col *table.Column, value types.Datum) bool {
 	return false
 }
 
-// CanSkipUpdateBinlog checks whether the column can be skiped or not.
-func (t *Table) CanSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
+// canSkipUpdateBinlog checks whether the column can be skiped or not.
+func (t *Table) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
 	if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
 		return true
 	}

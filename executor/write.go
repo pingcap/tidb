@@ -45,12 +45,12 @@ var (
 // 5. check not-null constraints.
 func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool, t table.Table, onDup bool) (bool, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
-	var changed = false
-	var handleChanged = false
-	var onUpdate = make([]bool, len(touched))
+	var changed, handleChanged = false, false
+	var onUpdateNoChange map[int]bool
 
 	// We can iterate on public columns not writable columns,
-	// because all writable columns are after public columns.
+	// because all of them are sorted by their `Offset`, which
+	// causes all writable columns are after public columns.
 	for i, col := range t.Cols() {
 		v, err := table.CastValue(ctx, newData[i], col.ToInfo())
 		if err != nil {
@@ -81,14 +81,13 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		} else {
 			if mysql.HasOnUpdateNowFlag(col.Flag) && touched[i] {
 				// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
-				onUpdate[i] = true
+				onUpdateNoChange[i] = true
 			}
 			touched[i] = false
-
 		}
 	}
 	for i, col := range t.Cols() {
-		if mysql.HasOnUpdateNowFlag(col.Flag) && !touched[i] && !onUpdate[i] {
+		if mysql.HasOnUpdateNowFlag(col.Flag) && !touched[i] && !onUpdateNoChange[i] {
 			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
 			if err != nil {
 				return false, errors.Trace(err)
@@ -132,9 +131,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	dirtyDB.addRow(tid, h, newData)
 
 	if onDup {
-		ctx.GetSessionVars().StmtCtx.AddAffectedRows(2)
+		sc.AddAffectedRows(2)
 	} else {
-		ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		sc.AddAffectedRows(1)
 	}
 
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
