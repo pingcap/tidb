@@ -27,7 +27,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -54,14 +53,13 @@ const (
 )
 
 type kvStore interface {
-	GetPDClient() pd.Client
+	GetRegionCache() *tikv.RegionCache
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
 }
 
 type regionHandlerTool struct {
 	bo          *tikv.Backoffer
 	infoSchema  infoschema.InfoSchema
-	pdClient    pd.Client
 	regionCache *tikv.RegionCache
 	store       kvStore
 }
@@ -100,10 +98,8 @@ func (rh *RegionHandler) prepare() (tool *regionHandlerTool, err error) {
 
 	store := rh.s.driver.(*TiDBDriver).store
 	tikvStore := store.(kvStore)
-	pdClient := tikvStore.GetPDClient()
 
-	// create regionCache.
-	regionCache := tikv.NewRegionCache(pdClient)
+	regionCache := tikvStore.GetRegionCache()
 	var session tidb.Session
 
 	session, err = tidb.CreateSession(store)
@@ -117,7 +113,6 @@ func (rh *RegionHandler) prepare() (tool *regionHandlerTool, err error) {
 	infoSchema := sessionctx.GetDomain(session.(context.Context)).InfoSchema()
 
 	tool = &regionHandlerTool{
-		pdClient:    pdClient,
 		regionCache: regionCache,
 		bo:          backOffer,
 		infoSchema:  infoSchema,
@@ -223,7 +218,7 @@ type RegionFrameRange struct {
 func (tool *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
-		meta, leader, err := tool.pdClient.GetRegionByID(goctx.TODO(), regionID)
+		meta, leader, err := tool.regionCache.PDClient().GetRegionByID(goctx.TODO(), regionID)
 		if err != nil {
 			return nil, err
 		}

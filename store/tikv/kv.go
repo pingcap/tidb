@@ -295,8 +295,8 @@ func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID Region
 	return sender.SendReq(bo, req, regionID, timeout)
 }
 
-func (s *tikvStore) GetPDClient() pd.Client {
-	return s.regionCache.pdClient
+func (s *tikvStore) GetRegionCache() *RegionCache {
+	return s.regionCache
 }
 
 // ParseEtcdAddr parses path to etcd address list
