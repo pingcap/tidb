@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
@@ -152,6 +153,8 @@ func main() {
 			log.Warn(errors.ErrorStack(err))
 			cfg.SSLEnabled = false
 		} else {
+			variable.SysVars["ssl_cert"].Value = *sslCertPath
+			variable.SysVars["ssl_key"].Value = *sslKeyPath
 			// try loading CA cert
 			clientAuthPolicy := tls.NoClientCert
 			var certPool *x509.CertPool
@@ -164,6 +167,7 @@ func main() {
 					if certPool.AppendCertsFromPEM(caCert) {
 						clientAuthPolicy = tls.VerifyClientCertIfGiven
 					}
+					variable.SysVars["ssl_ca"].Value = *sslCAPath
 				}
 			}
 			tlsConfig = &tls.Config{
@@ -177,6 +181,8 @@ func main() {
 
 	if cfg.SSLEnabled {
 		log.Info("Secure connection is enabled")
+		variable.SysVars["have_openssl"].Value = "YES"
+		variable.SysVars["have_ssl"].Value = "YES"
 	} else {
 		log.Warn("Secure connection is NOT ENABLED")
 	}
