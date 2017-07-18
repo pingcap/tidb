@@ -93,7 +93,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "default", "shared", "exclusive",
-		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets",
+		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -396,6 +396,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		// for show character set
 		{"show character set;", true},
+		{"show charset", true},
 		// for show collation
 		{"show collation", true},
 		{"show collation like 'utf8%'", true},
@@ -636,6 +637,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		{`SELECT LOCATE('bar', 'foobarbar');`, true},
 		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
+
+		{`SELECT tidb_version();`, true},
 
 		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
@@ -1411,6 +1414,24 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 	table := []testCase{
 		// for create user
 		{`CREATE USER 'test'`, true},
+		{`CREATE USER test`, true},
+		{"CREATE USER `test`", true},
+		{"CREATE USER test-user", false},
+		{"CREATE USER test.user", false},
+		{"CREATE USER 'test-user'", true},
+		{"CREATE USER `test-user`", true},
+		{"CREATE USER test.user", false},
+		{"CREATE USER 'test.user'", true},
+		{"CREATE USER `test.user`", true},
+		{"CREATE USER uesr1@localhost", true},
+		{"CREATE USER `uesr1`@localhost", true},
+		{"CREATE USER uesr1@`localhost`", true},
+		{"CREATE USER `uesr1`@`localhost`", true},
+		{"CREATE USER 'uesr1'@localhost", true},
+		{"CREATE USER uesr1@'localhost'", true},
+		{"CREATE USER 'uesr1'@'localhost'", true},
+		{"CREATE USER 'uesr1'@`localhost`", true},
+		{"CREATE USER `uesr1`@'localhost'", true},
 		{`CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
@@ -1770,4 +1791,37 @@ func (s *testParserSuite) TestGeneratedColumn(c *C) {
 		}
 	}
 
+}
+
+func (s *testParserSuite) TestSetTransaction(c *C) {
+	defer testleak.AfterTest(c)()
+	// Set transaction is equivalent to setting the global or session value of tx_isolation.
+	// For example:
+	// SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED
+	// SET SESSION tx_isolation='READ-COMMITTED'
+	tests := []struct {
+		input    string
+		isGlobal bool
+		value    string
+	}{
+		{
+			"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
+			false, "READ-COMMITTED",
+		},
+		{
+			"SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+			true, "REPEATABLE-READ",
+		},
+	}
+	parser := New()
+	for _, t := range tests {
+		stmt1, err := parser.ParseOneStmt(t.input, "", "")
+		c.Assert(err, IsNil)
+		setStmt := stmt1.(*ast.SetStmt)
+		vars := setStmt.Variables[0]
+		c.Assert(vars.Name, Equals, "tx_isolation")
+		c.Assert(vars.IsGlobal, Equals, t.isGlobal)
+		c.Assert(vars.IsSystem, Equals, true)
+		c.Assert(vars.Value.GetValue(), Equals, t.value)
+	}
 }
