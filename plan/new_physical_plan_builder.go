@@ -517,11 +517,10 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 		return nil, nil
 	}
 	memTable := PhysicalMemTable{
-		DBName:        p.DBName,
-		Table:         p.tableInfo,
-		Columns:       p.Columns,
-		TableAsName:   p.TableAsName,
-		NeedColHandle: p.NeedColHandle,
+		DBName:      p.DBName,
+		Table:       p.tableInfo,
+		Columns:     p.Columns,
+		TableAsName: p.TableAsName,
 	}.init(p.allocator, p.ctx)
 	memTable.SetSchema(p.schema)
 	memTable.Ranges = ranger.FullIntRange()

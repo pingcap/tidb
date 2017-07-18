@@ -605,15 +605,14 @@ func (b *executorBuilder) getStartTS() uint64 {
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	ts := &TableScanExec{
-		t:             table,
-		asName:        v.TableAsName,
-		ctx:           b.ctx,
-		columns:       v.Columns,
-		schema:        v.Schema(),
-		seekHandle:    math.MinInt64,
-		ranges:        v.Ranges,
-		isInfoSchema:  strings.EqualFold(v.DBName.L, infoschema.Name),
-		needColHandel: v.NeedColHandle,
+		t:            table,
+		asName:       v.TableAsName,
+		ctx:          b.ctx,
+		columns:      v.Columns,
+		schema:       v.Schema(),
+		seekHandle:   math.MinInt64,
+		ranges:       v.Ranges,
+		isInfoSchema: strings.EqualFold(v.DBName.L, infoschema.Name),
 	}
 	return ts
 }

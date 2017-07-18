@@ -981,6 +981,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 
+	// This will uncommented after rowMeta is totally removed.
 	/*
 		if sel.LockTp == ast.SelectLockForUpdate {
 			b.needColHandle = true

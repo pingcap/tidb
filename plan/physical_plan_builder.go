@@ -227,11 +227,10 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
 	if !isDistReq {
 		memTable := PhysicalMemTable{
-			DBName:        p.DBName,
-			Table:         p.tableInfo,
-			Columns:       p.Columns,
-			TableAsName:   p.TableAsName,
-			NeedColHandle: p.NeedColHandle,
+			DBName:      p.DBName,
+			Table:       p.tableInfo,
+			Columns:     p.Columns,
+			TableAsName: p.TableAsName,
 		}.init(p.allocator, p.ctx)
 		memTable.SetSchema(p.schema)
 		memTable.Ranges = ranger.FullIntRange()
