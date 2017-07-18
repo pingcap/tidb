@@ -99,7 +99,7 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	return colInfo, position, nil
 }
 
-func changeAllColumnsState(columnsInfo []*model.ColumnInfo, state model.SchemaState) {
+func setAllColumnsState(columnsInfo []*model.ColumnInfo, state model.SchemaState) {
 	for i := range columnsInfo {
 		columnsInfo[i].State = state
 	}
@@ -134,10 +134,7 @@ func (d *ddl) getColumnInfos(columns []*model.ColumnInfo, positions []*ast.Colum
 	var err error
 	for idx, col := range columns {
 		colInfo, _ := findCol(tblInfo.Columns, col.Name.L)
-		pos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-		if idx < len(positions) {
-			pos = positions[idx]
-		}
+		pos := positions[idx]
 
 		if colInfo != nil {
 			if colInfo.State == model.StatePublic {
@@ -172,6 +169,11 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobCancelled
 		return ver, errors.Trace(err)
 	}
+
+	if len(columns) != len(positions) {
+		job.State = model.JobCancelled
+		return ver, errors.Trace(errInvalidColumnDefs.GenByArgs(len(columns), len(positions)))
+	}
 	// First run of this job, get the offset of last column.
 	if lastColOffset == 0 {
 		lastColOffset = len(tblInfo.Columns)
@@ -182,33 +184,33 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	columnsInfo, err := d.getColumnInfos(columns, positions, job, tblInfo, lastColOffset)
+	columnInfos, err := d.getColumnInfos(columns, positions, job, tblInfo, lastColOffset)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	// Check whether all columns have the same state.
-	originalState := columnsInfo[0].State
-	if !checkColumnsStateConsistency(columnsInfo) {
+	originalState := columnInfos[0].State
+	if !checkColumnsStateConsistency(columnInfos) {
 		job.State = model.JobCancelled
 		return ver, ErrInvalidColumnState.Gen("unconsistency of all columns state: %v", originalState)
 	}
 
-	job.Args = []interface{}{columnsInfo, positions, lastColOffset}
-	switch columnsInfo[0].State {
+	job.Args = []interface{}{columnInfos, positions, lastColOffset}
+	switch columnInfos[0].State {
 	case model.StateNone:
 		job.SchemaState = model.StateDeleteOnly
-		changeAllColumnsState(columnsInfo, model.StateDeleteOnly)
+		setAllColumnsState(columnInfos, model.StateDeleteOnly)
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		job.SchemaState = model.StateWriteOnly
-		changeAllColumnsState(columnsInfo, model.StateWriteOnly)
+		setAllColumnsState(columnInfos, model.StateWriteOnly)
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		job.SchemaState = model.StateWriteReorganization
-		changeAllColumnsState(columnsInfo, model.StateWriteReorganization)
+		setAllColumnsState(columnInfos, model.StateWriteReorganization)
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
@@ -223,7 +225,7 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 
 		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, 0, lastColOffset, true)
-		changeAllColumnsState(columnsInfo, model.StatePublic)
+		setAllColumnsState(columnInfos, model.StatePublic)
 		job.SchemaState = model.StatePublic
 		ver, err := updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
@@ -233,7 +235,7 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-		d.asyncNotifyEvent(&Event{Tp: model.ActionAddColumns, TableInfo: tblInfo, ColumnsInfo: columnsInfo})
+		d.asyncNotifyEvent(&Event{Tp: model.ActionAddColumns, TableInfo: tblInfo, ColumnInfos: columnInfos})
 	default:
 		err = ErrInvalidColumnState.Gen("invalid column state %v", originalState)
 	}
@@ -321,7 +323,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 
-		d.asyncNotifyEvent(&Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnsInfo: []*model.ColumnInfo{colInfo}})
+		d.asyncNotifyEvent(&Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{colInfo}})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}

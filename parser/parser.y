@@ -576,7 +576,7 @@ import (
 	CastType		"Cast function target type"
 	CharsetName		"Character set name"
 	ColumnDef		"table column definition"
-	ColumnDefList       "table column definition list"
+	ColumnDefList   "table column definition list"
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
 	ColumnNameListOpt	"column name list opt"
@@ -958,14 +958,19 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp: 		ast.AlterTableAddColumns,
 			NewColumns:	[]*ast.ColumnDef{$3.(*ast.ColumnDef)},
-			Positions:	[]*ast.ColumnPosition{$4.(*ast.ColumnPosition)},
+			Positions:  []*ast.ColumnPosition{$4.(*ast.ColumnPosition)},
 		}
 	}
 |   "ADD" ColumnKeywordOpt '(' ColumnDefList ')'
     {
+        positions :=  make([]*ast.ColumnPosition, len($4.([]*ast.ColumnDef)))
+        for i:=0; i < len(positions); i++ {
+            positions[i] = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+        }
         $$ = &ast.AlterTableSpec{
             Tp: 		ast.AlterTableAddColumns,
             NewColumns:	$4.([]*ast.ColumnDef),
+            Positions:  positions,
         }
     }
 |	"ADD" Constraint
@@ -1014,7 +1019,7 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableModifyColumn,
 			NewColumns:	[]*ast.ColumnDef{$3.(*ast.ColumnDef)},
-            Positions:	[]*ast.ColumnPosition{$4.(*ast.ColumnPosition)},
+            Positions:  []*ast.ColumnPosition{$4.(*ast.ColumnPosition)},
 		}
 	}
 |	"CHANGE" ColumnKeywordOpt ColumnName ColumnDef ColumnPosition
