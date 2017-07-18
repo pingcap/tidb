@@ -83,7 +83,7 @@ type MvccTxnHandler struct {
 
 const (
 	opMvccGetByKey = "key"
-	opMvccGetByTXN = "txn"
+	opMvccGetByTxn = "txn"
 )
 
 // prepare checks and prepares for region request. It returns
@@ -215,10 +215,10 @@ type RegionFrameRange struct {
 	region *tikv.KeyLocation // the region
 }
 
-func (tool *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
+func (t *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
-		meta, leader, err := tool.regionCache.PDClient().GetRegionByID(goctx.TODO(), regionID)
+		meta, leader, err := t.regionCache.PDClient().GetRegionByID(goctx.TODO(), regionID)
 		if err != nil {
 			return nil, err
 		}
@@ -521,7 +521,7 @@ func (rh MvccTxnHandler) handleMvccGetByKey(tool *regionHandlerTool, params map[
 	return tool.getMvccByRecordID(tableID, recordID)
 }
 
-func (rh *MvccTxnHandler) handleMvccGetByTXN(tool *regionHandlerTool, params map[string]string) (interface{}, error) {
+func (rh *MvccTxnHandler) handleMvccGetByTXN(t *regionHandlerTool, params map[string]string) (interface{}, error) {
 	startTS, err := strconv.ParseInt(params[pStartTS], 0, 64)
 	if err != nil {
 		return nil, err
@@ -531,19 +531,19 @@ func (rh *MvccTxnHandler) handleMvccGetByTXN(tool *regionHandlerTool, params map
 	endKey := []byte("")
 	dbName := params[pDBName]
 	if len(dbName) > 0 {
-		tableID, err := tool.getTableID(params[pDBName], params[pTableName])
+		tableID, err := t.getTableID(params[pDBName], params[pTableName])
 		if err != nil {
 			return nil, err
 		}
 		startKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MinInt64)
 		endKey = tablecodec.EncodeTableIndexPrefix(tableID, math.MaxInt64)
 	}
-	return tool.getMvccByStartTs(uint64(startTS), startKey, endKey)
+	return t.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 
-func (tool *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
+func (t *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	encodeKey := tablecodec.EncodeRowKeyWithHandle(tableID, recordID)
-	keyLocation, err := tool.regionCache.LocateKey(tool.bo, encodeKey)
+	keyLocation, err := t.regionCache.LocateKey(t.bo, encodeKey)
 	if err != nil {
 		return nil, err
 	}
@@ -555,16 +555,16 @@ func (tool *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrp
 			Key: encodeKey,
 		},
 	}
-	kvResp, err := tool.store.SendReq(tool.bo, tikvReq, keyLocation.Region, time.Minute)
+	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
 	if err != nil {
 		return nil, err
 	}
 	return kvResp.MvccGetByKey, nil
 }
 
-func (tool *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
+func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
 	for {
-		curRegion, err := tool.regionCache.LocateKey(tool.bo, startKey)
+		curRegion, err := t.regionCache.LocateKey(t.bo, startKey)
 		if err != nil {
 			log.Error(startTS, startKey, err)
 			return nil, errors.Trace(err)
@@ -577,7 +577,7 @@ func (tool *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey
 				StartTs: startTS,
 			},
 		}
-		kvResp, err := tool.store.SendReq(tool.bo, tikvReq, curRegion.Region, time.Minute)
+		kvResp, err := t.store.SendReq(t.bo, tikvReq, curRegion.Region, time.Minute)
 		log.Info(startTS, startKey, curRegion, kvResp)
 		if err != nil {
 			log.Error(startTS, startKey, curRegion, err)
@@ -606,8 +606,8 @@ func (tool *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey
 	}
 }
 
-func (tool *regionHandlerTool) getTableID(dbName, tableName string) (int64, error) {
-	table, err := tool.infoSchema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+func (t *regionHandlerTool) getTableID(dbName, tableName string) (int64, error) {
+	table, err := t.infoSchema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		return 0, err
 	}

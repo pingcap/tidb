@@ -14,13 +14,13 @@
 package server
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
 
-	"bytes"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"

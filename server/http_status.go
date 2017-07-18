@@ -46,8 +46,8 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/tables/{db}/{table}/regions", TableRegionsHandler{tikvHandler})
 		router.Handle("/regions/{regionID}", tikvHandler)
 		router.Handle("/mvcc/key/{db}/{table}/{recordID}", MvccTxnHandler{tikvHandler, opMvccGetByKey})
-		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", MvccTxnHandler{tikvHandler, opMvccGetByTXN})
-		router.Handle("/mvcc/txn/{startTS}", MvccTxnHandler{tikvHandler, opMvccGetByTXN})
+		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", MvccTxnHandler{tikvHandler, opMvccGetByTxn})
+		router.Handle("/mvcc/txn/{startTS}", MvccTxnHandler{tikvHandler, opMvccGetByTxn})
 	}
 	addr := s.cfg.StatusAddr
 	if len(addr) == 0 {

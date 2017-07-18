@@ -232,12 +232,14 @@ func (e *mvccEntry) dumpMvccInfo() *kvrpcpb.MvccInfo {
 		}
 	}
 
-	info.Writes = make([]*kvrpcpb.WriteInfo, len(e.values), len(e.values))
-	info.Values = make([]*kvrpcpb.ValueInfo, len(e.values), len(e.values))
+	info.Writes = make([]*kvrpcpb.WriteInfo, len(e.values))
+	info.Values = make([]*kvrpcpb.ValueInfo, len(e.values))
 
 	for id, item := range e.values {
-		tp := kvrpcpb.Op_Put
+		var tp kvrpcpb.Op
 		switch item.valueType {
+		case typePut:
+			tp = kvrpcpb.Op_Put
 		case typeDelete:
 			tp = kvrpcpb.Op_Del
 		case typeRollback:
@@ -599,11 +601,13 @@ func (s *MvccStore) RawScan(startKey, endKey []byte, limit int) []Pair {
 }
 
 // MvccGetByStartTS gets mvcc info for the primary key with startTS
-func (s MvccStore) MvccGetByStartTS(starTS uint64) *kvrpcpb.MvccInfo {
-	startKey := NewMvccKey([]byte(""))
+func (s *MvccStore) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) *kvrpcpb.MvccInfo {
 	var info *kvrpcpb.MvccInfo
 	iterator := func(item llrb.Item) bool {
 		k := item.(*mvccEntry)
+		if !regionContains(startKey, endKey, k.key) {
+			return false
+		}
 		if k.containsStartTS(starTS) {
 			info = k.dumpMvccInfo()
 			return false
