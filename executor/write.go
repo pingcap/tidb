@@ -46,7 +46,7 @@ var (
 func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool, t table.Table, onDup bool) (bool, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
-	var onUpdateNoChange map[int]bool
+	var onUpdateNoChange = make(map[int]bool)
 
 	// We can iterate on public columns not writable columns,
 	// because all of them are sorted by their `Offset`, which
