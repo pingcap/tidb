@@ -469,20 +469,17 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 
 func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
-	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
 		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
 		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
-		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashJoinExec{
 		schema:        v.Schema(),
 		otherFilter:   v.OtherConditions,
 		prepared:      false,
 		ctx:           b.ctx,
-		targetTypes:   targetTypes,
 		concurrency:   v.Concurrency,
 		defaultValues: v.DefaultValues,
 	}
@@ -526,13 +523,11 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 
 func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJoinExec {
 	var leftHashKey, rightHashKey []*expression.Column
-	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
 		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
 		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
-		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashSemiJoinExec{
 		schema:       v.Schema(),
@@ -547,7 +542,6 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJ
 		smallHashKey: rightHashKey,
 		auxMode:      v.WithAux,
 		anti:         v.Anti,
-		targetTypes:  targetTypes,
 	}
 	return e
 }
@@ -829,19 +823,25 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 	}
 }
 
-func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, cols []*model.ColumnInfo) Executor {
+func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk *model.ColumnInfo, cols []*model.ColumnInfo) Executor {
 	startTS := b.getStartTS()
 	if b.err != nil {
 		return nil
 	}
 	table, _ := b.is.TableByID(tblInfo.ID)
+	keepOrder := false
+	if pk != nil {
+		keepOrder = true
+		cols = append([]*model.ColumnInfo{pk}, cols...)
+	}
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
 	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &TableReaderExecutor{
-			table:   table,
-			tableID: tblInfo.ID,
-			ranges:  ranges,
+			table:     table,
+			tableID:   tblInfo.ID,
+			ranges:    ranges,
+			keepOrder: keepOrder,
 			dagPB: &tipb.DAGRequest{
 				StartTs:        b.getStartTS(),
 				TimeZoneOffset: timeZoneOffset(b.ctx),
@@ -872,6 +872,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, col
 		schema:    schema,
 		Columns:   cols,
 		ranges:    ranges,
+		keepOrder: keepOrder,
 	}
 	return e
 }
@@ -940,20 +941,13 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		ctx:   b.ctx,
 		tasks: make([]*analyzeTask, 0, len(v.Children())),
 	}
-	for _, task := range v.PkTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType:  pkTask,
-			src:       b.buildTableScanForAnalyze(task.TableInfo, []*model.ColumnInfo{task.PKInfo}),
-			tableInfo: task.TableInfo,
-			Columns:   []*model.ColumnInfo{task.PKInfo},
-		})
-	}
 	for _, task := range v.ColTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType:  colTask,
-			src:       b.buildTableScanForAnalyze(task.TableInfo, task.ColsInfo),
+			src:       b.buildTableScanForAnalyze(task.TableInfo, task.PKInfo, task.ColsInfo),
 			tableInfo: task.TableInfo,
 			Columns:   task.ColsInfo,
+			PKInfo:    task.PKInfo,
 		})
 	}
 	for _, task := range v.IdxTasks {
