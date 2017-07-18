@@ -1231,14 +1231,14 @@ BinlogStmt:
 	}
 
 ColumnDefList:
-    ColumnDef
-    {
-        $$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}
-    }
-|   ColumnDefList ',' ColumnDef
-    {
-        $$ = append($1.([]*ast.ColumnDef), $3.(*ast.ColumnDef))
-    }
+    	ColumnDef
+    	{
+        	$$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}
+    	}
+|   	ColumnDefList ',' ColumnDef
+    	{
+        	$$ = append($1.([]*ast.ColumnDef), $3.(*ast.ColumnDef))
+    	}	
 
 ColumnDef:
 	ColumnName Type ColumnOptionListOpt
