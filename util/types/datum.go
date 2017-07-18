@@ -18,6 +18,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -1201,10 +1202,10 @@ func (d *Datum) convertToMysqlEnum(sc *variable.StatementContext, target *FieldT
 		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
-		return invalidConv(d, target.Tp)
+		err = errors.Wrap(err, ErrTruncated)
 	}
 	ret.SetValue(e)
-	return ret, nil
+	return ret, err
 }
 
 func (d *Datum) convertToMysqlSet(sc *variable.StatementContext, target *FieldType) (Datum, error) {
@@ -1239,9 +1240,12 @@ func (d *Datum) convertToMysqlJSON(sc *variable.StatementContext, target *FieldT
 		if j, err = json.ParseFromString(d.GetString()); err == nil {
 			ret.SetMysqlJSON(j)
 		}
-	case KindInt64, KindUint64:
+	case KindInt64:
 		i64 := d.GetInt64()
 		ret.SetMysqlJSON(json.CreateJSON(i64))
+	case KindUint64:
+		u64 := d.GetUint64()
+		ret.SetMysqlJSON(json.CreateJSON(u64))
 	case KindFloat32, KindFloat64:
 		f64 := d.GetFloat64()
 		ret.SetMysqlJSON(json.CreateJSON(f64))
@@ -1521,8 +1525,10 @@ func (d *Datum) ToMysqlJSON() (j json.JSON, err error) {
 	case KindMysqlJSON:
 		j = d.x.(json.JSON)
 		return
-	case KindInt64, KindUint64:
+	case KindInt64:
 		in = d.GetInt64()
+	case KindUint64:
+		in = d.GetUint64()
 	case KindFloat32, KindFloat64:
 		in = d.GetFloat64()
 	case KindMysqlDecimal:
@@ -1792,4 +1798,22 @@ func handleTruncateError(sc *variable.StatementContext) error {
 	}
 	sc.AppendWarning(ErrTruncated)
 	return nil
+}
+
+// DatumsToString converts several datums to formatted string.
+func DatumsToString(datums []Datum) (string, error) {
+	var strs []string
+	for _, datum := range datums {
+		str, err := datum.ToString()
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		strs = append(strs, str)
+	}
+	size := len(datums)
+	if size > 1 {
+		strs[0] = "(" + strs[0]
+		strs[size-1] = strs[size-1] + ")"
+	}
+	return strings.Join(strs, ", "), nil
 }

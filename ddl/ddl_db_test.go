@@ -825,6 +825,8 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	c.Assert(colC.Comment, Equals, "col c comment")
 	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
 	c.Assert(hasNotNull, IsFalse)
+	// for enum
+	s.mustExec(c, "alter table t3 add column en enum('a', 'b', 'c') not null default 'a'")
 
 	// for failing tests
 	sql := "alter table t3 change aa a bigint default ''"
@@ -834,6 +836,8 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	sql = "alter table t3 change t.a aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 	sql = "alter table t3 change aa a bigint not null"
+	s.testErrorCode(c, sql, tmysql.ErrUnknown)
+	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 }
 
@@ -898,6 +902,45 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrBadField)
 	sql = "alter table test_alter_column alter column c set default null"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+
+	// The followings tests whether adding constraints via change / modify column
+	// is forbidden as expected.
+	s.mustExec(c, "drop table if exists mc")
+	s.mustExec(c, "create table mc(a int key, b int, c int)")
+	_, err = s.tk.Exec("alter table mc modify column a int key") // Adds a new primary key
+	c.Assert(err, NotNil)
+	_, err = s.tk.Exec("alter table mc modify column c int unique") // Adds a new unique key
+	c.Assert(err, NotNil)
+	result := s.tk.MustQuery("show create table mc")
+	createSQL := result.Rows()[0][1]
+	expected := "CREATE TABLE `mc` (\n  `a` int(11) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	c.Assert(createSQL, Equals, expected)
+
+	// Change / modify column should preserve index options.
+	s.mustExec(c, "drop table if exists mc")
+	s.mustExec(c, "create table mc(a int key, b int, c int unique)")
+	s.mustExec(c, "alter table mc modify column a bigint") // NOT NULL & PRIMARY KEY should be preserved
+	s.mustExec(c, "alter table mc modify column b bigint")
+	s.mustExec(c, "alter table mc modify column c bigint") // Unique should be preserved
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(21) NOT NULL,\n  `b` bigint(21) DEFAULT NULL,\n  `c` bigint(21) DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	c.Assert(createSQL, Equals, expected)
+
+	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
+	s.mustExec(c, "drop table if exists mc")
+	s.mustExec(c, "create table mc(a int key auto_increment, b int)")
+	s.mustExec(c, "alter table mc modify column a bigint auto_increment") // Keeps auto_increment
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(21) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	s.mustExec(c, "alter table mc modify column a bigint") // Drops auto_increment
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(21) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	c.Assert(createSQL, Equals, expected)
+	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
+	c.Assert(err, NotNil)
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
@@ -1292,6 +1335,11 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 
 		// refer generated columns non prior.
 		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, mysql.ErrGeneratedColumnNonPrior},
+
+		// virtual generated columns cannot be primary key.
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b) primary key)`, mysql.ErrUnsupportedOnGeneratedColumn},
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(c))`, mysql.ErrUnsupportedOnGeneratedColumn},
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(a, c))`, mysql.ErrUnsupportedOnGeneratedColumn},
 	}
 	for _, tt := range genExprTests {
 		s.testErrorCode(c, tt.stmt, tt.err)

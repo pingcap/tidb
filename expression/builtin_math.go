@@ -65,7 +65,8 @@ var (
 	_ builtinFunc = &builtinAbsSig{}
 	_ builtinFunc = &builtinCeilSig{}
 	_ builtinFunc = &builtinFloorSig{}
-	_ builtinFunc = &builtinLogSig{}
+	_ builtinFunc = &builtinLog1ArgSig{}
+	_ builtinFunc = &builtinLog2ArgsSig{}
 	_ builtinFunc = &builtinLog2Sig{}
 	_ builtinFunc = &builtinLog10Sig{}
 	_ builtinFunc = &builtinRandSig{}
@@ -206,55 +207,73 @@ type logFunctionClass struct {
 }
 
 func (c *logFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLogSig{newBaseBuiltinFunc(args, ctx)}
+	var (
+		sig     builtinFunc
+		bf      baseBuiltinFunc
+		err     error
+		argsLen = len(args)
+	)
+
+	if argsLen == 1 {
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
+	}
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if argsLen == 1 {
+		sig = &builtinLog1ArgSig{baseRealBuiltinFunc{bf}}
+	} else {
+		sig = &builtinLog2ArgsSig{baseRealBuiltinFunc{bf}}
+	}
+
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinLogSig struct {
-	baseBuiltinFunc
+type builtinLog1ArgSig struct {
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinLogSig.
+// evalReal evals a builtinLog1ArgSig, corresponding to log(x).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log
-func (b *builtinLogSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinLog1ArgSig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
+	if val <= 0 {
+		return 0, true, nil
+	}
+	return math.Log(val), false, nil
+}
+
+type builtinLog2ArgsSig struct {
+	baseRealBuiltinFunc
+}
+
+// evalReal evals a builtinLog2ArgsSig, corresponding to log(b, x).
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log
+func (b *builtinLog2ArgsSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
-	switch len(args) {
-	case 1:
-		x, err := args[0].ToFloat64(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-		if x <= 0 {
-			return d, nil
-		}
-
-		d.SetFloat64(math.Log(x))
-		return d, nil
-	case 2:
-		b, err := args[0].ToFloat64(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-		x, err := args[1].ToFloat64(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-		if b <= 1 || x <= 0 {
-			return d, nil
-		}
-
-		d.SetFloat64(math.Log(x) / math.Log(b))
-		return d, nil
+	val1, isNull, err := b.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	return
+
+	val2, isNull, err := b.args[1].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	if val1 <= 0 || val1 == 1 || val2 <= 0 {
+		return 0, true, nil
+	}
+
+	return math.Log(val2) / math.Log(val1), false, nil
 }
 
 type log2FunctionClass struct {
@@ -262,33 +281,29 @@ type log2FunctionClass struct {
 }
 
 func (c *log2FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLog2Sig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinLog2Sig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLog2Sig struct {
-	baseBuiltinFunc
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinLog2Sig.
+// evalReal evals a builtinLog2Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log2
-func (b *builtinLog2Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinLog2Sig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	x, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	if val <= 0 {
+		return 0, true, nil
 	}
-
-	if x <= 0 {
-		return
-	}
-
-	d.SetFloat64(math.Log2(x))
-	return
+	return math.Log2(val), false, nil
 }
 
 type log10FunctionClass struct {
@@ -296,34 +311,29 @@ type log10FunctionClass struct {
 }
 
 func (c *log10FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLog10Sig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinLog10Sig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLog10Sig struct {
-	baseBuiltinFunc
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinLog10Sig.
+// evalReal evals a builtinLog10Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log10
-func (b *builtinLog10Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinLog10Sig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	x, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	if val <= 0 {
+		return 0, true, nil
 	}
-
-	if x <= 0 {
-		return
-	}
-
-	d.SetFloat64(math.Log10(x))
-	return
-
+	return math.Log10(val), false, nil
 }
 
 type randFunctionClass struct {
@@ -769,35 +779,31 @@ type asinFunctionClass struct {
 }
 
 func (c *asinFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinAsinSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinAsinSig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinAsinSig struct {
-	baseBuiltinFunc
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinAsinSig.
+// evalReal evals a builtinAsinSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_asin
-func (b *builtinAsinSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return d, nil
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	f, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if f < -1 || f > 1 {
-		return d, nil
+func (b *builtinAsinSig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	d.SetFloat64(math.Asin(f))
-	return
+	if val < -1 || val > 1 {
+		return 0, true, nil
+	}
+
+	return math.Asin(val), false, nil
 }
 
 type atanFunctionClass struct {
@@ -914,35 +920,27 @@ type degreesFunctionClass struct {
 }
 
 func (c *degreesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinDegreesSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinDegreesSig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDegreesSig struct {
-	baseBuiltinFunc
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinDegreesSig.
+// evalReal evals a builtinDegreesSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_degrees
-func (b *builtinDegreesSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinDegreesSig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-
-	if args[0].IsNull() {
-		d.SetNull()
-		return d, nil
-	}
-
-	sc := b.ctx.GetSessionVars().StmtCtx
-	x, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	d.SetFloat64(x * 180 / math.Pi)
-	return d, nil
+	res := val * 180 / math.Pi
+	return res, false, nil
 }
 
 type expFunctionClass struct {

@@ -54,8 +54,8 @@ var (
 	errInvalidPayloadLen = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
 	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
 	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
-	errNotAllowedCommand = terror.ClassServer.New(codeNotAllowedCommand,
-		"the used command is not allowed with this TiDB version")
+	errNotAllowedCommand = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
+	errAccessDenied      = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
 // Server is the MySQL protocol server
@@ -263,11 +263,13 @@ const (
 	codeInvalidType       = 4
 
 	codeNotAllowedCommand = 1148
+	codeAccessDenied      = mysql.ErrAccessDenied
 )
 
 func init() {
 	serverMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeNotAllowedCommand: mysql.ErrNotAllowedCommand,
+		codeAccessDenied:      mysql.ErrAccessDenied,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }

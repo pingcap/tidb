@@ -331,34 +331,29 @@ type md5FunctionClass struct {
 }
 
 func (c *md5FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinMD5Sig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 32
+	sig := &builtinMD5Sig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMD5Sig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinMD5Sig.
+// evalString evals a builtinMD5Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_md5
-func (b *builtinMD5Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinMD5Sig) evalString(row []types.Datum) (string, bool, error) {
+	arg, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	// This function takes one argument.
-	arg := args[0]
-	if arg.IsNull() {
-		return
-	}
-	bin, err := arg.ToBytes()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	sum := md5.Sum(bin)
+	sum := md5.Sum([]byte(arg))
 	hexStr := fmt.Sprintf("%x", sum)
-	d.SetString(hexStr)
-	return d, nil
+	return hexStr, false, nil
 }
 
 type oldPasswordFunctionClass struct {
