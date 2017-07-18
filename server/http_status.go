@@ -40,14 +40,14 @@ func (s *Server) startHTTPServer() {
 	router.HandleFunc("/status", s.handleStatus)
 	// HTTP path for prometheus.
 	router.Handle("/metrics", prometheus.Handler())
-	if s.cfg.Store == "tikv" {
-		tikvHandler := &RegionHandler{s}
+	tikvHandler, err := s.newRegionHandler()
+	if err == nil {
 		// HTTP path for regions
-		router.Handle("/tables/{db}/{table}/regions", TableRegionsHandler{tikvHandler})
+		router.Handle("/tables/{db}/{table}/regions", tableRegionsHandler{tikvHandler})
 		router.Handle("/regions/{regionID}", tikvHandler)
-		router.Handle("/mvcc/key/{db}/{table}/{recordID}", MvccTxnHandler{tikvHandler, opMvccGetByKey})
-		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", MvccTxnHandler{tikvHandler, opMvccGetByTxn})
-		router.Handle("/mvcc/txn/{startTS}", MvccTxnHandler{tikvHandler, opMvccGetByTxn})
+		router.Handle("/mvcc/key/{db}/{table}/{recordID}", mvccTxnHandler{tikvHandler, opMvccGetByKey})
+		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
+		router.Handle("/mvcc/txn/{startTS}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
 	}
 	addr := s.cfg.StatusAddr
 	if len(addr) == 0 {
@@ -55,7 +55,7 @@ func (s *Server) startHTTPServer() {
 	}
 	log.Infof("Listening on %v for status and metrics report.", addr)
 	http.Handle("/", router)
-	err := http.ListenAndServe(addr, nil)
+	err = http.ListenAndServe(addr, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
