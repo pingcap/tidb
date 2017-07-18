@@ -147,7 +147,8 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]interface{}, err
 		statusVars[name] = v.Value
 	}
 
-	if vars.TLSConnectionState != nil {
+	// `vars` may be nil in unit tests.
+	if vars != nil && vars.TLSConnectionState != nil {
 		statusVars["Ssl_cipher"] = tlsCipherString[vars.TLSConnectionState.CipherSuite]
 		statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
 		// tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
