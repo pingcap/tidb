@@ -193,7 +193,6 @@ func (e *DeleteExec) deleteMultiTables() error {
 			break
 		}
 
-		log.Warnf("joinedRow len: %v", len(joinedRow.Data))
 		for _, entry := range joinedRow.RowKeys {
 			if !isMatchTableName(entry, tblMap) {
 				continue
@@ -205,7 +204,6 @@ func (e *DeleteExec) deleteMultiTables() error {
 			end := offset + len(entry.Tbl.WritableCols())
 			data := joinedRow.Data[offset:end]
 			handle := joinedRow.Data[end].GetInt64()
-			log.Warnf("handle1: %v, handle2: %v", handle, entry.Handle)
 			tblRowMap[entry.Tbl][handle] = data
 		}
 	}

@@ -144,7 +144,6 @@ func (p *TopN) prepareStatsProfile() *statsProfile {
 // the cardinality for multi-dimension attributes properly. This is a simple and naive scheme of cardinality estimation.
 func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *statsProfile) float64 {
 	indices := schema.ColumnsIndices(cols)
-	log.Warnf("schema cols: %v", schema.Columns)
 	if indices == nil {
 		log.Errorf("Cannot find column %s indices from schema %s", cols, schema)
 		return 0
