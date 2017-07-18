@@ -57,11 +57,11 @@ var (
 // GetScope gets the status variables scope.
 func (d *ddl) GetScope(status string) variable.ScopeFlag {
 	// Now ddl status variables scope are all default scope.
-	return variable.DefaultScopeFlag
+	return variable.DefaultStatusVarScopeFlag
 }
 
 // Stats returns the DDL statistics.
-func (d *ddl) Stats() (map[string]interface{}, error) {
+func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
 	var ddlInfo, bgInfo *inspectkv.DDLInfo

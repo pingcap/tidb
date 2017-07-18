@@ -367,7 +367,8 @@ func (e *ShowExec) fetchShowVariables() error {
 }
 
 func (e *ShowExec) fetchShowStatus() error {
-	statusVars, err := variable.GetStatusVars()
+	sessionVars := e.ctx.GetSessionVars()
+	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
 		return errors.Trace(err)
 	}

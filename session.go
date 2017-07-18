@@ -18,6 +18,7 @@
 package tidb
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -26,7 +27,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crypto/tls"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/ngaut/pools"
@@ -108,9 +108,6 @@ func (h *stmtHistory) add(stmtID uint32, st ast.Statement, stmtCtx *variable.Sta
 }
 
 type session struct {
-	// TLS connection state
-	tlsState *tls.ConnectionState // nil if not using TLS
-
 	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
 	txn         kv.Transaction // current transaction
@@ -187,8 +184,12 @@ func (s *session) SetConnectionID(connectionID uint64) {
 func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
 	// if user is not connected via TLS, tlsState == nil
 	if tlsState != nil {
-		s.tlsState = tlsState
+		s.sessionVars.TLSConnectionState = tlsState
 	}
+}
+
+func (s *session) GetTLSState() *tls.ConnectionState {
+	return s.sessionVars.TLSConnectionState
 }
 
 func (s *session) SetSessionManager(sm util.SessionManager) {
