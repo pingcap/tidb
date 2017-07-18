@@ -1290,7 +1290,13 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("select asin('tidb')")
 	result.Check(testkit.Rows("0"))
 
-	// for floor
+	// for acos
+	result = tk.MustQuery("select acos(0), acos(-2), acos(2), acos(1)")
+	result.Check(testkit.Rows("1.5707963267948966 <nil> <nil> 0"))
+	result = tk.MustQuery("select acos('tidb')")
+	result.Check(testkit.Rows("1.5707963267948966"))
+  
+  // for floor
 	result = tk.MustQuery("select floor(0), floor(null), floor(1.23), floor(-1.23)")
 	result.Check(testkit.Rows("0 <nil> 1 -2"))
 	result = tk.MustQuery("select floor('tidb')")
