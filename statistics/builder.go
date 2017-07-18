@@ -48,7 +48,7 @@ func NewSortedBuilder(ctx context.Context, numBuckets, id int64, isPK bool) *Sor
 	}
 }
 
-// Iterate inserts row into the histogram one by one.
+// Iterate updates the histogram incrementally.
 func (b *SortedBuilder) Iterate(datums []types.Datum) error {
 	var data types.Datum
 	if b.isPK {
