@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 func (s *testEvaluatorSuite) TestBitCount(c *C) {
@@ -174,4 +175,26 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 	cmp, err := ret.CompareDatum(nil, currInsertValues[1])
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)
+}
+
+func (s *testEvaluatorSuite) TestIn(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.In]
+
+	tbl := []struct {
+		Input    []interface{}
+		Expected interface{}
+	}{
+		{[]interface{}{nil, 1, "hello"}, nil},
+		{[]interface{}{json.CreateJSON(uint64(1)), -1, 2, 32768, 3.14}, int64(0)},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		c.Assert(err, IsNil)
+
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d.GetValue(), Equals, t.Expected)
+	}
 }
