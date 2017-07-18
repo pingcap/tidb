@@ -1792,3 +1792,36 @@ func (s *testParserSuite) TestGeneratedColumn(c *C) {
 	}
 
 }
+
+func (s *testParserSuite) TestSetTransaction(c *C) {
+	defer testleak.AfterTest(c)()
+	// Set transaction is equivalent to setting the global or session value of tx_isolation.
+	// For example:
+	// SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED
+	// SET SESSION tx_isolation='READ-COMMITTED'
+	tests := []struct {
+		input    string
+		isGlobal bool
+		value    string
+	}{
+		{
+			"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
+			false, "READ-COMMITTED",
+		},
+		{
+			"SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+			true, "REPEATABLE-READ",
+		},
+	}
+	parser := New()
+	for _, t := range tests {
+		stmt1, err := parser.ParseOneStmt(t.input, "", "")
+		c.Assert(err, IsNil)
+		setStmt := stmt1.(*ast.SetStmt)
+		vars := setStmt.Variables[0]
+		c.Assert(vars.Name, Equals, "tx_isolation")
+		c.Assert(vars.IsGlobal, Equals, t.isGlobal)
+		c.Assert(vars.IsSystem, Equals, true)
+		c.Assert(vars.Value.GetValue(), Equals, t.value)
+	}
+}
