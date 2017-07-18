@@ -100,6 +100,7 @@ import (
 	distinct		"DISTINCT"
 	tidbSMJ			"TIDB_SMJ"
 	tidbINLJ		"TIDB_INLJ"
+	tidbVersion		"TIDB_VERSION"
 	div 			"DIV"
 	doubleType		"DOUBLE"
 	drop			"DROP"
@@ -763,6 +764,8 @@ import (
 	TableOptionListOpt	"create table option list opt"
 	TableRef 		"table reference"
 	TableRefs 		"table references"
+	TransactionChar		"Transaction characteristic"
+	TransactionChars	"Transaction characteristic list"
 	TrimDirection		"Trim string direction"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
@@ -841,8 +844,6 @@ import (
 	OuterOpt		"optional OUTER clause"
 	CrossOpt		"Cross join option"
 	TablesTerminalSym 	"{TABLE|TABLES}"
-	TransactionChar		"Transaction characteristic"
-	TransactionChars	"Transaction characteristic list"
 	IsolationLevel		"Isolation level"
 	ShowIndexKwd		"Show index/indexs/key keyword"
 	FromOrIn		"From or In"
@@ -2406,7 +2407,7 @@ NotKeywordToken:
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
 |	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
-|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY"
+|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY" | "TIDB_VERSION"
 
 /************************************************************************************
  *
@@ -3739,6 +3740,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"TIDB_VERSION" '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
+	}
 
 GetFormatSelector:
 	"DATE"
@@ -4881,27 +4886,72 @@ SetStmt:
 	}
 |	"SET" "GLOBAL" "TRANSACTION" TransactionChars
 	{
-		// Parsed but ignored
+		vars := $4.([]*ast.VariableAssignment)
+		for _, v := range vars {
+			v.IsGlobal = true
+		}
+		$$ = &ast.SetStmt{Variables: vars}
 	}
 |	"SET" "SESSION" "TRANSACTION" TransactionChars
 	{
-		// Parsed but ignored
+		$$ = &ast.SetStmt{Variables: $4.([]*ast.VariableAssignment)}
 	}
 
 TransactionChars:
 	TransactionChar
+	{
+		if $1 != nil {
+			$$ = []*ast.VariableAssignment{$1.(*ast.VariableAssignment)}
+		} else {
+			$$ = []*ast.VariableAssignment{}
+		}
+	}
 |	TransactionChars ',' TransactionChar
+	{
+		if $3 != nil {
+			$$ = append($1.([]*ast.VariableAssignment), $3.(*ast.VariableAssignment))
+		} else {
+			$$ = $1
+		}
+	}
 
 TransactionChar:
 	"ISOLATION" "LEVEL" IsolationLevel
+	{
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.Charset, tp.Collate = parser.charset, parser.collation
+		expr := ast.NewValueExpr($3)
+		expr.SetType(tp)
+		$$ = &ast.VariableAssignment{Name: "tx_isolation", Value: expr, IsSystem: true}
+	}
 |	"READ" "WRITE"
+	{
+		// Parsed but ignored
+		$$ = nil
+	}
 |	"READ" "ONLY"
+	{
+		// Parsed but ignored
+		$$ = nil
+	}
 
 IsolationLevel:
 	"REPEATABLE" "READ"
+	{
+		$$ = ast.RepeatableRead
+	}
 |	"READ"	"COMMITTED"
+	{
+		$$ = ast.ReadCommitted
+	}
 |	"READ"	"UNCOMMITTED"
+	{
+		$$ = ast.ReadUncommitted
+	}
 |	"SERIALIZABLE"
+	{
+		$$ = ast.Serializable
+	}
 
 SetExpr:
     "ON"
