@@ -29,6 +29,8 @@ var jsonFunctions = map[tipb.ExprType]func([]types.Datum, *variable.StatementCon
 	tipb.ExprType_JsonSet:     expression.JSONSet,
 	tipb.ExprType_JsonInsert:  expression.JSONInsert,
 	tipb.ExprType_JsonReplace: expression.JSONReplace,
+	tipb.ExprType_JsonObject:  expression.JSONObject,
+	tipb.ExprType_JsonArray:   expression.JSONArray,
 }
 
 func (e *Evaluator) evalJSONFunctions(expr *tipb.Expr) (d types.Datum, _ error) {
