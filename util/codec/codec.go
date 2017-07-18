@@ -79,7 +79,17 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 			b = EncodeInt(b, int64(val.GetMysqlDuration().Duration))
 		case types.KindMysqlDecimal:
 			b = append(b, decimalFlag)
-			b = EncodeDecimal(b, val)
+			if hash {
+				dec := val.GetMysqlDecimal()
+				precision, frac := dec.PrecisionAndFrac()
+				bin, err := dec.ToBin(precision, frac)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				b = append(b, bin...)
+			} else {
+				b = EncodeDecimal(b, val)
+			}
 		case types.KindMysqlHex:
 			b = encodeSignedInt(b, int64(val.GetMysqlHex().ToNumber()), comparable)
 		case types.KindMysqlBit:
