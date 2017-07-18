@@ -101,7 +101,8 @@ var (
 	_ builtinFunc = &builtinSubstring3ArgsSig{}
 	_ builtinFunc = &builtinSubstringIndexSig{}
 	_ builtinFunc = &builtinLocateSig{}
-	_ builtinFunc = &builtinHexSig{}
+	_ builtinFunc = &builtinHexStrArgSig{}
+	_ builtinFunc = &builtinHexIntArgSig{}
 	_ builtinFunc = &builtinUnHexSig{}
 	_ builtinFunc = &builtinTrimSig{}
 	_ builtinFunc = &builtinLTrimSig{}
@@ -1002,39 +1003,57 @@ type hexFunctionClass struct {
 }
 
 func (c *hexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinHexSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinHexSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinHexSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
-func (b *builtinHexSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	switch args[0].Kind() {
-	case types.KindNull:
-		return d, nil
-	case types.KindString, types.KindBytes:
-		x, err := args[0].ToString()
+	switch t := args[0].GetTypeClass(); t {
+	case types.ClassString:
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 		if err != nil {
-			return d, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		d.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))))
-		return d, nil
-	case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-		x, _ := args[0].Cast(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
-		h := fmt.Sprintf("%x", uint64(x.GetInt64()))
-		d.SetString(strings.ToUpper(h))
-		return d, nil
+		// Use UTF-8 as default
+		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
+		sig := &builtinHexStrArgSig{baseStringBuiltinFunc{bf}}
+		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+
+	case types.ClassInt, types.ClassReal, types.ClassDecimal:
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		bf.tp.Flen = args[0].GetType().Flen * 2
+		sig := &builtinHexIntArgSig{baseStringBuiltinFunc{bf}}
+		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+
 	default:
-		return d, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetValue())
+		return nil, errors.Errorf("Hex invalid args, need int or string but get %T", t)
 	}
+}
+
+type builtinHexStrArgSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinHexStrArgSig, corresponding to hex(str)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
+func (b *builtinHexStrArgSig) evalString(row []types.Datum) (string, bool, error) {
+	d, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	return strings.ToUpper(hex.EncodeToString(hack.Slice(d))), false, nil
+}
+
+type builtinHexIntArgSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinHexIntArgSig, corresponding to hex(N)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
+func (b *builtinHexIntArgSig) evalString(row []types.Datum) (string, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	return strings.ToUpper(fmt.Sprintf("%x", uint64(x))), false, nil
 }
 
 type unhexFunctionClass struct {
