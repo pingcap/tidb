@@ -114,7 +114,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 func (e *TableReaderExecutor) Open() error {
 	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
 	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -126,7 +126,7 @@ func (e *TableReaderExecutor) Open() error {
 func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.Context) error {
 	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
 	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -226,7 +226,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -240,7 +240,7 @@ func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -283,7 +283,7 @@ func (e *IndexLookUpExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -303,7 +303,7 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
 	if err != nil {
 		return errors.Trace(err)
 	}

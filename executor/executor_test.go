@@ -552,7 +552,10 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t (a DECIMAL(4,2))")
 	tk.MustExec("INSERT INTO t VALUE(12.34)")
 	r = tk.MustQuery("SELECT 1 AS c UNION select a FROM t")
-	r.Check(testkit.Rows("1.00", "12.34"))
+	r.Sort().Check(testkit.Rows("1.00", "12.34"))
+	// #issue3771
+	r = tk.MustQuery("SELECT 'a' UNION SELECT CONCAT('a', -4)")
+	r.Sort().Check(testkit.Rows("a", "a-4"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -938,6 +941,19 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101, "g", "h")`)
 	result = tk.MustQuery("select bit_length(a), bit_length(b), bit_length(c), bit_length(d), bit_length(e), bit_length(f), bit_length(g), bit_length(h), bit_length(null) from t")
 	result.Check(testkit.Rows("8 24 152 64 48 16 160 8 <nil>"))
+
+	// for substring_index
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery(`select substring_index(a, '.', 2), substring_index(b, '.', 2), substring_index(c, '.', -1), substring_index(d, '-', 1), substring_index(e, ':', -2) from t`)
+	result.Check(testkit.Rows("www.pingcap 12345 45 2017 01:01"))
+	result = tk.MustQuery(`select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100)`)
+	result.Check(testkit.Rows(" www.pingcap.com www.pingcap.com"))
+	result = tk.MustQuery(`select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1)`)
+	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,,"))
+	result = tk.MustQuery(`select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null)`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {
@@ -1246,6 +1262,26 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("select log10(-1)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select log10(NULL)")
+	result.Check(testkit.Rows("<nil>"))
+
+	//for log
+	result = tk.MustQuery("select log(0.0)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(100)")
+	result.Check(testkit.Rows("4.605170185988092"))
+	result = tk.MustQuery("select log('100.0abcd')")
+	result.Check(testkit.Rows("4.605170185988092"))
+	result = tk.MustQuery("select log(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(NULL, NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(1, 100)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(0.5, 0.25)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select log(-1, 0.25)")
 	result.Check(testkit.Rows("<nil>"))
 
 	// for asin
@@ -1697,10 +1733,9 @@ func (s *testSuite) TestSelectVar(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
 	tk.MustExec("insert into t values(1), (2), (1)")
+	// This behavior is different from MySQL.
 	result := tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("<nil> 2", "<nil> 3", "<nil> 2"))
-	result = tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("2 2", "2 3", "3 2"))
+	result.Check(testkit.Rows("<nil> 2", "2 3", "3 2"))
 }
 
 func (s *testSuite) TestHistoryRead(c *C) {

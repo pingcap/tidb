@@ -673,62 +673,51 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 
 func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		str    string
-		delim  string
-		count  int64
-		result string
+
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    string
 	}{
-		{"www.mysql.com", ".", 2, "www.mysql"},
-		{"www.mysql.com", ".", -2, "mysql.com"},
-		{"www.mysql.com", ".", 0, ""},
-		{"www.mysql.com", ".", 3, "www.mysql.com"},
-		{"www.mysql.com", ".", 4, "www.mysql.com"},
-		{"www.mysql.com", ".", -3, "www.mysql.com"},
-		{"www.mysql.com", ".", -4, "www.mysql.com"},
-
-		{"www.mysql.com", "d", 1, "www.mysql.com"},
-		{"www.mysql.com", "d", 0, ""},
-		{"www.mysql.com", "d", -1, "www.mysql.com"},
-
-		{"", ".", 2, ""},
-		{"", ".", -2, ""},
-		{"", ".", 0, ""},
-
-		{"www.mysql.com", "", 1, ""},
-		{"www.mysql.com", "", -1, ""},
-		{"www.mysql.com", "", 0, ""},
+		{[]interface{}{"www.pingcap.com", ".", 2}, false, false, "www.pingcap"},
+		{[]interface{}{"www.pingcap.com", ".", -2}, false, false, "pingcap.com"},
+		{[]interface{}{"www.pingcap.com", ".", 0}, false, false, ""},
+		{[]interface{}{"www.pingcap.com", ".", 100}, false, false, "www.pingcap.com"},
+		{[]interface{}{"www.pingcap.com", ".", -100}, false, false, "www.pingcap.com"},
+		{[]interface{}{"www.pingcap.com", "d", 0}, false, false, ""},
+		{[]interface{}{"www.pingcap.com", "d", 1}, false, false, "www.pingcap.com"},
+		{[]interface{}{"www.pingcap.com", "d", -1}, false, false, "www.pingcap.com"},
+		{[]interface{}{"www.pingcap.com", "", 0}, false, false, ""},
+		{[]interface{}{"www.pingcap.com", "", 1}, false, false, ""},
+		{[]interface{}{"www.pingcap.com", "", -1}, false, false, ""},
+		{[]interface{}{"", ".", 0}, false, false, ""},
+		{[]interface{}{"", ".", 1}, false, false, ""},
+		{[]interface{}{"", ".", -1}, false, false, ""},
+		{[]interface{}{nil, ".", 1}, true, false, ""},
+		{[]interface{}{"www.pingcap.com", nil, 1}, true, false, ""},
+		{[]interface{}{"www.pingcap.com", ".", nil}, true, false, ""},
+		{[]interface{}{errors.New("must error"), ".", 1}, false, true, ""},
 	}
-	for _, v := range tbl {
-		fc := funcs[ast.SubstringIndex]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.delim, v.count)), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.SubstringIndex, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(r.Kind(), Equals, types.KindString)
-		c.Assert(r.GetString(), Equals, v.result)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
 	}
-	errTbl := []struct {
-		str   interface{}
-		delim interface{}
-		count interface{}
-	}{
-		{nil, ".", 2},
-		{nil, ".", -2},
-		{nil, ".", 0},
-		{"asdf", nil, 2},
-		{"asdf", nil, -2},
-		{"asdf", nil, 0},
-		{"www.mysql.com", ".", nil},
-	}
-	for _, v := range errTbl {
-		fc := funcs[ast.SubstringIndex]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.delim, v.count)), s.ctx)
-		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
-		c.Assert(err, NotNil)
-		c.Assert(r.Kind(), Equals, types.KindNull)
-	}
+
+	f, err := funcs[ast.SubstringIndex].getFunction([]Expression{Zero, Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSpace(c *C) {
