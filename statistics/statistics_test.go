@@ -140,7 +140,7 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 		if row == nil {
 			break
 		}
-		err = b.Iterate(row)
+		err = b.Iterate(row.Data)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
