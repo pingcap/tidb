@@ -456,13 +456,26 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 	}
 
 	go func() {
+		var count int
 		for {
+			ok := true
 			select {
 			case <-do.exit:
 				return
-			case <-watchCh:
+			case _, ok = <-watchCh:
 			case <-time.After(duration):
 			}
+			if !ok {
+				log.Error("[domain] load privilege loop watch channel closed.")
+				watchCh = do.etcdClient.Watch(goctx.Background(), privilegeKey)
+				count++
+				if count > 10 {
+					time.Sleep(time.Duration(count) * time.Second)
+				}
+				continue
+			}
+
+			count = 0
 			err := do.privHandle.Update(ctx)
 			if err != nil {
 				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
