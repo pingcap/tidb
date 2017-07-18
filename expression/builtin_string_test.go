@@ -930,7 +930,7 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 		{-1, false, false, "FFFFFFFFFFFFFFFF"},
 		{-12.3, false, false, "FFFFFFFFFFFFFFF4"},
 		{-12.8, false, false, "FFFFFFFFFFFFFFF3"},
-		{types.Bit{Value: 0xC, Width: 4}, false, false, "C"},
+		{types.Bit{Value: 0xC, Width: 4}, false, false, "0C"},
 		{0x12, false, false, "12"},
 		{nil, true, false, ""},
 		{errors.New("must err"), false, true, ""},
