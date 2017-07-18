@@ -257,6 +257,9 @@ type physicalTableSource struct {
 
 	// NeedColHandle is used in execution phase.
 	NeedColHandle bool
+
+	// TODO: This should be removed after old planner was removed.
+	unionScanSchema *expression.Schema
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -329,7 +332,7 @@ func needValue(af expression.AggregationFunction) bool {
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
 }
 
-func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) PhysicalPlan {
+func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan, s *expression.Schema) PhysicalPlan {
 	if p.readOnly {
 		return resultPlan
 	}
@@ -339,17 +342,7 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 		NeedColHandle: p.NeedColHandle,
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
-	us.SetSchema(resultPlan.Schema())
-	// This table source must read handle.
-	if !p.NeedColHandle {
-		p.NeedColHandle = true
-		resultPlan.SetSchema(resultPlan.Schema().Clone())
-		resultPlan.Schema().Append(&expression.Column{
-			FromID:  resultPlan.ID(),
-			ColName: model.NewCIStr("_rowid"),
-			ID:      -1,
-		})
-	}
+	us.SetSchema(s)
 	return us
 }
 

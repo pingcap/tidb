@@ -1139,20 +1139,31 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			Position: i,
 			ID:       col.ID})
 	}
-	if p.NeedColHandle {
+	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
+	idRow := &expression.Column{
+		FromID:   p.id,
+		DBName:   schemaName,
+		TblName:  tableInfo.Name,
+		ColName:  model.NewCIStr("_rowid"),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		Position: len(schema.Columns),
+		ID:       -1,
+	}
+	if needUnionScan {
+		p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+		for _, col := range schema.Columns {
+			p.unionScanSchema.Append(col)
+		}
+		if p.NeedColHandle {
+			p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idRow)
+		}
+	}
+	if p.NeedColHandle || needUnionScan {
 		p.Columns = append(p.Columns, &model.ColumnInfo{
 			ID:   -1,
-			Name: model.NewCIStr(""),
+			Name: model.NewCIStr("_rowid"),
 		})
-		schema.Append(&expression.Column{
-			FromID:   p.id,
-			DBName:   schemaName,
-			TblName:  tableInfo.Name,
-			ColName:  model.NewCIStr("_rowid"),
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			Position: len(schema.Columns),
-			ID:       -1,
-		})
+		schema.Append(idRow)
 	}
 	p.SetSchema(schema)
 	return p

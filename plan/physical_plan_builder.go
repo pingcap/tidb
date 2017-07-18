@@ -47,11 +47,15 @@ var JoinConcurrency = 5
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	client := p.ctx.GetClient()
 	ts := PhysicalTableScan{
-		Table:               p.tableInfo,
-		Columns:             p.Columns,
-		TableAsName:         p.TableAsName,
-		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{client: client, NeedColHandle: p.NeedColHandle},
+		Table:       p.tableInfo,
+		Columns:     p.Columns,
+		TableAsName: p.TableAsName,
+		DBName:      p.DBName,
+		physicalTableSource: physicalTableSource{
+			client:          client,
+			NeedColHandle:   p.NeedColHandle || p.unionScanSchema != nil,
+			unionScanSchema: p.unionScanSchema,
+		},
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.Schema())
 	if p.ctx.Txn() != nil {
@@ -110,13 +114,17 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
 	client := p.ctx.GetClient()
 	is := PhysicalIndexScan{
-		Index:               index,
-		Table:               p.tableInfo,
-		Columns:             p.Columns,
-		TableAsName:         p.TableAsName,
-		OutOfOrder:          true,
-		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{client: client, NeedColHandle: p.NeedColHandle},
+		Index:       index,
+		Table:       p.tableInfo,
+		Columns:     p.Columns,
+		TableAsName: p.TableAsName,
+		OutOfOrder:  true,
+		DBName:      p.DBName,
+		physicalTableSource: physicalTableSource{
+			client:          client,
+			NeedColHandle:   p.NeedColHandle || p.unionScanSchema != nil,
+			unionScanSchema: p.unionScanSchema,
+		},
 	}.init(p.allocator, p.ctx)
 	is.SetSchema(p.schema)
 	if p.ctx.Txn() != nil {
@@ -171,6 +179,9 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
 	for _, colInfo := range columns {
 		if pkIsHandle && mysql.HasPriKeyFlag(colInfo.Flag) {
+			continue
+		}
+		if colInfo.ID == -1 {
 			continue
 		}
 		isIndexColumn := false
