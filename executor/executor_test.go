@@ -1289,6 +1289,12 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("0 <nil> <nil> 1.5707963267948966"))
 	result = tk.MustQuery("select asin('tidb')")
 	result.Check(testkit.Rows("0"))
+
+	// for floor
+	result = tk.MustQuery("select floor(0), floor(null), floor(1.23), floor(-1.23)")
+	result.Check(testkit.Rows("0 <nil> 1 -2"))
+	result = tk.MustQuery("select floor('tidb')")
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestJSON(c *C) {

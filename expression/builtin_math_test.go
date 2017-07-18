@@ -115,32 +115,47 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 
 	sc := s.ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
 	defer func() {
 		sc.IgnoreTruncate = tmpIT
 	}()
 
-	for _, t := range []struct {
-		num interface{}
-		ret interface{}
-		err Checker
+	for _, test := range []struct {
+		arg            interface{}
+		expect         float64
+		isNil          bool
+		getErr         bool
+		ignoreTruncate bool
 	}{
-		{nil, nil, IsNil},
-		{int64(1), int64(1), IsNil},
-		{float64(1.23), float64(1), IsNil},
-		{float64(-1.23), float64(-2), IsNil},
-		{"1.23", float64(1), IsNil},
-		{"-1.23", float64(-2), IsNil},
-		{"-1.b23", float64(-1), IsNil},
-		{"abce", float64(0), IsNil},
+		{nil, 0, false, false, false},
+		{int64(1), float64(1), false, false, false},
+		{float64(1.23), float64(1), false, false, false},
+		{float64(-1.23), float64(-2), false, false, false},
+		{"1.23", float64(1), false, false, false},
+		{"-1.23", float64(-2), false, false, false},
+		{"-1.b23", float64(0), false, true, false},
+		{"abce", float64(0), false, false, true},
+		{"-1.b23", float64(-1), false, false, true},
 	} {
-		fc := funcs[ast.Floor]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.num)), s.ctx)
+		sc.IgnoreTruncate = test.ignoreTruncate
+		f, err := newFunctionForTest(s.ctx, ast.Floor, primitiveValsToConstants([]interface{}{test.arg})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, t.err)
-		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Floor].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLog(c *C) {
