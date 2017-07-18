@@ -855,12 +855,13 @@ type builtinAtan2ArgsSig struct {
 // evalReal evals a builtinAtan1ArgSig, corresponding to atan(y, x).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_atan
 func (b *builtinAtan2ArgsSig) evalReal(row []types.Datum) (float64, bool, error) {
-	val1, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	val1, isNull, err := b.args[0].EvalReal(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
 
-	val2, isNull, err := b.args[1].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	val2, isNull, err := b.args[1].EvalReal(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
