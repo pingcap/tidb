@@ -29,22 +29,22 @@ var AllowCartesianProduct = true
 
 const (
 	flagPrunColumns uint64 = 1 << iota
+	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagPredicatePushDown
 	flagAggregationOptimize
 	flagPushDownTopN
-	flagEliminateProjection
 )
 
 var optRuleList = []logicalOptRule{
 	&columnPruner{},
+	&projectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&ppdSolver{},
 	&aggregationOptimizer{},
 	&pushDownTopNOptimizer{},
-	&projectionEliminater{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.

@@ -19,14 +19,9 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
-// canProjectionBeEliminatedLoose checks whether a projection can be eliminated, returns true if:
-// 1. the projection changes the order of its child's output columns, or:
-// 2. the projection just copy its child's output but set a different name for every column.
+// canProjectionBeEliminatedLoose checks whether a projection can be eliminated, returns true if
+// every expression is a single column.
 func canProjectionBeEliminatedLoose(p *Projection) bool {
-	child := p.Children()[0]
-	if p.Schema().Len() != child.Schema().Len() {
-		return false
-	}
 	for _, expr := range p.Exprs {
 		_, ok := expr.(*expression.Column)
 		if !ok {
@@ -36,10 +31,8 @@ func canProjectionBeEliminatedLoose(p *Projection) bool {
 	return true
 }
 
-// canProjectionBeEliminatedStrict checks whether a projection can be eliminated, returns true if:
-// 1. the projection just copy its child's output but set a different name for every column.
-// Unlike canProjectionBeEliminatedLoose, it will return false when the projection changes the order
-// of its child's output columns.
+// canProjectionBeEliminatedStrict checks whether a projection can be eliminated, returns true if
+// the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *Projection) bool {
 	child := p.Children()[0]
 	if p.Schema().Len() != child.Schema().Len() {
@@ -74,7 +67,6 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 
 // eliminatePhysicalProjection should be called after physical optimization to eliminate the redundant projection
 // left after logical projection elimination.
-// After logical and physical optimization, the redundant projection can be the parents of aggregation or join.
 func eliminatePhysicalProjection(p Plan, replace map[string]*expression.Column) Plan {
 	children := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
@@ -121,34 +113,55 @@ func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context, _ *i
 }
 
 // eliminate eliminates the redundant projection in a logical plan.
-// The order of output plan's schema columns can be changed if "haveOrderKeeper" is true.
-func (pe *projectionEliminater) eliminate(p Plan, replace map[string]*expression.Column, haveOrderKeeper bool) Plan {
+// The order of output plan's schema columns can be changed if "haveProjection" is true.
+func (pe *projectionEliminater) eliminate(p Plan, replace map[string]*expression.Column, haveProjection bool) Plan {
 	proj, isProj := p.(*Projection)
-	_, isJoin := p.(*LogicalJoin)
-	_, isAggr := p.(*LogicalAggregation)
-	isOrderKeeper := isProj || isJoin || isAggr
-
-	_, isUnion := p.(*Union)
-	_, isSort := p.(*Sort)
-	childMustKeepOrder := isUnion || isSort
-
 	children := make([]Plan, 0, len(p.Children()))
+	_, isUnion := p.(*Union)
 	for _, child := range p.Children() {
-		if childMustKeepOrder {
-			children = append(children, pe.eliminate(child, replace, false))
-		} else {
-			children = append(children, pe.eliminate(child, replace, haveOrderKeeper || isOrderKeeper))
-		}
-
+		children = append(children, pe.eliminate(child, replace, !isUnion && (haveProjection || isProj)))
 	}
 	p.SetChildren(children...)
 
-	for _, dst := range p.Schema().Columns {
-		resolveColumnAndReplace(dst, replace)
-	}
-	for _, key := range p.Schema().Keys {
-		for _, keyCol := range key {
-			resolveColumnAndReplace(keyCol, replace)
+	_, isSort := p.(*Sort)
+	_, isTopN := p.(*TopN)
+	_, isLimit := p.(*Limit)
+	_, isSelect := p.(*Selection)
+	_, isMaxOneRow := p.(*MaxOneRow)
+
+	_, isApply := p.(*LogicalApply)
+	_, isJoin := p.(*LogicalJoin)
+	if isSort || isTopN || isLimit || isSelect || isMaxOneRow {
+		p.SetSchema(p.Children()[0].Schema())
+	} else if isApply || isJoin {
+		var joinTp JoinType
+		if isApply {
+			joinTp = p.(*LogicalApply).JoinType
+		} else {
+			joinTp = p.(*LogicalJoin).JoinType
+		}
+		switch joinTp {
+		case InnerJoin:
+			fallthrough
+		case LeftOuterJoin:
+			fallthrough
+		case RightOuterJoin:
+			p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
+		case SemiJoin:
+			p.SetSchema(p.Children()[0].Schema().Clone())
+		case LeftOuterSemiJoin:
+			newSchema := p.Children()[0].Schema().Clone()
+			newSchema.Append(p.Schema().Columns[len(p.Schema().Columns)-1])
+			p.SetSchema(newSchema)
+		}
+	} else {
+		for _, dst := range p.Schema().Columns {
+			resolveColumnAndReplace(dst, replace)
+		}
+		for _, key := range p.Schema().Keys {
+			for _, keyCol := range key {
+				resolveColumnAndReplace(keyCol, replace)
+			}
 		}
 	}
 	p.replaceExprColumns(replace)
@@ -156,10 +169,10 @@ func (pe *projectionEliminater) eliminate(p Plan, replace map[string]*expression
 	if !isProj {
 		return p
 	}
-	child := p.Children()[0]
 
+	child := p.Children()[0]
 	_, childIsJoin := child.(*LogicalJoin)
-	if !haveOrderKeeper && childIsJoin {
+	if !haveProjection && childIsJoin {
 		return p
 	}
 
@@ -167,8 +180,7 @@ func (pe *projectionEliminater) eliminate(p Plan, replace map[string]*expression
 	if isProj && !canProjectionBeEliminatedStrict(proj) && canProjectionBeEliminatedLoose(proj) {
 		isOrderChanger = true
 	}
-
-	if (isOrderChanger && haveOrderKeeper) || canProjectionBeEliminatedStrict(proj) {
+	if (isOrderChanger && haveProjection) || canProjectionBeEliminatedStrict(proj) {
 		colNameMap := make(map[string]model.CIStr)
 		exprs := proj.Exprs
 		for i, parentColumn := range proj.Schema().Columns {
