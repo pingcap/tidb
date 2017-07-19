@@ -17,6 +17,7 @@ import (
 	"math"
 	"math/rand"
 	"runtime"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -119,15 +120,30 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 		sc.IgnoreTruncate = tmpIT
 	}()
 
+	genDuration := func(h, m, s int64) types.Duration {
+		duration := time.Duration(h)*time.Hour +
+			time.Duration(m)*time.Minute +
+			time.Duration(s)*time.Second
+
+		return types.Duration{Duration: duration, Fsp: types.DefaultFsp}
+	}
+
+	genTime := func(y, m, d int) types.Time {
+		return types.Time{
+			Time: types.FromDate(y, m, d, 0, 0, 0, 0),
+			Type: mysql.TypeDatetime,
+			Fsp:  types.DefaultFsp}
+	}
+
 	for _, test := range []struct {
 		arg            interface{}
-		expect         float64
+		expect         interface{}
 		isNil          bool
 		getErr         bool
 		ignoreTruncate bool
 	}{
-		{nil, 0, false, false, false},
-		{int64(1), float64(1), false, false, false},
+		{nil, nil, true, false, false},
+		{int64(1), int64(1), false, false, false},
 		{float64(1.23), float64(1), false, false, false},
 		{float64(-1.23), float64(-2), false, false, false},
 		{"1.23", float64(1), false, false, false},
@@ -135,6 +151,9 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 		{"-1.b23", float64(0), false, true, false},
 		{"abce", float64(0), false, false, true},
 		{"-1.b23", float64(-1), false, false, true},
+		{genDuration(12, 59, 59), float64(125959), false, false, false},
+		{genDuration(0, 12, 34), float64(1234), false, false, false},
+		{genTime(2017, 7, 19), float64(20170719000000), false, false, false},
 	} {
 		sc.IgnoreTruncate = test.ignoreTruncate
 		f, err := newFunctionForTest(s.ctx, ast.Floor, primitiveValsToConstants([]interface{}{test.arg})...)
@@ -148,7 +167,7 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 			if test.isNil {
 				c.Assert(result.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
+				c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 			}
 		}
 	}

@@ -64,7 +64,10 @@ var (
 var (
 	_ builtinFunc = &builtinAbsSig{}
 	_ builtinFunc = &builtinCeilSig{}
-	_ builtinFunc = &builtinFloorSig{}
+
+	_ builtinFunc = &builtinFloorRealSig{}
+	_ builtinFunc = &builtinFloorIntSig{}
+
 	_ builtinFunc = &builtinLog1ArgSig{}
 	_ builtinFunc = &builtinLog2ArgsSig{}
 	_ builtinFunc = &builtinLog2Sig{}
@@ -172,26 +175,66 @@ type floorFunctionClass struct {
 }
 
 func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+	if len(args) != 1 {
+		return nil, errors.Trace(errors.New("unexpected length of args"))
+	}
+
+	var (
+		bf           baseBuiltinFunc
+		sig          builtinFunc
+		err          error
+		retTp, argTp evalTp
+		tpClass      types.TypeClass
+	)
+
+	tpClass = args[0].GetTypeClass()
+	switch tpClass {
+	case types.ClassInt, types.ClassDecimal:
+		retTp, argTp = tpInt, tpReal
+	default:
+		retTp, argTp = tpReal, tpReal
+	}
+
+	bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinFloorSig{baseRealBuiltinFunc{bf}}
+
+	switch tpClass {
+	case types.ClassInt, types.ClassDecimal:
+		sig = &builtinFloorIntSig{baseIntBuiltinFunc{bf}}
+	default:
+		sig = &builtinFloorRealSig{baseRealBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinFloorSig struct {
+type builtinFloorRealSig struct {
 	baseRealBuiltinFunc
 }
 
-// evalReal evals a builtinFloorSig.
+// evalReal evals a builtinFloorRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_floor
-func (b *builtinFloorSig) evalReal(row []types.Datum) (float64, bool, error) {
+func (b *builtinFloorRealSig) evalReal(row []types.Datum) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
 	return math.Floor(val), false, nil
+}
+
+type builtinFloorIntSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals a builtinFloorIntSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_floor
+func (b *builtinFloorIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return int64(math.Floor(val)), false, nil
 }
 
 type logFunctionClass struct {
