@@ -14,6 +14,7 @@
 package dashbase
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 )
@@ -32,6 +33,11 @@ type ConnectionOption struct {
 	FirehosePort     int    `json:"firehose_port"`
 	ProxyHostname    string `json:"proxy_host"`
 	ProxyPort        int    `json:"proxy_port"`
+}
+
+// ToString converts the structure into format `hostname:port;hostname:port`
+func (conn *ConnectionOption) ToString() string {
+	return fmt.Sprintf("%s:%d;%s:%d", conn.FirehoseHostname, conn.FirehosePort, conn.ProxyHostname, conn.ProxyPort)
 }
 
 var connectionOptionRegexp *regexp.Regexp

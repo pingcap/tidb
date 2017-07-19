@@ -190,14 +190,14 @@ func (v *validator) checkDashbase(stmt *ast.CreateTableStmt) {
 
 	primaryKeys := 0
 
-	// PK must be timestamp type.
+	// PK must be datetime type.
 	for _, colDef := range stmt.Cols {
 		for _, op := range colDef.Options {
 			switch op.Tp {
 			case ast.ColumnOptionPrimaryKey:
 				primaryKeys++
-				if colDef.Tp.Tp != mysql.TypeTimestamp {
-					v.err = errors.New("Incorrect table definition; Dashbase table primary key column must be timestamp type")
+				if colDef.Tp.Tp != mysql.TypeDatetime {
+					v.err = errors.New("Incorrect table definition; Dashbase table primary key column must be datetime type")
 					return
 				}
 			}
@@ -207,7 +207,7 @@ func (v *validator) checkDashbase(stmt *ast.CreateTableStmt) {
 	for _, constraint := range stmt.Constraints {
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintPrimaryKey:
-			// PK must be timestamp type.
+			// PK must be datetime type.
 			primaryKeys++
 			if len(constraint.Keys) != 1 {
 				v.err = errors.New("Incorrect table definition; Dashbase table primary key must contain only one column")
@@ -215,8 +215,8 @@ func (v *validator) checkDashbase(stmt *ast.CreateTableStmt) {
 			}
 			for _, colDef := range stmt.Cols {
 				if colDef.Name.Name.L == constraint.Keys[0].Column.Name.L {
-					if colDef.Tp.Tp != mysql.TypeTimestamp {
-						v.err = errors.New("Incorrect table definition; Dashbase table primary key column must be timestamp type")
+					if colDef.Tp.Tp != mysql.TypeDatetime {
+						v.err = errors.New("Incorrect table definition; Dashbase table primary key column must be datetime type")
 						return
 					}
 					break

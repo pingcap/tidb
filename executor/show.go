@@ -540,6 +540,15 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", tb.Meta().Comment))
 	}
 
+	if strings.EqualFold(engine, "Dashbase") {
+		// TODO: Escape.
+		buf.WriteString(fmt.Sprintf(" DASHBASE_CONN='%s'", tb.Meta().DashbaseConnection.ToString()))
+		if len(tb.Meta().DashbaseTableName) > 0 {
+			// TODO: Escape.
+			buf.WriteString(fmt.Sprintf(" DASHBASE_TABLE_NAME='%s'", tb.Meta().DashbaseTableName))
+		}
+	}
+
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
 	e.rows = append(e.rows, &Row{Data: data})
 	return nil
