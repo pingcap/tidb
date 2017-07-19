@@ -545,7 +545,7 @@ func (d *Datum) compareString(sc *variable.StatementContext, s string) (int, err
 		return CompareString(d.GetString(), s), nil
 	case KindMysqlDecimal:
 		dec := new(MyDecimal)
-		err := dec.FromString([]byte(s))
+		err := sc.HandleTruncate(dec.FromString(hack.Slice(s)))
 		return d.GetMysqlDecimal().Compare(dec), err
 	case KindMysqlTime:
 		dt, err := ParseDatetime(s)
@@ -589,7 +589,7 @@ func (d *Datum) compareMysqlDecimal(sc *variable.StatementContext, dec *MyDecima
 		return d.GetMysqlDecimal().Compare(dec), nil
 	case KindString, KindBytes:
 		dDec := new(MyDecimal)
-		err := dDec.FromString(d.GetBytes())
+		err := sc.HandleTruncate(dDec.FromString(d.GetBytes()))
 		return dDec.Compare(dec), err
 	default:
 		fVal, _ := dec.ToFloat64()
@@ -1578,11 +1578,7 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 	if a.IsNull() || b.IsNull() {
 		return x, y, nil
 	}
-	var (
-		hasUint    bool
-		hasDecimal bool
-		hasFloat   bool
-	)
+	var hasUint, hasDecimal, hasFloat bool
 	x = a.convergeType(&hasUint, &hasDecimal, &hasFloat)
 	y = b.convergeType(&hasUint, &hasDecimal, &hasFloat)
 	if hasFloat {
@@ -1600,11 +1596,10 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			x.SetFloat64(x.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := x.ToFloat64(sc)
-			if err != nil {
-				return x, y, errors.Trace(err)
+			var fval float64
+			if fval, err = x.ToFloat64(sc); err == nil {
+				x.SetFloat64(fval)
 			}
-			x.SetFloat64(fval)
 		}
 		switch y.Kind() {
 		case KindInt64:
@@ -1620,26 +1615,21 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			y.SetFloat64(y.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := y.ToFloat64(sc)
-			if err != nil {
-				return x, y, errors.Trace(err)
+			var fval float64
+			if fval, err = y.ToFloat64(sc); err == nil {
+				y.SetFloat64(fval)
 			}
-			y.SetFloat64(fval)
 		}
 	} else if hasDecimal {
 		var dec *MyDecimal
-		dec, err = ConvertDatumToDecimal(sc, x)
-		if err != nil {
-			return x, y, errors.Trace(err)
+		if dec, err = ConvertDatumToDecimal(sc, x); err == nil {
+			x.SetMysqlDecimal(dec)
+			if dec, err = ConvertDatumToDecimal(sc, y); err == nil {
+				y.SetMysqlDecimal(dec)
+			}
 		}
-		x.SetMysqlDecimal(dec)
-		dec, err = ConvertDatumToDecimal(sc, y)
-		if err != nil {
-			return x, y, errors.Trace(err)
-		}
-		y.SetMysqlDecimal(dec)
 	}
-	return
+	return x, y, errors.Trace(sc.HandleTruncate(err))
 }
 
 // NewDatum creates a new Datum from an interface{}.

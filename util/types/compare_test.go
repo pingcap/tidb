@@ -146,6 +146,8 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{Set{Name: "a", Value: 1}, Hex{Value: 1}, 0},
 		{Set{Name: "a", Value: 1}, Enum{Name: "a", Value: 1}, 0},
 		{Set{Name: "a", Value: 1}, Set{Name: "a", Value: 1}, 0},
+
+		{"hello", NewDecFromInt(0), 0}, // compatible with MySQL.
 	}
 
 	for i, t := range cmpTbl {

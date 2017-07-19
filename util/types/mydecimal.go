@@ -303,7 +303,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	if len(str) == 0 {
 		*d = zeroMyDecimal
-		return ErrBadNumber
+		return ErrTruncated
 	}
 	switch str[0] {
 	case '-':
@@ -331,7 +331,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	if digitsInt+digitsFrac == 0 {
 		*d = zeroMyDecimal
-		return ErrBadNumber
+		return ErrTruncated
 	}
 	wordsInt := digitsToWords(digitsInt)
 	wordsFrac := digitsToWords(digitsFrac)

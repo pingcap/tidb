@@ -114,8 +114,8 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			s2 := Serialize(j2)
 			cmp = bytes.Compare(s1, s2)
 		default:
-			msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j1.typeCode)
-			panic(msg)
+			err = errors.Errorf(unknownTypeCodeErrorMsg, j1.typeCode)
+			return
 		}
 	} else if (precedence1 == jsonTypePrecedences["BOOLEAN"] && precedence2 == jsonTypePrecedences["INTEGER"]) ||
 		(precedence1 == jsonTypePrecedences["INTEGER"] && precedence2 == jsonTypePrecedences["BOOLEAN"]) {

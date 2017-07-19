@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 )
@@ -26,10 +27,12 @@ const (
 	codeCantGetValidID terror.ErrCode = 1
 	codeCantSetToNull  terror.ErrCode = 2
 	codeSnapshotTooOld terror.ErrCode = 3
+	codeTruncated      terror.ErrCode = terror.ErrCode(mysql.WarnDataTruncated)
 )
 
 // Error instances.
 var (
+	errTruncated      = terror.ClassTypes.New(codeTruncated, "Data Truncated")
 	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
 	ErrCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
 	ErrSnapshotTooOld = terror.ClassVariable.New(codeSnapshotTooOld, "snapshot is older than GC safe point %s")
@@ -403,15 +406,14 @@ func (sc *StatementContext) AppendWarning(warn error) {
 
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
-	if err == nil {
-		return nil
-	}
-	if sc.IgnoreTruncate {
-		return nil
-	}
-	if sc.TruncateAsWarning {
-		sc.AppendWarning(err)
-		return nil
+	if terr, ok := errors.Cause(err).(*terror.Error); ok && terr.Equal(errTruncated) {
+		if sc.IgnoreTruncate {
+			return nil
+		}
+		if sc.TruncateAsWarning {
+			sc.AppendWarning(err)
+			return nil
+		}
 	}
 	return err
 }

@@ -78,11 +78,10 @@ func (b *builtinInSig) eval(row []types.Datum) (d types.Datum, err error) {
 			hasNull = true
 			continue
 		}
+
 		a, b, err := types.CoerceDatum(sc, args[0], v)
 		if err != nil {
-			// If the coerce fail, we can't raise error.
-			a = args[0]
-			b = v
+			return d, errors.Trace(err)
 		}
 		ret, err := a.CompareDatum(sc, b)
 		if err != nil {
