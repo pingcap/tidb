@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -807,6 +808,12 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 }
 
 func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
+	// Reject if a dashbase table is referred.
+	if strings.EqualFold(ld.Table.TableInfo.Engine, "Dashbase") {
+		b.err = errors.New("Cannot load data into a dashbase table")
+		return nil
+	}
+
 	p := &LoadData{
 		IsLocal:    ld.IsLocal,
 		Path:       ld.Path,

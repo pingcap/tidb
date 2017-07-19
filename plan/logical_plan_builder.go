@@ -16,6 +16,7 @@ package plan
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
@@ -1258,6 +1259,19 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, t.Name.L, "")
 	}
 
+	// Reject if a dashbase table is referred.
+	isDashbaseReferred := false
+	for _, table := range tableList {
+		if strings.EqualFold(table.TableInfo.Engine, "Dashbase") {
+			isDashbaseReferred = true
+			break
+		}
+	}
+	if isDashbaseReferred {
+		b.err = errors.New("Cannot update a dashbase table")
+		return nil
+	}
+
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
@@ -1334,6 +1348,30 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
+	// Reject if a dashbase table is referred.
+	isDashbaseReferred := false
+	if delete.Tables != nil {
+		for _, table := range delete.Tables.Tables {
+			if strings.EqualFold(table.TableInfo.Engine, "Dashbase") {
+				isDashbaseReferred = true
+				break
+			}
+		}
+	} else {
+		var tableList []*ast.TableName
+		tableList = extractTableList(delete.TableRefs.TableRefs, tableList)
+		for _, table := range tableList {
+			if strings.EqualFold(table.TableInfo.Engine, "Dashbase") {
+				isDashbaseReferred = true
+				break
+			}
+		}
+	}
+	if isDashbaseReferred {
+		b.err = errors.New("Cannot delete from a dashbase table")
+		return nil
+	}
+
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
