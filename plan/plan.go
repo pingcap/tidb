@@ -264,6 +264,9 @@ type PhysicalPlan interface {
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx context.Context) (*tipb.Executor, error)
 
+	// ExplainInfo returns operator informations to be explained
+	ExplainInfo() string
+
 	// getChildrenPossibleProps tries to push the required properties to its children and return all the possible properties.
 	getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp
 
@@ -279,6 +282,11 @@ type baseLogicalPlan struct {
 
 type basePhysicalPlan struct {
 	basePlan *basePlan
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (bp *basePhysicalPlan) ExplainInfo() string {
+	return ""
 }
 
 func (p *baseLogicalPlan) getTask(prop *requiredProp) (task, error) {

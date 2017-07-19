@@ -727,12 +727,12 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	}
 	var indexCols []*expression.Column
 	for _, col := range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
+		indexCols = append(indexCols, &expression.Column{FromID: p.columnFromID, Position: col.Offset})
 	}
 	if is.Table.PKIsHandle {
 		for _, col := range is.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
+				indexCols = append(indexCols, &expression.Column{FromID: p.columnFromID, Position: col.Offset})
 				break
 			}
 		}

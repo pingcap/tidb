@@ -113,6 +113,43 @@ func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	return true
 }
 
+func setParents4FinalPlan(plan PhysicalPlan) {
+	allPlans := []PhysicalPlan{}
+	allPlans = append(allPlans, plan)
+	planMark := map[string]bool{}
+	planMark[plan.ID()] = true
+	for pID := 0; pID < len(allPlans); pID++ {
+		allPlans[pID].SetParents()
+		switch copPlan := allPlans[pID].(type) {
+		case *PhysicalTableReader:
+			setParents4FinalPlan(copPlan.tablePlan)
+		case *PhysicalIndexReader:
+			setParents4FinalPlan(copPlan.indexPlan)
+		case *PhysicalIndexLookUpReader:
+			setParents4FinalPlan(copPlan.indexPlan)
+			setParents4FinalPlan(copPlan.tablePlan)
+		}
+		for _, p := range allPlans[pID].Children() {
+			if !planMark[p.ID()] {
+				allPlans = append(allPlans, p.(PhysicalPlan))
+				planMark[p.ID()] = true
+			}
+		}
+	}
+
+	allPlans = allPlans[0:1]
+	planMark[plan.ID()] = false
+	for pID := 0; pID < len(allPlans); pID++ {
+		for _, p := range allPlans[pID].Children() {
+			p.AddParent(allPlans[pID])
+			if planMark[p.ID()] {
+				planMark[p.ID()] = false
+				allPlans = append(allPlans, p.(PhysicalPlan))
+			}
+		}
+	}
+}
+
 func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
 	logic, err := logicalOptimize(flag, logic, ctx, allocator)
 	if err != nil {
@@ -131,6 +168,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 		return nil, errors.Trace(err)
 	}
 	finalPlan := eliminatePhysicalProjection(physical)
+	setParents4FinalPlan(finalPlan)
 	return finalPlan, nil
 }
 

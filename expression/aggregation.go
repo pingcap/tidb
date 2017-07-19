@@ -147,6 +147,21 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *variable.S
 	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
 }
 
+func ExplainAggFunc(agg AggregationFunction) string {
+	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", agg.GetName()))
+	if agg.IsDistinct() {
+		buffer.WriteString("distinct ")
+	}
+	for i, arg := range agg.GetArgs() {
+		buffer.WriteString(arg.ExplainInfo())
+		if i+1<len(agg.GetArgs()) {
+			buffer.WriteString(", ")
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
+}
+
 type aggCtxMapper map[string]*aggEvaluateContext
 
 // AggFunctionMode stands for the aggregation function's mode.

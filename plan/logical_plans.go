@@ -259,6 +259,7 @@ type DataSource struct {
 	tableInfo  *model.TableInfo
 	Columns    []*model.ColumnInfo
 	DBName     model.CIStr
+	columnFromID string
 
 	TableAsName *model.CIStr
 

@@ -130,6 +130,12 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 		}
 		if v, ok := p.(*DataSource); ok {
 			v.TableAsName = &x.AsName
+			if x.AsName.L != "" {
+				v.columnFromID += "(" + x.AsName.O + ")"
+				for _, col := range p.Schema().Columns {
+					col.FromID = v.columnFromID
+				}
+			}
 		}
 		if x.AsName.L != "" {
 			for _, col := range p.Schema().Columns {
@@ -1073,7 +1079,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		proj.SetSchema(expression.NewSchema(p.Schema().Columns[:oldLen]...))
 		return proj
 	}
-
 	return p
 }
 
@@ -1112,6 +1117,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		statisticTable: statisticTable,
 		DBName:         schemaName,
 		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
+		columnFromID:   tableInfo.Name.O,
 	}.init(b.allocator, b.ctx)
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
@@ -1126,7 +1132,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	for i, col := range columns {
 		p.Columns = append(p.Columns, col.ColumnInfo)
 		schema.Append(&expression.Column{
-			FromID:   p.id,
+			FromID:   p.columnFromID,
 			ColName:  col.Name,
 			TblName:  tableInfo.Name,
 			DBName:   schemaName,
