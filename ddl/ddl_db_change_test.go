@@ -67,31 +67,34 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 }
 
 func (s *testStateChangeSuite) TestTowStates(c *C) {
+	cnt := 5
+	// New the testExecInfo.
 	testInfo := &testExecInfo{
-		execKinds: 5,
+		execCases: cnt,
 		sqlInfos:  make([]*sqlInfo, 4),
 	}
 	for i := 0; i < len(testInfo.sqlInfos); i++ {
-		testInfo.sqlInfos[i] = &sqlInfo{
-			rawStmts: make([]ast.StmtNode, testInfo.execKinds),
-			stmts:    make([]ast.Statement, testInfo.execKinds),
-			errs:     make([]error, testInfo.execKinds),
+		sqlInfo := &sqlInfo{cases: make([]*stateCase, cnt)}
+		for j := 0; j < cnt; j++ {
+			sqlInfo.cases[j] = new(stateCase)
 		}
+		testInfo.sqlInfos[i] = sqlInfo
 	}
 	err := testInfo.createSessions(s.store, "test_db_state")
 	c.Assert(err, IsNil)
+	// Fill the SQLs and expected error messages.
 	testInfo.sqlInfos[0].sql = "insert into t (c1, c2, c3, c4) value(2, 'b', 'N', '2017-07-02')"
 	testInfo.sqlInfos[1].sql = "insert into t (c1, c2, c3, d3, c4) value(3, 'b', 'N', 'a', '2017-07-03')"
 	unknownColErr := errors.New("unknown column d3")
-	testInfo.sqlInfos[1].errs[0] = unknownColErr
-	testInfo.sqlInfos[1].errs[1] = unknownColErr
-	testInfo.sqlInfos[1].errs[2] = unknownColErr
-	testInfo.sqlInfos[1].errs[3] = unknownColErr
+	testInfo.sqlInfos[1].cases[0].expectedErr = unknownColErr
+	testInfo.sqlInfos[1].cases[1].expectedErr = unknownColErr
+	testInfo.sqlInfos[1].cases[2].expectedErr = unknownColErr
+	testInfo.sqlInfos[1].cases[3].expectedErr = unknownColErr
 	testInfo.sqlInfos[2].sql = "update t set c2 = 'c2_update'"
 	// TODO: This code need to be remove after fix this bug.
-	testInfo.sqlInfos[2].errs[3] = errors.New("overflow enum boundary")
+	testInfo.sqlInfos[2].cases[3].expectedErr = errors.New("overflow enum boundary")
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')'"
-	testInfo.sqlInfos[3].errs[4] = errors.New("Column count doesn't match value count at row 1")
+	testInfo.sqlInfos[3].cases[4].expectedErr = errors.New("Column count doesn't match value count at row 1")
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
 	s.test(c, "", alterTableSQL, testInfo)
 	// TODO: Add more DDL statements.
@@ -121,6 +124,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 		times++
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
+			// This state we execute every sqlInfo one time using the first session and other information.
 			err = testInfo.compileSQL(0)
 			if err != nil {
 				checkErr = err
@@ -131,11 +135,13 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 				checkErr = err
 			}
 		case model.StateWriteOnly:
+			// This state we put the schema information to the second case.
 			err = testInfo.compileSQL(1)
 			if err != nil {
 				checkErr = err
 			}
 		case model.StateWriteReorganization:
+			// This state we execute every sqlInfo one time using the third session and other information.
 			err = testInfo.compileSQL(2)
 			if err != nil {
 				checkErr = err
@@ -152,6 +158,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 				checkErr = err
 				break
 			}
+			// This state we put the schema information to the fourth case.
 			err = testInfo.compileSQL(3)
 			if err != nil {
 				checkErr = err
@@ -173,45 +180,54 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	d.SetHook(callback)
 }
 
+type stateCase struct {
+	session     tidb.Session
+	rawStmt     ast.StmtNode
+	stmt        ast.Statement
+	expectedErr error
+}
+
 type sqlInfo struct {
-	sql      string
-	sessions []tidb.Session
-	rawStmts []ast.StmtNode
-	stmts    []ast.Statement
-	errs     []error
+	sql string
+	// cases is multiple stateCases.
+	// Every case need to be executed with the different schema state.
+	cases []*stateCase
 }
 
 type testExecInfo struct {
-	execKinds int
-	sqlInfos  []*sqlInfo
+	// execCases represents every SQL need to be executed execCases times.
+	// And the schema state is different at each execution.
+	execCases int
+	// sqlInfos represents this test information has multiple SQLs to test.
+	sqlInfos []*sqlInfo
 }
 
 func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
+	var err error
 	for i, info := range t.sqlInfos {
-		info.sessions = make([]tidb.Session, 0, t.execKinds)
-		for j := 0; j < t.execKinds; j++ {
-			se, err := tidb.CreateSession(store)
+		for j, c := range info.cases {
+			c.session, err = tidb.CreateSession(store)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			se.Execute("use " + useDB)
-			se.SetConnectionID(uint64(i*10 + j))
-			info.sessions = append(info.sessions, se)
+			c.session.Execute("use " + useDB)
+			// It's used to debug.
+			c.session.SetConnectionID(uint64(i*10 + j))
 		}
 	}
 	return nil
 }
 
 func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
+	if t.execCases <= 0 {
+		return nil
+	}
 	var err error
-	for i, sqlInfo := range t.sqlInfos {
-		if len(sqlInfo.sessions) == 0 {
-			return errors.Errorf("no,%d session not init", i)
-		}
-		seVars := sqlInfo.sessions[0].GetSessionVars()
+	for _, sqlInfo := range t.sqlInfos {
+		seVars := sqlInfo.cases[0].session.GetSessionVars()
 		charset, collation := seVars.GetCharsetInfo()
-		for j := 0; j < t.execKinds; j++ {
-			sqlInfo.rawStmts[j], err = p.ParseOneStmt(sqlInfo.sql, charset, collation)
+		for j := 0; j < t.execCases; j++ {
+			sqlInfo.cases[j].rawStmt, err = p.ParseOneStmt(sqlInfo.sql, charset, collation)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -224,11 +240,12 @@ func (t *testExecInfo) compileSQL(idx int) error {
 	var err error
 	compiler := executor.Compiler{}
 	for _, info := range t.sqlInfos {
-		se := info.sessions[idx]
+		c := info.cases[idx]
+		se := c.session
 		se.PrepareTxnCtx()
 		ctx := se.(context.Context)
-		executor.ResetStmtCtx(ctx, info.rawStmts[idx])
-		info.stmts[idx], err = compiler.Compile(ctx, info.rawStmts[idx])
+		executor.ResetStmtCtx(ctx, c.rawStmt)
+		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -238,16 +255,16 @@ func (t *testExecInfo) compileSQL(idx int) error {
 
 func (t *testExecInfo) execSQL(idx int) error {
 	for _, sqlInfo := range t.sqlInfos {
-		ctx := sqlInfo.sessions[idx].(context.Context)
-		_, err := sqlInfo.stmts[idx].Exec(ctx)
+		c := sqlInfo.cases[idx]
+		ctx := c.session.(context.Context)
+		_, err := c.stmt.Exec(ctx)
 		if err != nil {
-			expectedErr := sqlInfo.errs[idx]
-			if expectedErr != nil && strings.Contains(err.Error(), expectedErr.Error()) {
+			if c.expectedErr != nil && strings.Contains(err.Error(), c.expectedErr.Error()) {
 				return nil
 			}
 			return errors.Trace(err)
 		}
-		err = sqlInfo.sessions[idx].CommitTxn()
+		err = c.session.CommitTxn()
 		if err != nil {
 			return errors.Trace(err)
 		}
