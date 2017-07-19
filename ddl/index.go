@@ -190,8 +190,9 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		unique      bool
 		indexName   model.CIStr
 		idxColNames []*ast.IndexColName
+		indexOption *ast.IndexOption
 	)
-	err = job.DecodeArgs(&unique, &indexName, &idxColNames)
+	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption)
 	if err != nil {
 		job.State = model.JobCancelled
 		return ver, errors.Trace(err)
@@ -208,6 +209,13 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		if err != nil {
 			job.State = model.JobCancelled
 			return ver, errors.Trace(err)
+		}
+		if indexOption != nil {
+			indexInfo.Comment = indexOption.Comment
+			indexInfo.Tp = indexOption.Tp
+		} else {
+			// Use btree as default index type.
+			indexInfo.Tp = model.IndexTypeBtree
 		}
 		indexInfo.Primary = false
 		indexInfo.Unique = unique

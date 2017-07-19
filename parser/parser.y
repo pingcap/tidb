@@ -1559,13 +1559,14 @@ NumLiteral:
 
 
 CreateIndexStmt:
-	"CREATE" CreateIndexStmtUnique "INDEX" Identifier "ON" TableName '(' IndexColNameList ')'
+	"CREATE" CreateIndexStmtUnique "INDEX" Identifier "ON" TableName '(' IndexColNameList ')' IndexOptionList
 	{
 		$$ = &ast.CreateIndexStmt{
 			Unique: $2.(bool),
 			IndexName: $4,
-                	Table: $6.(*ast.TableName),
+			Table: $6.(*ast.TableName),
 			IndexColNames: $8.([]*ast.IndexColName),
+			IndexOption:   $10.(*ast.IndexOption),
 		}
 	}
 
