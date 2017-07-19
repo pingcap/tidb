@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -76,7 +77,7 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.AggregateFuncExpr:
 		v.inAggregate = false
 	case *ast.CreateTableStmt:
-		v.checkDashbaseOptions(x)
+		v.checkDashbase(x)
 		v.checkAutoIncrement(x)
 	case *ast.ParamMarkerExpr:
 		if !v.inPrepare {
@@ -170,10 +171,12 @@ func isEngineDashbase(stmt *ast.CreateTableStmt) bool {
 	return strings.EqualFold(opt.StrValue, "Dashbase")
 }
 
-func (v *validator) checkDashbaseOptions(stmt *ast.CreateTableStmt) {
+func (v *validator) checkDashbase(stmt *ast.CreateTableStmt) {
 	if !isEngineDashbase(stmt) {
 		return
 	}
+
+	// DASHBASE_CONN is required.
 	opt := getStmtTableOption(stmt, ast.TableOptionDashbaseConnection)
 	if opt == nil {
 		v.err = errors.New("Incorrect table definition; DASHBASE_CONN option is required for Dashbase engine tables")
@@ -184,13 +187,71 @@ func (v *validator) checkDashbaseOptions(stmt *ast.CreateTableStmt) {
 		v.err = errors.New("Incorrect table definition; DASHBASE_CONN is not valid")
 		return
 	}
+
+	primaryKeys := 0
+
+	// PK must be timestamp type.
+	for _, colDef := range stmt.Cols {
+		for _, op := range colDef.Options {
+			switch op.Tp {
+			case ast.ColumnOptionPrimaryKey:
+				primaryKeys++
+				if colDef.Tp.Tp != mysql.TypeTimestamp {
+					v.err = errors.New("Incorrect table definition; Dashbase table primary key column must be timestamp type")
+					return
+				}
+			}
+		}
+	}
+
+	for _, constraint := range stmt.Constraints {
+		switch tp := constraint.Tp; tp {
+		case ast.ConstraintPrimaryKey:
+			// PK must be timestamp type.
+			primaryKeys++
+			if len(constraint.Keys) != 1 {
+				v.err = errors.New("Incorrect table definition; Dashbase table primary key must contain only one column")
+				return
+			}
+			for _, colDef := range stmt.Cols {
+				if colDef.Name.Name.L == constraint.Keys[0].Column.Name.L {
+					if colDef.Tp.Tp != mysql.TypeTimestamp {
+						v.err = errors.New("Incorrect table definition; Dashbase table primary key column must be timestamp type")
+						return
+					}
+					break
+				}
+			}
+		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			// Must not have unique index.
+			v.err = fmt.Errorf("Incorrect table definition; Constraint %d not supported in Dashbase table", tp)
+			return
+		case ast.ConstraintKey, ast.ConstraintIndex:
+			// Index must be text type.
+			if len(constraint.Keys) != 1 {
+				v.err = errors.New("Incorrect table definition; Dashbase table index must contain only one column")
+				return
+			}
+			for _, colDef := range stmt.Cols {
+				if colDef.Name.Name.L == constraint.Keys[0].Column.Name.L {
+					if colDef.Tp.Tp != mysql.TypeVarString {
+						v.err = errors.New("Incorrect table definition; Dashbase table index column must be text type")
+						return
+					}
+					break
+				}
+			}
+		}
+	}
+
+	// PK is required.
+	if primaryKeys == 0 {
+		v.err = errors.New("Incorrect table definition; Dashbase table should have a primary key")
+		return
+	}
 }
 
 func (v *validator) checkAutoIncrement(stmt *ast.CreateTableStmt) {
-	if isEngineDashbase(stmt) {
-		return
-	}
-
 	var (
 		isKey            bool
 		count            int
