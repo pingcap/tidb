@@ -17,8 +17,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -61,9 +61,9 @@ func (*testModelSuite) TestModelBasic(c *C) {
 		Primary: true,
 	}
 
-	fk := &FKInfo {
+	fk := &FKInfo{
 		RefCols: []CIStr{NewCIStr("a")},
-		Cols: []CIStr{NewCIStr("a")},
+		Cols:    []CIStr{NewCIStr("a")},
 	}
 
 	table := &TableInfo{
@@ -103,14 +103,14 @@ func (*testModelSuite) TestModelBasic(c *C) {
 	has := index.HasPrefixIndex()
 	c.Assert(has, Equals, true)
 
-	// Corner branches
+	// Corner cases
 	column.Flag ^= mysql.PriKeyFlag
 	pkName = table.GetPkName()
 	c.Assert(pkName, Equals, NewCIStr(""))
 	newColumn = table.GetPkColInfo()
 	c.Assert(newColumn, IsNil)
 	anCol := &ColumnInfo{
-		Name:         NewCIStr("d"),
+		Name: NewCIStr("d"),
 	}
 	exIdx := table.ColumnIsInIndex(anCol)
 	c.Assert(exIdx, Equals, false)
@@ -196,30 +196,13 @@ func (testModelSuite) TestState(c *C) {
 	for _, state := range jobTbl {
 		c.Assert(len(state.String()), Greater, 0)
 	}
-
-	actionTbl := []ActionType{
-		ActionCreateSchema,
-		ActionDropSchema,
-		ActionCreateTable,
-		ActionDropTable,
-		ActionAddColumn,
-		ActionDropColumn,
-		ActionAddIndex,
-		ActionDropIndex,
-	}
-
-	for _, action := range actionTbl {
-		c.Assert(len(action.String()), Greater, 0)
-	}
 }
 
 func (testModelSuite) TestString(c *C) {
-	type inOut struct {
-		act ActionType
+	acts := []struct {
+		act    ActionType
 		result string
-	}
-
-	acts := []inOut{
+	}{
 		{ActionNone, "none"},
 		{ActionAddForeignKey, "add foreign key"},
 		{ActionDropForeignKey, "drop foreign key"},
@@ -227,6 +210,14 @@ func (testModelSuite) TestString(c *C) {
 		{ActionModifyColumn, "modify column"},
 		{ActionRenameTable, "rename table"},
 		{ActionSetDefaultValue, "set default value"},
+		{ActionCreateSchema, "create schema"},
+		{ActionDropSchema, "drop schema"},
+		{ActionCreateTable, "create table"},
+		{ActionDropTable, "drop table"},
+		{ActionAddIndex, "add index"},
+		{ActionDropIndex, "drop index"},
+		{ActionAddColumn, "add column"},
+		{ActionDropColumn, "drop column"},
 	}
 
 	for _, v := range acts {
