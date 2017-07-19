@@ -1312,6 +1312,24 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("1.5707963267948966 <nil> <nil> 0"))
 	result = tk.MustQuery("select acos('tidb')")
 	result.Check(testkit.Rows("1.5707963267948966"))
+
+	// for floor
+	result = tk.MustQuery("select floor(0), floor(null), floor(1.23), floor(-1.23), floor(1)")
+	result.Check(testkit.Rows("0 <nil> 1 -2 1"))
+	result = tk.MustQuery("select floor('tidb'), floor('1tidb'), floor('tidb1')")
+	result.Check(testkit.Rows("0 1 0"))
+	result = tk.MustQuery("SELECT floor(t.c_datetime) FROM (select CAST('2017-07-19 00:00:00' AS DATETIME) AS c_datetime) AS t")
+	result.Check(testkit.Rows("20170719000000"))
+	result = tk.MustQuery("SELECT floor(t.c_time) FROM (select CAST('12:34:56' AS TIME) AS c_time) AS t")
+	result.Check(testkit.Rows("123456"))
+	result = tk.MustQuery("SELECT floor(t.c_time) FROM (select CAST('00:34:00' AS TIME) AS c_time) AS t")
+	result.Check(testkit.Rows("3400"))
+	result = tk.MustQuery("SELECT floor(t.c_time) FROM (select CAST('00:00:00' AS TIME) AS c_time) AS t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT floor(t.c_decimal) FROM (SELECT CAST('-10.01' AS DECIMAL(10,2)) AS c_decimal) AS t")
+	result.Check(testkit.Rows("-11"))
+	result = tk.MustQuery("SELECT floor(t.c_decimal) FROM (SELECT CAST('-10.01' AS DECIMAL(10,1)) AS c_decimal) AS t")
+	result.Check(testkit.Rows("-10"))
 }
 
 func (s *testSuite) TestJSON(c *C) {
