@@ -46,6 +46,8 @@ var (
 func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool, t table.Table, onDup bool) (bool, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
+	// onUpdateNoChange is for "UPDATE SET ts_field = old_value", the
+	// timestamp field is explicitly seted, but not changed in fact.
 	var onUpdateNoChange = make(map[int]bool)
 
 	// We can iterate on public columns not writable columns,
@@ -86,15 +88,18 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			touched[i] = false
 		}
 	}
-	for i, col := range t.Cols() {
-		if mysql.HasOnUpdateNowFlag(col.Flag) && !touched[i] && !onUpdateNoChange[i] {
-			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
-			if err != nil {
-				return false, errors.Trace(err)
+	if changed {
+		// Only if some fields are really changed, we can change those on-update fields.
+		for i, col := range t.Cols() {
+			if mysql.HasOnUpdateNowFlag(col.Flag) && !touched[i] && !onUpdateNoChange[i] {
+				v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				newData[i] = v
+			} else {
+				continue
 			}
-			newData[i] = v
-		} else {
-			continue
 		}
 	}
 
@@ -645,6 +650,8 @@ func (e *InsertExec) Next() (*Row, error) {
 
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	batchInsert := e.ctx.GetSessionVars().BatchInsert && !e.ctx.GetSessionVars().InTxn()
+
+	txn := e.ctx.Txn()
 	rowCount := 0
 	for _, row := range rows {
 		if batchInsert && rowCount >= BatchInsertSize {
@@ -652,9 +659,9 @@ func (e *InsertExec) Next() (*Row, error) {
 				// We should return a special error for batch insert.
 				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
 			}
+			txn = e.ctx.Txn()
 			rowCount = 0
 		}
-		txn := e.ctx.Txn()
 		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
