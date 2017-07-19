@@ -39,6 +39,8 @@ const (
 	maxFlag          byte = 250
 )
 
+// encode will encode a datum and append it to a byte slice. If comparable is true, the encoded bytes can be sorted as it's original order.
+// If hash is true, the encoded bytes can be checked equal as it's original value.
 func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, error) {
 	for _, val := range vals {
 		switch val.Kind() {
