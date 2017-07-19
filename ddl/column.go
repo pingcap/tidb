@@ -47,6 +47,7 @@ func (d *ddl) adjustColumnOffsetForAdd(columns []*model.ColumnInfo, indices []*m
 }
 
 func updateIndexOffset(indices []*model.IndexInfo, offsetChanged map[int]int) {
+	// TODO: Index can't cover the add/remove column with offset now, we may check this later.
 	// Update index column offset info.
 	for _, idx := range indices {
 		for _, col := range idx.Columns {
