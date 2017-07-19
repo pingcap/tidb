@@ -17,6 +17,7 @@ import (
 	"math"
 	"math/rand"
 	"runtime"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -120,26 +121,68 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 		sc.IgnoreTruncate = tmpIT
 	}()
 
-	for _, t := range []struct {
-		num interface{}
-		ret interface{}
-		err Checker
+	genDuration := func(h, m, s int64) types.Duration {
+		duration := time.Duration(h)*time.Hour +
+			time.Duration(m)*time.Minute +
+			time.Duration(s)*time.Second
+
+		return types.Duration{Duration: duration, Fsp: types.DefaultFsp}
+	}
+
+	genTime := func(y, m, d int) types.Time {
+		return types.Time{
+			Time: types.FromDate(y, m, d, 0, 0, 0, 0),
+			Type: mysql.TypeDatetime,
+			Fsp:  types.DefaultFsp}
+	}
+
+	for _, test := range []struct {
+		arg    interface{}
+		expect interface{}
+		isNil  bool
+		getErr bool
 	}{
-		{nil, nil, IsNil},
-		{int64(1), int64(1), IsNil},
-		{float64(1.23), float64(1), IsNil},
-		{float64(-1.23), float64(-2), IsNil},
-		{"1.23", float64(1), IsNil},
-		{"-1.23", float64(-2), IsNil},
-		{"-1.b23", float64(-1), IsNil},
-		{"abce", float64(0), IsNil},
+		{nil, nil, true, false},
+		{int64(1), int64(1), false, false},
+		{float64(1.23), float64(1), false, false},
+		{float64(-1.23), float64(-2), false, false},
+		{"1.23", float64(1), false, false},
+		{"-1.23", float64(-2), false, false},
+		{"-1.b23", float64(-1), false, false},
+		{"abce", float64(0), false, false},
+		{genDuration(12, 59, 59), float64(125959), false, false},
+		{genDuration(0, 12, 34), float64(1234), false, false},
+		{genTime(2017, 7, 19), float64(20170719000000), false, false},
 	} {
-		fc := funcs[ast.Floor]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.num)), s.ctx)
+		f, err := newFunctionForTest(s.ctx, ast.Floor, primitiveValsToConstants([]interface{}{test.arg})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, t.err)
-		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+			}
+		}
+	}
+
+	for _, exp := range []Expression{
+		&Constant{
+			Value:   types.NewDatum(0),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		},
+		&Constant{
+			Value:   types.NewFloat64Datum(float64(12.34)),
+			RetType: types.NewFieldType(mysql.TypeFloat),
+		},
+	} {
+		f, err := funcs[ast.Floor].getFunction([]Expression{exp}, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 	}
 }
 
