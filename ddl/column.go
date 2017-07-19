@@ -31,29 +31,22 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int, lastColOffset int, added bool) {
+func (d *ddl) adjustColumnOffsetForAdd(columns []*model.ColumnInfo, indices []*model.IndexInfo, lastColOffset int) {
 	offsetChanged := make(map[int]int)
-	if added {
-		for i := 0; i < len(columns); i++ {
-			colOffset := columns[i].Offset
-			if colOffset != i {
-				if colOffset < lastColOffset { // column before the add action,
-					offsetChanged[colOffset] = i
-				}
-				columns[i].Offset = i
+	for i := 0; i < len(columns); i++ {
+		colOffset := columns[i].Offset
+		if colOffset != i {
+			if colOffset < lastColOffset { // column before the add action.
+				offsetChanged[colOffset] = i
 			}
+			columns[i].Offset = i
 		}
-	} else {
-		// on drop, now only support drop one column, so offsets has one offset
-		for i := offset + 1; i < len(columns); i++ {
-			offsetChanged[columns[i].Offset] = i - 1
-			columns[i].Offset = i - 1
-		}
-		columns[offset].Offset = len(columns) - 1
 	}
 
-	// TODO: Index can't cover the add/remove column with offset now, we may check this later.
+	updateIndexOffset(indices, offsetChanged)
+}
 
+func updateIndexOffset(indices []*model.IndexInfo, offsetChanged map[int]int) {
 	// Update index column offset info.
 	for _, idx := range indices {
 		for _, col := range idx.Columns {
@@ -63,6 +56,18 @@ func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.I
 			}
 		}
 	}
+}
+
+func (d *ddl) adjustColumnOffsetForDrop(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int) {
+	offsetChanged := make(map[int]int)
+	// on drop, now only support drop one column, so offsets has one offset
+	for i := offset + 1; i < len(columns); i++ {
+		offsetChanged[columns[i].Offset] = i - 1
+		columns[i].Offset = i - 1
+	}
+	columns[offset].Offset = len(columns) - 1
+
+	updateIndexOffset(indices, offsetChanged)
 }
 
 func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition, markedOffset int) (*model.ColumnInfo, int, error) {
@@ -224,7 +229,7 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 
-		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, 0, lastColOffset, true)
+		d.adjustColumnOffsetForAdd(tblInfo.Columns, tblInfo.Indices, lastColOffset)
 		setAllColumnsState(columnInfos, model.StatePublic)
 		job.SchemaState = model.StatePublic
 		ver, err := updateTableInfo(t, job, tblInfo, originalState)
@@ -282,7 +287,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.SchemaState = model.StateWriteOnly
 		colInfo.State = model.StateWriteOnly
 		// Set this column's offset to the last and reset all following columns' offsets.
-		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, colInfo.Offset, len(tblInfo.Columns), false)
+		d.adjustColumnOffsetForDrop(tblInfo.Columns, tblInfo.Indices, colInfo.Offset)
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteOnly:
 		// write only -> delete only
