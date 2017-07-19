@@ -403,6 +403,8 @@ func (sc *StatementContext) AppendWarning(warn error) {
 
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
+	// TODO: At present we have not checked whether the error can be ignored or
+	// traited as warning. we will do that later, and then append WarnDataTruncated.
 	if err == nil {
 		return nil
 	}
