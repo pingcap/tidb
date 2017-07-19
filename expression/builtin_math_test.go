@@ -775,28 +775,41 @@ func (s *testEvaluatorSuite) TestAsin(c *C) {
 
 func (s *testEvaluatorSuite) TestAtan(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg []interface{}
-		Ret interface{}
+
+	tests := []struct {
+		args   []interface{}
+		expect float64
+		isNil  bool
+		getErr bool
 	}{
-		{[]interface{}{nil}, nil},
-		{[]interface{}{nil, nil}, nil},
-		{[]interface{}{int64(0), "aaa"}, float64(0)},
-		{[]interface{}{int64(0)}, float64(0)},
-		{[]interface{}{"0", "1"}, float64(0)},
-		{[]interface{}{"0.0", "-2.0"}, float64(math.Pi)},
+		{[]interface{}{nil}, 0, true, false},
+		{[]interface{}{nil, nil}, 0, true, false},
+		{[]interface{}{float64(1)}, 0.7853981633974483, false, false},
+		{[]interface{}{float64(-1)}, -0.7853981633974483, false, false},
+		{[]interface{}{float64(0), float64(-2)}, float64(math.Pi), false, false},
+		{[]interface{}{"tidb"}, 0, false, true},
 	}
 
-	Dtbl := tblToDtbl(tbl)
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Atan, primitiveValsToConstants(test.args)...)
+		c.Assert(err, IsNil)
 
-	for idx, t := range Dtbl {
-		fc := funcs[ast.Atan]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
-		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("[%v] - arg:%v", idx, t["Arg"]))
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Atan].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestTan(c *C) {
