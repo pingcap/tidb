@@ -65,27 +65,28 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	resultPlan = ts
 	table := p.tableInfo
 	sc := p.ctx.GetSessionVars().StmtCtx
-	if sel, ok := p.parents[0].(*Selection); ok {
-		newSel := sel.Copy().(*Selection)
-		conds := make([]expression.Expression, 0, len(sel.Conditions))
-		for _, cond := range sel.Conditions {
-			conds = append(conds, cond.Clone())
+	ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	if len(p.parents) > 0 {
+		if sel, ok := p.parents[0].(*Selection); ok {
+			newSel := sel.Copy().(*Selection)
+			conds := make([]expression.Expression, 0, len(sel.Conditions))
+			for _, cond := range sel.Conditions {
+				conds = append(conds, cond.Clone())
+			}
+			ts.AccessCondition, newSel.Conditions = ranger.DetachColumnConditions(conds, table.GetPkName())
+			ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
+				expression.ExpressionsToPB(sc, newSel.Conditions, client)
+			ranges, err := ranger.BuildTableRange(ts.AccessCondition, sc)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			ts.Ranges = ranges
+			if len(newSel.Conditions) > 0 {
+				newSel.SetChildren(ts)
+				newSel.onTable = true
+				resultPlan = newSel
+			}
 		}
-		ts.AccessCondition, newSel.Conditions = ranger.DetachColumnConditions(conds, table.GetPkName())
-		ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
-			expression.ExpressionsToPB(sc, newSel.Conditions, client)
-		ranges, err := ranger.BuildTableRange(ts.AccessCondition, sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ts.Ranges = ranges
-		if len(newSel.Conditions) > 0 {
-			newSel.SetChildren(ts)
-			newSel.onTable = true
-			resultPlan = newSel
-		}
-	} else {
-		ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	}
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
@@ -131,40 +132,41 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
-	if sel, ok := p.parents[0].(*Selection); ok {
-		newSel := sel.Copy().(*Selection)
-		conds := make([]expression.Expression, 0, len(sel.Conditions))
-		for _, cond := range sel.Conditions {
-			conds = append(conds, cond.Clone())
-		}
-		is.AccessCondition, newSel.Conditions, is.accessEqualCount, is.accessInAndEqCount = ranger.DetachIndexScanConditions(conds, is.Index)
-		memDB := infoschema.IsMemoryDB(p.DBName.L)
-		isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeIndex, 0)
-		if isDistReq {
-			idxConds, tblConds := ranger.DetachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
-			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = expression.ExpressionsToPB(sc, idxConds, client)
-			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = expression.ExpressionsToPB(sc, tblConds, client)
-			newSel.Conditions = append(idxConds, tblConds...)
-		}
-		var err error
-		is.Ranges, err = ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
-		if err != nil {
-			if !terror.ErrorEqual(err, types.ErrTruncated) {
+	is.Ranges = ranger.FullIndexRange()
+	if len(p.parents) > 0 {
+		if sel, ok := p.parents[0].(*Selection); ok {
+			newSel := sel.Copy().(*Selection)
+			conds := make([]expression.Expression, 0, len(sel.Conditions))
+			for _, cond := range sel.Conditions {
+				conds = append(conds, cond.Clone())
+			}
+			is.AccessCondition, newSel.Conditions, is.accessEqualCount, is.accessInAndEqCount = ranger.DetachIndexScanConditions(conds, is.Index)
+			memDB := infoschema.IsMemoryDB(p.DBName.L)
+			isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeIndex, 0)
+			if isDistReq {
+				idxConds, tblConds := ranger.DetachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
+				is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = expression.ExpressionsToPB(sc, idxConds, client)
+				is.TableConditionPBExpr, is.tableFilterConditions, tblConds = expression.ExpressionsToPB(sc, tblConds, client)
+				newSel.Conditions = append(idxConds, tblConds...)
+			}
+			var err error
+			is.Ranges, err = ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
+			if err != nil {
+				if !terror.ErrorEqual(err, types.ErrTruncated) {
+					return nil, errors.Trace(err)
+				}
+				log.Warn("truncate error in buildIndexRange")
+			}
+			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
+			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			log.Warn("truncate error in buildIndexRange")
+			if len(newSel.Conditions) > 0 {
+				newSel.SetChildren(is)
+				newSel.onTable = true
+				resultPlan = newSel
+			}
 		}
-		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(newSel.Conditions) > 0 {
-			newSel.SetChildren(is)
-			newSel.onTable = true
-			resultPlan = newSel
-		}
-	} else {
-		is.Ranges = ranger.FullIndexRange()
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, reliable: !statsTbl.Pseudo}), nil
@@ -190,6 +192,9 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 }
 
 func (p *DataSource) need2ConsiderIndex(prop *requiredProperty) bool {
+	if len(p.parents) == 0 {
+		return len(prop.props) > 0
+	}
 	if _, ok := p.parents[0].(*Selection); ok || len(prop.props) > 0 {
 		return true
 	}
@@ -254,6 +259,9 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 // tryToConvert2DummyScan is an optimization which checks if its parent is a selection with a constant condition
 // that evaluates to false. If it is, there is no need for a real physical scan, a dummy scan will do.
 func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPlanInfo, error) {
+	if len(p.Parents()) == 0 {
+		return nil, nil
+	}
 	sel, isSel := p.parents[0].(*Selection)
 	if !isSel {
 		return nil, nil
@@ -967,6 +975,7 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 				break
 			}
 		}
+
 		nljInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, false)
 		if err != nil {
 			return nil, errors.Trace(err)

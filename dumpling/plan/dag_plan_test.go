@@ -84,17 +84,17 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test TopN to Limit in index single read.
 		{
 			sql:  "select c from t where t.c = 1 and t.e = 1 order by t.d limit 1",
-			best: "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->Limit)->Limit->Projection->Projection",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->Limit)->Limit->Projection",
 		},
 		// Test TopN to Limit in table single read.
 		{
 			sql:  "select c from t order by t.a limit 1",
-			best: "TableReader(Table(t)->Limit)->Limit->Projection->Projection",
+			best: "TableReader(Table(t)->Limit)->Limit->Projection",
 		},
 		// Test TopN push down in table single read.
 		{
 			sql:  "select c from t order by t.a + t.b limit 1",
-			best: "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->TopN([plus(test.t.a, test.t.b)],0,1)->Projection->Projection",
+			best: "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->TopN([plus(test.t.a, test.t.b)],0,1)->Projection",
 		},
 		// Test Limit push down in table single read.
 		{
@@ -139,12 +139,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test for index with length.
 		{
 			sql:  "select c_str from t where e_str = '1' order by d_str, c_str",
-			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[1,1]], Table(t))->Projection->Sort->Projection",
+			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[1,1]], Table(t))->Sort->Projection",
 		},
 		// Test PK in index single read.
 		{
 			sql:  "select c from t where t.c = 1 and t.a = 1 order by t.d limit 1",
-			best: "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.a, 1)])->Limit)->Limit->Projection->Projection",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.a, 1)])->Limit)->Limit->Projection",
 		},
 		// Test PK in index double read.
 		{
@@ -273,7 +273,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		// Test Index Join + Order by.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t1.c",
-			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Projection->Sort->Projection",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort->Projection",
 		},
 		// Test Index Join + Order by.
 		{
