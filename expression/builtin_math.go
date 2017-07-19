@@ -175,10 +175,6 @@ type floorFunctionClass struct {
 }
 
 func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if len(args) != 1 {
-		return nil, errors.Trace(errors.New("unexpected length of args"))
-	}
-
 	var (
 		bf           baseBuiltinFunc
 		sig          builtinFunc
@@ -186,6 +182,10 @@ func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context)
 		retTp, argTp evalTp
 		tpClass      types.TypeClass
 	)
+
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	tpClass = args[0].GetTypeClass()
 	switch tpClass {
@@ -206,7 +206,7 @@ func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context)
 	default:
 		sig = &builtinFloorRealSig{baseRealBuiltinFunc{bf}}
 	}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinFloorRealSig struct {
