@@ -17,8 +17,10 @@ import (
 	"math"
 	"testing"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -128,6 +130,24 @@ func encodeKey(key types.Datum) types.Datum {
 	return types.NewBytesDatum(bytes)
 }
 
+func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
+	b := NewSortedBuilder(ctx, numBuckets, id, true)
+	for {
+		row, err := records.Next()
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		err = b.Iterate(row.Data)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
+	}
+	return b.Count, b.Hist, nil
+}
+
 func (s *testStatisticsSuite) TestBuild(c *C) {
 	bucketCount := int64(256)
 	_, ndv, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
@@ -182,7 +202,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 0)
 
 	s.pk.(*recordSet).cursor = 0
-	tblCount, col, err = BuildPK(ctx, bucketCount, 4, ast.RecordSet(s.pk))
+	tblCount, col, err = buildPK(ctx, bucketCount, 4, ast.RecordSet(s.pk))
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))
@@ -303,7 +323,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	sc := ctx.GetSessionVars().StmtCtx
 
 	s.pk.(*recordSet).cursor = 0
-	rowCount, hg, err := build4SortedColumn(ctx, bucketCount, 0, s.pk, true)
+	rowCount, hg, err := buildPK(ctx, bucketCount, 0, s.pk)
 	c.Check(err, IsNil)
 	c.Check(rowCount, Equals, int64(100000))
 	col := &Column{Histogram: *hg}
