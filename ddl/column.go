@@ -71,7 +71,7 @@ func (d *ddl) adjustColumnOffsetForDrop(columns []*model.ColumnInfo, indices []*
 	updateIndexOffset(indices, offsetChanged)
 }
 
-func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition, markedOffset int) (*model.ColumnInfo, int, error) {
+func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, int, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
 	position := len(cols)
@@ -91,9 +91,9 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	}
 	colInfo.ID = allocateColumnID(tblInfo)
 	colInfo.State = model.StateNone
-	// To support add column asynchronous, we should mark its offset as the last column added idx.
+	// To support add column asynchronous, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.
-	colInfo.Offset = markedOffset
+	colInfo.Offset = len(cols)
 
 	// Insert col into the right place of the column list.
 	newCols := make([]*model.ColumnInfo, 0, len(cols)+1)
@@ -134,8 +134,7 @@ func checkHasDuplicateColumnName(columnsInfo []*model.ColumnInfo) error {
 }
 
 // getColumnInfos get all columnInfos correspond to column
-func (d *ddl) getColumnInfos(columns []*model.ColumnInfo, positions []*ast.ColumnPosition, job *model.Job, tblInfo *model.TableInfo,
-	lastColOffset int) ([]*model.ColumnInfo, error) {
+func (d *ddl) getColumnInfos(columns []*model.ColumnInfo, positions []*ast.ColumnPosition, job *model.Job, tblInfo *model.TableInfo) ([]*model.ColumnInfo, error) {
 	columnInfos := []*model.ColumnInfo{}
 	var err error
 	for idx, col := range columns {
@@ -149,8 +148,7 @@ func (d *ddl) getColumnInfos(columns []*model.ColumnInfo, positions []*ast.Colum
 				return nil, infoschema.ErrColumnExists.GenByArgs(col.Name)
 			}
 		} else {
-			// mark sequentially the offset of new column as the last column added idx
-			colInfo, _, err = d.createColumnInfo(tblInfo, col, pos, lastColOffset+idx)
+			colInfo, _, err = d.createColumnInfo(tblInfo, col, pos)
 			if err != nil {
 				job.State = model.JobCancelled
 				return nil, errors.Trace(err)
@@ -190,7 +188,7 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	columnInfos, err := d.getColumnInfos(columns, positions, job, tblInfo, lastColOffset)
+	columnInfos, err := d.getColumnInfos(columns, positions, job, tblInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
