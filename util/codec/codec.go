@@ -80,6 +80,8 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 		case types.KindMysqlDecimal:
 			b = append(b, decimalFlag)
 			if hash {
+				// If we want to hash a decimal, we should use the real precision and frac.
+				// e.g. cast(1 as decimal(2,1)) = cast(1 as decimal(3,0))
 				dec := val.GetMysqlDecimal()
 				precision, frac := dec.PrecisionAndFrac()
 				bin, err := dec.ToBin(precision, frac)
