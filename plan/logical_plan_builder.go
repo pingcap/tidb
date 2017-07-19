@@ -392,6 +392,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
+	b.optFlag |= flagEliminateProjection
 	proj := Projection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.allocator, b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
@@ -476,6 +477,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			return nil
 		}
 		if _, ok := sel.(*Projection); !ok {
+			b.optFlag |= flagEliminateProjection
 			proj := Projection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.allocator, b.ctx)
 			proj.SetSchema(sel.Schema().Clone())
 			sel.SetParents(proj)
