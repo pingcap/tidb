@@ -1139,6 +1139,11 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			RetType:  &col.FieldType,
 			Position: i,
 			ID:       col.ID})
+		/*
+			if tableInfo.PKIsHandle {
+				schema.TblID2handle[tableInfo.ID] = schema.Columns[schema.Len() - 1]
+			}
+		*/
 	}
 	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
 	idRow := &expression.Column{
@@ -1157,6 +1162,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		}
 		if p.NeedColHandle {
 			p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idRow)
+			p.unionScanSchema.TblID2handle[tableInfo.ID] = []*expression.Column{idRow}
 		}
 	}
 	if p.NeedColHandle || needUnionScan {
@@ -1165,6 +1171,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			Name: model.NewCIStr("_rowid"),
 		})
 		schema.Append(idRow)
+		schema.TblID2handle[tableInfo.ID] = []*expression.Column{idRow}
 	}
 	p.SetSchema(schema)
 	return p

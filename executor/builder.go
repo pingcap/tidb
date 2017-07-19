@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -815,19 +816,29 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 }
 
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
+	tblID2table := make(map[int64]table.Table)
+	for id := range v.Schema().TblID2handle {
+		tblID2table[id], _ = b.is.TableByID(id)
+	}
 	return &UpdateExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		SelectExec:   b.build(v.Children()[0]),
 		OrderedList:  v.OrderedList,
+		tblID2table:  tblID2table,
 	}
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
+	tblID2table := make(map[int64]table.Table)
+	for id := range v.Schema().TblID2handle {
+		tblID2table[id], _ = b.is.TableByID(id)
+	}
 	return &DeleteExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		SelectExec:   b.build(v.Children()[0]),
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
+		tblID2Table:  tblID2table,
 	}
 }
 

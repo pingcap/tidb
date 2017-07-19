@@ -145,6 +145,7 @@ type DeleteExec struct {
 
 	Tables       []*ast.TableName
 	IsMultiTable bool
+	tblID2Table  map[int64]table.Table
 
 	finished bool
 }
@@ -177,13 +178,12 @@ func (e *DeleteExec) deleteMultiTables() error {
 	// Table ID may not be unique for deleting multiple tables, for statements like
 	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
 	// by its alias instead of ID, so the table map value is an array which contains table aliases.
-	tblMap := make(map[int64][]string, len(e.Tables))
+	tblMap := make(map[int64][]*ast.TableName, len(e.Tables))
 	for _, t := range e.Tables {
-		tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
+		tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t)
 	}
-
 	// Map for unique (Table, Row) pair.
-	tblRowMap := make(map[table.Table]map[int64][]types.Datum)
+	tblRowMap := make(map[int64]map[int64][]types.Datum)
 	for {
 		joinedRow, err := e.SelectExec.Next()
 		if err != nil {
@@ -193,23 +193,27 @@ func (e *DeleteExec) deleteMultiTables() error {
 			break
 		}
 
-		for _, entry := range joinedRow.RowKeys {
-			if !isMatchTableName(entry, tblMap) {
-				continue
+		for id, cols := range e.SelectExec.Schema().TblID2handle {
+			tbl := e.tblID2Table[id]
+			for _, col := range cols {
+				if !isMatchTableNameNew(id, col, tblMap) {
+					continue
+				}
+				if tblRowMap[id] == nil {
+					tblRowMap[id] = make(map[int64][]types.Datum)
+				}
+				offset := getTableOffset(e.SelectExec.Schema(), col)
+				end := offset + len(tbl.WritableCols())
+				data := joinedRow.Data[offset:end]
+				handle := joinedRow.Data[col.Index].GetInt64()
+				tblRowMap[id][handle] = data
 			}
-			if tblRowMap[entry.Tbl] == nil {
-				tblRowMap[entry.Tbl] = make(map[int64][]types.Datum)
-			}
-			offset := getTableOffset(e.SelectExec.Schema(), entry)
-			end := offset + len(entry.Tbl.WritableCols())
-			data := joinedRow.Data[offset:end]
-			handle := joinedRow.Data[end].GetInt64()
-			tblRowMap[entry.Tbl][handle] = data
 		}
+
 	}
-	for t, rowMap := range tblRowMap {
+	for id, rowMap := range tblRowMap {
 		for handle, data := range rowMap {
-			err := e.removeRow(e.ctx, t, handle, data)
+			err := e.removeRow(e.ctx, e.tblID2Table[id], handle, data)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -218,21 +222,29 @@ func (e *DeleteExec) deleteMultiTables() error {
 	return nil
 }
 
-func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
-	names, ok := tblMap[entry.Tbl.Meta().ID]
+func isMatchTableNameNew(tid int64, col *expression.Column, tblMap map[int64][]*ast.TableName) bool {
+	names, ok := tblMap[tid]
 	if !ok {
 		return false
 	}
 	for _, n := range names {
-		if n == entry.TableName {
+		if (col.DBName.L == "" || col.DBName.L == n.Schema.L) && col.TblName.L == n.Name.L {
 			return true
 		}
 	}
-
 	return false
 }
 
 func (e *DeleteExec) deleteSingleTable() error {
+	var (
+		id        int64
+		tbl       table.Table
+		handleCol *expression.Column
+	)
+	for i, t := range e.tblID2Table {
+		id, tbl = i, t
+	}
+	handleCol = e.SelectExec.Schema().TblID2handle[id][0]
 	for {
 		row, err := e.SelectExec.Next()
 		if err != nil {
@@ -241,10 +253,9 @@ func (e *DeleteExec) deleteSingleTable() error {
 		if row == nil {
 			break
 		}
-		rowKey := row.RowKeys[0]
-		end := len(row.Data) - 1
-		handle := row.Data[end].GetInt64()
-		err = e.removeRow(e.ctx, rowKey.Tbl, handle, row.Data[:end])
+		end := len(tbl.WritableCols())
+		handle := row.Data[handleCol.Index].GetInt64()
+		err = e.removeRow(e.ctx, tbl, handle, row.Data[:end])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1130,7 +1141,8 @@ type UpdateExec struct {
 	OrderedList []*expression.Assignment
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
-	updatedRowKeys map[table.Table]map[int64]struct{}
+	updatedRowKeys map[int64]map[int64]struct{}
+	tblID2table    map[int64]table.Table
 
 	rows        []*Row          // The rows fetched from TableExec.
 	newRowsData [][]types.Datum // The new values to be set.
@@ -1156,33 +1168,35 @@ func (e *UpdateExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[table.Table]map[int64]struct{})
+		e.updatedRowKeys = make(map[int64]map[int64]struct{})
 	}
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
-	for _, entry := range row.RowKeys {
-		tbl := entry.Tbl
-		if e.updatedRowKeys[tbl] == nil {
-			e.updatedRowKeys[tbl] = make(map[int64]struct{})
+	for id, cols := range e.SelectExec.Schema().TblID2handle {
+		tbl := e.tblID2table[id]
+		if e.updatedRowKeys[id] == nil {
+			e.updatedRowKeys[id] = make(map[int64]struct{})
 		}
-		offset := getTableOffset(e.SelectExec.Schema(), entry)
-		end := offset + len(tbl.WritableCols())
-		handle := row.Data[end].GetInt64()
-		oldData := row.Data[offset:end]
-		newTableData := newData[offset:end]
-		flags := assignFlag[offset:end]
-		_, ok := e.updatedRowKeys[tbl][handle]
-		if ok {
-			// Each matched row is updated once, even if it matches the conditions multiple times.
-			continue
-		}
-		// Update row
-		changed, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
-		if changed {
-			e.updatedRowKeys[tbl][handle] = struct{}{}
+		for _, col := range cols {
+			offset := getTableOffset(e.SelectExec.Schema(), col)
+			end := offset + len(tbl.WritableCols())
+			handle := row.Data[col.Index].GetInt64()
+			oldData := row.Data[offset:end]
+			newTableData := newData[offset:end]
+			flags := assignFlag[offset:end]
+			_, ok := e.updatedRowKeys[id][handle]
+			if ok {
+				// Each matched row is updated once, even if it matches the conditions multiple times.
+				continue
+			}
+			// Update row
+			changed, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
+			if changed {
+				e.updatedRowKeys[id][handle] = struct{}{}
+			}
 		}
 	}
 	e.cursor++
@@ -1223,13 +1237,13 @@ func (e *UpdateExec) fetchRows() error {
 	}
 }
 
-func getTableOffset(schema *expression.Schema, entry *RowKeyEntry) int {
-	for i := 0; i < schema.Len(); i++ {
-		s := schema.Columns[i]
-		if s.TblName.L == entry.TableName {
+func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int {
+	for i, col := range schema.Columns {
+		if col.DBName.L == handleCol.DBName.L && col.TblName.L == handleCol.TblName.L {
 			return i
 		}
 	}
+	log.Errorf("Couldn't get column information when do update/delete")
 	return 0
 }
 
