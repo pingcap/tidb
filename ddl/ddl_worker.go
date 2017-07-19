@@ -219,7 +219,6 @@ func (d *ddl) handleDDLJobQueue() error {
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
 			schemaVer = d.runDDLJob(t, job)
-			log.Infof("job state %s, schema %v, ver %v", job.State, job.SchemaState, schemaVer)
 			if job.IsCancelled() {
 				err = d.finishDDLJob(t, job)
 				return errors.Trace(err)
@@ -241,7 +240,6 @@ func (d *ddl) handleDDLJobQueue() error {
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		log.Warnf("job state %s, schema %v, ver %v", job.State, job.SchemaState, schemaVer)
 		if job.State == model.JobRunning || job.State == model.JobDone {
 			d.waitSchemaChanged(waitTime, schemaVer)
 		}

@@ -59,7 +59,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	originTable := GetTableInTest(c, d.store, s.dbInfo.ID, tblInfo.ID)
+	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	// insert t values (1, 1), (2, 2), (3, 3)
 	_, err = originTable.AddRecord(ctx, types.MakeDatums(1, 1))

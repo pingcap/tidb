@@ -64,7 +64,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	// insert t values (1, 2);
-	originTable := GetTableInTest(c, d.store, s.dbInfo.ID, tblInfo.ID)
+	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
 	h, err := originTable.AddRecord(ctx, row)
 	c.Assert(err, IsNil)

@@ -303,7 +303,6 @@ func (s *session) RollbackTxn() error {
 	if s.txn != nil && s.txn.Valid() {
 		err = s.txn.Rollback()
 	}
-	log.Error("rollback txn")
 	s.cleanRetryInfo()
 	s.txn = nil
 	s.txnFuture = nil
@@ -1095,7 +1094,6 @@ func (s *session) PrepareTxnCtx() {
 	s.goCtx, s.cancelFunc = goctx.WithCancel(goctx.Background())
 	s.txnFuture = s.getTxnFuture()
 	is := sessionctx.GetDomain(s).InfoSchema()
-	log.Warnf("txn %v, future %v, session_id %d, ver %v", s.txn, s.txnFuture, s.sessionVars.ConnectionID, is.SchemaMetaVersion())
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
@@ -1119,7 +1117,6 @@ func (s *session) ActivePendingTxn() error {
 	if s.txn != nil && s.txn.Valid() {
 		return nil
 	}
-	log.Warnf("txn %v, future %v, session_id %d", s.txn, s.txnFuture, s.sessionVars.ConnectionID)
 	if s.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -1146,7 +1143,6 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if s.txn != nil && s.txn.Valid() {
 		return nil
 	}
-	log.Warnf("init txn %v, future %v, session_id %d", s.txn, s.txnFuture, s.sessionVars.ConnectionID)
 	if s.txnFuture == nil {
 		return errors.New("transaction channel is not set")
 	}

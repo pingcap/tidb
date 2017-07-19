@@ -205,11 +205,6 @@ type ddl struct {
 	workerVars *variable.SessionVars
 }
 
-// MockDDL mocks the ddl. It's used for testing. The ddl isn't exported so add this structure.
-type MockDDL struct {
-	*ddl
-}
-
 // RegisterEventCh registers passed channel for ddl Event.
 func (d *ddl) RegisterEventCh(ch chan<- *Event) {
 	d.ddlEventCh = ch
@@ -244,12 +239,6 @@ func NewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
 	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease)
 }
-
-//// NewMockDDL is used for testing.
-//func NewMockDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
-//	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *MockDDL {
-//	return &MockDDL{ddl: newDDL(ctx, etcdCli, store, infoHandle, hook, lease)}
-//}
 
 func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {

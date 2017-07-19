@@ -192,7 +192,6 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	currentData := make([]types.Datum, len(t.WritableCols()))
 	copy(currentData, newData)
 
-	log.Warnf("update record")
 	// If they are not set, and other data are changed, they will be updated by current timestamp too.
 	err := t.setOnUpdateData(ctx, touched, currentData)
 	if err != nil {
@@ -243,7 +242,6 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data []types.Datum) error {
 	ucols := table.FindOnUpdateCols(t.WritableCols())
 	for _, col := range ucols {
-		log.Warnf("off %v", col.Offset)
 		if !touched[col.Offset] {
 			value, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
 			if err != nil {

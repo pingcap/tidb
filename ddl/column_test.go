@@ -110,7 +110,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	ctx := testNewContext(s.d)
 
 	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
-	t := GetTableInTest(c, s.d.store, s.dbInfo.ID, tblInfo.ID)
+	t := testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 
 	num := 10
 	for i := 0; i < num; i++ {
@@ -137,7 +137,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job := testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c3")}}, 100)
 	testCheckJobDone(c, s.d, job, true)
 
-	t = GetTableInTest(c, s.d.store, s.dbInfo.ID, tblInfo.ID)
+	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 	c.Assert(table.FindCol(t.Cols(), "c4"), NotNil)
 
 	i = int64(0)
@@ -167,7 +167,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job = testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c4", false)
 	testCheckJobDone(c, s.d, job, false)
 
-	t = GetTableInTest(c, s.d.store, s.dbInfo.ID, tblInfo.ID)
+	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 	values, err = t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
@@ -177,7 +177,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job = testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 111)
 	testCheckJobDone(c, s.d, job, true)
 
-	t = GetTableInTest(c, s.d.store, s.dbInfo.ID, tblInfo.ID)
+	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 	values, err = t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
@@ -187,7 +187,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job = testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c5", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 101)
 	testCheckJobDone(c, s.d, job, true)
 
-	t = GetTableInTest(c, s.d.store, s.dbInfo.ID, tblInfo.ID)
+	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 	values, err = t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
@@ -197,7 +197,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job = testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c6", &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}, 202)
 	testCheckJobDone(c, s.d, job, true)
 
-	t = GetTableInTest(c, s.d.store, s.dbInfo.ID, tblInfo.ID)
+	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 	cols := t.Cols()
 	c.Assert(cols, HasLen, 6)
 	c.Assert(cols[0].Offset, Equals, 0)
@@ -223,7 +223,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job = testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c2", false)
 	testCheckJobDone(c, s.d, job, false)
 
-	t = GetTableInTest(c, s.d.store, s.dbInfo.ID, tblInfo.ID)
+	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 
 	values, err = t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
@@ -292,7 +292,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table,
 }
 
 func (s *testColumnSuite) checkNoneColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, columnValue interface{}) error {
-	t, err := GetTableWithError(d.store, s.dbInfo.ID, tblInfo.ID)
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -308,7 +308,7 @@ func (s *testColumnSuite) checkNoneColumn(ctx context.Context, d *ddl, tblInfo *
 }
 
 func (s *testColumnSuite) checkDeleteOnlyColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
-	t, err := GetTableWithError(d.store, s.dbInfo.ID, tblInfo.ID)
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -409,7 +409,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx context.Context, d *ddl, tbl
 }
 
 func (s *testColumnSuite) checkWriteOnlyColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
-	t, err := GetTableWithError(d.store, s.dbInfo.ID, tblInfo.ID)
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -514,7 +514,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx context.Context, d *ddl, tblI
 }
 
 func (s *testColumnSuite) checkReorganizationColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
-	t, err := GetTableWithError(d.store, s.dbInfo.ID, tblInfo.ID)
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -610,7 +610,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx context.Context, d *ddl,
 }
 
 func (s *testColumnSuite) checkPublicColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
-	t, err := GetTableWithError(d.store, s.dbInfo.ID, tblInfo.ID)
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -745,7 +745,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	t := GetTableInTest(c, d.store, s.dbInfo.ID, tblInfo.ID)
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
 	handle, err := t.AddRecord(ctx, oldRow)
@@ -769,7 +769,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 			return
 		}
 
-		t, err1 := GetTableWithError(d.store, s.dbInfo.ID, tblInfo.ID)
+		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err1 != nil {
 			hookErr = errors.Trace(err1)
 			return
@@ -831,7 +831,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	t := GetTableInTest(c, d.store, s.dbInfo.ID, tblInfo.ID)
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	colName := "c4"
 	defaultColValue := int64(4)
@@ -853,7 +853,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 		if checkOK {
 			return
 		}
-		t, err1 := GetTableWithError(d.store, s.dbInfo.ID, tblInfo.ID)
+		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err1 != nil {
 			hookErr = errors.Trace(err1)
 			return

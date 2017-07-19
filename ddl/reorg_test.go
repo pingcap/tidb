@@ -142,7 +142,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	tblInfo := testTableInfo(c, d1, "t", 3)
 	testCreateTable(c, ctx, d1, dbInfo, tblInfo)
-	t := GetTableInTest(c, d1.store, dbInfo.ID, tblInfo.ID)
+	t := testGetTable(c, d1, dbInfo.ID, tblInfo.ID)
 
 	num := 10
 	for i := 0; i < num; i++ {

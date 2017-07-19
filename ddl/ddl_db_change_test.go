@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
@@ -67,7 +66,7 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	s.se.Close()
 }
 
-func (s *testStateChangeSuite) TestX(c *C) {
+func (s *testStateChangeSuite) TestTowStates(c *C) {
 	testInfo := &testExecInfo{
 		execKinds: 5,
 		sqlInfos:  make([]*sqlInfo, 4),
@@ -189,7 +188,6 @@ type testExecInfo struct {
 
 func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 	for i, info := range t.sqlInfos {
-		log.Warnf("info %v", info)
 		info.sessions = make([]tidb.Session, 0, t.execKinds)
 		for j := 0; j < t.execKinds; j++ {
 			se, err := tidb.CreateSession(store)
@@ -214,7 +212,6 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 		charset, collation := seVars.GetCharsetInfo()
 		for j := 0; j < t.execKinds; j++ {
 			sqlInfo.rawStmts[j], err = p.ParseOneStmt(sqlInfo.sql, charset, collation)
-			log.Warnf("sql %v, err %v", sqlInfo.sql, err)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -232,7 +229,6 @@ func (t *testExecInfo) compileSQL(idx int) error {
 		ctx := se.(context.Context)
 		executor.ResetStmtCtx(ctx, info.rawStmts[idx])
 		info.stmts[idx], err = compiler.Compile(ctx, info.rawStmts[idx])
-		log.Warnf("sql %v, stmts %v, idx %d, err %v", info.sql, info.stmts[idx], idx, err)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -243,14 +239,12 @@ func (t *testExecInfo) compileSQL(idx int) error {
 func (t *testExecInfo) execSQL(idx int) error {
 	for _, sqlInfo := range t.sqlInfos {
 		ctx := sqlInfo.sessions[idx].(context.Context)
-		log.Warnf("sql %v, stmts %v, idx %d", sqlInfo.sql, sqlInfo.stmts, idx)
 		_, err := sqlInfo.stmts[idx].Exec(ctx)
 		if err != nil {
 			expectedErr := sqlInfo.errs[idx]
 			if expectedErr != nil && strings.Contains(err.Error(), expectedErr.Error()) {
 				return nil
 			}
-			log.Warnf("sql %v, idx %d, err %v", sqlInfo.sql, idx, err)
 			return errors.Trace(err)
 		}
 		err = sqlInfo.sessions[idx].CommitTxn()

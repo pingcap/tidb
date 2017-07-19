@@ -144,6 +144,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// write only -> reorganization
 		job.SchemaState = model.StateWriteReorganization
 		columnInfo.State = model.StateWriteReorganization
+		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteReorganization:
@@ -174,7 +175,6 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
 	}
 
-	log.Infof("job state %s, schema %v, ver %v", job.State, job.SchemaState, ver)
 	return ver, errors.Trace(err)
 }
 

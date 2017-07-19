@@ -154,15 +154,15 @@ func testCheckTableState(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.Tabl
 	})
 }
 
-func GetTableInTest(c *C, store kv.Storage, schemaID int64, tableID int64) table.Table {
-	tbl, err := GetTableWithError(store, schemaID, tableID)
+func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.Table {
+	tbl, err := testGetTableWithError(d, schemaID, tableID)
 	c.Assert(err, IsNil)
 	return tbl
 }
 
-func GetTableWithError(store kv.Storage, schemaID, tableID int64) (table.Table, error) {
+func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error) {
 	var tblInfo *model.TableInfo
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		tblInfo, err1 = t.GetTable(schemaID, tableID)
@@ -177,7 +177,7 @@ func GetTableWithError(store kv.Storage, schemaID, tableID int64) (table.Table, 
 	if tblInfo == nil {
 		return nil, errors.New("table not found")
 	}
-	alloc := autoid.NewAllocator(store, schemaID)
+	alloc := autoid.NewAllocator(d.store, schemaID)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -220,7 +220,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d)
 
 	// To drop a table with reorgTableDeleteLimit+10 records.
-	tbl := GetTableInTest(c, d.store, s.dbInfo.ID, tblInfo.ID)
+	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	for i := 1; i <= reorgTableDeleteLimit+10; i++ {
 		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)

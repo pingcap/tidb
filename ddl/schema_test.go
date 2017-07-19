@@ -135,7 +135,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	tJob1 := testCreateTable(c, ctx, d, dbInfo, tblInfo1)
 	testCheckTableState(c, d, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(c, d, tJob1, true)
-	tbl1 := GetTableInTest(c, d.store, dbInfo.ID, tblInfo1.ID)
+	tbl1 := testGetTable(c, d, dbInfo.ID, tblInfo1.ID)
 	for i := 1; i <= 100; i++ {
 		_, err := tbl1.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
@@ -145,7 +145,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	tJob2 := testCreateTable(c, ctx, d, dbInfo, tblInfo2)
 	testCheckTableState(c, d, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(c, d, tJob2, true)
-	tbl2 := GetTableInTest(c, d.store, dbInfo.ID, tblInfo2.ID)
+	tbl2 := testGetTable(c, d, dbInfo.ID, tblInfo2.ID)
 	for i := 1; i <= defaultBatchCnt+10; i++ {
 		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
