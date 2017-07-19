@@ -116,6 +116,7 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 
 	sc := s.ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
 	defer func() {
 		sc.IgnoreTruncate = tmpIT
 	}()
@@ -136,26 +137,23 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 	}
 
 	for _, test := range []struct {
-		arg            interface{}
-		expect         interface{}
-		isNil          bool
-		getErr         bool
-		ignoreTruncate bool
+		arg    interface{}
+		expect interface{}
+		isNil  bool
+		getErr bool
 	}{
-		{nil, nil, true, false, false},
-		{int64(1), int64(1), false, false, false},
-		{float64(1.23), float64(1), false, false, false},
-		{float64(-1.23), float64(-2), false, false, false},
-		{"1.23", float64(1), false, false, false},
-		{"-1.23", float64(-2), false, false, false},
-		{"-1.b23", float64(0), false, true, false},
-		{"abce", float64(0), false, false, true},
-		{"-1.b23", float64(-1), false, false, true},
-		{genDuration(12, 59, 59), float64(125959), false, false, false},
-		{genDuration(0, 12, 34), float64(1234), false, false, false},
-		{genTime(2017, 7, 19), float64(20170719000000), false, false, false},
+		{nil, nil, true, false},
+		{int64(1), int64(1), false, false},
+		{float64(1.23), float64(1), false, false},
+		{float64(-1.23), float64(-2), false, false},
+		{"1.23", float64(1), false, false},
+		{"-1.23", float64(-2), false, false},
+		{"-1.b23", float64(-1), false, false},
+		{"abce", float64(0), false, false},
+		{genDuration(12, 59, 59), float64(125959), false, false},
+		{genDuration(0, 12, 34), float64(1234), false, false},
+		{genTime(2017, 7, 19), float64(20170719000000), false, false},
 	} {
-		sc.IgnoreTruncate = test.ignoreTruncate
 		f, err := newFunctionForTest(s.ctx, ast.Floor, primitiveValsToConstants([]interface{}{test.arg})...)
 		c.Assert(err, IsNil)
 
