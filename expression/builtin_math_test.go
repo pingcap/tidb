@@ -172,9 +172,20 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Floor].getFunction([]Expression{Zero}, s.ctx)
-	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	for _, exp := range []Expression{
+		&Constant{
+			Value:   types.NewDatum(0),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		},
+		&Constant{
+			Value:   types.NewFloat64Datum(float64(12.34)),
+			RetType: types.NewFieldType(mysql.TypeFloat),
+		},
+	} {
+		f, err := funcs[ast.Floor].getFunction([]Expression{exp}, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
+	}
 }
 
 func (s *testEvaluatorSuite) TestLog(c *C) {
