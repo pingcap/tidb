@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -352,7 +353,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		go func() {
-			childCtx, cancel := goctx.WithCancel(ctx)
+			childCtx, cancel := util.WithCancel(ctx)
 			defer cancel()
 			it.work(childCtx, it.taskCh)
 		}()
@@ -360,7 +361,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 
 	go func() {
 		// Send tasks to feed the worker goroutines.
-		childCtx, cancel := goctx.WithCancel(ctx)
+		childCtx, cancel := util.WithCancel(ctx)
 		defer cancel()
 		for _, t := range it.tasks {
 			finished, canceled := it.sendToTaskCh(childCtx, t)
