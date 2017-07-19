@@ -172,6 +172,18 @@ func (s *Schema) ColumnsIndices(cols []*Column) (ret []int) {
 	return
 }
 
+// ColumnsByIndices returns columns by multiple offsets.
+// Callers should guarantee that all the offsets provided should be valid, which means offset should:
+// 1. not smaller than 0, and
+// 2. not exceed len(s.Columns)
+func (s *Schema) ColumnsByIndices(offsets []int) []*Column {
+	cols := make([]*Column, 0, len(offsets))
+	for _, offset := range offsets {
+		cols = append(cols, s.Columns[offset])
+	}
+	return cols
+}
+
 // MergeSchema will merge two schema into one schema.
 func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	if lSchema == nil && rSchema == nil {

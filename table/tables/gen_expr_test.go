@@ -11,25 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package parser
+package tables
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
+var _ = Suite(&testGenExprSuite{})
 
-var _ = Suite(&testParserSuite{})
+type testGenExprSuite struct{}
 
-type testParserSuite struct{}
-
-func (s *testParserSuite) TestParseExpression(c *C) {
+func (s *testGenExprSuite) TestParseExpression(c *C) {
 	tests := []struct {
 		input   string
 		output  string
@@ -38,7 +31,7 @@ func (s *testParserSuite) TestParseExpression(c *C) {
 		{"json_extract(a, '$.a')", "json_extract", true},
 	}
 	for _, tt := range tests {
-		node, err := ParseExpression(tt.input)
+		node, err := parseExpression(tt.input)
 		if tt.success {
 			fc := node.(*ast.FuncCallExpr)
 			c.Assert(fc.FnName.L, Equals, tt.output)

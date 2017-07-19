@@ -126,15 +126,10 @@ type Insert struct {
 	Ignore    bool
 }
 
-// AnalyzePKTask is used for analyze pk. Used only when pk is handle.
-type AnalyzePKTask struct {
-	TableInfo *model.TableInfo
-	PKInfo    *model.ColumnInfo
-}
-
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
 	TableInfo *model.TableInfo
+	PKInfo    *model.ColumnInfo
 	ColsInfo  []*model.ColumnInfo
 }
 
@@ -148,7 +143,6 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	basePlan
 
-	PkTasks  []AnalyzePKTask
 	ColTasks []AnalyzeColumnsTask
 	IdxTasks []AnalyzeIndexTask
 }

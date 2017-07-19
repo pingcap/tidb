@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -61,19 +60,6 @@ func makeDatums(i interface{}) []types.Datum {
 		}
 	}
 	return types.MakeDatums(i)
-}
-
-func (s *testEvaluatorSuite) TestCoalesce(c *C) {
-	defer testleak.AfterTest(c)()
-	args := types.MakeDatums(1, nil)
-	v, err := builtinCoalesce(args, s.ctx)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum(1))
-
-	args = types.MakeDatums(nil, nil)
-	v, err = builtinCoalesce(args, s.ctx)
-	c.Assert(err, IsNil)
-	c.Assert(v, testutil.DatumEquals, types.NewDatum(nil))
 }
 
 func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {

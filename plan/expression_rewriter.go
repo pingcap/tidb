@@ -747,21 +747,16 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				er.ctxStack[stkLen-1])
 			return
 		}
-		if _, ok := sessionVars.Users[name]; ok {
-			f, err := expression.NewFunction(er.ctx,
-				ast.GetVar,
-				// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
-				types.NewFieldType(mysql.TypeString),
-				datumToConstant(types.NewStringDatum(name), mysql.TypeString))
-			if err != nil {
-				er.err = errors.Trace(err)
-				return
-			}
-			er.ctxStack = append(er.ctxStack, f)
-		} else {
-			// select null user vars is permitted.
-			er.ctxStack = append(er.ctxStack, &expression.Constant{RetType: types.NewFieldType(mysql.TypeNull)})
+		f, err := expression.NewFunction(er.ctx,
+			ast.GetVar,
+			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
+			types.NewFieldType(mysql.TypeString),
+			datumToConstant(types.NewStringDatum(name), mysql.TypeString))
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
 		}
+		er.ctxStack = append(er.ctxStack, f)
 		return
 	}
 	var val string

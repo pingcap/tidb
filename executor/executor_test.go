@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -546,6 +547,15 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t (a int, b int)")
 	tk.MustExec("INSERT INTO t VALUES ('1', '1')")
 	r = tk.MustQuery("select b from (SELECT * FROM t UNION ALL SELECT a, b FROM t order by a) t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a DECIMAL(4,2))")
+	tk.MustExec("INSERT INTO t VALUE(12.34)")
+	r = tk.MustQuery("SELECT 1 AS c UNION select a FROM t")
+	r.Sort().Check(testkit.Rows("1.00", "12.34"))
+	// #issue3771
+	r = tk.MustQuery("SELECT 'a' UNION SELECT CONCAT('a', -4)")
+	r.Sort().Check(testkit.Rows("a", "a-4"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -924,6 +934,26 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("barbar ki"))
 	result = tk.MustQuery(`select substr(null, 2, 3), substr('foo', null, 3), substr('foo', 2, null)`)
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+
+	// for bit_length
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10), g binary(20), h varbinary(20))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101, "g", "h")`)
+	result = tk.MustQuery("select bit_length(a), bit_length(b), bit_length(c), bit_length(d), bit_length(e), bit_length(f), bit_length(g), bit_length(h), bit_length(null) from t")
+	result.Check(testkit.Rows("8 24 152 64 48 16 160 8 <nil>"))
+
+	// for substring_index
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery(`select substring_index(a, '.', 2), substring_index(b, '.', 2), substring_index(c, '.', -1), substring_index(d, '-', 1), substring_index(e, ':', -2) from t`)
+	result.Check(testkit.Rows("www.pingcap 12345 45 2017 01:01"))
+	result = tk.MustQuery(`select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100)`)
+	result.Check(testkit.Rows(" www.pingcap.com www.pingcap.com"))
+	result = tk.MustQuery(`select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1)`)
+	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,,"))
+	result = tk.MustQuery(`select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null)`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {
@@ -1184,13 +1214,13 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	//test degrees
+	// for degrees
 	result := tk.MustQuery("select degrees(0), degrees(1)")
 	result.Check(testkit.Rows("0 57.29577951308232"))
 	result = tk.MustQuery("select degrees(2), degrees(5)")
 	result.Check(testkit.Rows("114.59155902616465 286.4788975654116"))
 
-	// test sin
+	// for sin
 	result = tk.MustQuery("select sin(0), sin(1.5707963267949)")
 	result.Check(testkit.Rows("0 1"))
 	result = tk.MustQuery("select sin(1), sin(100)")
@@ -1198,19 +1228,19 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("select sin('abcd')")
 	result.Check(testkit.Rows("0"))
 
-	// test cos
+	// for cos
 	result = tk.MustQuery("select cos(0), cos(3.1415926535898)")
 	result.Check(testkit.Rows("1 -1"))
 	result = tk.MustQuery("select cos('abcd')")
 	result.Check(testkit.Rows("1"))
 
-	//for tan
+	// for tan
 	result = tk.MustQuery("select tan(0.00), tan(PI()/4)")
 	result.Check(testkit.Rows("0 1"))
 	result = tk.MustQuery("select tan('abcd')")
 	result.Check(testkit.Rows("0"))
 
-	//for log2
+	// for log2
 	result = tk.MustQuery("select log2(0.0)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select log2(4)")
@@ -1222,7 +1252,7 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("select log2(NULL)")
 	result.Check(testkit.Rows("<nil>"))
 
-	//for log10
+	// for log10
 	result = tk.MustQuery("select log10(0.0)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select log10(100)")
@@ -1233,6 +1263,44 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select log10(NULL)")
 	result.Check(testkit.Rows("<nil>"))
+
+	//for log
+	result = tk.MustQuery("select log(0.0)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(100)")
+	result.Check(testkit.Rows("4.605170185988092"))
+	result = tk.MustQuery("select log('100.0abcd')")
+	result.Check(testkit.Rows("4.605170185988092"))
+	result = tk.MustQuery("select log(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(NULL, NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(1, 100)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(0.5, 0.25)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select log(-1, 0.25)")
+	result.Check(testkit.Rows("<nil>"))
+
+	// for atan
+	result = tk.MustQuery("select atan(0), atan(-1), atan(1), atan(1,2)")
+	result.Check(testkit.Rows("0 -0.7853981633974483 0.7853981633974483 0.4636476090008061"))
+	result = tk.MustQuery("select atan('tidb')")
+	result.Check(testkit.Rows("0"))
+
+	// for asin
+	result = tk.MustQuery("select asin(0), asin(-2), asin(2), asin(1)")
+	result.Check(testkit.Rows("0 <nil> <nil> 1.5707963267948966"))
+	result = tk.MustQuery("select asin('tidb')")
+	result.Check(testkit.Rows("0"))
+
+	// for acos
+	result = tk.MustQuery("select acos(0), acos(-2), acos(2), acos(1)")
+	result.Check(testkit.Rows("1.5707963267948966 <nil> <nil> 0"))
+	result = tk.MustQuery("select acos('tidb')")
+	result.Check(testkit.Rows("1.5707963267948966"))
 }
 
 func (s *testSuite) TestJSON(c *C) {
@@ -1596,8 +1664,6 @@ func (s *testSuite) TestPointGet(c *C) {
 }
 
 func (s *testSuite) TestRow(c *C) {
-	// There exists a constant folding problem when the arguments of compare functions are Rows,
-	// the switch will be opened after the problem be fixed.
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
@@ -1679,10 +1745,9 @@ func (s *testSuite) TestSelectVar(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
 	tk.MustExec("insert into t values(1), (2), (1)")
+	// This behavior is different from MySQL.
 	result := tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("<nil> 2", "<nil> 3", "<nil> 2"))
-	result = tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("2 2", "2 3", "3 2"))
+	result.Check(testkit.Rows("<nil> 2", "2 3", "3 2"))
 }
 
 func (s *testSuite) TestHistoryRead(c *C) {
@@ -2032,4 +2097,29 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("", ""))
 	tk.MustExec("insert into t values (null)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
+}
+
+func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// for uuid
+	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
+	for _, it := range r.Rows() {
+		for _, item := range it {
+			uuid, ok := item.(string)
+			c.Assert(ok, Equals, true)
+			list := strings.Split(uuid, "-")
+			c.Assert(len(list), Equals, 5)
+			c.Assert(len(list[0]), Equals, 8)
+			c.Assert(len(list[1]), Equals, 4)
+			c.Assert(len(list[2]), Equals, 4)
+			c.Assert(len(list[3]), Equals, 4)
+			c.Assert(len(list[4]), Equals, 12)
+		}
+	}
 }

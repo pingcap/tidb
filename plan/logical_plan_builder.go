@@ -17,11 +17,13 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -390,6 +392,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
+	b.optFlag |= flagEliminateProjection
 	proj := Projection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.allocator, b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
@@ -423,7 +426,8 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
 					colName = model.NewCIStr(innerExpr.Text())
 				} else {
-					colName = model.NewCIStr(field.Text())
+					// Remove special comment code for field part, see issue #3739 for detail.
+					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
 				}
 			}
 		}
@@ -473,6 +477,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			return nil
 		}
 		if _, ok := sel.(*Projection); !ok {
+			b.optFlag |= flagEliminateProjection
 			proj := Projection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.allocator, b.ctx)
 			proj.SetSchema(sel.Schema().Clone())
 			sel.SetParents(proj)
@@ -491,14 +496,12 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			 * | bbbbbbbbbb    |
 			 * +---------------+
 			 */
-			if col.RetType.Flen > firstSchema.Columns[i].RetType.Flen {
-				firstSchema.Columns[i].RetType.Flen = col.RetType.Flen
-			}
-			// For select nul union select "abc", we should not convert "abc" to nil.
-			// And the result field type should be VARCHAR.
-			if firstSchema.Columns[i].RetType.Tp == 0 || firstSchema.Columns[i].RetType.Tp == mysql.TypeNull {
-				firstSchema.Columns[i].RetType.Tp = col.RetType.Tp
-			}
+			schemaTp := firstSchema.Columns[i].RetType
+			colTp := col.RetType
+			schemaTp.Decimal = mathutil.Max(colTp.Decimal, schemaTp.Decimal)
+			// `Flen - Decimal` is the fraction before '.'
+			schemaTp.Flen = mathutil.Max(colTp.Flen-colTp.Decimal, schemaTp.Flen-schemaTp.Decimal) + schemaTp.Decimal
+			schemaTp.Tp = types.MergeFieldType(schemaTp.Tp, colTp.Tp)
 		}
 		sel.SetParents(u)
 	}
