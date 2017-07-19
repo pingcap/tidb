@@ -121,23 +121,16 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	var finalPlan PhysicalPlan
+	var physical PhysicalPlan
 	if UseDAGPlanBuilder(ctx) {
-		finalPlan, err = dagPhysicalOptimize(logic)
+		physical, err = dagPhysicalOptimize(logic)
 	} else {
-		finalPlan, err = physicalOptimize(flag, logic, allocator)
-	}
-	oldRoot := finalPlan
-	finalPlan = eliminatePhysicalProjection(finalPlan)
-	if oldRoot.ID() != finalPlan.ID() {
-		newCols := finalPlan.Schema().Columns
-		for i, oldCol := range oldRoot.Schema().Columns {
-			newCols[i].ColName = oldCol.ColName
-		}
+		physical, err = physicalOptimize(flag, logic, allocator)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	finalPlan := eliminatePhysicalProjection(physical)
 	return finalPlan, nil
 }
 
