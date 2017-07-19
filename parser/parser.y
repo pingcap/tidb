@@ -1023,7 +1023,7 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableModifyColumn,
 			NewColumns:	[]*ast.ColumnDef{$3.(*ast.ColumnDef)},
-            		Positions:  []*ast.ColumnPosition{$4.(*ast.ColumnPosition)},
+            		Positions:  	[]*ast.ColumnPosition{$4.(*ast.ColumnPosition)},
 		}
 	}
 |	"CHANGE" ColumnKeywordOpt ColumnName ColumnDef ColumnPosition
