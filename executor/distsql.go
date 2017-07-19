@@ -509,7 +509,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			return &Row{Data: values}, nil
 		}
 		values = e.indexRowToTableRow(h, values)
-		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle || !e.outOfOrder), nil
+		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle), nil
 	}
 }
 

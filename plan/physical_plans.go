@@ -343,6 +343,7 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan, s *expr
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
 	us.SetSchema(s)
+	p.NeedColHandle = true
 	return us
 }
 

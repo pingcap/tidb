@@ -54,11 +54,11 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		DBName:      p.DBName,
 		physicalTableSource: physicalTableSource{
 			client:          client,
-			NeedColHandle:   p.NeedColHandle || p.unionScanSchema != nil,
+			NeedColHandle:   p.NeedColHandle,
 			unionScanSchema: p.unionScanSchema,
 		},
 	}.init(p.allocator, p.ctx)
-	ts.SetSchema(p.Schema())
+	ts.SetSchema(p.schema)
 	if p.ctx.Txn() != nil {
 		ts.readOnly = p.ctx.Txn().IsReadOnly()
 	} else {
@@ -124,7 +124,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		DBName:      p.DBName,
 		physicalTableSource: physicalTableSource{
 			client:          client,
-			NeedColHandle:   p.NeedColHandle || p.unionScanSchema != nil,
+			NeedColHandle:   p.NeedColHandle,
 			unionScanSchema: p.unionScanSchema,
 		},
 	}.init(p.allocator, p.ctx)
