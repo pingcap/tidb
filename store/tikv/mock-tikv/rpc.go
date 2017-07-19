@@ -292,7 +292,7 @@ func (h *rpcHandler) handleMvccGetByKey(req *kvrpcpb.MvccGetByKeyRequest) *kvrpc
 
 func (h *rpcHandler) handleMvccGetByStartTS(req *kvrpcpb.MvccGetByStartTsRequest) *kvrpcpb.MvccGetByStartTsResponse {
 	var resp kvrpcpb.MvccGetByStartTsResponse
-	resp.Info = h.mvccStore.MvccGetByStartTS(h.startKey, h.endKey, req.StartTs)
+	resp.Info, resp.Key = h.mvccStore.MvccGetByStartTS(h.startKey, h.endKey, req.StartTs)
 	return &resp
 }
 

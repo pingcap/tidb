@@ -601,8 +601,9 @@ func (s *MvccStore) RawScan(startKey, endKey []byte, limit int) []Pair {
 }
 
 // MvccGetByStartTS gets mvcc info for the primary key with startTS
-func (s *MvccStore) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) *kvrpcpb.MvccInfo {
+func (s *MvccStore) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte) {
 	var info *kvrpcpb.MvccInfo
+	var key []byte
 	iterator := func(item llrb.Item) bool {
 		k := item.(*mvccEntry)
 		if !regionContains(startKey, endKey, k.key) {
@@ -610,12 +611,13 @@ func (s *MvccStore) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) *kv
 		}
 		if k.containsStartTS(starTS) {
 			info = k.dumpMvccInfo()
+			key = k.key
 			return false
 		}
 		return true
 	}
 	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
-	return info
+	return info, key
 }
 
 // MvccGetByKey gets mvcc info for the key

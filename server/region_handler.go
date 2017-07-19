@@ -344,6 +344,7 @@ func (rh *regionHandler) writeData(w http.ResponseWriter, data interface{}) {
 		rh.writeError(w, err)
 		return
 	}
+	log.Info(string(js))
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
@@ -522,8 +523,8 @@ func (rh *mvccTxnHandler) handleMvccGetByTXN(params map[string]string) (interfac
 		if err != nil {
 			return nil, err
 		}
-		startKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MinInt64)
-		endKey = tablecodec.EncodeTableIndexPrefix(tableID, math.MaxInt64)
+		startKey = tablecodec.EncodeTablePrefix(tableID)
+		endKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
 	}
 	return rh.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
@@ -543,6 +544,8 @@ func (t *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb
 		},
 	}
 	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
+	log.Info(string(encodeKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
+
 	if err != nil {
 		return nil, err
 	}
@@ -564,25 +567,25 @@ func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []
 				StartTs: startTS,
 			},
 		}
-		kvResp, err := t.store.SendReq(t.bo, tikvReq, curRegion.Region, time.Minute)
-		log.Info(startTS, startKey, curRegion, kvResp)
+		kvResp, err := t.store.SendReq(t.bo, tikvReq, curRegion.Region, time.Hour)
+		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
 		if err != nil {
-			log.Error(startTS, startKey, curRegion, err)
+			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
 			return nil, err
 		}
 		data := kvResp.MvccGetByStartTS
 		if err := data.GetRegionError(); err != nil {
-			log.Warn(startTS, startKey, curRegion, err)
+			log.Warn(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
 			continue
 		}
 
 		if len(data.GetError()) > 0 {
-			log.Error(startTS, startKey, curRegion, data.GetError())
+			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), data.GetError())
 			return nil, errors.New(data.GetError())
 		}
 
-		info := data.GetInfo()
-		if info != nil && (info.Lock != nil || len(info.Writes) > 0) {
+		key := data.GetKey()
+		if len(key) > 0 {
 			return data, nil
 		}
 
