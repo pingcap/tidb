@@ -40,7 +40,35 @@ func FoldConstant(expr Expression) Expression {
 		log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", scalarFunc.FuncName, args)
 		return expr
 	}
+	return &Constant{
+		Value:   value,
+		RetType: scalarFunc.RetType,
+	}
+}
 
+// PlainFoldConstant does constant folding optimization
+// on an expression without recursively folding.
+func PlainFoldConstant(expr Expression) Expression {
+	scalarFunc, ok := expr.(*ScalarFunction)
+	if !ok || !scalarFunc.Function.isDeterministic() {
+		return expr
+	}
+	args := scalarFunc.GetArgs()
+	canFold := true
+	for i := 0; i < len(args); i++ {
+		if _, ok := args[i].(*Constant); !ok {
+			canFold = false
+			break
+		}
+	}
+	if !canFold {
+		return expr
+	}
+	value, err := scalarFunc.Eval(nil)
+	if err != nil {
+		log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", scalarFunc.FuncName, args)
+		return expr
+	}
 	return &Constant{
 		Value:   value,
 		RetType: scalarFunc.RetType,

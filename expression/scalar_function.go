@@ -84,11 +84,13 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
-	return &ScalarFunction{
+	scalarFunc := &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
-	}, nil
+	}
+
+	return PlainFoldConstant(scalarFunc), nil
 }
 
 // ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
@@ -178,18 +180,6 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 	sc := sf.GetCtx().GetSessionVars().StmtCtx
 	if !TurnOnNewExprEval {
 		d, err = sf.Function.eval(row)
-		// TODO: fix #3762, maybe better way
-		if err != nil && terror.ErrorEqual(err, types.ErrOverflow) && sf.GetTypeClass() == types.ClassInt &&
-			sf.FuncName.L == ast.UnaryMinus && !sc.InUpdateOrDeleteStmt {
-			err = sf.convertArgsToDecimal(sc)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			d, err = sf.Function.eval(row)
-			// change return type
-			decVal, _ := d.ToDecimal(sc)
-			types.DefaultTypeForValue(decVal, sf.RetType)
-		}
 		return
 	}
 	var (
@@ -230,7 +220,6 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 			return d, errors.Trace(err)
 		}
 		res, isNull, err = sf.EvalDecimal(row, sc)
-		types.DefaultTypeForValue(res, sf.RetType)
 	}
 
 	if isNull || err != nil {

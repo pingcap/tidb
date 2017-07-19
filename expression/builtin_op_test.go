@@ -14,24 +14,25 @@
 package expression
 
 import (
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestUnary(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		args         interface{}
-		expected     interface{}
-		expectedType byte
-		overflow     bool
-		getErr       bool
+		args     interface{}
+		expected interface{}
+		overflow bool
+		getErr   bool
 	}{
-		{uint64(9223372036854775809), "-9223372036854775809", mysql.TypeNewDecimal, true, false},
-		{uint64(9223372036854775810), "-9223372036854775810", mysql.TypeNewDecimal, true, false},
-		{uint64(9223372036854775808), "-9223372036854775808", mysql.TypeLonglong, false, false},
+		{uint64(9223372036854775809), "-9223372036854775809", true, false},
+		{uint64(9223372036854775810), "-9223372036854775810", true, false},
+		{uint64(9223372036854775808), "-9223372036854775808", false, false},
+		{int64(math.MinInt64), "9223372036854775808", false, false},
 	}
 
 	for _, t := range cases {
@@ -44,10 +45,10 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 		} else {
 			c.Assert(err, IsNil)
 			if !t.overflow {
-				c.Assert(d.GetString(), Equals, t.expected)
+				strd, _ := d.ToString()
+				c.Assert(strd, Equals, t.expected)
 			} else {
 				c.Assert(d.GetMysqlDecimal().String(), Equals, t.expected)
-				c.Assert(f.GetType().Tp, Equals, t.expectedType)
 			}
 		}
 	}

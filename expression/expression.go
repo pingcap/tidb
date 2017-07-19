@@ -170,7 +170,8 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if expr.GetTypeClass() == types.ClassDecimal {
+	switch expr.GetTypeClass() {
+	case types.ClassDecimal, types.ClassInt:
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
 		// TODO: We maintain two sets of type systems, one for Expression, one for Datum.
@@ -180,7 +181,8 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 		// but what we actually get is store as float64 in Datum.
 		// So if we wrap `CastDecimalAsInt` upon the result, we'll get <nil> when call `arg.EvalDecimal()`.
 		// This will be fixed after all built-in functions be rewrite correctlly.
-	} else if IsHybridType(expr) {
+	}
+	if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
 	}

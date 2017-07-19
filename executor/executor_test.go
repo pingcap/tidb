@@ -1037,6 +1037,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 	// fixed issue #3762
 	result = tk.MustQuery("select -9223372036854775809;")
 	result.Check(testkit.Rows("-9223372036854775809"))
+	result = tk.MustQuery("select --9223372036854775809;")
+	result.Check(testkit.Rows("9223372036854775809"))
 	result = tk.MustQuery("select -9223372036854775808;")
 	result.Check(testkit.Rows("-9223372036854775808"))
 

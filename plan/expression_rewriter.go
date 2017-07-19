@@ -93,7 +93,8 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-	result := expression.FoldConstant(er.ctxStack[0])
+	result := expression.PlainFoldConstant(er.ctxStack[0])
+	// result := expression.FoldConstant(er.ctxStack[0])
 	return result, er.p, nil
 }
 
