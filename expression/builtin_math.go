@@ -79,7 +79,8 @@ var (
 	_ builtinFunc = &builtinArithmeticSig{}
 	_ builtinFunc = &builtinAcosSig{}
 	_ builtinFunc = &builtinAsinSig{}
-	_ builtinFunc = &builtinAtanSig{}
+	_ builtinFunc = &builtinAtan1ArgSig{}
+	_ builtinFunc = &builtinAtan2ArgsSig{}
 	_ builtinFunc = &builtinCosSig{}
 	_ builtinFunc = &builtinCotSig{}
 	_ builtinFunc = &builtinDegreesSig{}
@@ -806,42 +807,66 @@ type atanFunctionClass struct {
 }
 
 func (c *atanFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinAtanSig{newBaseBuiltinFunc(args, ctx)}
+	var (
+		sig     builtinFunc
+		bf      baseBuiltinFunc
+		err     error
+		argsLen = len(args)
+	)
+
+	if argsLen == 1 {
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
+	}
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if argsLen == 1 {
+		sig = &builtinAtan1ArgSig{baseRealBuiltinFunc{bf}}
+	} else {
+		sig = &builtinAtan2ArgsSig{baseRealBuiltinFunc{bf}}
+	}
+
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinAtanSig struct {
-	baseBuiltinFunc
+type builtinAtan1ArgSig struct {
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinAtanSig.
+// evalReal evals a builtinAtan1ArgSig, corresponding to atan(x).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_atan
-func (b *builtinAtanSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinAtan1ArgSig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		return d, nil
-	}
+
+	return math.Atan(val), false, nil
+}
+
+type builtinAtan2ArgsSig struct {
+	baseRealBuiltinFunc
+}
+
+// evalReal evals a builtinAtan1ArgSig, corresponding to atan(y, x).
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_atan
+func (b *builtinAtan2ArgsSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	y, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	val1, isNull, err := b.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	if len(args) == 2 {
-		x, err := args[1].ToFloat64(sc)
-		if err != nil {
-			d.SetFloat64(math.Atan(y))
-		} else {
-			d.SetFloat64(math.Atan2(y, x))
-		}
-	} else {
-		d.SetFloat64(math.Atan(y))
+	val2, isNull, err := b.args[1].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	return d, nil
+	return math.Atan2(val1, val2), false, nil
 }
 
 type cosFunctionClass struct {
