@@ -16,8 +16,6 @@ package kv_test
 import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -30,9 +28,7 @@ func (s testFaultInjectionSuite) TestFaultInjectionBasic(c *C) {
 	err := errors.New("foo")
 	cfg.SetGetError(err)
 
-	store, _, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	storage := kv.NewInjectedStore(store, &cfg)
+	storage := kv.NewInjectedStore(kv.NewMockStorage(), &cfg)
 	txn, err := storage.Begin()
 	c.Assert(err, IsNil)
 	_, err = storage.BeginWithStartTS(0)
@@ -46,13 +42,4 @@ func (s testFaultInjectionSuite) TestFaultInjectionBasic(c *C) {
 	b, err = snap.Get([]byte{'a'})
 	c.Assert(err.Error(), Equals, errors.New("foo").Error())
 	c.Assert(b, IsNil)
-}
-
-func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	do, err := tidb.BootstrapSession(store)
-	return store, do, errors.Trace(err)
 }
