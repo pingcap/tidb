@@ -217,7 +217,11 @@ func (e *ShowExec) fetchShowTableStatus() error {
 
 	for _, t := range tables {
 		now := types.CurrentTime(mysql.TypeDatetime)
-		data := types.MakeDatums(t.Meta().Name.O, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
+		engine := t.Meta().Engine
+		if len(engine) == 0 {
+			engine = "InnoDB"
+		}
+		data := types.MakeDatums(t.Meta().Name.O, engine, "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
 			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment)
 		e.rows = append(e.rows, &Row{Data: data})
 	}
@@ -510,9 +514,12 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate)))
 		}
 	}
-	buf.WriteString("\n")
+	engine := tb.Meta().Engine
+	if len(engine) == 0 {
+		engine = "InnoDB"
+	}
+	buf.WriteString(fmt.Sprintf("\n) ENGINE=%s", engine))
 
-	buf.WriteString(") ENGINE=InnoDB")
 	charsetName := tb.Meta().Charset
 	if len(charsetName) == 0 {
 		charsetName = charset.CharsetUTF8

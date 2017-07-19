@@ -571,6 +571,10 @@ const (
 	TableOptionDelayKeyWrite
 	TableOptionRowFormat
 	TableOptionStatsPersistent
+	/**************** Begin Dashbase Options ****************/
+	TableOptionDashbaseConnection
+	TableOptionDashbaseTableName
+	/**************** End Dashbase Options ****************/
 )
 
 // RowFormat types

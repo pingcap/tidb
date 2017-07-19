@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/dashbase"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -762,6 +763,8 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 	for _, op := range options {
 		switch op.Tp {
+		case ast.TableOptionEngine:
+			tbInfo.Engine = op.StrValue
 		case ast.TableOptionAutoIncrement:
 			tbInfo.AutoIncID = int64(op.UintValue)
 		case ast.TableOptionComment:
@@ -770,6 +773,11 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 			tbInfo.Charset = op.StrValue
 		case ast.TableOptionCollate:
 			tbInfo.Collate = op.StrValue
+		case ast.TableOptionDashbaseConnection:
+			conn, _ := dashbase.ParseConnectionOption(op.StrValue)
+			tbInfo.DashbaseConnection = conn
+		case ast.TableOptionDashbaseTableName:
+			tbInfo.DashbaseTableName = op.StrValue
 		}
 	}
 }

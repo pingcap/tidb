@@ -1358,3 +1358,30 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(21) YES  <nil> `))
 }
+
+func (s *testDBSuite) TestDashbaseCreateTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.mustExec(c, "drop table if exists t")
+
+	// DASHBASE_CONN is required
+	_, err := s.tk.Exec("create table t (a double key, b text) engine=dashbase")
+	c.Assert(err, NotNil)
+
+	s.tk.MustExec("create table t (a double key, b text) engine=dashbase dashbase_conn='192.168.0.1:1234;192.168.0.2:4321'")
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	c.Assert(tblInfo.Engine, Equals, "dashbase")
+	c.Assert(tblInfo.DashbaseConnection, NotNil)
+	c.Assert(tblInfo.DashbaseConnection.FirehoseHostname, Equals, "192.168.0.1")
+	c.Assert(tblInfo.DashbaseConnection.FirehosePort, Equals, 1234)
+	c.Assert(tblInfo.DashbaseConnection.ProxyHostname, Equals, "192.168.0.2")
+	c.Assert(tblInfo.DashbaseConnection.ProxyPort, Equals, 4321)
+	c.Assert(tblInfo.DashbaseTableName, Equals, "")
+
+	s.mustExec(c, "drop table t")
+}

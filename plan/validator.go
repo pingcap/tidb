@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/dashbase"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -75,6 +76,7 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.AggregateFuncExpr:
 		v.inAggregate = false
 	case *ast.CreateTableStmt:
+		v.checkDashbaseOptions(x)
 		v.checkAutoIncrement(x)
 	case *ast.ParamMarkerExpr:
 		if !v.inPrepare {
@@ -151,7 +153,44 @@ func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) boo
 	return false
 }
 
+func getStmtTableOption(stmt *ast.CreateTableStmt, tp ast.TableOptionType) *ast.TableOption {
+	for _, opt := range stmt.Options {
+		if opt.Tp == tp {
+			return opt
+		}
+	}
+	return nil
+}
+
+func isEngineDashbase(stmt *ast.CreateTableStmt) bool {
+	opt := getStmtTableOption(stmt, ast.TableOptionEngine)
+	if opt == nil {
+		return false
+	}
+	return strings.EqualFold(opt.StrValue, "Dashbase")
+}
+
+func (v *validator) checkDashbaseOptions(stmt *ast.CreateTableStmt) {
+	if !isEngineDashbase(stmt) {
+		return
+	}
+	opt := getStmtTableOption(stmt, ast.TableOptionDashbaseConnection)
+	if opt == nil {
+		v.err = errors.New("Incorrect table definition; DASHBASE_CONN option is required for Dashbase engine tables")
+		return
+	}
+	_, success := dashbase.ParseConnectionOption(opt.StrValue)
+	if !success {
+		v.err = errors.New("Incorrect table definition; DASHBASE_CONN is not valid")
+		return
+	}
+}
+
 func (v *validator) checkAutoIncrement(stmt *ast.CreateTableStmt) {
+	if isEngineDashbase(stmt) {
+		return
+	}
+
 	var (
 		isKey            bool
 		count            int
