@@ -70,7 +70,7 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 func (s *testStateChangeSuite) TestX(c *C) {
 	testInfo := &testExecInfo{
 		execKinds: 5,
-		sqlInfos:  make([]*sqlInfo, 2),
+		sqlInfos:  make([]*sqlInfo, 4),
 	}
 	for i := 0; i < len(testInfo.sqlInfos); i++ {
 		testInfo.sqlInfos[i] = &sqlInfo{
@@ -88,13 +88,14 @@ func (s *testStateChangeSuite) TestX(c *C) {
 	testInfo.sqlInfos[1].errs[1] = unknownColErr
 	testInfo.sqlInfos[1].errs[2] = unknownColErr
 	testInfo.sqlInfos[1].errs[3] = unknownColErr
-	//      testInfo.sqlInfos[2].sql = "update t set c2 = 'c2_update'"
-	//	// TODO: This code need to be remove after fix this bug.
-	//	testInfo.sqlInfos[2].errs[3] = errors.New("overflow enum boundary")
-	//	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')'"
-	//	testInfo.sqlInfos[3].errs[4] = errors.New("Column count doesn't match value count at row 1")
+	testInfo.sqlInfos[2].sql = "update t set c2 = 'c2_update'"
+	// TODO: This code need to be remove after fix this bug.
+	testInfo.sqlInfos[2].errs[3] = errors.New("overflow enum boundary")
+	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')'"
+	testInfo.sqlInfos[3].errs[4] = errors.New("Column count doesn't match value count at row 1")
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
 	s.test(c, "", alterTableSQL, testInfo)
+	// TODO: Add more DDL statements.
 }
 
 func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testInfo *testExecInfo) {
@@ -161,8 +162,6 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	d := s.dom.DDL()
 	d.SetHook(callback)
 	s.se.Execute(alterTableSQL)
-	//	err = s.dom.Reload()
-	//	c.Assert(err, IsNil)
 	err = testInfo.compileSQL(4)
 	c.Assert(err, IsNil)
 	err = testInfo.execSQL(4)
