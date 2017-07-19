@@ -709,9 +709,6 @@ func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
 // Seek implements table.Table Seek interface.
 func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 	seekKey := tablecodec.EncodeRowKeyWithHandle(t.ID, h)
-	if ctx == nil {
-		return 0, false, nil
-	}
 	iter, err := ctx.Txn().Seek(seekKey)
 	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
 		// No more records in the table, skip to the end.

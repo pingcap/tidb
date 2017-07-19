@@ -136,10 +136,6 @@ func (ts *testSuite) TestBasic(c *C) {
 
 	err = tb.RebaseAutoID(0, false)
 	c.Assert(err, IsNil)
-	handle, found, err = tb.Seek(nil, 0)
-	c.Assert(handle, Equals, int64(0))
-	c.Assert(found, Equals, false)
-	c.Assert(err, IsNil)
 }
 
 func countEntriesWithPrefix(ctx context.Context, prefix []byte) (int, error) {
@@ -323,7 +319,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(tb, IsNil)
 	c.Assert(err, NotNil)
 	tbInfo.State = model.StateNone
-	tables.TableFromMeta(nil, tbInfo)
+	tb, err = tables.TableFromMeta(nil, tbInfo)
 	c.Assert(tb, IsNil)
 	c.Assert(err, NotNil)
 }
