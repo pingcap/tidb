@@ -1325,7 +1325,7 @@ func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, 
 	case KindFloat64:
 		err = dec.FromFloat64(d.GetFloat64())
 	case KindString:
-		err = dec.FromString(d.GetBytes())
+		err = sc.HandleTruncate(dec.FromString(d.GetBytes()))
 	case KindMysqlDecimal:
 		*dec = *d.GetMysqlDecimal()
 	case KindMysqlHex:
@@ -1625,13 +1625,11 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 	} else if hasDecimal {
 		var dec *MyDecimal
 		dec, err = ConvertDatumToDecimal(sc, x)
-		err = sc.HandleTruncate(err)
 		if err != nil {
 			return x, y, errors.Trace(err)
 		}
 		x.SetMysqlDecimal(dec)
 		dec, err = ConvertDatumToDecimal(sc, y)
-		err = sc.HandleTruncate(err)
 		if err != nil {
 			return x, y, errors.Trace(err)
 		}
