@@ -1596,10 +1596,11 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			x.SetFloat64(x.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			var fval float64
-			if fval, err = x.ToFloat64(sc); err == nil {
-				x.SetFloat64(fval)
+			fval, err := x.ToFloat64(sc)
+			if err != nil {
+				return x, y, errors.Trace(err)
 			}
+			x.SetFloat64(fval)
 		}
 		switch y.Kind() {
 		case KindInt64:
@@ -1615,21 +1616,28 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			y.SetFloat64(y.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			var fval float64
-			if fval, err = y.ToFloat64(sc); err == nil {
-				y.SetFloat64(fval)
+			fval, err := y.ToFloat64(sc)
+			if err != nil {
+				return x, y, errors.Trace(err)
 			}
+			y.SetFloat64(fval)
 		}
 	} else if hasDecimal {
 		var dec *MyDecimal
-		if dec, err = ConvertDatumToDecimal(sc, x); err == nil {
-			x.SetMysqlDecimal(dec)
-			if dec, err = ConvertDatumToDecimal(sc, y); err == nil {
-				y.SetMysqlDecimal(dec)
-			}
+		dec, err = ConvertDatumToDecimal(sc, x)
+		err = sc.HandleTruncate(err)
+		if err != nil {
+			return x, y, errors.Trace(err)
 		}
+		x.SetMysqlDecimal(dec)
+		dec, err = ConvertDatumToDecimal(sc, y)
+		err = sc.HandleTruncate(err)
+		if err != nil {
+			return x, y, errors.Trace(err)
+		}
+		y.SetMysqlDecimal(dec)
 	}
-	return x, y, errors.Trace(sc.HandleTruncate(err))
+	return
 }
 
 // NewDatum creates a new Datum from an interface{}.
