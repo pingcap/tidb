@@ -644,8 +644,16 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 			sql: "select t1.a from t t1, (select @a:=0, @b:=0) t2",
 			ans: "LeftHashJoin{Table(t)->Dual->Projection}->Projection",
 		},
+		{
+			sql: "select count(*) from t order by sum(b);",
+			ans: "Table(t)->HashAgg->Sort->Projection",
+		},
+		{
+			sql: "select a as c1 from t limit 2",
+			ans: "Table(t)->Limit",
+		},
 	}
-	for _, tt := range tests {
+	for i, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
@@ -666,6 +674,15 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		info.p = eliminatePhysicalProjection(info.p)
 		c.Assert(ToString(info.p), Equals, tt.ans, Commentf("for %s", tt.sql))
+		if i == len(tests)-2 {
+			c.Assert(len(info.p.Schema().Columns), Equals, 1)
+			c.Assert(info.p.Schema().Columns[0].ColName.O, Equals, "count(*)")
+			c.Assert(info.p.Schema().Columns[0].FromID, Equals, "Projection_5")
+		} else if i == len(tests)-1 {
+			c.Assert(len(info.p.Schema().Columns), Equals, 1)
+			c.Assert(info.p.Schema().Columns[0].ColName.O, Equals, "c1")
+			c.Assert(info.p.Schema().Columns[0].FromID, Equals, "TableScan_1")
+		}
 	}
 }
 
