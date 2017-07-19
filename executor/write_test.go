@@ -171,6 +171,13 @@ func (s *testSuite) TestInsert(c *C) {
 	r.Check(testkit.Rows("1035651600"))
 	tk.MustExec("set @@time_zone = @origin_time_zone")
 
+	// issue 3647
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned auto_increment primary key)")
+	_, err = tk.Exec("insert into t value(18446744073709551610)")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows("18446744073709551610"))
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
