@@ -438,26 +438,26 @@ func (d *ddl) getIndexRecords(t table.Table, taskOpInfo *indexTaskOpInfo, rawRec
 			return errors.Trace(err)
 		}
 		idxVal := make([]types.Datum, len(idxInfo.Columns))
-		for i, v := range idxInfo.Columns {
+		for j, v := range idxInfo.Columns {
 			col := cols[v.Offset]
 			if col.IsPKHandleColumn(t.Meta()) {
 				if mysql.HasUnsignedFlag(col.Flag) {
-					idxVal[col.Offset].SetUint64(uint64(idxRecord.handle))
+					idxVal[j].SetUint64(uint64(idxRecord.handle))
 				} else {
-					idxVal[col.Offset].SetInt64(idxRecord.handle)
+					idxVal[j].SetInt64(idxRecord.handle)
 				}
 				continue
 			}
 			idxColumnVal := rowMap[col.ID]
 			if _, ok := rowMap[col.ID]; ok {
-				idxVal[i] = idxColumnVal
+				idxVal[j] = idxColumnVal
 				continue
 			}
 			idxColumnVal, err = tables.GetColDefaultValue(ctx, col, defaultVals)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idxVal[i] = idxColumnVal
+			idxVal[j] = idxColumnVal
 		}
 		idxRecord.vals = idxVal
 	}
