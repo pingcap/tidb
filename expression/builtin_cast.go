@@ -690,7 +690,7 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(row []types.Datum) (res *typ
 		return res, isNull, errors.Trace(err)
 	}
 	res = new(types.MyDecimal)
-	err = res.FromString([]byte(val))
+	err = sc.HandleTruncate(res.FromString([]byte(val)))
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
