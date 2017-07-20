@@ -78,10 +78,18 @@ func (s *testSuite) TestShow(c *C) {
 
 	// Test case for index type and comment
 	tk.MustExec(`create table show_index (id int, c int, primary key (id), index cIdx using hash (c) comment "index_comment_for_cIdx");`)
+	tk.MustExec(`create index idx1 on show_index (id) using hash;`)
+	tk.MustExec(`create index idx2 on show_index (id) comment 'idx';`)
+	tk.MustExec(`create index idx3 on show_index (id) using hash comment 'idx';`)
+	tk.MustExec(`alter table show_index add index idx4 (id) using btree comment 'idx';`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
 		"show_index|0|PRIMARY|1|id|utf8_bin|0|<nil>|<nil>||BTREE||",
 		"show_index|1|cIdx|1|c|utf8_bin|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx",
+		"show_index|1|idx1|1|id|utf8_bin|0|<nil>|<nil>|YES|HASH||",
+		"show_index|1|idx2|1|id|utf8_bin|0|<nil>|<nil>|YES|||idx",
+		"show_index|1|idx3|1|id|utf8_bin|0|<nil>|<nil>|YES|HASH||idx",
+		"show_index|1|idx4|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||idx",
 	))
 
 	// For show like with escape

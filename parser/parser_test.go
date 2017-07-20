@@ -1314,6 +1314,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD UNIQUE KEY (a) COMMENT 'a'", true},
 		{"ALTER TABLE t ADD UNIQUE INDEX (a) COMMENT 'a'", true},
 
+		// For create index statement
+		{"CREATE INDEX idx ON t (a) USING HASH", true},
+		{"CREATE INDEX idx ON t (a) COMMENT 'foo'", true},
+		{"CREATE INDEX idx ON t (a) USING HASH COMMENT 'foo'", true},
+
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
 		{"RENAME TABLE t t1", false},
