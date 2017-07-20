@@ -1044,6 +1044,11 @@ func (s *testSuite) TestGetFieldsFromLine(c *C) {
 			`"4","a string containing a \", quote and comma","102.20"`,
 			[]string{"4", "a string containing a \", quote and comma", "102.20"},
 		},
+		// Test some escape char.
+		{
+			`"\0\b\n\r\t\Z\\\  \c\'\""`,
+			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
+		},
 	}
 	fieldsInfo := &ast.FieldsClause{
 		Enclosed:   '"',
