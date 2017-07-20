@@ -48,7 +48,7 @@ func (wrap *wrapResult) Err() error {
 	err := wrap.Context.Err()
 	if err != nil {
 		// Have to introduce errors package because caller may assert that
-		// errors.Cause(err) == to context.Canceled
+		// errors.Cause(err) == context.Canceled
 		return errors.Annotate(err, fmt.Sprintf("cancel at %s:%d", wrap.file, wrap.line))
 	}
 	return err
