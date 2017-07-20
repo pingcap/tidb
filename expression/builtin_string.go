@@ -1061,49 +1061,54 @@ type unhexFunctionClass struct {
 }
 
 func (c *unhexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinUnHexSig{newBaseBuiltinFunc(args, ctx)}
+	var retFlen int
+
+	argType := args[0].GetType()
+	switch t := args[0].GetTypeClass(); t {
+	case types.ClassString:
+		// Use UTF-8 as default charset, so there're (Flen * 3 + 1) / 2 byte-pairs
+		retFlen = (argType.Flen*3 + 1) / 2
+
+	case types.ClassInt, types.ClassReal, types.ClassDecimal:
+		// For number value, there're (Flen + 1) / 2 byte-pairs
+		retFlen = (argType.Flen + 1) / 2
+
+	default:
+		return nil, errors.Errorf("Unhex invalid args, need int or string but get %T", t)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = retFlen
+	types.SetBinChsClnFlag(bf.tp)
+	sig := &builtinUnHexSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUnHexSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinUnHexSig.
+// evalString evals a builtinUnHexSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_unhex
-func (b *builtinUnHexSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinUnHexSig) evalString(row []types.Datum) (string, bool, error) {
+	var bs []byte
+
+	d, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	// Add a '0' to the front, if the length is not the multiple of 2
+	if len(d)%2 != 0 {
+		d = "0" + d
+	}
+	bs, err = hex.DecodeString(d)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return "", true, nil
 	}
-	switch args[0].Kind() {
-	case types.KindNull:
-		return d, nil
-	case types.KindString, types.KindBytes:
-		x, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		bytes, err := hex.DecodeString(x)
-		if err != nil {
-			return d, nil
-		}
-		d.SetString(string(bytes))
-		return d, nil
-	case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-		x, _ := args[0].Cast(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeString))
-		if x.IsNull() {
-			return d, nil
-		}
-		bytes, err := hex.DecodeString(x.GetString())
-		if err != nil {
-			return d, nil
-		}
-		d.SetString(string(bytes))
-		return d, nil
-	default:
-		return d, errors.Errorf("Unhex invalid args, need int or string but get %T", args[0].GetValue())
-	}
+	return string(bs), false, nil
 }
 
 type trimFunctionClass struct {
