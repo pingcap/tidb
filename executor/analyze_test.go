@@ -20,6 +20,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -68,7 +70,7 @@ func (r *recordSet) Next() (*ast.Row, error) {
 		return nil, nil
 	}
 	r.cursor++
-	return &ast.Row{Data: []types.Datum{r.data[r.cursor-1]}}, nil
+	return &ast.Row{Data: []types.Datum{types.NewIntDatum(int64(r.cursor)), r.data[r.cursor-1]}}, nil
 }
 
 func (r *recordSet) Close() error {
@@ -83,6 +85,9 @@ func (s *testSuite) TestCollectSamplesAndEstimateNDVs(c *C) {
 		count:  count,
 		cursor: 0,
 	}
+	pkInfo := &model.ColumnInfo{
+		ID: 1,
+	}
 	start := 1000 // 1000 values is null
 	for i := start; i < rs.count; i++ {
 		rs.data[i].SetInt64(int64(i))
@@ -94,8 +99,10 @@ func (s *testSuite) TestCollectSamplesAndEstimateNDVs(c *C) {
 		rs.data[i].SetInt64(rs.data[i].GetInt64() + 2)
 	}
 
-	collectors, err := executor.CollectSamplesAndEstimateNDVs(rs, 1)
+	collectors, pkBuilder, err := executor.CollectSamplesAndEstimateNDVs(mock.NewContext(), rs, 1, pkInfo)
 	c.Assert(err, IsNil)
 	c.Assert(collectors[0].NullCount+collectors[0].Count, Equals, int64(rs.count))
 	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(6624))
+	c.Assert(int64(pkBuilder.Count), Equals, int64(rs.count))
+	c.Assert(pkBuilder.Hist.NDV, Equals, int64(rs.count))
 }
