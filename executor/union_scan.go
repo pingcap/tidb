@@ -240,7 +240,7 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 			}
 			newData = make([]types.Datum, 0, newLen)
 			for _, col := range us.columns {
-				if col.ID == -1 && us.needColHandle {
+				if col.ID == -1 {
 					continue
 				}
 				newData = append(newData, data[col.Offset])
