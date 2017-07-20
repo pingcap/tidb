@@ -55,27 +55,58 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 
 func (s *testEvaluatorSuite) TestCeil(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+
+	sc := s.ctx.GetSessionVars().StmtCtx
+	tmpIT := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = tmpIT
+	}()
+
+	for _, test := range []struct {
+		arg    interface{}
+		expect interface{}
+		isNil  bool
+		getErr bool
 	}{
-		{nil, nil},
-		{int64(1), int64(1)},
-		{float64(1.23), float64(2)},
-		{float64(-1.23), float64(-1)},
-		{"1.23", float64(2)},
-		{"-1.23", float64(-1)},
+		{nil, nil, true, false},
+		{int64(1), int64(1), false, false},
+		{float64(1.23), float64(2), false, false},
+		{float64(-1.23), float64(-1), false, false},
+		{"1.23", float64(2), false, false},
+		{"-1.23", float64(-1), false, false},
+		{"tidb", float64(0), false, false},
+		{"1tidb", float64(1), false, false},
+	} {
+		f, err := newFunctionForTest(s.ctx, ast.Ceil, primitiveValsToConstants([]interface{}{test.arg})...)
+		c.Assert(err, IsNil)
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+			}
+		}
 	}
 
-	Dtbl := tblToDtbl(tbl)
-
-	for _, t := range Dtbl {
-		fc := funcs[ast.Ceil]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+	for _, exp := range []Expression{
+		&Constant{
+			Value:   types.NewDatum(0),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		},
+		&Constant{
+			Value:   types.NewFloat64Datum(float64(12.34)),
+			RetType: types.NewFieldType(mysql.TypeFloat),
+		},
+	} {
+		f, err := funcs[ast.Ceil].getFunction([]Expression{exp}, s.ctx)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+		c.Assert(f.isDeterministic(), IsTrue)
 	}
 }
 
