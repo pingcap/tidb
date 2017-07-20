@@ -74,6 +74,13 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(res.GetString()), Equals, 5)
 	c.Assert(res.GetString(), Equals, string([]byte{'a', 0x00, 0x00, 0x00, 0x00}))
+
+	// cast(bad_string as decimal)
+	for _, s := range []string{"hello", ""} {
+		f = NewCastFunc(tp, &Constant{Value: types.NewDatum(s), RetType: types.NewFieldType(mysql.TypeDecimal)}, ctx)
+		res, err = f.Eval(nil)
+		c.Assert(err, IsNil)
+	}
 }
 
 var (
