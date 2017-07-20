@@ -261,13 +261,13 @@ xxx row5_col1	- 	row5_col3`)
 	// support ClientLocalFiles capability
 	runTests(c, dsn+"&allowAllFiles=true&strict=false", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
-		rs, err := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
-		dbt.Assert(err, IsNil)
-		lastID, err := rs.LastInsertId()
-		dbt.Assert(err, IsNil)
+		rs, err1 := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
+		dbt.Assert(err1, IsNil)
+		lastID, err1 := rs.LastInsertId()
+		dbt.Assert(err1, IsNil)
 		dbt.Assert(lastID, Equals, int64(1))
-		affectedRows, err := rs.RowsAffected()
-		dbt.Assert(err, IsNil)
+		affectedRows, err1 := rs.RowsAffected()
+		dbt.Assert(err1, IsNil)
 		dbt.Assert(affectedRows, Equals, int64(5))
 		var (
 			a  string

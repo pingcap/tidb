@@ -61,6 +61,8 @@ type Plan interface {
 	SetParents(...Plan)
 	// SetChildren sets the children for the plan.
 	SetChildren(...Plan)
+	// replaceExprColumns replace all the column reference in the plan's expression node.
+	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() context.Context
 
@@ -439,6 +441,10 @@ type basePlan struct {
 func (p *basePlan) copy() *basePlan {
 	np := *p
 	return &np
+}
+
+func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
+	return
 }
 
 // MarshalJSON implements json.Marshaler interface.
