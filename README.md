@@ -4,6 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
 ![Project Status](https://img.shields.io/badge/status-rc-yellow.svg)
 [![CircleCI Status](https://circleci.com/gh/pingcap/tidb.svg?style=shield)](https://circleci.com/gh/pingcap/tidb)
+[![Coverage Status](https://coveralls.io/repos/github/pingcap/tidb/badge.svg?branch=master)](https://coveralls.io/github/pingcap/tidb?branch=master)
 
 ## What is TiDB?
 
@@ -21,9 +22,6 @@ Think of TiDB as a single-machine RDBMS. You can start a transaction that crosse
 
 - __Compatible with MySQL protocol__
 Use TiDB as MySQL. You can replace MySQL with TiDB to power your application without changing a single line of code in most cases.
-
-- __Written in Go__
-Enjoy TiDB as much as we love Go. We believe Go code is both easy and enjoyable to work with. Go makes us improve TiDB fast and makes it easy to dive into the codebase.
 
 - __NewSQL over TiKV__
   Turn [TiKV](https://github.com/pingcap/tikv) into NewSQL database.

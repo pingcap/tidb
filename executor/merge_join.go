@@ -31,19 +31,21 @@ import (
 // will throw error.
 type MergeJoinExec struct {
 	// Left is always the driver side
+
 	ctx           context.Context
 	stmtCtx       *variable.StatementContext
 	leftJoinKeys  []*expression.Column
 	rightJoinKeys []*expression.Column
 	prepared      bool
-	leftFilter    expression.Expression
-	otherFilter   expression.Expression
+	leftFilter    []expression.Expression
+	otherFilter   []expression.Expression
 	schema        *expression.Schema
 	preserveLeft  bool // To preserve left side of the relation as in left outer join
 	cursor        int
 	defaultValues []types.Datum
 
 	// Default for both side in case full join
+
 	defaultRightRow *Row
 	outputBuf       []*Row
 	leftRowBlock    *rowBlockIterator
@@ -61,9 +63,9 @@ type joinBuilder struct {
 	leftChild     Executor
 	rightChild    Executor
 	eqConditions  []*expression.ScalarFunction
-	leftFilter    expression.Expression
-	rightFilter   expression.Expression
-	otherFilter   expression.Expression
+	leftFilter    []expression.Expression
+	rightFilter   []expression.Expression
+	otherFilter   []expression.Expression
 	schema        *expression.Schema
 	joinType      plan.JoinType
 	defaultValues []types.Datum
@@ -89,17 +91,17 @@ func (b *joinBuilder) RightChild(exec Executor) *joinBuilder {
 	return b
 }
 
-func (b *joinBuilder) LeftFilter(expr expression.Expression) *joinBuilder {
+func (b *joinBuilder) LeftFilter(expr []expression.Expression) *joinBuilder {
 	b.leftFilter = expr
 	return b
 }
 
-func (b *joinBuilder) RightFilter(expr expression.Expression) *joinBuilder {
+func (b *joinBuilder) RightFilter(expr []expression.Expression) *joinBuilder {
 	b.rightFilter = expr
 	return b
 }
 
-func (b *joinBuilder) OtherFilter(expr expression.Expression) *joinBuilder {
+func (b *joinBuilder) OtherFilter(expr []expression.Expression) *joinBuilder {
 	b.otherFilter = expr
 	return b
 }
@@ -184,12 +186,12 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 	return exec, nil
 }
 
-// Represent a row block with the same join keys
+// rowBlockIterator represents a row block with the same join keys
 type rowBlockIterator struct {
 	stmtCtx   *variable.StatementContext
 	ctx       context.Context
 	reader    Executor
-	filter    expression.Expression
+	filter    []expression.Expression
 	joinKeys  []*expression.Column
 	peekedRow *Row
 	rowCache  []*Row
@@ -265,8 +267,6 @@ func (rb *rowBlockIterator) nextBlock() ([]*Row, error) {
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
-	e.prepared = false
-	e.cursor = 0
 	e.outputBuf = nil
 
 	lErr := e.leftRowBlock.reader.Close()
@@ -280,6 +280,19 @@ func (e *MergeJoinExec) Close() error {
 	}
 
 	return nil
+}
+
+// Open implements the Executor Open interface.
+func (e *MergeJoinExec) Open() error {
+	e.prepared = false
+	e.cursor = 0
+	e.outputBuf = nil
+
+	err := e.leftRowBlock.reader.Open()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(e.rightRowBlock.reader.Open())
 }
 
 // Schema implements the Executor Schema interface.

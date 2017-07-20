@@ -20,11 +20,10 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/pkg/apiutil"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -36,6 +35,8 @@ type Client interface {
 	GetClusterID(ctx context.Context) uint64
 	// GetTS gets a timestamp from PD.
 	GetTS(ctx context.Context) (int64, int64, error)
+	// GetTSAsync gets a timestamp from PD, without block the caller.
+	GetTSAsync(ctx context.Context) TSFuture
 	// GetRegion gets a region and its leader Peer from PD by key.
 	// The region may expire after split. Caller is responsible for caching and
 	// taking care of region change.
@@ -53,6 +54,8 @@ type Client interface {
 }
 
 type tsoRequest struct {
+	start    time.Time
+	ctx      context.Context
 	done     chan error
 	physical int64
 	logical  int64
@@ -125,20 +128,16 @@ func NewClient(pdAddrs []string) (Client, error) {
 }
 
 func (c *client) initClusterID() error {
+	ctx, cancel := context.WithCancel(c.ctx)
+	defer cancel()
 	for i := 0; i < maxInitClusterRetries; i++ {
 		for _, u := range c.urls {
-			// TODO: Use gRPC instead.
-			client, err := apiutil.NewClient(u, pdTimeout)
-			if err != nil {
+			members, err := c.getMembers(ctx, u)
+			if err != nil || members.GetHeader() == nil {
 				log.Errorf("[pd] failed to get cluster id: %v", err)
 				continue
 			}
-			clusterID, err := client.GetClusterID()
-			if err != nil {
-				log.Errorf("[pd] failed to get cluster id: %v", err)
-				continue
-			}
-			c.clusterID = clusterID
+			c.clusterID = members.GetHeader().GetClusterId()
 			return nil
 		}
 
@@ -149,17 +148,14 @@ func (c *client) initClusterID() error {
 }
 
 func (c *client) updateLeader() error {
+	ctx, cancel := context.WithCancel(c.ctx)
+	defer cancel()
 	for _, u := range c.urls {
-		// TODO: Use gRPC instead.
-		client, err := apiutil.NewClient(u, pdTimeout)
-		if err != nil {
+		members, err := c.getMembers(ctx, u)
+		if err != nil || members.GetLeader() == nil || len(members.GetLeader().GetClientUrls()) == 0 {
 			continue
 		}
-		leader, err := client.GetLeader()
-		if err != nil {
-			continue
-		}
-		if err = c.switchLeader(leader.GetClientUrls()); err != nil {
+		if err = c.switchLeader(members.GetLeader().GetClientUrls()); err != nil {
 			return errors.Trace(err)
 		}
 		return nil
@@ -167,23 +163,47 @@ func (c *client) updateLeader() error {
 	return errors.Errorf("failed to get leader from %v", c.urls)
 }
 
+func (c *client) getMembers(ctx context.Context, url string) (*pdpb.GetMembersResponse, error) {
+	cc, err := c.getOrCreateGRPCConn(url)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	members, err := pdpb.NewPDClient(cc).GetMembers(ctx, &pdpb.GetMembersRequest{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return members, nil
+}
+
 func (c *client) switchLeader(addrs []string) error {
 	// FIXME: How to safely compare leader urls? For now, only allows one client url.
 	addr := addrs[0]
+
 	c.connMu.RLock()
-	if c.connMu.leader == addr {
-		c.connMu.RUnlock()
+	oldLeader := c.connMu.leader
+	c.connMu.RUnlock()
+
+	if addr == oldLeader {
 		return nil
 	}
 
-	log.Infof("[pd] leader switches to: %v, previous: %v", addr, c.connMu.leader)
-	_, ok := c.connMu.clientConns[addr]
+	log.Infof("[pd] leader switches to: %v, previous: %v", addr, oldLeader)
+	if _, err := c.getOrCreateGRPCConn(addr); err != nil {
+		return errors.Trace(err)
+	}
+
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+	c.connMu.leader = addr
+	return nil
+}
+
+func (c *client) getOrCreateGRPCConn(addr string) (*grpc.ClientConn, error) {
+	c.connMu.RLock()
+	conn, ok := c.connMu.clientConns[addr]
 	c.connMu.RUnlock()
 	if ok {
-		c.connMu.Lock()
-		c.connMu.leader = addr
-		c.connMu.Unlock()
-		return nil
+		return conn, nil
 	}
 
 	cc, err := grpc.Dial(addr, grpc.WithDialer(func(addr string, d time.Duration) (net.Conn, error) {
@@ -198,28 +218,31 @@ func (c *client) switchLeader(addrs []string) error {
 		return net.DialTimeout("tcp", u.Host, d)
 	}), grpc.WithInsecure()) // TODO: Support HTTPS.
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
-	if _, ok := c.connMu.clientConns[addr]; ok {
+	if old, ok := c.connMu.clientConns[addr]; ok {
 		cc.Close()
-	} else {
-		c.connMu.clientConns[addr] = cc
+		return old, nil
 	}
-	c.connMu.leader = addr
-	return nil
+
+	c.connMu.clientConns[addr] = cc
+	return cc, nil
 }
 
 func (c *client) leaderLoop() {
 	defer c.wg.Done()
 
+	ctx, cancel := context.WithCancel(c.ctx)
+	defer cancel()
+
 	for {
 		select {
 		case <-c.checkLeaderCh:
 		case <-time.After(time.Minute):
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 
@@ -238,6 +261,9 @@ type deadline struct {
 func (c *client) tsCancelLoop() {
 	defer c.wg.Done()
 
+	ctx, cancel := context.WithCancel(c.ctx)
+	defer cancel()
+
 	for {
 		select {
 		case d := <-c.tsDeadlineCh:
@@ -246,10 +272,10 @@ func (c *client) tsCancelLoop() {
 				log.Error("tso request is canceled due to timeout")
 				d.cancel()
 			case <-d.done:
-			case <-c.ctx.Done():
+			case <-ctx.Done():
 				return
 			}
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -257,6 +283,9 @@ func (c *client) tsCancelLoop() {
 
 func (c *client) tsLoop() {
 	defer c.wg.Done()
+
+	loopCtx, loopCancel := context.WithCancel(c.ctx)
+	defer loopCancel()
 
 	var requests []*tsoRequest
 	var stream pdpb.PD_TsoClient
@@ -271,10 +300,12 @@ func (c *client) tsLoop() {
 			stream, err = c.leaderClient().Tso(ctx)
 			if err != nil {
 				log.Errorf("[pd] create tso stream error: %v", err)
+				c.scheduleCheckLeader()
 				cancel()
+				c.revokeTSORequest(err)
 				select {
 				case <-time.After(time.Second):
-				case <-c.ctx.Done():
+				case <-loopCtx.Done():
 					return
 				}
 				continue
@@ -296,18 +327,19 @@ func (c *client) tsLoop() {
 			}
 			select {
 			case c.tsDeadlineCh <- dl:
-			case <-c.ctx.Done():
+			case <-loopCtx.Done():
 				return
 			}
 			err = c.processTSORequests(stream, requests)
 			close(done)
 			requests = requests[:0]
-		case <-c.ctx.Done():
+		case <-loopCtx.Done():
 			return
 		}
 
 		if err != nil {
 			log.Errorf("[pd] getTS error: %v", err)
+			c.scheduleCheckLeader()
 			cancel()
 			stream, cancel = nil, nil
 		}
@@ -316,20 +348,17 @@ func (c *client) tsLoop() {
 
 func (c *client) processTSORequests(stream pdpb.PD_TsoClient, requests []*tsoRequest) error {
 	start := time.Now()
-	//	ctx, cancel := context.WithTimeout(c.ctx, pdTimeout)
 	req := &pdpb.TsoRequest{
 		Header: c.requestHeader(),
 		Count:  uint32(len(requests)),
 	}
 	if err := stream.Send(req); err != nil {
 		c.finishTSORequest(requests, 0, 0, err)
-		c.scheduleCheckLeader()
 		return errors.Trace(err)
 	}
 	resp, err := stream.Recv()
 	if err != nil {
 		c.finishTSORequest(requests, 0, 0, errors.Trace(err))
-		c.scheduleCheckLeader()
 		return errors.Trace(err)
 	}
 	requestDuration.WithLabelValues("tso").Observe(time.Since(start).Seconds())
@@ -355,15 +384,19 @@ func (c *client) finishTSORequest(requests []*tsoRequest, physical, firstLogical
 	}
 }
 
+func (c *client) revokeTSORequest(err error) {
+	n := len(c.tsoRequests)
+	for i := 0; i < n; i++ {
+		req := <-c.tsoRequests
+		req.done <- errors.Trace(err)
+	}
+}
+
 func (c *client) Close() {
 	c.cancel()
 	c.wg.Wait()
 
-	n := len(c.tsoRequests)
-	for i := 0; i < n; i++ {
-		req := <-c.tsoRequests
-		req.done <- errors.Trace(errClosing)
-	}
+	c.revokeTSORequest(errClosing)
 
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
@@ -392,25 +425,50 @@ func (c *client) GetClusterID(context.Context) uint64 {
 	return c.clusterID
 }
 
-func (c *client) GetTS(ctx context.Context) (int64, int64, error) {
-	start := time.Now()
-	defer func() { cmdDuration.WithLabelValues("tso").Observe(time.Since(start).Seconds()) }()
+var tsoReqPool = sync.Pool{
+	New: func() interface{} {
+		return &tsoRequest{
+			done: make(chan error, 1),
+		}
+	},
+}
 
-	req := &tsoRequest{
-		done: make(chan error, 1),
-	}
+func (c *client) GetTSAsync(ctx context.Context) TSFuture {
+	req := tsoReqPool.Get().(*tsoRequest)
+	req.start = time.Now()
+	req.ctx = ctx
+	req.physical = 0
+	req.logical = 0
 	c.tsoRequests <- req
 
+	return req
+}
+
+// TSFuture is a future which promises to return a TSO.
+type TSFuture interface {
+	// Wait gets the physical and logical time, it would block caller if data is not available yet.
+	Wait() (int64, int64, error)
+}
+
+func (req *tsoRequest) Wait() (int64, int64, error) {
 	select {
 	case err := <-req.done:
+		defer tsoReqPool.Put(req)
 		if err != nil {
-			cmdFailedDuration.WithLabelValues("tso").Observe(time.Since(start).Seconds())
+			cmdFailedDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds())
 			return 0, 0, errors.Trace(err)
 		}
-		return req.physical, req.logical, err
-	case <-ctx.Done():
-		return 0, 0, errors.Trace(ctx.Err())
+		physical, logical := req.physical, req.logical
+		cmdDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds())
+		return physical, logical, err
+	case <-req.ctx.Done():
+		return 0, 0, errors.Trace(req.ctx.Err())
 	}
+}
+
+func (c *client) GetTS(ctx context.Context) (int64, int64, error) {
+	resp := c.GetTSAsync(ctx)
+	return resp.Wait()
 }
 
 func (c *client) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {

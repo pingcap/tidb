@@ -15,10 +15,12 @@ package types
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -26,7 +28,7 @@ const (
 	UnspecifiedLength int = -1
 )
 
-// TypeClass classifies types, used for type inference.
+// TypeClass classifies field types, used for type inference.
 type TypeClass byte
 
 // TypeClass values.
@@ -75,6 +77,21 @@ func (ft *FieldType) ToClass() TypeClass {
 	}
 }
 
+func (tc TypeClass) String() string {
+	switch tc {
+	case ClassString:
+		return "ClassString"
+	case ClassReal:
+		return "ClassReal"
+	case ClassInt:
+		return "ClassInt"
+	case ClassDecimal:
+		return "ClassDecimal"
+	default:
+		return "ClassRow"
+	}
+}
+
 // ToType maps the type class to a type.
 func (tc TypeClass) ToType() byte {
 	switch tc {
@@ -112,7 +129,7 @@ func (ft *FieldType) CompactStr() string {
 			es = append(es, e)
 		}
 		suffix = fmt.Sprintf("('%s')", strings.Join(es, "','"))
-	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate:
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeDuration:
 		if ft.Decimal != UnspecifiedLength && ft.Decimal != 0 {
 			suffix = fmt.Sprintf("(%d)", ft.Decimal)
 		}
@@ -163,49 +180,102 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull
-	case bool, int64, int:
+		tp.Flen = 0
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+	case bool:
 		tp.Tp = mysql.TypeLonglong
+		tp.Flen = 1
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+	case int:
+		tp.Tp = mysql.TypeLonglong
+		tp.Flen = len(strconv.FormatInt(int64(x), 10))
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+	case int64:
+		tp.Tp = mysql.TypeLonglong
+		tp.Flen = len(strconv.FormatInt(int64(x), 10))
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
+		tp.Flen = len(strconv.FormatUint(uint64(x), 10))
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case string:
 		tp.Tp = mysql.TypeVarString
+		// TODO: tp.Flen should be len(x) * 3 (max bytes length of CharsetUTF8)
+		tp.Flen = len(x)
+		tp.Decimal = UnspecifiedLength
 		tp.Charset = mysql.DefaultCharset
 		tp.Collate = mysql.DefaultCollationName
 	case float64:
 		tp.Tp = mysql.TypeDouble
+		s := strconv.FormatFloat(x, 'f', -1, 64)
+		tp.Flen = len(s)
+		tp.Decimal = len(s) - 1 - strings.Index(s, ".")
 		SetBinChsClnFlag(tp)
 	case []byte:
 		tp.Tp = mysql.TypeBlob
+		tp.Flen = len(x)
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case Bit:
-		tp.Tp = mysql.TypeBit
+		tp.Tp = mysql.TypeVarchar
+		tp.Flen = len(x.String())
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case Hex:
 		tp.Tp = mysql.TypeVarchar
+		tp.Flen = len(x.String())
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case Time:
 		tp.Tp = x.Type
+		switch x.Type {
+		case mysql.TypeDate:
+			tp.Flen = mysql.MaxDateWidth
+			tp.Decimal = UnspecifiedLength
+		case mysql.TypeDatetime, mysql.TypeTimestamp:
+			tp.Flen = mysql.MaxDatetimeWidthNoFsp
+			if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
+				tp.Flen = x.Fsp + 1
+			}
+			tp.Decimal = x.Fsp
+		}
 		SetBinChsClnFlag(tp)
 	case Duration:
 		tp.Tp = mysql.TypeDuration
+		tp.Flen = len(x.String())
+		if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
+			tp.Flen = x.Fsp + 1
+		}
+		tp.Decimal = x.Fsp
 		SetBinChsClnFlag(tp)
 	case *MyDecimal:
 		tp.Tp = mysql.TypeNewDecimal
+		tp.Flen = len(x.ToString())
+		tp.Decimal = int(x.digitsFrac)
 		SetBinChsClnFlag(tp)
 	case Enum:
 		tp.Tp = mysql.TypeEnum
+		tp.Flen = len(x.Name)
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case Set:
 		tp.Tp = mysql.TypeSet
+		tp.Flen = len(x.Name)
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
+	case json.JSON:
+		tp.Tp = mysql.TypeJSON
 	default:
 		tp.Tp = mysql.TypeUnspecified
+		tp.Flen = UnspecifiedLength
+		tp.Decimal = UnspecifiedLength
 	}
-	tp.Flen = UnspecifiedLength
-	tp.Decimal = UnspecifiedLength
 }
 
 // DefaultCharsetForType returns the default charset/collation for mysql type.

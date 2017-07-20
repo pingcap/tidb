@@ -16,6 +16,7 @@ package model
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -58,14 +59,17 @@ func (s SchemaState) String() string {
 
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
-	ID                 int64       `json:"id"`
-	Name               CIStr       `json:"name"`
-	Offset             int         `json:"offset"`
-	OriginDefaultValue interface{} `json:"origin_default"`
-	DefaultValue       interface{} `json:"default"`
-	types.FieldType    `json:"type"`
-	State              SchemaState `json:"state"`
-	Comment            string      `json:"comment"`
+	ID                  int64               `json:"id"`
+	Name                CIStr               `json:"name"`
+	Offset              int                 `json:"offset"`
+	OriginDefaultValue  interface{}         `json:"origin_default"`
+	DefaultValue        interface{}         `json:"default"`
+	GeneratedExprString string              `json:"generated_expr_string"`
+	GeneratedStored     bool                `json:"generated_stored"`
+	Dependences         map[string]struct{} `json:"dependences"`
+	types.FieldType     `json:"type"`
+	State               SchemaState `json:"state"`
+	Comment             string      `json:"comment"`
 }
 
 // Clone clones ColumnInfo.
@@ -90,6 +94,7 @@ type TableInfo struct {
 	AutoIncID   int64         `json:"auto_inc_id"`
 	MaxColumnID int64         `json:"max_col_id"`
 	MaxIndexID  int64         `json:"max_idx_id"`
+	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged
 	// while renaming a table from one database to another.
@@ -118,11 +123,49 @@ func (t *TableInfo) Clone() *TableInfo {
 	return &nt
 }
 
+// GetPkName will return the pk name if pk exists.
+func (t *TableInfo) GetPkName() CIStr {
+	if t.PKIsHandle {
+		for _, colInfo := range t.Columns {
+			if mysql.HasPriKeyFlag(colInfo.Flag) {
+				return colInfo.Name
+			}
+		}
+	}
+	return CIStr{}
+}
+
+// GetPkColInfo gets the ColumnInfo of pk if exists.
+// Make sure PkIsHandle checked before call this method.
+func (t *TableInfo) GetPkColInfo() *ColumnInfo {
+	for _, colInfo := range t.Columns {
+		if mysql.HasPriKeyFlag(colInfo.Flag) {
+			return colInfo
+		}
+	}
+	return nil
+}
+
+// ColumnIsInIndex checks whether c is included in any indices of t.
+func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
+	for _, index := range t.Indices {
+		for _, column := range index.Columns {
+			if column.Name.L == c.Name.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IndexColumn provides index column info.
 type IndexColumn struct {
 	Name   CIStr `json:"name"`   // Index name
 	Offset int   `json:"offset"` // Index offset
-	Length int   `json:"length"` // Index length
+	// Length of prefix when using column prefix
+	// for indexing;
+	// UnspecifedLength if not using prefix indexing
+	Length int `json:"length"`
 }
 
 // Clone clones IndexColumn.

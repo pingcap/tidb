@@ -204,6 +204,10 @@ func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []expression.Aggregatio
 	if a.allFirstRow(aggFuncs) {
 		return child
 	}
+	// If the join is multiway-join, we forbid pushing down.
+	if _, ok := join.children[childIdx].(*LogicalJoin); ok {
+		return child
+	}
 	tmpSchema := expression.NewSchema(gbyCols...)
 	for _, key := range child.Schema().Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {

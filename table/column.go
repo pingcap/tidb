@@ -23,6 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -31,7 +32,11 @@ import (
 )
 
 // Column provides meta data describing a table column.
-type Column model.ColumnInfo
+type Column struct {
+	*model.ColumnInfo
+	// If this column is a generated column, the expression will be stored here.
+	GeneratedExpr ast.ExprNode
+}
 
 // PrimaryKeyName defines primary key name.
 const PrimaryKeyName = "PRIMARY"
@@ -49,8 +54,9 @@ func (c *Column) String() string {
 }
 
 // ToInfo casts Column to model.ColumnInfo
+// NOTE: DONT modify return value.
 func (c *Column) ToInfo() *model.ColumnInfo {
-	return (*model.ColumnInfo)(c)
+	return c.ColumnInfo
 }
 
 // FindCol finds column in cols by name.
@@ -65,7 +71,10 @@ func FindCol(cols []*Column, name string) *Column {
 
 // ToColumn converts a *model.ColumnInfo to *Column.
 func ToColumn(col *model.ColumnInfo) *Column {
-	return (*Column)(col)
+	return &Column{
+		col,
+		nil,
+	}
 }
 
 // FindCols finds columns in cols by names.
@@ -97,11 +106,13 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 
 // CastValues casts values based on columns type.
 func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreErr bool) (err error) {
+	sc := ctx.GetSessionVars().StmtCtx
 	for _, c := range cols {
 		var converted types.Datum
 		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo())
 		if err != nil {
 			if ignoreErr {
+				sc.AppendWarning(err)
 				log.Warnf("cast values failed:%v", err)
 			} else {
 				return errors.Trace(err)
@@ -197,6 +208,12 @@ func NewColDesc(col *Column) *ColDesc {
 		extra = "auto_increment"
 	} else if mysql.HasOnUpdateNowFlag(col.Flag) {
 		extra = "on update CURRENT_TIMESTAMP"
+	} else if col.GeneratedExprString != "" {
+		if col.GeneratedStored {
+			extra = "STORED GENERATED"
+		} else {
+			extra = "VIRTUAL GENERATED"
+		}
 	}
 
 	return &ColDesc{
@@ -343,6 +360,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetMysqlBit(types.Bit{Value: 0, Width: types.MinBitWidth})
 	case mysql.TypeSet:
 		d.SetMysqlSet(types.Set{})
+	case mysql.TypeEnum:
+		d.SetMysqlEnum(types.Enum{})
 	}
 	return d
 }

@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -253,6 +254,7 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 func (s *testMainSuite) TestSchemaValidity(c *C) {
 	localstore.MockRemoteStore = true
 	store := newStoreWithBootstrap(c, s.dbName+"schema_validity")
+	defer store.Close()
 	dbName := "test_schema_validity"
 	se := newSession(c, store, dbName)
 	se1 := newSession(c, store, dbName)
@@ -332,16 +334,49 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	err = <-endCh2
 	c.Assert(err, IsNil, Commentf("err:%v", err))
 
-	err = se.Close()
-	c.Assert(err, IsNil)
-	err = se1.Close()
-	c.Assert(err, IsNil)
-	err = se2.Close()
-	c.Assert(err, IsNil)
+	se.Close()
+	se1.Close()
+	se2.Close()
 	sessionctx.GetDomain(ctx).Close()
 	err = store.Close()
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
+}
+
+func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
+	// TODO: testleak package should be able to find this leak.
+	store := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
+	defer store.Close()
+	se, err := createSession(store)
+	c.Assert(err, IsNil)
+
+	// Test an issue that sysSessionPool doesn't call session's Close, cause
+	// asyncGetTSWorker goroutine leak.
+	before := runtime.NumGoroutine()
+	count := 200
+	var wg sync.WaitGroup
+	wg.Add(count)
+	for i := 0; i < count; i++ {
+		go func(se *session) {
+			_, _, err := se.ExecRestrictedSQL(se, "select * from mysql.user limit 1")
+			c.Assert(err, IsNil)
+			wg.Done()
+		}(se)
+	}
+	wg.Wait()
+	se.sysSessionPool().Close()
+	c.Assert(se.sysSessionPool().IsClosed(), Equals, true)
+	for i := 0; i < 300; i++ {
+		// After and before should be Equal, but this test may be disturbed by other factors.
+		// So I relax the strict check to make CI more stable.
+		after := runtime.NumGoroutine()
+		if after-before < 3 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	after := runtime.NumGoroutine()
+	c.Assert(after-before, Less, 3)
 }
 
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
@@ -371,7 +406,6 @@ func newSession(c *C, store kv.Storage, dbName string) Session {
 	id := atomic.AddUint64(&testConnID, 1)
 	se.SetConnectionID(id)
 	c.Assert(err, IsNil)
-	se.GetSessionVars().SkipDDLWait = true
 	se.Auth(`root@%`, nil, []byte("012345678901234567890"))
 	mustExecSQL(c, se, "create database if not exists "+dbName)
 	mustExecSQL(c, se, "use "+dbName)

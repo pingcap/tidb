@@ -59,6 +59,19 @@ func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
 	return tsMu.physicalTS, tsMu.logicalTS, nil
 }
 
+func (c *pdClient) GetTSAsync(ctx context.Context) pd.TSFuture {
+	return &mockTSFuture{c, ctx}
+}
+
+type mockTSFuture struct {
+	pdc *pdClient
+	ctx context.Context
+}
+
+func (m *mockTSFuture) Wait() (int64, int64, error) {
+	return m.pdc.GetTS(m.ctx)
+}
+
 func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
 	region, peer := c.cluster.GetRegionByKey(key)
 	return region, peer, nil
@@ -70,6 +83,11 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	store := c.cluster.GetStore(storeID)
 	return store, nil
 }

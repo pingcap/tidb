@@ -193,7 +193,8 @@ func prepareTableData(store kv.Storage, tbl *simpleTableInfo, count int64, gen g
 func setRow(txn kv.Transaction, handle int64, tbl *simpleTableInfo, gen genValueFunc) error {
 	rowKey := tablecodec.EncodeRowKey(tbl.tID, codec.EncodeInt(nil, handle))
 	columnValues := gen(handle, tbl)
-	value, err := tablecodec.EncodeRow(columnValues, tbl.cIDs)
+	// TODO: Should use session's TimeZone instead of UTC.
+	value, err := tablecodec.EncodeRow(columnValues, tbl.cIDs, time.UTC)
 	if err != nil {
 		return errors.Trace(err)
 	}

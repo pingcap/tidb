@@ -87,7 +87,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 }
 
 func (ts *testDatumSuite) TestEqualDatums(c *C) {
-	testCases := []struct {
+	tests := []struct {
 		a    []interface{}
 		b    []interface{}
 		same bool
@@ -109,8 +109,8 @@ func (ts *testDatumSuite) TestEqualDatums(c *C) {
 		{[]interface{}{1}, []interface{}{1, 1}, false},
 		{[]interface{}{nil}, []interface{}{1}, false},
 	}
-	for _, t := range testCases {
-		testEqualDatums(c, t.a, t.b, t.same)
+	for _, tt := range tests {
+		testEqualDatums(c, tt.a, tt.b, tt.same)
 	}
 }
 
@@ -184,8 +184,55 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	c.Assert(converted.GetFloat64(), Equals, datum.GetFloat64())
 }
 
+// mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
+func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
+	t, err := ParseTime(s, tp, fsp)
+	if err != nil {
+		panic("ParseTime fail")
+	}
+	d.SetMysqlTime(t)
+	return
+}
+
+func (ts *testDatumSuite) TestToJSON(c *C) {
+	ft := NewFieldType(mysql.TypeJSON)
+	sc := new(variable.StatementContext)
+	tests := []struct {
+		datum    Datum
+		expected string
+		success  bool
+	}{
+		{NewIntDatum(1), `1.0`, true},
+		{NewFloat64Datum(2), `2`, true},
+		{NewStringDatum("\"hello, 世界\""), `"hello, 世界"`, true},
+		{NewStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
+		{NewStringDatum("{}"), `{}`, true},
+		{NewIntDatum(1), `true`, true},
+		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
+
+		// can not parse JSON from this string, so error occurs.
+		{NewStringDatum("hello, 世界"), "", false},
+	}
+	for _, tt := range tests {
+		obtain, err := tt.datum.ConvertTo(sc, ft)
+		if tt.success {
+			c.Assert(err, IsNil)
+
+			sd := NewStringDatum(tt.expected)
+			expected, err := sd.ConvertTo(sc, ft)
+			c.Assert(err, IsNil)
+
+			cmp, err := obtain.CompareDatum(sc, expected)
+			c.Assert(err, IsNil)
+			c.Assert(cmp, Equals, 0)
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
 func (ts *testDatumSuite) TestIsNull(c *C) {
-	testCases := []struct {
+	tests := []struct {
 		data   interface{}
 		isnull bool
 	}{
@@ -196,8 +243,8 @@ func (ts *testDatumSuite) TestIsNull(c *C) {
 		{"string", false},
 		{"", false},
 	}
-	for _, t := range testCases {
-		testIsNull(c, t.data, t.isnull)
+	for _, tt := range tests {
+		testIsNull(c, tt.data, tt.isnull)
 	}
 }
 
@@ -207,7 +254,7 @@ func testIsNull(c *C, data interface{}, isnull bool) {
 }
 
 func (ts *testDatumSuite) TestCoerceDatum(c *C) {
-	testCases := []struct {
+	tests := []struct {
 		a    Datum
 		b    Datum
 		kind byte
@@ -219,16 +266,16 @@ func (ts *testDatumSuite) TestCoerceDatum(c *C) {
 	}
 	sc := new(variable.StatementContext)
 	sc.IgnoreTruncate = true
-	for _, ca := range testCases {
-		x, y, err := CoerceDatum(sc, ca.a, ca.b)
+	for _, tt := range tests {
+		x, y, err := CoerceDatum(sc, tt.a, tt.b)
 		c.Check(err, IsNil)
 		c.Check(x.Kind(), Equals, y.Kind())
-		c.Check(x.Kind(), Equals, ca.kind)
+		c.Check(x.Kind(), Equals, tt.kind)
 	}
 }
 
 func (ts *testDatumSuite) TestBitOps(c *C) {
-	testCases := []struct {
+	tests := []struct {
 		a      Datum
 		b      Datum
 		bitop  string // bitwise operator
@@ -275,34 +322,34 @@ func (ts *testDatumSuite) TestBitOps(c *C) {
 		{NewFloat64Datum(1024), NewFloat64Datum(10.5), "RightShift", NewUintDatum(0)},
 	}
 
-	for _, ca := range testCases {
+	for _, tt := range tests {
 		var (
 			result Datum
 			err    error
 		)
 		sc := new(variable.StatementContext)
 		sc.IgnoreTruncate = true
-		switch ca.bitop {
+		switch tt.bitop {
 		case "And":
-			result, err = ComputeBitAnd(sc, ca.a, ca.b)
+			result, err = ComputeBitAnd(sc, tt.a, tt.b)
 		case "Or":
-			result, err = ComputeBitOr(sc, ca.a, ca.b)
+			result, err = ComputeBitOr(sc, tt.a, tt.b)
 		case "Not":
-			result, err = ComputeBitNeg(sc, ca.a)
+			result, err = ComputeBitNeg(sc, tt.a)
 		case "Xor":
-			result, err = ComputeBitXor(sc, ca.a, ca.b)
+			result, err = ComputeBitXor(sc, tt.a, tt.b)
 		case "LeftShift":
-			result, err = ComputeLeftShift(sc, ca.a, ca.b)
+			result, err = ComputeLeftShift(sc, tt.a, tt.b)
 		case "RightShift":
-			result, err = ComputeRightShift(sc, ca.a, ca.b)
+			result, err = ComputeRightShift(sc, tt.a, tt.b)
 		}
 		c.Check(err, Equals, nil)
-		c.Assert(result.GetUint64(), Equals, ca.result.GetUint64())
+		c.Assert(result.GetUint64(), Equals, tt.result.GetUint64())
 	}
 }
 
 func (ts *testDatumSuite) TestToBytes(c *C) {
-	testCases := []struct {
+	tests := []struct {
 		a   Datum
 		out []byte
 	}{
@@ -313,9 +360,9 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 	}
 	sc := new(variable.StatementContext)
 	sc.IgnoreTruncate = true
-	for _, ca := range testCases {
-		bin, err := ca.a.ToBytes()
+	for _, tt := range tests {
+		bin, err := tt.a.ToBytes()
 		c.Assert(err, IsNil)
-		c.Assert(bin, BytesEquals, ca.out)
+		c.Assert(bin, BytesEquals, tt.out)
 	}
 }

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-var aesCases = []struct {
+var aesTests = []struct {
 	origin interface{}
 	key    interface{}
 	crypt  interface{}
@@ -40,13 +40,13 @@ var aesCases = []struct {
 func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesEncrypt]
-	for _, test := range aesCases {
-		str := types.NewDatum(test.origin)
-		key := types.NewDatum(test.key)
+	for _, tt := range aesTests {
+		str := types.NewDatum(tt.origin)
+		key := types.NewDatum(tt.key)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, key}), s.ctx)
 		crypt, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(test.crypt))
+		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
 	}
 	s.testNullInput(c, ast.AesDecrypt)
 }
@@ -54,7 +54,7 @@ func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesDecrypt]
-	for _, test := range aesCases {
+	for _, test := range aesTests {
 		cryptStr := fromHex(test.crypt)
 		key := types.NewDatum(test.key)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{cryptStr, key}), s.ctx)
@@ -100,7 +100,7 @@ func fromHex(str interface{}) (d types.Datum) {
 	return d
 }
 
-var shaCases = []struct {
+var shaTests = []struct {
 	origin interface{}
 	crypt  string
 }{
@@ -115,14 +115,14 @@ var shaCases = []struct {
 func (s *testEvaluatorSuite) TestShaEncrypt(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.SHA]
-	for _, test := range shaCases {
-		in := types.NewDatum(test.origin)
+	for _, tt := range shaTests {
+		in := types.NewDatum(tt.origin)
 		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
 		crypt, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		res, err := crypt.ToString()
 		c.Assert(err, IsNil)
-		c.Assert(res, Equals, test.crypt)
+		c.Assert(res, Equals, tt.crypt)
 	}
 	// test NULL input for sha
 	var argNull types.Datum
@@ -132,7 +132,7 @@ func (s *testEvaluatorSuite) TestShaEncrypt(c *C) {
 	c.Assert(crypt.IsNull(), IsTrue)
 }
 
-var sha2Cases = []struct {
+var sha2Tests = []struct {
 	origin     interface{}
 	hashLength interface{}
 	crypt      interface{}
@@ -156,50 +156,59 @@ var sha2Cases = []struct {
 func (s *testEvaluatorSuite) TestSha2Encrypt(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.SHA2]
-	for _, test := range sha2Cases {
-		str := types.NewDatum(test.origin)
-		hashLength := types.NewDatum(test.hashLength)
+	for _, tt := range sha2Tests {
+		str := types.NewDatum(tt.origin)
+		hashLength := types.NewDatum(tt.hashLength)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, hashLength}), s.ctx)
 		crypt, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		if test.validCase {
+		if tt.validCase {
 			res, err := crypt.ToString()
 			c.Assert(err, IsNil)
-			c.Assert(res, Equals, test.crypt)
+			c.Assert(res, Equals, tt.crypt)
 		} else {
 			c.Assert(crypt.IsNull(), IsTrue)
 		}
 	}
 }
 
-type md5Test struct {
-	out interface{}
-	in  interface{}
-}
-
-var md5Cases = []md5Test{
-	{"d41d8cd98f00b204e9800998ecf8427e", ""},
-	{"0cc175b9c0f1b6a831c399e269772661", "a"},
-	{"187ef4436122d1cc2f40dc2b92f0eba0", "ab"},
-	{"900150983cd24fb0d6963f7d28e17f72", "abc"},
-	{"202cb962ac59075b964b07152d234b70", 123},
-	{"202cb962ac59075b964b07152d234b70", "123"},
-	{"46ddc40585caa8abc07c460b3485781e", 123.123},
-	{nil, nil},
-}
-
 func (s *testEvaluatorSuite) TestMD5(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.MD5]
-	for _, test := range md5Cases {
-		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
-		c.Assert(err, IsNil)
-		out, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(out, DeepEquals, types.NewDatum(test.out))
+
+	cases := []struct {
+		args     interface{}
+		expected string
+		isNil    bool
+		getErr   bool
+	}{
+		{"", "d41d8cd98f00b204e9800998ecf8427e", false, false},
+		{"a", "0cc175b9c0f1b6a831c399e269772661", false, false},
+		{"ab", "187ef4436122d1cc2f40dc2b92f0eba0", false, false},
+		{"abc", "900150983cd24fb0d6963f7d28e17f72", false, false},
+		{123, "202cb962ac59075b964b07152d234b70", false, false},
+		{"123", "202cb962ac59075b964b07152d234b70", false, false},
+		{123.123, "46ddc40585caa8abc07c460b3485781e", false, false},
+		{nil, "", true, false},
 	}
-	s.testNullInput(c, ast.AesDecrypt)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.MD5, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.expected)
+			}
+		}
+	}
+	f, err := funcs[ast.MD5].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+
 }
 
 type compressTest struct {
@@ -207,22 +216,23 @@ type compressTest struct {
 	out interface{}
 }
 
-var compressCases = []compressTest{
+var compressTests = []compressTest{
 	{[]byte("hello world"), []byte{120, 156, 202, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 4, 0, 0, 255, 255, 26, 11, 4, 93}},
 	{[]byte("i love you)"), []byte{120, 156, 202, 84, 200, 201, 47, 75, 85, 168, 204, 47, 213, 4, 4, 0, 0, 255, 255, 23, 142, 3, 230}},
 	{nil, nil},
+	{string(""), string("")},
 }
 
 func (s *testEvaluatorSuite) TestCompress(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Compress]
-	for _, test := range compressCases {
-		arg := types.NewDatum(test.in)
+	for _, tt := range compressTests {
+		arg := types.NewDatum(tt.in)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
 		c.Assert(err, IsNil)
 		out, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(out, DeepEquals, types.NewDatum(test.out))
+		c.Assert(out, DeepEquals, types.NewDatum(tt.out))
 	}
 }
 
@@ -253,4 +263,85 @@ func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
 	out, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(len(out.GetBytes()), Equals, 0)
+}
+
+func (s *testEvaluatorSuite) TestUncompress(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		in     interface{}
+		expect interface{}
+	}{
+		{[]byte{120, 156, 202, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 4, 0, 0, 255, 255, 26, 11, 4, 93}, []byte("hello world")},
+		{[]byte{120, 156, 202, 84, 200, 201, 47, 75, 85, 168, 204, 47, 213, 4, 4, 0, 0, 255, 255, 23, 142, 3, 230}, []byte("i love you)")},
+		{nil, nil},
+		{string(""), string("")},
+	}
+
+	fc := funcs[ast.Uncompress]
+	for _, test := range tests {
+		arg := types.NewDatum(test.in)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		out, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(out, DeepEquals, types.NewDatum(test.expect))
+	}
+}
+func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		in     interface{}
+		expect interface{}
+	}{
+		{[]byte{120, 156, 202, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 4, 0, 0, 255, 255, 26, 11, 4, 93}, int64(11)},
+		{[]byte{120, 156, 202, 84, 200, 201, 47, 75, 85, 168, 204, 47, 213, 4, 4, 0, 0, 255, 255, 23, 142, 3, 230}, int64(11)},
+		{nil, int64(0)},
+		{string(""), int64(0)},
+	}
+
+	fc := funcs[ast.UncompressedLength]
+	for _, test := range tests {
+		arg := types.NewDatum(test.in)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		out, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(out.GetInt64(), Equals, test.expect)
+	}
+}
+func (s *testEvaluatorSuite) TestPassword(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		args     interface{}
+		expected string
+		isNil    bool
+		getErr   bool
+	}{
+		{nil, "", true, false},
+		{"", "", false, false},
+		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", false, false},
+		{123, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", false, false},
+		{1.23, "*A589EEBA8D3F9E1A34A7EE518FAC4566BFAD5BB6", false, false},
+		{types.NewDecFromFloatForTest(123.123), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1", false, false},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.PasswordFunc, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.expected)
+			}
+		}
+	}
+
+	f, err := funcs[ast.PasswordFunc].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }

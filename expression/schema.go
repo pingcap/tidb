@@ -74,6 +74,13 @@ func (s *Schema) Clone() *Schema {
 // FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
 func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
+	col, _, err := s.FindColumnAndIndex(astCol)
+	return col, errors.Trace(err)
+}
+
+// FindColumnAndIndex finds an Column and its index from schema for a ast.ColumnName.
+// It compares the db/table/column names. If there are more than one result, raise ambiguous error.
+func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, col := range s.Columns {
@@ -83,14 +90,14 @@ func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 			if idx == -1 {
 				idx = i
 			} else {
-				return nil, errors.Errorf("Column %s is ambiguous", col.String())
+				return nil, -1, errors.Errorf("Column %s is ambiguous", col.String())
 			}
 		}
 	}
 	if idx == -1 {
-		return nil, nil
+		return nil, idx, nil
 	}
-	return s.Columns[idx], nil
+	return s.Columns[idx], idx, nil
 }
 
 // RetrieveColumn retrieves column in expression from the columns in schema.
@@ -157,8 +164,29 @@ func (s *Schema) ColumnsIndices(cols []*Column) (ret []int) {
 	return
 }
 
+// ColumnsByIndices returns columns by multiple offsets.
+// Callers should guarantee that all the offsets provided should be valid, which means offset should:
+// 1. not smaller than 0, and
+// 2. not exceed len(s.Columns)
+func (s *Schema) ColumnsByIndices(offsets []int) []*Column {
+	cols := make([]*Column, 0, len(offsets))
+	for _, offset := range offsets {
+		cols = append(cols, s.Columns[offset])
+	}
+	return cols
+}
+
 // MergeSchema will merge two schema into one schema.
 func MergeSchema(lSchema, rSchema *Schema) *Schema {
+	if lSchema == nil && rSchema == nil {
+		return nil
+	}
+	if lSchema == nil {
+		return rSchema.Clone()
+	}
+	if rSchema == nil {
+		return lSchema.Clone()
+	}
 	tmpL := lSchema.Clone()
 	tmpR := rSchema.Clone()
 	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)

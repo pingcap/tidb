@@ -93,26 +93,39 @@ func (*testSuite) TestJobCodec(c *C) {
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: NewCIStr("test_history_tbl")})
 
-	b, err := job.Encode()
+	b, err := job.Encode(false)
 	c.Assert(err, IsNil)
-
 	newJob := &Job{}
 	err = newJob.Decode(b)
 	c.Assert(err, IsNil)
 	c.Assert(newJob.BinlogInfo, DeepEquals, job.BinlogInfo)
-
 	name := CIStr{}
 	a := A{}
 	err = newJob.DecodeArgs(&name, &a)
 	c.Assert(err, IsNil)
+	c.Assert(name, DeepEquals, NewCIStr(""))
+	c.Assert(a, DeepEquals, A{Name: ""})
+	c.Assert(len(newJob.String()), Greater, 0)
+
+	b1, err := job.Encode(true)
+	c.Assert(err, IsNil)
+	newJob = &Job{}
+	err = newJob.Decode(b1)
+	c.Assert(err, IsNil)
+	c.Assert(newJob.BinlogInfo, DeepEquals, job.BinlogInfo)
+	name = CIStr{}
+	a = A{}
+	err = newJob.DecodeArgs(&name, &a)
+	c.Assert(err, IsNil)
 	c.Assert(name, DeepEquals, NewCIStr("a"))
 	c.Assert(a, DeepEquals, A{Name: "abc"})
-
 	c.Assert(len(newJob.String()), Greater, 0)
 
 	job.State = JobDone
+	c.Assert(job.IsDone(), IsTrue)
 	c.Assert(job.IsFinished(), IsTrue)
 	c.Assert(job.IsRunning(), IsFalse)
+	c.Assert(job.IsSynced(), IsFalse)
 }
 
 func (testSuite) TestState(c *C) {

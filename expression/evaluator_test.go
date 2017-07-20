@@ -44,6 +44,11 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
+	TurnOnNewExprEval = true
+}
+
+func (s *testEvaluatorSuite) TearDownSuite(c *C) {
+	TurnOnNewExprEval = false
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {
@@ -396,7 +401,7 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 
 func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		args      []interface{}
 		resultStr string
 	}{
@@ -405,20 +410,20 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 	}
 
 	c.Log(s.ctx)
-	for _, ca := range cases {
+	for _, tt := range tests {
 		fc := funcs[ast.LastInsertId]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(ca.args...)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(tt.args...)), s.ctx)
 		c.Assert(err, IsNil)
 		val, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		valStr := fmt.Sprintf("%v", val.GetValue())
-		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %v", ca.args))
+		c.Assert(valStr, Equals, tt.resultStr, Commentf("for %v", tt.args))
 	}
 }
 
 func (s *testEvaluatorSuite) TestLike(c *C) {
 	defer testleak.AfterTest(c)()
-	testCases := []struct {
+	tests := []struct {
 		input   string
 		pattern string
 		match   int
@@ -430,19 +435,19 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{"aAb", "Aa%", 1},
 		{"aAb", "Aa_", 1},
 	}
-	for _, tc := range testCases {
+	for _, tt := range tests {
 		fc := funcs[ast.Like]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(tc.input, tc.pattern, 0)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tc.match))
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
 	}
 }
 
 func (s *testEvaluatorSuite) TestRegexp(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
+	tests := []struct {
 		pattern string
 		input   string
 		match   int64
@@ -457,13 +462,13 @@ func (s *testEvaluatorSuite) TestRegexp(c *C) {
 		{".ab", "aab", 1},
 		{".*", "abcd", 1},
 	}
-	for _, v := range tbl {
+	for _, tt := range tests {
 		fc := funcs[ast.Regexp]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.input, v.pattern)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(tt.input, tt.pattern)), s.ctx)
 		c.Assert(err, IsNil)
 		match, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(match, testutil.DatumEquals, types.NewDatum(v.match), Commentf("%v", v))
+		c.Assert(match, testutil.DatumEquals, types.NewDatum(tt.match), Commentf("%v", tt))
 	}
 }
 
@@ -577,35 +582,4 @@ func (s *testEvaluatorSuite) TestMod(c *C) {
 	r, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(1.5))
-}
-
-func (s *testEvaluatorSuite) TestDynamic(c *C) {
-	var dynamicFuncs = map[string]int{
-		ast.Rand:         0,
-		ast.ConnectionID: 0,
-		ast.CurrentUser:  0,
-		ast.User:         0,
-		ast.Database:     0,
-		ast.Schema:       0,
-		ast.FoundRows:    0,
-		ast.LastInsertId: 0,
-		ast.Version:      0,
-		ast.Sleep:        0,
-		ast.GetVar:       0,
-		ast.SetVar:       0,
-		ast.Values:       0,
-		ast.SessionUser:  0,
-		ast.SystemUser:   0,
-		ast.RowCount:     0,
-	}
-	for name, fc := range funcs {
-		f, _ := fc.getFunction(nil, s.ctx)
-		if _, ok := dynamicFuncs[name]; ok {
-			c.Assert(f.isDeterministic(), IsFalse)
-		} else {
-			c.Assert(f.isDeterministic(), IsTrue)
-		}
-	}
-	values := NewValuesFunc(0, nil, nil)
-	c.Assert(values.Function.isDeterministic(), IsFalse)
 }

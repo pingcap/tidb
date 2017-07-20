@@ -294,7 +294,7 @@ func driveRunCmd() {
 		log.Fatal(errors.New("buffer size must be positive"))
 	}
 	if nWorkers <= 0 {
-		log.Fatal(errors.New("the number of workers must be postive"))
+		log.Fatal(errors.New("the number of workers must be positive"))
 	}
 	if inputRatio < 0 || inputRatio > 100 {
 		log.Fatal(errors.New("input ratio must between 0 and 100 (inclusive)"))

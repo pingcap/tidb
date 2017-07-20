@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"encoding/binary"
 	"sort"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -180,7 +181,7 @@ type selectContext struct {
 	// TODO: Only one of these three flags can be true at the same time. We should set this as an enum var.
 	aggregate bool
 	descScan  bool
-	topn      bool
+	topN      bool
 
 	// Use for DecodeRow.
 	colTps map[int64]*types.FieldType
@@ -207,7 +208,8 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			keyRanges: req.ranges,
 			sc:        xeval.FlagsToStatementContext(sel.Flags),
 		}
-		ctx.eval = xeval.NewEvaluator(ctx.sc)
+		loc := time.FixedZone("UTC", int(sel.TimeZoneOffset))
+		ctx.eval = xeval.NewEvaluator(ctx.sc, loc)
 		if sel.Where != nil {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
 			collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)
@@ -219,7 +221,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 				if sel.Limit == nil {
 					return nil, errors.New("we don't support pushing down Sort without Limit")
 				}
-				ctx.topn = true
+				ctx.topN = true
 				ctx.topnHeap = &topnHeap{
 					totalCount: int(*sel.Limit),
 					topnSorter: topnSorter{
@@ -267,7 +269,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			}
 			err = rs.getRowsFromIndexReq(ctx)
 		}
-		if ctx.topn {
+		if ctx.topN {
 			rs.setTopNDataForCtx(ctx)
 		}
 		selResp := new(tipb.SelectResponse)
@@ -591,7 +593,7 @@ func (rs *localRegion) valuesToRow(ctx *selectContext, handle int64, values map[
 	if !match {
 		return false, nil
 	}
-	if ctx.topn {
+	if ctx.topN {
 		return false, errors.Trace(rs.evalTopN(ctx, handle, values, columns))
 	}
 	if ctx.aggregate {
@@ -648,7 +650,7 @@ func (rs *localRegion) setColumnValueToCtx(ctx *selectContext, h int64, row map[
 		} else {
 			data := row[colID]
 			ft := distsql.FieldTypeFromPBColumn(col)
-			datum, err := tablecodec.DecodeColumnValue(data, ft)
+			datum, err := tablecodec.DecodeColumnValue(data, ft, ctx.eval.TimeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -14,18 +14,13 @@
 package executor_test
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 )
 
 type MockExec struct {
@@ -57,14 +52,23 @@ func (m *MockExec) Close() error {
 	return nil
 }
 
+func (m *MockExec) Open() error {
+	m.curRowIdx = 0
+	return nil
+}
+
 func (s *testSuite) TestAggregation(c *C) {
-	mocktikv.MockDAGRequest = true
+	// New expression evaluation architecture does not support aggregation functions now.
+	origin := expression.TurnOnNewExprEval
+	expression.TurnOnNewExprEval = false
+	defer func() {
+		expression.TurnOnNewExprEval = origin
+	}()
 	plan.JoinConcurrency = 1
 	defer func() {
 		plan.JoinConcurrency = 5
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -168,6 +172,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("-1", "-1", "-2", "-2"))
 	result = tk.MustQuery("select 1-d as d from t having d + 1 < 0 order by d + 1")
 	result.Check(testkit.Rows("-2", "-2"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (keywords varchar(20), type int)")
+	tk.MustExec("insert into t values('测试', 1), ('test', 2)")
+	result = tk.MustQuery("select group_concat(keywords) from t group by type order by type")
+	result.Check(testkit.Rows("测试", "test"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
 	tk.MustExec("insert t values (1, -1)")
@@ -275,7 +284,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory table in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "587"
+	columnCountOfAllInformationSchemaTables := "733"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -303,101 +312,10 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustQuery("select sum(a), sum(b) from idx_agg where b > 0 and b < 10")
 }
 
-func (s *testSuite) TestStreamAgg(c *C) {
-	col := &expression.Column{
-		Index: 1,
-	}
-	gbyCol := &expression.Column{
-		Index: 0,
-	}
-	sumAgg := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{col}, false)
-	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
-	avgAgg := expression.NewAggFunction(ast.AggFuncAvg, []expression.Expression{col}, false)
-	maxAgg := expression.NewAggFunction(ast.AggFuncMax, []expression.Expression{col}, false)
-	cases := []struct {
-		aggFunc expression.AggregationFunction
-		result  string
-		input   [][]interface{}
-		result1 []string
-	}{
-		{
-			sumAgg,
-			"<nil>",
-			[][]interface{}{
-				{0, 1}, {0, nil}, {1, 2}, {1, 3},
-			},
-			[]string{
-				"1", "5",
-			},
-		},
-		{
-			cntAgg,
-			"0",
-			[][]interface{}{
-				{0, 1}, {0, nil}, {1, 2}, {1, 3},
-			},
-			[]string{
-				"1", "2",
-			},
-		},
-		{
-			avgAgg,
-			"<nil>",
-			[][]interface{}{
-				{0, 1}, {0, nil}, {1, 2}, {1, 3},
-			},
-			[]string{
-				"1.0000", "2.5000",
-			},
-		},
-		{
-			maxAgg,
-			"<nil>",
-			[][]interface{}{
-				{0, 1}, {0, nil}, {1, 2}, {1, 3},
-			},
-			[]string{
-				"1", "3",
-			},
-		},
-	}
-	ctx := mock.NewContext()
-	for _, ca := range cases {
-		mock := &MockExec{}
-		e := &executor.StreamAggExec{
-			AggFuncs: []expression.AggregationFunction{ca.aggFunc},
-			Src:      mock,
-			Ctx:      ctx,
-		}
-		row, err := e.Next()
-		c.Check(err, IsNil)
-		c.Check(row, NotNil)
-		c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, ca.result)
-		e.GroupByItems = append(e.GroupByItems, gbyCol)
-		e.Close()
-		row, err = e.Next()
-		c.Check(err, IsNil)
-		c.Check(row, IsNil)
-		e.Close()
-		for _, input := range ca.input {
-			data := types.MakeDatums(input...)
-			mock.Rows = append(mock.Rows, &executor.Row{Data: data})
-		}
-		for _, res := range ca.result1 {
-			row, err = e.Next()
-			c.Check(err, IsNil)
-			c.Check(row, NotNil)
-			c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, res)
-		}
-	}
-}
-
 func (s *testSuite) TestAggPrune(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -427,18 +345,15 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 
 	tk.MustExec("begin")
 	r := tk.MustQuery("select distinct name from select_distinct_test;")
-	rowStr := fmt.Sprintf("%v", []byte("hello"))
-	r.Check(testkit.Rows(rowStr))
+	r.Check(testkit.Rows("hello"))
 	tk.MustExec("commit")
 
 }
 
 func (s *testSuite) TestAggPushDown(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

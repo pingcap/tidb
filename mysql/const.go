@@ -170,10 +170,16 @@ const (
 	SuperPriv
 	// CreateUserPriv is the privilege to create user.
 	CreateUserPriv
+	// TriggerPriv is not checked yet.
+	TriggerPriv
 	// DropPriv is the privilege to drop schema/table.
 	DropPriv
+	// ProcessPriv pertains to display of information about the threads executing within the server.
+	ProcessPriv
 	// GrantPriv is the privilege to grant privilege to user.
 	GrantPriv
+	// ReferencesPriv is not checked yet.
+	ReferencesPriv
 	// AlterPriv is the privilege to run alter statement.
 	AlterPriv
 	// ExecutePriv is the privilege to run execute statement.
@@ -187,6 +193,25 @@ const (
 // AllPrivMask is the mask for PrivilegeType with all bits set to 1.
 const AllPrivMask = AllPriv - 1
 
+// MySQL type maximum length.
+const (
+	// For arguments that have no fixed number of decimals, the decimals value is set to 31,
+	// which is 1 more than the maximum number of decimals permitted for the DECIMAL, FLOAT, and DOUBLE data types.
+	NotFixedDec = 31
+
+	MaxIntWidth             = 20
+	MaxRealWidth            = 23
+	MaxDateWidth            = 10 // YYYY-MM-DD.
+	MaxDatetimeWidthNoFsp   = 19 // YYYY-MM-DD HH:MM:SS
+	MaxDatetimeWidthWithFsp = 26 // YYYY-MM-DD HH:MM:SS[.fraction]
+	MaxDurationWidthNoFsp   = 9  // HH:MM:SS
+	MaxDurationWidthWithFsp = 15 // HH:MM:SS[.fraction]
+	MaxBlobWidth            = 16777216
+)
+
+// PWDHashLen is the length of password's hash.
+const PWDHashLen = 40
+
 // Priv2UserCol is the privilege to mysql.user table column name.
 var Priv2UserCol = map[PrivilegeType]string{
 	CreatePriv:     "Create_priv",
@@ -197,8 +222,11 @@ var Priv2UserCol = map[PrivilegeType]string{
 	ShowDBPriv:     "Show_db_priv",
 	SuperPriv:      "Super_priv",
 	CreateUserPriv: "Create_user_priv",
+	TriggerPriv:    "Trigger_priv",
 	DropPriv:       "Drop_priv",
+	ProcessPriv:    "Process_priv",
 	GrantPriv:      "Grant_priv",
+	ReferencesPriv: "References_priv",
 	AlterPriv:      "Alter_priv",
 	ExecutePriv:    "Execute_priv",
 	IndexPriv:      "Index_priv",
@@ -214,15 +242,18 @@ var Col2PrivType = map[string]PrivilegeType{
 	"Show_db_priv":     ShowDBPriv,
 	"Super_priv":       SuperPriv,
 	"Create_user_priv": CreateUserPriv,
+	"Trigger_priv":     TriggerPriv,
 	"Drop_priv":        DropPriv,
+	"Process_priv":     ProcessPriv,
 	"Grant_priv":       GrantPriv,
+	"References_priv":  ReferencesPriv,
 	"Alter_priv":       AlterPriv,
 	"Execute_priv":     ExecutePriv,
 	"Index_priv":       IndexPriv,
 }
 
 // AllGlobalPrivs is all the privileges in global scope.
-var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv}
+var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, GrantPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, TriggerPriv}
 
 // Priv2Str is the map for privilege to string.
 var Priv2Str = map[PrivilegeType]string{
@@ -234,8 +265,11 @@ var Priv2Str = map[PrivilegeType]string{
 	ShowDBPriv:     "Show Databases",
 	SuperPriv:      "Super",
 	CreateUserPriv: "Create User",
+	TriggerPriv:    "Trigger",
 	DropPriv:       "Drop",
+	ProcessPriv:    "Process",
 	GrantPriv:      "Grant Option",
+	ReferencesPriv: "References",
 	AlterPriv:      "Alter",
 	ExecutePriv:    "Execute",
 	IndexPriv:      "Index",
@@ -421,3 +455,15 @@ var locale2FormatFunction = map[string]FormatFunc{
 	"en_US": formatENUS,
 	"zh_CN": formatZHCN,
 }
+
+// PriorityEnum is defined for Priority const values.
+type PriorityEnum int
+
+// Priority const values.
+// See https://dev.mysql.com/doc/refman/5.7/en/insert.html
+const (
+	NoPriority PriorityEnum = iota
+	LowPriority
+	HighPriority
+	DelayedPriority
+)

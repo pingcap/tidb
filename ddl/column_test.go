@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testColumnSuite{})
@@ -44,7 +45,7 @@ type testColumnSuite struct {
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_column")
-	s.d = newDDL(s.store, nil, nil, testLease)
+	s.d = newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
@@ -275,7 +276,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table,
 	}
 	colMap := make(map[int64]*types.FieldType)
 	colMap[col.ID] = &col.FieldType
-	rowMap, err := tablecodec.DecodeRow(data, colMap)
+	rowMap, err := tablecodec.DecodeRow(data, colMap, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -738,7 +739,7 @@ func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool
 
 func (s *testColumnSuite) TestAddColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(d)
 
@@ -797,7 +798,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	s.d.Stop()
 
 	d.Stop()
-	d.start()
+	d.start(goctx.Background())
 
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, newColName, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultColValue)
 
@@ -819,12 +820,12 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	s.d.start()
+	s.d.start(goctx.Background())
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 4)
 	ctx := testNewContext(d)
 
@@ -873,7 +874,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	s.d.Stop()
 
 	d.Stop()
-	d.start()
+	d.start(goctx.Background())
 
 	job := testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
 	testCheckJobDone(c, d, job, false)
@@ -894,30 +895,35 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	s.d.start()
+	s.d.start(goctx.Background())
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
-	d := newDDL(s.store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
-	cases := []struct {
+	tests := []struct {
 		origin string
 		to     string
-		ok     bool
+		err    error
 	}{
-		{"int", "bigint", true},
-		{"int", "int unsigned", false},
-		{"varchar(10)", "text", true},
-		{"varbinary(10)", "blob", true},
-		{"text", "blob", false},
-		{"varchar(10)", "varchar(8)", false},
-		{"varchar(10)", "varchar(11)", true},
-		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", true},
+		{"int", "bigint", nil},
+		{"int", "int unsigned", errUnsupportedModifyColumn.GenByArgs("unsigned true not match origin false")},
+		{"varchar(10)", "text", nil},
+		{"varbinary(10)", "blob", nil},
+		{"text", "blob", errUnsupportedModifyColumn.GenByArgs("charset binary not match origin utf8")},
+		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenByArgs("length 8 is less than origin 10")},
+		{"varchar(10)", "varchar(11)", nil},
+		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
 	}
-	for _, ca := range cases {
-		ftA := s.colDefStrToFieldType(c, ca.origin)
-		ftB := s.colDefStrToFieldType(c, ca.to)
-		c.Assert(modifiable(ftA, ftB), Equals, ca.ok)
+	for _, tt := range tests {
+		ftA := s.colDefStrToFieldType(c, tt.origin)
+		ftB := s.colDefStrToFieldType(c, tt.to)
+		err := modifiable(ftA, ftB)
+		if err == nil {
+			c.Assert(tt.err, IsNil)
+		} else {
+			c.Assert(err.Error(), Equals, tt.err.Error())
+		}
 	}
 }
 
@@ -929,4 +935,19 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	col, _, err := buildColumnAndConstraint(nil, 0, colDef)
 	c.Assert(err, IsNil)
 	return &col.FieldType
+}
+
+func (s *testColumnSuite) TestFieldCase(c *C) {
+	var fields = []string{"field", "Field"}
+	var colDefs = make([]*ast.ColumnDef, len(fields))
+	for i, name := range fields {
+		colDefs[i] = &ast.ColumnDef{
+			Name: &ast.ColumnName{
+				Schema: model.NewCIStr("TestSchema"),
+				Table:  model.NewCIStr("TestTable"),
+				Name:   model.NewCIStr(name),
+			},
+		}
+	}
+	c.Assert(checkDuplicateColumn(colDefs), NotNil)
 }

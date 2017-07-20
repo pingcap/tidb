@@ -35,7 +35,7 @@ func (k Key) Next() Key {
 //   rowkey1_column2
 //   rowKey2
 //
-// If we seek 'rowkey1' Next, we will get 'rowkey1_colum1'.
+// If we seek 'rowkey1' Next, we will get 'rowkey1_column1'.
 // If we seek 'rowkey1' PrefixNext, we will get 'rowkey2'.
 func (k Key) PrefixNext() Key {
 	buf := make([]byte, len([]byte(k)))

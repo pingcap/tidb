@@ -38,12 +38,19 @@ var (
 	_ StmtNode = &SetPwdStmt{}
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
-	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &FlushStmt{}
 	_ StmtNode = &KillStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
+)
+
+// Isolation level constants.
+const (
+	ReadCommitted   = "READ-COMMITTED"
+	ReadUncommitted = "READ-UNCOMMITTED"
+	Serializable    = "SERIALIZABLE"
+	RepeatableRead  = "REPEATABLE-READ"
 )
 
 // TypeOpt is used for parsing data type option from SQL.
@@ -61,7 +68,7 @@ type FloatOpt struct {
 
 // AuthOption is used for parsing create use statement.
 type AuthOption struct {
-	// AuthString/HashString can be empty, so we need to decide which one to use.
+	// ByAuthString set as true, if AuthString is used for authorization. Otherwise, authorization is done by HashString.
 	ByAuthString bool
 	AuthString   string
 	HashString   string
@@ -262,6 +269,7 @@ type VariableAssignment struct {
 	IsGlobal bool
 	IsSystem bool
 
+	// ExtendValue is a way to store extended info.
 	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
 	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
 	// TODO: Use SetStmt to implement set password statement.
@@ -299,9 +307,8 @@ type FlushStmt struct {
 
 	Tp              FlushStmtType // Privileges/Tables/...
 	NoWriteToBinLog bool
-	// For FlushTableStmt, if Tables is empty, it means flush all tables.
-	Tables   []*TableName
-	ReadLock bool
+	Tables          []*TableName // For FlushTableStmt, if Tables is empty, it means flush all tables.
+	ReadLock        bool
 }
 
 // Accept implements Node Accept interface.
@@ -318,10 +325,12 @@ func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 type KillStmt struct {
 	stmtNode
 
+	// Query indicates whether terminate a single query on this connection or the whole connection.
 	// If Query is true, terminates the statement the connection is currently executing, but leaves the connection itself intact.
 	// If Query is false, terminates the connection associated with the given ConnectionID, after terminating any statement the connection is executing.
 	Query        bool
 	ConnectionID uint64
+	// TiDBExtension is used to indicate whether the user knows he is sending kill statement to the right tidb-server.
 	// When the SQL grammar is "KILL TIDB [CONNECTION | QUERY] connectionID", TiDBExtension will be set.
 	// It's a special grammar extension in TiDB. This extension exists because, when the connection is:
 	// client -> LVS proxy -> TiDB, and type Ctrl+C in client, the following action will be executed:
@@ -410,6 +419,20 @@ func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
 type UserSpec struct {
 	User    string
 	AuthOpt *AuthOption
+}
+
+// SecurityString formats the UserSpec without password information.
+func (u *UserSpec) SecurityString() string {
+	withPassword := false
+	if opt := u.AuthOpt; opt != nil {
+		if len(opt.AuthString) > 0 || len(opt.HashString) > 0 {
+			withPassword = true
+		}
+	}
+	if withPassword {
+		return fmt.Sprintf("{%s password = ***}", u.User)
+	}
+	return u.User
 }
 
 // CreateUserStmt creates user account.
@@ -666,41 +689,19 @@ func (i Ident) String() string {
 	return fmt.Sprintf("%s.%s", i.Schema, i.Name)
 }
 
-// AnalyzeTableStmt is used to create table statistics.
-type AnalyzeTableStmt struct {
-	stmtNode
-
-	TableNames []*TableName
-}
-
-// Accept implements Node Accept interface.
-func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AnalyzeTableStmt)
-	for i, val := range n.TableNames {
-		node, ok := val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.TableNames[i] = node.(*TableName)
-	}
-	return v.Leave(n)
-}
-
 // SelectStmtOpts wrap around select hints and switches
 type SelectStmtOpts struct {
 	Distinct      bool
 	SQLCache      bool
 	CalcFoundRows bool
+	Priority      mysql.PriorityEnum
 	TableHints    []*TableOptimizerHint
 }
 
 // TableOptimizerHint is Table level optimizer hint
 type TableOptimizerHint struct {
 	node
+	// HintName is the name or alias of the table(s) which the hint will affect.
 	// Table hints has no schema info
 	// It allows only table name or alias (if table has an alias)
 	HintName model.CIStr

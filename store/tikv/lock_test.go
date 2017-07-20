@@ -15,11 +15,13 @@ package tikv
 
 import (
 	"math"
+	"runtime"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -177,6 +179,22 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 }
 
+func (s *testLockSuite) TestRC(c *C) {
+	s.putKV(c, []byte("key"), []byte("v1"))
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set([]byte("key"), []byte("v2"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+
+	txn2, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn2.SetOption(kv.IsolationLevel, kv.RC)
+	val, err := txn2.Get([]byte("key"))
+	c.Assert(err, IsNil)
+	c.Assert(string(val), Equals, "v1")
+}
+
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
 	committer, err := newTwoPhaseCommitter(txn)
 	c.Assert(err, IsNil)
@@ -188,18 +206,18 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(getMaxBackoff, goctx.Background())
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdGet,
-		CmdGetReq: &kvrpcpb.CmdGetRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdGet,
+		Get: &kvrpcpb.GetRequest{
 			Key:     key,
 			Version: ver.Ver,
 		},
 	}
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	resp, err := s.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
+	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	cmdGetResp := resp.GetCmdGetResp()
+	cmdGetResp := resp.Get
 	c.Assert(cmdGetResp, NotNil)
 	keyErr := cmdGetResp.GetError()
 	c.Assert(keyErr, NotNil)
@@ -209,7 +227,14 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 }
 
 func (s *testLockSuite) ttlEquals(c *C, x, y uint64) {
-	c.Assert(int(math.Abs(float64(x-y))), LessEqual, 2)
+	// NOTE: On ppc64le, all integers are by default unsigned integers,
+	// hence we have to separately cast the value returned by "math.Abs()" function for ppc64le.
+	if runtime.GOARCH == "ppc64le" {
+		c.Assert(int(-math.Abs(float64(x-y))), LessEqual, 2)
+	} else {
+		c.Assert(int(math.Abs(float64(x-y))), LessEqual, 2)
+	}
+
 }
 
 func (s *testLockSuite) TestLockTTL(c *C) {

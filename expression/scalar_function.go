@@ -18,8 +18,11 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -27,6 +30,7 @@ import (
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
 	FuncName model.CIStr
+	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType  *types.FieldType
 	Function builtinFunc
@@ -73,6 +77,12 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if retType == nil {
+		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
+	}
+	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified {
+		retType = builtinRetTp
+	}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
@@ -80,7 +90,7 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	}, nil
 }
 
-//ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
+// ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
 func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 	result := make([]Expression, 0, len(funcs))
 	for _, col := range funcs {
@@ -95,10 +105,12 @@ func (sf *ScalarFunction) Clone() Expression {
 	for _, arg := range sf.GetArgs() {
 		newArgs = append(newArgs, arg.Clone())
 	}
-	switch v := sf.Function.(type) {
-	case *builtinCastSig:
-		return NewCastFunc(v.tp, newArgs[0], sf.GetCtx())
-	case *builtinValuesSig:
+	switch sf.FuncName.L {
+	case ast.Cast:
+		newFunc, _ := buildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
+		return newFunc
+	case ast.Values:
+		v := sf.Function.(*builtinValuesSig)
 		return NewValuesFunc(v.offset, sf.GetType(), sf.GetCtx())
 	}
 	newFunc, _ := NewFunction(sf.GetCtx(), sf.FuncName.L, sf.RetType, newArgs...)
@@ -108,6 +120,11 @@ func (sf *ScalarFunction) Clone() Expression {
 // GetType implements Expression interface.
 func (sf *ScalarFunction) GetType() *types.FieldType {
 	return sf.RetType
+}
+
+// GetTypeClass implements Expression interface.
+func (sf *ScalarFunction) GetTypeClass() types.TypeClass {
+	return sf.RetType.ToClass()
 }
 
 // Equal implements Expression interface.
@@ -141,8 +158,75 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 }
 
 // Eval implements Expression interface.
-func (sf *ScalarFunction) Eval(row []types.Datum) (types.Datum, error) {
-	return sf.Function.eval(row)
+func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
+	if !TurnOnNewExprEval {
+		return sf.Function.eval(row)
+	}
+	sc := sf.GetCtx().GetSessionVars().StmtCtx
+	var (
+		res    interface{}
+		isNull bool
+	)
+	tp := sf.GetType()
+	switch sf.GetTypeClass() {
+	case types.ClassInt:
+		var intRes int64
+		intRes, isNull, err = sf.EvalInt(row, sc)
+		if mysql.HasUnsignedFlag(tp.Flag) {
+			res = uint64(intRes)
+		} else {
+			res = intRes
+		}
+	case types.ClassReal:
+		res, isNull, err = sf.EvalReal(row, sc)
+	case types.ClassDecimal:
+		res, isNull, err = sf.EvalDecimal(row, sc)
+	case types.ClassString:
+		switch x := sf.GetType().Tp; x {
+		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeNewDate:
+			res, isNull, err = sf.EvalTime(row, sc)
+		case mysql.TypeDuration:
+			res, isNull, err = sf.EvalDuration(row, sc)
+		default:
+			res, isNull, err = sf.EvalString(row, sc)
+		}
+	}
+	if isNull || err != nil {
+		d.SetValue(nil)
+		return d, errors.Trace(err)
+	}
+	d.SetValue(res)
+	return
+}
+
+// EvalInt implements Expression interface.
+func (sf *ScalarFunction) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	return sf.Function.evalInt(row)
+}
+
+// EvalReal implements Expression interface.
+func (sf *ScalarFunction) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	return sf.Function.evalReal(row)
+}
+
+// EvalDecimal implements Expression interface.
+func (sf *ScalarFunction) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	return sf.Function.evalDecimal(row)
+}
+
+// EvalString implements Expression interface.
+func (sf *ScalarFunction) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	return sf.Function.evalString(row)
+}
+
+// EvalTime implements Expression interface.
+func (sf *ScalarFunction) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+	return sf.Function.evalTime(row)
+}
+
+// EvalDuration implements Expression interface.
+func (sf *ScalarFunction) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
+	return sf.Function.evalDuration(row)
 }
 
 // HashCode implements Expression interface.

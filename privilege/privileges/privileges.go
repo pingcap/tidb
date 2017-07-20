@@ -14,7 +14,6 @@
 package privileges
 
 import (
-	"bytes"
 	"strings"
 
 	"github.com/juju/errors"
@@ -28,7 +27,7 @@ import (
 )
 
 // Enable enables the new privilege check feature.
-var Enable = false
+var Enable = true
 
 // SkipWithGrant causes the server to start without using the privilege system at all.
 var SkipWithGrant = false
@@ -64,12 +63,15 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 		return true
 	}
 
+	// Skip check for INFORMATION_SCHEMA database.
+	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
+	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+		return true
+	}
+
 	mysqlPriv := p.Handle.Get()
 	return mysqlPriv.RequestVerification(p.user, p.host, db, table, column, priv)
 }
-
-// PWDHashLen is the length of password's hash.
-const PWDHashLen = 40
 
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []byte) bool {
@@ -87,19 +89,32 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 	}
 
 	pwd := record.Password
-	if len(pwd) != 0 && len(pwd) != PWDHashLen {
+	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
 		return false
 	}
+
+	// empty password
+	if len(pwd) == 0 && len(auth) == 0 {
+		p.user = user
+		p.host = host
+		return true
+	}
+
+	if len(pwd) == 0 || len(auth) == 0 {
+		return false
+	}
+
 	hpwd, err := util.DecodePassword(pwd)
 	if err != nil {
 		log.Errorf("Decode password string error %v", err)
 		return false
 	}
-	checkAuth := util.CalcPassword(salt, hpwd)
-	if !bytes.Equal(auth, checkAuth) {
+
+	if !util.CheckScrambledPassword(salt, hpwd, auth) {
 		return false
 	}
+
 	p.user = user
 	p.host = host
 	return true

@@ -33,6 +33,11 @@ var _ = Suite(&testTErrorSuite{})
 type testTErrorSuite struct {
 }
 
+func (s *testTErrorSuite) TestErrCode(c *C) {
+	c.Assert(CodeMissConnectionID, Equals, ErrCode(1))
+	c.Assert(CodeResultUndetermined, Equals, ErrCode(2))
+}
+
 func (s *testTErrorSuite) TestTError(c *C) {
 	defer testleak.AfterTest(c)()
 	c.Assert(ClassParser.String(), Not(Equals), "")

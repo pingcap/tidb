@@ -46,6 +46,19 @@ func Round(f float64, dec int) float64 {
 	return RoundFloat(tmp) / shift
 }
 
+// Truncate truncates the argument f to dec decimal places.
+// dec defaults to 0 if not specified. dec can be negative
+// to cause dec digits left of the decimal point of the
+// value f to become zero.
+func Truncate(f float64, dec int) float64 {
+	shift := math.Pow10(dec)
+	tmp := f * shift
+	if math.IsInf(tmp, 0) {
+		return f
+	}
+	return math.Trunc(tmp) / shift
+}
+
 func getMaxFloat(flen int, decimal int) float64 {
 	intPartLen := flen - decimal
 	f := math.Pow10(intPartLen)
@@ -58,7 +71,7 @@ func getMaxFloat(flen int, decimal int) float64 {
 func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	if math.IsNaN(f) {
 		// nan returns 0
-		return 0, ErrOverflow
+		return 0, ErrOverflow.GenByArgs("DOUBLE", "")
 	}
 
 	maxF := getMaxFloat(flen, decimal)
@@ -70,10 +83,10 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	var err error
 	if f > maxF {
 		f = maxF
-		err = ErrOverflow
+		err = ErrOverflow.GenByArgs("DOUBLE", "")
 	} else if f < -maxF {
 		f = -maxF
-		err = ErrOverflow
+		err = ErrOverflow.GenByArgs("DOUBLE", "")
 	}
 
 	return f, errors.Trace(err)

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:generate go run maketables.go
+
 // Package charmap provides simple character encodings such as IBM Code Page 437
 // and Windows 1252.
 package charmap // import "golang.org/x/text/encoding/charmap"
@@ -31,32 +33,32 @@ var (
 	ISO8859_8I encoding.Encoding = &iso8859_8I
 
 	iso8859_6E = internal.Encoding{
-		ISO8859_6,
-		"ISO-8859-6E",
-		identifier.ISO88596E,
+		Encoding: ISO8859_6,
+		Name:     "ISO-8859-6E",
+		MIB:      identifier.ISO88596E,
 	}
 
 	iso8859_6I = internal.Encoding{
-		ISO8859_6,
-		"ISO-8859-6I",
-		identifier.ISO88596I,
+		Encoding: ISO8859_6,
+		Name:     "ISO-8859-6I",
+		MIB:      identifier.ISO88596I,
 	}
 
 	iso8859_8E = internal.Encoding{
-		ISO8859_8,
-		"ISO-8859-8E",
-		identifier.ISO88598E,
+		Encoding: ISO8859_8,
+		Name:     "ISO-8859-8E",
+		MIB:      identifier.ISO88598E,
 	}
 
 	iso8859_8I = internal.Encoding{
-		ISO8859_8,
-		"ISO-8859-8I",
-		identifier.ISO88598I,
+		Encoding: ISO8859_8,
+		Name:     "ISO-8859-8I",
+		MIB:      identifier.ISO88598I,
 	}
 )
 
 // All is a list of all defined encodings in this package.
-var All = listAll
+var All []encoding.Encoding = listAll
 
 // TODO: implement these encodings, in order of importance.
 // ASCII, ISO8859_1:       Rather common. Close to Windows 1252.
@@ -68,8 +70,8 @@ type utf8Enc struct {
 	data [3]byte
 }
 
-// charmap describes an 8-bit character set encoding.
-type charmap struct {
+// Charmap is an 8-bit character set encoding.
+type Charmap struct {
 	// name is the encoding's name.
 	name string
 	// mib is the encoding type of this encoder.
@@ -77,7 +79,7 @@ type charmap struct {
 	// asciiSuperset states whether the encoding is a superset of ASCII.
 	asciiSuperset bool
 	// low is the lower bound of the encoded byte for a non-ASCII rune. If
-	// charmap.asciiSuperset is true then this will be 0x80, otherwise 0x00.
+	// Charmap.asciiSuperset is true then this will be 0x80, otherwise 0x00.
 	low uint8
 	// replacement is the encoded replacement character.
 	replacement byte
@@ -89,26 +91,30 @@ type charmap struct {
 	encode [256]uint32
 }
 
-func (m *charmap) NewDecoder() transform.Transformer {
-	return charmapDecoder{charmap: m}
+// NewDecoder implements the encoding.Encoding interface.
+func (m *Charmap) NewDecoder() *encoding.Decoder {
+	return &encoding.Decoder{Transformer: charmapDecoder{charmap: m}}
 }
 
-func (m *charmap) NewEncoder() transform.Transformer {
-	return charmapEncoder{charmap: m}
+// NewEncoder implements the encoding.Encoding interface.
+func (m *Charmap) NewEncoder() *encoding.Encoder {
+	return &encoding.Encoder{Transformer: charmapEncoder{charmap: m}}
 }
 
-func (m *charmap) String() string {
+// String returns the Charmap's name.
+func (m *Charmap) String() string {
 	return m.name
 }
 
-func (m *charmap) ID() (mib identifier.MIB, other string) {
+// ID implements an internal interface.
+func (m *Charmap) ID() (mib identifier.MIB, other string) {
 	return m.mib, ""
 }
 
 // charmapDecoder implements transform.Transformer by decoding to UTF-8.
 type charmapDecoder struct {
 	transform.NopResetter
-	charmap *charmap
+	charmap *Charmap
 }
 
 func (m charmapDecoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
@@ -140,14 +146,27 @@ func (m charmapDecoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, 
 	return nDst, nSrc, err
 }
 
+// DecodeByte returns the Charmap's rune decoding of the byte b.
+func (m *Charmap) DecodeByte(b byte) rune {
+	switch x := &m.decode[b]; x.len {
+	case 1:
+		return rune(x.data[0])
+	case 2:
+		return rune(x.data[0]&0x1f)<<6 | rune(x.data[1]&0x3f)
+	default:
+		return rune(x.data[0]&0x0f)<<12 | rune(x.data[1]&0x3f)<<6 | rune(x.data[2]&0x3f)
+	}
+}
+
 // charmapEncoder implements transform.Transformer by encoding from UTF-8.
 type charmapEncoder struct {
 	transform.NopResetter
-	charmap *charmap
+	charmap *Charmap
 }
 
 func (m charmapEncoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
 	r, size := rune(0), 0
+loop:
 	for nSrc < len(src) {
 		if nDst >= len(dst) {
 			err = transform.ErrShortDst
@@ -157,12 +176,13 @@ func (m charmapEncoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, 
 
 		// Decode a 1-byte rune.
 		if r < utf8.RuneSelf {
-			nSrc++
 			if m.charmap.asciiSuperset {
+				nSrc++
 				dst[nDst] = uint8(r)
 				nDst++
 				continue
 			}
+			size = 1
 
 		} else {
 			// Decode a multi-byte rune.
@@ -173,23 +193,18 @@ func (m charmapEncoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, 
 				// full character yet.
 				if !atEOF && !utf8.FullRune(src[nSrc:]) {
 					err = transform.ErrShortSrc
-					break
+				} else {
+					err = internal.RepertoireError(m.charmap.replacement)
 				}
-			}
-			nSrc += size
-			if r == utf8.RuneError {
-				dst[nDst] = m.charmap.replacement
-				nDst++
-				continue
+				break
 			}
 		}
 
 		// Binary search in [low, high) for that rune in the m.charmap.encode table.
 		for low, high := int(m.charmap.low), 0x100; ; {
 			if low >= high {
-				dst[nDst] = m.charmap.replacement
-				nDst++
-				break
+				err = internal.RepertoireError(m.charmap.replacement)
+				break loop
 			}
 			mid := (low + high) / 2
 			got := m.charmap.encode[mid]
@@ -204,6 +219,31 @@ func (m charmapEncoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, 
 				break
 			}
 		}
+		nSrc += size
 	}
 	return nDst, nSrc, err
+}
+
+// EncodeRune returns the Charmap's byte encoding of the rune r. ok is whether
+// r is in the Charmap's repertoire. If not, b is set to the Charmap's
+// replacement byte. This is often the ASCII substitute character '\x1a'.
+func (m *Charmap) EncodeRune(r rune) (b byte, ok bool) {
+	if r < utf8.RuneSelf && m.asciiSuperset {
+		return byte(r), true
+	}
+	for low, high := int(m.low), 0x100; ; {
+		if low >= high {
+			return m.replacement, false
+		}
+		mid := (low + high) / 2
+		got := m.encode[mid]
+		gotRune := rune(got & (1<<24 - 1))
+		if gotRune < r {
+			low = mid + 1
+		} else if gotRune > r {
+			high = mid
+		} else {
+			return byte(got >> 24), true
+		}
+	}
 }

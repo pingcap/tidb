@@ -117,7 +117,7 @@ type infoSchema struct {
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
 
-	// We should check version when change schema.
+	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
 }
 
@@ -254,9 +254,6 @@ func NewHandle(store kv.Storage) (*Handle, error) {
 	// init memory tables
 	var err error
 	h.perfHandle, err = perfschema.NewPerfHandle()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

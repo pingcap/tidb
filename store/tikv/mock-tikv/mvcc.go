@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"sort"
 	"sync"
 
 	"github.com/juju/errors"
@@ -94,9 +95,9 @@ func (e *mvccEntry) lockErr() error {
 	}
 }
 
-func (e *mvccEntry) Get(ts uint64) ([]byte, error) {
-	if e.lock != nil {
-		if e.lock.startTS <= ts {
+func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
+	if isoLevel == kvrpcpb.IsolationLevel_SI {
+		if e.lock != nil && e.lock.startTS <= ts {
 			return nil, e.lockErr()
 		}
 	}
@@ -130,18 +131,18 @@ func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary
 	return nil
 }
 
-func (e *mvccEntry) checkTxnCommitted(startTS uint64) (uint64, bool) {
+func (e *mvccEntry) getTxnCommitInfo(startTS uint64) *mvccValue {
 	for _, v := range e.values {
-		if v.startTS == startTS && v.valueType != typeRollback {
-			return v.commitTS, true
+		if v.startTS == startTS {
+			return &v
 		}
 	}
-	return 0, false
+	return nil
 }
 
 func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 	if e.lock == nil || e.lock.startTS != startTS {
-		if _, ok := e.checkTxnCommitted(startTS); ok {
+		if c := e.getTxnCommitInfo(startTS); c != nil && c.valueType != typeRollback {
 			return nil
 		}
 		return ErrRetryable("txn not found")
@@ -153,62 +154,102 @@ func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 		} else {
 			valueType = typeDelete
 		}
-		e.values = append([]mvccValue{{
+		e.addValue(mvccValue{
 			valueType: valueType,
 			startTS:   startTS,
 			commitTS:  commitTS,
 			value:     e.lock.value,
-		}}, e.values...)
+		})
 	}
 	e.lock = nil
 	return nil
 }
 
 func (e *mvccEntry) Rollback(startTS uint64) error {
-	if e.lock == nil || e.lock.startTS != startTS {
-		if commitTS, ok := e.checkTxnCommitted(startTS); ok {
-			return ErrAlreadyCommitted(commitTS)
-		}
+	// If current transaction's lock exist.
+	if e.lock != nil && e.lock.startTS == startTS {
+		e.lock = nil
+		e.addValue(mvccValue{
+			valueType: typeRollback,
+			startTS:   startTS,
+			commitTS:  startTS,
+		})
 		return nil
 	}
-	e.values = append([]mvccValue{{
+
+	// If current transaction's lock not exist.
+	// If commit info of current transaction exist.
+	if c := e.getTxnCommitInfo(startTS); c != nil {
+		// If current transaction is already committed.
+		if c.valueType != typeRollback {
+			return ErrAlreadyCommitted(c.commitTS)
+		}
+		// If current transaction is already rollback.
+		return nil
+	}
+	// If current transaction is not prewritted before.
+	e.addValue(mvccValue{
 		valueType: typeRollback,
 		startTS:   startTS,
 		commitTS:  startTS,
-	}}, e.values...)
-	e.lock = nil
+	})
 	return nil
+}
+
+func (e *mvccEntry) addValue(v mvccValue) {
+	i := sort.Search(len(e.values), func(i int) bool { return e.values[i].commitTS <= v.commitTS })
+	if i >= len(e.values) {
+		e.values = append(e.values, v)
+	} else {
+		e.values = append(e.values[:i+1], e.values[i:]...)
+		e.values[i] = v
+	}
+}
+
+type rawEntry struct {
+	key   []byte
+	value []byte
+}
+
+func newRawEntry(key []byte) *rawEntry {
+	return &rawEntry{
+		key: key,
+	}
+}
+
+func (e *rawEntry) Less(than llrb.Item) bool {
+	return bytes.Compare(e.key, than.(*rawEntry).key) < 0
 }
 
 // MvccStore is an in-memory, multi-versioned, transaction-supported kv storage.
 type MvccStore struct {
 	sync.RWMutex
 	tree  *llrb.LLRB
-	rawkv map[string][]byte
+	rawkv *llrb.LLRB
 }
 
 // NewMvccStore creates a MvccStore.
 func NewMvccStore() *MvccStore {
 	return &MvccStore{
 		tree:  llrb.New(),
-		rawkv: make(map[string][]byte),
+		rawkv: llrb.New(),
 	}
 }
 
 // Get reads a key by ts.
-func (s *MvccStore) Get(key []byte, startTS uint64) ([]byte, error) {
+func (s *MvccStore) Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
 	s.RLock()
 	defer s.RUnlock()
 
-	return s.get(NewMvccKey(key), startTS)
+	return s.get(NewMvccKey(key), startTS, isoLevel)
 }
 
-func (s *MvccStore) get(key MvccKey, startTS uint64) ([]byte, error) {
+func (s *MvccStore) get(key MvccKey, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
 	entry := s.tree.Get(newEntry(key))
 	if entry == nil {
 		return nil, nil
 	}
-	return entry.(*mvccEntry).Get(startTS)
+	return entry.(*mvccEntry).Get(startTS, isoLevel)
 }
 
 // A Pair is a KV pair read from MvccStore or an error if any occurs.
@@ -219,13 +260,13 @@ type Pair struct {
 }
 
 // BatchGet gets values with keys and ts.
-func (s *MvccStore) BatchGet(ks [][]byte, startTS uint64) []Pair {
+func (s *MvccStore) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
 	s.RLock()
 	defer s.RUnlock()
 
 	var pairs []Pair
 	for _, k := range ks {
-		val, err := s.get(NewMvccKey(k), startTS)
+		val, err := s.get(NewMvccKey(k), startTS, isoLevel)
 		if val == nil && err == nil {
 			continue
 		}
@@ -244,7 +285,7 @@ func regionContains(startKey []byte, endKey []byte, key []byte) bool {
 }
 
 // Scan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey.
-func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
+func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
 	s.RLock()
 	defer s.RUnlock()
 
@@ -260,7 +301,7 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 		if !regionContains(startKey, endKey, k) {
 			return false
 		}
-		val, err := s.get(k, startTS)
+		val, err := s.get(k, startTS, isoLevel)
 		if val != nil || err != nil {
 			pairs = append(pairs, Pair{
 				Key:   k.Raw(),
@@ -276,7 +317,7 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 
 // ReverseScan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey
 // in descending order.
-func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
+func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
 	s.RLock()
 	defer s.RUnlock()
 
@@ -295,7 +336,7 @@ func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint
 		if bytes.Compare(k, startKey) < 0 {
 			return false
 		}
-		val, err := s.get(k, startTS)
+		val, err := s.get(k, startTS, isoLevel)
 		if val != nil || err != nil {
 			pairs = append(pairs, Pair{
 				Key:   k.Raw(),
@@ -449,7 +490,12 @@ func (s *MvccStore) ResolveLock(startKey, endKey []byte, startTS, commitTS uint6
 func (s *MvccStore) RawGet(key []byte) []byte {
 	s.RLock()
 	defer s.RUnlock()
-	return s.rawkv[string(key)]
+
+	entry := s.rawkv.Get(newRawEntry(key))
+	if entry == nil {
+		return nil
+	}
+	return entry.(*rawEntry).value
 }
 
 // RawPut stores a key-value pair.
@@ -459,14 +505,46 @@ func (s *MvccStore) RawPut(key, value []byte) {
 	if value == nil {
 		value = []byte{}
 	}
-	s.rawkv[string(key)] = value
+	entry := s.rawkv.Get(newRawEntry(key))
+	if entry != nil {
+		entry.(*rawEntry).value = value
+	} else {
+		s.rawkv.ReplaceOrInsert(&rawEntry{
+			key:   key,
+			value: value,
+		})
+	}
 }
 
 // RawDelete deletes a key-value pair.
 func (s *MvccStore) RawDelete(key []byte) {
 	s.Lock()
 	defer s.Unlock()
-	delete(s.rawkv, string(key))
+	s.rawkv.Delete(newRawEntry(key))
+}
+
+// RawScan reads up to a limited number of rawkv Pairs.
+func (s *MvccStore) RawScan(startKey, endKey []byte, limit int) []Pair {
+	s.RLock()
+	defer s.RUnlock()
+
+	var pairs []Pair
+	iterator := func(item llrb.Item) bool {
+		if len(pairs) >= limit {
+			return false
+		}
+		k := item.(*rawEntry).key
+		if !regionContains(startKey, endKey, k) {
+			return false
+		}
+		pairs = append(pairs, Pair{
+			Key:   k,
+			Value: item.(*rawEntry).value,
+		})
+		return true
+	}
+	s.rawkv.AscendGreaterOrEqual(newRawEntry(startKey), iterator)
+	return pairs
 }
 
 // MvccKey is the encoded key type.

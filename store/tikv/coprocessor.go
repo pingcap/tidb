@@ -23,6 +23,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -32,8 +33,8 @@ type CopClient struct {
 	store *tikvStore
 }
 
-// SupportRequestType checks whether reqType is supported.
-func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
+// IsRequestTypeSupported checks whether reqType is supported.
+func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 	switch reqType {
 	case kv.ReqTypeSelect, kv.ReqTypeIndex:
 		switch subType {
@@ -42,6 +43,8 @@ func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 		default:
 			return supportExpr(tipb.ExprType(subType))
 		}
+	case kv.ReqTypeDAG:
+		return c.store.mock
 	}
 	return false
 }
@@ -63,6 +66,10 @@ func supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
 		return true
+	case tipb.ExprType_JsonType, tipb.ExprType_JsonExtract, tipb.ExprType_JsonUnquote, tipb.ExprType_JsonValid,
+		tipb.ExprType_JsonObject, tipb.ExprType_JsonArray, tipb.ExprType_JsonMerge, tipb.ExprType_JsonSet,
+		tipb.ExprType_JsonInsert, tipb.ExprType_JsonReplace, tipb.ExprType_JsonRemove, tipb.ExprType_JsonContains:
+		return false
 	case kv.ReqSubTypeDesc:
 		return true
 	default:
@@ -302,7 +309,7 @@ type copResponse struct {
 
 const minLogCopTaskTime = 300 * time.Millisecond
 
-// The worker function that get a copTask from channel, handle it and
+// work is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 	defer it.wg.Done()
@@ -344,13 +351,19 @@ func (it *copIterator) run(ctx goctx.Context) {
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
-		go it.work(ctx, it.taskCh)
+		go func() {
+			childCtx, cancel := goctx.WithCancel(ctx)
+			defer cancel()
+			it.work(childCtx, it.taskCh)
+		}()
 	}
 
 	go func() {
 		// Send tasks to feed the worker goroutines.
+		childCtx, cancel := goctx.WithCancel(ctx)
+		defer cancel()
 		for _, t := range it.tasks {
-			finished, canceled := it.sendToTaskCh(ctx, t)
+			finished, canceled := it.sendToTaskCh(childCtx, t)
 			if finished || canceled {
 				break
 			}
@@ -376,7 +389,7 @@ func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask) (finished boo
 	return
 }
 
-// Return next coprocessor result.
+// Next returns next coprocessor result.
 func (it *copIterator) Next() ([]byte, error) {
 	coprocessorCounter.WithLabelValues("next").Inc()
 
@@ -411,13 +424,16 @@ func (it *copIterator) Next() ([]byte, error) {
 	if resp.err != nil {
 		return nil, errors.Trace(resp.err)
 	}
+	if resp.Data == nil {
+		return []byte{}, nil
+	}
 	return resp.Data, nil
 }
 
-// Handle single copTask.
+// handleTask handles single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
-	sender := NewRegionRequestSender(bo, it.store.regionCache, it.store.client)
+	sender := NewRegionRequestSender(it.store.regionCache, it.store.client, pbIsolationLevel(it.req.IsolationLevel))
 	for {
 		select {
 		case <-it.finished:
@@ -425,23 +441,26 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 		default:
 		}
 
-		req := &coprocessor.Request{
-			Tp:     it.req.Tp,
-			Data:   it.req.Data,
-			Ranges: task.ranges.toPBRanges(),
+		req := &tikvrpc.Request{
+			Type: tikvrpc.CmdCop,
+			Cop: &coprocessor.Request{
+				Tp:     it.req.Tp,
+				Data:   it.req.Data,
+				Ranges: task.ranges.toPBRanges(),
+			},
 		}
-		resp, err := sender.SendCopReq(req, task.region, readTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, task.region, readTimeoutMedium)
 		if err != nil {
 			return []copResponse{{err: errors.Trace(err)}}
 		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		if regionErr := resp.Cop.GetRegionError(); regionErr != nil {
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return []copResponse{{err: errors.Trace(err)}}
 			}
 			return it.handleRegionErrorTask(bo, task)
 		}
-		if e := resp.GetLocked(); e != nil {
+		if e := resp.Cop.GetLocked(); e != nil {
 			log.Debugf("coprocessor encounters lock: %v", e)
 			ok, err1 := it.store.lockResolver.ResolveLocks(bo, []*Lock{newLock(e)})
 			if err1 != nil {
@@ -455,17 +474,17 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 			}
 			continue
 		}
-		if e := resp.GetOtherError(); e != "" {
+		if e := resp.Cop.GetOtherError(); e != "" {
 			err = errors.Errorf("other error: %s", e)
 			log.Warnf("coprocessor err: %v", err)
 			return []copResponse{{err: errors.Trace(err)}}
 		}
 		task.storeAddr = sender.storeAddr
-		return []copResponse{{Response: resp}}
+		return []copResponse{{Response: resp.Cop}}
 	}
 }
 
-// Rebuild and handle current task. It may be split into multiple tasks (in region split scenario).
+// handleRegionErrorTask handles current task. It may be split into multiple tasks (in region split scenario).
 func (it *copIterator) handleRegionErrorTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("rebuild_task").Inc()
 

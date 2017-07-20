@@ -19,33 +19,27 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
-	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
 type testStoreSuite struct {
-	cluster *mocktikv.Cluster
-	store   *tikvStore
+	store *tikvStore
 }
 
 var _ = Suite(&testStoreSuite{})
 
 func (s *testStoreSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	mvccStore := mocktikv.NewMvccStore()
-	clientFactory := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
-	store, err := newTikvStore("mock-tikv-store", pdCli, clientFactory, false)
-	c.Assert(err, IsNil)
-	s.store = store
+	store, err := NewMockTikvStore()
+	c.Check(err, IsNil)
+	s.store = store.(*tikvStore)
 }
 
 func (s *testStoreSuite) TestParsePath(c *C) {
@@ -211,6 +205,19 @@ func (o *mockOracle) GetTimestamp(goctx.Context) (uint64, error) {
 	return ts, nil
 }
 
+type mockOracleFuture struct {
+	o   *mockOracle
+	ctx goctx.Context
+}
+
+func (m *mockOracleFuture) Wait() (uint64, error) {
+	return m.o.GetTimestamp(m.ctx)
+}
+
+func (o *mockOracle) GetTimestampAsync(ctx goctx.Context) oracle.Future {
+	return &mockOracleFuture{o, ctx}
+}
+
 func (o *mockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
 	o.RLock()
 	defer o.RUnlock()
@@ -247,32 +254,14 @@ func (c *busyClient) Close() error {
 	return c.client.Close()
 }
 
-func (c *busyClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *busyClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	if c.mu.isBusy {
-		return &kvrpcpb.Response{
-			RegionError: &errorpb.Error{
-				ServerIsBusy: &errorpb.ServerIsBusy{},
-			},
-		}, nil
+		return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
 	}
-	return c.client.SendKVReq(ctx, addr, req, timeout)
-}
-
-func (c *busyClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.mu.isBusy {
-		return &coprocessor.Response{
-			RegionError: &errorpb.Error{
-				ServerIsBusy: &errorpb.ServerIsBusy{},
-			},
-		}, nil
-	}
-	return c.client.SendCopReq(ctx, addr, req, timeout)
+	return c.client.SendReq(ctx, addr, req)
 }
 
 type mockPDClient struct {
@@ -307,6 +296,10 @@ func (c *mockPDClient) GetTS(ctx goctx.Context) (int64, int64, error) {
 	return c.client.GetTS(ctx)
 }
 
+func (c *mockPDClient) GetTSAsync(ctx goctx.Context) pd.TSFuture {
+	return nil
+}
+
 func (c *mockPDClient) GetRegion(ctx goctx.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
@@ -338,3 +331,58 @@ func (c *mockPDClient) GetStore(ctx goctx.Context, storeID uint64) (*metapb.Stor
 }
 
 func (c *mockPDClient) Close() {}
+
+type checkRequestClient struct {
+	Client
+	priority pb.CommandPri
+}
+
+func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	if c.priority != req.Priority {
+		return nil, errors.New("request check error")
+	}
+
+	return c.Client.SendReq(ctx, addr, req)
+}
+
+func (s *testStoreSuite) TestRequestPriority(c *C) {
+	client := &checkRequestClient{
+		Client: s.store.client,
+	}
+	s.store.client = client
+
+	// Cover 2PC commit.
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	client.priority = pb.CommandPri_High
+	txn.SetOption(kv.Priority, kv.PriorityHigh)
+	err = txn.Set([]byte("key"), []byte("value"))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+
+	// Cover the basic Get request.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	client.priority = pb.CommandPri_Low
+	txn.SetOption(kv.Priority, kv.PriorityLow)
+	_, err = txn.Get([]byte("key"))
+	c.Assert(err, IsNil)
+
+	// A counter example.
+	client.priority = pb.CommandPri_Low
+	txn.SetOption(kv.Priority, kv.PriorityNormal)
+	_, err = txn.Get([]byte("key"))
+	// err is translated to "try again later" by backoffer, so doesn't check error value here.
+	c.Assert(err, NotNil)
+
+	// Cover Seek request.
+	client.priority = pb.CommandPri_High
+	txn.SetOption(kv.Priority, kv.PriorityHigh)
+	iter, err := txn.Seek([]byte("key"))
+	c.Assert(err, IsNil)
+	for iter.Valid() {
+		c.Assert(iter.Next(), IsNil)
+	}
+	iter.Close()
+}

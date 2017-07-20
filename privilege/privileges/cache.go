@@ -51,7 +51,7 @@ type userRecord struct {
 	Password   string // max length 41
 	Privileges mysql.PrivilegeType
 
-	// Compiled from Host, cached for pattern match performance.
+	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
 	patTypes []byte
 }
@@ -62,7 +62,7 @@ type dbRecord struct {
 	User       string
 	Privileges mysql.PrivilegeType
 
-	// Compiled from Host, cached for pattern match performance.
+	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
 	patTypes []byte
 }
@@ -77,7 +77,7 @@ type tablesPrivRecord struct {
 	TablePriv  mysql.PrivilegeType
 	ColumnPriv mysql.PrivilegeType
 
-	// Compiled from Host, cached for pattern match performance.
+	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
 	patTypes []byte
 }
@@ -91,7 +91,7 @@ type columnsPrivRecord struct {
 	Timestamp  time.Time
 	ColumnPriv mysql.PrivilegeType
 
-	// Compiled from Host, cached for pattern match performance.
+	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
 	patTypes []byte
 }
@@ -149,7 +149,7 @@ func noSuchTable(err error) bool {
 
 // LoadUserTable loads the mysql.user table from database.
 func (p *MySQLPrivilege) LoadUserTable(ctx context.Context) error {
-	return p.loadTable(ctx, "select Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Index_priv,Create_user_priv from mysql.user order by host, user;", p.decodeUserTableRow)
+	return p.loadTable(ctx, "select Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Index_priv,Create_user_priv,Trigger_priv from mysql.user order by host, user;", p.decodeUserTableRow)
 }
 
 // LoadDBTable loads the mysql.db table from database.
@@ -430,9 +430,14 @@ func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column strin
 // DBIsVisible checks whether the user can see the db.
 func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 	if record := p.matchUser(user, host); record != nil {
-		if record.Privileges&mysql.ShowDBPriv > 0 {
+		if record.Privileges != 0 {
 			return true
 		}
+	}
+
+	// INFORMATION_SCHEMA is visible to all users.
+	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+		return true
 	}
 
 	if record := p.matchDB(user, host, db); record != nil {
@@ -545,7 +550,7 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user userRecord) [][]typ
 	} else {
 		isGrantable = "NO"
 	}
-	gurantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
+	guarantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
 
 	for _, priv := range mysql.AllGlobalPrivs {
 		if priv == mysql.GrantPriv {
@@ -557,7 +562,7 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user userRecord) [][]typ
 			// | GRANTEE                   | TABLE_CATALOG | PRIVILEGE_TYPE          | IS_GRANTABLE |
 			// +---------------------------+---------------+-------------------------+--------------+
 			// | 'root'@'localhost'        | def           | SELECT                  | YES          |
-			record := types.MakeDatums(gurantee, "def", privilegeType, isGrantable)
+			record := types.MakeDatums(guarantee, "def", privilegeType, isGrantable)
 			rows = append(rows, record)
 		}
 	}
@@ -566,15 +571,12 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user userRecord) [][]typ
 
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
-	ctx  context.Context
 	priv atomic.Value
 }
 
 // NewHandle returns a Handle.
-func NewHandle(ctx context.Context) *Handle {
-	return &Handle{
-		ctx: ctx,
-	}
+func NewHandle() *Handle {
+	return &Handle{}
 }
 
 // Get the MySQLPrivilege for read.
@@ -583,9 +585,9 @@ func (h *Handle) Get() *MySQLPrivilege {
 }
 
 // Update loads all the privilege info from kv storage.
-func (h *Handle) Update() error {
+func (h *Handle) Update(ctx context.Context) error {
 	var priv MySQLPrivilege
-	err := priv.LoadAll(h.ctx)
+	err := priv.LoadAll(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

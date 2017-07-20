@@ -15,11 +15,11 @@ package statistics
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -41,119 +41,103 @@ const (
 
 // Table represents statistics for a table.
 type Table struct {
-	Info    *model.TableInfo
-	Columns []*Column
-	Indices []*Column
-	Count   int64 // Total row count in a table.
-	Pseudo  bool
+	TableID     int64
+	Columns     map[int64]*Column
+	Indices     map[int64]*Index
+	Count       int64 // Total row count in a table.
+	ModifyCount int64 // Total modify count in a table.
+	Version     uint64
+	Pseudo      bool
 }
 
-// SaveToStorage saves stats table to storage.
-func (t *Table) SaveToStorage(ctx context.Context) error {
-	_, err := ctx.(sqlexec.SQLExecutor).Execute("begin")
-	if err != nil {
-		return errors.Trace(err)
+func (t *Table) copy() *Table {
+	nt := &Table{
+		TableID: t.TableID,
+		Count:   t.Count,
+		Pseudo:  t.Pseudo,
+		Columns: make(map[int64]*Column),
+		Indices: make(map[int64]*Index),
 	}
-	txn := ctx.Txn()
-	version := txn.StartTS()
-	SetStatisticsTableCache(t.Info.ID, t, version)
-	deleteSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", t.Info.ID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
+	for id, col := range t.Columns {
+		nt.Columns[id] = col
 	}
-	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, t.Info.ID, t.Count)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
-	if err != nil {
-		return errors.Trace(err)
+	for id, idx := range t.Indices {
+		nt.Indices[id] = idx
 	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", t.Info.ID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", t.Info.ID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, col := range t.Columns {
-		err = col.saveToStorage(ctx, t.Info.ID, 0)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	for _, idx := range t.Indices {
-		err = idx.saveToStorage(ctx, t.Info.ID, 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	_, err = ctx.(sqlexec.SQLExecutor).Execute("commit")
-	return errors.Trace(err)
+	return nt
 }
 
-// TableStatsFromStorage loads table stats info from storage.
-func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
-	table := &Table{
-		Info:  info,
-		Count: count,
+// tableStatsFromStorage loads table stats info from storage.
+func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, error) {
+	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
+	if !ok {
+		table = &Table{
+			TableID: tableInfo.ID,
+			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
+			Indices: make(map[int64]*Index, len(tableInfo.Indices)),
+		}
+	} else {
+		// We copy it before writing to avoid race.
+		table = table.copy()
 	}
-	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count from mysql.stats_histograms where table_id = %d", info.ID)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count from mysql.stats_histograms where table_id = %d", tableInfo.ID)
+	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// indexCount and columnCount record the number of indices and columns in table stats. If the number don't match with
-	// tableInfo, we will return pseudo table.
-	// TODO: In fact, we can return pseudo column.
-	indexCount, columnCount := 0, 0
+	// Check deleted table.
+	if len(rows) == 0 {
+		return nil, nil
+	}
 	for _, row := range rows {
 		distinct := row.Data[3].GetInt64()
 		histID := row.Data[2].GetInt64()
+		histVer := row.Data[4].GetUint64()
+		nullCount := row.Data[5].GetInt64()
 		if row.Data[1].GetInt64() > 0 {
 			// process index
-			var col *Column
-			for _, idxInfo := range info.Indices {
+			idx := table.Indices[histID]
+			for _, idxInfo := range tableInfo.Indices {
 				if histID == idxInfo.ID {
-					col, err = colStatsFromStorage(ctx, info.ID, histID, nil, distinct, 1)
-					if err != nil {
-						return nil, errors.Trace(err)
+					if idx == nil || idx.LastUpdateVersion < histVer {
+						hg, err := h.histogramFromStorage(tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
+						if err != nil {
+							return nil, errors.Trace(err)
+						}
+						idx = &Index{Histogram: *hg, Info: idxInfo}
 					}
 					break
 				}
 			}
-			if col != nil {
-				table.Indices = append(table.Indices, col)
-				indexCount++
+			if idx != nil {
+				table.Indices[histID] = idx
 			} else {
-				log.Warnf("We cannot find index id %d in table %s now. It may be deleted.", histID, info.Name)
+				log.Warnf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
 			}
 		} else {
 			// process column
-			var col *Column
-			for _, colInfo := range info.Columns {
+			col := table.Columns[histID]
+			for _, colInfo := range tableInfo.Columns {
 				if histID == colInfo.ID {
-					col, err = colStatsFromStorage(ctx, info.ID, histID, &colInfo.FieldType, distinct, 0)
-					if err != nil {
-						return nil, errors.Trace(err)
+					if col == nil || col.LastUpdateVersion < histVer {
+						hg, err := h.histogramFromStorage(tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
+						if err != nil {
+							return nil, errors.Trace(err)
+						}
+						col = &Column{Histogram: *hg, Info: colInfo}
 					}
 					break
 				}
 			}
 			if col != nil {
-				table.Columns = append(table.Columns, col)
-				columnCount++
+				table.Columns[col.ID] = col
 			} else {
-				log.Warnf("We cannot find column id %d in table %s now. It may be deleted.", histID, info.Name)
+				// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
+				// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
+				// avoid error.
+				log.Warnf("We cannot find column id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
 			}
 		}
-	}
-	if indexCount != len(info.Indices) {
-		return nil, errors.New("The number of indices doesn't match with the schema")
-	}
-	if columnCount != len(info.Columns) {
-		return nil, errors.New("The number of columns doesn't match with the schema")
 	}
 	return table, nil
 }
@@ -161,73 +145,208 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
-	strs = append(strs, fmt.Sprintf("Table:%d count:%d", t.Info.ID, t.Count))
+	strs = append(strs, fmt.Sprintf("Table:%d Count:%d", t.TableID, t.Count))
 	for _, col := range t.Columns {
+		strs = append(strs, col.String())
+	}
+	for _, col := range t.Indices {
 		strs = append(strs, col.String())
 	}
 	return strings.Join(strs, "\n")
 }
 
-// ColumnIsInvalid checks if this column is invalid. Exported for test.
+// ColumnIsInvalid checks if this column is invalid.
 func (t *Table) ColumnIsInvalid(colInfo *model.ColumnInfo) bool {
 	if t.Pseudo {
 		return true
 	}
-	offset := colInfo.Offset
-	return offset >= len(t.Columns) || t.Columns[offset].ID != colInfo.ID
+	col, ok := t.Columns[colInfo.ID]
+	return !ok || len(col.Buckets) == 0
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
-func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (int64, error) {
+func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
 	if t.ColumnIsInvalid(colInfo) {
-		return t.Count / pseudoLessRate, nil
+		return float64(t.Count) / pseudoLessRate, nil
 	}
-	return t.Columns[colInfo.Offset].GreaterRowCount(sc, value)
+	hist := t.Columns[colInfo.ID]
+	result, err := hist.greaterRowCount(sc, value)
+	result *= hist.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value.
-func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (int64, error) {
+func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
 	if t.ColumnIsInvalid(colInfo) {
-		return t.Count / pseudoLessRate, nil
+		return float64(t.Count) / pseudoLessRate, nil
 	}
-	return t.Columns[colInfo.Offset].LessRowCount(sc, value)
+	hist := t.Columns[colInfo.ID]
+	result, err := hist.lessRowCount(sc, value)
+	result *= hist.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colInfo *model.ColumnInfo) (int64, error) {
+func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colInfo *model.ColumnInfo) (float64, error) {
 	if t.ColumnIsInvalid(colInfo) {
-		return t.Count / pseudoBetweenRate, nil
+		return float64(t.Count) / pseudoBetweenRate, nil
 	}
-	return t.Columns[colInfo.Offset].BetweenRowCount(sc, a, b)
+	hist := t.Columns[colInfo.ID]
+	result, err := hist.betweenRowCount(sc, a, b)
+	result *= hist.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
-func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (int64, error) {
+func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
 	if t.ColumnIsInvalid(colInfo) {
-		return t.Count / pseudoEqualRate, nil
+		return float64(t.Count) / pseudoEqualRate, nil
 	}
-	return t.Columns[colInfo.Offset].EqualRowCount(sc, value)
+	hist := t.Columns[colInfo.ID]
+	result, err := hist.equalRowCount(sc, value)
+	result *= hist.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
+}
+
+// GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
+func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colID int64, intRanges []types.IntColumnRange) (float64, error) {
+	c := t.Columns[colID]
+	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
+		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
+	}
+	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
+}
+
+// GetRowCountByColumnRanges estimates the row count by a slice of ColumnRange.
+func (t *Table) GetRowCountByColumnRanges(sc *variable.StatementContext, colID int64, colRanges []*types.ColumnRange) (float64, error) {
+	c := t.Columns[colID]
+	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
+		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges)
+	}
+	return c.getColumnRowCount(sc, colRanges)
+}
+
+// GetRowCountByIndexRanges estimates the row count by a slice of IndexRange.
+func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID int64, indexRanges []*types.IndexRange) (float64, error) {
+	idx := t.Indices[idxID]
+	if t.Pseudo || idx == nil || len(idx.Buckets) == 0 {
+		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count))
+	}
+	result, err := idx.getRowCount(sc, indexRanges)
+	result *= idx.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
-func PseudoTable(ti *model.TableInfo) *Table {
-	t := &Table{Info: ti, Pseudo: true}
+func PseudoTable(tableID int64) *Table {
+	t := &Table{TableID: tableID, Pseudo: true}
 	t.Count = pseudoRowCount
-	t.Columns = make([]*Column, len(ti.Columns))
-	t.Indices = make([]*Column, len(ti.Indices))
-	for i, v := range ti.Columns {
-		c := &Column{
-			ID:  v.ID,
-			NDV: pseudoRowCount / 2,
-		}
-		t.Columns[i] = c
-	}
-	for i, v := range ti.Indices {
-		c := &Column{
-			ID:  v.ID,
-			NDV: pseudoRowCount / 2,
-		}
-		t.Indices[i] = c
-	}
+	t.Columns = make(map[int64]*Column)
+	t.Indices = make(map[int64]*Index)
 	return t
+}
+
+func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges []*types.IndexRange,
+	tableRowCount float64) (float64, error) {
+	if tableRowCount == 0 {
+		return 0, nil
+	}
+	var totalCount float64
+	for _, indexRange := range indexRanges {
+		count := tableRowCount
+		i, err := indexRange.PrefixEqualLen(sc)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if i >= len(indexRange.LowVal) {
+			i = len(indexRange.LowVal) - 1
+		}
+		colRange := []*types.ColumnRange{{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}}
+		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, colRange)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		count = count / float64(tableRowCount) * float64(rowCount)
+		// If the condition is a = 1, b = 1, c = 1, d = 1, we think every a=1, b=1, c=1 only filtrate 1/100 data,
+		// so as to avoid collapsing too fast.
+		for j := 0; j < i; j++ {
+			count = count / float64(100)
+		}
+		totalCount += count
+	}
+	// To avoid the totalCount become too small.
+	if uint64(totalCount) < 1000 {
+		// We will not let the row count less than 1000 to avoid collapsing too fast in the future calculation.
+		totalCount = 1000.0
+	}
+	if totalCount > tableRowCount {
+		totalCount = tableRowCount / 3.0
+	}
+	return totalCount, nil
+}
+
+func getPseudoRowCountByColumnRanges(sc *variable.StatementContext, tableRowCount float64, columnRanges []*types.ColumnRange) (float64, error) {
+	var rowCount float64
+	var err error
+	for _, ran := range columnRanges {
+		if ran.Low.Kind() == types.KindNull && ran.High.Kind() == types.KindMaxValue {
+			rowCount += tableRowCount
+		} else if ran.Low.Kind() == types.KindMinNotNull {
+			var nullCount float64
+			nullCount = tableRowCount / pseudoEqualRate
+			if ran.High.Kind() == types.KindMaxValue {
+				rowCount += tableRowCount - nullCount
+			} else if err == nil {
+				lessCount := tableRowCount / pseudoLessRate
+				rowCount += lessCount - nullCount
+			}
+		} else if ran.High.Kind() == types.KindMaxValue {
+			rowCount += tableRowCount / pseudoLessRate
+		} else {
+			compare, err1 := ran.Low.CompareDatum(sc, ran.High)
+			if err1 != nil {
+				return 0, errors.Trace(err1)
+			}
+			if compare == 0 {
+				rowCount += tableRowCount / pseudoEqualRate
+			} else {
+				rowCount += tableRowCount / pseudoBetweenRate
+			}
+		}
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	if rowCount > tableRowCount {
+		rowCount = tableRowCount
+	}
+	return rowCount, nil
+}
+
+func getPseudoRowCountByIntRanges(intRanges []types.IntColumnRange, tableRowCount float64) float64 {
+	var rowCount float64
+	for _, rg := range intRanges {
+		var cnt float64
+		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
+			cnt = tableRowCount
+		} else if rg.LowVal == math.MinInt64 {
+			cnt = tableRowCount / pseudoLessRate
+		} else if rg.HighVal == math.MaxInt64 {
+			cnt = tableRowCount / pseudoLessRate
+		} else {
+			if rg.LowVal == rg.HighVal {
+				cnt = tableRowCount / pseudoEqualRate
+			} else {
+				cnt = tableRowCount / pseudoBetweenRate
+			}
+		}
+		if rg.HighVal-rg.LowVal > 0 && cnt > float64(rg.HighVal-rg.LowVal) {
+			cnt = float64(rg.HighVal - rg.LowVal)
+		}
+		rowCount += cnt
+	}
+	if rowCount > tableRowCount {
+		rowCount = tableRowCount
+	}
+	return rowCount
 }

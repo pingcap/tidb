@@ -22,8 +22,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -38,6 +36,8 @@ import (
 
 // ShowExec represents a show executor.
 type ShowExec struct {
+	baseExecutor
+
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName model.CIStr
 	Table  *ast.TableName  // Used for showing columns.
@@ -46,21 +46,14 @@ type ShowExec struct {
 	Full   bool
 	User   string // Used for show grants.
 
-	// Used by show variables
+	// GlobalScope is used by show variables
 	GlobalScope bool
 
-	schema *expression.Schema
-	ctx    context.Context
-	is     infoschema.InfoSchema
+	is infoschema.InfoSchema
 
 	fetched bool
 	rows    []*Row
 	cursor  int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *ShowExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Next implements Execution Next interface.
@@ -117,6 +110,12 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowProcessList()
 	case ast.ShowEvents:
 		// empty result
+	case ast.ShowStatsMeta:
+		return e.fetchShowStatsMeta()
+	case ast.ShowStatsHistograms:
+		return e.fetchShowStatsHistogram()
+	case ast.ShowStatsBuckets:
+		return e.fetchShowStatsBuckets()
 	}
 	return nil
 }
@@ -329,6 +328,7 @@ func (e *ShowExec) fetchShowIndex() error {
 	return nil
 }
 
+// fetchShowCharset gets all charset information and fill them into e.rows.
 // See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 func (e *ShowExec) fetchShowCharset() error {
 	descs := charset.GetAllCharsets()
@@ -401,6 +401,15 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var pkCol *table.Column
 	for i, col := range tb.Cols() {
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
+		if len(col.GeneratedExprString) != 0 {
+			// It's a generated column.
+			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s)", col.GeneratedExprString))
+			if col.GeneratedStored {
+				buf.WriteString(" STORED")
+			} else {
+				buf.WriteString(" VIRTUAL")
+			}
+		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			buf.WriteString(" NOT NULL AUTO_INCREMENT")
 		} else {
@@ -440,7 +449,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		buf.WriteString(fmt.Sprintf(" PRIMARY KEY (`%s`)", pkCol.Name.O))
+		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (`%s`)", pkCol.Name.O))
 	}
 
 	if len(tb.Indices()) > 0 || len(tb.Meta().ForeignKeys) > 0 {
@@ -504,9 +513,17 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
-	if s := tb.Meta().Charset; len(s) > 0 {
-		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s", s))
+	charsetName := tb.Meta().Charset
+	if len(charsetName) == 0 {
+		charsetName = charset.CharsetUTF8
 	}
+	collate := tb.Meta().Collate
+	if len(collate) == 0 {
+		collate = charset.CollationUTF8
+	}
+	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
+	// to make it work on MySQL server which has default collate utf8_general_ci.
+	buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
 
 	if tb.Meta().AutoIncID > 0 {
 		buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", tb.Meta().AutoIncID))
@@ -521,7 +538,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	return nil
 }
 
-// Compose show create database result.
+// fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
@@ -612,9 +629,4 @@ func (e *ShowExec) getTable() (table.Table, error) {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}
 	return tb, nil
-}
-
-// Close implements the Executor Close interface.
-func (e *ShowExec) Close() error {
-	return nil
 }

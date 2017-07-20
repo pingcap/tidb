@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -36,15 +37,19 @@ const (
 
 // tikvSnapshot implements MvccSnapshot interface.
 type tikvSnapshot struct {
-	store   *tikvStore
-	version kv.Version
+	store          *tikvStore
+	version        kv.Version
+	isolationLevel kv.IsoLevel
+	priority       pb.CommandPri
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
 func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 	return &tikvSnapshot{
-		store:   store,
-		version: ver,
+		store:          store,
+		version:        ver,
+		isolationLevel: kv.SI,
+		priority:       pb.CommandPri_Normal,
 	}
 }
 
@@ -98,7 +103,9 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 	ch := make(chan error)
 	for _, batch := range batches {
 		go func(batch batchKeys) {
-			ch <- s.batchGetSingleRegion(bo.Fork(), batch, collectF)
+			backoffer, cancel := bo.Fork()
+			defer cancel()
+			ch <- s.batchGetSingleRegion(backoffer, batch, collectF)
 		}(batch)
 	}
 	for i := 0; i < len(batches); i++ {
@@ -111,20 +118,27 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 }
 
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, pbIsolationLevel(s.isolationLevel))
+
 	pending := batch.keys
 	for {
-		req := &pb.Request{
-			Type: pb.MessageType_CmdBatchGet,
-			CmdBatchGetReq: &pb.CmdBatchGetRequest{
+		req := &tikvrpc.Request{
+			Type:     tikvrpc.CmdBatchGet,
+			Priority: s.priority,
+			BatchGet: &pb.BatchGetRequest{
 				Keys:    pending,
 				Version: s.version.Ver,
 			},
 		}
-		resp, err := s.store.SendKVReq(bo, req, batch.region, readTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
@@ -132,7 +146,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			err = s.batchGetKeysByRegions(bo, pending, collectF)
 			return errors.Trace(err)
 		}
-		batchGetResp := resp.GetCmdBatchGetResp()
+		batchGetResp := resp.BatchGet
 		if batchGetResp == nil {
 			return errors.Trace(errBodyMissing)
 		}
@@ -184,9 +198,12 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 }
 
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
-	req := &pb.Request{
-		Type: pb.MessageType_CmdGet,
-		CmdGetReq: &pb.CmdGetRequest{
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, pbIsolationLevel(s.isolationLevel))
+
+	req := &tikvrpc.Request{
+		Type:     tikvrpc.CmdGet,
+		Priority: s.priority,
+		Get: &pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
 		},
@@ -196,18 +213,22 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := s.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if regionErr != nil {
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			continue
 		}
-		cmdGetResp := resp.GetCmdGetResp()
+		cmdGetResp := resp.Get
 		if cmdGetResp == nil {
 			return nil, errors.Trace(errBodyMissing)
 		}

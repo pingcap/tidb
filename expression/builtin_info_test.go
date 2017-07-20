@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -48,12 +49,16 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	defer testleak.AfterTest(c)()
+	ctx := mock.NewContext()
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.LastFoundRows = 2
+
 	fc := funcs[ast.FoundRows]
-	f, err := fc.getFunction(nil, s.ctx)
+	f, err := fc.getFunction(nil, ctx)
 	c.Assert(err, IsNil)
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
-	c.Assert(d.GetUint64(), Equals, uint64(0))
+	c.Assert(d.GetUint64(), Equals, uint64(2))
 }
 
 func (s *testEvaluatorSuite) TestUser(c *C) {
@@ -106,4 +111,59 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
+}
+
+func (s *testEvaluatorSuite) TestBenchMark(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Benchmark]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil, nil)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, ErrorMatches, "*FUNCTION BENCHMARK does not exist")
+}
+
+func (s *testEvaluatorSuite) TestCharset(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Charset]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, ErrorMatches, "*FUNCTION CHARSET does not exist")
+}
+
+func (s *testEvaluatorSuite) TestCoercibility(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Coercibility]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, ErrorMatches, "*FUNCTION COERCIBILITY does not exist")
+}
+
+func (s *testEvaluatorSuite) TestCollation(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Collation]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, ErrorMatches, "*FUNCTION COLLATION does not exist")
+}
+
+func (s *testEvaluatorSuite) TestRowCount(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.RowCount]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums()), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, ErrorMatches, "*FUNCTION ROW_COUNT does not exist")
+}
+
+// Test case for tidb_server().
+func (s *testEvaluatorSuite) TestTiDBVersion(c *C) {
+	defer testleak.AfterTest(c)()
+	f, err := newFunctionForTest(s.ctx, ast.TiDBVersion, primitiveValsToConstants([]interface{}{})...)
+	c.Assert(err, IsNil)
+	v, err := f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, printer.GetTiDBInfo())
 }

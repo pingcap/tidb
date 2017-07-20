@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -37,6 +36,8 @@ var (
 
 // RevokeExec executes RevokeStmt.
 type RevokeExec struct {
+	baseExecutor
+
 	Privs      []*ast.PrivElem
 	ObjectType ast.ObjectTypeType
 	Level      *ast.GrantLevel
@@ -45,11 +46,6 @@ type RevokeExec struct {
 	ctx  context.Context
 	is   infoschema.InfoSchema
 	done bool
-}
-
-// Schema implements the Executor Schema interface.
-func (e *RevokeExec) Schema() *expression.Schema {
-	return expression.NewSchema()
 }
 
 // Next implements Execution Next interface.
@@ -76,10 +72,8 @@ func (e *RevokeExec) Next() (*Row, error) {
 		}
 	}
 	e.done = true
-	// Flush privileges.
-	dom := sessionctx.GetDomain(e.ctx)
-	err := dom.PrivilegeHandle().Update()
-	return nil, errors.Trace(err)
+	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	return nil, nil
 }
 
 func (e *RevokeExec) revokeOneUser(user, host string) error {
@@ -193,10 +187,5 @@ func (e *RevokeExec) revokeColumnPriv(priv *ast.PrivElem, user, host string) err
 			return errors.Trace(err)
 		}
 	}
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *RevokeExec) Close() error {
 	return nil
 }

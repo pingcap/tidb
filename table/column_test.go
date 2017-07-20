@@ -36,10 +36,10 @@ type testColumnSuite struct{}
 
 func (s *testColumnSuite) TestString(c *C) {
 	defer testleak.AfterTest(c)()
-	col := &Column{
+	col := ToColumn(&model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeTiny),
 		State:     model.StatePublic,
-	}
+	})
 	col.Flen = 2
 	col.Decimal = 1
 	col.Charset = mysql.DefaultCharset
@@ -114,7 +114,7 @@ func (s *testColumnSuite) TestDesc(c *C) {
 }
 
 func (s *testColumnSuite) TestGetZeroValue(c *C) {
-	cases := []struct {
+	tests := []struct {
 		ft    *types.FieldType
 		value types.Datum
 	}{
@@ -173,20 +173,27 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 			types.NewFieldType(mysql.TypeSet),
 			types.NewDatum(types.Set{}),
 		},
+		{
+			types.NewFieldType(mysql.TypeEnum),
+			types.NewDatum(types.Enum{}),
+		},
 	}
 	sc := new(variable.StatementContext)
-	for _, ca := range cases {
-		colInfo := &model.ColumnInfo{FieldType: *ca.ft}
+	for _, tt := range tests {
+		colInfo := &model.ColumnInfo{FieldType: *tt.ft}
 		zv := GetZeroValue(colInfo)
-		c.Assert(zv.Kind(), Equals, ca.value.Kind())
-		cmp, err := zv.CompareDatum(sc, ca.value)
+		c.Assert(zv.Kind(), Equals, tt.value.Kind())
+		cmp, err := zv.CompareDatum(sc, tt.value)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
 }
 
 func (s *testColumnSuite) TestGetDefaultValue(c *C) {
-	tcases := []struct {
+	ctx := mock.NewContext()
+	zeroTimestamp := types.ZeroTimestamp
+	zeroTimestamp.TimeZone = ctx.GetSessionVars().GetTimeZone()
+	tests := []struct {
 		colInfo *model.ColumnInfo
 		strict  bool
 		val     types.Datum
@@ -246,7 +253,7 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 				DefaultValue: "0000-00-00 00:00:00",
 			},
 			false,
-			types.NewDatum(types.ZeroTimestamp),
+			types.NewDatum(zeroTimestamp),
 			nil,
 		},
 		{
@@ -257,7 +264,7 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 				},
 			},
 			true,
-			types.NewDatum(types.ZeroTimestamp),
+			types.NewDatum(zeroTimestamp),
 			errNoDefaultValue,
 		},
 		{
@@ -273,23 +280,21 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 		},
 	}
 
-	ctx := mock.NewContext()
-
-	for _, tc := range tcases {
-		ctx.GetSessionVars().StrictSQLMode = tc.strict
-		val, err := GetColDefaultValue(ctx, tc.colInfo)
+	for _, tt := range tests {
+		ctx.GetSessionVars().StrictSQLMode = tt.strict
+		val, err := GetColDefaultValue(ctx, tt.colInfo)
 		if err != nil {
-			c.Assert(tc.err, NotNil, Commentf("%v", err))
+			c.Assert(tt.err, NotNil, Commentf("%v", err))
 			continue
 		}
-		c.Assert(val, DeepEquals, tc.val)
+		c.Assert(val, DeepEquals, tt.val)
 	}
 
 }
 
 func newCol(name string) *Column {
-	return &Column{
+	return ToColumn(&model.ColumnInfo{
 		Name:  model.NewCIStr(name),
 		State: model.StatePublic,
-	}
+	})
 }

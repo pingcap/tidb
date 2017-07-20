@@ -15,8 +15,6 @@ package mvmap
 
 import (
 	"bytes"
-	"hash"
-	"hash/fnv"
 )
 
 type entry struct {
@@ -85,6 +83,15 @@ func (ds *dataStore) get(e entry, key []byte) []byte {
 	return slice[valOffset : valOffset+e.valLen]
 }
 
+func (ds *dataStore) getEntryData(e entry) (key, value []byte) {
+	slice := ds.slices[e.addr.sliceIdx]
+	keyOffset := e.addr.offset
+	key = slice[keyOffset : keyOffset+e.keyLen]
+	valOffset := e.addr.offset + e.keyLen
+	value = slice[valOffset : valOffset+e.valLen]
+	return
+}
+
 var nullEntryAddr = entryAddr{}
 
 func (es *entryStore) put(e entry) entryAddr {
@@ -112,14 +119,13 @@ type MVMap struct {
 	entryStore entryStore
 	dataStore  dataStore
 	hashTable  map[uint64]entryAddr
-	hashFunc   hash.Hash64
+	length     int
 }
 
 // NewMVMap creates a new multi-value map.
 func NewMVMap() *MVMap {
 	m := new(MVMap)
 	m.hashTable = make(map[uint64]entryAddr)
-	m.hashFunc = fnv.New64()
 	m.entryStore.slices = [][]entry{make([]entry, 0, 64)}
 	// Append the first empty entry, so the zero entryAddr can represent null.
 	m.entryStore.put(entry{})
@@ -130,7 +136,7 @@ func NewMVMap() *MVMap {
 // Put puts the key/value pairs to the MVMap, if the key already exists, old value will not be overwritten,
 // values are stored in a list.
 func (m *MVMap) Put(key, value []byte) {
-	hashKey := m.hash(key)
+	hashKey := fnvHash64(key)
 	oldEntryAddr := m.hashTable[hashKey]
 	dataAddr := m.dataStore.put(key, value)
 	e := entry{
@@ -141,12 +147,13 @@ func (m *MVMap) Put(key, value []byte) {
 	}
 	newEntryAddr := m.entryStore.put(e)
 	m.hashTable[hashKey] = newEntryAddr
+	m.length++
 }
 
 // Get gets the values of the key.
 func (m *MVMap) Get(key []byte) [][]byte {
 	var values [][]byte
-	hashKey := m.hash(key)
+	hashKey := fnvHash64(key)
 	entryAddr := m.hashTable[hashKey]
 	for entryAddr != nullEntryAddr {
 		e := m.entryStore.get(entryAddr)
@@ -165,8 +172,41 @@ func (m *MVMap) Get(key []byte) [][]byte {
 	return values
 }
 
-func (m *MVMap) hash(key []byte) uint64 {
-	m.hashFunc.Reset()
-	m.hashFunc.Write(key)
-	return m.hashFunc.Sum64()
+// Len returns the number of values in th mv map, the number of keys may be less than Len
+// if the same key is put more than once.
+func (m *MVMap) Len() int {
+	return m.length
+}
+
+// Iterator is used to iterate the MVMap.
+type Iterator struct {
+	m        *MVMap
+	sliceCur int
+	entryCur int
+}
+
+// Next returns the next key/value pair of the MVMap.
+// It returns (nil, nil) when there is no more entries to iterate.
+func (i *Iterator) Next() (key, value []byte) {
+	for {
+		if i.sliceCur >= len(i.m.entryStore.slices) {
+			return nil, nil
+		}
+		entrySlice := i.m.entryStore.slices[i.sliceCur]
+		if i.entryCur >= len(entrySlice) {
+			i.sliceCur++
+			i.entryCur = 0
+			continue
+		}
+		entry := entrySlice[i.entryCur]
+		key, value = i.m.dataStore.getEntryData(entry)
+		i.entryCur++
+		return
+	}
+}
+
+// NewIterator creates a iterator for the MVMap.
+func (m *MVMap) NewIterator() *Iterator {
+	// The first entry is empty, so init entryCur to 1.
+	return &Iterator{m: m, entryCur: 1}
 }

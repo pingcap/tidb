@@ -15,14 +15,19 @@ package plan
 
 import (
 	"fmt"
+	"sort"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -88,7 +93,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 				ColName:     model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, position)),
 				Position:    position,
 				IsAggOrSubq: true,
-				RetType:     aggFunc.GetType()})
+				RetType:     newFunc.GetType()})
 		}
 	}
 	for _, col := range p.Schema().Columns {
@@ -211,10 +216,10 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 }
 
 func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
-	b.optFlag = b.optFlag | flagPredicatePushDown
 	if join.Right == nil {
 		return b.buildResultSetNode(join.Left)
 	}
+	b.optFlag = b.optFlag | flagPredicatePushDown
 	leftPlan := b.buildResultSetNode(join.Left)
 	rightPlan := b.buildResultSetNode(join.Right)
 	leftAlias := extractTableAlias(leftPlan)
@@ -226,6 +231,18 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	addChild(joinPlan, rightPlan)
 	joinPlan.SetSchema(newSchema)
 
+	// Merge sub join's redundantSchema into this join plan. When handle query like
+	// select t2.a from (t1 join t2 using (a)) join t3 using (a);
+	// we can simply search in the top level join plan to find redundant column.
+	var lRedundant, rRedundant *expression.Schema
+	if left, ok := leftPlan.(*LogicalJoin); ok && left.redundantSchema != nil {
+		lRedundant = left.redundantSchema
+	}
+	if right, ok := rightPlan.(*LogicalJoin); ok && right.redundantSchema != nil {
+		rRedundant = right.redundantSchema
+	}
+	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
+
 	if b.TableHints() != nil {
 		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
 		if b.TableHints().ifPreferINLJ(leftAlias) {
@@ -236,10 +253,16 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 		if joinPlan.preferMergeJoin && joinPlan.preferINLJ > 0 {
 			b.err = errors.New("Optimizer Hints is conflict")
+			return nil
 		}
 	}
 
-	if join.On != nil {
+	if join.Using != nil {
+		if err := b.buildUsingClause(joinPlan, leftPlan, rightPlan, join); err != nil {
+			b.err = err
+			return nil
+		}
+	} else if join.On != nil {
 		onExpr, _, err := b.rewrite(join.On.Expr, joinPlan, nil, false)
 		if err != nil {
 			b.err = err
@@ -247,6 +270,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 		if onExpr.IsCorrelated() {
 			b.err = errors.New("ON condition doesn't support subqueries yet")
+			return nil
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
 		joinPlan.attachOnConds(onCondition)
@@ -263,6 +287,81 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		joinPlan.JoinType = InnerJoin
 	}
 	return joinPlan
+}
+
+// buildUsingClause do redundant column elimination and column ordering based on using clause.
+// According to standard SQL, producing this display order:
+// First, coalesced common columns of the two joined tables, in the order in which they occur in the first table.
+// Second, columns unique to the first table, in order in which they occur in that table.
+// Third, columns unique to the second table, in order in which they occur in that table.
+func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
+	lsc := leftPlan.Schema().Clone()
+	rsc := rightPlan.Schema().Clone()
+
+	schemaCols := make([]*expression.Column, 0, len(lsc.Columns)+len(rsc.Columns)-len(join.Using))
+	redundantCols := make([]*expression.Column, 0, len(join.Using))
+	conds := make([]*expression.ScalarFunction, 0, len(join.Using))
+
+	redundant := make(map[string]bool, len(join.Using))
+	for _, col := range join.Using {
+		var (
+			err    error
+			lc, rc *expression.Column
+			cond   expression.Expression
+		)
+
+		if lc, err = lsc.FindColumn(col); err != nil {
+			return errors.Trace(err)
+		}
+		if rc, err = rsc.FindColumn(col); err != nil {
+			return errors.Trace(err)
+		}
+		redundant[col.Name.L] = true
+		if lc == nil || rc == nil {
+			// Same as MySQL.
+			return ErrUnknownColumn.GenByArgs(col.Name, "from clause")
+		}
+
+		if cond, err = expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc); err != nil {
+			return errors.Trace(err)
+		}
+		conds = append(conds, cond.(*expression.ScalarFunction))
+
+		if join.Tp == ast.RightJoin {
+			schemaCols = append(schemaCols, rc)
+			redundantCols = append(redundantCols, lc)
+		} else {
+			schemaCols = append(schemaCols, lc)
+			redundantCols = append(redundantCols, rc)
+		}
+	}
+
+	// Columns in using clause may not ordered in the order in which they occur in the first table, so reorder them.
+	sort.Slice(schemaCols, func(i, j int) bool {
+		return schemaCols[i].Position < schemaCols[j].Position
+	})
+
+	if join.Tp == ast.RightJoin {
+		lsc, rsc = rsc, lsc
+	}
+	for _, col := range lsc.Columns {
+		if !redundant[col.ColName.L] {
+			schemaCols = append(schemaCols, col)
+		}
+	}
+	for _, col := range rsc.Columns {
+		if !redundant[col.ColName.L] {
+			schemaCols = append(schemaCols, col)
+		}
+	}
+
+	p.SetSchema(expression.NewSchema(schemaCols...))
+	p.EqualConditions = append(conds, p.EqualConditions...)
+
+	// p.redundantSchema may contains columns which are merged from sub join, so merge it with redundantCols.
+	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(redundantCols...))
+
+	return nil
 }
 
 func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
@@ -293,6 +392,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
+	b.optFlag |= flagEliminateProjection
 	proj := Projection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.allocator, b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
@@ -326,7 +426,8 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
 					colName = model.NewCIStr(innerExpr.Text())
 				} else {
-					colName = model.NewCIStr(field.Text())
+					// Remove special comment code for field part, see issue #3739 for detail.
+					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
 				}
 			}
 		}
@@ -376,8 +477,13 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			return nil
 		}
 		if _, ok := sel.(*Projection); !ok {
+			b.optFlag |= flagEliminateProjection
 			proj := Projection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.allocator, b.ctx)
-			proj.SetSchema(sel.Schema().Clone())
+			schema := sel.Schema().Clone()
+			for _, col := range schema.Columns {
+				col.FromID = proj.ID()
+			}
+			proj.SetSchema(schema)
 			sel.SetParents(proj)
 			proj.SetChildren(sel)
 			sel = proj
@@ -394,14 +500,12 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			 * | bbbbbbbbbb    |
 			 * +---------------+
 			 */
-			if col.RetType.Flen > firstSchema.Columns[i].RetType.Flen {
-				firstSchema.Columns[i].RetType.Flen = col.RetType.Flen
-			}
-			// For select nul union select "abc", we should not convert "abc" to nil.
-			// And the result field type should be VARCHAR.
-			if firstSchema.Columns[i].RetType.Tp == 0 || firstSchema.Columns[i].RetType.Tp == mysql.TypeNull {
-				firstSchema.Columns[i].RetType.Tp = col.RetType.Tp
-			}
+			schemaTp := firstSchema.Columns[i].RetType
+			colTp := col.RetType
+			schemaTp.Decimal = mathutil.Max(colTp.Decimal, schemaTp.Decimal)
+			// `Flen - Decimal` is the fraction before '.'
+			schemaTp.Flen = mathutil.Max(colTp.Flen-colTp.Decimal, schemaTp.Flen-schemaTp.Decimal) + schemaTp.Decimal
+			schemaTp.Tp = types.MergeFieldType(schemaTp.Tp, colTp.Tp)
 		}
 		sel.SetParents(u)
 	}
@@ -433,7 +537,10 @@ type ByItems struct {
 
 // String implements fmt.Stringer interface.
 func (by *ByItems) String() string {
-	return fmt.Sprintf("(%s, %v)", by.Expr, by.Desc)
+	if by.Desc {
+		return fmt.Sprintf("%s true", by.Expr)
+	}
+	return by.Expr.String()
 }
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
@@ -473,6 +580,9 @@ func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint
 }
 
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
+	if UseDAGPlanBuilder(b.ctx) {
+		b.optFlag = b.optFlag | flagPushDownTopN
+	}
 	var (
 		offset, count uint64
 		err           error
@@ -677,6 +787,9 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 	return n, true
 }
 
+// resolveHavingAndOrderBy will process aggregate functions and resolve the columns that don't exist in select fields.
+// If we found some columns that are not in select fields, we will append it to select fields and update the colMapper.
+// When we rewrite the order by / having expression, we will find column in map at first.
 func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan) (
 	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int) {
 	extractor := &havingAndOrderbyExprResolver{
@@ -847,8 +960,8 @@ func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	}
 	if len(sortMergeTables) != 0 || len(INLJTables) != 0 {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
-			sortMergeJoinTables: sortMergeTables,
-			INLJTables:          INLJTables,
+			sortMergeJoinTables:       sortMergeTables,
+			indexNestedLoopJoinTables: INLJTables,
 		})
 		return true
 	}
@@ -859,6 +972,7 @@ func (b *planBuilder) popTableHints() {
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
 }
 
+// TableHints returns the *tableHintInfo of PlanBuilder.
 func (b *planBuilder) TableHints() *tableHintInfo {
 	if b.tableHintInfo == nil || len(b.tableHintInfo) == 0 {
 		return nil
@@ -960,7 +1074,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.allocator, b.ctx)
 		addChild(proj, p)
-		proj.SetSchema(expression.NewSchema(p.Schema().Columns[:oldLen]...))
+		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
+		for _, col := range schema.Columns {
+			col.FromID = proj.ID()
+		}
+		proj.SetSchema(schema)
 		return proj
 	}
 
@@ -974,7 +1092,14 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	statisticTable := statistics.GetStatisticsTableCache(tn.TableInfo)
+	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
+	var statisticTable *statistics.Table
+	if handle == nil {
+		// When the first session is created, the handle hasn't been initialized.
+		statisticTable = statistics.PseudoTable(tn.TableInfo.ID)
+	} else {
+		statisticTable = handle.GetTableStats(tn.TableInfo.ID)
+	}
 	if b.err != nil {
 		return nil
 	}
@@ -994,23 +1119,20 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		tableInfo:      tableInfo,
 		statisticTable: statisticTable,
 		DBName:         schemaName,
+		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
 	}.init(b.allocator, b.ctx)
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
-	// Equal condition contains a column from previous joined table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
-	for i, col := range tableInfo.Columns {
-		if b.inUpdateStmt {
-			switch col.State {
-			case model.StatePublic, model.StateWriteOnly, model.StateWriteReorganization:
-			default:
-				continue
-			}
-		} else if col.State != model.StatePublic {
-			continue
-		}
-		p.Columns = append(p.Columns, col)
+	var columns []*table.Column
+	if b.inUpdateStmt {
+		columns = tbl.WritableCols()
+	} else {
+		columns = tbl.Cols()
+	}
+	for i, col := range columns {
+		p.Columns = append(p.Columns, col.ColumnInfo)
 		schema.Append(&expression.Column{
 			FromID:   p.id,
 			ColName:  col.Name,
@@ -1037,7 +1159,9 @@ func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.init(b.allocator, b.ctx)
-
+	if tp == LeftOuterJoin {
+		ap.DefaultValues = make([]types.Datum, innerPlan.Schema().Len())
+	}
 	addChild(ap, outerPlan)
 	addChild(ap, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
@@ -1144,7 +1268,6 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, t.Name.L, "")
 	}
 
-	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
@@ -1163,7 +1286,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 			return nil
 		}
 	}
-	orderedList, np := b.buildUpdateLists(update.List, p)
+	orderedList, np := b.buildUpdateLists(tableList, update.List, p)
 	if b.err != nil {
 		return nil
 	}
@@ -1174,31 +1297,48 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	return updt
 }
 
-func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
-	schema := p.Schema()
-	newList := make([]*expression.Assignment, schema.Len())
+func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
+	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
 	for _, assign := range list {
-		col, err := schema.FindColumn(assign.Column)
+		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil
 		}
-		if col == nil {
-			b.err = errors.Trace(errors.Errorf("column %s not found", assign.Column.Name.O))
+		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
+		modifyColumns[columnFullName] = struct{}{}
+	}
+	// If columnes in set list contains generated columns, raise error.
+	for _, tn := range tableList {
+		tableInfo := tn.TableInfo
+		for _, colInfo := range tableInfo.Columns {
+			if len(colInfo.GeneratedExprString) == 0 {
+				continue
+			}
+			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+			if _, ok := modifyColumns[columnFullName]; ok {
+				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
+				return nil, nil
+			}
+		}
+	}
+
+	newList := make([]*expression.Assignment, 0, p.Schema().Len())
+	for _, assign := range list {
+		col, _, err := p.findColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
 			return nil, nil
 		}
-		offset := schema.ColumnIndex(col)
-		if offset == -1 {
-			b.err = errors.Trace(errors.Errorf("could not find column %s.%s", col.TblName, col.ColName))
-			return nil, nil
-		}
-		newExpr, np, err := b.rewrite(assign.Expr, p, nil, false)
+		var newExpr expression.Expression
+		var np LogicalPlan
+		newExpr, np, err = b.rewrite(assign.Expr, p, nil, false)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil
 		}
 		p = np
-		newList[offset] = &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr}
+		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
 	}
 	return newList, p
 }
@@ -1210,7 +1350,6 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 		return nil
 	}
 
-	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {

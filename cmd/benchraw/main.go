@@ -34,7 +34,7 @@ var (
 	valueSize = flag.Int("V", 5, "value size in byte")
 )
 
-// blind put bench
+// batchRawPut blinds put bench.
 func batchRawPut(value []byte) {
 	cli, err := tikv.NewRawKVClient(strings.Split(*pdAddr, ","))
 	if err != nil {

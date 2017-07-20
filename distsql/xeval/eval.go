@@ -14,6 +14,8 @@
 package xeval
 
 import (
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/mysql"
@@ -59,14 +61,16 @@ type Evaluator struct {
 	fieldTps     []*types.FieldType
 	valueLists   map[*tipb.Expr]*decodedValueList
 	StatementCtx *variable.StatementContext
+	TimeZone     *time.Location
 }
 
 // NewEvaluator creates a new Evaluator instance.
-func NewEvaluator(sc *variable.StatementContext) *Evaluator {
+func NewEvaluator(sc *variable.StatementContext, timeZone *time.Location) *Evaluator {
 	return &Evaluator{
 		Row:          make(map[int64]types.Datum),
 		ColIDs:       make(map[int64]int),
 		StatementCtx: sc,
+		TimeZone:     timeZone,
 	}
 }
 
@@ -100,7 +104,7 @@ func (e *Evaluator) SetRowValue(handle int64, row [][]byte, relatedColIDs map[in
 		} else {
 			data := row[offset]
 			ft := e.fieldTps[offset]
-			datum, err := tablecodec.DecodeColumnValue(data, ft)
+			datum, err := tablecodec.DecodeColumnValue(data, ft, e.TimeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -147,6 +151,11 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalCoalesce(expr)
 	case tipb.ExprType_IsNull:
 		return e.evalIsNull(expr)
+	// json functions
+	case tipb.ExprType_JsonType, tipb.ExprType_JsonExtract, tipb.ExprType_JsonUnquote, tipb.ExprType_JsonValid,
+		tipb.ExprType_JsonObject, tipb.ExprType_JsonArray, tipb.ExprType_JsonMerge, tipb.ExprType_JsonSet,
+		tipb.ExprType_JsonInsert, tipb.ExprType_JsonReplace, tipb.ExprType_JsonRemove, tipb.ExprType_JsonContains:
+		return e.evalJSONFunctions(expr)
 	}
 	return types.Datum{}, nil
 }

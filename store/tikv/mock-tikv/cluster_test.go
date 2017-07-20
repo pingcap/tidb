@@ -17,8 +17,10 @@ import (
 	"bytes"
 	"math"
 	"strconv"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -34,7 +36,13 @@ type testClusterSuite struct {
 }
 
 func (s *testClusterSuite) TestClusterSplit(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	mvccStore := mocktikv.NewMvccStore()
+	store, err := tikv.NewMockTikvStore(
+		tikv.WithCluster(cluster),
+		tikv.WithMVCCStore(mvccStore),
+	)
 	c.Assert(err, IsNil)
 
 	txn, err := store.Begin()
@@ -48,7 +56,8 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	for i := 0; i < 1000; i++ {
 		rowKey := tablecodec.EncodeRowKeyWithHandle(tblID, handle)
 		colValue := types.NewStringDatum(strconv.Itoa(int(handle)))
-		rowValue, err1 := tablecodec.EncodeRow([]types.Datum{colValue}, []int64{colID})
+		// TODO: Should use session's TimeZone instead of UTC.
+		rowValue, err1 := tablecodec.EncodeRow([]types.Datum{colValue}, []int64{colID}, time.UTC)
 		c.Assert(err1, IsNil)
 		txn.Set(rowKey, rowValue)
 
@@ -62,9 +71,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	c.Assert(err, IsNil)
 
 	// Split Table into 10 regions.
-	cli := tikv.GetMockTiKVClient(store)
-	cluster := cli.Cluster
-	cluster.SplitTable(cli.MvccStore, tblID, 10)
+	cluster.SplitTable(mvccStore, tblID, 10)
 
 	// 10 table regions and first region and last region.
 	regions := cluster.GetAllRegions()
@@ -78,7 +85,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		if !bytes.HasPrefix(startKey, recordPrefix) {
 			continue
 		}
-		pairs := cli.MvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64)
+		pairs := mvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI)
 		if len(pairs) > 0 {
 			c.Assert(pairs, HasLen, 100)
 		}
@@ -88,7 +95,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	}
 	c.Assert(allKeysMap, HasLen, 1000)
 
-	cluster.SplitIndex(cli.MvccStore, tblID, idxID, 10)
+	cluster.SplitIndex(mvccStore, tblID, idxID, 10)
 
 	allIndexMap := make(map[string]bool)
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tblID, idxID)
@@ -99,7 +106,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		if !bytes.HasPrefix(startKey, indexPrefix) {
 			continue
 		}
-		pairs := cli.MvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64)
+		pairs := mvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI)
 		if len(pairs) > 0 {
 			c.Assert(pairs, HasLen, 100)
 		}

@@ -14,6 +14,7 @@
 package mocktikv
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -55,19 +56,25 @@ func (s *testMockTiKVSuite) SetUpTest(c *C) {
 }
 
 func (s *testMockTiKVSuite) mustGetNone(c *C, key string, ts uint64) {
-	val, err := s.store.Get([]byte(key), ts)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
 	c.Assert(err, IsNil)
 	c.Assert(val, IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetErr(c *C, key string, ts uint64) {
-	val, err := s.store.Get([]byte(key), ts)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
 	c.Assert(err, NotNil)
 	c.Assert(val, IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetOK(c *C, key string, ts uint64, expect string) {
-	val, err := s.store.Get([]byte(key), ts)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
+	c.Assert(err, IsNil)
+	c.Assert(string(val), Equals, expect)
+}
+
+func (s *testMockTiKVSuite) mustGetRC(c *C, key string, ts uint64, expect string) {
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_RC)
 	c.Assert(err, IsNil)
 	c.Assert(string(val), Equals, expect)
 }
@@ -97,7 +104,7 @@ func (s *testMockTiKVSuite) mustDeleteOK(c *C, key string, startTS, commitTS uin
 }
 
 func (s *testMockTiKVSuite) mustScanOK(c *C, start string, limit int, ts uint64, expect ...string) {
-	pairs := s.store.Scan([]byte(start), nil, limit, ts)
+	pairs := s.store.Scan([]byte(start), nil, limit, ts, kvrpcpb.IsolationLevel_SI)
 	c.Assert(len(pairs)*2, Equals, len(expect))
 	for i := 0; i < len(pairs); i++ {
 		c.Assert(pairs[i].Err, IsNil)
@@ -253,4 +260,33 @@ func (s *testMockTiKVSuite) TestResolveLock(c *C) {
 	s.mustGetOK(c, "p2", 20, "v10")
 	s.mustGetOK(c, "s2", 30, "v10")
 	s.mustScanLock(c, 30, nil)
+}
+
+func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {
+	s.mustPutOK(c, "test", "test", 1, 3)
+
+	errs := s.store.Prewrite(putMutations("lock", "lock", "test", "test1"), []byte("test"), 2, 2)
+	s.mustWriteWriteConflict(c, errs, 1)
+
+	s.mustPutOK(c, "test", "test2", 5, 8)
+
+	// simulate `getTxnStatus` for txn 2.
+	err := s.store.Cleanup([]byte("test"), 2)
+	c.Assert(err, IsNil)
+
+	errs = s.store.Prewrite(putMutations("test", "test3"), []byte("test"), 6, 1)
+	s.mustWriteWriteConflict(c, errs, 0)
+}
+
+func (s *testMockTiKVSuite) mustWriteWriteConflict(c *C, errs []error, i int) {
+	c.Assert(errs[i], NotNil)
+	c.Assert(strings.Contains(errs[i].Error(), "write conflict"), IsTrue)
+}
+
+func (s *testMockTiKVSuite) TestRC(c *C) {
+	s.mustPutOK(c, "key", "v1", 5, 10)
+	s.mustPrewriteOK(c, putMutations("key", "v2"), "key", 15)
+	s.mustGetErr(c, "key", 20)
+	s.mustGetRC(c, "key", 12, "v1")
+	s.mustGetRC(c, "key", 20, "v1")
 }

@@ -28,8 +28,9 @@ import (
 )
 
 const (
-	// We want to ensure our initial record id greater than a threshold.
+	// initialRecordID means initial record id, and we want to ensure our initial record id greater than a threshold.
 	initialRecordID int64 = 123
+	// invalidRecordID means invalid record id.
 	// In our case, a valid record will always greater than 0, so we use a
 	// macro to mark an invalid one.
 	invalidRecordID int64 = 0

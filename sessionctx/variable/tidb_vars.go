@@ -48,6 +48,10 @@ const (
 	// those indices can be scanned concurrently, with the cost of higher system performance impact.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
 
+	// TiDBCurrentTS is used to get the current transaction timestamp.
+	// It is read-only.
+	TiDBCurrentTS = "tidb_current_ts"
+
 	/* Session and global */
 
 	// tidb_distsql_scan_concurrency is used to set the concurrency of a distsql scan task.
@@ -70,15 +74,9 @@ const (
 	// Set this value higher may reduce the latency but consumes more system resource.
 	TiDBIndexLookupConcurrency = "tidb_index_lookup_concurrency"
 
-	// tidb_index_serial_scan_concurrency is used for controling the concurrency of index scan operation
+	// tidb_index_serial_scan_concurrency is used for controlling the concurrency of index scan operation
 	// when we need to keep the data output order the same as the order of index data.
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
-
-	// tidb_skip_ddl_wait skips the wait tiem of two lease after executing CREATE TABLE statement.
-	// When we have multiple TiDB servers in a cluster, the newly created table may not be available on all TiDB server
-	// until two lease time later, set this value to true will reduce the time to create a table, with the risk that
-	// other TiDB servers may fail to use the newly created table in a small time window.
-	TiDBSkipDDLWait = "tidb_skip_ddl_wait"
 
 	// tidb_skip_utf8_check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
 	// the input string values are valid, we can skip the check.
@@ -87,6 +85,11 @@ const (
 	// tidb_batch_insert is used to enable/disable auto-split insert data. If set this option on, insert executor will automatically
 	// insert data into multiple batches and use a single txn for each batch. This will be helpful when inserting large data.
 	TiDBBatchInsert = "tidb_batch_insert"
+
+	// tidb_max_row_count_for_inlj is used when do index nested loop join.
+	// It controls the max row count of outer table when do index nested loop join without hint.
+	// After the row count of the inner table is accurate, this variable will be removed.
+	TiDBMaxRowCountForINLJ = "tidb_max_row_count_for_inlj"
 )
 
 // Default TiDB system variable values.
@@ -96,9 +99,10 @@ const (
 	DefIndexLookupSize            = 20000
 	DefDistSQLScanConcurrency     = 10
 	DefBuildStatsConcurrency      = 4
-	DefSkipDDLWait                = false
+	DefMaxRowCountForINLJ         = 128
 	DefSkipUTF8Check              = false
 	DefOptAggPushDown             = true
 	DefOptInSubqUnfolding         = false
 	DefBatchInsert                = false
+	DefCurretTS                   = 0
 )

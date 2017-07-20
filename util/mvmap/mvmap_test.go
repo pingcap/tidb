@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"testing"
 )
 
@@ -32,6 +33,23 @@ func TestMVMap(t *testing.T) {
 	}
 	vals = m.Get([]byte("def"))
 	if fmt.Sprintf("%s", vals) != "[def1 def2]" {
+		t.FailNow()
+	}
+
+	if m.Len() != 4 {
+		t.FailNow()
+	}
+
+	results := []string{"abc abc1", "abc abc2", "def def1", "def def2"}
+	it := m.NewIterator()
+	for i := 0; i < 4; i++ {
+		key, val := it.Next()
+		if fmt.Sprintf("%s %s", key, val) != results[i] {
+			t.FailNow()
+		}
+	}
+	key, val := it.Next()
+	if key != nil || val != nil {
 		t.FailNow()
 	}
 }
@@ -59,5 +77,17 @@ func BenchmarkMVMapGet(b *testing.B) {
 		if len(val) != 1 || bytes.Compare(val[0], buffer) != 0 {
 			b.FailNow()
 		}
+	}
+}
+
+func TestFNVHash(t *testing.T) {
+	b := []byte{0xcb, 0xf2, 0x9c, 0xe4, 0x84, 0x22, 0x23, 0x25}
+	sum1 := fnvHash64(b)
+	hash := fnv.New64()
+	hash.Reset()
+	hash.Write(b)
+	sum2 := hash.Sum64()
+	if sum1 != sum2 {
+		t.FailNow()
 	}
 }

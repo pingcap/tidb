@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 type testCtxKeyType int
@@ -37,7 +38,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
 
-	d := newDDL(store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 
 	time.Sleep(testLease)
@@ -60,25 +61,27 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
-	done := make(chan struct{})
 	rowCount := int64(10)
 	f := func() error {
 		d.setReorgRowCount(rowCount)
 		time.Sleep(4 * testLease)
-		close(done)
 		return nil
 	}
 	job := &model.Job{}
 	err = d.runReorgJob(job, f)
 	c.Assert(err, NotNil)
 
-	<-done
-	// Make sure the function of f is returned.
-	time.Sleep(5 * time.Millisecond)
-	err = d.runReorgJob(job, f)
+	// The longest to wait for 5 seconds to make sure the function of f is returned.
+	for i := 0; i < 1000; i++ {
+		time.Sleep(5 * time.Millisecond)
+		err = d.runReorgJob(job, f)
+		if err == nil {
+			c.Assert(job.RowCount, Equals, rowCount)
+			c.Assert(d.reorgRowCount, Equals, int64(0))
+			break
+		}
+	}
 	c.Assert(err, IsNil)
-	c.Assert(job.RowCount, Equals, rowCount)
-	c.Assert(d.reorgRowCount, Equals, int64(0))
 
 	d.Stop()
 	err = d.runReorgJob(job, func() error {
@@ -86,7 +89,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		return nil
 	})
 	c.Assert(err, NotNil)
-	d.start()
+	d.start(goctx.Background())
 
 	job = &model.Job{
 		ID:       1,
@@ -124,14 +127,14 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	store := testCreateStore(c, "test_reorg_owner")
 	defer store.Close()
 
-	d1 := newDDL(store, nil, nil, testLease)
+	d1 := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
 
 	ctx := testNewContext(d1)
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 
-	d2 := newDDL(store, nil, nil, testLease)
+	d2 := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d2.Stop()
 
 	dbInfo := testSchemaInfo(c, d1, "test")

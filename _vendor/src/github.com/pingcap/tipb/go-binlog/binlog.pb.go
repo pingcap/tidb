@@ -19,11 +19,11 @@ import (
 	"fmt"
 
 	proto "github.com/golang/protobuf/proto"
+
+	math "math"
+
+	io "io"
 )
-
-import math "math"
-
-import io "io"
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
@@ -305,100 +305,100 @@ func init() {
 	proto.RegisterEnum("binlog.MutationType", MutationType_name, MutationType_value)
 	proto.RegisterEnum("binlog.BinlogType", BinlogType_name, BinlogType_value)
 }
-func (m *TableMutation) Marshal() (data []byte, err error) {
+func (m *TableMutation) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *TableMutation) MarshalTo(data []byte) (int, error) {
+func (m *TableMutation) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	data[i] = 0x8
+	dAtA[i] = 0x8
 	i++
-	i = encodeVarintBinlog(data, i, uint64(m.TableId))
+	i = encodeVarintBinlog(dAtA, i, uint64(m.TableId))
 	if len(m.InsertedRows) > 0 {
 		for _, b := range m.InsertedRows {
-			data[i] = 0x12
+			dAtA[i] = 0x12
 			i++
-			i = encodeVarintBinlog(data, i, uint64(len(b)))
-			i += copy(data[i:], b)
+			i = encodeVarintBinlog(dAtA, i, uint64(len(b)))
+			i += copy(dAtA[i:], b)
 		}
 	}
 	if len(m.UpdatedRows) > 0 {
 		for _, b := range m.UpdatedRows {
-			data[i] = 0x1a
+			dAtA[i] = 0x1a
 			i++
-			i = encodeVarintBinlog(data, i, uint64(len(b)))
-			i += copy(data[i:], b)
+			i = encodeVarintBinlog(dAtA, i, uint64(len(b)))
+			i += copy(dAtA[i:], b)
 		}
 	}
 	if len(m.DeletedIds) > 0 {
 		for _, num := range m.DeletedIds {
-			data[i] = 0x20
+			dAtA[i] = 0x20
 			i++
-			i = encodeVarintBinlog(data, i, uint64(num))
+			i = encodeVarintBinlog(dAtA, i, uint64(num))
 		}
 	}
 	if len(m.DeletedPks) > 0 {
 		for _, b := range m.DeletedPks {
-			data[i] = 0x2a
+			dAtA[i] = 0x2a
 			i++
-			i = encodeVarintBinlog(data, i, uint64(len(b)))
-			i += copy(data[i:], b)
+			i = encodeVarintBinlog(dAtA, i, uint64(len(b)))
+			i += copy(dAtA[i:], b)
 		}
 	}
 	if len(m.DeletedRows) > 0 {
 		for _, b := range m.DeletedRows {
-			data[i] = 0x32
+			dAtA[i] = 0x32
 			i++
-			i = encodeVarintBinlog(data, i, uint64(len(b)))
-			i += copy(data[i:], b)
+			i = encodeVarintBinlog(dAtA, i, uint64(len(b)))
+			i += copy(dAtA[i:], b)
 		}
 	}
 	if len(m.Sequence) > 0 {
 		for _, num := range m.Sequence {
-			data[i] = 0x38
+			dAtA[i] = 0x38
 			i++
-			i = encodeVarintBinlog(data, i, uint64(num))
+			i = encodeVarintBinlog(dAtA, i, uint64(num))
 		}
 	}
 	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
+		i += copy(dAtA[i:], m.XXX_unrecognized)
 	}
 	return i, nil
 }
 
-func (m *PrewriteValue) Marshal() (data []byte, err error) {
+func (m *PrewriteValue) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *PrewriteValue) MarshalTo(data []byte) (int, error) {
+func (m *PrewriteValue) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	data[i] = 0x8
+	dAtA[i] = 0x8
 	i++
-	i = encodeVarintBinlog(data, i, uint64(m.SchemaVersion))
+	i = encodeVarintBinlog(dAtA, i, uint64(m.SchemaVersion))
 	if len(m.Mutations) > 0 {
 		for _, msg := range m.Mutations {
-			data[i] = 0x12
+			dAtA[i] = 0x12
 			i++
-			i = encodeVarintBinlog(data, i, uint64(msg.Size()))
-			n, err := msg.MarshalTo(data[i:])
+			i = encodeVarintBinlog(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
 			if err != nil {
 				return 0, err
 			}
@@ -406,87 +406,87 @@ func (m *PrewriteValue) MarshalTo(data []byte) (int, error) {
 		}
 	}
 	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
+		i += copy(dAtA[i:], m.XXX_unrecognized)
 	}
 	return i, nil
 }
 
-func (m *Binlog) Marshal() (data []byte, err error) {
+func (m *Binlog) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *Binlog) MarshalTo(data []byte) (int, error) {
+func (m *Binlog) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	data[i] = 0x8
+	dAtA[i] = 0x8
 	i++
-	i = encodeVarintBinlog(data, i, uint64(m.Tp))
-	data[i] = 0x10
+	i = encodeVarintBinlog(dAtA, i, uint64(m.Tp))
+	dAtA[i] = 0x10
 	i++
-	i = encodeVarintBinlog(data, i, uint64(m.StartTs))
-	data[i] = 0x18
+	i = encodeVarintBinlog(dAtA, i, uint64(m.StartTs))
+	dAtA[i] = 0x18
 	i++
-	i = encodeVarintBinlog(data, i, uint64(m.CommitTs))
+	i = encodeVarintBinlog(dAtA, i, uint64(m.CommitTs))
 	if m.PrewriteKey != nil {
-		data[i] = 0x22
+		dAtA[i] = 0x22
 		i++
-		i = encodeVarintBinlog(data, i, uint64(len(m.PrewriteKey)))
-		i += copy(data[i:], m.PrewriteKey)
+		i = encodeVarintBinlog(dAtA, i, uint64(len(m.PrewriteKey)))
+		i += copy(dAtA[i:], m.PrewriteKey)
 	}
 	if m.PrewriteValue != nil {
-		data[i] = 0x2a
+		dAtA[i] = 0x2a
 		i++
-		i = encodeVarintBinlog(data, i, uint64(len(m.PrewriteValue)))
-		i += copy(data[i:], m.PrewriteValue)
+		i = encodeVarintBinlog(dAtA, i, uint64(len(m.PrewriteValue)))
+		i += copy(dAtA[i:], m.PrewriteValue)
 	}
 	if m.DdlQuery != nil {
-		data[i] = 0x32
+		dAtA[i] = 0x32
 		i++
-		i = encodeVarintBinlog(data, i, uint64(len(m.DdlQuery)))
-		i += copy(data[i:], m.DdlQuery)
+		i = encodeVarintBinlog(dAtA, i, uint64(len(m.DdlQuery)))
+		i += copy(dAtA[i:], m.DdlQuery)
 	}
-	data[i] = 0x38
+	dAtA[i] = 0x38
 	i++
-	i = encodeVarintBinlog(data, i, uint64(m.DdlJobId))
+	i = encodeVarintBinlog(dAtA, i, uint64(m.DdlJobId))
 	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
+		i += copy(dAtA[i:], m.XXX_unrecognized)
 	}
 	return i, nil
 }
 
-func encodeFixed64Binlog(data []byte, offset int, v uint64) int {
-	data[offset] = uint8(v)
-	data[offset+1] = uint8(v >> 8)
-	data[offset+2] = uint8(v >> 16)
-	data[offset+3] = uint8(v >> 24)
-	data[offset+4] = uint8(v >> 32)
-	data[offset+5] = uint8(v >> 40)
-	data[offset+6] = uint8(v >> 48)
-	data[offset+7] = uint8(v >> 56)
+func encodeFixed64Binlog(dAtA []byte, offset int, v uint64) int {
+	dAtA[offset] = uint8(v)
+	dAtA[offset+1] = uint8(v >> 8)
+	dAtA[offset+2] = uint8(v >> 16)
+	dAtA[offset+3] = uint8(v >> 24)
+	dAtA[offset+4] = uint8(v >> 32)
+	dAtA[offset+5] = uint8(v >> 40)
+	dAtA[offset+6] = uint8(v >> 48)
+	dAtA[offset+7] = uint8(v >> 56)
 	return offset + 8
 }
-func encodeFixed32Binlog(data []byte, offset int, v uint32) int {
-	data[offset] = uint8(v)
-	data[offset+1] = uint8(v >> 8)
-	data[offset+2] = uint8(v >> 16)
-	data[offset+3] = uint8(v >> 24)
+func encodeFixed32Binlog(dAtA []byte, offset int, v uint32) int {
+	dAtA[offset] = uint8(v)
+	dAtA[offset+1] = uint8(v >> 8)
+	dAtA[offset+2] = uint8(v >> 16)
+	dAtA[offset+3] = uint8(v >> 24)
 	return offset + 4
 }
-func encodeVarintBinlog(data []byte, offset int, v uint64) int {
+func encodeVarintBinlog(dAtA []byte, offset int, v uint64) int {
 	for v >= 1<<7 {
-		data[offset] = uint8(v&0x7f | 0x80)
+		dAtA[offset] = uint8(v&0x7f | 0x80)
 		v >>= 7
 		offset++
 	}
-	data[offset] = uint8(v)
+	dAtA[offset] = uint8(v)
 	return offset + 1
 }
 func (m *TableMutation) Size() (n int) {
@@ -587,8 +587,8 @@ func sovBinlog(x uint64) (n int) {
 func sozBinlog(x uint64) (n int) {
 	return sovBinlog(uint64((x << 1) ^ uint64((int64(x) >> 63))))
 }
-func (m *TableMutation) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *TableMutation) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -600,7 +600,7 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -628,7 +628,7 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.TableId |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -647,7 +647,7 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -662,7 +662,7 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.InsertedRows = append(m.InsertedRows, make([]byte, postIndex-iNdEx))
-			copy(m.InsertedRows[len(m.InsertedRows)-1], data[iNdEx:postIndex])
+			copy(m.InsertedRows[len(m.InsertedRows)-1], dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -676,7 +676,7 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -691,28 +691,70 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.UpdatedRows = append(m.UpdatedRows, make([]byte, postIndex-iNdEx))
-			copy(m.UpdatedRows[len(m.UpdatedRows)-1], data[iNdEx:postIndex])
+			copy(m.UpdatedRows[len(m.UpdatedRows)-1], dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field DeletedIds", wireType)
-			}
-			var v int64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowBinlog
+			if wireType == 0 {
+				var v int64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowBinlog
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= (int64(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
 				}
-				if iNdEx >= l {
+				m.DeletedIds = append(m.DeletedIds, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowBinlog
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= (int(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return ErrInvalidLengthBinlog
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex > l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
-				iNdEx++
-				v |= (int64(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
+				for iNdEx < postIndex {
+					var v int64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowBinlog
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= (int64(b) & 0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.DeletedIds = append(m.DeletedIds, v)
 				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field DeletedIds", wireType)
 			}
-			m.DeletedIds = append(m.DeletedIds, v)
 		case 5:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field DeletedPks", wireType)
@@ -725,7 +767,7 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -740,7 +782,7 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.DeletedPks = append(m.DeletedPks, make([]byte, postIndex-iNdEx))
-			copy(m.DeletedPks[len(m.DeletedPks)-1], data[iNdEx:postIndex])
+			copy(m.DeletedPks[len(m.DeletedPks)-1], dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -754,7 +796,7 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -769,31 +811,73 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.DeletedRows = append(m.DeletedRows, make([]byte, postIndex-iNdEx))
-			copy(m.DeletedRows[len(m.DeletedRows)-1], data[iNdEx:postIndex])
+			copy(m.DeletedRows[len(m.DeletedRows)-1], dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 7:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Sequence", wireType)
-			}
-			var v MutationType
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowBinlog
+			if wireType == 0 {
+				var v MutationType
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowBinlog
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= (MutationType(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
 				}
-				if iNdEx >= l {
+				m.Sequence = append(m.Sequence, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowBinlog
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= (int(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return ErrInvalidLengthBinlog
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex > l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
-				iNdEx++
-				v |= (MutationType(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
+				for iNdEx < postIndex {
+					var v MutationType
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowBinlog
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= (MutationType(b) & 0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.Sequence = append(m.Sequence, v)
 				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field Sequence", wireType)
 			}
-			m.Sequence = append(m.Sequence, v)
 		default:
 			iNdEx = preIndex
-			skippy, err := skipBinlog(data[iNdEx:])
+			skippy, err := skipBinlog(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -803,7 +887,7 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
 			iNdEx += skippy
 		}
 	}
@@ -813,8 +897,8 @@ func (m *TableMutation) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *PrewriteValue) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *PrewriteValue) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -826,7 +910,7 @@ func (m *PrewriteValue) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -854,7 +938,7 @@ func (m *PrewriteValue) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.SchemaVersion |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -873,7 +957,7 @@ func (m *PrewriteValue) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -888,13 +972,13 @@ func (m *PrewriteValue) Unmarshal(data []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.Mutations = append(m.Mutations, TableMutation{})
-			if err := m.Mutations[len(m.Mutations)-1].Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.Mutations[len(m.Mutations)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
-			skippy, err := skipBinlog(data[iNdEx:])
+			skippy, err := skipBinlog(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -904,7 +988,7 @@ func (m *PrewriteValue) Unmarshal(data []byte) error {
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
 			iNdEx += skippy
 		}
 	}
@@ -914,8 +998,8 @@ func (m *PrewriteValue) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *Binlog) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *Binlog) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -927,7 +1011,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -955,7 +1039,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.Tp |= (BinlogType(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -974,7 +1058,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.StartTs |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -993,7 +1077,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.CommitTs |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1012,7 +1096,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1026,7 +1110,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PrewriteKey = append(m.PrewriteKey[:0], data[iNdEx:postIndex]...)
+			m.PrewriteKey = append(m.PrewriteKey[:0], dAtA[iNdEx:postIndex]...)
 			if m.PrewriteKey == nil {
 				m.PrewriteKey = []byte{}
 			}
@@ -1043,7 +1127,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1057,7 +1141,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PrewriteValue = append(m.PrewriteValue[:0], data[iNdEx:postIndex]...)
+			m.PrewriteValue = append(m.PrewriteValue[:0], dAtA[iNdEx:postIndex]...)
 			if m.PrewriteValue == nil {
 				m.PrewriteValue = []byte{}
 			}
@@ -1074,7 +1158,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1088,7 +1172,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DdlQuery = append(m.DdlQuery[:0], data[iNdEx:postIndex]...)
+			m.DdlQuery = append(m.DdlQuery[:0], dAtA[iNdEx:postIndex]...)
 			if m.DdlQuery == nil {
 				m.DdlQuery = []byte{}
 			}
@@ -1105,7 +1189,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.DdlJobId |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1114,7 +1198,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 			}
 		default:
 			iNdEx = preIndex
-			skippy, err := skipBinlog(data[iNdEx:])
+			skippy, err := skipBinlog(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -1124,7 +1208,7 @@ func (m *Binlog) Unmarshal(data []byte) error {
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
 			iNdEx += skippy
 		}
 	}
@@ -1134,8 +1218,8 @@ func (m *Binlog) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func skipBinlog(data []byte) (n int, err error) {
-	l := len(data)
+func skipBinlog(dAtA []byte) (n int, err error) {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		var wire uint64
@@ -1146,7 +1230,7 @@ func skipBinlog(data []byte) (n int, err error) {
 			if iNdEx >= l {
 				return 0, io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1164,7 +1248,7 @@ func skipBinlog(data []byte) (n int, err error) {
 					return 0, io.ErrUnexpectedEOF
 				}
 				iNdEx++
-				if data[iNdEx-1] < 0x80 {
+				if dAtA[iNdEx-1] < 0x80 {
 					break
 				}
 			}
@@ -1181,7 +1265,7 @@ func skipBinlog(data []byte) (n int, err error) {
 				if iNdEx >= l {
 					return 0, io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				length |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1204,7 +1288,7 @@ func skipBinlog(data []byte) (n int, err error) {
 					if iNdEx >= l {
 						return 0, io.ErrUnexpectedEOF
 					}
-					b := data[iNdEx]
+					b := dAtA[iNdEx]
 					iNdEx++
 					innerWire |= (uint64(b) & 0x7F) << shift
 					if b < 0x80 {
@@ -1215,7 +1299,7 @@ func skipBinlog(data []byte) (n int, err error) {
 				if innerWireType == 4 {
 					break
 				}
-				next, err := skipBinlog(data[start:])
+				next, err := skipBinlog(dAtA[start:])
 				if err != nil {
 					return 0, err
 				}
@@ -1243,7 +1327,7 @@ func init() { proto.RegisterFile("binlog.proto", fileDescriptorBinlog) }
 
 var fileDescriptorBinlog = []byte{
 	// 517 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x54, 0x92, 0xcd, 0x6e, 0x9b, 0x40,
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x54, 0x92, 0xcd, 0x6e, 0x9b, 0x40,
 	0x14, 0x85, 0x03, 0x38, 0xfe, 0xb9, 0x06, 0x0b, 0x8d, 0x52, 0x09, 0xb5, 0x92, 0x4d, 0x5d, 0x55,
 	0x42, 0xa9, 0x94, 0x56, 0xde, 0x75, 0xeb, 0x7a, 0x43, 0xd3, 0x48, 0x04, 0xb9, 0xd9, 0x22, 0xf0,
 	0x8c, 0x5c, 0x6a, 0xcc, 0x10, 0x66, 0x08, 0xf2, 0xb2, 0x4f, 0xd0, 0x6d, 0x1f, 0x29, 0xcb, 0x3e,

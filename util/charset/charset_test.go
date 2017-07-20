@@ -37,25 +37,27 @@ func testValidCharset(c *C, charset string, collation string, expect bool) {
 
 func (s *testCharsetSuite) TestValidCharset(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
+	tests := []struct {
 		cs   string
 		co   string
 		succ bool
 	}{
 		{"utf8", "utf8_general_ci", true},
 		{"", "utf8_general_ci", true},
-		{"latin1", "", true},
+		{"utf8mb4", "utf8mb4_bin", true},
+		{"latin1", "latin1_bin", true},
 		{"utf8", "utf8_invalid_ci", false},
+		{"utf16", "utf16_bin", false},
 		{"gb2312", "gb2312_chinese_ci", false},
 	}
-	for _, t := range tbl {
-		testValidCharset(c, t.cs, t.co, t.succ)
+	for _, tt := range tests {
+		testValidCharset(c, tt.cs, tt.co, tt.succ)
 	}
 }
 
 func (s *testCharsetSuite) TestGetAllCharsets(c *C) {
 	defer testleak.AfterTest(c)()
-	charset := &Charset{"test", nil, nil, "Test", 5}
+	charset := &Charset{"test", "test_bin", nil, "Test", 5}
 	charsetInfos = append(charsetInfos, charset)
 	descs := GetAllCharsets()
 	c.Assert(len(descs), Equals, len(charsetInfos)-1)
@@ -72,18 +74,21 @@ func testGetDefaultCollation(c *C, charset string, expectCollation string, succ 
 
 func (s *testCharsetSuite) TestGetDefaultCollation(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
+	tests := []struct {
 		cs   string
 		co   string
 		succ bool
 	}{
-		{"utf8", "utf8_general_ci", true},
-		{"UTF8", "utf8_general_ci", true},
-		{"latin1", "latin1_swedish_ci", true},
+		{"utf8", "utf8_bin", true},
+		{"UTF8", "utf8_bin", true},
+		{"utf8mb4", "utf8mb4_bin", true},
+		{"ascii", "ascii_bin", true},
+		{"binary", "binary", true},
+		{"latin1", "latin1_bin", true},
 		{"invalid_cs", "", false},
-		{"", "utf8_general_ci", false},
+		{"", "utf8_bin", false},
 	}
-	for _, t := range tbl {
-		testGetDefaultCollation(c, t.cs, t.co, t.succ)
+	for _, tt := range tests {
+		testGetDefaultCollation(c, tt.cs, tt.co, tt.succ)
 	}
 }

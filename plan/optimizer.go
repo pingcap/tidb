@@ -29,18 +29,22 @@ var AllowCartesianProduct = true
 
 const (
 	flagPrunColumns uint64 = 1 << iota
+	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagPredicatePushDown
 	flagAggregationOptimize
+	flagPushDownTopN
 )
 
 var optRuleList = []logicalOptRule{
 	&columnPruner{},
+	&projectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&ppdSolver{},
 	&aggregationOptimizer{},
+	&pushDownTopNOptimizer{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -52,7 +56,7 @@ type logicalOptRule interface {
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	// We have to infer type again because after parameter is set, the expression type may change.
-	if err := InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
+	if err := expression.InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
 	allocator := new(idAllocator)
@@ -81,6 +85,25 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	return p, nil
 }
 
+// BuildLogicalPlan is exported and only used for test.
+func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+	// We have to infer type again because after parameter is set, the expression type may change.
+	if err := expression.InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
+		return nil, errors.Trace(err)
+	}
+	builder := &planBuilder{
+		ctx:       ctx,
+		is:        is,
+		colMapper: make(map[*ast.ColumnNameExpr]int),
+		allocator: new(idAllocator),
+	}
+	p := builder.build(node)
+	if builder.err != nil {
+		return nil, errors.Trace(builder.err)
+	}
+	return p, nil
+}
+
 func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	for _, v := range vs {
 		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
@@ -98,8 +121,17 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	logic.ResolveIndicesAndCorCols()
-	return physicalOptimize(flag, logic, allocator)
+	var physical PhysicalPlan
+	if UseDAGPlanBuilder(ctx) {
+		physical, err = dagPhysicalOptimize(logic)
+	} else {
+		physical, err = physicalOptimize(flag, logic, allocator)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	finalPlan := eliminatePhysicalProjection(physical)
+	return finalPlan, nil
 }
 
 func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
@@ -119,17 +151,29 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc 
 	return logic, errors.Trace(err)
 }
 
+func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
+	logic.preparePossibleProperties()
+	logic.prepareStatsProfile()
+	task, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	p := task.plan()
+	p.ResolveIndices()
+	return p, nil
+}
+
 func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
+	logic.ResolveIndices()
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	pp := info.p
-	pp = EliminateProjection(pp)
+	p := info.p
 	if flag&(flagDecorrelate) > 0 {
-		addCachePlan(pp, allocator)
+		addCachePlan(p, allocator)
 	}
-	return pp, nil
+	return p, nil
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {
@@ -164,6 +208,9 @@ const (
 	CodeUnsupported         terror.ErrCode = 4
 	CodeInvalidGroupFuncUse terror.ErrCode = 5
 	CodeIllegalReference    terror.ErrCode = 6
+
+	// MySQL error code.
+	CodeNoDB terror.ErrCode = mysql.ErrNoDB
 )
 
 // Optimizer base errors.
@@ -173,6 +220,7 @@ var (
 	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(CodeUnsupported, "Cartesian product is unsupported")
 	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
 	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
+	ErrNoDB                        = terror.ClassOptimizer.New(CodeNoDB, "No database selected")
 )
 
 func init() {
@@ -181,6 +229,7 @@ func init() {
 		CodeInvalidWildCard:     mysql.ErrParse,
 		CodeInvalidGroupFuncUse: mysql.ErrInvalidGroupFuncUse,
 		CodeIllegalReference:    mysql.ErrIllegalReference,
+		CodeNoDB:                mysql.ErrNoDB,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 	expression.EvalAstExpr = evalAstExpr

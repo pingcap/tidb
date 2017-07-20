@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"encoding/json"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 func (s *testDDLSuite) TestDropSchema(c *C) {
@@ -28,7 +30,7 @@ func (s *testDDLSuite) TestDropSchema(c *C) {
 	store := testCreateStore(c, "test_drop_schema")
 	defer store.Close()
 
-	d := newDDL(store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 
 	job := &model.Job{
@@ -74,7 +76,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	store := testCreateStore(c, "test_drop_table")
 	defer store.Close()
 
-	d := newDDL(store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 
 	dbInfo := testSchemaInfo(c, d, "test")
@@ -90,7 +92,10 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 				Name: model.CIStr{O: "t"},
 			}},
 	}
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	var err error
+	job.RawArgs, err = json.Marshal(job.Args)
+	c.Assert(err, IsNil)
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return d.prepareBgJob(t, job)
 	})
@@ -105,7 +110,7 @@ func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 	store := testCreateStore(c, "test_invalid_bg_job_type")
 	defer store.Close()
 
-	d := newDDL(store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 
 	job := &model.Job{

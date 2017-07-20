@@ -63,6 +63,7 @@ const (
 	SetVar     = "setvar"
 	GetVar     = "getvar"
 	Values     = "values"
+	BitCount   = "bit_count"
 
 	// common functions
 	Coalesce = "coalesce"
@@ -169,7 +170,7 @@ const (
 	ConcatWS       = "concat_ws"
 	Convert        = "convert"
 	Elt            = "elt"
-	ExportSet      = "Export"
+	ExportSet      = "export_set"
 	Field          = "field"
 	Format         = "format"
 	FromBase64     = "from_base64"
@@ -187,16 +188,19 @@ const (
 	Mid            = "mid"
 	Oct            = "oct"
 	Ord            = "ord"
+	Position       = "position"
 	Quote          = "quote"
 	Repeat         = "repeat"
 	Replace        = "replace"
 	Reverse        = "reverse"
+	Right          = "right"
 	RTrim          = "rtrim"
 	Space          = "space"
 	Strcmp         = "strcmp"
 	Substring      = "substring"
 	Substr         = "substr"
 	SubstringIndex = "substring_index"
+	ToBase64       = "to_base64"
 	Trim           = "trim"
 	Upper          = "upper"
 	Ucase          = "ucase"
@@ -224,6 +228,7 @@ const (
 	SystemUser   = "system_user"
 	User         = "user"
 	Version      = "version"
+	TiDBVersion  = "tidb_version"
 
 	// control functions
 	If     = "if"
@@ -273,6 +278,20 @@ const (
 	Uncompress               = "uncompress"
 	UncompressedLength       = "uncompressed_length"
 	ValidatePasswordStrength = "validate_password_strength"
+
+	// json functions
+	JSONType     = "json_type"
+	JSONExtract  = "json_extract"
+	JSONUnquote  = "json_unquote"
+	JSONArray    = "json_array"
+	JSONObject   = "json_object"
+	JSONMerge    = "json_merge"
+	JSONValid    = "json_valid"
+	JSONSet      = "json_set"
+	JSONInsert   = "json_insert"
+	JSONReplace  = "json_replace"
+	JSONRemove   = "json_remove"
+	JSONContains = "json_contains"
 )
 
 // FuncCallExpr is for function expression.
@@ -319,7 +338,7 @@ type FuncCastExpr struct {
 	Expr ExprNode
 	// Tp is the conversion type.
 	Tp *types.FieldType
-	// Cast, Convert and Binary share this struct.
+	// FunctionType is either Cast, Convert or Binary.
 	FunctionType CastFunctionType
 }
 
@@ -390,7 +409,7 @@ type AggregateFuncExpr struct {
 	F string
 	// Args is the function args.
 	Args []ExprNode
-	// If distinct is true, the function only aggregate distinct values.
+	// Distinct is true, function hence only aggregate distinct values.
 	// For example, column c1 values are "1", "2", "2",  "sum(c1)" is "5",
 	// but "sum(distinct c1)" is "3".
 	Distinct bool

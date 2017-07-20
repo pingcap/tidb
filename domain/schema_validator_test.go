@@ -28,7 +28,7 @@ type leaseGrantItem struct {
 
 func (*testSuite) TestSchemaValidator(c *C) {
 	defer testleak.AfterTest(c)()
-	lease := 2 * time.Millisecond
+	lease := 5 * time.Millisecond
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
 	exit := make(chan struct{})
@@ -55,6 +55,9 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	valid = validator.Check(ts, item.schemaVer)
 	c.Assert(valid, IsFalse)
 
+	validator.Stop()
+	validator.Restart()
+
 	reload(validator, leaseGrantCh)
 	valid = validator.Check(ts, item.schemaVer)
 	c.Assert(valid, IsFalse)
@@ -70,7 +73,7 @@ func reload(validator SchemaValidator, leaseGrantCh chan leaseGrantItem) {
 	validator.Update(item.leaseGrantTS, item.schemaVer)
 }
 
-// serverFunc plays the role as a remote server, runs in a seperate goroutine.
+// serverFunc plays the role as a remote server, runs in a separate goroutine.
 // It can grant lease and provide timestamp oracle.
 // Caller should communicate with it through channel to mock network.
 func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh chan uint64, exit chan struct{}) {

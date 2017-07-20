@@ -689,7 +689,7 @@ func (n *UnaryOperationExpr) Accept(v Visitor) (Node, bool) {
 // ValuesExpr is the expression used in INSERT VALUES.
 type ValuesExpr struct {
 	exprNode
-	// model.CIStr is column name.
+	// Column is column name.
 	Column *ColumnNameExpr
 }
 

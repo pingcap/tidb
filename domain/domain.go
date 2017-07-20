@@ -17,8 +17,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
@@ -30,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
+	goctx "golang.org/x/net/context"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -39,11 +42,13 @@ type Domain struct {
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
 	statsHandle     *statistics.Handle
+	statsLease      time.Duration
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *sync.Pool
+	sysSessionPool  *pools.ResourcePool
 	exit            chan struct{}
+	etcdClient      *clientv3.Client
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -64,6 +69,19 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	if usedSchemaVersion != 0 && usedSchemaVersion == latestSchemaVersion {
 		return latestSchemaVersion, nil
 	}
+
+	// Update self schema version to etcd.
+	defer func() {
+		if err != nil {
+			log.Info("[ddl] not update self schema version to etcd")
+			return
+		}
+		err = do.ddl.SchemaSyncer().UpdateSelfVersion(goctx.Background(), latestSchemaVersion)
+		if err != nil {
+			log.Infof("[ddl] update self version from %v to %v failed %v", usedSchemaVersion, latestSchemaVersion, err)
+		}
+	}()
+
 	startTime := time.Now()
 	ok, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
 	if err != nil {
@@ -281,8 +299,10 @@ func (do *Domain) Reload() error {
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
+	// TODO: Reset ticker or make interval longer.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
+	syncer := do.ddl.SchemaSyncer()
 
 	for {
 		select {
@@ -291,6 +311,21 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
+		case <-syncer.GlobalVersionCh():
+			err := do.Reload()
+			if err != nil {
+				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
+			}
+		case <-syncer.Done():
+			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
+			log.Info("[ddl] reload schema in loop, schema syncer need restart")
+			do.SchemaValidator.Stop()
+			err := syncer.Restart(goctx.Background())
+			if err != nil {
+				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
+				break
+			}
+			do.SchemaValidator.Restart()
 		case <-do.exit:
 			return
 		}
@@ -301,6 +336,10 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 func (do *Domain) Close() {
 	do.ddl.Stop()
 	close(do.exit)
+	if do.etcdClient != nil {
+		do.etcdClient.Close()
+	}
+	do.sysSessionPool.Close()
 }
 
 type ddlCallback struct {
@@ -342,63 +381,109 @@ func (m *MockFailure) getValue() bool {
 	return m.val
 }
 
+type etcdBackend interface {
+	EtcdAddrs() []string
+}
+
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory) (d *Domain, err error) {
+	capacity := 200                // capacity of the sysSessionPool size
+	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
 	d = &Domain{
 		store:           store,
-		SchemaValidator: newSchemaValidator(lease),
+		SchemaValidator: newSchemaValidator(ddlLease),
 		exit:            make(chan struct{}),
-		sysSessionPool:  &sync.Pool{},
+		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, idleTimeout),
+		statsLease:      statsLease,
+	}
+
+	if ebd, ok := store.(etcdBackend); ok {
+		if addrs := ebd.EtcdAddrs(); addrs != nil {
+			cli, err := clientv3.New(clientv3.Config{
+				Endpoints:   addrs,
+				DialTimeout: 5 * time.Second,
+			})
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			d.etcdClient = cli
+		}
 	}
 
 	d.infoHandle, err = infoschema.NewHandle(d.store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	d.ddl = ddl.NewDDL(d.store, d.infoHandle, &ddlCallback{do: d}, lease)
+	ctx := goctx.Background()
+	callback := &ddlCallback{do: d}
+	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease)
+	if err = d.ddl.SchemaSyncer().Init(ctx); err != nil {
+		return nil, errors.Trace(err)
+	}
 	if err = d.Reload(); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
-	if lease > 0 {
+	if ddlLease > 0 {
 		// Local store needs to get the change information for every DDL state in each session.
-		go d.loadSchemaInLoop(lease)
+		go d.loadSchemaInLoop(ddlLease)
 	}
 
 	return d, nil
 }
 
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() *sync.Pool {
+func (do *Domain) SysSessionPool() *pools.ResourcePool {
 	return do.sysSessionPool
 }
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
-	do.privHandle = privileges.NewHandle(ctx)
-	err := do.privHandle.Update()
+	do.privHandle = privileges.NewHandle()
+	err := do.privHandle.Update(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	go func(do *Domain) {
-		ticker := time.NewTicker(5 * time.Minute)
+	var watchCh clientv3.WatchChan
+	duration := 5 * time.Minute
+	if do.etcdClient != nil {
+		watchCh = do.etcdClient.Watch(goctx.Background(), privilegeKey)
+		duration = 10 * time.Minute
+	}
+
+	go func() {
+		var count int
 		for {
+			ok := true
 			select {
-			case <-ticker.C:
-				err := do.privHandle.Update()
-				if err != nil {
-					log.Error(errors.ErrorStack(err))
-				}
 			case <-do.exit:
 				return
+			case _, ok = <-watchCh:
+			case <-time.After(duration):
+			}
+			if !ok {
+				log.Error("[domain] load privilege loop watch channel closed.")
+				watchCh = do.etcdClient.Watch(goctx.Background(), privilegeKey)
+				count++
+				if count > 10 {
+					time.Sleep(time.Duration(count) * time.Second)
+				}
+				continue
+			}
+
+			count = 0
+			err := do.privHandle.Update(ctx)
+			if err != nil {
+				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
+			} else {
+				log.Info("[domain] reload privilege success.")
 			}
 		}
-	}(do)
-
+	}()
 	return nil
 }
 
@@ -412,35 +497,66 @@ func (do *Domain) StatsHandle() *statistics.Handle {
 	return do.statsHandle
 }
 
-// LoadTableStatsLoop creates a goroutine loads stats info in a loop, it
+// CreateStatsHandle is used only for test.
+func (do *Domain) CreateStatsHandle(ctx context.Context) {
+	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
+}
+
+// UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It
 // should be called only once in BootstrapSession.
-func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
-	do.statsHandle = statistics.NewHandle(ctx)
+func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
+	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
+	do.ddl.RegisterEventCh(do.statsHandle.DDLEventCh())
 	err := do.statsHandle.Update(do.InfoSchema())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	lease := do.DDL().GetLease()
+	lease := do.statsLease
 	if lease <= 0 {
 		return nil
 	}
+	deltaUpdateDuration := lease * 5
 	go func(do *Domain) {
-		ticker := time.NewTicker(lease)
-		defer ticker.Stop()
+		loadTicker := time.NewTicker(lease)
+		defer loadTicker.Stop()
+		deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
+		defer deltaUpdateTicker.Stop()
 
 		for {
 			select {
-			case <-ticker.C:
+			case <-loadTicker.C:
 				err := do.statsHandle.Update(do.InfoSchema())
 				if err != nil {
 					log.Error(errors.ErrorStack(err))
 				}
 			case <-do.exit:
 				return
+			// This channel is sent only by ddl owner. Only owner know if this ddl is done or not.
+			case t := <-do.statsHandle.DDLEventCh():
+				err := do.statsHandle.HandleDDLEvent(t)
+				if err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
+			case <-deltaUpdateTicker.C:
+				do.statsHandle.DumpStatsDeltaToKV()
 			}
 		}
 	}(do)
 	return nil
+}
+
+const privilegeKey = "/tidb/privilege"
+
+// NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
+// the key will get notification.
+func (do *Domain) NotifyUpdatePrivilege(ctx context.Context) {
+	if do.etcdClient != nil {
+		kv := do.etcdClient.KV
+		_, err := kv.Put(goctx.Background(), privilegeKey, "")
+		if err != nil {
+			log.Warn("notify update privilege failed:", err)
+		}
+	}
 }
 
 // Domain error codes.

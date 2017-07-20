@@ -15,6 +15,7 @@ package ast
 
 import (
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 )
 
 var (
@@ -68,6 +69,8 @@ type Join struct {
 	Tp JoinType
 	// On represents join on condition.
 	On *OnCondition
+	// Using represents join using clause.
+	Using []*ColumnName
 }
 
 // Accept implements Node Accept interface.
@@ -271,11 +274,11 @@ type SelectField struct {
 
 	// Offset is used to get original text.
 	Offset int
-	// If WildCard is not nil, Expr will be nil.
+	// WildCard is not nil, Expr will be nil.
 	WildCard *WildCardField
-	// If Expr is not nil, WildCard will be nil.
+	// Expr is not nil, WildCard will be nil.
 	Expr ExprNode
-	// Alias name for Expr.
+	// AsName is alias name for Expr.
 	AsName model.CIStr
 	// Auxiliary stands for if this field is auxiliary.
 	// When we add a Field into SelectField list which is used for having/orderby clause but the field is not in select clause,
@@ -443,7 +446,9 @@ type SelectStmt struct {
 	dmlNode
 	resultSetNode
 
-	// Distinct represents if the select has distinct option.
+	// SelectStmtOpts wraps around select hints and switches.
+	*SelectStmtOpts
+	// Distinct represents whether the select has distinct option.
 	Distinct bool
 	// From is the from clause of the query.
 	From *TableRefsClause
@@ -459,9 +464,9 @@ type SelectStmt struct {
 	OrderBy *OrderByClause
 	// Limit is the limit clause.
 	Limit *Limit
-	// Lock is the lock type
+	// LockTp is the lock type
 	LockTp SelectLockType
-	// Table Level Optimizer Hint
+	// TableHints represents the level Optimizer Hint
 	TableHints []*TableOptimizerHint
 }
 
@@ -640,15 +645,6 @@ func (n *Assignment) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// Priority const values.
-// See https://dev.mysql.com/doc/refman/5.7/en/insert.html
-const (
-	NoPriority = iota
-	LowPriority
-	HighPriority
-	DelayedPriority
-)
-
 // LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
 // See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
 type LoadDataStmt struct {
@@ -657,6 +653,7 @@ type LoadDataStmt struct {
 	IsLocal    bool
 	Path       string
 	Table      *TableName
+	Columns    []*ColumnName
 	FieldsInfo *FieldsClause
 	LinesInfo  *LinesClause
 }
@@ -674,6 +671,13 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Table = node.(*TableName)
+	}
+	for i, val := range n.Columns {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Columns[i] = node.(*ColumnName)
 	}
 	return v.Leave(n)
 }
@@ -702,7 +706,7 @@ type InsertStmt struct {
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
 	Setlist     []*Assignment
-	Priority    int
+	Priority    mysql.PriorityEnum
 	OnDuplicate []*Assignment
 	Select      ResultSetNode
 }
@@ -767,9 +771,9 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 type DeleteStmt struct {
 	dmlNode
 
-	// Used in both single table and multiple table delete statement.
+	// TableRefs is used in both single table and multiple table delete statement.
 	TableRefs *TableRefsClause
-	// Only used in multiple table delete statement.
+	// Tables is only used in multiple table delete statement.
 	Tables       *DeleteTableList
 	Where        ExprNode
 	Order        *OrderByClause
@@ -940,6 +944,9 @@ const (
 	ShowProcessList
 	ShowCreateDatabase
 	ShowEvents
+	ShowStatsMeta
+	ShowStatsHistograms
+	ShowStatsBuckets
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
@@ -956,7 +963,7 @@ type ShowStmt struct {
 	Full   bool
 	User   string // Used for show grants.
 
-	// Used by show variables
+	// GlobalScope is used by show variables
 	GlobalScope bool
 	Pattern     *PatternLikeExpr
 	Where       ExprNode

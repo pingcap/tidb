@@ -194,9 +194,9 @@ func (s *testSuite) TestCreateUserWhenGrant(c *C) {
 	tk.MustExec("DROP USER IF EXISTS 'test'@'%'")
 	tk.MustExec("GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'")
 	// Make sure user is created automatically when grant to a non-exists one.
-	rows := tk.MustQuery("SELECT user FROM mysql.user WHERE user='test' and host='%'").Rows()
-	c.Assert(rows, HasLen, 1)
-	c.Check(fmt.Sprintf("%v", rows[0]), Equals, fmt.Sprintf("[%v]", []byte("test")))
+	tk.MustQuery("SELECT user FROM mysql.user WHERE user='test' and host='%'").Check(
+		testkit.Rows("test"),
+	)
 }
 
 func (s *testSuite) TestIssue2654(c *C) {
@@ -206,5 +206,5 @@ func (s *testSuite) TestIssue2654(c *C) {
 	tk.MustExec("CREATE USER 'test'@'%' IDENTIFIED BY 'test'")
 	tk.MustExec("GRANT SELECT ON test.* to 'test'")
 	rows := tk.MustQuery("SELECT user,host FROM mysql.user WHERE user='test' and host='%'")
-	rows.Check(testkit.Rows("[116 101 115 116] [37]")) // "test" "%"
+	rows.Check(testkit.Rows("test %"))
 }

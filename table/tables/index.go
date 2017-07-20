@@ -92,7 +92,7 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 	return
 }
 
-// kvIndex is the data structure for index data in the KV store.
+// index is the data structure for index data in the KV store.
 type index struct {
 	tblInfo *model.TableInfo
 	idxInfo *model.IndexInfo

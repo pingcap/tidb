@@ -27,7 +27,7 @@ func (s *testEvalSuite) TestEvalCoalesce(c *C) {
 	nullDatum := types.Datum{}
 	nullDatum.SetNull()
 	notNullDatum := types.NewStringDatum("not-null")
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
 	}{
@@ -44,11 +44,11 @@ func (s *testEvalSuite) TestEvalCoalesce(c *C) {
 			result: notNullDatum,
 		},
 	}
-	for _, ca := range cases {
-		result, err := xevaluator.Eval(ca.expr)
+	for _, tt := range tests {
+		result, err := xevaluator.Eval(tt.expr)
 		c.Assert(err, IsNil)
-		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.StatementCtx, ca.result)
+		c.Assert(result.Kind(), Equals, tt.result.Kind())
+		cmp, err := result.CompareDatum(xevaluator.StatementCtx, tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
