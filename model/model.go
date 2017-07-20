@@ -184,13 +184,15 @@ func (t IndexType) String() string {
 		return "BTREE"
 	case IndexTypeHash:
 		return "HASH"
+	default:
+		return ""
 	}
-	return ""
 }
 
 // IndexTypes
 const (
-	IndexTypeBtree IndexType = iota + 1
+	IndexTypeInvalid IndexType = iota
+	IndexTypeBtree
 	IndexTypeHash
 )
 
