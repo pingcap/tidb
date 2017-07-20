@@ -38,7 +38,7 @@ var (
 	_ Executor = &LoadData{}
 )
 
-// 1. fill values into on-update-now fields;
+// 1. Fill values into on-update-now fields;
 // 2. rebase auto increment id if the field is changed;
 // 3. cast changed fields with respective columns;
 // 4. calculate it updates the record really or not;
@@ -47,7 +47,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
 	// onUpdateNoChange is for "UPDATE SET ts_field = old_value", the
-	// timestamp field is explicitly seted, but not changed in fact.
+	// timestamp field is explicitly set, but not changed in fact.
 	var onUpdateNoChange = make(map[int]bool)
 
 	// We can iterate on public columns not writable columns,
