@@ -162,11 +162,12 @@ func (t *Table) Cols() []*table.Column {
 	publicColumns := make([]*table.Column, len(t.Columns))
 	maxOffset := -1
 	for _, col := range t.Columns {
-		if col.State == model.StatePublic {
-			publicColumns[col.Offset] = col
-			if maxOffset < col.Offset {
-				maxOffset = col.Offset
-			}
+		if col.State != model.StatePublic {
+			continue
+		}
+		publicColumns[col.Offset] = col
+		if maxOffset < col.Offset {
+			maxOffset = col.Offset
 		}
 	}
 	return publicColumns[0 : maxOffset+1]
@@ -180,11 +181,12 @@ func (t *Table) WritableCols() []*table.Column {
 	writableColumns := make([]*table.Column, len(t.Columns))
 	maxOffset := -1
 	for _, col := range t.Columns {
-		if col.State != model.StateDeleteOnly && col.State != model.StateDeleteReorganization {
-			writableColumns[col.Offset] = col
-			if maxOffset < col.Offset {
-				maxOffset = col.Offset
-			}
+		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+			continue
+		}
+		writableColumns[col.Offset] = col
+		if maxOffset < col.Offset {
+			maxOffset = col.Offset
 		}
 	}
 	return writableColumns[0 : maxOffset+1]

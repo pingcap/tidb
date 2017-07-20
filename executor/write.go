@@ -88,20 +88,6 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			touched[i] = false
 		}
 	}
-	if changed {
-		// Only if some fields are really changed, we can change those on-update fields.
-		for i, col := range t.Cols() {
-			if mysql.HasOnUpdateNowFlag(col.Flag) && !touched[i] && !onUpdateNoChange[i] {
-				v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
-				if err != nil {
-					return false, errors.Trace(err)
-				}
-				newData[i] = v
-			} else {
-				continue
-			}
-		}
-	}
 
 	err := table.CheckNotNull(t.Cols(), newData)
 	if err != nil {
@@ -114,6 +100,17 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			sc.AddAffectedRows(1)
 		}
 		return false, nil
+	}
+
+	// Only if some fields are really changed, we can change those on-update fields.
+	for i, col := range t.Cols() {
+		if mysql.HasOnUpdateNowFlag(col.Flag) && !touched[i] && !onUpdateNoChange[i] {
+			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			newData[i] = v
+		}
 	}
 
 	if handleChanged {
