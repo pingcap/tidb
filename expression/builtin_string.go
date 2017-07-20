@@ -1003,6 +1003,10 @@ type hexFunctionClass struct {
 }
 
 func (c *hexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	switch t := args[0].GetTypeClass(); t {
 	case types.ClassString:
 		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
@@ -1012,7 +1016,7 @@ func (c *hexFunctionClass) getFunction(args []Expression, ctx context.Context) (
 		// Use UTF-8 as default
 		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
 		sig := &builtinHexStrArgSig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+		return sig.setSelf(sig), nil
 
 	case types.ClassInt, types.ClassReal, types.ClassDecimal:
 		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
@@ -1021,7 +1025,7 @@ func (c *hexFunctionClass) getFunction(args []Expression, ctx context.Context) (
 		}
 		bf.tp.Flen = args[0].GetType().Flen * 2
 		sig := &builtinHexIntArgSig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+		return sig.setSelf(sig), nil
 
 	default:
 		return nil, errors.Errorf("Hex invalid args, need int or string but get %T", t)
@@ -1063,6 +1067,9 @@ type unhexFunctionClass struct {
 func (c *unhexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	var retFlen int
 
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	argType := args[0].GetType()
 	switch t := args[0].GetTypeClass(); t {
 	case types.ClassString:
@@ -1084,7 +1091,7 @@ func (c *unhexFunctionClass) getFunction(args []Expression, ctx context.Context)
 	bf.tp.Flen = retFlen
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinUnHexSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinUnHexSig struct {
