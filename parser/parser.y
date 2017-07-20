@@ -1564,12 +1564,16 @@ CreateIndexStmt:
 		var indexOption *ast.IndexOption
 		if $11 != nil {
 			indexOption = $11.(*ast.IndexOption)
-		}
-		if $5 != nil {
-			if indexOption == nil {
-				indexOption = &ast.IndexOption{}
+			if indexOption.Tp == model.IndexTypeInvalid {
+				if $5 != nil {
+					indexOption.Tp = $5.(model.IndexType)
+				}
 			}
-			indexOption.Tp = $5.(model.IndexType)
+		} else {
+			indexOption = &ast.IndexOption{}
+			if $5 != nil {
+				indexOption.Tp = $5.(model.IndexType)
+			}
 		}
 		$$ = &ast.CreateIndexStmt{
 			Unique:        $2.(bool),

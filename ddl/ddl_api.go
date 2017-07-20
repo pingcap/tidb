@@ -627,7 +627,12 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		// set index type.
 		if constr.Option != nil {
 			idxInfo.Comment = constr.Option.Comment
-			idxInfo.Tp = constr.Option.Tp
+			if constr.Option.Tp == model.IndexTypeInvalid {
+				// Use btree as default index type.
+				idxInfo.Tp = model.IndexTypeBtree
+			} else {
+				idxInfo.Tp = constr.Option.Tp
+			}
 		} else {
 			// Use btree as default index type.
 			idxInfo.Tp = model.IndexTypeBtree

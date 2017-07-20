@@ -212,7 +212,12 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		}
 		if indexOption != nil {
 			indexInfo.Comment = indexOption.Comment
-			indexInfo.Tp = indexOption.Tp
+			if indexOption.Tp == model.IndexTypeInvalid {
+				// Use btree as default index type.
+				indexInfo.Tp = model.IndexTypeBtree
+			} else {
+				indexInfo.Tp = indexOption.Tp
+			}
 		} else {
 			// Use btree as default index type.
 			indexInfo.Tp = model.IndexTypeBtree
