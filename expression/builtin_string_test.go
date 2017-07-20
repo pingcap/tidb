@@ -913,33 +913,53 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 	}
 }
+
 func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Input  interface{}
-		Expect string
+	cases := []struct {
+		arg    interface{}
+		isNil  bool
+		getErr bool
+		res    string
 	}{
-		{12, "C"},
-		{12.3, "C"},
-		{12.5, "D"},
-		{-12.3, "FFFFFFFFFFFFFFF4"},
-		{-12.5, "FFFFFFFFFFFFFFF3"},
-		{"12", "3132"},
-		{0x12, "12"},
-		{"", ""},
+		{"abc", false, false, "616263"},
+		{"你好", false, false, "E4BDA0E5A5BD"},
+		{12, false, false, "C"},
+		{12.3, false, false, "C"},
+		{12.8, false, false, "D"},
+		{-1, false, false, "FFFFFFFFFFFFFFFF"},
+		{-12.3, false, false, "FFFFFFFFFFFFFFF4"},
+		{-12.8, false, false, "FFFFFFFFFFFFFFF3"},
+		{types.Bit{Value: 0xC, Width: 4}, false, false, "0C"},
+		{0x12, false, false, "12"},
+		{nil, true, false, ""},
+		{errors.New("must err"), false, true, ""},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Hex, primitiveValsToConstants([]interface{}{t.arg})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
 	}
 
-	dtbl := tblToDtbl(tbl)
-	fc := funcs[ast.Hex]
-	for _, t := range dtbl {
-		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
-		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+	f, err := funcs[ast.Hex].getFunction([]Expression{int8Con}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 
-	}
+	f, err = funcs[ast.Hex].getFunction([]Expression{varcharCon}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
+
 func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {

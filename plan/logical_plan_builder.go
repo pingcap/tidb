@@ -392,6 +392,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
+	b.optFlag |= flagEliminateProjection
 	proj := Projection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.allocator, b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
@@ -476,8 +477,13 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			return nil
 		}
 		if _, ok := sel.(*Projection); !ok {
+			b.optFlag |= flagEliminateProjection
 			proj := Projection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.allocator, b.ctx)
-			proj.SetSchema(sel.Schema().Clone())
+			schema := sel.Schema().Clone()
+			for _, col := range schema.Columns {
+				col.FromID = proj.ID()
+			}
+			proj.SetSchema(schema)
 			sel.SetParents(proj)
 			proj.SetChildren(sel)
 			sel = proj
@@ -1068,7 +1074,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.allocator, b.ctx)
 		addChild(proj, p)
-		proj.SetSchema(expression.NewSchema(p.Schema().Columns[:oldLen]...))
+		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
+		for _, col := range schema.Columns {
+			col.FromID = proj.ID()
+		}
+		proj.SetSchema(schema)
 		return proj
 	}
 
