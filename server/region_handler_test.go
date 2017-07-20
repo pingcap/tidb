@@ -251,3 +251,24 @@ func (ts *TidbRegionHandlerTestSuite) TestGetMvcc(c *C) {
 		c.Assert(bytes.Equal(v2, expect.Value), IsTrue)
 	}
 }
+
+func (ts *TidbRegionHandlerTestSuite) TestGetMvccNotFound(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1234"))
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var data kvrpcpb.MvccGetByKeyResponse
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(data.Info, IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/0"))
+	c.Assert(err, IsNil)
+	var p kvrpcpb.MvccGetByStartTsResponse
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&p)
+	c.Assert(err, IsNil)
+	c.Assert(p.Info, IsNil)
+}

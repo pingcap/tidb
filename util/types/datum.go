@@ -843,6 +843,7 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementCo
 			var truncateLen int
 			for i := range s {
 				runeCount++
+
 				if runeCount == flen+1 {
 					// We don't break here because we need to iterate to the end to get runeCount.
 					truncateLen = i

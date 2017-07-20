@@ -487,7 +487,7 @@ func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if rh.op == opMvccGetByKey {
 		data, err = rh.handleMvccGetByKey(params)
 	} else {
-		data, err = rh.handleMvccGetByTXN(params)
+		data, err = rh.handleMvccGetByTxn(params)
 	}
 	if err != nil {
 		rh.writeError(w, err)
@@ -509,7 +509,7 @@ func (rh mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface
 	return rh.getMvccByRecordID(tableID, recordID)
 }
 
-func (rh *mvccTxnHandler) handleMvccGetByTXN(params map[string]string) (interface{}, error) {
+func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface{}, error) {
 	startTS, err := strconv.ParseInt(params[pStartTS], 0, 64)
 	if err != nil {
 		return nil, err
@@ -562,7 +562,7 @@ func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []
 
 		tikvReq := &tikvrpc.Request{
 			Type:     tikvrpc.CmdMvccGetByStartTs,
-			Priority: kvrpcpb.CommandPri_Normal,
+			Priority: kvrpcpb.CommandPri_Low,
 			MvccGetByStartTs: &kvrpcpb.MvccGetByStartTsRequest{
 				StartTs: startTS,
 			},
@@ -590,6 +590,9 @@ func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []
 		}
 
 		if len(endKey) > 0 && curRegion.Contains(endKey) {
+			return nil, nil
+		}
+		if len(curRegion.EndKey) == 0 {
 			return nil, nil
 		}
 		startKey = curRegion.EndKey
