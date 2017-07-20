@@ -37,7 +37,6 @@ var _ = Suite(&testDistsqlSuite{})
 
 type testDistsqlSuite struct{}
 
-// TODO: add more tests.
 func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 	defer testleak.AfterTest(c)()
 	// Make sure the Flag is set in tipb.ColumnInfo
