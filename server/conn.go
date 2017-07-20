@@ -324,7 +324,7 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 
 	// The packet is a SSLRequest, let's switch to TLS.
 	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.cfg.SSLEnabled {
-		if err := cc.UpgradeToTLS(cc.server.tlsConfig); err != nil {
+		if err = cc.UpgradeToTLS(cc.server.tlsConfig); err != nil {
 			return errors.Trace(err)
 		}
 		// Read the following HandshakeResponse packet.
@@ -339,7 +339,7 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 	}
 
 	// Read the remaining part of the packet.
-	if err := parseHandshakeResponseBody(&resp, data, pos); err != nil {
+	if err = parseHandshakeResponseBody(&resp, data, pos); err != nil {
 		return errors.Trace(err)
 	}
 
