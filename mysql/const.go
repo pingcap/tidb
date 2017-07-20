@@ -119,6 +119,7 @@ const (
 	ClientPluginAuthLenencClientData
 )
 
+// MySQL type maximum length.
 const (
 	MaxIntWidth = 20
 )
