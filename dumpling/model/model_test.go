@@ -121,6 +121,18 @@ func (*testSuite) TestJobCodec(c *C) {
 	c.Assert(a, DeepEquals, A{Name: "abc"})
 	c.Assert(len(newJob.String()), Greater, 0)
 
+	b2, err := job.Encode(true)
+	c.Assert(err, IsNil)
+	newJob = &Job{}
+	err = newJob.Decode(b2)
+	c.Assert(err, IsNil)
+	name = CIStr{}
+	// Don't decode to a here.
+	err = newJob.DecodeArgs(&name)
+	c.Assert(err, IsNil)
+	c.Assert(name, DeepEquals, NewCIStr("a"))
+	c.Assert(len(newJob.String()), Greater, 0)
+
 	job.State = JobDone
 	c.Assert(job.IsDone(), IsTrue)
 	c.Assert(job.IsFinished(), IsTrue)
