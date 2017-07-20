@@ -41,7 +41,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	intDatum := types.NewIntDatum(1)
 	corCol := &CorrelatedColumn{Column: *col, Data: &intDatum}
 	invalidCorCol := &CorrelatedColumn{Column: Column{FromID: "Projection_0"}}
-	schema := &Schema{Columns: []*Column{&Column{FromID: "DataSource_0", Position: 0}}}
+	schema := &Schema{Columns: []*Column{{FromID: "DataSource_0", Position: 0}}}
 	c.Assert(corCol.Equal(corCol, nil), IsTrue)
 	c.Assert(corCol.Equal(invalidCorCol, nil), IsFalse)
 	c.Assert(corCol.IsCorrelated(), IsTrue)
