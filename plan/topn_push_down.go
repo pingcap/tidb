@@ -38,6 +38,7 @@ func (s *baseLogicalPlan) pushDownTopN(topN *TopN) LogicalPlan {
 	return p
 }
 
+// setChild set p as topn's child. If eliminable is true, this topn plan can be removed.
 func (s *TopN) setChild(p LogicalPlan, eliminable bool) LogicalPlan {
 	if s.partial && eliminable {
 		return p
