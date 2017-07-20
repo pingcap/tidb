@@ -247,13 +247,16 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
 	c.Assert(v.(*MyDecimal).String(), Equals, "-9999.9999")
 
-	// For bad TypeNewDecimal
-	v, err = Convert("hello", ft)
+	// Test Datum.ToDecimal with bad number.
+	d := NewDatum("hello")
+	sc := new(variable.StatementContext)
+	v, err = d.ToDecimal(sc)
+	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue)
+
+	sc.IgnoreTruncate = true
+	v, err = d.ToDecimal(sc)
 	c.Assert(err, IsNil)
-	c.Assert(v.(*MyDecimal).String(), Equals, "0.0000")
-	v, err = Convert("", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(*MyDecimal).String(), Equals, "0.0000")
+	c.Assert(v.(*MyDecimal).String(), Equals, "0")
 
 	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
