@@ -1318,6 +1318,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE INDEX idx ON t (a) USING HASH", true},
 		{"CREATE INDEX idx ON t (a) COMMENT 'foo'", true},
 		{"CREATE INDEX idx ON t (a) USING HASH COMMENT 'foo'", true},
+		{"CREATE INDEX idx USING BTREE ON t (a) USING HASH COMMENT 'foo'", true},
+		{"CREATE INDEX idx USING BTREE ON t (a)", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
