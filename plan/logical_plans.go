@@ -321,11 +321,25 @@ type TopN struct {
 	ByItems []*ByItems
 	Offset  uint64
 	Count   uint64
+
+	partial bool
 }
 
 // isLimit checks if TopN is a limit plan.
 func (t *TopN) isLimit() bool {
 	return len(t.ByItems) == 0
+}
+
+// Limit represents offset and limit plan.
+type Limit struct {
+	*basePlan
+	baseLogicalPlan
+	basePhysicalPlan
+
+	Offset uint64
+	Count  uint64
+
+	partial bool
 }
 
 // Update represents Update plan.
