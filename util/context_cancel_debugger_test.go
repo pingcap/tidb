@@ -16,32 +16,55 @@ package util
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/juju/errors"
 	"golang.org/x/net/context"
 )
 
-func TestWithCancel(t *testing.T) {
-	debug = true
-	bg := context.Background()
-	ctx1, cancel := WithCancel(bg)
+func testResult(ctx context.Context, cancel context.CancelFunc, t *testing.T) {
 	cancel()
 
 	select {
-	case <-ctx1.Done():
+	case <-ctx.Done():
 	default:
 		t.FailNow()
 	}
 
-	res := ctx1.(*wrapResult)
+	res := ctx.(*wrapResult)
 	if !strings.HasSuffix(res.file, "context_cancel_debugger_test.go") {
 		t.Errorf("wrong file information")
 	}
-	if res.line != 28 {
+	if res.line != 26 {
 		t.Errorf("wrong line information")
 	}
 
-	if errors.Cause(ctx1.Err()) != context.Canceled {
+	if errors.Cause(ctx.Err()) != context.Canceled {
 		t.Errorf("error should be canceled")
+	}
+}
+
+func TestWithCancel(t *testing.T) {
+	debug = true
+	bg := context.Background()
+	ctx1, cancel := WithCancel(bg)
+	testResult(ctx1, cancel, t)
+	debug = false
+}
+
+func TestWithTimeout(t *testing.T) {
+	debug = true
+	bg := context.Background()
+	ctx1, cancel := WithTimeout(bg, time.Second)
+	if ctx1.Err() != nil {
+		t.FailNow()
+	}
+
+	testResult(ctx1, cancel, t)
+
+	debug = false
+	ctx, _ := WithTimeout(bg, time.Second)
+	if _, ok := ctx.(*wrapResult); ok {
+		t.FailNow()
 	}
 }

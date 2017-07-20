@@ -15,6 +15,7 @@ package util
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 	"time"
 
@@ -22,7 +23,13 @@ import (
 	"golang.org/x/net/context"
 )
 
-var debug = false
+var debug bool
+
+func init() {
+	if os.Getenv("tidb_context_cancel") != "" {
+		debug = true
+	}
+}
 
 func wrap(ctx context.Context, cancel context.CancelFunc) (context.Context, context.CancelFunc) {
 	if !debug {
