@@ -49,7 +49,9 @@ func canProjectionBeEliminatedStrict(p *Projection) bool {
 func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
 	dst := replace[string(origin.HashCode())]
 	if dst != nil {
+		colName := origin.ColName
 		*origin = *dst
+		origin.ColName = colName
 	}
 }
 
