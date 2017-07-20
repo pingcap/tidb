@@ -542,7 +542,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 	if strings.EqualFold(engine, "Dashbase") {
 		// TODO: Escape.
-		buf.WriteString(fmt.Sprintf(" DASHBASE_CONN='%s'", tb.Meta().DashbaseConnection.ToString()))
+		buf.WriteString(fmt.Sprintf(" DASHBASE_CONN='%s'", tb.Meta().DashbaseConnection.String()))
 		if len(tb.Meta().DashbaseTableName) > 0 {
 			// TODO: Escape.
 			buf.WriteString(fmt.Sprintf(" DASHBASE_TABLE_NAME='%s'", tb.Meta().DashbaseTableName))

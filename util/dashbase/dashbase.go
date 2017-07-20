@@ -36,7 +36,7 @@ type ConnectionOption struct {
 }
 
 // ToString converts the structure into format `hostname:port;hostname:port`
-func (conn *ConnectionOption) ToString() string {
+func (conn *ConnectionOption) String() string {
 	return fmt.Sprintf("%s:%d;%s:%d", conn.FirehoseHostname, conn.FirehosePort, conn.ProxyHostname, conn.ProxyPort)
 }
 
