@@ -1130,6 +1130,9 @@ func (s *session) ActivePendingTxn() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if s.sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
+		txn.SetOption(kv.IsolationLevel, kv.RC)
+	}
 	return nil
 }
 
