@@ -71,7 +71,7 @@ func (s *Schema) Clone() *Schema {
 	return schema
 }
 
-// ExprFromSchema checks if all columns of this expression are from some schema.
+// ExprFromSchema checks if all columns of this expression are from the same schema.
 func ExprFromSchema(expr Expression, schema *Schema) bool {
 	cols := ExtractColumns(expr)
 	return len(schema.ColumnsIndices(cols)) > 0

@@ -162,6 +162,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return
 }
 
+// updateEQCond will extract the arguments of a equal condition that connect two expressions.
 func (p *LogicalJoin) updateEQCond() {
 	lChild, rChild := p.children[0], p.children[1]
 	var lKeys, rKeys []expression.Expression
@@ -184,8 +185,8 @@ func (p *LogicalJoin) updateEQCond() {
 		}
 	}
 	if len(lKeys) > 0 {
-		lProj := p.createProj(0)
-		rProj := p.createProj(1)
+		lProj := p.getProj(0)
+		rProj := p.getProj(1)
 		for i := range lKeys {
 			lKey := lProj.appendExpr(lKeys[i])
 			rKey := rProj.appendExpr(rKeys[i])
@@ -211,7 +212,7 @@ func (p *Projection) appendExpr(expr expression.Expression) *expression.Column {
 	return col.Clone().(*expression.Column)
 }
 
-func (p *LogicalJoin) createProj(idx int) *Projection {
+func (p *LogicalJoin) getProj(idx int) *Projection {
 	child := p.children[idx]
 	proj, ok := child.(*Projection)
 	if ok {
