@@ -63,7 +63,9 @@ var (
 
 var (
 	_ builtinFunc = &builtinAbsSig{}
-	_ builtinFunc = &builtinCeilSig{}
+
+	_ builtinFunc = &builtinCeilRealSig{}
+	_ builtinFunc = &builtinCeilIntSig{}
 
 	_ builtinFunc = &builtinFloorRealSig{}
 	_ builtinFunc = &builtinFloorIntSig{}
@@ -143,32 +145,66 @@ type ceilFunctionClass struct {
 }
 
 func (c *ceilFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinCeilSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	var (
+		bf           baseBuiltinFunc
+		sig          builtinFunc
+		err          error
+		retTp, argTp evalTp
+		tpClass      types.TypeClass
+	)
+
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tpClass = args[0].GetTypeClass()
+	switch tpClass {
+	case types.ClassInt, types.ClassDecimal:
+		retTp, argTp = tpInt, tpReal
+	default:
+		retTp, argTp = tpReal, tpReal
+	}
+
+	bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	switch tpClass {
+	case types.ClassInt, types.ClassDecimal:
+		sig = &builtinCeilIntSig{baseIntBuiltinFunc{bf}}
+	default:
+		sig = &builtinCeilRealSig{baseRealBuiltinFunc{bf}}
+	}
+	return sig.setSelf(sig), nil
 }
 
-type builtinCeilSig struct {
-	baseBuiltinFunc
+type builtinCeilRealSig struct {
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinCeilSig.
+// evalReal evals a builtinCeilRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_ceiling
-func (b *builtinCeilSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinCeilRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	if args[0].IsNull() ||
-		args[0].Kind() == types.KindUint64 || args[0].Kind() == types.KindInt64 {
-		return args[0], nil
-	}
+	return math.Ceil(val), false, nil
+}
 
-	f, err := args[0].ToFloat64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
+type builtinCeilIntSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals a builtinCeilIntSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_ceiling
+func (b *builtinCeilIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	d.SetFloat64(math.Ceil(f))
-	return
+	return int64(math.Ceil(val)), false, nil
 }
 
 type floorFunctionClass struct {
