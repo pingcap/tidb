@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func (s *testEvaluatorSuite) TestColumn222(c *C) {
+func (s *testEvaluatorSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 
 	sc := s.ctx.GetSessionVars().StmtCtx
