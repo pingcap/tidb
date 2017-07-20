@@ -1691,6 +1691,12 @@ func NewDurationDatum(dur Duration) (d Datum) {
 	return d
 }
 
+// NewTimeDatum creates a new Time from a Time value.
+func NewTimeDatum(t Time) (d Datum) {
+	d.SetMysqlTime(t)
+	return d
+}
+
 // NewDecimalDatum creates a new Datum form a MyDecimal value.
 func NewDecimalDatum(dec *MyDecimal) (d Datum) {
 	d.SetMysqlDecimal(dec)
