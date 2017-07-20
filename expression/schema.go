@@ -71,6 +71,12 @@ func (s *Schema) Clone() *Schema {
 	return schema
 }
 
+// ExprFromSchema checks if all columns of this expression are from the same schema.
+func ExprFromSchema(expr Expression, schema *Schema) bool {
+	cols := ExtractColumns(expr)
+	return len(schema.ColumnsIndices(cols)) > 0
+}
+
 // FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
 func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {

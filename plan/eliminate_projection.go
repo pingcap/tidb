@@ -66,27 +66,18 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 	}
 }
 
-func doPhysicalProjectionElimination(p PhysicalPlan, replace map[string]*expression.Column) PhysicalPlan {
+func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	children := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		children = append(children, doPhysicalProjectionElimination(child.(PhysicalPlan), replace))
+		children = append(children, doPhysicalProjectionElimination(child.(PhysicalPlan)))
 	}
 	p.SetChildren(children...)
-
-	for _, dst := range p.Schema().Columns {
-		resolveColumnAndReplace(dst, replace)
-	}
-	p.replaceExprColumns(replace)
 
 	proj, isProj := p.(*Projection)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
 		return p
 	}
 	child := p.Children()[0]
-	exprs := proj.Exprs
-	for i, col := range proj.Schema().Columns {
-		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
-	}
 	RemovePlan(p)
 	return child.(PhysicalPlan)
 }
@@ -95,7 +86,7 @@ func doPhysicalProjectionElimination(p PhysicalPlan, replace map[string]*express
 // left after logical projection elimination.
 func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 	oldRoot := p
-	newRoot := doPhysicalProjectionElimination(p, make(map[string]*expression.Column))
+	newRoot := doPhysicalProjectionElimination(p)
 	if oldRoot.ID() != newRoot.ID() {
 		newCols := newRoot.Schema().Columns
 		for i, oldCol := range oldRoot.Schema().Columns {
@@ -184,12 +175,6 @@ func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) 
 	}
 	for _, otherExpr := range p.OtherConditions {
 		resolveExprAndReplace(otherExpr, replace)
-	}
-	for _, leftKey := range p.LeftJoinKeys {
-		resolveColumnAndReplace(leftKey, replace)
-	}
-	for _, rightKey := range p.RightJoinKeys {
-		resolveColumnAndReplace(rightKey, replace)
 	}
 }
 

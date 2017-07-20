@@ -14,8 +14,12 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 type ppdSolver struct{}
@@ -128,10 +132,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	}
-	for _, eqCond := range p.EqualConditions {
-		p.LeftJoinKeys = append(p.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
-		p.RightJoinKeys = append(p.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
-	}
 	leftRet, _, err1 := leftPlan.PredicatePushDown(leftCond)
 	if err1 != nil {
 		return nil, nil, errors.Trace(err1)
@@ -152,9 +152,82 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 			return nil, nil, errors.Trace(err2)
 		}
 	}
+	p.updateEQCond()
+	for _, eqCond := range p.EqualConditions {
+		p.LeftJoinKeys = append(p.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
+		p.RightJoinKeys = append(p.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
+	}
 	p.mergeSchema()
 	p.buildKeyInfo()
 	return
+}
+
+// updateEQCond will extract the arguments of a equal condition that connect two expressions.
+func (p *LogicalJoin) updateEQCond() {
+	lChild, rChild := p.children[0], p.children[1]
+	var lKeys, rKeys []expression.Expression
+	for i := len(p.OtherConditions) - 1; i >= 0; i-- {
+		need2Remove := false
+		if eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction); ok && eqCond.FuncName.L == ast.EQ {
+			lExpr, rExpr := eqCond.GetArgs()[0], eqCond.GetArgs()[1]
+			if expression.ExprFromSchema(lExpr, lChild.Schema()) && expression.ExprFromSchema(rExpr, rChild.Schema()) {
+				lKeys = append(lKeys, lExpr)
+				rKeys = append(rKeys, rExpr)
+				need2Remove = true
+			} else if expression.ExprFromSchema(lExpr, rChild.Schema()) && expression.ExprFromSchema(rExpr, lChild.Schema()) {
+				lKeys = append(lKeys, rExpr)
+				rKeys = append(rKeys, lExpr)
+				need2Remove = true
+			}
+		}
+		if need2Remove {
+			p.OtherConditions = append(p.OtherConditions[:i], p.OtherConditions[i+1:]...)
+		}
+	}
+	if len(lKeys) > 0 {
+		lProj := p.getProj(0)
+		rProj := p.getProj(1)
+		for i := range lKeys {
+			lKey := lProj.appendExpr(lKeys[i])
+			rKey := rProj.appendExpr(rKeys[i])
+			eqCond, _ := expression.NewFunction(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+			p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
+		}
+	}
+}
+
+func (p *Projection) appendExpr(expr expression.Expression) *expression.Column {
+	if col, ok := expr.(*expression.Column); ok {
+		return col
+	}
+	expr = expression.ColumnSubstitute(expr, p.schema, p.Exprs)
+	p.Exprs = append(p.Exprs, expr)
+	col := &expression.Column{
+		FromID:   p.id,
+		Position: p.schema.Len(),
+		ColName:  model.NewCIStr(expr.String()),
+		RetType:  expr.GetType(),
+	}
+	p.schema.Append(col)
+	return col.Clone().(*expression.Column)
+}
+
+func (p *LogicalJoin) getProj(idx int) *Projection {
+	child := p.children[idx]
+	proj, ok := child.(*Projection)
+	if ok {
+		return proj
+	}
+	proj = Projection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.init(p.allocator, p.ctx)
+	for _, col := range child.Schema().Columns {
+		proj.Exprs = append(proj.Exprs, col.Clone())
+	}
+	proj.SetSchema(child.Schema().Clone())
+	child.SetParents(proj)
+	proj.SetChildren(child)
+	proj.SetParents(p)
+	p.children[idx] = proj
+	return proj
 }
 
 // outerJoinSimplify simplifies outer join.
