@@ -221,6 +221,7 @@ func (e *rawEntry) Less(than llrb.Item) bool {
 	return bytes.Compare(e.key, than.(*rawEntry).key) < 0
 }
 
+// MVCCStore is a mvcc key-value storage.
 type MVCCStore interface {
 	RawKV
 	Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error)
@@ -235,6 +236,7 @@ type MVCCStore interface {
 	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
 }
 
+// RawKV is a key-value storage. MVCCStore can be implemented upon it with timestamp encoded into key.
 type RawKV interface {
 	RawGet(key []byte) []byte
 	RawScan(startKey, endKey []byte, limit int) []Pair
