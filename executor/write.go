@@ -489,7 +489,7 @@ func escape(str []byte) []byte {
 	for i := 0; i < len(str); i++ {
 		c := str[i]
 		if c == '\\' && i+1 < len(str) {
-			c, _ = escapeChar(str[i+1])
+			c = escapeChar(str[i+1])
 			i++
 		}
 
@@ -499,24 +499,24 @@ func escape(str []byte) []byte {
 	return str[:pos]
 }
 
-func escapeChar(c byte) (byte, bool) {
+func escapeChar(c byte) byte {
 	switch c {
 	case '0':
-		return 0, true
+		return 0
 	case 'b':
-		return '\b', true
+		return '\b'
 	case 'n':
-		return '\n', true
+		return '\n'
 	case 'r':
-		return '\r', true
+		return '\r'
 	case 't':
-		return '\t', true
+		return '\t'
 	case 'Z':
-		return 26, true
+		return 26
 	case '\\':
-		return '\\', true
+		return '\\'
 	}
-	return c, false
+	return c
 }
 
 func (e *LoadDataInfo) insertData(cols []string) {
