@@ -149,7 +149,7 @@ func (ft *FieldType) CompactStr() string {
 	return ts + suffix
 }
 
-// Add unsigned for support infoschme
+// Add unsigned for support infoschema
 func (ft *FieldType) InfoSchemaStr() string {
 	suffix := ""
 	if mysql.HasUnsignedFlag(ft.Flag) {
