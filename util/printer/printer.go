@@ -40,6 +40,11 @@ func PrintRawTiDBInfo() {
 	fmt.Println("UTC Build Time: ", TiDBBuildTS)
 }
 
+// GetTiDBInfo returns the git hash and build time of this tidb-server binary.
+func GetTiDBInfo() string {
+	return fmt.Sprintf("Git Commit Hash: %s\nUTC Build Time: %s", TiDBGitHash, TiDBBuildTS)
+}
+
 // checkValidity checks whether cols and every data have the same length.
 func checkValidity(cols []string, datas [][]string) bool {
 	colLen := len(cols)
