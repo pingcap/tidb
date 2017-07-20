@@ -111,6 +111,18 @@ func (p LogicalApply) init(allocator *idAllocator, ctx context.Context) *Logical
 	return &p
 }
 
+func (p DashbaseInsert) init(allocator *idAllocator, ctx context.Context) *DashbaseInsert {
+	p.basePlan = newBasePlan(TypeDual, allocator, ctx, &p)
+	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
+func (p DashbaseSelect) init(allocator *idAllocator, ctx context.Context) *DashbaseSelect {
+	p.basePlan = newBasePlan(TypeDual, allocator, ctx, &p)
+	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	return &p
+}
+
 func (p Selection) init(allocator *idAllocator, ctx context.Context) *Selection {
 	p.basePlan = newBasePlan(TypeSel, allocator, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)

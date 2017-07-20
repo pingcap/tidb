@@ -358,3 +358,17 @@ func (p *MaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]exp
 	_, _, err := p.baseLogicalPlan.PredicatePushDown(nil)
 	return predicates, p, errors.Trace(err)
 }
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *DashbaseSelect) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	// DashbaseSelect forbids any condition to push down.
+	_, _, err := p.baseLogicalPlan.PredicatePushDown(nil)
+	return predicates, p, errors.Trace(err)
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *DashbaseInsert) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	// DashbaseInsert forbids any condition to push down.
+	_, _, err := p.baseLogicalPlan.PredicatePushDown(nil)
+	return predicates, p, errors.Trace(err)
+}

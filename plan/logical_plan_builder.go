@@ -983,6 +983,27 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 
+	isDashbaseReferred := false
+	var tableList []*ast.TableName
+	if sel.From != nil {
+		tableList = extractTableList(sel.From.TableRefs, tableList)
+		for _, table := range tableList {
+			if strings.EqualFold(table.TableInfo.Engine, "Dashbase") {
+				isDashbaseReferred = true
+				break
+			}
+		}
+	}
+	if isDashbaseReferred {
+		if len(tableList) > 1 {
+			b.err = errors.New("Cannot select from multiple tables when at least one of them is dashbase table")
+			return nil
+		}
+		// Create a dashbase select plan instead of a select plan.
+		plan := DashbaseSelect{SQL: sel.Text()}.init(b.allocator, b.ctx)
+		return plan
+	}
+
 	hasAgg := b.detectSelectAgg(sel)
 	var (
 		p                             LogicalPlan

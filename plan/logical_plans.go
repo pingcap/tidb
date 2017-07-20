@@ -41,6 +41,8 @@ var (
 	_ LogicalPlan = &Limit{}
 	_ LogicalPlan = &Show{}
 	_ LogicalPlan = &Insert{}
+	_ LogicalPlan = &DashbaseInsert{}
+	_ LogicalPlan = &DashbaseSelect{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -345,6 +347,21 @@ type Delete struct {
 
 	Tables       []*ast.TableName
 	IsMultiTable bool
+}
+
+// DashbaseSelect represents a plan of selecting from a dashbase table
+type DashbaseSelect struct {
+	*basePlan
+	baseLogicalPlan
+
+	SQL string
+}
+
+// DashbaseInsert represents a plan of inserting into a dashbase table
+type DashbaseInsert struct {
+	*basePlan
+	baseLogicalPlan
+	// TODO
 }
 
 // AddChild for parent.
