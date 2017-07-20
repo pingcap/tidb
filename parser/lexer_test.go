@@ -66,15 +66,15 @@ func (s *testLexerSuite) TestSingleCharOther(c *C) {
 	runTest(c, table)
 }
 
-func (s *testLexerSuite) TestSysOrUserVar(c *C) {
+func (s *testLexerSuite) TestAtLeadingIdentifier(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCaseItem{
-		{"@a_3cbbc", userVar},
+		{"@a_3cbbc", singleAtIdentifier},
 		{"@-3cbbc", at},
-		{"@@global.test", sysVar},
-		{"@@session.test", sysVar},
-		{"@@local.test", sysVar},
-		{"@@test", sysVar},
+		{"@@global.test", doubleAtIdentifier},
+		{"@@session.test", doubleAtIdentifier},
+		{"@@local.test", doubleAtIdentifier},
+		{"@@test", doubleAtIdentifier},
 	}
 	runTest(c, table)
 }

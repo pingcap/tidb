@@ -249,6 +249,7 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 
 func (ts *testSuite) TestUnsignedPK(c *C) {
 	defer testleak.AfterTest(c)()
+	ts.se.Execute("DROP TABLE IF EXISTS test.tPK")
 	_, err := ts.se.Execute("CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(context.Context)
@@ -267,6 +268,7 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 
 func (ts *testSuite) TestIterRecords(c *C) {
 	defer testleak.AfterTest(c)()
+	ts.se.Execute("DROP TABLE IF EXISTS test.tIter")
 	_, err := ts.se.Execute("CREATE TABLE test.tIter (a int primary key, b int)")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute("INSERT test.tIter VALUES (1, 2), (2, NULL)")

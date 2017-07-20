@@ -101,7 +101,8 @@ var (
 	_ builtinFunc = &builtinSubstring3ArgsSig{}
 	_ builtinFunc = &builtinSubstringIndexSig{}
 	_ builtinFunc = &builtinLocateSig{}
-	_ builtinFunc = &builtinHexSig{}
+	_ builtinFunc = &builtinHexStrArgSig{}
+	_ builtinFunc = &builtinHexIntArgSig{}
 	_ builtinFunc = &builtinUnHexSig{}
 	_ builtinFunc = &builtinTrimSig{}
 	_ builtinFunc = &builtinLTrimSig{}
@@ -205,6 +206,10 @@ func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context
 			bf.tp.Flag |= mysql.BinaryFlag
 		}
 
+		if argType.Flen < 0 {
+			bf.tp.Flen = mysql.MaxBlobWidth
+			log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT is -1.", i)
+		}
 		bf.tp.Flen += argType.Flen
 	}
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
@@ -254,6 +259,10 @@ func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Conte
 
 		// skip seperator param
 		if i != 0 {
+			if argType.Flen < 0 {
+				bf.tp.Flen = mysql.MaxBlobWidth
+				log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT_WS is -1.", i)
+			}
 			bf.tp.Flen += argType.Flen
 		}
 	}
@@ -844,49 +853,49 @@ type substringIndexFunctionClass struct {
 }
 
 func (c *substringIndexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinSubstringIndexSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	if mysql.HasBinaryFlag(argType.Flag) {
+		types.SetBinChsClnFlag(bf.tp)
+	}
+	sig := &builtinSubstringIndexSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSubstringIndexSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinSubstringIndexSig.
+// evalString evals a builtinSubstringIndexSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
-func (b *builtinSubstringIndexSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinSubstringIndexSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var (
+		str, delim string
+		count      int64
+	)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	// The meaning of the elements of args.
-	// args[0] -> StrExpr
-	// args[1] -> Delim
-	// args[2] -> Count
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Errorf("Substring_Index invalid args, need string but get %T", args[0].GetValue())
+	delim, isNull, err = b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-
-	delim, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Errorf("Substring_Index invalid delim, need string but get %T", args[1].GetValue())
+	count, isNull, err = b.args[2].EvalInt(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
 	if len(delim) == 0 {
-		d.SetString("")
-		return d, nil
+		return "", false, nil
 	}
 
-	c, err := args[2].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	count := int(c)
 	strs := strings.Split(str, delim)
-	var (
-		start = 0
-		end   = len(strs)
-	)
+	start, end := int64(0), int64(len(strs))
 	if count > 0 {
 		// If count is positive, everything to the left of the final delimiter (counting from the left) is returned.
 		if count < end {
@@ -900,8 +909,7 @@ func (b *builtinSubstringIndexSig) eval(row []types.Datum) (d types.Datum, err e
 		}
 	}
 	substrs := strs[start:end]
-	d.SetString(strings.Join(substrs, delim))
-	return d, nil
+	return strings.Join(substrs, delim), false, nil
 }
 
 type locateFunctionClass struct {
@@ -995,39 +1003,57 @@ type hexFunctionClass struct {
 }
 
 func (c *hexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinHexSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinHexSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinHexSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
-func (b *builtinHexSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	switch args[0].Kind() {
-	case types.KindNull:
-		return d, nil
-	case types.KindString, types.KindBytes:
-		x, err := args[0].ToString()
+	switch t := args[0].GetTypeClass(); t {
+	case types.ClassString:
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 		if err != nil {
-			return d, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		d.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))))
-		return d, nil
-	case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-		x, _ := args[0].Cast(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
-		h := fmt.Sprintf("%x", uint64(x.GetInt64()))
-		d.SetString(strings.ToUpper(h))
-		return d, nil
+		// Use UTF-8 as default
+		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
+		sig := &builtinHexStrArgSig{baseStringBuiltinFunc{bf}}
+		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+
+	case types.ClassInt, types.ClassReal, types.ClassDecimal:
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		bf.tp.Flen = args[0].GetType().Flen * 2
+		sig := &builtinHexIntArgSig{baseStringBuiltinFunc{bf}}
+		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+
 	default:
-		return d, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetValue())
+		return nil, errors.Errorf("Hex invalid args, need int or string but get %T", t)
 	}
+}
+
+type builtinHexStrArgSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinHexStrArgSig, corresponding to hex(str)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
+func (b *builtinHexStrArgSig) evalString(row []types.Datum) (string, bool, error) {
+	d, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	return strings.ToUpper(hex.EncodeToString(hack.Slice(d))), false, nil
+}
+
+type builtinHexIntArgSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinHexIntArgSig, corresponding to hex(N)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
+func (b *builtinHexIntArgSig) evalString(row []types.Datum) (string, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	return strings.ToUpper(fmt.Sprintf("%x", uint64(x))), false, nil
 }
 
 type unhexFunctionClass struct {
@@ -1287,31 +1313,28 @@ type bitLengthFunctionClass struct {
 }
 
 func (c *bitLengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinBitLengthSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 10
+	sig := &builtinBitLengthSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinBitLengthSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinBitLengthSig.
+// evalInt evaluates a builtinBitLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bit-length
-func (b *builtinBitLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return d, nil
+func (b *builtinBitLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetInt64(int64(len(str) * 8))
-	return d, nil
+	return int64(len(val) * 8), false, nil
 }
 
 type charFunctionClass struct {

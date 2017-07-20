@@ -319,7 +319,7 @@ func (s *session) String() string {
 		"id":         sessVars.ConnectionID,
 		"user":       sessVars.User,
 		"currDBName": sessVars.CurrentDB,
-		"stauts":     sessVars.Status,
+		"status":     sessVars.Status,
 		"strictMode": sessVars.StrictSQLMode,
 	}
 	if s.txn != nil {
@@ -1129,6 +1129,9 @@ func (s *session) ActivePendingTxn() error {
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if s.sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
+		txn.SetOption(kv.IsolationLevel, kv.RC)
 	}
 	return nil
 }

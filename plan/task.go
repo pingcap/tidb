@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -135,10 +136,21 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), rTask.plan())
 	return &rootTask{
-		p: np,
-		// TODO: we will estimate the cost and count more precisely.
-		cst: lTask.cost(),
+		p:   np,
+		cst: lTask.cost() + p.getCost(lTask.count()),
 	}
+}
+
+func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
+	return lCnt * netWorkStartFactor
+}
+
+func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
+	smallTableCnt := lCnt
+	if p.SmallTable == 1 {
+		smallTableCnt = rCnt
+	}
+	return (lCnt + rCnt) * (1 + math.Log2(smallTableCnt))
 }
 
 func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
@@ -147,10 +159,13 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), rTask.plan())
 	return &rootTask{
-		p: np,
-		// TODO: we will estimate the cost and count more precisely.
-		cst: lTask.cost() + rTask.cost(),
+		p:   np,
+		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
 	}
+}
+
+func (p *PhysicalMergeJoin) getCost(lCnt, rCnt float64) float64 {
+	return lCnt + rCnt
 }
 
 func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
@@ -159,10 +174,13 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), rTask.plan())
 	return &rootTask{
-		p: np,
-		// TODO: we will estimate the cost and count more precisely.
-		cst: lTask.cost() + rTask.cost(),
+		p:   np,
+		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
 	}
+}
+
+func (p *PhysicalHashSemiJoin) getCost(lCnt, rCnt float64) float64 {
+	return (lCnt + rCnt) * (1 + math.Log2(rCnt))
 }
 
 func (p *PhysicalHashSemiJoin) attach2Task(tasks ...task) task {
@@ -171,9 +189,8 @@ func (p *PhysicalHashSemiJoin) attach2Task(tasks ...task) task {
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), rTask.plan())
 	task := &rootTask{
-		p: np,
-		// TODO: we will estimate the cost and count more precisely.
-		cst: lTask.cost() + rTask.cost(),
+		p:   np,
+		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
 	}
 	return task
 }

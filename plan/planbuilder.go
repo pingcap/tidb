@@ -416,11 +416,8 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 		for _, idx := range idxInfo {
 			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx})
 		}
-		if len(colInfo) > 0 {
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, ColsInfo: colInfo})
-		}
-		if pkInfo != nil {
-			p.PkTasks = append(p.PkTasks, AnalyzePKTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo})
+		if len(colInfo) > 0 || pkInfo != nil {
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo})
 		}
 	}
 	p.SetSchema(&expression.Schema{})
