@@ -63,12 +63,14 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 		sc.IgnoreTruncate = tmpIT
 	}()
 
-	for _, test := range []struct {
+	type testCase struct {
 		arg    interface{}
 		expect interface{}
 		isNil  bool
 		getErr bool
-	}{
+	}
+
+	cases := []testCase{
 		{nil, nil, true, false},
 		{int64(1), int64(1), false, false},
 		{float64(1.23), float64(2), false, false},
@@ -76,25 +78,9 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 		{"1.23", float64(2), false, false},
 		{"-1.23", float64(-1), false, false},
 		{"tidb", float64(0), false, false},
-		{"1tidb", float64(1), false, false},
-	} {
-		f, err := newFunctionForTest(s.ctx, ast.Ceil, primitiveValsToConstants([]interface{}{test.arg})...)
-		c.Assert(err, IsNil)
+		{"1tidb", float64(1), false, false}}
 
-		result, err := f.Eval(nil)
-		if test.getErr {
-			c.Assert(err, NotNil)
-		} else {
-			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
-			}
-		}
-	}
-
-	for _, exp := range []Expression{
+	expressions := []Expression{
 		&Constant{
 			Value:   types.NewDatum(0),
 			RetType: types.NewFieldType(mysql.TypeTiny),
@@ -103,11 +89,35 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 			Value:   types.NewFloat64Datum(float64(12.34)),
 			RetType: types.NewFieldType(mysql.TypeFloat),
 		},
-	} {
-		f, err := funcs[ast.Ceil].getFunction([]Expression{exp}, s.ctx)
-		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
 	}
+
+	runCasesOn := func(funcName string, cases []testCase, exps []Expression) {
+		for _, test := range cases {
+			f, err := newFunctionForTest(s.ctx, funcName, primitiveValsToConstants([]interface{}{test.arg})...)
+			c.Assert(err, IsNil)
+
+			result, err := f.Eval(nil)
+			if test.getErr {
+				c.Assert(err, NotNil)
+			} else {
+				c.Assert(err, IsNil)
+				if test.isNil {
+					c.Assert(result.Kind(), Equals, types.KindNull)
+				} else {
+					c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+				}
+			}
+		}
+
+		for _, exp := range exps {
+			f, err := funcs[funcName].getFunction([]Expression{exp}, s.ctx)
+			c.Assert(err, IsNil)
+			c.Assert(f.isDeterministic(), IsTrue)
+		}
+	}
+
+	runCasesOn(ast.Ceil, cases, expressions)
+	runCasesOn(ast.Ceiling, cases, expressions)
 }
 
 func (s *testEvaluatorSuite) TestExp(c *C) {
