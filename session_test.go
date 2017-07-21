@@ -2351,17 +2351,6 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	se.Close()
 }
 
-func (s *testSessionSuite) TestColumnLength(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_column_length"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t1 (b char(0));")
-	mustExecSQL(c, se, `insert into t1 values ("");`)
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestIndexColumnLength(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_index_column_length"
