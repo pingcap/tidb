@@ -238,6 +238,29 @@ func (p *Insert) ResolveIndices() {
 		set.Col.ResolveIndices(p.tableSchema)
 		set.Expr.ResolveIndices(p.tableSchema)
 	}
+	for _, expr := range p.GenCols.Exprs {
+		expr.ResolveIndices(p.tableSchema)
+	}
+	for _, asgn := range p.GenCols.OnDups {
+		asgn.Col.ResolveIndices(p.tableSchema)
+		asgn.Expr.ResolveIndices(p.tableSchema)
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *DataSource) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	for _, expr := range p.GenValues {
+		expr.ResolveIndices(p.Schema())
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalTableScan) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	for _, expr := range p.GenValues {
+		expr.ResolveIndices(p.Schema())
+	}
 }
 
 // ResolveIndices implements Plan interface.

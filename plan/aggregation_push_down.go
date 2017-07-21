@@ -391,6 +391,16 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 				}
 				union.SetChildren(newChildren...)
 				union.SetSchema(pushedAgg.schema)
+			} else if ds, ok1 := child.(*DataSource); ok1 {
+				for i, expr := range agg.GroupByItems {
+					agg.GroupByItems[i] = ds.replaceColumnByGenerationExpression(expr)
+				}
+				for _, aggFunc := range agg.AggFuncs {
+					args := aggFunc.GetArgs()
+					for i, expr := range args {
+						args[i] = ds.replaceColumnByGenerationExpression(expr)
+					}
+				}
 			}
 		}
 	}
