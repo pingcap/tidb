@@ -121,6 +121,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	for _, d := range newData {
+		log.Warnf("data val: %v", d.GetValue())
+	}
 	dirtyDB := getDirtyDB(ctx)
 	tid := t.Meta().ID
 	dirtyDB.deleteRow(tid, h)

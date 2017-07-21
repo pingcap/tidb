@@ -1140,6 +1140,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		columns = tbl.Cols()
 	}
+	var pkCol *expression.Column
 	for i, col := range columns {
 		p.Columns = append(p.Columns, col.ColumnInfo)
 		schema.Append(&expression.Column{
@@ -1150,39 +1151,42 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			RetType:  &col.FieldType,
 			Position: i,
 			ID:       col.ID})
-		/*
-			if tableInfo.PKIsHandle {
-				schema.TblID2handle[tableInfo.ID] = schema.Columns[schema.Len() - 1]
-			}
-		*/
+		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			pkCol = schema.Columns[schema.Len()-1]
+		}
 	}
 	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
-	idRow := &expression.Column{
-		FromID:   p.id,
-		DBName:   schemaName,
-		TblName:  tableInfo.Name,
-		ColName:  model.NewCIStr("_rowid"),
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		Position: len(schema.Columns),
-		ID:       -1,
-	}
-	if needUnionScan {
-		p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
-		for _, col := range schema.Columns {
-			p.unionScanSchema.Append(col)
+	if b.needColHandle || needUnionScan {
+		if pkCol == nil || needUnionScan {
+			idCol := &expression.Column{
+				FromID:   p.id,
+				DBName:   schemaName,
+				TblName:  tableInfo.Name,
+				ColName:  model.NewCIStr("_rowid"),
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				Position: schema.Len(),
+				Index:    schema.Len(),
+				ID:       -1,
+			}
+			if needUnionScan {
+				p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+				for _, col := range schema.Columns {
+					p.unionScanSchema.Append(col)
+				}
+				if b.needColHandle {
+					p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
+					p.unionScanSchema.TblID2handle[tableInfo.ID] = []*expression.Column{idCol}
+				}
+			}
+			p.Columns = append(p.Columns, &model.ColumnInfo{
+				ID:   -1,
+				Name: model.NewCIStr("_rowid"),
+			})
+			schema.Append(idCol)
+			schema.TblID2handle[tableInfo.ID] = []*expression.Column{idCol}
+		} else {
+			schema.TblID2handle[tableInfo.ID] = []*expression.Column{pkCol}
 		}
-		if p.NeedColHandle {
-			p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idRow)
-			p.unionScanSchema.TblID2handle[tableInfo.ID] = []*expression.Column{idRow}
-		}
-	}
-	if p.NeedColHandle || needUnionScan {
-		p.Columns = append(p.Columns, &model.ColumnInfo{
-			ID:   -1,
-			Name: model.NewCIStr("_rowid"),
-		})
-		schema.Append(idRow)
-		schema.TblID2handle[tableInfo.ID] = []*expression.Column{idRow}
 	}
 	p.SetSchema(schema)
 	return p

@@ -378,6 +378,11 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		return nil
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src), needColHandle: v.NeedColHandle}
+	if len(src.Schema().TblID2handle) > 0 {
+		for _, cols := range src.Schema().TblID2handle {
+			us.handleCol = cols[0]
+		}
+	}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc
@@ -1018,6 +1023,10 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
+	var handleCol *expression.Column
+	if v.NeedColHandle {
+		handleCol = v.Schema().TblID2handle[ts.Table.ID][0]
+	}
 	e := &TableReaderExecutor{
 		ctx:           b.ctx,
 		schema:        v.Schema(),
@@ -1030,12 +1039,13 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		ranges:        ts.Ranges,
 		columns:       ts.Columns,
 		needColHandle: v.NeedColHandle,
+		handleCol:     handleCol,
 	}
 
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	if e.needColHandle {
+	if e.needColHandle && e.handleCol.ID == -1 {
 		dagReq.OutputOffsets = dagReq.OutputOffsets[:len(dagReq.OutputOffsets)-1]
 	}
 
@@ -1049,6 +1059,10 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
+	var handleCol *expression.Column
+	if v.NeedColHandle {
+		handleCol = v.Schema().TblID2handle[is.Table.ID][0]
+	}
 	e := &IndexReaderExecutor{
 		ctx:           b.ctx,
 		schema:        v.Schema(),
@@ -1062,12 +1076,13 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		ranges:        is.Ranges,
 		columns:       is.Columns,
 		needColHandle: v.NeedColHandle,
+		handleCol:     handleCol,
 	}
 
 	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
 	}
-	if e.needColHandle {
+	if e.needColHandle && handleCol.ID == -1 {
 		dagReq.OutputOffsets = dagReq.OutputOffsets[:len(dagReq.OutputOffsets)-1]
 	}
 
@@ -1085,11 +1100,15 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
+	var handleCol *expression.Column
+	if v.NeedColHandle {
+		handleCol = v.Schema().TblID2handle[is.Table.ID][0]
+	}
 
 	for i := range v.Schema().Columns {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
-	if v.NeedColHandle {
+	if v.NeedColHandle && handleCol.ID == -1 {
 		tableReq.OutputOffsets = tableReq.OutputOffsets[:len(tableReq.OutputOffsets)-1]
 	}
 
@@ -1107,6 +1126,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		tableRequest:  tableReq,
 		columns:       is.Columns,
 		needColHandle: v.NeedColHandle,
+		handleCol:     handleCol,
 	}
 	return e
 }

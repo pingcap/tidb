@@ -53,6 +53,7 @@ type TableReaderExecutor struct {
 	// columns are only required by union scan.
 	columns       []*model.ColumnInfo
 	needColHandle bool
+	handleCol     *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -74,6 +75,10 @@ func (e *TableReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *TableReaderExecutor) Next() (*Row, error) {
+	var handleID int64
+	if e.needColHandle {
+		handleID = e.schema.TblID2handle[e.tableID][0].ID
+	}
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -99,8 +104,9 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		if e.needColHandle {
+		if e.needColHandle && handleID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
+			values[len(values)-1].SetInt64(h)
 		} else {
 			err = codec.SetRawValues(rowData, values)
 		}
@@ -111,7 +117,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle), nil
+		return resultRowToRow(e.table, h, values, e.asName), nil
 	}
 }
 
@@ -162,6 +168,7 @@ type IndexReaderExecutor struct {
 	ctx           context.Context
 	schema        *expression.Schema
 	needColHandle bool
+	handleCol     *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -185,6 +192,10 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next() (*Row, error) {
+	var handleID int64
+	if e.needColHandle {
+		handleID = e.schema.TblID2handle[e.tableID][0].ID
+	}
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -210,8 +221,9 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		if e.needColHandle {
+		if e.needColHandle && handleID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
+			values[len(values)-1].SetInt64(h)
 		} else {
 			err = codec.SetRawValues(rowData, values)
 		}
@@ -222,7 +234,7 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle), nil
+		return resultRowToRow(e.table, h, values, e.asName), nil
 	}
 }
 
@@ -271,6 +283,7 @@ type IndexLookUpExecutor struct {
 	ctx           context.Context
 	schema        *expression.Schema
 	needColHandle bool
+	handleCol     *expression.Column
 
 	// result returns one or more distsql.PartialResult.
 	result distsql.SelectResult

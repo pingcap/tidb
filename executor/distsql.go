@@ -42,8 +42,7 @@ const (
 	minLogDuration = 50 * time.Millisecond
 )
 
-// TODO: This should be updated after.
-func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *model.CIStr, needHandle bool) *Row {
+func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *model.CIStr) *Row {
 	entry := &RowKeyEntry{
 		Handle: h,
 		Tbl:    t,
@@ -52,9 +51,6 @@ func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *mod
 		entry.TableName = tableAsName.L
 	} else {
 		entry.TableName = t.Meta().Name.L
-	}
-	if needHandle {
-		data[len(data)-1].SetInt64(h)
 	}
 	return &Row{Data: data, RowKeys: []*RowKeyEntry{entry}}
 }
@@ -98,13 +94,14 @@ func (task *lookupTableTask) getRow() (*Row, error) {
 
 // rowsSorter sorts the rows by its index order.
 type rowsSorter struct {
-	order map[int64]int
-	rows  []*Row
+	order     map[int64]int
+	rows      []*Row
+	handleIdx int
 }
 
 func (s *rowsSorter) Less(i, j int) bool {
-	x := s.order[s.rows[i].Data[len(s.rows[i].Data)-1].GetInt64()]
-	y := s.order[s.rows[j].Data[len(s.rows[i].Data)-1].GetInt64()]
+	x := s.order[s.rows[i].Data[s.handleIdx].GetInt64()]
+	y := s.order[s.rows[j].Data[s.handleIdx].GetInt64()]
 	return x < y
 }
 
@@ -456,6 +453,10 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		}
 		e.result.Fetch(e.ctx.GoCtx())
 	}
+	var handleID int64
+	if e.needColHandle {
+		handleID = e.schema.TblID2handle[e.tableInfo.ID][0].ID
+	}
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -493,8 +494,9 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			schema = e.idxColsSchema
 		}
 		values := make([]types.Datum, schema.Len())
-		if e.needColHandle {
+		if e.needColHandle && handleID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
+			values[len(values)-1].SetInt64(h)
 		} else {
 			err = codec.SetRawValues(rowData, values)
 		}
@@ -509,7 +511,10 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			return &Row{Data: values}, nil
 		}
 		values = e.indexRowToTableRow(h, values)
-		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle), nil
+		if e.needColHandle && handleID == -1 {
+			values[len(values)-1].SetInt64(h)
+		}
+		return resultRowToRow(e.table, h, values, e.asName), nil
 	}
 }
 
@@ -528,9 +533,6 @@ func decodeRawValues(values []types.Datum, schema *expression.Schema, loc *time.
 
 func (e *XSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Datum) []types.Datum {
 	rowLen := len(e.columns)
-	if e.needColHandle {
-		rowLen++
-	}
 	tableRow := make([]types.Datum, rowLen)
 	for i, tblCol := range e.columns {
 		if table.ToColumn(tblCol).IsPKHandleColumn(e.tableInfo) {
@@ -752,12 +754,19 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 	}
 	if !e.outOfOrder {
 		// Restore the index order.
-		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows}
+		var handleIdx int
+		if !e.needColHandle {
+			handleIdx = e.schema.Len()
+		} else {
+			handleIdx = e.schema.TblID2handle[e.tableInfo.ID][0].Index
+		}
+		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: handleIdx}
 		if e.desc && !e.supportDesc {
 			sort.Sort(sort.Reverse(sorter))
 		} else {
 			sort.Sort(sorter)
 		}
+		// If this executor don't need handle, we should cut it off.
 		if !e.needColHandle {
 			for _, row := range task.rows {
 				row.Data = row.Data[:len(row.Data)-1]
@@ -789,7 +798,13 @@ func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult d
 
 func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult distsql.PartialResult) ([]*Row, error) {
 	defer partialResult.Close()
-	var rows []*Row
+	var (
+		rows     []*Row
+		handleID int64
+	)
+	if e.needColHandle {
+		handleID = e.schema.TblID2handle[e.tableInfo.ID][0].ID
+	}
 	for {
 		h, rowData, err := partialResult.Next()
 		if err != nil {
@@ -803,8 +818,11 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 			length++
 		}
 		values := make([]types.Datum, length)
-		if e.needColHandle || !e.outOfOrder {
+		// If the handle col is not pk or we need it to sort the rows, it should be generated
+		// and cannot set value by SetRawValues.
+		if (e.needColHandle && handleID == -1) || length > e.schema.Len() {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
+			values[len(values)-1].SetInt64(h)
 		} else {
 			err = codec.SetRawValues(rowData, values)
 		}
@@ -812,10 +830,14 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 			return nil, errors.Trace(err)
 		}
 		err = decodeRawValues(values, e.Schema(), e.ctx.GetSessionVars().GetTimeZone())
+		log.Warnf("value len: %v", len(values))
+		for _, d := range values {
+			log.Warnf("d: %v", d.GetString())
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row := resultRowToRow(t, h, values, e.asName, e.needColHandle || !e.outOfOrder)
+		row := resultRowToRow(t, h, values, e.asName)
 		rows = append(rows, row)
 	}
 	return rows, nil
@@ -967,6 +989,10 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 	}
+	var handleID int64
+	if e.needColHandle {
+		handleID = e.schema.TblID2handle[e.tableInfo.ID][0].ID
+	}
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -999,8 +1025,9 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		e.returnedRows++
 		values := make([]types.Datum, e.schema.Len())
-		if e.needColHandle {
+		if e.needColHandle && handleID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
+			values[len(values)-1].SetInt64(h)
 		} else {
 			err = codec.SetRawValues(rowData, values)
 		}
@@ -1015,7 +1042,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			// compose aggregate row
 			return &Row{Data: values}, nil
 		}
-		return resultRowToRow(e.table, h, values, e.asName, e.needColHandle), nil
+		return resultRowToRow(e.table, h, values, e.asName), nil
 	}
 }
 
