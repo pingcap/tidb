@@ -848,7 +848,13 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementCo
 					truncateLen = i
 				}
 			}
-			if truncateLen > 0 {
+			// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
+			//    CREATE TABLE t (a char(0));
+			//    INSERT INTO t VALUES (``);
+			// 2. If len(s) is 10 and flen is 0, truncateLen will be 0 too, but we still need to truncate s.
+			//    SELECT 1, CAST(1234 AS CHAR(0));
+			// So truncateLen is not a suitable variable to determine to do truncate or not.
+			if len([]rune(s)) > flen {
 				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, runeCount)
 				s = truncateStr(s, truncateLen)
 			}
