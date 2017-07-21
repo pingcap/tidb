@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
+	"github.com/pingcap/tidb/store/localstore/lmdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tipb/go-binlog"
@@ -81,6 +82,7 @@ var (
 
 func main() {
 	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
+	tidb.RegisterLocalStore("lmdb", lmdb.Driver{})
 	tidb.RegisterStore("tikv", tikv.Driver{})
 	tidb.RegisterStore("mocktikv", tikv.MockDriver{})
 
