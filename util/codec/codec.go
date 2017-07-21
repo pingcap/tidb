@@ -39,6 +39,8 @@ const (
 	maxFlag          byte = 250
 )
 
+// encode will encode a datum and append it to a byte slice. If comparable is true, the encoded bytes can be sorted as it's original order.
+// If hash is true, the encoded bytes can be checked equal as it's original value.
 func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, error) {
 	for _, val := range vals {
 		switch val.Kind() {
@@ -79,7 +81,18 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 			b = EncodeInt(b, int64(val.GetMysqlDuration().Duration))
 		case types.KindMysqlDecimal:
 			b = append(b, decimalFlag)
-			b = EncodeDecimal(b, val)
+			if hash {
+				// If hash is true, we only consider the original value of this decimal and ignore it's precision.
+				dec := val.GetMysqlDecimal()
+				precision, frac := dec.PrecisionAndFrac()
+				bin, err := dec.ToBin(precision, frac)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				b = append(b, bin...)
+			} else {
+				b = EncodeDecimal(b, val)
+			}
 		case types.KindMysqlHex:
 			b = encodeSignedInt(b, int64(val.GetMysqlHex().ToNumber()), comparable)
 		case types.KindMysqlBit:
