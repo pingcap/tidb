@@ -23,7 +23,20 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
+)
+
+// evalTp indicates the specified types that arguments and result of a built-in function should be.
+type evalTp byte
+
+const (
+	tpInt evalTp = iota
+	tpReal
+	tpDecimal
+	tpString
+	tpTime
+	tpDuration
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -48,18 +61,87 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 	}
 }
 
-// newBaseBuiltinFuncWithTp will be renamed to newBaseBuiltinFunc and replaces the older one later.
-// We'll move the type infer work to expression writer,
-// thus the `tp` attribute is needed for `baseBuiltinFunc`
-// to obtain the FieldType of a ScalarFunction.
-func newBaseBuiltinFuncWithTp(args []Expression, tp *types.FieldType, ctx context.Context) baseBuiltinFunc {
+// newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
+// argTps indicates the types of the args, retType indicates the return type of the built-in function.
+// Every built-in function needs determined argTps and retType when we create it.
+func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc, err error) {
+	if len(args) != len(argTps) {
+		return bf, errors.New("unexpected length of args and argTps")
+	}
+	for i := range args {
+		switch argTps[i] {
+		case tpInt:
+			args[i], err = WrapWithCastAsInt(args[i], ctx)
+		case tpReal:
+			args[i], err = WrapWithCastAsReal(args[i], ctx)
+		case tpDecimal:
+			args[i], err = WrapWithCastAsDecimal(args[i], ctx)
+		case tpString:
+			args[i], err = WrapWithCastAsString(args[i], ctx)
+		case tpTime:
+			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
+		case tpDuration:
+			args[i], err = WrapWithCastAsDuration(args[i], ctx)
+		}
+		if err != nil {
+			return bf, errors.Trace(err)
+		}
+	}
+	var fieldType *types.FieldType
+	switch retType {
+	case tpInt:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeLonglong,
+			Flen:    mysql.MaxIntWidth,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpReal:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeDouble,
+			Flen:    mysql.MaxRealWidth,
+			Decimal: types.UnspecifiedLength,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpDecimal:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeNewDecimal,
+			Flen:    11,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpString:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeVarString,
+			Flen:    0,
+			Decimal: types.UnspecifiedLength,
+		}
+	case tpTime:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeDatetime,
+			Flen:    mysql.MaxDatetimeWidthWithFsp,
+			Decimal: types.MaxFsp,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpDuration:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeDuration,
+			Flen:    mysql.MaxDurationWidthWithFsp,
+			Decimal: types.MaxFsp,
+			Flag:    mysql.BinaryFlag,
+		}
+	}
+	if mysql.HasBinaryFlag(fieldType.Flag) {
+		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
+	} else {
+		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
+	}
 	return baseBuiltinFunc{
 		args:          args,
 		argValues:     make([]types.Datum, len(args)),
 		ctx:           ctx,
 		deterministic: true,
-		tp:            tp,
-	}
+		tp:            fieldType}, nil
 }
 
 func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
@@ -127,8 +209,10 @@ func (b *baseBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) 
 	if err != nil || val.IsNull() {
 		return types.Time{}, val.IsNull(), errors.Trace(err)
 	}
-	dateVal, err := val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDatetime))
-	return dateVal.GetMysqlTime(), false, errors.Trace(err)
+	if val.Kind() != types.KindMysqlTime {
+		val, err = val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &types.FieldType{Tp: mysql.TypeDatetime, Decimal: types.MaxFsp})
+	}
+	return val.GetMysqlTime(), false, errors.Trace(err)
 }
 
 func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
@@ -136,8 +220,14 @@ func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool,
 	if err != nil || val.IsNull() {
 		return types.Duration{}, val.IsNull(), errors.Trace(err)
 	}
-	durationVal, err := val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDuration))
-	return durationVal.GetMysqlDuration(), false, errors.Trace(err)
+	if val.Kind() != types.KindMysqlDuration {
+		val, err = val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &types.FieldType{Tp: mysql.TypeDuration, Decimal: types.MaxFsp})
+	}
+	return val.GetMysqlDuration(), false, errors.Trace(err)
+}
+
+func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
+	return b.tp
 }
 
 // equal only checks if both functions are non-deterministic and if these arguments are same.
@@ -173,7 +263,11 @@ func (b *baseIntBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil || isNull {
 		return d, errors.Trace(err)
 	}
-	d.SetInt64(res)
+	if mysql.HasUnsignedFlag(b.tp.Flag) {
+		d.SetUint64(uint64(res))
+	} else {
+		d.SetInt64(res)
+	}
 	return
 }
 
@@ -322,6 +416,21 @@ func (b *baseStringBuiltinFunc) evalDuration(row []types.Datum) (types.Duration,
 	panic("cannot get DURATION result from ClassString expression")
 }
 
+func (b *baseStringBuiltinFunc) getRetTp() *types.FieldType {
+	tp, flen := b.tp, b.tp.Flen
+	if flen >= mysql.MaxBlobWidth {
+		tp.Tp = mysql.TypeLongBlob
+	} else if flen >= 65536 {
+		tp.Tp = mysql.TypeMediumBlob
+	}
+	if mysql.HasBinaryFlag(tp.Flag) {
+		tp.Charset, tp.Collate = charset.CharsetBin, charset.CollationBin
+	} else {
+		tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	}
+	return tp
+}
+
 type baseTimeBuiltinFunc struct {
 	baseBuiltinFunc
 }
@@ -422,6 +531,8 @@ type builtinFunc interface {
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
 	getCtx() context.Context
+	// getRetTp returns the return type of the built-in function.
+	getRetTp() *types.FieldType
 	// setSelf sets a pointer to itself.
 	setSelf(builtinFunc) builtinFunc
 }
@@ -618,6 +729,8 @@ var funcs = map[string]functionClass{
 	ast.RowCount:     &rowCountFunctionClass{baseFunctionClass{ast.RowCount, 0, 0}},
 	ast.SessionUser:  &userFunctionClass{baseFunctionClass{ast.SessionUser, 0, 0}},
 	ast.SystemUser:   &userFunctionClass{baseFunctionClass{ast.SystemUser, 0, 0}},
+	// This function is used to show tidb-server version info.
+	ast.TiDBVersion: &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
 
 	// control functions
 	ast.If:     &ifFunctionClass{baseFunctionClass{ast.If, 3, 3}},
@@ -712,5 +825,8 @@ var funcs = map[string]functionClass{
 	ast.JSONSet:     &jsonSetFunctionClass{baseFunctionClass{ast.JSONSet, 3, -1}},
 	ast.JSONInsert:  &jsonInsertFunctionClass{baseFunctionClass{ast.JSONInsert, 3, -1}},
 	ast.JSONReplace: &jsonReplaceFunctionClass{baseFunctionClass{ast.JSONReplace, 3, -1}},
+	ast.JSONRemove:  &jsonRemoveFunctionClass{baseFunctionClass{ast.JSONRemove, 2, -1}},
 	ast.JSONMerge:   &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
+	ast.JSONObject:  &jsonObjectFunctionClass{baseFunctionClass{ast.JSONObject, 2, -1}},
+	ast.JSONArray:   &jsonArrayFunctionClass{baseFunctionClass{ast.JSONArray, 1, -1}},
 }

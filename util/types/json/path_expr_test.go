@@ -17,6 +17,23 @@ import (
 	. "github.com/pingcap/check"
 )
 
+func (s *testJSONSuite) TestContainsAnyAsterisk(c *C) {
+	var tests = []struct {
+		exprString        string
+		containsAsterisks bool
+	}{
+		{"$.a[b]", false},
+		{"$.a[*]", true},
+		{"$.*[b]", true},
+		{"$**.a[b]", true},
+	}
+	for _, tt := range tests {
+		pe, err := ParseJSONPathExpr(tt.exprString)
+		c.Assert(err, IsNil)
+		c.Assert(pe.flags.containsAnyAsterisk(), Equals, tt.containsAsterisks)
+	}
+}
+
 func (s *testJSONSuite) TestValidatePathExpr(c *C) {
 	var tests = []struct {
 		exprString string

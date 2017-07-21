@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/tablecodec"
 	goctx "golang.org/x/net/context"
@@ -271,12 +272,17 @@ func (c *Cluster) GiveUpLeader(regionID uint64) {
 	c.ChangeLeader(regionID, 0)
 }
 
-// Split splits a Region at the key and creates new Region.
+// Split splits a Region at the key (encoded) and creates new Region.
 func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, peerIDs []uint64, leaderPeerID uint64) {
+	c.SplitRaw(regionID, newRegionID, NewMvccKey(key), peerIDs, leaderPeerID)
+}
+
+// SplitRaw splits a Region at the key (not encoded) and creates new Region.
+func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) {
 	c.Lock()
 	defer c.Unlock()
 
-	newRegion := c.regions[regionID].split(newRegionID, []byte(NewMvccKey(key)), peerIDs, leaderPeerID)
+	newRegion := c.regions[regionID].split(newRegionID, []byte(rawKey), peerIDs, leaderPeerID)
 	c.regions[newRegionID] = newRegion
 }
 
@@ -317,7 +323,7 @@ func (c *Cluster) splitRange(mvccStore *MvccStore, start, end MvccKey, count int
 func (c *Cluster) getEntriesGroupByRegions(mvccStore *MvccStore, start, end MvccKey, count int) [][]Pair {
 	startTS := uint64(math.MaxUint64)
 	limit := int(math.MaxInt32)
-	pairs := mvccStore.Scan(start.Raw(), end.Raw(), limit, startTS)
+	pairs := mvccStore.Scan(start.Raw(), end.Raw(), limit, startTS, kvrpcpb.IsolationLevel_SI)
 	regionEntriesSlice := make([][]Pair, 0, count)
 	quotient := len(pairs) / count
 	remainder := len(pairs) % count

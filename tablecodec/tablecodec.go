@@ -189,13 +189,8 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
-		if t.Type == mysql.TypeTimestamp && !t.IsZero() {
-			raw, err := t.Time.GoTime(loc)
-			if err != nil {
-				return data, errors.Trace(err)
-			}
-			converted := raw.In(time.UTC)
-			t.Time = types.FromGoTime(converted)
+		if t.Type == mysql.TypeTimestamp && loc != time.UTC {
+			t.ConvertTimeZone(loc, time.UTC)
 		}
 		v, err := t.ToPackedUint()
 		return types.NewUintDatum(v), errors.Trace(err)
@@ -412,24 +407,17 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 			return datum, errors.Trace(err)
 		}
 		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
-			raw, err := t.Time.GoTime(time.UTC)
-			if err != nil {
-				return datum, errors.Trace(err)
-			}
-			converted := raw.In(loc)
-			t.Time = types.FromGoTime(converted)
+			t.ConvertTimeZone(time.UTC, loc)
 		}
 		datum.SetMysqlTime(t)
 		return datum, nil
-	case mysql.TypeDuration:
-		dur := types.Duration{Duration: time.Duration(datum.GetInt64())}
+	case mysql.TypeDuration: //duration should read fsp from column meta data
+		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: ft.Decimal}
 		datum.SetValue(dur)
 		return datum, nil
 	case mysql.TypeEnum:
-		enum, err := types.ParseEnumValue(ft.Elems, datum.GetUint64())
-		if err != nil {
-			return datum, errors.Trace(err)
-		}
+		// ignore error deliberately, to read empty enum value.
+		enum, _ := types.ParseEnumValue(ft.Elems, datum.GetUint64())
 		datum.SetValue(enum)
 		return datum, nil
 	case mysql.TypeSet:

@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -35,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -50,21 +53,31 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	store kv.Storage
+	cluster   *mocktikv.Cluster
+	mvccStore *mocktikv.MvccStore
+	store     kv.Storage
 	*parser.Parser
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
+	expression.TurnOnNewExprEval = true
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		store, err := tikv.NewMockTikvStore("")
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.NewMvccStore()
+		store, err := tikv.NewMockTikvStore(
+			tikv.WithCluster(s.cluster),
+			tikv.WithMVCCStore(s.mvccStore),
+		)
 		c.Assert(err, IsNil)
 		s.store = store
 		tidb.SetSchemaLease(0)
+		tidb.SetStatsLease(0)
 	} else {
 		store, err := tidb.NewStore("memory://test/test")
 		c.Assert(err, IsNil)
@@ -78,6 +91,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
+	expression.TurnOnNewExprEval = false
 }
 
 func (s *testSuite) cleanEnv(c *C) {
@@ -104,7 +118,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 6)
+	c.Assert(row.Data, HasLen, 7)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	ddlInfo, err := inspectkv.GetDDLInfo(txn)
@@ -533,6 +547,15 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t (a int, b int)")
 	tk.MustExec("INSERT INTO t VALUES ('1', '1')")
 	r = tk.MustQuery("select b from (SELECT * FROM t UNION ALL SELECT a, b FROM t order by a) t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a DECIMAL(4,2))")
+	tk.MustExec("INSERT INTO t VALUE(12.34)")
+	r = tk.MustQuery("SELECT 1 AS c UNION select a FROM t")
+	r.Sort().Check(testkit.Rows("1.00", "12.34"))
+	// #issue3771
+	r = tk.MustQuery("SELECT 'a' UNION SELECT CONCAT('a', -4)")
+	r.Sort().Check(testkit.Rows("a", "a-4"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -772,6 +795,229 @@ func (s *testSuite) TestUnsignedPKColumn(c *C) {
 	result.Check(testkit.Rows("1 1 2"))
 }
 
+func (s *testSuite) TestStringBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for length
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
+	result := tk.MustQuery("select length(a), length(b), length(c), length(d), length(e), length(f), length(null) from t")
+	result.Check(testkit.Rows("1 3 19 8 6 2 <nil>"))
+
+	// for concat
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef")`)
+	result = tk.MustQuery("select concat(a, b, c, d, e) from t")
+	result.Check(testkit.Rows("11.12017-01-01 12:01:0112:01:01abcdef"))
+	result = tk.MustQuery("select concat(null)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select concat(null, a, b) from t")
+	result.Check(testkit.Rows("<nil>"))
+
+	// for concat_ws
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef")`)
+	result = tk.MustQuery("select concat_ws('|', a, b, c, d, e) from t")
+	result.Check(testkit.Rows("1|1.1|2017-01-01 12:01:01|12:01:01|abcdef"))
+	result = tk.MustQuery("select concat_ws(null, null)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select concat_ws(null, a, b) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select concat_ws(',', 'a', 'b')")
+	result.Check(testkit.Rows("a,b"))
+	result = tk.MustQuery("select concat_ws(',','First name',NULL,'Last Name')")
+	result.Check(testkit.Rows("First name,Last Name"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a binary(3))")
+	tk.MustExec("insert into t values('a')")
+	result = tk.MustQuery(`select concat_ws(',', a, 'test') = 'a\0\0,test' from t`)
+	result.Check(testkit.Rows("1"))
+
+	// for ascii
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010)`)
+	result = tk.MustQuery("select ascii(a), ascii(b), ascii(c), ascii(d), ascii(e), ascii(f) from t")
+	result.Check(testkit.Rows("50 50 50 50 49 10"))
+	result = tk.MustQuery("select ascii('123'), ascii(123), ascii(''), ascii('你好'), ascii(NULL)")
+	result.Check(testkit.Rows("49 49 0 228 <nil>"))
+
+	// for lower
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f binary(3), g binary(3))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 'aa', 'BB')`)
+	result = tk.MustQuery("select lower(a), lower(b), lower(c), lower(d), lower(e), lower(f), lower(g), lower(null) from t")
+	result.Check(testkit.Rows("1 1.1 2017-01-01 12:01:01 12:01:01 abcdef aa\x00 BB\x00 <nil>"))
+
+	// for upper
+	result = tk.MustQuery("select upper(a), upper(b), upper(c), upper(d), upper(e), upper(f), upper(g), upper(null) from t")
+	result.Check(testkit.Rows("1 1.1 2017-01-01 12:01:01 12:01:01 ABCDEF aa\x00 BB\x00 <nil>"))
+
+	// for strcmp
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values("123", 123, 12.34, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery(`select strcmp(a, "123"), strcmp(b, "123"), strcmp(c, "12.34"), strcmp(d, "2017-01-01 12:01:01"), strcmp(e, "12:01:01") from t`)
+	result.Check(testkit.Rows("0 0 0 0 0"))
+	result = tk.MustQuery(`select strcmp("1", "123"), strcmp("123", "1"), strcmp("123", "45"), strcmp("123", null), strcmp(null, "123")`)
+	result.Check(testkit.Rows("-1 1 -1 <nil> <nil>"))
+	result = tk.MustQuery(`select strcmp("", "123"), strcmp("123", ""), strcmp("", ""), strcmp("", null), strcmp(null, "")`)
+	result.Check(testkit.Rows("-1 1 0 <nil> <nil>"))
+
+	// for left
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values('abcde', 1234, 12.34, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery("select left(a, 2), left(b, 2), left(c, 2), left(d, 2), left(e, 2) from t")
+	result.Check(testkit.Rows("ab 12 12 20 12"))
+	result = tk.MustQuery(`select left("abc", 0), left("abc", -1), left(NULL, 1), left("abc", NULL)`)
+	result.Check(testkit.Rows("  <nil> <nil>"))
+	result = tk.MustQuery(`select left("abc", "a"), left("abc", 1.9), left("abc", 1.2)`)
+	result.Check(testkit.Rows(" ab a"))
+	// for right, reuse the table created for left
+	result = tk.MustQuery("select right(a, 3), right(b, 3), right(c, 3), right(d, 3), right(e, 3) from t")
+	result.Check(testkit.Rows("cde 234 .34 :01 :01"))
+	result = tk.MustQuery(`select right("abcde", 0), right("abcde", -1), right("abcde", 100), right(NULL, 1), right("abcde", NULL)`)
+	result.Check(testkit.Rows("  abcde <nil> <nil>"))
+	result = tk.MustQuery(`select right("abcde", "a"), right("abcde", 1.9), right("abcde", 1.2)`)
+	result.Check(testkit.Rows(" de e"))
+
+	// for ord
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb")`)
+	result = tk.MustQuery("select ord(a), ord(b), ord(c), ord(d), ord(e), ord(f), ord(g), ord(h), ord(i) from t")
+	result.Check(testkit.Rows("50 50 50 50 49 10 53 52 116"))
+	result = tk.MustQuery("select ord('123'), ord(123), ord(''), ord('你好'), ord(NULL), ord('👍')")
+	result.Check(testkit.Rows("49 49 0 14990752 <nil> 4036989325"))
+
+	// for space
+	result = tk.MustQuery(`select space(0), space(2), space(-1), space(1.1), space(1.9)`)
+	result.Check(testutil.RowsWithSep(",", ",  ,, ,  "))
+	result = tk.MustQuery(`select space("abc"), space("2"), space("1.1"), space(''), space(null)`)
+	result.Check(testutil.RowsWithSep(",", ",  , ,,<nil>"))
+
+	// for replace
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values('www.mysql.com', 1234, 12.34, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery(`select replace(a, 'mysql', 'pingcap'), replace(b, 2, 55), replace(c, 34, 0), replace(d, '-', '/'), replace(e, '01', '22') from t`)
+	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,15534,12.0,2017/01/01 12:01:01,12:22:22"))
+	result = tk.MustQuery(`select replace('aaa', 'a', ''), replace(null, 'a', 'b'), replace('a', null, 'b'), replace('a', 'b', null)`)
+	result.Check(testkit.Rows(" <nil> <nil> <nil>"))
+
+	// for tobase64
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10), g binary(20), h blob(10))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101, "512", "abc")`)
+	result = tk.MustQuery("select to_base64(a), to_base64(b), to_base64(c), to_base64(d), to_base64(e), to_base64(f), to_base64(g), to_base64(h), to_base64(null) from t")
+	result.Check(testkit.Rows("MQ== MS4x MjAxNy0wMS0wMSAxMjowMTowMQ== MTI6MDE6MDE= YWJjZGVm ABU= NTEyAAAAAAAAAAAAAAAAAAAAAAA= YWJj <nil>"))
+
+	// for substr
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values('Sakila', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery(`select substr(a, 3), substr(b, 2, 3), substr(c, -3), substr(d, -8), substr(e, -3, 100) from t`)
+	result.Check(testkit.Rows("kila 234 .45 12:01:01 :01"))
+	result = tk.MustQuery(`select substr('Sakila', 100), substr('Sakila', -100), substr('Sakila', -5, 3), substr('Sakila', 2, -1)`)
+	result.Check(testutil.RowsWithSep(",", ",,aki,"))
+	result = tk.MustQuery(`select substr('foobarbar' from 4), substr('Sakila' from -4 for 2)`)
+	result.Check(testkit.Rows("barbar ki"))
+	result = tk.MustQuery(`select substr(null, 2, 3), substr('foo', null, 3), substr('foo', 2, null)`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+
+	// for bit_length
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10), g binary(20), h varbinary(20))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101, "g", "h")`)
+	result = tk.MustQuery("select bit_length(a), bit_length(b), bit_length(c), bit_length(d), bit_length(e), bit_length(f), bit_length(g), bit_length(h), bit_length(null) from t")
+	result.Check(testkit.Rows("8 24 152 64 48 16 160 8 <nil>"))
+
+	// for substring_index
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery(`select substring_index(a, '.', 2), substring_index(b, '.', 2), substring_index(c, '.', -1), substring_index(d, '-', 1), substring_index(e, ':', -2) from t`)
+	result.Check(testkit.Rows("www.pingcap 12345 45 2017 01:01"))
+	result = tk.MustQuery(`select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100)`)
+	result.Check(testkit.Rows(" www.pingcap.com www.pingcap.com"))
+	result = tk.MustQuery(`select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1)`)
+	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,,"))
+	result = tk.MustQuery(`select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null)`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+
+	// for hex
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time, f decimal(5, 2), g bit(4))")
+	tk.MustExec(`insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01", 123.45, 0b1100)`)
+	result = tk.MustQuery(`select hex(a), hex(b), hex(c), hex(d), hex(e), hex(f), hex(g) from t`)
+	result.Check(testkit.Rows("7777772E70696E676361702E636F6D 3039 7B 323031372D30312D30312031323A30313A3031 31323A30313A3031 7B C"))
+	result = tk.MustQuery(`select hex('abc'), hex('你好'), hex(12), hex(12.3), hex(12.8)`)
+	result.Check(testkit.Rows("616263 E4BDA0E5A5BD C C D"))
+	result = tk.MustQuery(`select hex(-1), hex(-12.3), hex(-12.8), hex(0x12), hex(null)`)
+	result.Check(testkit.Rows("FFFFFFFFFFFFFFFF FFFFFFFFFFFFFFF4 FFFFFFFFFFFFFFF3 12 <nil>"))
+
+	// for unhex
+	result = tk.MustQuery(`select unhex('4D7953514C'), unhex('313233'), unhex(313233), unhex('')`)
+	result.Check(testkit.Rows("MySQL 123 123 "))
+	result = tk.MustQuery(`select unhex('string'), unhex('你好'), unhex(123.4), unhex(null)`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+}
+
+func (s *testSuite) TestEncryptionBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for password
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(41), b char(41), c char(41))")
+	tk.MustExec(`insert into t values(NULL, '', 'abc')`)
+	result := tk.MustQuery("select password(a) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select password(b) from t")
+	result.Check(testkit.Rows(""))
+	result = tk.MustQuery("select password(c) from t")
+	result.Check(testkit.Rows("*0D3CED9BEC10A777AEC23CCC353A8C08A633045E"))
+
+	// for md5
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb")`)
+	result = tk.MustQuery("select md5(a), md5(b), md5(c), md5(d), md5(e), md5(f), md5(g), md5(h), md5(i) from t")
+	result.Check(testkit.Rows("c81e728d9d4c2f636f067f89cc14862c c81e728d9d4c2f636f067f89cc14862c 1a18da63cbbfb49cb9616e6bfd35f662 bad2fa88e1f35919ec7584cc2623a310 991f84d41d7acff6471e536caa8d97db 68b329da9893e34099c7d8ad5cb9c940 5c9f0e9b3b36276731bfba852a73ccc6 642e92efb79421734881b53e1e1b18b6 c337e11bfca9f12ae9b1342901e04379"))
+	result = tk.MustQuery("select md5('123'), md5(123), md5(''), md5('你好'), md5(NULL), md5('👍')")
+	result.Check(testkit.Rows(`202cb962ac59075b964b07152d234b70 202cb962ac59075b964b07152d234b70 d41d8cd98f00b204e9800998ecf8427e 7eca689f0d3389d9dea66ae112e5cfd7 <nil> 0215ac4dab1ecaf71d83f98af5726984`))
+}
+
+func (s *testSuite) TestTimeBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for makeDate
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
+	result := tk.MustQuery("select makedate(a,a), makedate(b,b), makedate(c,c), makedate(d,d), makedate(e,e), makedate(f,f), makedate(null,null), makedate(a,b) from t")
+	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
+}
+
 func (s *testSuite) TestBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -811,6 +1057,15 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("11:11:11"))
 	result = tk.MustQuery("select * from t where a > cast(2 as decimal)")
 	result.Check(testkit.Rows("3 2"))
+	result = tk.MustQuery("select cast(-1 as unsigned)")
+	result.Check(testkit.Rows("18446744073709551615"))
+
+	// fixed issue #3471
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(6));")
+	tk.MustExec("insert into t value('12:59:59.999999')")
+	result = tk.MustQuery("select cast(a as signed) from t")
+	result.Check(testkit.Rows("130000"))
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
@@ -825,6 +1080,13 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1267"))
 	result = tk.MustQuery("select hex(unhex(1267))")
 	result.Check(testkit.Rows("1267"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a binary(8))")
+	tk.MustExec(`insert into t values('test')`)
+	result = tk.MustQuery("select hex(a) from t")
+	result.Check(testkit.Rows("7465737400000000"))
+	result = tk.MustQuery("select unhex(a) from t")
+	result.Check(testkit.Rows("<nil>"))
 
 	// select from_unixtime
 	result = tk.MustQuery("select from_unixtime(1451606400)")
@@ -847,6 +1109,12 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select strcmp('abc', 'abc')")
 	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select substr(null, 1, 2)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select substr('123', null, 2)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select substr('123', 1, null)")
+	result.Check(testkit.Rows("<nil>"))
 
 	// for case
 	tk.MustExec("drop table if exists t")
@@ -955,8 +1223,147 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestJSON(c *C) {
+func (s *testSuite) TestMathBuiltin(c *C) {
 	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for degrees
+	result := tk.MustQuery("select degrees(0), degrees(1)")
+	result.Check(testkit.Rows("0 57.29577951308232"))
+	result = tk.MustQuery("select degrees(2), degrees(5)")
+	result.Check(testkit.Rows("114.59155902616465 286.4788975654116"))
+
+	// for sin
+	result = tk.MustQuery("select sin(0), sin(1.5707963267949)")
+	result.Check(testkit.Rows("0 1"))
+	result = tk.MustQuery("select sin(1), sin(100)")
+	result.Check(testkit.Rows("0.8414709848078965 -0.5063656411097588"))
+	result = tk.MustQuery("select sin('abcd')")
+	result.Check(testkit.Rows("0"))
+
+	// for cos
+	result = tk.MustQuery("select cos(0), cos(3.1415926535898)")
+	result.Check(testkit.Rows("1 -1"))
+	result = tk.MustQuery("select cos('abcd')")
+	result.Check(testkit.Rows("1"))
+
+	// for tan
+	result = tk.MustQuery("select tan(0.00), tan(PI()/4)")
+	result.Check(testkit.Rows("0 1"))
+	result = tk.MustQuery("select tan('abcd')")
+	result.Check(testkit.Rows("0"))
+
+	// for log2
+	result = tk.MustQuery("select log2(0.0)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log2(4)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select log2('8.0abcd')")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("select log2(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log2(NULL)")
+	result.Check(testkit.Rows("<nil>"))
+
+	// for log10
+	result = tk.MustQuery("select log10(0.0)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log10(100)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select log10('1000.0abcd')")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("select log10(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log10(NULL)")
+	result.Check(testkit.Rows("<nil>"))
+
+	//for log
+	result = tk.MustQuery("select log(0.0)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(100)")
+	result.Check(testkit.Rows("4.605170185988092"))
+	result = tk.MustQuery("select log('100.0abcd')")
+	result.Check(testkit.Rows("4.605170185988092"))
+	result = tk.MustQuery("select log(-1)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(NULL, NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(1, 100)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select log(0.5, 0.25)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select log(-1, 0.25)")
+	result.Check(testkit.Rows("<nil>"))
+
+	// for atan
+	result = tk.MustQuery("select atan(0), atan(-1), atan(1), atan(1,2)")
+	result.Check(testkit.Rows("0 -0.7853981633974483 0.7853981633974483 0.4636476090008061"))
+	result = tk.MustQuery("select atan('tidb')")
+	result.Check(testkit.Rows("0"))
+
+	// for asin
+	result = tk.MustQuery("select asin(0), asin(-2), asin(2), asin(1)")
+	result.Check(testkit.Rows("0 <nil> <nil> 1.5707963267948966"))
+	result = tk.MustQuery("select asin('tidb')")
+	result.Check(testkit.Rows("0"))
+
+	// for acos
+	result = tk.MustQuery("select acos(0), acos(-2), acos(2), acos(1)")
+	result.Check(testkit.Rows("1.5707963267948966 <nil> <nil> 0"))
+	result = tk.MustQuery("select acos('tidb')")
+	result.Check(testkit.Rows("1.5707963267948966"))
+
+	// for floor
+	result = tk.MustQuery("select floor(0), floor(null), floor(1.23), floor(-1.23), floor(1)")
+	result.Check(testkit.Rows("0 <nil> 1 -2 1"))
+	result = tk.MustQuery("select floor('tidb'), floor('1tidb'), floor('tidb1')")
+	result.Check(testkit.Rows("0 1 0"))
+	result = tk.MustQuery("SELECT floor(t.c_datetime) FROM (select CAST('2017-07-19 00:00:00' AS DATETIME) AS c_datetime) AS t")
+	result.Check(testkit.Rows("20170719000000"))
+	result = tk.MustQuery("SELECT floor(t.c_time) FROM (select CAST('12:34:56' AS TIME) AS c_time) AS t")
+	result.Check(testkit.Rows("123456"))
+	result = tk.MustQuery("SELECT floor(t.c_time) FROM (select CAST('00:34:00' AS TIME) AS c_time) AS t")
+	result.Check(testkit.Rows("3400"))
+	result = tk.MustQuery("SELECT floor(t.c_time) FROM (select CAST('00:00:00' AS TIME) AS c_time) AS t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT floor(t.c_decimal) FROM (SELECT CAST('-10.01' AS DECIMAL(10,2)) AS c_decimal) AS t")
+	result.Check(testkit.Rows("-11"))
+	result = tk.MustQuery("SELECT floor(t.c_decimal) FROM (SELECT CAST('-10.01' AS DECIMAL(10,1)) AS c_decimal) AS t")
+	result.Check(testkit.Rows("-10"))
+
+	// for ceil/ceiling
+	result = tk.MustQuery("select ceil(0), ceil(null), ceil(1.23), ceil(-1.23), ceil(1)")
+	result.Check(testkit.Rows("0 <nil> 2 -1 1"))
+	result = tk.MustQuery("select ceiling(0), ceiling(null), ceiling(1.23), ceiling(-1.23), ceiling(1)")
+	result.Check(testkit.Rows("0 <nil> 2 -1 1"))
+	result = tk.MustQuery("select ceil('tidb'), ceil('1tidb'), ceil('tidb1'), ceiling('tidb'), ceiling('1tidb'), ceiling('tidb1')")
+	result.Check(testkit.Rows("0 1 0 0 1 0"))
+	result = tk.MustQuery("select ceil(t.c_datetime), ceiling(t.c_datetime) from (select cast('2017-07-20 00:00:00' as datetime) as c_datetime) as t")
+	result.Check(testkit.Rows("20170720000000 20170720000000"))
+	result = tk.MustQuery("select ceil(t.c_time), ceiling(t.c_time) from (select cast('12:34:56' as time) as c_time) as t")
+	result.Check(testkit.Rows("123456 123456"))
+	result = tk.MustQuery("select ceil(t.c_time), ceiling(t.c_time) from (select cast('00:34:00' as time) as c_time) as t")
+	result.Check(testkit.Rows("3400 3400"))
+	result = tk.MustQuery("select ceil(t.c_time), ceiling(t.c_time) from (select cast('00:00:00' as time) as c_time) as t")
+	result.Check(testkit.Rows("0 0"))
+	result = tk.MustQuery("select ceil(t.c_decimal), ceiling(t.c_decimal) from (select cast('-10.01' as decimal(10,2)) as c_decimal) as t")
+	result.Check(testkit.Rows("-10 -10"))
+	result = tk.MustQuery("select ceil(t.c_decimal), ceiling(t.c_decimal) from (select cast('-10.01' as decimal(10,1)) as c_decimal) as t")
+	result.Check(testkit.Rows("-10 -10"))
+}
+
+func (s *testSuite) TestJSON(c *C) {
+	// This will be opened after implementing cast as json.
+	origin := expression.TurnOnNewExprEval
+	expression.TurnOnNewExprEval = false
+	defer func() {
+		expression.TurnOnNewExprEval = origin
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
@@ -1019,6 +1426,90 @@ func (s *testSuite) TestJSON(c *C) {
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
 	result.Check(testkit.Rows(`3 {} <nil>`))
+}
+
+func (s *testSuite) TestMultiUpdate(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_mu (a int primary key, b int, c int)`)
+	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3), (4, 5, 6), (7, 8, 9)`)
+
+	// Test INSERT ... ON DUPLICATE UPDATE set_lists.
+	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE b = 3, c = b`)
+	result := tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 3 3`, `4 5 6`, `7 8 9`))
+
+	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE c = 2, b = c+5`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 5 6`, `7 8 9`))
+
+	// Test UPDATE ... set_lists.
+	tk.MustExec(`UPDATE test_mu SET b = 0, c = b WHERE a = 4`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 0 0`, `7 8 9`))
+
+	tk.MustExec(`UPDATE test_mu SET c = 8, b = c WHERE a = 4`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 8 8`, `7 8 9`))
+
+	tk.MustExec(`UPDATE test_mu SET c = b, b = c WHERE a = 7`)
+	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
+	result.Check(testkit.Rows(`1 7 2`, `4 8 8`, `7 8 8`))
+}
+
+func (s *testSuite) TestGeneratedColumnWrite(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key, b int, c int as (a+8) virtual)`)
+	tk.MustExec(`CREATE TABLE test_gc_write_1 (a int primary key, b int, c int)`)
+
+	tests := []struct {
+		stmt string
+		err  int
+	}{
+		// Can't modify generated column by values.
+		{`insert into test_gc_write (a, b, c) values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by select clause.
+		{`insert into test_gc_write select 1, 1, 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by on duplicate clause.
+		{`insert into test_gc_write (a, b) values (1, 1) on duplicate key update c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by set.
+		{`insert into test_gc_write set a = 1, b = 1, c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by update clause.
+		{`update test_gc_write set c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by multi-table update clause.
+		{`update test_gc_write, test_gc_write_1 set test_gc_write.c = 1`, mysql.ErrBadGeneratedColumn},
+
+		// Can insert without generated columns.
+		{`insert into test_gc_write (a, b) values (1, 1)`, 0},
+		{`insert into test_gc_write set a = 2, b = 2`, 0},
+		// Can update without generated columns.
+		{`update test_gc_write set b = 2 where a = 2`, 0},
+		{`update test_gc_write t1, test_gc_write_1 t2 set t1.b = 3, t2.b = 4`, 0},
+
+		// But now we can't do this, just as same with MySQL 5.7:
+		{`insert into test_gc_write values (1, 1)`, mysql.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write select 1, 1`, mysql.ErrWrongValueCountOnRow},
+	}
+	for _, tt := range tests {
+		_, err := tk.Exec(tt.stmt)
+		if tt.err != 0 {
+			c.Assert(err, NotNil)
+			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+		} else {
+			c.Assert(err, IsNil)
+		}
+	}
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
@@ -1097,9 +1588,9 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	tk.MustExec("insert t values ('11:11:12', '11:11:12')")
 	tk.MustExec("insert t values ('11:11:13', '11:11:13')")
 	result = tk.MustQuery("select * from t where a > '11:11:11.5'")
-	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
+	result.Check(testkit.Rows("11:11:12.000 11:11:12", "11:11:13.000 11:11:13"))
 	result = tk.MustQuery("select * from t where b > '11:11:11.5'")
-	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
+	result.Check(testkit.Rows("11:11:12.000 11:11:12", "11:11:13.000 11:11:13"))
 }
 
 func (s *testSuite) TestSQLMode(c *C) {
@@ -1191,11 +1682,11 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
-	stmtNode, err = s.ParseOneStmt("create table t (a int)", "", "")
+	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
 	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
-	c.Check(stmt.OriginText(), Equals, "create table t (a int)")
+	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
 
 func (s *testSuite) TestPointGet(c *C) {
@@ -1225,7 +1716,6 @@ func (s *testSuite) TestPointGet(c *C) {
 		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, plan)
 		c.Assert(ret, Equals, result)
 	}
-
 }
 
 func (s *testSuite) TestRow(c *C) {
@@ -1251,6 +1741,20 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1 1"))
 	result = tk.MustQuery("select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d))")
 	result.Check(testkit.Rows("1 1", "1 3", "2 1", "2 3"))
+	result = tk.MustQuery("select (1, 2, 3) < (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 3, 3)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) <= (2, 1, 4)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select (2, 3, 4) >= (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) = (2, 3, 4)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (2, 3, 4) != (2, 3, 4)")
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestColumnName(c *C) {
@@ -1296,10 +1800,9 @@ func (s *testSuite) TestSelectVar(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
 	tk.MustExec("insert into t values(1), (2), (1)")
+	// This behavior is different from MySQL.
 	result := tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("<nil> 2", "<nil> 3", "<nil> 2"))
-	result = tk.MustQuery("select @a, @a := d+1 from t")
-	result.Check(testkit.Rows("2 2", "2 3", "3 2"))
+	result.Check(testkit.Rows("<nil> 2", "2 3", "3 2"))
 }
 
 func (s *testSuite) TestHistoryRead(c *C) {
@@ -1452,7 +1955,7 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (ts timestamp)")
 	tk.MustExec("set time_zone = '+00:00'")
 	tk.MustExec("insert into t values ('2017-04-27 22:40:42')")
@@ -1466,8 +1969,45 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	}
 	for _, tt := range tests {
 		tk.MustExec(fmt.Sprintf("set time_zone = '%s'", tt.timezone))
-		tk.MustQuery(fmt.Sprintf("select * from t where ts = '%s'", tt.expect)).Check(testkit.Rows(tt.expect))
+		tk.MustQuery("select * from t").Check(testkit.Rows(tt.expect))
 	}
+
+	// For issue https://github.com/pingcap/tidb/issues/3467
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (
+ 	      id bigint(20) NOT NULL AUTO_INCREMENT,
+ 	      uid int(11) DEFAULT NULL,
+ 	      datetime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ 	      ip varchar(128) DEFAULT NULL,
+ 	    PRIMARY KEY (id),
+ 	      KEY i_datetime (datetime),
+ 	      KEY i_userid (uid)
+ 	    );`)
+	tk.MustExec(`INSERT INTO t1 VALUES (123381351,1734,"2014-03-31 08:57:10","127.0.0.1");`)
+	r := tk.MustQuery("select datetime from t1;") // Cover TableReaderExec
+	r.Check(testkit.Rows("2014-03-31 08:57:10"))
+	r = tk.MustQuery("select datetime from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("2014-03-31 08:57:10")) // Cover IndexReaderExec
+	r = tk.MustQuery("select * from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("123381351 1734 2014-03-31 08:57:10 127.0.0.1")) // Cover IndexLookupExec
+
+	// For issue https://github.com/pingcap/tidb/issues/3485
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (
+	    id bigint(20) NOT NULL AUTO_INCREMENT,
+	    datetime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	    PRIMARY KEY (id)
+	  );`)
+	tk.MustExec(`INSERT INTO t1 VALUES (123381351,"2014-03-31 08:57:10");`)
+	r = tk.MustQuery(`select * from t1 where datetime="2014-03-31 08:57:10";`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	tk.MustExec(`alter table t1 add key i_datetime (datetime);`)
+	r = tk.MustQuery(`select * from t1 where datetime="2014-03-31 08:57:10";`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	r = tk.MustQuery(`select * from t1;`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	r = tk.MustQuery("select datetime from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("2014-03-31 08:57:10"))
 }
 
 func (s *testSuite) TestTiDBCurrentTS(c *C) {
@@ -1551,4 +2091,90 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	tk2.MustExec("commit")
 
 	tk1.MustExec("commit")
+}
+
+func (s *testSuite) TestFuncREPEAT(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS table_string;")
+	tk.MustExec("CREATE TABLE table_string(a CHAR(20), b VARCHAR(20), c TINYTEXT, d TEXT(20), e MEDIUMTEXT, f LONGTEXT, g BIGINT);")
+	tk.MustExec("INSERT INTO table_string (a, b, c, d, e, f, g) VALUES ('a', 'b', 'c', 'd', 'e', 'f', 2);")
+	tk.CheckExecResult(1, 0)
+
+	r := tk.MustQuery("SELECT REPEAT(a, g), REPEAT(b, g), REPEAT(c, g), REPEAT(d, g), REPEAT(e, g), REPEAT(f, g) FROM table_string;")
+	r.Check(testkit.Rows("aa bb cc dd ee ff"))
+
+	r = tk.MustQuery("SELECT REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g) FROM table_string;")
+	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+
+	r = tk.MustQuery("SELECT REPEAT(a, NULL), REPEAT(b, NULL), REPEAT(c, NULL), REPEAT(d, NULL), REPEAT(e, NULL), REPEAT(f, NULL) FROM table_string;")
+	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+
+	r = tk.MustQuery("SELECT REPEAT(a, 2), REPEAT(b, 2), REPEAT(c, 2), REPEAT(d, 2), REPEAT(e, 2), REPEAT(f, 2) FROM table_string;")
+	r.Check(testkit.Rows("aa bb cc dd ee ff"))
+
+	r = tk.MustQuery("SELECT REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2) FROM table_string;")
+	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+
+	r = tk.MustQuery("SELECT REPEAT(a, -1), REPEAT(b, -2), REPEAT(c, -2), REPEAT(d, -2), REPEAT(e, -2), REPEAT(f, -2) FROM table_string;")
+	r.Check(testkit.Rows("     "))
+
+	r = tk.MustQuery("SELECT REPEAT(a, 0), REPEAT(b, 0), REPEAT(c, 0), REPEAT(d, 0), REPEAT(e, 0), REPEAT(f, 0) FROM table_string;")
+	r.Check(testkit.Rows("     "))
+
+	r = tk.MustQuery("SELECT REPEAT(a, 16777217), REPEAT(b, 16777217), REPEAT(c, 16777217), REPEAT(d, 16777217), REPEAT(e, 16777217), REPEAT(f, 16777217) FROM table_string;")
+	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+}
+
+func (s *testSuite) TestEmptyEnum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (e enum('Y', 'N'))")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
+	_, err := tk.Exec("insert into t values (0)")
+	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+	_, err = tk.Exec("insert into t values ('abc')")
+	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("insert into t values (0)")
+	tk.MustQuery("select * from t").Check(testkit.Rows(""))
+	tk.MustExec("insert into t values ('abc')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("", ""))
+	tk.MustExec("insert into t values (null)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
+}
+
+func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// for uuid
+	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
+	for _, it := range r.Rows() {
+		for _, item := range it {
+			uuid, ok := item.(string)
+			c.Assert(ok, Equals, true)
+			list := strings.Split(uuid, "-")
+			c.Assert(len(list), Equals, 5)
+			c.Assert(len(list[0]), Equals, 8)
+			c.Assert(len(list[1]), Equals, 4)
+			c.Assert(len(list[2]), Equals, 4)
+			c.Assert(len(list[3]), Equals, 4)
+			c.Assert(len(list[4]), Equals, 12)
+		}
+	}
 }

@@ -190,8 +190,9 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		unique      bool
 		indexName   model.CIStr
 		idxColNames []*ast.IndexColName
+		indexOption *ast.IndexOption
 	)
-	err = job.DecodeArgs(&unique, &indexName, &idxColNames)
+	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption)
 	if err != nil {
 		job.State = model.JobCancelled
 		return ver, errors.Trace(err)
@@ -208,6 +209,18 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		if err != nil {
 			job.State = model.JobCancelled
 			return ver, errors.Trace(err)
+		}
+		if indexOption != nil {
+			indexInfo.Comment = indexOption.Comment
+			if indexOption.Tp == model.IndexTypeInvalid {
+				// Use btree as default index type.
+				indexInfo.Tp = model.IndexTypeBtree
+			} else {
+				indexInfo.Tp = indexOption.Tp
+			}
+		} else {
+			// Use btree as default index type.
+			indexInfo.Tp = model.IndexTypeBtree
 		}
 		indexInfo.Primary = false
 		indexInfo.Unique = unique
@@ -269,7 +282,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		addIndexColumnFlag(tblInfo, indexInfo)
 
 		job.SchemaState = model.StatePublic
-		ver, err := updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -360,7 +373,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		dropIndexColumnFlag(tblInfo, indexInfo)
 
 		job.SchemaState = model.StateNone
-		ver, err := updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -420,22 +433,48 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 		return nil, ret
 	}
 
+	err = d.getIndexRecords(t, taskOpInfo, rawRecords, idxRecords)
+	if err != nil {
+		ret.err = errors.Trace(err)
+	}
+	return idxRecords, ret
+}
+
+func (d *ddl) getIndexRecords(t table.Table, taskOpInfo *indexTaskOpInfo, rawRecords [][]byte, idxRecords []*indexRecord) error {
 	cols := t.Cols()
+	ctx := d.newContext()
 	idxInfo := taskOpInfo.tblIndex.Meta()
+	defaultVals := make([]types.Datum, len(cols))
 	for i, idxRecord := range idxRecords {
 		rowMap, err := tablecodec.DecodeRow(rawRecords[i], taskOpInfo.colMap, time.UTC)
 		if err != nil {
-			ret.err = errors.Trace(err)
-			return nil, ret
+			return errors.Trace(err)
 		}
-		idxVal := make([]types.Datum, 0, len(idxInfo.Columns))
-		for _, v := range idxInfo.Columns {
+		idxVal := make([]types.Datum, len(idxInfo.Columns))
+		for j, v := range idxInfo.Columns {
 			col := cols[v.Offset]
-			idxVal = append(idxVal, rowMap[col.ID])
+			if col.IsPKHandleColumn(t.Meta()) {
+				if mysql.HasUnsignedFlag(col.Flag) {
+					idxVal[j].SetUint64(uint64(idxRecord.handle))
+				} else {
+					idxVal[j].SetInt64(idxRecord.handle)
+				}
+				continue
+			}
+			idxColumnVal := rowMap[col.ID]
+			if _, ok := rowMap[col.ID]; ok {
+				idxVal[j] = idxColumnVal
+				continue
+			}
+			idxColumnVal, err = tables.GetColDefaultValue(ctx, col, defaultVals)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			idxVal[j] = idxColumnVal
 		}
 		idxRecord.vals = idxVal
 	}
-	return idxRecords, ret
+	return nil
 }
 
 const (

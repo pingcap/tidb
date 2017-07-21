@@ -74,6 +74,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil, nil
+	case *ast.DropStatsStmt:
+		err = e.executeDropStats(x)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -319,4 +321,9 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
+	h := sessionctx.GetDomain(e.ctx).StatsHandle()
+	return errors.Trace(h.DeleteTableStatsFromKV(s.Table.TableInfo.ID))
 }

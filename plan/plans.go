@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 )
 
@@ -121,19 +122,14 @@ type Insert struct {
 	OnDuplicate []*expression.Assignment
 
 	IsReplace bool
-	Priority  int
+	Priority  mysql.PriorityEnum
 	Ignore    bool
-}
-
-// AnalyzePKTask is used for analyze pk. Used only when pk is handle.
-type AnalyzePKTask struct {
-	TableInfo *model.TableInfo
-	PKInfo    *model.ColumnInfo
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
 	TableInfo *model.TableInfo
+	PKInfo    *model.ColumnInfo
 	ColsInfo  []*model.ColumnInfo
 }
 
@@ -147,7 +143,6 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	basePlan
 
-	PkTasks  []AnalyzePKTask
 	ColTasks []AnalyzeColumnsTask
 	IdxTasks []AnalyzeIndexTask
 }

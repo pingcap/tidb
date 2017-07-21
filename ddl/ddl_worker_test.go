@@ -203,7 +203,7 @@ func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
-		c.Assert(historyJob.State, Equals, model.JobDone)
+		checkHistoryJob(c, historyJob)
 		if isAdd {
 			c.Assert(historyJob.SchemaState, Equals, model.StatePublic)
 		} else {

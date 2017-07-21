@@ -36,10 +36,10 @@ type testColumnSuite struct{}
 
 func (s *testColumnSuite) TestString(c *C) {
 	defer testleak.AfterTest(c)()
-	col := &Column{
+	col := ToColumn(&model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeTiny),
 		State:     model.StatePublic,
-	}
+	})
 	col.Flen = 2
 	col.Decimal = 1
 	col.Charset = mysql.DefaultCharset
@@ -173,6 +173,10 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 			types.NewFieldType(mysql.TypeSet),
 			types.NewDatum(types.Set{}),
 		},
+		{
+			types.NewFieldType(mysql.TypeEnum),
+			types.NewDatum(types.Enum{}),
+		},
 	}
 	sc := new(variable.StatementContext)
 	for _, tt := range tests {
@@ -186,6 +190,9 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 }
 
 func (s *testColumnSuite) TestGetDefaultValue(c *C) {
+	ctx := mock.NewContext()
+	zeroTimestamp := types.ZeroTimestamp
+	zeroTimestamp.TimeZone = ctx.GetSessionVars().GetTimeZone()
 	tests := []struct {
 		colInfo *model.ColumnInfo
 		strict  bool
@@ -246,7 +253,7 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 				DefaultValue: "0000-00-00 00:00:00",
 			},
 			false,
-			types.NewDatum(types.ZeroTimestamp),
+			types.NewDatum(zeroTimestamp),
 			nil,
 		},
 		{
@@ -257,7 +264,7 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 				},
 			},
 			true,
-			types.NewDatum(types.ZeroTimestamp),
+			types.NewDatum(zeroTimestamp),
 			errNoDefaultValue,
 		},
 		{
@@ -273,8 +280,6 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 		},
 	}
 
-	ctx := mock.NewContext()
-
 	for _, tt := range tests {
 		ctx.GetSessionVars().StrictSQLMode = tt.strict
 		val, err := GetColDefaultValue(ctx, tt.colInfo)
@@ -288,8 +293,8 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 }
 
 func newCol(name string) *Column {
-	return &Column{
+	return ToColumn(&model.ColumnInfo{
 		Name:  model.NewCIStr(name),
 		State: model.StatePublic,
-	}
+	})
 }

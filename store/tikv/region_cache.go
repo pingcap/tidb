@@ -399,7 +399,7 @@ func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 }
 
 // OnRequestFail is used for clearing cache when a tikv server does not respond.
-func (c *RegionCache) OnRequestFail(ctx *RPCContext) {
+func (c *RegionCache) OnRequestFail(ctx *RPCContext, err error) {
 	// Switch region's leader peer to next one.
 	regionID := ctx.Region
 	c.mu.Lock()
@@ -416,7 +416,7 @@ func (c *RegionCache) OnRequestFail(ctx *RPCContext) {
 	delete(c.storeMu.stores, storeID)
 	c.storeMu.Unlock()
 
-	log.Warnf("drop regions from cache due to request fail, storeID: %v", storeID)
+	log.Infof("drop regions of store %d from cache due to request fail, err: %v", storeID, err)
 
 	c.mu.Lock()
 	for id, r := range c.mu.regions {

@@ -430,9 +430,14 @@ func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column strin
 // DBIsVisible checks whether the user can see the db.
 func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 	if record := p.matchUser(user, host); record != nil {
-		if record.Privileges&mysql.ShowDBPriv > 0 {
+		if record.Privileges != 0 {
 			return true
 		}
+	}
+
+	// INFORMATION_SCHEMA is visible to all users.
+	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+		return true
 	}
 
 	if record := p.matchDB(user, host, db); record != nil {

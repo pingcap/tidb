@@ -75,6 +75,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"alter table t add column c int auto_increment key, auto_increment=10", true,
 			errors.New("[autoid:3]No support for setting auto_increment using alter_table")},
 		{"alter table t add column c int auto_increment key", true, nil},
+		{"create table `` (a int)", true, errors.New("[ddl:1103]Incorrect table name ''")},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)

@@ -40,6 +40,7 @@ const (
 	CmdRawGet CmdType = 256 + iota
 	CmdRawPut
 	CmdRawDelete
+	CmdRawScan
 
 	CmdCop CmdType = 512 + iota
 )
@@ -47,6 +48,7 @@ const (
 // Request wraps all kv/coprocessor requests.
 type Request struct {
 	Type          CmdType
+	Priority      kvrpcpb.CommandPri
 	Get           *kvrpcpb.GetRequest
 	Scan          *kvrpcpb.ScanRequest
 	Prewrite      *kvrpcpb.PrewriteRequest
@@ -60,6 +62,7 @@ type Request struct {
 	RawGet        *kvrpcpb.RawGetRequest
 	RawPut        *kvrpcpb.RawPutRequest
 	RawDelete     *kvrpcpb.RawDeleteRequest
+	RawScan       *kvrpcpb.RawScanRequest
 	Cop           *coprocessor.Request
 }
 
@@ -93,6 +96,8 @@ func (req *Request) GetContext() (*kvrpcpb.Context, error) {
 		c = req.RawPut.GetContext()
 	case CmdRawDelete:
 		c = req.RawDelete.GetContext()
+	case CmdRawScan:
+		c = req.RawScan.GetContext()
 	case CmdCop:
 		c = req.Cop.GetContext()
 	default:
@@ -117,11 +122,13 @@ type Response struct {
 	RawGet        *kvrpcpb.RawGetResponse
 	RawPut        *kvrpcpb.RawPutResponse
 	RawDelete     *kvrpcpb.RawDeleteResponse
+	RawScan       *kvrpcpb.RawScanResponse
 	Cop           *coprocessor.Response
 }
 
-// SetContext set the Context field for the given req to the specifed ctx.
+// SetContext set the Context field for the given req to the specified ctx.
 func SetContext(req *Request, ctx *kvrpcpb.Context) error {
+	ctx.Priority = req.Priority
 	switch req.Type {
 	case CmdGet:
 		req.Get.Context = ctx
@@ -149,6 +156,8 @@ func SetContext(req *Request, ctx *kvrpcpb.Context) error {
 		req.RawPut.Context = ctx
 	case CmdRawDelete:
 		req.RawDelete.Context = ctx
+	case CmdRawScan:
+		req.RawScan.Context = ctx
 	case CmdCop:
 		req.Cop.Context = ctx
 	default:
@@ -215,6 +224,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.RawDelete = &kvrpcpb.RawDeleteResponse{
 			RegionError: e,
 		}
+	case CmdRawScan:
+		resp.RawScan = &kvrpcpb.RawScanResponse{
+			RegionError: e,
+		}
 	case CmdCop:
 		resp.Cop = &coprocessor.Response{
 			RegionError: e,
@@ -255,6 +268,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.RawPut.GetRegionError()
 	case CmdRawDelete:
 		e = resp.RawDelete.GetRegionError()
+	case CmdRawScan:
+		e = resp.RawScan.GetRegionError()
 	case CmdCop:
 		e = resp.Cop.GetRegionError()
 	default:

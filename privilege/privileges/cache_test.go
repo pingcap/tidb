@@ -77,9 +77,8 @@ func (s *testCacheSuite) TestLoadDBTable(c *C) {
 	mustExec(c, se, "use mysql;")
 	mustExec(c, se, "truncate table db;")
 
-	// Host | DB | User | Select_priv | Insert_priv | Update_priv | Delete_priv | Create_priv | Drop_priv | Grant_priv | Index_priv | Alter_priv | Execute_priv
-	mustExec(c, se, `INSERT INTO mysql.db VALUES ("%", "information_schema", "root", "Y", "Y", "Y", "Y", "Y", "N", "N", "N", "N", "N")`)
-	mustExec(c, se, `INSERT INTO mysql.db VALUES ("%", "mysql", "root1", "N", "N", "N", "N", "N", "Y", "Y", "Y", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.db (Host, DB, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv) VALUES ("%", "information_schema", "root", "Y", "Y", "Y", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.db (Host, DB, User, Drop_priv, Grant_priv, Index_priv, Alter_priv, Execute_priv) VALUES ("%", "mysql", "root1", "Y", "Y", "Y", "Y", "Y")`)
 
 	var p privileges.MySQLPrivilege
 	err = p.LoadDBTable(se)
@@ -136,7 +135,7 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	defer se.Close()
 	mustExec(c, se, "USE MYSQL;")
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("10.0.%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("10.0.%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 	var p privileges.MySQLPrivilege
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
@@ -147,7 +146,7 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	c.Assert(p.RequestVerification("root", "114.114.114.114", "test", "", "", mysql.SelectPriv), IsFalse)
 
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 	p = privileges.MySQLPrivilege{}
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
@@ -162,7 +161,7 @@ func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 	mustExec(c, se, "CREATE DATABASE TCTrain;")
 	mustExec(c, se, "CREATE TABLE TCTrain.TCTrainOrder (id int);")
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, `INSERT INTO mysql.db VALUES ("127.0.0.1", "TCTrain", "genius", "Y", "Y", "Y", "Y", "Y", "N", "N", "N", "N", "N")`)
+	mustExec(c, se, `INSERT INTO mysql.db VALUES ("127.0.0.1", "TCTrain", "genius", "Y", "Y", "Y", "Y", "Y", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N")`)
 	var p privileges.MySQLPrivilege
 	err = p.LoadDBTable(se)
 	c.Assert(err, IsNil)

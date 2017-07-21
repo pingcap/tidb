@@ -81,9 +81,18 @@ type LogicalJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 
+	LeftJoinKeys    []*expression.Column
+	RightJoinKeys   []*expression.Column
+	leftProperties  [][]*expression.Column
+	rightProperties [][]*expression.Column
+
 	// DefaultValues is only used for outer join, which stands for the default values when the outer table cannot find join partner
 	// instead of null padding.
 	DefaultValues []types.Datum
+
+	// redundantSchema contains columns which are eliminated in join.
+	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
+	redundantSchema *expression.Schema
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
@@ -153,6 +162,8 @@ type LogicalAggregation struct {
 
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
+
+	possibleProperties [][]*expression.Column
 }
 
 func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -263,7 +274,7 @@ func (p *DataSource) getPKIsHandleCol() *expression.Column {
 	if !p.tableInfo.PKIsHandle {
 		return nil
 	}
-	for i, col := range p.tableInfo.Columns {
+	for i, col := range p.Columns {
 		if mysql.HasPriKeyFlag(col.Flag) {
 			return p.schema.Columns[i]
 		}

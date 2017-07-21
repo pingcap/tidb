@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testStatsUpdateSuite{})
@@ -61,6 +62,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	stats2 := h.GetTableStats(tableInfo2.ID)
 	c.Assert(stats2.Count, Equals, int64(rowCount2))
 
+	testKit.MustExec("analyze table t1")
 	// Test update in a txn.
 	for i := 0; i < rowCount1; i++ {
 		testKit.MustExec("insert into t1 values(1, 2)")
@@ -69,6 +71,11 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1.ID)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
+
+	// Test IncreaseFactor.
+	count, err := stats1.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo1.Columns[0])
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, float64(rowCount1*2))
 
 	testKit.MustExec("begin")
 	for i := 0; i < rowCount1; i++ {
@@ -99,7 +106,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	c.Assert(stats2.Count, Equals, int64(rowCount2))
 
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
-	rs.Check(testkit.Rows("50", "40"))
+	rs.Check(testkit.Rows("40", "40"))
 }
 
 func (s *testStatsUpdateSuite) TestMultiSession(c *C) {

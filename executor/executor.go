@@ -49,7 +49,7 @@ var (
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
 	_ Executor = &TableScanExec{}
-	_ Executor = &TopnExec{}
+	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
 )
 
@@ -160,10 +160,12 @@ type Executor interface {
 type ShowDDLExec struct {
 	baseExecutor
 
-	schema  *expression.Schema
-	ddlInfo *inspectkv.DDLInfo
-	bgInfo  *inspectkv.DDLInfo
-	done    bool
+	ddlOwnerID string
+	bgOwnerID  string
+	selfID     string
+	ddlInfo    *inspectkv.DDLInfo
+	bgInfo     *inspectkv.DDLInfo
+	done       bool
 }
 
 // Next implements the Executor Next interface.
@@ -171,18 +173,12 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
 	}
-	var ddlOwner, ddlJob string
-	if e.ddlInfo.Owner != nil {
-		ddlOwner = e.ddlInfo.Owner.String()
-	}
+
+	var ddlJob string
 	if e.ddlInfo.Job != nil {
 		ddlJob = e.ddlInfo.Job.String()
 	}
-
-	var bgOwner, bgJob string
-	if e.bgInfo.Owner != nil {
-		bgOwner = e.bgInfo.Owner.String()
-	}
+	var bgJob string
 	if e.bgInfo.Job != nil {
 		bgJob = e.bgInfo.Job.String()
 	}
@@ -190,11 +186,12 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	row := &Row{}
 	row.Data = types.MakeDatums(
 		e.ddlInfo.SchemaVer,
-		ddlOwner,
+		e.ddlOwnerID,
 		ddlJob,
 		e.bgInfo.SchemaVer,
-		bgOwner,
+		e.bgOwnerID,
 		bgJob,
+		e.selfID,
 	)
 	e.done = true
 
@@ -438,7 +435,7 @@ func (e *SelectionExec) initController() error {
 
 	switch x := e.children[0].(type) {
 	case *XSelectTableExec:
-		accessCondition, restCondtion := ranger.DetachTableScanConditions(newConds, x.tableInfo.GetPkName())
+		accessCondition, restCondtion := ranger.DetachColumnConditions(newConds, x.tableInfo.GetPkName())
 		x.where, _, _ = expression.ExpressionsToPB(sc, restCondtion, client)
 		ranges, err := ranger.BuildTableRange(accessCondition, sc)
 		if err != nil {

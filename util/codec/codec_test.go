@@ -532,6 +532,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 		var t types.Time
 		t.Type = mysql.TypeDatetime
 		t.FromPackedUint(v[0].GetUint64())
+		t.TimeZone = nil
 		c.Assert(types.NewDatum(t), DeepEquals, m)
 	}
 

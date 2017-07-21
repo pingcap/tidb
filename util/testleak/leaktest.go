@@ -44,7 +44,6 @@ func interestingGoroutines() (gs []string) {
 			strings.Contains(stack, "ddl.(*ddl).start") ||
 			strings.Contains(stack, "domain.NewDomain") ||
 			strings.Contains(stack, "testing.(*T).Run") ||
-			strings.Contains(stack, "tidb.asyncGetTSWorker") || // TODO: remove it
 			strings.Contains(stack, "domain.(*Domain).LoadPrivilegeLoop") ||
 			strings.Contains(stack, "domain.(*Domain).UpdateTableStatsLoop") ||
 			strings.Contains(stack, "testing.Main(") ||
@@ -72,7 +71,7 @@ func BeforeTest() {
 }
 
 // AfterTest gets the current goroutines and runs the returned function to
-// get the goroutines at that time to contrast wheter any goroutines leaked.
+// get the goroutines at that time to contrast whether any goroutines leaked.
 // Usage: defer testleak.AfterTest(c)()
 // It can call with BeforeTest() at the beginning of check.Suite.TearDownSuite() or
 // call alone at the beginning of each test.

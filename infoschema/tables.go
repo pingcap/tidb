@@ -979,7 +979,7 @@ var tableNameToColumns = map[string]([]columnInfo){
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
 	columns := make([]*table.Column, len(meta.Columns))
 	for i, col := range meta.Columns {
-		columns[i] = (*table.Column)(col)
+		columns[i] = table.ToColumn(col)
 	}
 	return &infoschemaTable{
 		handle: handle,

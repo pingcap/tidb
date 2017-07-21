@@ -302,6 +302,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	// TODO: Reset ticker or make interval longer.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
+	syncer := do.ddl.SchemaSyncer()
 
 	for {
 		select {
@@ -310,11 +311,21 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
-		case <-do.ddl.SchemaSyncer().GlobalVersionCh():
+		case <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
+		case <-syncer.Done():
+			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
+			log.Info("[ddl] reload schema in loop, schema syncer need restart")
+			do.SchemaValidator.Stop()
+			err := syncer.Restart(goctx.Background())
+			if err != nil {
+				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
+				break
+			}
+			do.SchemaValidator.Restart()
 		case <-do.exit:
 			return
 		}
@@ -445,16 +456,31 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 	}
 
 	go func() {
+		var count int
 		for {
+			ok := true
 			select {
 			case <-do.exit:
 				return
-			case <-watchCh:
+			case _, ok = <-watchCh:
 			case <-time.After(duration):
 			}
+			if !ok {
+				log.Error("[domain] load privilege loop watch channel closed.")
+				watchCh = do.etcdClient.Watch(goctx.Background(), privilegeKey)
+				count++
+				if count > 10 {
+					time.Sleep(time.Duration(count) * time.Second)
+				}
+				continue
+			}
+
+			count = 0
 			err := do.privHandle.Update(ctx)
 			if err != nil {
-				log.Error("load privilege fail:", errors.ErrorStack(err))
+				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
+			} else {
+				log.Info("[domain] reload privilege success.")
 			}
 		}
 	}()
@@ -489,7 +515,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	if lease <= 0 {
 		return nil
 	}
-	deltaUpdateDuration := time.Minute
+	deltaUpdateDuration := lease * 5
 	go func(do *Domain) {
 		loadTicker := time.NewTicker(lease)
 		defer loadTicker.Stop()

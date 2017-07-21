@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -114,7 +115,12 @@ func (s *testSuite) TestCreateDropDatabase(c *C) {
 	tk.MustExec("create database if not exists drop_test;")
 	tk.MustExec("drop database if exists drop_test;")
 	tk.MustExec("create database drop_test;")
+	tk.MustExec("use drop_test;")
 	tk.MustExec("drop database drop_test;")
+	_, err := tk.Exec("drop table t;")
+	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	_, err = tk.Exec("select * from t;")
+	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 }
 
 func (s *testSuite) TestCreateDropTable(c *C) {
@@ -183,7 +189,8 @@ func (s *testSuite) TestAlterTableModifyColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table if not exists mc (c1 int, c2 varchar(10))")
+	tk.MustExec("drop table if exists mc")
+	tk.MustExec("create table mc(c1 int, c2 varchar(10))")
 	_, err := tk.Exec("alter table mc modify column c1 short")
 	c.Assert(err, NotNil)
 	tk.MustExec("alter table mc modify column c1 bigint")

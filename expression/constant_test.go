@@ -77,7 +77,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn("a"), nullValue),
 				newFunction(ast.NE, newColumn("c"), newLonglong(2)),
 			},
-			result: "0",
+			result: "eq(cast(1), <nil>), eq(test.t.a, 1), eq(test.t.b, 1), ne(test.t.c, 2)",
 		},
 		{
 			conditions: []Expression{
@@ -118,7 +118,11 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 	}
 	for _, tt := range tests {
 		ctx := mock.NewContext()
-		newConds := PropagateConstant(ctx, tt.conditions)
+		conds := make([]Expression, 0, len(tt.conditions))
+		for _, cd := range tt.conditions {
+			conds = append(conds, FoldConstant(cd))
+		}
+		newConds := PropagateConstant(ctx, conds)
 		var result []string
 		for _, v := range newConds {
 			result = append(result, v.String())

@@ -60,6 +60,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
 		"when", "where", "write", "xor", "year_month", "zerofill",
+		"generated", "virtual", "stored",
 		// TODO: support the following keywords
 		// "delayed" , "high_priority" , "low_priority", "with",
 	}
@@ -92,6 +93,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "default", "shared", "exclusive",
+		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -307,6 +309,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 join t2 left join t3 on t2.id = t3.id", true},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false},
+		{"select * from t1 join t2 left join t3 using (id)", true},
+		{"select * from t1 right join t2 using (id) left join t3 using (id)", true},
+		{"select * from t1 right join t2 using (id) left join t3", false},
 
 		// for admin
 		{"admin show ddl;", true},
@@ -391,6 +396,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		// for show character set
 		{"show character set;", true},
+		{"show charset", true},
 		// for show collation
 		{"show collation", true},
 		{"show collation like 'utf8%'", true},
@@ -401,6 +407,15 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show create table
 		{"show create table test.t", true},
 		{"show create table t", true},
+		// for show stats_meta.
+		{"show stats_meta", true},
+		{"show stats_meta where table_name = 't'", true},
+		// for show stats_histograms
+		{"show stats_histograms", true},
+		{"show stats_histograms where col_name = 'a'", true},
+		// for show stats_buckets
+		{"show stats_buckets", true},
+		{"show stats_buckets where col_name = 'a'", true},
 
 		// set
 		// user defined
@@ -622,6 +637,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		{`SELECT LOCATE('bar', 'foobarbar');`, true},
 		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
+
+		{`SELECT tidb_version();`, true},
 
 		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
@@ -1140,7 +1157,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create schema xxx", true},
 		{"create schema if exists xxx", false},
 		{"create schema if not exists xxx", true},
-		// for drop database/schema/table
+		// for drop database/schema/table/stats
 		{"drop database xxx", true},
 		{"drop database if exists xxx", true},
 		{"drop database if not exists xxx", false},
@@ -1154,6 +1171,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop table if exists xxx", true},
 		{"drop table if not exists xxx", false},
 		{"drop view if exists xxx", true},
+		{"drop stats t", true},
 		// for issue 974
 		{`CREATE TABLE address (
 		id bigint(20) NOT NULL AUTO_INCREMENT,
@@ -1270,6 +1288,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255) FIRST", true},
 		{"ALTER TABLE db.t RENAME to db1.t1", true},
+		{"ALTER TABLE db.t RENAME db1.t1", true},
 		{"ALTER TABLE t RENAME as t1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1", true},
 		{"ALTER TABLE t ALTER a SET DEFAULT 1", true},
@@ -1295,13 +1314,28 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD UNIQUE KEY (a) COMMENT 'a'", true},
 		{"ALTER TABLE t ADD UNIQUE INDEX (a) COMMENT 'a'", true},
 
+		// For create index statement
+		{"CREATE INDEX idx ON t (a)", true},
+		{"CREATE INDEX idx ON t (a) USING HASH", true},
+		{"CREATE INDEX idx ON t (a) COMMENT 'foo'", true},
+		{"CREATE INDEX idx ON t (a) USING HASH COMMENT 'foo'", true},
+		{"CREATE INDEX idx USING BTREE ON t (a) USING HASH COMMENT 'foo'", true},
+		{"CREATE INDEX idx USING BTREE ON t (a)", true},
+
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
+		{"RENAME TABLE t t1", false},
 		{"RENAME TABLE d.t TO d1.t1", true},
 
 		// for truncate statement
 		{"TRUNCATE TABLE t1", true},
 		{"TRUNCATE t1", true},
+
+		// for empty alert table index
+		{"ALTER TABLE t ADD INDEX () ", false},
+		{"ALTER TABLE t ADD UNIQUE ()", false},
+		{"ALTER TABLE t ADD UNIQUE INDEX ()", false},
+		{"ALTER TABLE t ADD UNIQUE KEY ()", false},
 	}
 	s.RunTest(c, table)
 }
@@ -1388,6 +1422,24 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 	table := []testCase{
 		// for create user
 		{`CREATE USER 'test'`, true},
+		{`CREATE USER test`, true},
+		{"CREATE USER `test`", true},
+		{"CREATE USER test-user", false},
+		{"CREATE USER test.user", false},
+		{"CREATE USER 'test-user'", true},
+		{"CREATE USER `test-user`", true},
+		{"CREATE USER test.user", false},
+		{"CREATE USER 'test.user'", true},
+		{"CREATE USER `test.user`", true},
+		{"CREATE USER uesr1@localhost", true},
+		{"CREATE USER `uesr1`@localhost", true},
+		{"CREATE USER uesr1@`localhost`", true},
+		{"CREATE USER `uesr1`@`localhost`", true},
+		{"CREATE USER 'uesr1'@localhost", true},
+		{"CREATE USER uesr1@'localhost'", true},
+		{"CREATE USER 'uesr1'@'localhost'", true},
+		{"CREATE USER 'uesr1'@`localhost`", true},
+		{"CREATE USER `uesr1`@'localhost'", true},
 		{`CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
@@ -1508,6 +1560,13 @@ func (s *testParserSuite) TestMysqlDump(c *C) {
 		{`LOCK TABLES t1 READ;`, true},
 		{`show table status like 't'`, true},
 		{`LOCK TABLES t2 WRITE`, true},
+
+		// for unlock table and lock table
+		{`UNLOCK TABLE;`, true},
+		{`LOCK TABLE t1 READ;`, true},
+		{`show table status like 't'`, true},
+		{`LOCK TABLE t2 WRITE`, true},
+		{`LOCK TABLE t1 WRITE, t3 READ`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -1525,6 +1584,23 @@ func (s *testParserSuite) TestIndexHint(c *C) {
 		{`select * from t use index for group by (idx1) use index for order by (idx2), t2`, true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestPriority(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{`select high_priority * from t`, true},
+		{`insert high_priority into t values (1)`, true},
+		{`insert LOW_PRIORITY into t values (1)`, true},
+		{`update low_priority t set a = 2`, true},
+	}
+	s.RunTest(c, table)
+
+	parser := New()
+	stmt, err := parser.Parse("select HIGH_PRIORITY * from t", "", "")
+	c.Assert(err, IsNil)
+	sel := stmt[0].(*ast.SelectStmt)
+	c.Assert(sel.SelectStmtOpts.Priority, Equals, mysql.HighPriority)
 }
 
 func (s *testParserSuite) TestEscape(c *C) {
@@ -1692,4 +1768,68 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t1 index a,b", true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestGeneratedColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		input string
+		ok    bool
+		expr  string
+	}{
+		{"create table t (c int, d int generated always as (c + 1) virtual)", true, "c + 1"},
+		{"create table t (c int, d int as (   c + 1   ) virtual)", true, "c + 1"},
+		{"create table t (c int, d int as (1 + 1) stored)", true, "1 + 1"},
+	}
+	parser := New()
+	for _, tt := range tests {
+		stmtNodes, err := parser.Parse(tt.input, "", "")
+		if tt.ok {
+			c.Assert(err, IsNil)
+			stmtNode := stmtNodes[0]
+			for _, col := range stmtNode.(*ast.CreateTableStmt).Cols {
+				for _, opt := range col.Options {
+					if opt.Tp == ast.ColumnOptionGenerated {
+						c.Assert(opt.Expr.Text(), Equals, tt.expr)
+					}
+				}
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+
+}
+
+func (s *testParserSuite) TestSetTransaction(c *C) {
+	defer testleak.AfterTest(c)()
+	// Set transaction is equivalent to setting the global or session value of tx_isolation.
+	// For example:
+	// SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED
+	// SET SESSION tx_isolation='READ-COMMITTED'
+	tests := []struct {
+		input    string
+		isGlobal bool
+		value    string
+	}{
+		{
+			"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
+			false, "READ-COMMITTED",
+		},
+		{
+			"SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+			true, "REPEATABLE-READ",
+		},
+	}
+	parser := New()
+	for _, t := range tests {
+		stmt1, err := parser.ParseOneStmt(t.input, "", "")
+		c.Assert(err, IsNil)
+		setStmt := stmt1.(*ast.SetStmt)
+		vars := setStmt.Variables[0]
+		c.Assert(vars.Name, Equals, "tx_isolation")
+		c.Assert(vars.IsGlobal, Equals, t.isGlobal)
+		c.Assert(vars.IsSystem, Equals, true)
+		c.Assert(vars.Value.GetValue(), Equals, t.value)
+	}
 }

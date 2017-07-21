@@ -175,7 +175,7 @@ func (p *PhysicalMemTable) Copy() PhysicalPlan {
 }
 
 // physicalDistSQLPlan means the plan that can be executed distributively.
-// We can push down other plan like selection, limit, aggregation, topn into this plan.
+// We can push down other plan like selection, limit, aggregation, topN into this plan.
 type physicalDistSQLPlan interface {
 	addAggregation(ctx context.Context, agg *PhysicalAggregation) *expression.Schema
 	addTopN(ctx context.Context, prop *requiredProperty) bool
@@ -476,6 +476,7 @@ type PhysicalIndexJoin struct {
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
+	outerIndex      int
 
 	DefaultValues []types.Datum
 }
@@ -494,6 +495,9 @@ type PhysicalMergeJoin struct {
 
 	DefaultValues []types.Datum
 	Desc          bool
+
+	leftKeys  []*expression.Column
+	rightKeys []*expression.Column
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.

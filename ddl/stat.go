@@ -81,11 +81,7 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 	}
 
 	m[ddlSchemaVersion] = ddlInfo.SchemaVer
-	if ddlInfo.Owner != nil {
-		m[ddlOwnerID] = ddlInfo.Owner.OwnerID
-		// LastUpdateTS uses nanosecond.
-		m[ddlOwnerLastUpdateTS] = ddlInfo.Owner.LastUpdateTS / 1e9
-	}
+	// TODO: Get the owner information.
 	if ddlInfo.Job != nil {
 		m[ddlJobID] = ddlInfo.Job.ID
 		m[ddlJobAction] = ddlInfo.Job.Type.String()
@@ -107,11 +103,7 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 
 	// background DDL info
 	m[bgSchemaVersion] = bgInfo.SchemaVer
-	if bgInfo.Owner != nil {
-		m[bgOwnerID] = bgInfo.Owner.OwnerID
-		// LastUpdateTS uses nanosecond.
-		m[bgOwnerLastUpdateTS] = bgInfo.Owner.LastUpdateTS / 1e9
-	}
+	// TODO: Get the owner information.
 	if bgInfo.Job != nil {
 		m[bgJobID] = bgInfo.Job.ID
 		m[bgJobAction] = bgInfo.Job.Type.String()

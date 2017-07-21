@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"strings"
-
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -43,13 +41,15 @@ type typeInferrer struct {
 }
 
 func (v *typeInferrer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch in.(type) {
+	case *ast.ColumnOption:
+		return in, true
+	}
 	return in, false
 }
 
 func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
-	case *ast.AggregateFuncExpr:
-		v.aggregateFunc(x)
 	case *ast.BetweenExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		types.SetBinChsClnFlag(&x.Type)
@@ -91,16 +91,12 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		types.SetBinChsClnFlag(&x.Type)
 		v.convertValueToColumnTypeIfNeeded(x)
-	case *ast.PatternLikeExpr:
-		v.handleLikeExpr(x)
 	case *ast.PatternRegexpExpr:
 		v.handleRegexpExpr(x)
 	case *ast.SelectStmt:
 		v.selectStmt(x)
 	case *ast.UnaryOperationExpr:
 		v.unaryOperation(x)
-	case *ast.ValueExpr:
-		v.handleValueExpr(x)
 	case *ast.ValuesExpr:
 		v.handleValuesExpr(x)
 	case *ast.VariableExpr:
@@ -124,33 +120,6 @@ func (v *typeInferrer) selectStmt(x *ast.SelectStmt) {
 		if val.Column.ID == 0 && val.Expr.GetType() != nil {
 			val.Column.FieldType = *(val.Expr.GetType())
 		}
-	}
-}
-
-func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
-	name := strings.ToLower(x.F)
-	switch name {
-	case ast.AggFuncCount:
-		ft := types.NewFieldType(mysql.TypeLonglong)
-		ft.Flen = 21
-		types.SetBinChsClnFlag(ft)
-		x.SetType(ft)
-	case ast.AggFuncMax, ast.AggFuncMin:
-		x.SetType(x.Args[0].GetType())
-	case ast.AggFuncSum, ast.AggFuncAvg:
-		ft := types.NewFieldType(mysql.TypeNewDecimal)
-		types.SetBinChsClnFlag(ft)
-		ft.Decimal = x.Args[0].GetType().Decimal
-		x.SetType(ft)
-	case ast.AggFuncGroupConcat:
-		ft := types.NewFieldType(mysql.TypeVarString)
-		ft.Charset = v.defaultCharset
-		cln, err := charset.GetDefaultCollation(v.defaultCharset)
-		if err != nil {
-			v.err = err
-		}
-		ft.Collate = cln
-		x.SetType(ft)
 	}
 }
 
@@ -202,11 +171,11 @@ func toArithType(ft *types.FieldType) (tp byte) {
 func mergeArithType(fta, ftb *types.FieldType) byte {
 	a, b := toArithType(fta), toArithType(ftb)
 	switch a {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeEnum, mysql.TypeSet:
 		return mysql.TypeDouble
 	}
 	switch b {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeEnum, mysql.TypeSet:
 		return mysql.TypeDouble
 	}
 	if a == mysql.TypeNewDecimal || b == mysql.TypeNewDecimal {
@@ -271,18 +240,6 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 		}
 	}
 	types.SetBinChsClnFlag(&x.Type)
-}
-
-func fixDecimals(value interface{}, tp *types.FieldType) {
-	switch x := value.(type) {
-	case *types.MyDecimal:
-		tp.Decimal = int(x.GetDigitsFrac())
-	}
-}
-
-func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
-	types.DefaultTypeForValue(x.GetValue(), x.GetType())
-	fixDecimals(x.GetValue(), x.GetType())
 }
 
 func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {
@@ -381,18 +338,27 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case ast.MicroSecond, ast.Second, ast.Minute, ast.Hour, ast.Day, ast.Week, ast.Month, ast.Year,
 		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.Weekday, ast.WeekOfYear, ast.YearWeek, ast.DateDiff,
-		ast.FoundRows, ast.Length, ast.Extract, ast.Locate, ast.UnixTimestamp, ast.Quarter, ast.IsIPv4, ast.ToDays,
+		ast.FoundRows, ast.Length, ast.ASCII, ast.Extract, ast.Locate, ast.UnixTimestamp, ast.Quarter, ast.IsIPv4, ast.ToDays,
 		ast.ToSeconds, ast.Strcmp, ast.IsNull, ast.BitLength, ast.CharLength, ast.CRC32, ast.TimestampDiff,
 		ast.Sign, ast.IsIPv6, ast.Ord, ast.Instr, ast.BitCount, ast.TimeToSec, ast.FindInSet, ast.Field,
-		ast.GetLock, ast.ReleaseLock, ast.Interval, ast.Position, ast.PeriodAdd, ast.PeriodDiff, ast.IsIPv4Mapped, ast.UncompressedLength:
+		ast.GetLock, ast.ReleaseLock, ast.Interval, ast.Position, ast.PeriodAdd, ast.PeriodDiff, ast.IsIPv4Mapped, ast.IsIPv4Compat, ast.UncompressedLength:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case ast.ConnectionID, ast.InetAton:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
 	// time related
 	case ast.AddTime:
-		t := x.Args[0].GetType().Tp
-		switch t {
+		switch x.Args[0].GetType().Tp {
+		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
+			tp = types.NewFieldType(mysql.TypeDatetime)
+		case mysql.TypeDuration:
+			tp = types.NewFieldType(mysql.TypeDuration)
+		default:
+			tp = types.NewFieldType(mysql.TypeVarString)
+		}
+		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
+	case ast.SubTime:
+		switch t := x.Args[0].GetType().Tp; t {
 		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
 			tp = types.NewFieldType(mysql.TypeDatetime)
 		case mysql.TypeDuration:
@@ -426,7 +392,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		ast.DateFormat, ast.Rpad, ast.Lpad, ast.CharFunc, ast.Conv, ast.MakeSet, ast.Oct, ast.UUID,
 		ast.InsertFunc, ast.Bin, ast.Quote, ast.Format, ast.FromBase64, ast.ToBase64,
 		ast.ExportSet, ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa, ast.Inet6Aton,
-		ast.Inet6Ntoa:
+		ast.Inet6Ntoa, ast.PasswordFunc, ast.TiDBVersion:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case ast.RandomBytes:
@@ -454,9 +420,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = x.Args[0].GetType()
 	case ast.RowFunc:
 		tp = x.Args[0].GetType()
-	case ast.PasswordFunc:
-		tp = types.NewFieldType(mysql.TypeVarString)
-		chs = v.defaultCharset
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
@@ -497,14 +460,6 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 		types.SetBinChsClnFlag(tp)
 	}
 	x.SetType(tp)
-}
-
-// handleLikeExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.
-func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
-	x.SetType(types.NewFieldType(mysql.TypeLonglong))
-	types.SetBinChsClnFlag(&x.Type)
-	x.Expr = v.addCastToString(x.Expr)
-	x.Pattern = v.addCastToString(x.Pattern)
 }
 
 // handleRegexpExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.

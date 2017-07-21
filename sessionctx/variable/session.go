@@ -150,6 +150,9 @@ type SessionVars struct {
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
 
+	// BinlogClient is used to write binlog.
+	BinlogClient interface{}
+
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
@@ -301,6 +304,7 @@ const (
 	CharacterSetResults = "character_set_results"
 	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
+	TxnIsolation        = "tx_isolation"
 )
 
 // TableDelta stands for the changed count for one table.
@@ -326,6 +330,9 @@ type StatementContext struct {
 		foundRows    uint64
 		warnings     []error
 	}
+
+	// Copied from SessionVars.TimeZone.
+	TimeZone *time.Location
 }
 
 // AddAffectedRows adds affected rows.
@@ -396,6 +403,8 @@ func (sc *StatementContext) AppendWarning(warn error) {
 
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
+	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
+	// We will do that later, and then append WarnDataTruncated instead of the error itself.
 	if err == nil {
 		return nil
 	}

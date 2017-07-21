@@ -245,3 +245,41 @@ func Column2Exprs(cols []*Column) []Expression {
 	}
 	return result
 }
+
+// ColInfo2Col finds the corresponding column of the ColumnInfo in a column slice.
+func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
+	for _, c := range cols {
+		if c.ColName.L == col.Name.L {
+			return c
+		}
+	}
+	return nil
+}
+
+// indexCol2Col finds the corresponding column of the IndexColumn in a column slice.
+func indexCol2Col(cols []*Column, col *model.IndexColumn) *Column {
+	for _, c := range cols {
+		if c.ColName.L == col.Name.L {
+			return c
+		}
+	}
+	return nil
+}
+
+// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
+// together with a []int containing their lengths.
+// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
+// the return value will be only the 1st corresponding *Column and its length.
+func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
+	retCols := make([]*Column, 0, len(index.Columns))
+	lengths := make([]int, 0, len(index.Columns))
+	for _, c := range index.Columns {
+		col := indexCol2Col(cols, c)
+		if col == nil {
+			return retCols, lengths
+		}
+		retCols = append(retCols, col)
+		lengths = append(lengths, c.Length)
+	}
+	return retCols, lengths
+}

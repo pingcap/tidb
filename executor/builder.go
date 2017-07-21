@@ -16,10 +16,12 @@ package executor
 import (
 	"math"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -27,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -142,6 +146,24 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	e := &ShowDDLExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 	}
+
+	var err error
+	ownerManager := sessionctx.GetDomain(e.ctx).DDL().OwnerManager()
+	ctx, cancel := goctx.WithTimeout(goctx.Background(), 3*time.Second)
+	e.ddlOwnerID, err = ownerManager.GetOwnerID(ctx, ddl.DDLOwnerKey)
+	cancel()
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	ctx, cancel = goctx.WithTimeout(goctx.Background(), 3*time.Second)
+	e.bgOwnerID, err = ownerManager.GetOwnerID(ctx, ddl.BgOwnerKey)
+	cancel()
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+
 	ddlInfo, err := inspectkv.GetDDLInfo(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
@@ -154,6 +176,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	}
 	e.ddlInfo = ddlInfo
 	e.bgInfo = bgInfo
+	e.selfID = ownerManager.ID()
 	return e
 }
 
@@ -446,20 +469,17 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 
 func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
-	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
 		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
 		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
-		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashJoinExec{
 		schema:        v.Schema(),
 		otherFilter:   v.OtherConditions,
 		prepared:      false,
 		ctx:           b.ctx,
-		targetTypes:   targetTypes,
 		concurrency:   v.Concurrency,
 		defaultValues: v.DefaultValues,
 	}
@@ -503,13 +523,11 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 
 func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJoinExec {
 	var leftHashKey, rightHashKey []*expression.Column
-	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
 		ln, _ := eqCond.GetArgs()[0].(*expression.Column)
 		rn, _ := eqCond.GetArgs()[1].(*expression.Column)
 		leftHashKey = append(leftHashKey, ln)
 		rightHashKey = append(rightHashKey, rn)
-		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashSemiJoinExec{
 		schema:       v.Schema(),
@@ -524,7 +542,6 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJ
 		smallHashKey: rightHashKey,
 		auxMode:      v.WithAux,
 		anti:         v.Anti,
-		targetTypes:  targetTypes,
 	}
 	return e
 }
@@ -685,7 +702,7 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 		schema:       v.Schema(),
 	}
 	if v.ExecLimit != nil {
-		return &TopnExec{
+		return &TopNExec{
 			SortExec: sortExec,
 			limit:    v.ExecLimit,
 		}
@@ -699,7 +716,7 @@ func (b *executorBuilder) buildTopN(v *plan.TopN) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	return &TopnExec{
+	return &TopNExec{
 		SortExec: sortExec,
 		limit:    &plan.Limit{Count: v.Count, Offset: v.Offset},
 	}
@@ -806,19 +823,25 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 	}
 }
 
-func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, cols []*model.ColumnInfo) Executor {
+func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk *model.ColumnInfo, cols []*model.ColumnInfo) Executor {
 	startTS := b.getStartTS()
 	if b.err != nil {
 		return nil
 	}
 	table, _ := b.is.TableByID(tblInfo.ID)
+	keepOrder := false
+	if pk != nil {
+		keepOrder = true
+		cols = append([]*model.ColumnInfo{pk}, cols...)
+	}
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
 	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &TableReaderExecutor{
-			table:   table,
-			tableID: tblInfo.ID,
-			ranges:  ranges,
+			table:     table,
+			tableID:   tblInfo.ID,
+			ranges:    ranges,
+			keepOrder: keepOrder,
 			dagPB: &tipb.DAGRequest{
 				StartTs:        b.getStartTS(),
 				TimeZoneOffset: timeZoneOffset(b.ctx),
@@ -849,6 +872,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, col
 		schema:    schema,
 		Columns:   cols,
 		ranges:    ranges,
+		keepOrder: keepOrder,
 	}
 	return e
 }
@@ -917,20 +941,13 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		ctx:   b.ctx,
 		tasks: make([]*analyzeTask, 0, len(v.Children())),
 	}
-	for _, task := range v.PkTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType:  pkTask,
-			src:       b.buildTableScanForAnalyze(task.TableInfo, []*model.ColumnInfo{task.PKInfo}),
-			tableInfo: task.TableInfo,
-			Columns:   []*model.ColumnInfo{task.PKInfo},
-		})
-	}
 	for _, task := range v.ColTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType:  colTask,
-			src:       b.buildTableScanForAnalyze(task.TableInfo, task.ColsInfo),
+			src:       b.buildTableScanForAnalyze(task.TableInfo, task.PKInfo, task.ColsInfo),
 			tableInfo: task.TableInfo,
 			Columns:   task.ColsInfo,
+			PKInfo:    task.PKInfo,
 		})
 	}
 	for _, task := range v.IdxTasks {

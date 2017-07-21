@@ -78,12 +78,6 @@ const (
 	// when we need to keep the data output order the same as the order of index data.
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
 
-	// tidb_skip_ddl_wait skips the wait time of two lease after executing CREATE TABLE statement.
-	// When we have multiple TiDB servers in a cluster, the newly created table may not be available on all TiDB server
-	// until two lease time later, set this value to true will reduce the time to create a table, with the risk that
-	// other TiDB servers may fail to use the newly created table in a small time window.
-	TiDBSkipDDLWait = "tidb_skip_ddl_wait"
-
 	// tidb_skip_utf8_check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"

@@ -33,6 +33,7 @@ const (
 	typeCodeArray   TypeCode = 0x03
 	typeCodeLiteral TypeCode = 0x04
 	typeCodeInt64   TypeCode = 0x09
+	typeCodeUint64  TypeCode = 0x0a
 	typeCodeFloat64 TypeCode = 0x0b
 	typeCodeString  TypeCode = 0x0c
 )
@@ -96,6 +97,9 @@ func (j JSON) MarshalJSON() ([]byte, error) {
 		}
 	case typeCodeInt64:
 		return json.Marshal(j.i64)
+	case typeCodeUint64:
+		u64 := *(*uint64)(unsafe.Pointer(&j.i64))
+		return json.Marshal(u64)
 	case typeCodeFloat64:
 		f64 := *(*float64)(unsafe.Pointer(&j.i64))
 		return json.Marshal(f64)

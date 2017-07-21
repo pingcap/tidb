@@ -81,8 +81,7 @@ const (
 
 // containsAnyAsterisk returns true if pef contains any asterisk.
 func (pef pathExpressionFlag) containsAnyAsterisk() bool {
-	pef &= pathExpressionContainsAsterisk
-	pef &= pathExpressionContainsDoubleAsterisk
+	pef &= (pathExpressionContainsAsterisk | pathExpressionContainsDoubleAsterisk)
 	return byte(pef) != 0
 }
 

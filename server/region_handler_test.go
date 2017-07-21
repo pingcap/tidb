@@ -151,8 +151,8 @@ func (ts *TidbRegionHandlerTestSuite) TestListTableRegionsWithError(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := http.Get("http://127.0.0.1:10090/tables/fdsfds/aaa/regions")
-	defer resp.Body.Close()
 	c.Assert(err, IsNil)
+	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 }
 
@@ -167,7 +167,8 @@ func (ts *TidbRegionHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 
 func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	cluster := mocktikv.NewCluster()
-	store, err := tikv.NewMockTikvStoreWithCluster(cluster)
+	mocktikv.BootstrapWithSingleStore(cluster)
+	store, err := tikv.NewMockTikvStore(tikv.WithCluster(cluster))
 	c.Assert(err, IsNil)
 	pdCli := mocktikv.NewPDClient(cluster)
 	_, err = tidb.BootstrapSession(store)

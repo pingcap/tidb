@@ -18,8 +18,10 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -78,6 +80,9 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
+	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified {
+		retType = builtinRetTp
+	}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
@@ -100,10 +105,12 @@ func (sf *ScalarFunction) Clone() Expression {
 	for _, arg := range sf.GetArgs() {
 		newArgs = append(newArgs, arg.Clone())
 	}
-	switch v := sf.Function.(type) {
-	case *builtinCastSig:
-		return NewCastFunc(v.tp, newArgs[0], sf.GetCtx())
-	case *builtinValuesSig:
+	switch sf.FuncName.L {
+	case ast.Cast:
+		newFunc, _ := buildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
+		return newFunc
+	case ast.Values:
+		v := sf.Function.(*builtinValuesSig)
 		return NewValuesFunc(v.offset, sf.GetType(), sf.GetCtx())
 	}
 	newFunc, _ := NewFunction(sf.GetCtx(), sf.FuncName.L, sf.RetType, newArgs...)
@@ -151,8 +158,45 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 }
 
 // Eval implements Expression interface.
-func (sf *ScalarFunction) Eval(row []types.Datum) (types.Datum, error) {
-	return sf.Function.eval(row)
+func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
+	if !TurnOnNewExprEval {
+		return sf.Function.eval(row)
+	}
+	sc := sf.GetCtx().GetSessionVars().StmtCtx
+	var (
+		res    interface{}
+		isNull bool
+	)
+	tp := sf.GetType()
+	switch sf.GetTypeClass() {
+	case types.ClassInt:
+		var intRes int64
+		intRes, isNull, err = sf.EvalInt(row, sc)
+		if mysql.HasUnsignedFlag(tp.Flag) {
+			res = uint64(intRes)
+		} else {
+			res = intRes
+		}
+	case types.ClassReal:
+		res, isNull, err = sf.EvalReal(row, sc)
+	case types.ClassDecimal:
+		res, isNull, err = sf.EvalDecimal(row, sc)
+	case types.ClassString:
+		switch x := sf.GetType().Tp; x {
+		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeNewDate:
+			res, isNull, err = sf.EvalTime(row, sc)
+		case mysql.TypeDuration:
+			res, isNull, err = sf.EvalDuration(row, sc)
+		default:
+			res, isNull, err = sf.EvalString(row, sc)
+		}
+	}
+	if isNull || err != nil {
+		d.SetValue(nil)
+		return d, errors.Trace(err)
+	}
+	d.SetValue(res)
+	return
 }
 
 // EvalInt implements Expression interface.

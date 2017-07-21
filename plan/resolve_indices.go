@@ -220,29 +220,23 @@ func (p *PhysicalApply) ResolveIndices() {
 // ResolveIndices implements Plan interface.
 func (p *Update) ResolveIndices() {
 	p.basePlan.ResolveIndices()
-	orderedList := make([]*expression.Assignment, len(p.OrderedList))
 	schema := p.children[0].Schema()
-	for _, v := range p.OrderedList {
-		if v == nil {
-			continue
-		}
-		orderedList[schema.ColumnIndex(v.Col)] = v
+	for _, assign := range p.OrderedList {
+		assign.Col.ResolveIndices(schema)
+		assign.Expr.ResolveIndices(schema)
 	}
-	for i := 0; i < len(orderedList); i++ {
-		if orderedList[i] == nil {
-			continue
-		}
-		orderedList[i].Col.ResolveIndices(schema)
-		orderedList[i].Expr.ResolveIndices(schema)
-	}
-	p.OrderedList = orderedList
 }
 
 // ResolveIndices implements Plan interface.
 func (p *Insert) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, asgn := range p.OnDuplicate {
+		asgn.Col.ResolveIndices(p.tableSchema)
 		asgn.Expr.ResolveIndices(p.tableSchema)
+	}
+	for _, set := range p.Setlist {
+		set.Col.ResolveIndices(p.tableSchema)
+		set.Expr.ResolveIndices(p.tableSchema)
 	}
 }
 

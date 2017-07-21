@@ -26,7 +26,7 @@ func TestT(t *testing.T) {
 }
 
 type testMockTiKVSuite struct {
-	store *MvccStore
+	store MVCCStore
 }
 
 var _ = Suite(&testMockTiKVSuite{})
@@ -56,19 +56,25 @@ func (s *testMockTiKVSuite) SetUpTest(c *C) {
 }
 
 func (s *testMockTiKVSuite) mustGetNone(c *C, key string, ts uint64) {
-	val, err := s.store.Get([]byte(key), ts)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
 	c.Assert(err, IsNil)
 	c.Assert(val, IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetErr(c *C, key string, ts uint64) {
-	val, err := s.store.Get([]byte(key), ts)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
 	c.Assert(err, NotNil)
 	c.Assert(val, IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetOK(c *C, key string, ts uint64, expect string) {
-	val, err := s.store.Get([]byte(key), ts)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
+	c.Assert(err, IsNil)
+	c.Assert(string(val), Equals, expect)
+}
+
+func (s *testMockTiKVSuite) mustGetRC(c *C, key string, ts uint64, expect string) {
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_RC)
 	c.Assert(err, IsNil)
 	c.Assert(string(val), Equals, expect)
 }
@@ -98,7 +104,7 @@ func (s *testMockTiKVSuite) mustDeleteOK(c *C, key string, startTS, commitTS uin
 }
 
 func (s *testMockTiKVSuite) mustScanOK(c *C, start string, limit int, ts uint64, expect ...string) {
-	pairs := s.store.Scan([]byte(start), nil, limit, ts)
+	pairs := s.store.Scan([]byte(start), nil, limit, ts, kvrpcpb.IsolationLevel_SI)
 	c.Assert(len(pairs)*2, Equals, len(expect))
 	for i := 0; i < len(pairs); i++ {
 		c.Assert(pairs[i].Err, IsNil)
@@ -231,6 +237,21 @@ func (s *testMockTiKVSuite) TestScan(c *C) {
 	checkV40()
 }
 
+func (s *testMockTiKVSuite) TestBatchGet(c *C) {
+	s.mustPutOK(c, "k1", "v1", 1, 2)
+	s.mustPutOK(c, "k2", "v2", 1, 2)
+	s.mustPutOK(c, "k2", "v2", 3, 4)
+	s.mustPutOK(c, "k3", "v3", 1, 2)
+	batchKeys := [][]byte{[]byte("k1"), []byte("k2"), []byte("k3")}
+	pairs := s.store.BatchGet(batchKeys, 5, kvrpcpb.IsolationLevel_SI)
+	for _, pair := range pairs {
+		c.Assert(pair.Err, IsNil)
+	}
+	c.Assert(string(pairs[0].Value), Equals, "v1")
+	c.Assert(string(pairs[1].Value), Equals, "v2")
+	c.Assert(string(pairs[2].Value), Equals, "v3")
+}
+
 func (s *testMockTiKVSuite) TestScanLock(c *C) {
 	s.mustPutOK(c, "k1", "v1", 1, 2)
 	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
@@ -242,6 +263,28 @@ func (s *testMockTiKVSuite) TestScanLock(c *C) {
 		lock("s1", "p1", 5),
 		lock("s2", "p2", 10),
 	})
+}
+
+func (s *testMockTiKVSuite) TestCommitConflict(c *C) {
+	// txn A want set x to A
+	// txn B want set x to B
+	// A prewrite.
+	s.mustPrewriteOK(c, putMutations("x", "A"), "x", 5)
+	// B prewrite and find A's lock.
+	errs := s.store.Prewrite(putMutations("x", "B"), []byte("x"), 10, 0)
+	c.Assert(errs[0], NotNil)
+	// B find rollback A because A exist too long.
+	s.mustRollbackOK(c, [][]byte{[]byte("x")}, 5)
+	// if A commit here, it would find its lock removed, report error txn not found.
+	s.mustCommitErr(c, [][]byte{[]byte("x")}, 5, 10)
+	// B prewrite itself after it rollback A.
+	s.mustPrewriteOK(c, putMutations("x", "B"), "x", 10)
+	// if A commit here, it would find its lock replaced by others and commit fail.
+	s.mustCommitErr(c, [][]byte{[]byte("x")}, 5, 20)
+	// B commit success.
+	s.mustCommitOK(c, [][]byte{[]byte("x")}, 10, 20)
+	// if B commit again, it will success because the key already committed.
+	s.mustCommitOK(c, [][]byte{[]byte("x")}, 10, 20)
 }
 
 func (s *testMockTiKVSuite) TestResolveLock(c *C) {
@@ -275,4 +318,12 @@ func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {
 func (s *testMockTiKVSuite) mustWriteWriteConflict(c *C, errs []error, i int) {
 	c.Assert(errs[i], NotNil)
 	c.Assert(strings.Contains(errs[i].Error(), "write conflict"), IsTrue)
+}
+
+func (s *testMockTiKVSuite) TestRC(c *C) {
+	s.mustPutOK(c, "key", "v1", 5, 10)
+	s.mustPrewriteOK(c, putMutations("key", "v2"), "key", 15)
+	s.mustGetErr(c, "key", 20)
+	s.mustGetRC(c, "key", 12, "v1")
+	s.mustGetRC(c, "key", 20, "v1")
 }

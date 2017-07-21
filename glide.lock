@@ -1,5 +1,5 @@
-hash: f1088ed50769a58cf4e9de95fac279530c47a4b35082414024a99d2ddc599865
-updated: 2017-06-08T15:30:41.381147472+08:00
+hash: a3686dc6fa1040197c06e3069bd12d3cbe7ccc4dda7f42cf5315d4722d8d9c8f
+updated: 2017-06-22T15:03:57.374451744+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -114,7 +114,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: bedba879c8bcef3487c10347b29b7313cd89efa6
+  version: f29189ecf47c65d8945b1e272929554b31346286
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -125,11 +125,11 @@ imports:
   - pkg/raft_serverpb
   - pkg/tikvpb
 - name: github.com/pingcap/pd
-  version: 83d0e46737a1ca4470c89ea8b9fd7ceb1f80b4d5
+  version: ce8db87a8c3f2560750232e85ad5152a0a1c69df
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: 11c2044a6a91f947faaa5e4f1a06c9026f333f69
+  version: 5e4b9cf7c32d2b09ba71aa9ab6675ec135f9fbda
   subpackages:
   - go-binlog
   - go-tipb
@@ -183,6 +183,7 @@ imports:
   - encoding/unicode
   - internal/utf8internal
   - runes
+  - secure
   - secure/bidirule
   - transform
   - unicode/bidi

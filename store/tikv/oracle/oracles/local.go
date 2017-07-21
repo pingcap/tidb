@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 var _ oracle.Oracle = &localOracle{}
@@ -38,7 +38,7 @@ func (l *localOracle) IsExpired(lockTS uint64, TTL uint64) bool {
 	return oracle.GetPhysical(time.Now()) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
 }
 
-func (l *localOracle) GetTimestamp(context.Context) (uint64, error) {
+func (l *localOracle) GetTimestamp(goctx.Context) (uint64, error) {
 	l.Lock()
 	defer l.Unlock()
 	physical := oracle.GetPhysical(time.Now())
@@ -50,6 +50,22 @@ func (l *localOracle) GetTimestamp(context.Context) (uint64, error) {
 	l.lastTimeStampTS = ts
 	l.n = 0
 	return uint64(ts), nil
+}
+
+func (l *localOracle) GetTimestampAsync(ctx goctx.Context) oracle.Future {
+	return &future{
+		ctx: ctx,
+		l:   l,
+	}
+}
+
+type future struct {
+	ctx goctx.Context
+	l   *localOracle
+}
+
+func (f *future) Wait() (uint64, error) {
+	return f.l.GetTimestamp(f.ctx)
 }
 
 func (l *localOracle) Close() {
