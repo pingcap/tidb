@@ -274,7 +274,9 @@ func (p *Limit) attach2Task(tasks ...task) task {
 		cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		task = finishCopTask(cop, p.ctx, p.allocator)
 	}
-	task = attachPlan2Task(p.Copy(), task)
+	if !p.partial {
+		task = attachPlan2Task(p.Copy(), task)
+	}
 	return task
 }
 
@@ -340,8 +342,10 @@ func (p *TopN) attach2Task(tasks ...task) task {
 		copTask.addCost(pushedDownTopN.getCost(task.count()))
 	}
 	task = finishCopTask(task, p.ctx, p.allocator)
-	task = attachPlan2Task(p.Copy(), task)
-	task.addCost(p.getCost(task.count()))
+	if !p.partial {
+		task = attachPlan2Task(p.Copy(), task)
+		task.addCost(p.getCost(task.count()))
+	}
 	return task
 }
 
