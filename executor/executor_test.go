@@ -1356,6 +1356,12 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("-10 -10"))
 	result = tk.MustQuery("select ceil(t.c_decimal), ceiling(t.c_decimal) from (select cast('-10.01' as decimal(10,1)) as c_decimal) as t")
 	result.Check(testkit.Rows("-10 -10"))
+
+	// for cot
+	result = tk.MustQuery("select cot(1), cot(-1), cot(NULL)")
+	result.Check(testkit.Rows("0.6420926159343308 -0.6420926159343308 <nil>"))
+	result = tk.MustQuery("select cot('1tidb')")
+	result.Check(testkit.Rows("0.6420926159343308"))
 }
 
 func (s *testSuite) TestJSON(c *C) {
