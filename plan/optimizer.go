@@ -50,6 +50,27 @@ type logicalOptRule interface {
 	optimize(LogicalPlan, context.Context, *idAllocator) (LogicalPlan, error)
 }
 
+func isDashbasePlan(plan Plan) bool {
+	switch plan.(type) {
+	case DashbaseInsert, DashbaseSelect:
+		return true
+	}
+	return false
+}
+
+func ensureNoDashbasePlanInChildren(plan Plan) (success bool) {
+	if isDashbasePlan(plan) {
+		return false
+	}
+	// Check children.
+	for _, p := range plan.Children() {
+		if !ensureNoDashbasePlanInChildren(p) {
+			return false
+		}
+	}
+	return true
+}
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
@@ -67,6 +88,20 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
+	}
+
+	// Validate Dashbase plans
+	if isDashbasePlan(p) {
+		// For a dashbase plan, children is not allowed
+		children := p.Children()
+		if len(children) > 0 {
+			return nil, errors.New("Unsupported operation")
+		}
+	} else {
+		// For a normal plan, dashbase plan in children is not allowed
+		if !ensureNoDashbasePlanInChildren(p) {
+			return nil, errors.New("Unsupported operation")
+		}
 	}
 
 	// Maybe it's better to move this to Preprocess, but check privilege need table
