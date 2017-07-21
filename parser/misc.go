@@ -119,8 +119,6 @@ func init() {
 	initTokenString("<>", neqSynonym)
 	initTokenString("<<", lsh)
 	initTokenString(">>", rsh)
-	initTokenString("->", jss)   // jss means json separator symbol.
-	initTokenString("->>", juss) // juss means json unquoted separator symbol.
 
 	initTokenFunc("@", startWithAt)
 	initTokenFunc("/", startWithSlash)

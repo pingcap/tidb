@@ -554,14 +554,14 @@ import (
 
 	ge		">="
 	le		"<="
+	jss		"->"
+	juss		"->>"
 	lsh		"<<"
 	neq		"!="
 	neqSynonym	"<>"
 	nulleq		"<=>"
 	placeholder	"PLACEHOLDER"
 	rsh		">>"
-	jss		"->"
-	juss		"->>"
 
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
