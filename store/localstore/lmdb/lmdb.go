@@ -1,8 +1,20 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package lmdb
 
 import (
 	"os"
-	"path"
 	"runtime"
 
 	"github.com/bmatsuo/lmdb-go/lmdb"
@@ -26,18 +38,18 @@ type db struct {
 	queue chan *lmdbop
 }
 
-func (b *db) worker() {
+func (d *db) worker() {
 	runtime.LockOSThread()
 	defer runtime.LockOSThread()
 
-	for op := range b.queue {
-		op.res <- b.env.UpdateLocked(op.op)
+	for op := range d.queue {
+		op.res <- d.env.UpdateLocked(op.op)
 	}
 }
 
-func (b *db) update(op lmdb.TxnOp) error {
+func (d *db) update(op lmdb.TxnOp) error {
 	res := make(chan error)
-	b.queue <- &lmdbop{op, res}
+	d.queue <- &lmdbop{op, res}
 	return <-res
 }
 
@@ -62,6 +74,7 @@ func (d *db) Get(key []byte) ([]byte, error) {
 func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
 	var key, value []byte
 	err := d.env.View(func(txn *lmdb.Txn) error {
+		// Set RawRead true to reduce once memory copy
 		txn.RawRead = true
 		c, err := txn.OpenCursor(d.dbi)
 		if err != nil {
@@ -93,6 +106,7 @@ func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
 func (d *db) SeekReverse(startKey []byte) ([]byte, []byte, error) {
 	var key, value []byte
 	err := d.env.View(func(txn *lmdb.Txn) error {
+		// Set RawRead true to reduce once memory copy
 		txn.RawRead = true
 		c, err := txn.OpenCursor(d.dbi)
 		if err != nil {
@@ -103,7 +117,15 @@ func (d *db) SeekReverse(startKey []byte) ([]byte, []byte, error) {
 		if startKey == nil {
 			k, v, err = c.Get(nil, nil, lmdb.Last)
 		} else {
-			k, v, err = c.Get(startKey, nil, lmdb.Prev)
+			// Seek to startKey's prev
+			k, v, err = c.Get(startKey, nil, lmdb.SetRange)
+			if lmdb.IsNotFound(err) {
+				// If we got not found, we should give the last one
+				k, v, err = c.Get(nil, nil, lmdb.Last)
+			} else {
+				// get prev item.
+				k, v, err = c.Get(nil, nil, lmdb.Prev)
+			}
 		}
 		if err != nil {
 			if lmdb.IsNotFound(err) {
@@ -134,6 +156,10 @@ func (d *db) Commit(b engine.Batch) error {
 		for _, w := range bt.writes {
 			if w.isDelete {
 				err = txn.Del(d.dbi, w.key, nil)
+				// If key is not found just ignore it
+				if lmdb.IsNotFound(err) {
+					err = nil
+				}
 			} else {
 				err = txn.Put(d.dbi, w.key, w.value, 0)
 			}
@@ -187,8 +213,7 @@ type Driver struct {
 
 // Open opens or creates a local storage database with given path.
 func (driver Driver) Open(dbPath string) (engine.DB, error) {
-	base := path.Dir(dbPath)
-	os.MkdirAll(base, 0755)
+	os.MkdirAll(dbPath, 0755)
 
 	env, err := lmdb.NewEnv()
 	if err != nil {
