@@ -105,7 +105,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
-		if mysql.HasOnUpdateNowFlag(col.Flag) && !touched[i] && !onUpdateNoChange[i] {
+		if mysql.HasOnUpdateNowFlag(col.Flag) && !onUpdateNoChange[i] {
 			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
 			if err != nil {
 				return false, errors.Trace(err)

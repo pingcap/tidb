@@ -283,29 +283,32 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum) error {
 	for _, idx := range t.DeletableIndices() {
 		for _, ic := range idx.Meta().Columns {
-			if touched[ic.Offset] {
-				oldVs, err := idx.FetchValues(oldData)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if t.removeRowIndex(rm, h, oldVs, idx); err != nil {
-					return errors.Trace(err)
-				}
-				break
+			if !touched[ic.Offset] {
+				continue
 			}
+			oldVs, err := idx.FetchValues(oldData)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if t.removeRowIndex(rm, h, oldVs, idx); err != nil {
+				return errors.Trace(err)
+			}
+			break
 		}
 	}
 	for _, idx := range t.WritableIndices() {
 		for _, ic := range idx.Meta().Columns {
-			if touched[ic.Offset] {
-				newVs, err := idx.FetchValues(newData)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if err := t.buildIndexForRow(rm, h, newVs, idx); err != nil {
-					return errors.Trace(err)
-				}
+			if !touched[ic.Offset] {
+				continue
 			}
+			newVs, err := idx.FetchValues(newData)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if err := t.buildIndexForRow(rm, h, newVs, idx); err != nil {
+				return errors.Trace(err)
+			}
+			break
 		}
 	}
 	return nil
