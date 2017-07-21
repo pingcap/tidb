@@ -119,6 +119,11 @@ const (
 	ClientPluginAuthLenencClientData
 )
 
+// MySQL type maximum length.
+const (
+	MaxIntWidth = 20
+)
+
 // Cache type informations.
 const (
 	TypeNoCache byte = 0xff

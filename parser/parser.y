@@ -4220,6 +4220,11 @@ CastType:
 |	"SIGNED" OptInteger
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
+		x.Flen = mysql.MaxIntWidth
+		x.Decimal = 0
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"UNSIGNED" OptInteger

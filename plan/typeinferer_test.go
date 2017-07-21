@@ -79,6 +79,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"c_double is null", mysql.TypeLonglong, charset.CharsetBin},
 		{"isnull(1/0)", mysql.TypeLonglong, charset.CharsetBin},
 		{"cast(1 as decimal)", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"cast(\"xxx\" as signed integer)", mysql.TypeLonglong, charset.CharsetBin},
 
 		{"1 and 1", mysql.TypeLonglong, charset.CharsetBin},
 		{"1 or 1", mysql.TypeLonglong, charset.CharsetBin},
