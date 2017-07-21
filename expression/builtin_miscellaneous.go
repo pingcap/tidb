@@ -124,8 +124,8 @@ func (b *builtinSleepSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	duration := time.Duration(sleepTime.GetFloat64() * float64(time.Second.Nanoseconds()))
-	time.Sleep(duration)
+	dur := time.Duration(sleepTime.GetFloat64() * float64(time.Second.Nanoseconds()))
+	time.Sleep(dur)
 	d.SetInt64(0)
 	return
 }
