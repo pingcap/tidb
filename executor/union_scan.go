@@ -230,22 +230,17 @@ func (us *UnionScanExec) compare(a, b *Row) (int, error) {
 
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CIStr) error {
 	us.addedRows = make([]*Row, 0, len(us.dirty.addedRows))
+	newLen := us.schema.Len()
+	if !us.needColHandle {
+		newLen++
+	}
 	for h, data := range us.dirty.addedRows {
-		var newData []types.Datum
-		if us.schema.Len() == len(data) {
-			newData = data
-		} else {
-			newLen := us.schema.Len()
-			if us.needColHandle {
-				newLen--
+		newData := make([]types.Datum, 0, newLen)
+		for _, col := range us.columns {
+			if col.ID == -1 {
+				continue
 			}
-			newData = make([]types.Datum, 0, newLen)
-			for _, col := range us.columns {
-				if col.ID == -1 {
-					continue
-				}
-				newData = append(newData, data[col.Offset])
-			}
+			newData = append(newData, data[col.Offset])
 		}
 		matched, err := expression.EvalBool(us.conditions, newData, us.ctx)
 		if err != nil {
