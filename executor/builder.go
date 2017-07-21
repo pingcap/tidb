@@ -656,6 +656,10 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
+	var handleCol *expression.Column
+	if v.NeedColHandle {
+		handleCol = v.Schema().TblID2handle[v.Table.ID][0]
+	}
 	e := &XSelectIndexExec{
 		tableInfo:            v.Table,
 		ctx:                  b.ctx,
@@ -678,6 +682,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggFuncs:             v.AggFuncsPB,
 		byItems:              v.GbyItemsPB,
 		needColHandle:        v.NeedColHandle,
+		handleCol:            handleCol,
 	}
 	vars := b.ctx.GetSessionVars()
 	if v.OutOfOrder {

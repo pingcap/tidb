@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -75,10 +76,6 @@ func (e *TableReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *TableReaderExecutor) Next() (*Row, error) {
-	var handleID int64
-	if e.needColHandle {
-		handleID = e.schema.TblID2handle[e.tableID][0].ID
-	}
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -104,7 +101,8 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		if e.needColHandle && handleID == -1 {
+		log.Warnf("need: %v, handle col: %v, len: %v", e.needColHandle, e.handleCol, len(e.schema.TblID2handle))
+		if e.needColHandle && e.handleCol.ID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
@@ -192,10 +190,6 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next() (*Row, error) {
-	var handleID int64
-	if e.needColHandle {
-		handleID = e.schema.TblID2handle[e.tableID][0].ID
-	}
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -221,7 +215,7 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		if e.needColHandle && handleID == -1 {
+		if e.needColHandle && e.handleCol.ID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
@@ -344,6 +338,10 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	defer func() {
 		task.doneCh <- errors.Trace(err)
 	}()
+	var handleCol *expression.Column
+	if e.needColHandle {
+		handleCol = e.schema.TblID2handle[e.tableID][0]
+	}
 	tableReader := &TableReaderExecutor{
 		asName:        e.asName,
 		table:         e.table,
@@ -352,6 +350,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		schema:        e.schema,
 		ctx:           e.ctx,
 		needColHandle: e.needColHandle,
+		handleCol:     handleCol,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {

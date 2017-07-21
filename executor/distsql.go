@@ -384,6 +384,7 @@ type XSelectIndexExec struct {
 	outOfOrder           bool
 	indexConditionPBExpr *tipb.Expr
 	needColHandle        bool
+	handleCol            *expression.Column
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -453,10 +454,6 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		}
 		e.result.Fetch(e.ctx.GoCtx())
 	}
-	var handleID int64
-	if e.needColHandle {
-		handleID = e.schema.TblID2handle[e.tableInfo.ID][0].ID
-	}
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -494,7 +491,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			schema = e.idxColsSchema
 		}
 		values := make([]types.Datum, schema.Len())
-		if e.needColHandle && handleID == -1 {
+		if e.needColHandle && e.handleCol.ID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
@@ -511,7 +508,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			return &Row{Data: values}, nil
 		}
 		values = e.indexRowToTableRow(h, values)
-		if e.needColHandle && handleID == -1 {
+		if e.needColHandle && e.handleCol.ID == -1 {
 			values[len(values)-1].SetInt64(h)
 		}
 		return resultRowToRow(e.table, h, values, e.asName), nil
@@ -798,13 +795,7 @@ func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult d
 
 func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult distsql.PartialResult) ([]*Row, error) {
 	defer partialResult.Close()
-	var (
-		rows     []*Row
-		handleID int64
-	)
-	if e.needColHandle {
-		handleID = e.schema.TblID2handle[e.tableInfo.ID][0].ID
-	}
+	var rows []*Row
 	for {
 		h, rowData, err := partialResult.Next()
 		if err != nil {
@@ -820,7 +811,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		values := make([]types.Datum, length)
 		// If the handle col is not pk or we need it to sort the rows, it should be generated
 		// and cannot set value by SetRawValues.
-		if (e.needColHandle && handleID == -1) || length > e.schema.Len() {
+		if (e.needColHandle && e.handleCol.ID == -1) || length > e.schema.Len() {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
