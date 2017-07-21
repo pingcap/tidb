@@ -15,6 +15,7 @@ package expression
 
 import (
 	"encoding/json"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
