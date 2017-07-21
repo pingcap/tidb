@@ -238,7 +238,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 		if col.State != model.StatePublic {
 			// if col is in write only or write reorganization state
 			// and the value is not default, we should use default value.
-			value, err = table.GetColDefaultValue(ctx, col.ToInfo())
+			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -354,7 +354,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		var value types.Datum
 		if col.State != model.StatePublic {
 			// if col is in write only or write reorganization state, we must add it with its default value.
-			value, err = table.GetColDefaultValue(ctx, col.ToInfo())
+			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
