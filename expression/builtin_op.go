@@ -45,50 +45,37 @@ type andandFunctionClass struct {
 }
 
 func (c *andandFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinAndAndSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	err := c.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinAndAndSig{baseIntBuiltinFunc{bf}}
+	sig.tp.Flen = 1
+	return sig.setSelf(sig), nil
 }
 
 type builtinAndAndSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-func (b *builtinAndAndSig) eval(row []types.Datum) (d types.Datum, err error) {
-	leftDatum, err := b.args[0].Eval(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
+func (b *builtinAndAndSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if !leftDatum.IsNull() {
-		var x int64
-		x, err = leftDatum.ToBool(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		} else if x == 0 {
-			// false && any other types is false
-			d.SetInt64(x)
-			return
-		}
+	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
+	if err != nil || (!isNull0 && arg0 == 0) {
+		return 0, false, errors.Trace(err)
 	}
-	rightDatum, err := b.args[1].Eval(row)
-	if err != nil {
-		return d, errors.Trace(err)
+	arg1, isNull1, err := b.args[1].EvalInt(row, sc)
+	if err != nil || (!isNull1 && arg1 == 0) {
+		return 0, false, errors.Trace(err)
 	}
-	if !rightDatum.IsNull() {
-		var y int64
-		y, err = rightDatum.ToBool(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		} else if y == 0 {
-			d.SetInt64(y)
-			return
-		}
+	if isNull0 || isNull1 {
+		return 0, true, nil
 	}
-	if leftDatum.IsNull() || rightDatum.IsNull() {
-		return
-	}
-	d.SetInt64(int64(1))
-	return
+	return 1, false, nil
 }
 
 type ororFunctionClass struct {
