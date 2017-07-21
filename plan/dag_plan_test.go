@@ -183,6 +183,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		best string
 	}{
 		{
+			sql:  "select * from t t1 join t t2 on t1.a = t2.c_str",
+			best: "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}(cast(t1.a),cast(t2.c_str))->Projection",
+		},
+		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a",
 			best: "IndexJoin{IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
 		},
@@ -204,11 +208,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t where t.c in (select b from t s where s.a = t.a)",
-			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}",
+			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)(test.t.c,s.b)",
 		},
 		{
 			sql:  "select t.c in (select b from t s where s.a = t.a) from t",
-			best: "SemiJoinWithAux{TableReader(Table(t))->TableReader(Table(t))}->Projection",
+			best: "SemiJoinWithAux{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)(test.t.c,s.b)->Projection",
 		},
 		// Test Single Merge Join.
 		// Merge Join will no longer enforce a sort. If a hint doesn't take effect, we will choose other types of join.
@@ -299,6 +303,44 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		{
 			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 right outer join t t2 on t1.a = t2.b",
 			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t2.b,t1.a)->Projection",
+		},
+	}
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := plan.MockResolve(stmt)
+		c.Assert(err, IsNil)
+		p, err := plan.Optimize(se, stmt, is)
+		c.Assert(err, IsNil)
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+	}
+}
+
+func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		// Test join key with cast.
+		{
+			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
+			best: "SemiJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->HashAgg)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection",
+		},
+		{
+			// Test Nested sub query.
+			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
+			best: "SemiJoin{TableReader(Table(t))->Projection->SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(s.d,k.d)(s.c,k.c)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection",
 		},
 	}
 	for _, tt := range tests {

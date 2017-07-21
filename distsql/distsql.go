@@ -301,6 +301,7 @@ const (
 func FieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 	return &types.FieldType{
 		Tp:      byte(col.GetTp()),
+		Flag:    uint(col.Flag),
 		Flen:    int(col.GetColumnLen()),
 		Decimal: int(col.GetDecimal()),
 		Elems:   col.Elems,
