@@ -965,6 +965,12 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("616263 E4BDA0E5A5BD C C D"))
 	result = tk.MustQuery(`select hex(-1), hex(-12.3), hex(-12.8), hex(0x12), hex(null)`)
 	result.Check(testkit.Rows("FFFFFFFFFFFFFFFF FFFFFFFFFFFFFFF4 FFFFFFFFFFFFFFF3 12 <nil>"))
+
+	// for unhex
+	result = tk.MustQuery(`select unhex('4D7953514C'), unhex('313233'), unhex(313233), unhex('')`)
+	result.Check(testkit.Rows("MySQL 123 123 "))
+	result = tk.MustQuery(`select unhex('string'), unhex('你好'), unhex(123.4), unhex(null)`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {
