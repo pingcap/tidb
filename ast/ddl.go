@@ -500,6 +500,7 @@ type CreateIndexStmt struct {
 	Table         *TableName
 	Unique        bool
 	IndexColNames []*IndexColName
+	IndexOption   *IndexOption
 }
 
 // Accept implements Node Accept interface.
@@ -520,6 +521,13 @@ func (n *CreateIndexStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.IndexColNames[i] = node.(*IndexColName)
+	}
+	if n.IndexOption != nil {
+		node, ok := n.IndexOption.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.IndexOption = node.(*IndexOption)
 	}
 	return v.Leave(n)
 }
