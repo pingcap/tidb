@@ -157,6 +157,17 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	_, err = index.Create(txn, values, 2)
 	c.Assert(err, NotNil)
 
+	it, err = index.SeekFirst(txn)
+	c.Assert(err, IsNil)
+
+	getValues, h, err = it.Next()
+	c.Assert(err, IsNil)
+	c.Assert(getValues, HasLen, 2)
+	c.Assert(getValues[0].GetInt64(), Equals, int64(1))
+	c.Assert(getValues[1].GetInt64(), Equals, int64(2))
+	c.Assert(h, Equals, int64(1))
+	it.Close()
+
 	exist, h, err = index.Exist(txn, values, 1)
 	c.Assert(err, IsNil)
 	c.Assert(h, Equals, int64(1))
