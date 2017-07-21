@@ -479,7 +479,11 @@ func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			limit := Limit{Offset: p.Offset, Count: p.Count}.init(p.allocator, p.ctx)
+			limit := Limit{
+				Offset:  p.Offset,
+				Count:   p.Count,
+				partial: p.partial,
+			}.init(p.allocator, p.ctx)
 			limit.SetSchema(p.schema)
 			limit.profile = p.profile
 			orderedTask = limit.attach2Task(orderedTask)
