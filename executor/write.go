@@ -38,11 +38,9 @@ var (
 	_ Executor = &LoadData{}
 )
 
-// 1. Fill values into on-update-now fields;
-// 2. rebase auto increment id if the field is changed;
-// 3. cast changed fields with respective columns;
-// 4. calculate it updates the record really or not;
-// 5. check not-null constraints.
+// updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
+// `touched` means which columns are really modified. It's used for secondary indices.
+// Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool, t table.Table, onDup bool) (bool, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
@@ -54,12 +52,14 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	// because all of them are sorted by their `Offset`, which
 	// causes all writable columns are after public columns.
 	for i, col := range t.Cols() {
+		// Cast changed fields with respective columns.
 		v, err := table.CastValue(ctx, newData[i], col.ToInfo())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		newData[i] = v
 
+		// Rebase auto increment id if the field is changed.
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
 				return false, errors.Errorf("Column '%v' cannot be null", col.Name.O)
@@ -89,6 +89,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		}
 	}
 
+	// Check the not-null constraints.
 	err := table.CheckNotNull(t.Cols(), newData)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -102,7 +103,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		return false, nil
 	}
 
-	// Only if some fields are really changed, we can change those on-update fields.
+	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !touched[i] && !onUpdateNoChange[i] {
 			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
@@ -993,13 +994,13 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 // onDuplicateUpdate updates the duplicate row.
 // TODO: Report rows affected and last insert id.
 func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expression.Assignment) error {
-	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	e.ctx.GetSessionVars().CurrInsertValues = row
-
 	data, err := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+	e.ctx.GetSessionVars().CurrInsertValues = row
 
 	// evaluate assignment
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
