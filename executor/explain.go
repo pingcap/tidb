@@ -15,6 +15,7 @@ package executor
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
@@ -24,7 +25,6 @@ import (
 )
 
 // ExplainExec represents an explain executor.
-// See https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
 type ExplainExec struct {
 	baseExecutor
 
@@ -61,8 +61,8 @@ func (e *ExplainExec) prepareExplainInfo(p plan.Plan, parent plan.Plan) error {
 	return nil
 }
 
-// prepareExplainInfo4DAGTask prepares these informations for every plan in the directed acyclic plan graph:
-// ["id", "parents", "schema", "key info", "task type", "operator info"] for every plan
+// prepareExplainInfo4DAGTask generates the following informations for every plan:
+// ["id", "parents", "schema", "key", "task", "operator info"]
 func (e *ExplainExec) prepareExplainInfo4DAGTask(p plan.PhysicalPlan, taskType string) error {
 	parents := p.Parents()
 	parentIDs := make([]string, 0, len(parents))
@@ -74,15 +74,17 @@ func (e *ExplainExec) prepareExplainInfo4DAGTask(p plan.PhysicalPlan, taskType s
 	uniqueKeyInfo := p.Schema().KeyInfo()
 	operatorInfo := p.ExplainInfo()
 	row := &Row{
-		Data: types.MakeDatums(p.ID(), parentInfo, columnInfo, uniqueKeyInfo, taskType, operatorInfo),
+		Data: types.MakeDatums(fmt.Sprintf("%s(%T)", p.ID(), p), parentInfo, columnInfo, uniqueKeyInfo, taskType, operatorInfo),
 	}
 	e.rows = append(e.rows, row)
 	return nil
 }
 
+// prepareCopTaskInfo generates explain informations for cop-tasks.
+// Only PhysicalTableReader, PhysicalIndexReader and PhysicalIndexLookUpReader have cop-tasks currently.
 func (e *ExplainExec) prepareCopTaskInfo(plans []plan.PhysicalPlan) error {
 	for _, p := range plans {
-		err := e.prepareExplainInfo4DAGTask(p, "cop task")
+		err := e.prepareExplainInfo4DAGTask(p, "cop")
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -90,6 +92,7 @@ func (e *ExplainExec) prepareCopTaskInfo(plans []plan.PhysicalPlan) error {
 	return nil
 }
 
+// prepareRootTaskInfo generates explain informations for root-tasks.
 func (e *ExplainExec) prepareRootTaskInfo(p plan.PhysicalPlan) error {
 	e.explainedPlans[p.ID()] = true
 	for _, child := range p.Children() {
@@ -110,7 +113,7 @@ func (e *ExplainExec) prepareRootTaskInfo(p plan.PhysicalPlan) error {
 		e.prepareCopTaskInfo(copPlan.IndexPlans)
 		e.prepareCopTaskInfo(copPlan.TablePlans)
 	}
-	err := e.prepareExplainInfo4DAGTask(p, "root task")
+	err := e.prepareExplainInfo4DAGTask(p, "root")
 	if err != nil {
 		return errors.Trace(err)
 	}

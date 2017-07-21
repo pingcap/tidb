@@ -14,15 +14,15 @@
 package expression
 
 import (
-	"fmt"
 	"bytes"
+	"fmt"
 )
 
 func (expr *ScalarFunction) ExplainInfo() string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", expr.FuncName.L))
 	for i, arg := range expr.GetArgs() {
 		buffer.WriteString(fmt.Sprintf("%s", arg.ExplainInfo()))
-		if i<len(expr.GetArgs()) {
+		if i < len(expr.GetArgs()) {
 			buffer.WriteString(", ")
 		}
 	}
@@ -37,7 +37,22 @@ func (expr *Column) ExplainInfo() string {
 func (expr *Constant) ExplainInfo() string {
 	valStr, err := expr.Value.ToString()
 	if err != nil {
-		valStr = "not recognize const value"
+		valStr = "not recognized const value"
 	}
 	return fmt.Sprintf("const(%s)", valStr)
+}
+
+func ExplainAggFunc(agg AggregationFunction) string {
+	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", agg.GetName()))
+	if agg.IsDistinct() {
+		buffer.WriteString("distinct ")
+	}
+	for i, arg := range agg.GetArgs() {
+		buffer.WriteString(arg.ExplainInfo())
+		if i+1 < len(agg.GetArgs()) {
+			buffer.WriteString(", ")
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
 }
