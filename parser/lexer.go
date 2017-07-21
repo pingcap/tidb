@@ -294,8 +294,18 @@ func startWithSharp(s *Scanner) (tok int, pos Pos, lit string) {
 func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	if !strings.HasPrefix(s.r.s[pos.Offset:], "-- ") {
-		tok = int('-')
-		s.r.inc()
+		if strings.HasPrefix(s.r.s[pos.Offset:], "->") {
+			if strings.HasPrefix(s.r.s[pos.Offset:], "->>") {
+				tok = juss
+				s.r.incN(3)
+			} else {
+				tok = jss
+				s.r.incN(2)
+			}
+		} else {
+			tok = int('-')
+			s.r.inc()
+		}
 		return
 	}
 
