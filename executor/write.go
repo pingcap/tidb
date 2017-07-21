@@ -39,14 +39,14 @@ var (
 )
 
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
-// `touched` means which columns are really modified. It's used for secondary indices.
+// `modified` means which columns are really modified. It's used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool, t table.Table, onDup bool) (bool, error) {
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table, onDup bool) (bool, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
-	// onUpdateNoChange is for "UPDATE SET ts_field = old_value", the
+	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
-	var onUpdateNoChange = make(map[int]bool)
+	var onUpdateSpecified = make(map[int]bool)
 
 	// We can iterate on public columns not writable columns,
 	// because all of them are sorted by their `Offset`, which
@@ -76,16 +76,16 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		}
 		if cmp != 0 {
 			changed = true
-			touched[i] = true
+			modified[i] = true
 			if col.IsPKHandleColumn(t.Meta()) {
 				handleChanged = true
 			}
 		} else {
-			if mysql.HasOnUpdateNowFlag(col.Flag) && touched[i] {
+			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
 				// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
-				onUpdateNoChange[i] = true
+				onUpdateSpecified[i] = true
 			}
-			touched[i] = false
+			modified[i] = false
 		}
 	}
 
@@ -105,7 +105,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
-		if mysql.HasOnUpdateNowFlag(col.Flag) && !onUpdateNoChange[i] {
+		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
 			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
 			if err != nil {
 				return false, errors.Trace(err)
@@ -122,7 +122,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		_, err = t.AddRecord(ctx, newData)
 	} else {
 		// Update record to new value and update index.
-		err = t.UpdateRecord(ctx, h, oldData, newData, touched)
+		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
 	}
 	if err != nil {
 		return false, errors.Trace(err)
