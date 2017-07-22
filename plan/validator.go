@@ -307,13 +307,14 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 	return nil
 }
 
-//checkFieldLengthLimitation check the maximum length of the column
+// checkFieldLengthLimitation check the maximum length of the column
+// See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
 func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 	tp := colDef.Tp
 	if tp == nil {
 		return nil
 	}
-	if tp.Flen > 4294967295 || tp.Decimal > 4294967295 {
+	if tp.Flen > 4294967295 {
 		return errors.Errorf("Display width out of range for column '%s' (max = 4294967295)", colDef.Name.Name.O)
 	}
 	switch tp.Tp {
