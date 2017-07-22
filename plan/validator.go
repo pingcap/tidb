@@ -310,6 +310,9 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 //checkFieldLengthLimitation check the maximum length of the column
 func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 	tp := colDef.Tp
+	if tp == nil{
+		return nil
+	}
 	switch tp.Tp {
 	case mysql.TypeString:
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > 255 {
