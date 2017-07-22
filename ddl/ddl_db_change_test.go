@@ -194,6 +194,8 @@ type sqlInfo struct {
 	cases []*stateCase
 }
 
+// testExecInfo contains some SQL information and the number of times each SQL is executed
+// in a DDL statement.
 type testExecInfo struct {
 	// execCases represents every SQL need to be executed execCases times.
 	// And the schema state is different at each execution.
