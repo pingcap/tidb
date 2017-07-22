@@ -76,13 +76,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[autoid:3]No support for setting auto_increment using alter_table")},
 		{"alter table t add column c int auto_increment key", true, nil},
 		{"create table `` (a int)", true, errors.New("[ddl:1103]Incorrect table name ''")},
-		{"alter table t add column varchar4294967295 varchar(4294967295)", true,
-			errors.New("Column length too big for column 'varchar4294967295' (max = 21845); use BLOB or TEXT instead")},
 		{"alter table t add column char4294967295 char(4294967295)", true,
-			errors.New("Column length too big for column 'char4294967295' (max = 255); use BLOB or TEXT instead")},
-		{"create table t2 (varchar4294967295 varchar(4294967295))", true,
-			errors.New("Column length too big for column 'varchar4294967295' (max = 21845); use BLOB or TEXT instead")},
-		{"create table t2 (char4294967295 char(4294967295))", true,
 			errors.New("Column length too big for column 'char4294967295' (max = 255); use BLOB or TEXT instead")},
 	}
 

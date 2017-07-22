@@ -310,17 +310,13 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 //checkFieldLengthLimitation check the maximum length of the column
 func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 	tp := colDef.Tp
-	if tp == nil{
+	if tp == nil {
 		return nil
 	}
 	switch tp.Tp {
 	case mysql.TypeString:
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > 255 {
 			return errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
-		}
-	case mysql.TypeVarchar:
-		if tp.Flen != types.UnspecifiedLength && tp.Flen > 21845 {
-			return errors.Errorf("Column length too big for column '%s' (max = 21845); use BLOB or TEXT instead", colDef.Name.Name.O)
 		}
 	}
 	return nil
