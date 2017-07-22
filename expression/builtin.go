@@ -549,6 +549,15 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
 		return errIncorrectParameterCount.GenByArgs(b.funcName)
 	}
+	for i, arg := range args {
+		if arg == nil {
+			return errors.Errorf("arg[%v] of function %s can not be nil.", i, b.funcName)
+		}
+		if arg.GetType() == nil {
+			return errors.Errorf("arg[%v]'s return type of function %s can not be nil.",
+				i, b.funcName)
+		}
+	}
 	return nil
 }
 
@@ -771,7 +780,7 @@ var funcs = map[string]functionClass{
 	ast.LT:         &compareFunctionClass{baseFunctionClass{ast.LT, 2, 2}, opcode.LT},
 	ast.GT:         &compareFunctionClass{baseFunctionClass{ast.GT, 2, 2}, opcode.GT},
 	ast.NullEQ:     &compareFunctionClass{baseFunctionClass{ast.NullEQ, 2, 2}, opcode.NullEQ},
-	ast.Plus:       &arithmeticFunctionClass{baseFunctionClass{ast.Plus, 2, 2}, opcode.Plus},
+	ast.Plus:       &arithmeticPlusFunctionClass{baseFunctionClass{ast.Plus, 2, 2}},
 	ast.Minus:      &arithmeticFunctionClass{baseFunctionClass{ast.Minus, 2, 2}, opcode.Minus},
 	ast.Mod:        &arithmeticFunctionClass{baseFunctionClass{ast.Mod, 2, 2}, opcode.Mod},
 	ast.Div:        &arithmeticFunctionClass{baseFunctionClass{ast.Div, 2, 2}, opcode.Div},
