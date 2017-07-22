@@ -212,10 +212,8 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
-		tp := colDef.Tp
-		if tp.Tp == mysql.TypeString &&
-			tp.Flen != types.UnspecifiedLength && tp.Flen > 255 {
-			v.err = errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
+		if err := checkFieldLengthLimitation(colDef); err != nil {
+			v.err = err
 			return
 		}
 		countPrimaryKey += isPrimary(colDef.Options)
@@ -264,6 +262,12 @@ func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	specs := stmt.Specs
 	for _, spec := range specs {
+		if spec.NewColumn != nil {
+			if err := checkFieldLengthLimitation(spec.NewColumn); err != nil {
+				v.err = err
+				return
+			}
+		}
 		switch spec.Tp {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
@@ -298,6 +302,22 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 			if name1.L == name2.L {
 				return infoschema.ErrColumnExists.GenByArgs(name2)
 			}
+		}
+	}
+	return nil
+}
+
+//checkFieldLengthLimitation check the maximum length of the column
+func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
+	tp := colDef.Tp
+	switch tp.Tp {
+	case mysql.TypeString:
+		if tp.Flen != types.UnspecifiedLength && tp.Flen > 255 {
+			return errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
+		}
+	case mysql.TypeVarchar:
+		if tp.Flen != types.UnspecifiedLength && tp.Flen > 21845 {
+			return errors.Errorf("Column length too big for column '%s' (max = 21845); use BLOB or TEXT instead", colDef.Name.Name.O)
 		}
 	}
 	return nil
