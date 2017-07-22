@@ -313,10 +313,21 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 	if tp == nil {
 		return nil
 	}
+	if tp.Flen > 4294967295 || tp.Decimal > 4294967295 {
+		return errors.Errorf("Display width out of range for column '%s' (max = 4294967295)", colDef.Name.Name.O)
+	}
 	switch tp.Tp {
 	case mysql.TypeString:
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > 255 {
 			return errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
+		}
+	case mysql.TypeDouble:
+		if tp.Flen != types.UnspecifiedLength && tp.Flen > 53 {
+			return errors.Errorf("Incorrect column specifier for column '%s'", colDef.Name.Name.O)
+		}
+	case mysql.TypeSet:
+		if len(tp.Elems) > 64 {
+			return errors.Errorf("Too many strings for column %s and SET", colDef.Name.Name.O)
 		}
 	}
 	return nil

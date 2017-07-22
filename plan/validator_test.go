@@ -78,6 +78,20 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"create table `` (a int)", true, errors.New("[ddl:1103]Incorrect table name ''")},
 		{"alter table t add column char4294967295 char(4294967295)", true,
 			errors.New("Column length too big for column 'char4294967295' (max = 255); use BLOB or TEXT instead")},
+		{"alter table t add column char4294967296 char(4294967296)", true,
+			errors.New("Display width out of range for column 'char4294967296' (max = 4294967295)")},
+		{"create table t (c float(4294967296));", true,
+			errors.New("Display width out of range for column 'c' (max = 4294967295)")},
+		{"alter table t add column c float(4294967296);", true,
+			errors.New("Display width out of range for column 'c' (max = 4294967295)")},
+		{"create table t (c float(54));", true,
+			errors.New("Incorrect column specifier for column 'c'")},
+		{"alter table t add column c float(54);", true,
+			errors.New("Incorrect column specifier for column 'c'")},
+		{"create table t (set65 set ('1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30','31','32','33','34','35','36','37','38','39','40','41','42','43','44','45','46','47','48','49','50','51','52','53','54','55','56','57','58','59','60','61','62','63','64','65'))", true,
+			errors.New("Too many strings for column set65 and SET")},
+		{"alter table t add column set65 set ('1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30','31','32','33','34','35','36','37','38','39','40','41','42','43','44','45','46','47','48','49','50','51','52','53','54','55','56','57','58','59','60','61','62','63','64','65')", true,
+			errors.New("Too many strings for column set65 and SET")},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
