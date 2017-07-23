@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -137,6 +138,99 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
 	s.testColumnDrop(c, ctx, d, tb) // delete 3rd column
 	s.testAddMultipleColumns(c, ctx, d, tblInfo)
+}
+
+func (s *testColumnChangeSuite) TestAddColumnJobArgsChangeInRunning(c *C) {
+	defer testleak.AfterTest(c)()
+	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	defer d.Stop()
+	// create table t_resume (c1 int);
+	tblInfo := testTableInfo(c, d, "t_resume", 1)
+	ctx := testNewContext(d)
+	err := ctx.NewTxn()
+	c.Assert(err, IsNil)
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+
+	tc := &testDDLCallback{}
+	s.testCheckAddColumn(c, ctx, d, tc, tblInfo, "c2", &ast.ColumnPosition{Tp: ast.ColumnPositionFirst},
+		types.MakeDatums(1, 2))
+	s.testCheckAddColumn(c, ctx, d, tc, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone},
+		types.MakeDatums(2, 3, 4))
+	s.testCheckAddColumn(c, ctx, d, tc, tblInfo, "c4",
+		&ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c2")}},
+		types.MakeDatums(1, 2, 3, 4))
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	assertEqualColumnNames(c, t.Cols(), []string{"c2", "c4", "c1", "c3"})
+}
+
+func (s *testColumnChangeSuite) testCheckAddColumn(c *C, ctx context.Context, d *ddl, tc *testDDLCallback,
+	tblInfo *model.TableInfo, colName string, pos *ast.ColumnPosition, newRecord []types.Datum) {
+	col := &model.ColumnInfo{
+		Name:               model.NewCIStr(colName),
+		Offset:             len(tblInfo.Columns),
+		DefaultValue:       int64(3),
+		OriginDefaultValue: int64(3),
+	}
+	col.ID = allocateColumnID(tblInfo)
+	col.FieldType = *types.NewFieldType(mysql.TypeLong)
+	d.Stop()
+	tc.onJobRunBefore = func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+			job.Type = model.ActionAddColumn
+			job.EncodeArgs(col, pos, 0)
+		}
+	}
+	prevState := model.StateNone
+	var checkErr error
+	var writeOnlyTable table.Table
+	tc.onJobUpdated = func(job *model.Job) {
+		if job.SchemaState == prevState {
+			return
+		}
+		hookCtx := mock.NewContext()
+		hookCtx.Store = s.store
+		prevState = job.SchemaState
+		var err error
+		err = hookCtx.NewTxn()
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+		case model.StatePublic:
+			_, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+			_, err = writeOnlyTable.AddRecord(hookCtx, newRecord)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+		}
+		err = hookCtx.Txn().Commit()
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
+	}
+	d.setHook(tc)
+	d.start(goctx.Background())
+
+	job := testAddColumnJob(c, ctx, d, s.dbInfo, tblInfo, col, pos)
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	testCheckJobDone(c, d, job, true)
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	testCheckColumnState(c, t.Meta(), colName, model.StatePublic)
+}
+
+func testCheckColumnState(c *C, tblInfo *model.TableInfo, colName string, state model.SchemaState) {
+	col, _ := findCol(tblInfo.Columns, colName)
+	c.Check(col, NotNil)
+	c.Check(col.State, Equals, state)
 }
 
 func (s *testColumnChangeSuite) testAddMultipleColumns(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {

@@ -210,7 +210,6 @@ func (testModelSuite) TestState(c *C) {
 	}
 }
 
-
 func (testModelSuite) TestString(c *C) {
 	acts := []struct {
 		act    ActionType
@@ -229,6 +228,7 @@ func (testModelSuite) TestString(c *C) {
 		{ActionDropTable, "drop table"},
 		{ActionAddIndex, "add index"},
 		{ActionDropIndex, "drop index"},
+		{ActionAddColumn, "add column"},
 		{ActionAddColumns, "add columns"},
 		{ActionDropColumn, "drop column"},
 	}

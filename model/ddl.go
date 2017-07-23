@@ -32,6 +32,7 @@ const (
 	ActionDropSchema
 	ActionCreateTable
 	ActionDropTable
+	ActionAddColumn
 	ActionAddColumns
 	ActionDropColumn
 	ActionAddIndex
@@ -54,6 +55,8 @@ func (action ActionType) String() string {
 		return "create table"
 	case ActionDropTable:
 		return "drop table"
+	case ActionAddColumn:
+		return "add column"
 	case ActionAddColumns:
 		return "add columns"
 	case ActionDropColumn:
@@ -173,6 +176,14 @@ func (job *Job) Decode(b []byte) error {
 func (job *Job) DecodeArgs(args ...interface{}) error {
 	job.Args = args
 	err := json.Unmarshal(job.RawArgs, &job.Args)
+	return errors.Trace(err)
+}
+
+// EncodeArgs set Args , meanwhile, it set RawArgs to encoded args.
+func (job *Job) EncodeArgs(args ...interface{}) error {
+	var err error
+	job.Args = args
+	job.RawArgs, err = json.Marshal(job.Args)
 	return errors.Trace(err)
 }
 

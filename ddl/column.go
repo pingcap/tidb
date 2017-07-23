@@ -159,6 +159,28 @@ func (d *ddl) getColumnInfos(columns []*model.ColumnInfo, positions []*ast.Colum
 	return columnInfos, nil
 }
 
+// onAddColumn convert previous ActionAddColumnJob to ActionAddColumnsJob
+func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	col := &model.ColumnInfo{}
+	pos := &ast.ColumnPosition{}
+	offset := 0
+	err := job.DecodeArgs(col, pos, &offset)
+	if err != nil {
+		job.State = model.JobCancelled
+		return ver, errors.Trace(err)
+	}
+
+	columns := []*model.ColumnInfo{col}
+	positions := []*ast.ColumnPosition{pos}
+	if err = job.EncodeArgs(columns, positions); err != nil {
+		job.State = model.JobCancelled
+		return ver, errors.Trace(err)
+	}
+	job.Type = model.ActionAddColumns
+
+	return d.onAddColumns(t, job)
+}
+
 func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
@@ -168,8 +190,7 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	columns := []*model.ColumnInfo{}
 	positions := []*ast.ColumnPosition{}
-	lastColOffset := 0
-	if err = job.DecodeArgs(&columns, &positions, &lastColOffset); err != nil {
+	if err = job.DecodeArgs(&columns, &positions); err != nil {
 		job.State = model.JobCancelled
 		return ver, errors.Trace(err)
 	}
@@ -177,10 +198,6 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if len(columns) != len(positions) {
 		job.State = model.JobCancelled
 		return ver, errors.Trace(errInvalidColumnDefs.GenByArgs(len(columns), len(positions)))
-	}
-	// First run of this job, get the offset of last column.
-	if lastColOffset == 0 {
-		lastColOffset = len(tblInfo.Columns)
 	}
 
 	if err = checkHasDuplicateColumnName(columns); err != nil {
@@ -200,7 +217,7 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, ErrInvalidColumnState.Gen("unconsistency of all columns state: %v", originalState)
 	}
 
-	job.Args = []interface{}{columnInfos, positions, lastColOffset}
+	job.Args = []interface{}{columnInfos, positions}
 	switch columnInfos[0].State {
 	case model.StateNone:
 		job.SchemaState = model.StateDeleteOnly
@@ -228,6 +245,7 @@ func (d *ddl) onAddColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 
+		lastColOffset := len(tblInfo.Columns) - len(columns)
 		d.adjustColumnOffsetForAdd(tblInfo.Columns, tblInfo.Indices, lastColOffset)
 		setAllColumnsState(columnInfos, model.StatePublic)
 		job.SchemaState = model.StatePublic
