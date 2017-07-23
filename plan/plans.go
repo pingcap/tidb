@@ -47,16 +47,6 @@ type SelectLock struct {
 	Lock ast.SelectLockType
 }
 
-// Limit represents offset and limit plan.
-type Limit struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
-
-	Offset uint64
-	Count  uint64
-}
-
 // Prepare represents prepare plan.
 type Prepare struct {
 	basePlan
