@@ -2772,7 +2772,7 @@ Function:
 	    expr := ast.NewValueExpr($3)
 	    expr.SetType(tp)
 
-	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr("JSON_EXTRACT"), Args: []ast.ExprNode{col, expr}}
+	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{col, expr}}
 	}
 |	Identifier juss stringLit
 	{
@@ -2783,8 +2783,8 @@ Function:
 	    expr := ast.NewValueExpr($3)
 	    expr.SetType(tp)
 
-	    extract := &ast.FuncCallExpr{FnName: model.NewCIStr("JSON_EXTRACT"), Args: []ast.ExprNode{col, expr}}
-	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr("JSON_UNQUOTE"), Args: []ast.ExprNode{extract}}
+	    extract := &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{col, expr}}
+	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONUnquote), Args: []ast.ExprNode{extract}}
 	}
 
 FunctionNameConflict:
