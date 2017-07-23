@@ -943,12 +943,16 @@ func (s *testEvaluatorSuite) TestCot(c *C) {
 		expect float64
 		isNil  bool
 		getErr bool
+		errMsg string
 	}{
-		{nil, 0, true, false},
-		{float64(0), 0, false, true},
-		{float64(-1), -0.6420926159343308, false, false},
-		{float64(1), 0.6420926159343308, false, false},
-		{"tidb", 0, false, true},
+		{nil, 0, true, false, ""},
+		{float64(0), 0, false, true, "[types:1690]DOUBLE value is out of range in 'cot(0)'"},
+		{float64(-1), -0.6420926159343308, false, false, ""},
+		{float64(1), 0.6420926159343308, false, false, ""},
+		{math.Pi / 4, 1 / math.Tan(math.Pi/4), false, false, ""},
+		{math.Pi / 2, 1 / math.Tan(math.Pi/2), false, false, ""},
+		{math.Pi, 1 / math.Tan(math.Pi), false, false, ""},
+		{"tidb", 0, false, true, ""},
 	}
 
 	for _, test := range tests {
@@ -958,6 +962,9 @@ func (s *testEvaluatorSuite) TestCot(c *C) {
 		result, err := f.Eval(nil)
 		if test.getErr {
 			c.Assert(err, NotNil)
+			if test.errMsg != "" {
+				c.Assert(err.Error(), Equals, test.errMsg)
+			}
 		} else {
 			c.Assert(err, IsNil)
 			if test.isNil {

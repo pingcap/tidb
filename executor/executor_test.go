@@ -1362,6 +1362,12 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("0.6420926159343308 -0.6420926159343308 <nil>"))
 	result = tk.MustQuery("select cot('1tidb')")
 	result.Check(testkit.Rows("0.6420926159343308"))
+	rs, err := tk.Exec("select cot(0)")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 }
 
 func (s *testSuite) TestJSON(c *C) {
