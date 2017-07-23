@@ -230,6 +230,7 @@ import (
 	xor 			"XOR"
 	yearMonth		"YEAR_MONTH"
 	zerofill		"ZEROFILL"
+	natural			"NATURAL"
 
 	/* the following tokens belong to NotKeywordToken*/
 	abs				"ABS"
@@ -889,7 +890,7 @@ import (
 %precedence lowerThanKey
 %precedence key
 
-%left   join inner cross left right full
+%left   join inner cross left right full natural
 /* A dummy token to force the priority of TableRef production in a join. */
 %left   tableRefPriority
 %precedence lowerThanOn
@@ -2405,7 +2406,7 @@ ReservedKeyword:
 | "STARTING" | "TABLE" | "STORED" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRIGGER" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
 | "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "VALUES" | "VARBINARY" | "VARCHAR" | "VIRTUAL"
-| "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL"
+| "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL" | "NATURAL"
  /*
 | "DELAYED" | "HIGH_PRIORITY" | "LOW_PRIORITY"| "WITH"
  */
@@ -4602,6 +4603,14 @@ JoinTable:
 |	TableRef JoinType OuterOpt "JOIN" TableRef "USING" '(' ColumnNameList ')'
 	{
 		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $5.(ast.ResultSetNode), Tp: $2.(ast.JoinType), Using: $8.([]*ast.ColumnName)}
+	}
+|	TableRef "NATURAL" "JOIN" TableRef
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $4.(ast.ResultSetNode), NaturalJoin: true}
+	}
+|	TableRef "NATURAL" JoinType OuterOpt "JOIN" TableRef
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $6.(ast.ResultSetNode), Tp: $3.(ast.JoinType), NaturalJoin: true}
 	}
 
 JoinType:

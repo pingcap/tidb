@@ -257,7 +257,12 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 	}
 
-	if join.Using != nil {
+	if join.NaturalJoin {
+		if err := b.buildNaturalJoin(joinPlan, leftPlan, rightPlan, join); err != nil {
+			b.err = err
+			return nil
+		}
+	} else if join.Using != nil {
 		if err := b.buildUsingClause(joinPlan, leftPlan, rightPlan, join); err != nil {
 			b.err = err
 			return nil
@@ -360,6 +365,78 @@ func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 
 	// p.redundantSchema may contains columns which are merged from sub join, so merge it with redundantCols.
 	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(redundantCols...))
+
+	return nil
+}
+
+// buildNaturalJoin build natural join output schema. It find out all the common columns
+// then using the same mechanism as buildUsingClause to eliminate redundant columns and build join conditions.
+// According to standard SQL, producing this display order:
+// 	All the common columns
+// 	Every column in the first (left) table that is not a common column
+// 	Every column in the second (right) table that is not a common column
+func (b *planBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
+	lsc := leftPlan.Schema().Clone()
+	rsc := rightPlan.Schema().Clone()
+	if join.Tp == ast.RightJoin {
+		lsc, rsc = rsc, lsc
+	}
+	lColumns, rColumns := lsc.Columns, rsc.Columns
+
+	// Find out all the common columns and put them ahead.
+	commonLen := 0
+	for i := 0; i < len(lColumns); i++ {
+		isCommon := false
+
+		for j := commonLen; j < len(rColumns); j++ {
+			if lColumns[i].ColName.L == rColumns[j].ColName.L {
+				rColumns[commonLen], rColumns[j] = rColumns[j], rColumns[commonLen]
+				isCommon = true
+				break
+			}
+		}
+
+		if isCommon {
+			lColumns[commonLen], lColumns[i] = lColumns[i], lColumns[commonLen]
+			commonLen++
+		}
+	}
+
+	// Output schema
+	schemaCols := make([]*expression.Column, 0, len(lColumns)+len(rColumns)-commonLen)
+
+	// All the common columns
+	schemaCols = append(schemaCols, lColumns[:commonLen]...)
+
+	// Every column in the first (left) table that is not a common column
+	lRemain := lColumns[commonLen:]
+	sort.Slice(lRemain, func(i, j int) bool {
+		return lRemain[i].Position < lRemain[j].Position
+	})
+	schemaCols = append(schemaCols, lRemain...)
+
+	// Every column in the second (right) table that is not a common column
+	rRemain := rColumns[commonLen:]
+	sort.Slice(rRemain, func(i, j int) bool {
+		return rRemain[i].Position < rRemain[j].Position
+	})
+	schemaCols = append(schemaCols, rRemain...)
+
+	if join.Tp == ast.RightJoin {
+		lColumns, rColumns = rColumns, lColumns
+	}
+	conds := make([]*expression.ScalarFunction, 0, commonLen)
+	for i := 0; i < commonLen; i++ {
+		cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lColumns[i], rColumns[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		conds = append(conds, cond.(*expression.ScalarFunction))
+	}
+
+	p.SetSchema(expression.NewSchema(schemaCols...))
+	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rsc.Columns[:commonLen]...))
+	p.EqualConditions = append(conds, p.EqualConditions...)
 
 	return nil
 }
