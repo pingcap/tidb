@@ -330,7 +330,7 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 		// TODO: Change TableOption parser to parse collate.
 		// Reference https://github.com/pingcap/tidb/blob/b091e828cfa1d506b014345fb8337e424a4ab905/ddl/ddl_api.go#L185-L204
 		if len(tp.Charset) == 0 {
-			cs = "utf8"
+			cs = mysql.UTF8Charset
 		}
 		desc, err := charset.GetCharsetDesc(cs)
 		if err != nil {
