@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -322,6 +323,21 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > 255 {
 			return errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
 		}
+	case mysql.TypeVarchar:
+		maxFlen := 65535
+		cs := tp.Charset
+		// Reference https://github.com/pingcap/tidb/blob/b091e828cfa1d506b014345fb8337e424a4ab905/ddl/ddl_api.go#L185-L204
+		if len(tp.Charset) == 0 {
+			cs = charset.CharsetBin
+		}
+		desc, err := charset.GetCharsetDesc(cs)
+		if err != nil {
+			return err
+		}
+		maxFlen /= desc.Maxlen
+		if tp.Flen != types.UnspecifiedLength && tp.Flen > maxFlen {
+			return errors.Errorf("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
+		}
 	case mysql.TypeDouble:
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > 53 {
 			return errors.Errorf("Incorrect column specifier for column '%s'", colDef.Name.Name.O)
@@ -330,6 +346,8 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 		if len(tp.Elems) > 64 {
 			return errors.Errorf("Too many strings for column %s and SET", colDef.Name.Name.O)
 		}
+	default:
+		//TODO: Add more types.
 	}
 	return nil
 }

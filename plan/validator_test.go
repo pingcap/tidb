@@ -92,6 +92,12 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("Too many strings for column set65 and SET")},
 		{"alter table t add column set65 set ('1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30','31','32','33','34','35','36','37','38','39','40','41','42','43','44','45','46','47','48','49','50','51','52','53','54','55','56','57','58','59','60','61','62','63','64','65')", true,
 			errors.New("Too many strings for column set65 and SET")},
+		{"create table t (c varchar(4294967295) CHARACTER SET utf8);", true,
+			errors.New("Column length too big for column 'c' (max = 21845); use BLOB or TEXT instead")},
+		{"create table t (c varchar(4294967295) CHARACTER SET utf8mb4);", true,
+			errors.New("Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
+		{"create table t (c varchar(4294967295) CHARACTER SET ascii);", true,
+			errors.New("Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
