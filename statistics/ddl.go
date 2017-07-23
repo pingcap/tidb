@@ -32,6 +32,8 @@ func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
 		return h.insertTableStats2KV(t.TableInfo)
 	case model.ActionDropTable:
 		return h.DeleteTableStatsFromKV(t.TableInfo.ID)
+	case model.ActionAddColumn:
+		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfos[0])
 	case model.ActionAddColumns:
 		for i := 0; i < len(t.ColumnInfos); i++ {
 			err := h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfos[i])
