@@ -1,3 +1,16 @@
+// Copyright 2017 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package expression
 
 import (
@@ -25,6 +38,9 @@ type arithmeticPlusFunctionClass struct {
 	baseFunctionClass
 }
 
+// setFlenDecimal4Real is called to set proper `Flen` and `Decimal` of return
+// type according to the two input parameter's types.
+// It's only used in `tpDecimal` or `tpReal` return `evalTp`s
 func (c *arithmeticPlusFunctionClass) setFlenDecimal4Real(retTp, a, b *types.FieldType) {
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
 		retTp.Decimal = int(math.Max(float64(a.Decimal), float64(b.Decimal)))
@@ -41,6 +57,9 @@ func (c *arithmeticPlusFunctionClass) setFlenDecimal4Real(retTp, a, b *types.Fie
 	}
 }
 
+// setFlenDecimal4Int is called to set proper `Flen` and `Decimal` of return
+// type according to the two input parameter's types.
+// It's only used in `tpInt` return `evalTp`
 func (c *arithmeticPlusFunctionClass) setFlenDecimal4Int(retTp, a, b *types.FieldType) {
 	retTp.Decimal = 0
 	if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
@@ -51,15 +70,14 @@ func (c *arithmeticPlusFunctionClass) setFlenDecimal4Int(retTp, a, b *types.Fiel
 	}
 }
 
+// getEvalTp will get the `evalTp` of the argument according to it's return type.
 func (c *arithmeticPlusFunctionClass) getEvalTp(ft *types.FieldType) evalTp {
 	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeBit, mysql.TypeYear:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
+		mysql.TypeLonglong, mysql.TypeBit, mysql.TypeYear:
 		return tpInt
 	case mysql.TypeNewDecimal, mysql.TypeDatetime, mysql.TypeDuration:
 		return tpDecimal
-	default:
-		return tpReal
 	}
 	return tpReal
 }
@@ -103,37 +121,14 @@ type builtinArithmeticPlusIntSig struct {
 
 func (s *builtinArithmeticPlusIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-
 	a, isNull, err := s.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-
 	b, isNull, err := s.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-
-	return a + b, false, nil
-}
-
-type builtinArithmeticPlusRealSig struct {
-	baseRealBuiltinFunc
-}
-
-func (s *builtinArithmeticPlusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
-	sc := s.ctx.GetSessionVars().StmtCtx
-
-	a, isNull, err := s.args[0].EvalReal(row, sc)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-
-	b, isNull, err := s.args[1].EvalReal(row, sc)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-
 	return a + b, false, nil
 }
 
@@ -143,23 +138,37 @@ type builtinArithmeticPlusDecimalSig struct {
 
 func (s *builtinArithmeticPlusDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-
 	a, isNull, err := s.args[0].EvalDecimal(row, sc)
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
 	}
-
 	b, isNull, err := s.args[1].EvalDecimal(row, sc)
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
 	}
-
 	c := &types.MyDecimal{}
 	err = types.DecimalAdd(a, b, c)
 	if err != nil {
 		return nil, true, errors.Trace(err)
 	}
 	return c, false, nil
+}
+
+type builtinArithmeticPlusRealSig struct {
+	baseRealBuiltinFunc
+}
+
+func (s *builtinArithmeticPlusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	a, isNull, err := s.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	b, isNull, err := s.args[1].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return a + b, false, nil
 }
 
 type arithmeticFunctionClass struct {
