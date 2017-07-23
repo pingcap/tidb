@@ -98,6 +98,12 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
 		{"create table t (c varchar(4294967295) CHARACTER SET ascii);", true,
 			errors.New("Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
+		{"alter table t add column c varchar(4294967295) CHARACTER SET utf8;", true,
+			errors.New("Column length too big for column 'c' (max = 21845); use BLOB or TEXT instead")},
+		{"alter table t add column c varchar(4294967295) CHARACTER SET utf8mb4;", true,
+			errors.New("Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
+		{"alter table t add column c varchar(4294967295) CHARACTER SET ascii;", true,
+			errors.New("Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)

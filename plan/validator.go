@@ -326,6 +326,7 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 	case mysql.TypeVarchar:
 		maxFlen := 65535
 		cs := tp.Charset
+		// TODO Supports all character sets SQL. eg:create table t2 (c varchar(10) ) DEFAULT CHARACTER SET utf8mb4
 		// Reference https://github.com/pingcap/tidb/blob/b091e828cfa1d506b014345fb8337e424a4ab905/ddl/ddl_api.go#L185-L204
 		if len(tp.Charset) == 0 {
 			cs = charset.CharsetBin
