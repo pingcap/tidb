@@ -86,9 +86,8 @@ const (
 	opMvccGetByTxn = "txn"
 )
 
-// prepare checks and prepares for region request. It returns
-// regionHandlerTool on success while return an err on any
-// error happens.
+// newRegionHandler checks and prepares for region handler.
+// It returns an err on any error happens.
 func (s *Server) newRegionHandler() (hanler *regionHandler, err error) {
 	// check store
 	if s.cfg.Store != "tikv" {
