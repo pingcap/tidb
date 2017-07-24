@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table"
@@ -76,6 +77,8 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
+	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpClient()
+	ctx.GetSessionVars().InRestrictedSQL = false
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(rid, Greater, int64(0))
@@ -120,7 +123,18 @@ func (ts *testSuite) TestBasic(c *C) {
 	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(indexCnt(), Greater, 0)
+	handle, found, err := tb.Seek(ctx, 0)
+	c.Assert(handle, Equals, int64(1))
+	c.Assert(found, Equals, true)
+	c.Assert(err, IsNil)
 	_, err = ts.se.Execute("drop table test.t")
+	c.Assert(err, IsNil)
+
+	table.MockTableFromMeta(tb.Meta())
+	alc := tb.Allocator()
+	c.Assert(alc, NotNil)
+
+	err = tb.RebaseAutoID(0, false)
 	c.Assert(err, IsNil)
 }
 
@@ -287,4 +301,25 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(totalCount, Equals, 2)
 	c.Assert(ctx.Txn().Commit(), IsNil)
+}
+
+func (ts *testSuite) TestTableFromMeta(c *C) {
+	defer testleak.AfterTest(c)()
+	_, err := ts.se.Execute("CREATE TABLE test.meta (a int primary key auto_increment, b varchar(255) unique)")
+	c.Assert(err, IsNil)
+	ctx := ts.se.(context.Context)
+	c.Assert(ctx.NewTxn(), IsNil)
+	dom := sessionctx.GetDomain(ctx)
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
+	tbInfo := tb.Meta()
+	tbInfo.Columns[0].GeneratedExprString = "test"
+	tables.TableFromMeta(nil, tbInfo)
+	tbInfo.Columns[0].State = model.StateNone
+	tb, err = tables.TableFromMeta(nil, tbInfo)
+	c.Assert(tb, IsNil)
+	c.Assert(err, NotNil)
+	tbInfo.State = model.StateNone
+	tb, err = tables.TableFromMeta(nil, tbInfo)
+	c.Assert(tb, IsNil)
+	c.Assert(err, NotNil)
 }
