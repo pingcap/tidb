@@ -71,8 +71,8 @@ func (tc *testExpressionsSuite) TestExpresionsVisitorCover(c *C) {
 		}{
 			{&BetweenExpr{Expr: ce, Left: ce, Right: ce}, 3, 3},
 			{&BinaryOperationExpr{L: ce, R: ce}, 2, 2},
-			{&CaseExpr{Value: ce, WhenClauses: []*WhenClause{&WhenClause{Expr: ce, Result: ce},
-				&WhenClause{Expr: ce, Result: ce}}, ElseClause: ce}, 6, 6},
+			{&CaseExpr{Value: ce, WhenClauses: []*WhenClause{{Expr: ce, Result: ce},
+				{Expr: ce, Result: ce}}, ElseClause: ce}, 6, 6},
 			{&ColumnNameExpr{Name: &ColumnName{}}, 0, 0},
 			{&CompareSubqueryExpr{L: ce, R: ce}, 2, 2},
 			{&DefaultExpr{Name: &ColumnName{}}, 0, 0},

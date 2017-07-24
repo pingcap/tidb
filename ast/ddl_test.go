@@ -25,9 +25,9 @@ type testDDLSuite struct {
 
 func (ts *testDDLSuite) TestDDLVisitorCover(c *C) {
 	ce := &checkExpr{}
-	constraint := &Constraint{Keys: []*IndexColName{&IndexColName{Column: &ColumnName{}}, {Column: &ColumnName{}}}, Refer: &ReferenceDef{}, Option: &IndexOption{}}
+	constraint := &Constraint{Keys: []*IndexColName{{Column: &ColumnName{}}, {Column: &ColumnName{}}}, Refer: &ReferenceDef{}, Option: &IndexOption{}}
 
-	alterTableSpec := &AlterTableSpec{Constraint: constraint, Options: []*TableOption{&TableOption{}}, NewTable: &TableName{}, NewColumn: &ColumnDef{Name: &ColumnName{}}, OldColumnName: &ColumnName{}, Position: &ColumnPosition{RelativeColumn: &ColumnName{}}}
+	alterTableSpec := &AlterTableSpec{Constraint: constraint, Options: []*TableOption{{}}, NewTable: &TableName{}, NewColumn: &ColumnDef{Name: &ColumnName{}}, OldColumnName: &ColumnName{}, Position: &ColumnPosition{RelativeColumn: &ColumnName{}}}
 
 	stmts := []struct {
 		node             Node
@@ -37,7 +37,7 @@ func (ts *testDDLSuite) TestDDLVisitorCover(c *C) {
 		{&CreateDatabaseStmt{}, 0, 0},
 		{&DropDatabaseStmt{}, 0, 0},
 		{&DropIndexStmt{Table: &TableName{}}, 0, 0},
-		{&DropTableStmt{Tables: []*TableName{&TableName{}, &TableName{}}}, 0, 0},
+		{&DropTableStmt{Tables: []*TableName{{}, {}}}, 0, 0},
 		{&RenameTableStmt{OldTable: &TableName{}, NewTable: &TableName{}}, 0, 0},
 		{&TruncateTableStmt{Table: &TableName{}}, 0, 0},
 
@@ -46,12 +46,12 @@ func (ts *testDDLSuite) TestDDLVisitorCover(c *C) {
 		{&CreateIndexStmt{Table: &TableName{}}, 0, 0},
 		{&CreateTableStmt{Table: &TableName{}, ReferTable: &TableName{}}, 0, 0},
 		{&AlterTableSpec{}, 0, 0},
-		{&ColumnDef{Name: &ColumnName{}, Options: []*ColumnOption{&ColumnOption{Expr: ce}}}, 1, 1},
+		{&ColumnDef{Name: &ColumnName{}, Options: []*ColumnOption{{Expr: ce}}}, 1, 1},
 		{&ColumnOption{Expr: ce}, 1, 1},
 		{&ColumnPosition{RelativeColumn: &ColumnName{}}, 0, 0},
-		{&Constraint{Keys: []*IndexColName{&IndexColName{Column: &ColumnName{}}, {Column: &ColumnName{}}}, Refer: &ReferenceDef{}, Option: &IndexOption{}}, 0, 0},
+		{&Constraint{Keys: []*IndexColName{{Column: &ColumnName{}}, {Column: &ColumnName{}}}, Refer: &ReferenceDef{}, Option: &IndexOption{}}, 0, 0},
 		{&IndexColName{Column: &ColumnName{}}, 0, 0},
-		{&ReferenceDef{Table: &TableName{}, IndexColNames: []*IndexColName{&IndexColName{Column: &ColumnName{}}, {Column: &ColumnName{}}}, OnDelete: &OnDeleteOpt{}, OnUpdate: &OnUpdateOpt{}}, 0, 0},
+		{&ReferenceDef{Table: &TableName{}, IndexColNames: []*IndexColName{{Column: &ColumnName{}}, {Column: &ColumnName{}}}, OnDelete: &OnDeleteOpt{}, OnUpdate: &OnUpdateOpt{}}, 0, 0},
 	}
 
 	for _, v := range stmts {
