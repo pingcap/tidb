@@ -95,8 +95,15 @@ func (s *Server) newRegionHandler() (hanler *regionHandler, err error) {
 		return
 	}
 
-	store := s.driver.(*TiDBDriver).store
-	tikvStore := store.(kvStore)
+	var tikvStore kvStore
+	store, ok := s.driver.(*TiDBDriver)
+	if ok {
+		tikvStore, ok = store.store.(kvStore)
+	}
+	if !ok {
+		err = fmt.Errorf("Invalid KvStore")
+		return
+	}
 
 	regionCache := tikvStore.GetRegionCache()
 
@@ -106,7 +113,7 @@ func (s *Server) newRegionHandler() (hanler *regionHandler, err error) {
 	tool := &regionHandlerTool{
 		regionCache: regionCache,
 		bo:          backOffer,
-		store:       store.(kvStore),
+		store:       tikvStore,
 	}
 	return &regionHandler{tool}, nil
 }
