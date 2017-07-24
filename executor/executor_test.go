@@ -1018,6 +1018,19 @@ func (s *testSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
 }
 
+func (s *testSuite) TestOpBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for logical and
+	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
+	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
+}
+
 func (s *testSuite) TestBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
