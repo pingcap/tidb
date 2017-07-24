@@ -209,6 +209,24 @@ const (
 	MaxBlobWidth            = 16777216
 )
 
+// MySQL max type field length
+const (
+	MaxFieldCharLength    = 255
+	MaxFieldVarCharLength = 65535
+)
+
+// MySQL precision
+const (
+	PrecisionForDouble = 53
+	PrecisionForFloat  = 24
+)
+
+// MaxUint32 is the max uint32
+const MaxUint32 = (1 << 32) - 1
+
+// MaxTypeSetMembers is the number of set members
+const MaxTypeSetMembers = 64
+
 // PWDHashLen is the length of password's hash.
 const PWDHashLen = 40
 
