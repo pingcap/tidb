@@ -406,7 +406,6 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 
 	var line []byte
 	var isEOF, hasStarting, reachLimit bool
-	cols := make([]string, 0, len(e.row))
 	if len(prevData) > 0 && len(curData) == 0 {
 		isEOF = true
 		prevData, curData = curData, prevData
@@ -432,8 +431,10 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			curData = nil
 		}
 
-		rawCols := bytes.Split(line, []byte(e.FieldsInfo.Terminated))
-		cols = escapeCols(rawCols)
+		cols, err := GetFieldsFromLine(line, e.FieldsInfo)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
 		e.insertData(cols)
 		e.insertVal.currRow++
 		if e.insertVal.batchRows != 0 && e.insertVal.currRow%e.insertVal.batchRows == 0 {
@@ -450,10 +451,31 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	return curData, reachLimit, nil
 }
 
+// GetFieldsFromLine splits line according to fieldsInfo, this function is exported for testing.
+func GetFieldsFromLine(line []byte, fieldsInfo *ast.FieldsClause) ([]string, error) {
+	var sep []byte
+	if fieldsInfo.Enclosed != 0 {
+		if line[0] != fieldsInfo.Enclosed || line[len(line)-1] != fieldsInfo.Enclosed {
+			return nil, errors.Errorf("line %s should begin and end with %c", string(line), fieldsInfo.Enclosed)
+		}
+		line = line[1 : len(line)-1]
+		sep = make([]byte, 0, len(fieldsInfo.Terminated)+2)
+		sep = append(sep, fieldsInfo.Enclosed)
+		sep = append(sep, fieldsInfo.Terminated...)
+		sep = append(sep, fieldsInfo.Enclosed)
+	} else {
+		sep = []byte(fieldsInfo.Terminated)
+	}
+	rawCols := bytes.Split(line, sep)
+	cols := escapeCols(rawCols)
+	return cols, nil
+}
+
 func escapeCols(strs [][]byte) []string {
 	ret := make([]string, len(strs))
 	for i, v := range strs {
-		ret[i] = string(escape(v))
+		output := escape(v)
+		ret[i] = string(output)
 	}
 	return ret
 }
@@ -467,10 +489,8 @@ func escape(str []byte) []byte {
 	for i := 0; i < len(str); i++ {
 		c := str[i]
 		if c == '\\' && i+1 < len(str) {
-			var ok bool
-			if c, ok = escapeChar(str[i+1]); ok {
-				i++
-			}
+			c = escapeChar(str[i+1])
+			i++
 		}
 
 		str[pos] = c
@@ -479,24 +499,24 @@ func escape(str []byte) []byte {
 	return str[:pos]
 }
 
-func escapeChar(c byte) (byte, bool) {
+func escapeChar(c byte) byte {
 	switch c {
 	case '0':
-		return 0, true
+		return 0
 	case 'b':
-		return '\b', true
+		return '\b'
 	case 'n':
-		return '\n', true
+		return '\n'
 	case 'r':
-		return '\r', true
+		return '\r'
 	case 't':
-		return '\t', true
+		return '\t'
 	case 'Z':
-		return 26, true
+		return 26
 	case '\\':
-		return '\\', true
+		return '\\'
 	}
-	return c, false
+	return c
 }
 
 func (e *LoadDataInfo) insertData(cols []string) {

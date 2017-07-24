@@ -139,7 +139,7 @@ func (s *tikvStore) EtcdAddrs() []string {
 
 type mockOptions struct {
 	cluster        *mocktikv.Cluster
-	mvccStore      *mocktikv.MvccStore
+	mvccStore      mocktikv.MVCCStore
 	clientHijack   func(Client) Client
 	pdClientHijack func(pd.Client) pd.Client
 }
@@ -171,7 +171,7 @@ func WithCluster(cluster *mocktikv.Cluster) MockTiKVStoreOption {
 }
 
 // WithMVCCStore provides the customized mvcc store.
-func WithMVCCStore(store *mocktikv.MvccStore) MockTiKVStoreOption {
+func WithMVCCStore(store mocktikv.MVCCStore) MockTiKVStoreOption {
 	return func(c *mockOptions) {
 		c.mvccStore = store
 	}
