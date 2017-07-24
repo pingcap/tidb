@@ -214,7 +214,7 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkFieldLengthLimitation(colDef); err != nil {
-			v.err = err
+			v.err = errors.Trace(err)
 			return
 		}
 		countPrimaryKey += isPrimary(colDef.Options)
@@ -330,11 +330,11 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 		// TODO: Change TableOption parser to parse collate.
 		// Reference https://github.com/pingcap/tidb/blob/b091e828cfa1d506b014345fb8337e424a4ab905/ddl/ddl_api.go#L185-L204
 		if len(tp.Charset) == 0 {
-			cs = mysql.UTF8Charset
+			cs = mysql.UTF8MB4Charset
 		}
 		desc, err := charset.GetCharsetDesc(cs)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		maxFlen /= desc.Maxlen
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > maxFlen {
