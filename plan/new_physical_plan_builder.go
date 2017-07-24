@@ -373,6 +373,7 @@ func (p *LogicalJoin) getSemiJoin() PhysicalPlan {
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		Anti:            p.anti,
+		rightChOffset:   p.children[0].Schema().Len(),
 	}.init(p.allocator, p.ctx)
 	semiJoin.SetSchema(p.schema)
 	semiJoin.profile = p.profile
@@ -926,8 +927,9 @@ func (p *LogicalApply) generatePhysicalPlans() []PhysicalPlan {
 		join = p.getHashJoin(1)
 	}
 	apply := PhysicalApply{
-		PhysicalJoin: join,
-		OuterSchema:  p.corCols,
+		PhysicalJoin:  join,
+		OuterSchema:   p.corCols,
+		rightChOffset: p.children[0].Schema().Len(),
 	}.init(p.allocator, p.ctx)
 	apply.SetSchema(p.schema)
 	apply.profile = p.profile
@@ -958,8 +960,8 @@ func (p *PhysicalHashJoin) getChildrenPossibleProps(prop *requiredProp) [][]*req
 func (p *PhysicalHashSemiJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols}
 	for _, col := range lProp.cols {
-		// FIXME: This condition may raise a panic, fix it in the future.
-		if p.children[0].Schema().ColumnIndex(col) == -1 {
+		idx := p.Schema().ColumnIndex(col)
+		if idx == -1 || idx >= p.rightChOffset {
 			return nil
 		}
 	}
@@ -969,8 +971,8 @@ func (p *PhysicalHashSemiJoin) getChildrenPossibleProps(prop *requiredProp) [][]
 func (p *PhysicalApply) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols}
 	for _, col := range lProp.cols {
-		// FIXME: This condition may raise a panic, fix it in the future.
-		if p.children[0].Schema().ColumnIndex(col) == -1 {
+		idx := p.Schema().ColumnIndex(col)
+		if idx == -1 || idx >= p.rightChOffset {
 			return nil
 		}
 	}

@@ -554,6 +554,8 @@ import (
 
 	ge		">="
 	le		"<="
+	jss		"->"
+	juss		"->>"
 	lsh		"<<"
 	neq		"!="
 	neqSynonym	"<>"
@@ -2761,6 +2763,29 @@ Function:
 |	FunctionCallNonKeyword
 |	FunctionCallConflict
 |	FunctionCallAgg
+|	Identifier jss stringLit
+	{
+	    col := &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: model.NewCIStr($1)}}
+
+	    tp := types.NewFieldType(mysql.TypeString)
+	    tp.Charset, tp.Collate = parser.charset, parser.collation
+	    expr := ast.NewValueExpr($3)
+	    expr.SetType(tp)
+
+	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{col, expr}}
+	}
+|	Identifier juss stringLit
+	{
+	    col := &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: model.NewCIStr($1)}}
+
+	    tp := types.NewFieldType(mysql.TypeString)
+	    tp.Charset, tp.Collate = parser.charset, parser.collation
+	    expr := ast.NewValueExpr($3)
+	    expr.SetType(tp)
+
+	    extract := &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{col, expr}}
+	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONUnquote), Args: []ast.ExprNode{extract}}
+	}
 
 FunctionNameConflict:
 	"DATABASE"
