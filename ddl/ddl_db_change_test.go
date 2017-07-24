@@ -55,7 +55,8 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute("create database test_db_state")
 	c.Assert(err, IsNil)
-	s.se.Execute("use test_db_state")
+	_, err = s.se.Execute("use test_db_state")
+	c.Assert(err, IsNil)
 	s.p = parser.New()
 }
 
@@ -66,7 +67,7 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	s.se.Close()
 }
 
-func (s *testStateChangeSuite) TestTowStates(c *C) {
+func (s *testStateChangeSuite) TestTwoStates(c *C) {
 	cnt := 5
 	// New the testExecInfo.
 	testInfo := &testExecInfo{
@@ -102,19 +103,21 @@ func (s *testStateChangeSuite) TestTowStates(c *C) {
 
 func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testInfo *testExecInfo) {
 	defer testleak.AfterTest(c)()
-	s.se.Execute(`create table t (
+	_, err := s.se.Execute(`create table t (
 		c1 int,
 		c2 varchar(64),
 		c3 enum('N','Y') not null default 'N', 
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
+	c.Assert(err, IsNil)
 	defer s.se.Execute("drop table t")
-	s.se.Execute("insert into t values(1, 1, 'a', 'N', '2017-07-01')")
+	_, err = s.se.Execute("insert into t values(1, 'a', 'N', '2017-07-01')")
+	c.Assert(err, IsNil)
 
 	callback := &ddl.TestDDLCallback{}
 	prevState := model.StateNone
 	var checkErr error
-	err := testInfo.parseSQLs(s.p)
+	err = testInfo.parseSQLs(s.p)
 	c.Assert(err, IsNil, Commentf("error stack %v", errors.ErrorStack(err)))
 	times := 0
 	callback.OnJobUpdatedExported = func(job *model.Job) {
@@ -167,7 +170,8 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	}
 	d := s.dom.DDL()
 	d.SetHook(callback)
-	s.se.Execute(alterTableSQL)
+	_, err = s.se.Execute(alterTableSQL)
+	c.Assert(err, IsNil)
 	err = testInfo.compileSQL(4)
 	c.Assert(err, IsNil)
 	err = testInfo.execSQL(4)
@@ -212,7 +216,10 @@ func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			c.session.Execute("use " + useDB)
+			_, err = c.session.Execute("use " + useDB)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			// It's used to debug.
 			c.session.SetConnectionID(uint64(i*10 + j))
 		}
