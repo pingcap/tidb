@@ -122,7 +122,7 @@ type DDL interface {
 	CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ident) error
 	DropTable(ctx context.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx context.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
-		columnNames []*ast.IndexColName) error
+		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
 	DropIndex(ctx context.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
