@@ -62,9 +62,9 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 
 func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	s.se.Execute("drop database if exists test_db_state")
+	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	s.se.Close()
 }
 
 func (s *testStateChangeSuite) TestTwoStates(c *C) {
