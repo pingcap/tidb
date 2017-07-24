@@ -386,7 +386,7 @@ func newBasePhysicalPlan(basePlan *basePlan) basePhysicalPlan {
 	}
 }
 
-func (p *basePhysicalPlan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+func (bp *basePhysicalPlan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
 

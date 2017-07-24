@@ -18,6 +18,7 @@ import (
 	"fmt"
 )
 
+// ExplainInfo implements the Expression interface.
 func (expr *ScalarFunction) ExplainInfo() string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", expr.FuncName.L))
 	for i, arg := range expr.GetArgs() {
@@ -30,10 +31,12 @@ func (expr *ScalarFunction) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainInfo implements the Expression interface.
 func (expr *Column) ExplainInfo() string {
 	return fmt.Sprintf("col(%s)", expr.String())
 }
 
+// ExplainInfo implements the Expression interface.
 func (expr *Constant) ExplainInfo() string {
 	valStr, err := expr.Value.ToString()
 	if err != nil {
@@ -42,6 +45,7 @@ func (expr *Constant) ExplainInfo() string {
 	return fmt.Sprintf("const(%s)", valStr)
 }
 
+// ExplainAggFunc generates explain informations for a aggregation function.
 func ExplainAggFunc(agg AggregationFunction) string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", agg.GetName()))
 	if agg.IsDistinct() {

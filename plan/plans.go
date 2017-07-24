@@ -232,7 +232,3 @@ func (e *Explain) prepareRootTaskInfo(p PhysicalPlan) {
 	}
 	e.prepareExplainInfo4DAGTask(p, "root")
 }
-
-func (e *Explain) GenerateExplainInfo() [][]types.Datum {
-	return e.Rows
-}
