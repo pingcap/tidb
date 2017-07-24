@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"sort"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
@@ -124,6 +126,7 @@ func (e *TableReaderExecutor) Open() error {
 
 // doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
 func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.Context) error {
+	sort.Sort(int64Slice(handles))
 	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
 	var err error
 	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
@@ -336,9 +339,18 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		var row *Row
 		row, err = tableReader.Next()
 		if err != nil || row == nil {
-			return
+			break
 		}
 		task.rows = append(task.rows, row)
+	}
+	if e.keepOrder {
+		// Restore the index order.
+		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows}
+		if e.desc {
+			sort.Sort(sort.Reverse(sorter))
+		} else {
+			sort.Sort(sorter)
+		}
 	}
 }
 
