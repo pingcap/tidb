@@ -36,6 +36,7 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft.Tp = mysql.TypeLong
 	ft.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
 	c.Assert(ft.String(), Equals, "int(5) UNSIGNED ZEROFILL")
+	c.Assert(ft.InfoSchemaStr(), Equals, "int(5) unsigned")
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 10
