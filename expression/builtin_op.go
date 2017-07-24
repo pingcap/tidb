@@ -423,6 +423,7 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, bf *baseBuiltinF
 	types.SetBinChsClnFlag(bf.tp)
 
 	overflow := false
+	// TODO: handle float overflow
 	if arg, ok := argExpr.(*Constant); ok {
 		switch arg.Value.Kind() {
 		case types.KindUint64:
@@ -482,35 +483,6 @@ type builtinUnaryMinusIntSig struct {
 	baseIntBuiltinFunc
 }
 
-// func (b *builtinUnaryMinusIntSig) eval(row []types.Datum) (d types.Datum, err error) {
-// 	res, isNull, err := b.self.evalInt(row)
-// 	sc := b.getCtx().GetSessionVars().StmtCtx
-// 	if !sc.InUpdateOrDeleteStmt && terror.ErrorEqual(err, types.ErrOverflow) {
-// 		var (
-// 			dec, to *types.MyDecimal
-// 		)
-
-// 		dec, isNull, err = b.args[0].EvalDecimal(row, sc)
-// 		if err != nil || isNull {
-// 			return d, errors.Trace(err)
-// 		}
-// 		to, err = unaryMinusDecimal(dec)
-// 		d.SetMysqlDecimal(to)
-// 		b.getRetTp().Tp = mysql.TypeNewDecimal
-// 		return
-// 	}
-
-// 	if err != nil || isNull {
-// 		return d, errors.Trace(err)
-// 	}
-// 	if mysql.HasUnsignedFlag(b.tp.Flag) {
-// 		d.SetUint64(uint64(res))
-// 	} else {
-// 		d.SetInt64(res)
-// 	}
-// 	return
-// }
-
 func (b *builtinUnaryMinusIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
 	var val int64
 	val, isNull, err = b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
@@ -563,7 +535,7 @@ func (b *builtinUnaryMinusDecimalSig) evalDecimal(row []types.Datum) (*types.MyD
 		return dec, isNull, errors.Trace(err)
 	}
 
-	if sc.InUpdateOrDeleteStmt && b.constantArgOverflow {
+	if !sc.InSelectStmt && b.constantArgOverflow {
 		return dec, false, types.ErrOverflow.GenByArgs("DECIMAL", dec.String())
 	}
 

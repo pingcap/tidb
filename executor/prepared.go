@@ -347,6 +347,8 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	case *ast.LoadDataStmt:
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+	case *ast.SelectStmt:
+		sc.InSelectStmt = true
 	default:
 		sc.IgnoreTruncate = true
 		if show, ok := s.(*ast.ShowStmt); ok {

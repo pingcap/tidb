@@ -166,7 +166,7 @@ func (sf *ScalarFunction) convertArgsToDecimal(sc *variable.StatementContext) er
 		if constArg, ok := arg.(*Constant); ok {
 			val, err := constArg.Value.ConvertTo(sc, ft)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			constArg.Value = val
 		}
@@ -213,7 +213,7 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 	}
 
 	if err != nil && terror.ErrorEqual(err, types.ErrOverflow) &&
-		sf.FuncName.L == ast.UnaryMinus && !sc.InUpdateOrDeleteStmt {
+		sf.FuncName.L == ast.UnaryMinus && sc.InSelectStmt {
 		// TODO: fix #3762, overflow convert it to decimal
 		err = sf.convertArgsToDecimal(sc)
 		if err != nil {
