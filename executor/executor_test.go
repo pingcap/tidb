@@ -1018,6 +1018,19 @@ func (s *testSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
 }
 
+func (s *testSuite) TestOpBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for logical and
+	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
+	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
+}
+
 func (s *testSuite) TestBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -1396,11 +1409,11 @@ func (s *testSuite) TestJSON(c *C) {
 	result = tk.MustQuery(`select tj.a from test_json tj order by tj.id`)
 	result.Check(testkit.Rows(`{"a":[1,"2",{"aa":"bb"},4],"b":true}`, "null", "<nil>", "true", "3", "4", `"string"`))
 
-	// check json_type function
+	// Check json_type function
 	result = tk.MustQuery(`select json_type(a) from test_json tj order by tj.id`)
 	result.Check(testkit.Rows("OBJECT", "NULL", "<nil>", "BOOLEAN", "INTEGER", "DOUBLE", "STRING"))
 
-	// check json compare with primitives.
+	// Check json compare with primitives.
 	result = tk.MustQuery(`select a from test_json tj where a = 3`)
 	result.Check(testkit.Rows("3"))
 	result = tk.MustQuery(`select a from test_json tj where a = 4.0`)
@@ -1410,7 +1423,13 @@ func (s *testSuite) TestJSON(c *C) {
 	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
 	result.Check(testkit.Rows(`"string"`))
 
-	// check some DDL limits for TEXT/BLOB/JSON column.
+	// Check two json grammar sugar.
+	result = tk.MustQuery(`select a->>'$.a[2].aa' as x, a->'$.b' as y from test_json having x is not null order by id`)
+	result.Check(testkit.Rows(`bb true`))
+	result = tk.MustQuery(`select a->'$.a[2].aa' as x, a->>'$.b' as y from test_json having x is not null order by id`)
+	result.Check(testkit.Rows(`"bb" true`))
+
+	// Check some DDL limits for TEXT/BLOB/JSON column.
 	var err error
 	var terr *terror.Error
 
