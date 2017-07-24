@@ -17,29 +17,104 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
-// BuildPK builds histogram for pk.
-func BuildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
-	return build4SortedColumn(ctx, numBuckets, id, records, true)
+// SortedBuilder is used to build histograms for PK and index.
+type SortedBuilder struct {
+	sc              *variable.StatementContext
+	numBuckets      int64
+	valuesPerBucket int64
+	lastNumber      int64
+	bucketIdx       int64
+	Count           int64
+	isPK            bool
+	Hist            *Histogram
+}
+
+// NewSortedBuilder creates a new SortedBuilder.
+func NewSortedBuilder(ctx context.Context, numBuckets, id int64, isPK bool) *SortedBuilder {
+	return &SortedBuilder{
+		sc:              ctx.GetSessionVars().StmtCtx,
+		numBuckets:      numBuckets,
+		valuesPerBucket: 1,
+		isPK:            isPK,
+		Hist: &Histogram{
+			ID:      id,
+			Buckets: make([]Bucket, 1, numBuckets),
+		},
+	}
+}
+
+// Iterate updates the histogram incrementally.
+func (b *SortedBuilder) Iterate(datums []types.Datum) error {
+	var data types.Datum
+	if b.isPK {
+		data = datums[0]
+	} else {
+		bytes, err := codec.EncodeKey(nil, datums...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		data = types.NewBytesDatum(bytes)
+	}
+	cmp, err := b.Hist.Buckets[b.bucketIdx].UpperBound.CompareDatum(b.sc, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	b.Count++
+	if cmp == 0 {
+		// The new item has the same value as current bucket value, to ensure that
+		// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
+		// valuesPerBucket.
+		b.Hist.Buckets[b.bucketIdx].Count++
+		b.Hist.Buckets[b.bucketIdx].Repeats++
+	} else if b.Hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
+		// The bucket still have room to store a new item, update the bucket.
+		b.Hist.Buckets[b.bucketIdx].Count++
+		b.Hist.Buckets[b.bucketIdx].UpperBound = data
+		b.Hist.Buckets[b.bucketIdx].Repeats = 1
+		if b.bucketIdx == 0 && b.Hist.Buckets[0].Count == 1 {
+			b.Hist.Buckets[0].LowerBound = data
+		}
+		b.Hist.NDV++
+	} else {
+		// All buckets are full, we should merge buckets.
+		if b.bucketIdx+1 == b.numBuckets {
+			b.Hist.mergeBuckets(b.bucketIdx)
+			b.valuesPerBucket *= 2
+			b.bucketIdx = b.bucketIdx / 2
+			if b.bucketIdx == 0 {
+				b.lastNumber = 0
+			} else {
+				b.lastNumber = b.Hist.Buckets[b.bucketIdx-1].Count
+			}
+		}
+		// We may merge buckets, so we should check it again.
+		if b.Hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
+			b.Hist.Buckets[b.bucketIdx].Count++
+			b.Hist.Buckets[b.bucketIdx].UpperBound = data
+			b.Hist.Buckets[b.bucketIdx].Repeats = 1
+		} else {
+			b.lastNumber = b.Hist.Buckets[b.bucketIdx].Count
+			b.bucketIdx++
+			b.Hist.Buckets = append(b.Hist.Buckets, Bucket{
+				Count:      b.lastNumber + 1,
+				UpperBound: data,
+				LowerBound: data,
+				Repeats:    1,
+			})
+		}
+		b.Hist.NDV++
+	}
+	return nil
 }
 
 // BuildIndex builds histogram for index.
 func BuildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
-	return build4SortedColumn(ctx, numBuckets, id, records, false)
-}
-
-func build4SortedColumn(ctx context.Context, numBuckets, id int64, records ast.RecordSet, isPK bool) (int64, *Histogram, error) {
-	hg := &Histogram{
-		ID:      id,
-		NDV:     0,
-		Buckets: make([]Bucket, 1, numBuckets),
-	}
-	var valuesPerBucket, lastNumber, bucketIdx int64 = 1, 0, 0
-	count := int64(0)
-	sc := ctx.GetSessionVars().StmtCtx
+	b := NewSortedBuilder(ctx, numBuckets, id, false)
 	for {
 		row, err := records.Next()
 		if err != nil {
@@ -48,70 +123,12 @@ func build4SortedColumn(ctx context.Context, numBuckets, id int64, records ast.R
 		if row == nil {
 			break
 		}
-		var data types.Datum
-		if isPK {
-			data = row.Data[0]
-		} else {
-			bytes, err := codec.EncodeKey(nil, row.Data...)
-			if err != nil {
-				return 0, nil, errors.Trace(err)
-			}
-			data = types.NewBytesDatum(bytes)
-		}
-		cmp, err := hg.Buckets[bucketIdx].UpperBound.CompareDatum(sc, data)
+		err = b.Iterate(row.Data)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		count++
-		if cmp == 0 {
-			// The new item has the same value as current bucket value, to ensure that
-			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
-			// valuesPerBucket.
-			hg.Buckets[bucketIdx].Count++
-			hg.Buckets[bucketIdx].Repeats++
-		} else if hg.Buckets[bucketIdx].Count+1-lastNumber <= valuesPerBucket {
-			// The bucket still have room to store a new item, update the bucket.
-			hg.Buckets[bucketIdx].Count++
-			hg.Buckets[bucketIdx].UpperBound = data
-			hg.Buckets[bucketIdx].Repeats = 1
-			if bucketIdx == 0 && hg.Buckets[0].Count == 1 {
-				hg.Buckets[0].LowerBound = data
-			}
-			hg.NDV++
-		} else {
-			// All buckets are full, we should merge buckets.
-			if bucketIdx+1 == numBuckets {
-				hg.mergeBuckets(bucketIdx)
-				valuesPerBucket *= 2
-				bucketIdx = bucketIdx / 2
-				if bucketIdx == 0 {
-					lastNumber = 0
-				} else {
-					lastNumber = hg.Buckets[bucketIdx-1].Count
-				}
-			}
-			// We may merge buckets, so we should check it again.
-			if hg.Buckets[bucketIdx].Count+1-lastNumber <= valuesPerBucket {
-				hg.Buckets[bucketIdx].Count++
-				hg.Buckets[bucketIdx].UpperBound = data
-				hg.Buckets[bucketIdx].Repeats = 1
-			} else {
-				lastNumber = hg.Buckets[bucketIdx].Count
-				bucketIdx++
-				hg.Buckets = append(hg.Buckets, Bucket{
-					Count:      lastNumber + 1,
-					UpperBound: data,
-					LowerBound: data,
-					Repeats:    1,
-				})
-			}
-			hg.NDV++
-		}
 	}
-	if count == 0 {
-		hg = &Histogram{ID: id}
-	}
-	return count, hg, nil
+	return int64(b.Hist.totalRowCount()), b.Hist, nil
 }
 
 // BuildColumn builds histogram from samples for column.

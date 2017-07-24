@@ -87,7 +87,7 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			right := j2.i64
 			// false is less than true.
 			cmp = int(right - left)
-		case typeCodeInt64, typeCodeFloat64:
+		case typeCodeInt64, typeCodeUint64, typeCodeFloat64:
 			left := i64AsFloat64(j1.i64, j1.typeCode)
 			right := i64AsFloat64(j2.i64, j2.typeCode)
 			cmp = compareFloat64PrecisionLoss(left, right)
@@ -114,7 +114,8 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			s2 := Serialize(j2)
 			cmp = bytes.Compare(s1, s2)
 		default:
-			cmp = 0
+			err = errors.Errorf(unknownTypeCodeErrorMsg, j1.typeCode)
+			return
 		}
 	} else if (precedence1 == jsonTypePrecedences["BOOLEAN"] && precedence2 == jsonTypePrecedences["INTEGER"]) ||
 		(precedence1 == jsonTypePrecedences["INTEGER"] && precedence2 == jsonTypePrecedences["BOOLEAN"]) {
