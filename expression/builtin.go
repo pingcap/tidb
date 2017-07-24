@@ -549,15 +549,6 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
 		return errIncorrectParameterCount.GenByArgs(b.funcName)
 	}
-	for i, arg := range args {
-		if arg == nil {
-			return errors.Errorf("arg[%v] of function %s can not be nil.", i, b.funcName)
-		}
-		if arg.GetType() == nil {
-			return errors.Errorf("arg[%v]'s return type of function %s can not be nil.",
-				i, b.funcName)
-		}
-	}
 	return nil
 }
 

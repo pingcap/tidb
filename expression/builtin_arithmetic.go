@@ -14,12 +14,13 @@
 package expression
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
-	"math"
 )
 
 var (
@@ -38,48 +39,50 @@ type arithmeticPlusFunctionClass struct {
 	baseFunctionClass
 }
 
+// getEvalTp will get the `evalTp` of the argument according to it's return type.
+func (c *arithmeticPlusFunctionClass) getEvalTp(ft *types.FieldType) evalTp {
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
+		mysql.TypeLonglong, mysql.TypeBit, mysql.TypeYear, mysql.TypeDuration:
+		return tpInt
+	case mysql.TypeNewDecimal, mysql.TypeDatetime:
+		return tpDecimal
+	}
+	return tpReal
+}
+
+// setFlenDecimal4Int is called to set proper `Flen` and `Decimal` of return
+// type according to the two input parameter's types.
+func (c *arithmeticPlusFunctionClass) setFlenDecimal4Int(retTp, a, b *types.FieldType) {
+	retTp.Decimal = 0
+	if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
+		retTp.Flen = mysql.MaxIntWidth
+	} else {
+		retTp.Flen = int(math.Max(float64(a.Flen), float64(b.Flen))) + 1
+		retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxIntWidth)))
+	}
+}
+
 // setFlenDecimal4Real is called to set proper `Flen` and `Decimal` of return
 // type according to the two input parameter's types.
-// It's only used in `tpDecimal` or `tpReal` return `evalTp`s
-func (c *arithmeticPlusFunctionClass) setFlenDecimal4Real(retTp, a, b *types.FieldType) {
+func (c *arithmeticPlusFunctionClass) setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
 		retTp.Decimal = int(math.Max(float64(a.Decimal), float64(b.Decimal)))
 		if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
 			retTp.Flen = types.UnspecifiedLength
 		} else {
-			digitsInt := int(math.Max(float64(a.Flen-a.Decimal-1), float64(a.Flen-b.Decimal-1)))
+			digitsInt := int(math.Max(float64(a.Flen-a.Decimal-1), float64(b.Flen-b.Decimal-1)))
 			retTp.Flen = digitsInt + retTp.Decimal + 3
-			retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxRealWidth)))
+			if isReal {
+				retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxRealWidth)))
+			} else {
+				retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxDecimalWidth)))
+			}
 		}
 	} else {
 		retTp.Decimal = types.UnspecifiedLength
-		retTp.Flen = mysql.MaxRealWidth
-	}
-}
-
-// setFlenDecimal4Int is called to set proper `Flen` and `Decimal` of return
-// type according to the two input parameter's types.
-// It's only used in `tpInt` return `evalTp`
-func (c *arithmeticPlusFunctionClass) setFlenDecimal4Int(retTp, a, b *types.FieldType) {
-	retTp.Decimal = 0
-	if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
 		retTp.Flen = types.UnspecifiedLength
-	} else {
-		retTp.Flen = int(math.Max(float64(a.Flen), float64(b.Flen))) + 1
-		retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxRealWidth)))
 	}
-}
-
-// getEvalTp will get the `evalTp` of the argument according to it's return type.
-func (c *arithmeticPlusFunctionClass) getEvalTp(ft *types.FieldType) evalTp {
-	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
-		mysql.TypeLonglong, mysql.TypeBit, mysql.TypeYear:
-		return tpInt
-	case mysql.TypeNewDecimal, mysql.TypeDatetime, mysql.TypeDuration:
-		return tpDecimal
-	}
-	return tpReal
 }
 
 func (c *arithmeticPlusFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
@@ -96,21 +99,21 @@ func (c *arithmeticPlusFunctionClass) getFunction(args []Expression, ctx context
 		c.setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		sig := &builtinArithmeticPlusIntSig{baseIntBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
-	} else if evalTpA == tpDecimal || evalTpB == tpDecimal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		c.setFlenDecimal4Real(bf.tp, args[0].GetType(), args[1].GetType())
-		sig := &builtinArithmeticPlusDecimalSig{baseDecimalBuiltinFunc{bf}}
-		return sig.setSelf(sig), nil
-	} else {
+	} else if evalTpA == tpReal || evalTpB == tpReal {
 		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		c.setFlenDecimal4Real(bf.tp, args[0].GetType(), args[1].GetType())
+		c.setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
 		sig := &builtinArithmeticPlusRealSig{baseRealBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	} else {
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		c.setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
+		sig := &builtinArithmeticPlusDecimalSig{baseDecimalBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
 }
