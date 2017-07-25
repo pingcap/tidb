@@ -16,6 +16,7 @@ package expression
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -24,13 +25,20 @@ import (
 func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 	defer testleak.AfterTest(c)()
 
-	sf := newFunction(ast.LT, Zero, One)
+	a := &Column{
+		FromID:   "aa",
+		Position: 1,
+		TblName:  model.NewCIStr("fei"),
+		ColName:  model.NewCIStr("han"),
+		RetType:  types.NewFieldType(mysql.TypeDouble),
+	}
+	sf := newFunction(ast.LT, a, One)
 	res, err := sf.MarshalJSON()
 	c.Assert(err, IsNil)
-	c.Assert(res, DeepEquals, []byte{0x22, 0x6c, 0x74, 0x28, 0x30, 0x2c, 0x20, 0x31, 0x29, 0x22})
+	c.Assert(res, DeepEquals, []byte{0x22, 0x6c, 0x74, 0x28, 0x66, 0x65, 0x69, 0x2e, 0x68, 0x61, 0x6e, 0x2c, 0x20, 0x31, 0x29, 0x22})
 	c.Assert(sf.IsCorrelated(), IsFalse)
 	c.Assert(sf.Decorrelate(nil).Equal(sf, s.ctx), IsTrue)
-	c.Assert(sf.HashCode(), DeepEquals, []byte{0x2, 0x8, 0x2, 0x4, 0x6c, 0x74, 0x2, 0x4, 0x8, 0x0, 0x2, 0x4, 0x8, 0x2})
+	c.Assert(sf.HashCode(), DeepEquals, []byte{0x2, 0x8, 0x2, 0x4, 0x6c, 0x74, 0x2, 0xc, 0x2, 0x4, 0x61, 0x61, 0x8, 0x2, 0x2, 0x12, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0})
 
 	sf = NewValuesFunc(0, types.NewFieldType(mysql.TypeLonglong), s.ctx)
 	newSf, ok := sf.Clone().(*ScalarFunction)
@@ -43,8 +51,13 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 
 func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {
 	defer testleak.AfterTest(c)()
-	sf0, _ := newFunction(ast.LT, Zero, Zero).(*ScalarFunction)
-	sf1, _ := newFunction(ast.LT, One, One).(*ScalarFunction)
+	a := &Column{
+		FromID:   "aa",
+		Position: 1,
+		RetType:  types.NewFieldType(mysql.TypeDouble),
+	}
+	sf0, _ := newFunction(ast.LT, a.Clone(), Zero).(*ScalarFunction)
+	sf1, _ := newFunction(ast.LT, a.Clone(), One).(*ScalarFunction)
 
 	funcs := []*ScalarFunction{sf0, sf1}
 	exprs := ScalarFuncs2Exprs(funcs)

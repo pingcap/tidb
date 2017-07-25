@@ -87,7 +87,7 @@ func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
 
 type rpcHandler struct {
 	cluster   *Cluster
-	mvccStore *MvccStore
+	mvccStore MVCCStore
 
 	// store id for current request
 	storeID uint64
@@ -339,11 +339,11 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
 	Cluster   *Cluster
-	MvccStore *MvccStore
+	MvccStore MVCCStore
 }
 
 // NewRPCClient creates an RPCClient.
-func NewRPCClient(cluster *Cluster, mvccStore *MvccStore) *RPCClient {
+func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
 	return &RPCClient{
 		Cluster:   cluster,
 		MvccStore: mvccStore,
