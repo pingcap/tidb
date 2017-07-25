@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -262,7 +263,7 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b := newExecutorBuilder(e.Ctx, e.IS)
+	b := newExecutorBuilder(e.Ctx, e.IS, kv.PriorityNormal)
 	stmtExec := b.build(p)
 	if b.err != nil {
 		return errors.Trace(b.err)
