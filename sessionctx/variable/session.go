@@ -230,6 +230,7 @@ func NewSessionVars() *SessionVars {
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
+		CBO: true,
 	}
 }
 
