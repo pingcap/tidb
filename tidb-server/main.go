@@ -173,7 +173,9 @@ func main() {
 
 	pushMetric(*metricsAddr, time.Duration(*metricsInterval)*time.Second)
 
-	log.Error(svr.Run())
+	if err := svr.Run(); err != nil {
+		log.Error(err)
+	}
 	domain.Close()
 	os.Exit(0)
 }

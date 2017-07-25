@@ -45,6 +45,14 @@ var (
 	_ Node = &VariableAssignment{}
 )
 
+// Isolation level constants.
+const (
+	ReadCommitted   = "READ-COMMITTED"
+	ReadUncommitted = "READ-UNCOMMITTED"
+	Serializable    = "SERIALIZABLE"
+	RepeatableRead  = "REPEATABLE-READ"
+)
+
 // TypeOpt is used for parsing data type option from SQL.
 type TypeOpt struct {
 	IsUnsigned bool

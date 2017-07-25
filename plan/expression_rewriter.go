@@ -93,9 +93,8 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-	result := expression.PlainFoldConstant(er.ctxStack[0])
-	// result := expression.FoldConstant(er.ctxStack[0])
-	return result, er.p, nil
+
+	return er.ctxStack[0], er.p, nil
 }
 
 type expressionRewriter struct {
@@ -752,21 +751,16 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				er.ctxStack[stkLen-1])
 			return
 		}
-		if _, ok := sessionVars.Users[name]; ok {
-			f, err := expression.NewFunction(er.ctx,
-				ast.GetVar,
-				// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
-				types.NewFieldType(mysql.TypeString),
-				datumToConstant(types.NewStringDatum(name), mysql.TypeString))
-			if err != nil {
-				er.err = errors.Trace(err)
-				return
-			}
-			er.ctxStack = append(er.ctxStack, f)
-		} else {
-			// select null user vars is permitted.
-			er.ctxStack = append(er.ctxStack, &expression.Constant{RetType: types.NewFieldType(mysql.TypeNull)})
+		f, err := expression.NewFunction(er.ctx,
+			ast.GetVar,
+			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
+			types.NewFieldType(mysql.TypeString),
+			datumToConstant(types.NewStringDatum(name), mysql.TypeString))
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
 		}
+		er.ctxStack = append(er.ctxStack, f)
 		return
 	}
 	var val string

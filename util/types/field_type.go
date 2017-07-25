@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -148,6 +149,16 @@ func (ft *FieldType) CompactStr() string {
 	return ts + suffix
 }
 
+// InfoSchemaStr joins the CompactStr with unsigned flag and
+// returns a string.
+func (ft *FieldType) InfoSchemaStr() string {
+	suffix := ""
+	if mysql.HasUnsignedFlag(ft.Flag) {
+		suffix = " unsigned"
+	}
+	return ft.CompactStr() + suffix
+}
+
 // String joins the information of FieldType and
 // returns a string.
 func (ft *FieldType) String() string {
@@ -268,6 +279,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Flen = len(x.Name)
 		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
+	case json.JSON:
+		tp.Tp = mysql.TypeJSON
 	default:
 		tp.Tp = mysql.TypeUnspecified
 		tp.Flen = UnspecifiedLength

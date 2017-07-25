@@ -1554,19 +1554,19 @@ func (b *builtinDateArithSig) eval(row []types.Datum) (d types.Datum, err error)
 			interval = fmt.Sprintf("%v", ii)
 		}
 	}
-	year, month, day, duration, err := types.ExtractTimeValue(nodeIntervalUnit, interval)
+	year, month, day, dur, err := types.ExtractTimeValue(nodeIntervalUnit, interval)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	if b.op == ast.DateArithSub {
-		year, month, day, duration = -year, -month, -day, -duration
+		year, month, day, dur = -year, -month, -day, -dur
 	}
 	// TODO: Consider time_zone variable.
 	t, err := result.Time.GoTime(time.Local)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	t = t.Add(duration)
+	t = t.Add(dur)
 	t = t.AddDate(int(year), int(month), int(day))
 	if t.Nanosecond() == 0 {
 		result.Fsp = 0
@@ -2588,7 +2588,7 @@ func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err err
 	if err != nil {
 		return d, errorOrWarning(err, b.ctx)
 	}
-	tm, err := date.Time.GoTime(time.Local)
+	tm1, err := date.Time.GoTime(time.Local)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -2596,24 +2596,24 @@ func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err err
 	fsp := types.DefaultFsp
 	switch unit {
 	case "MICROSECOND":
-		tb = tm.Add(time.Duration(v) * time.Microsecond)
+		tb = tm1.Add(time.Duration(v) * time.Microsecond)
 		fsp = types.MaxFsp
 	case "SECOND":
-		tb = tm.Add(time.Duration(v) * time.Second)
+		tb = tm1.Add(time.Duration(v) * time.Second)
 	case "MINUTE":
-		tb = tm.Add(time.Duration(v) * time.Minute)
+		tb = tm1.Add(time.Duration(v) * time.Minute)
 	case "HOUR":
-		tb = tm.Add(time.Duration(v) * time.Hour)
+		tb = tm1.Add(time.Duration(v) * time.Hour)
 	case "DAY":
-		tb = tm.AddDate(0, 0, int(v))
+		tb = tm1.AddDate(0, 0, int(v))
 	case "WEEK":
-		tb = tm.AddDate(0, 0, 7*int(v))
+		tb = tm1.AddDate(0, 0, 7*int(v))
 	case "MONTH":
-		tb = tm.AddDate(0, int(v), 0)
+		tb = tm1.AddDate(0, int(v), 0)
 	case "QUARTER":
-		tb = tm.AddDate(0, 3*int(v), 0)
+		tb = tm1.AddDate(0, 3*int(v), 0)
 	case "YEAR":
-		tb = tm.AddDate(int(v), 0, 0)
+		tb = tm1.AddDate(int(v), 0, 0)
 	default:
 		return d, errors.Trace(types.ErrInvalidTimeFormat)
 	}

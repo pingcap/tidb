@@ -55,7 +55,6 @@ func newFunction(funcName string, args ...Expression) Expression {
 
 func (*testExpressionSuite) TestConstantPropagation(c *C) {
 	defer testleak.AfterTest(c)()
-	nullValue := &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 	tests := []struct {
 		conditions []Expression
 		result     string
@@ -68,16 +67,15 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn("d"), newLonglong(1)),
 				newFunction(ast.OrOr, newLonglong(1), newColumn("a")),
 			},
-			result: "eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, 1), eq(test.t.d, 1), or(1, 1)",
+			result: "1, eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, 1), eq(test.t.d, 1)",
 		},
 		{
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn("a"), newColumn("b")),
 				newFunction(ast.EQ, newColumn("b"), newLonglong(1)),
-				newFunction(ast.EQ, newColumn("a"), nullValue),
 				newFunction(ast.NE, newColumn("c"), newLonglong(2)),
 			},
-			result: "eq(cast(1), <nil>), eq(test.t.a, 1), eq(test.t.b, 1), ne(test.t.c, 2)",
+			result: "eq(test.t.a, 1), eq(test.t.b, 1), ne(test.t.c, 2)",
 		},
 		{
 			conditions: []Expression{

@@ -1681,6 +1681,13 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 		{"select (1+1)", "(1+1)"},
 		{"select a from t", "a"},
 		{"select        ((a+1))     from t", "((a+1))"},
+		{"select 1 /*!32301 +1 */;", "1  +1 "},
+		{"select /*!32301 1  +1 */;", "1  +1 "},
+		{"/*!32301 select 1  +1 */;", "1  +1 "},
+		{"select 1 + /*!32301 1 +1 */;", "1 +  1 +1 "},
+		{"select 1 /*!32301 + 1, 1 */;", "1  + 1"},
+		{"select /*!32301 1, 1 +1 */;", "1"},
+		{"select /*!32301 1 + 1, */ +1;", "1 + 1"},
 	}
 	for _, tt := range tests {
 		results, err := se.Execute(tt.sql)
