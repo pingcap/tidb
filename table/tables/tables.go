@@ -131,7 +131,7 @@ func (t *Table) WritableIndices() []table.Index {
 	writable := make([]table.Index, 0, len(t.indices))
 	for _, index := range t.indices {
 		s := index.Meta().State
-		if s != model.StateNone && s != model.StateDeleteOnly && s != model.StateDeleteReorganization {
+		if s != model.StateDeleteOnly && s != model.StateDeleteReorganization {
 			writable = append(writable, index)
 		}
 	}
@@ -140,13 +140,8 @@ func (t *Table) WritableIndices() []table.Index {
 
 // DeletableIndices implements table.Table DeletableIndices interface.
 func (t *Table) DeletableIndices() []table.Index {
-	deletable := make([]table.Index, 0, len(t.indices))
-	for _, index := range t.indices {
-		if index.Meta().State != model.StateNone {
-			deletable = append(deletable, index)
-		}
-	}
-	return deletable
+	// All indices are deletable because we don't need to check StateNone.
+	return t.indices
 }
 
 // Meta implements table.Table Meta interface.
@@ -353,7 +348,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	for _, col := range t.WritableCols() {
 		var value types.Datum
 		if col.State != model.StatePublic {
-			// if col is in write only or write reorganization state, we must add it with its default value.
+			// If col is in write only or write reorganization state, we must add it with its default value.
 			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 			if err != nil {
 				return 0, errors.Trace(err)
