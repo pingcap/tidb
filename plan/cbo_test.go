@@ -15,6 +15,7 @@ package plan_test
 
 import (
 	"fmt"
+
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -81,6 +82,14 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		{
 			sql:  "select count(c) from t where t.b <= 50",
 			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select * from t where t.b <= 40",
+			best: "IndexLookUp(Index(t.b)[[-inf,40]], Table(t))",
+		},
+		{
+			sql:  "select * from t where t.b <= 50",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
 		},
 	}
 	for _, tt := range tests {
