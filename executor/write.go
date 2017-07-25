@@ -872,6 +872,9 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 }
 
 func (e *InsertValues) truncateTrailingSpaces(v *types.Datum) {
+	if v.Kind() == types.KindNull {
+		return
+	}
 	b := v.GetBytes()
 	len := len(b)
 	for len > 0 && b[len-1] == ' ' {
