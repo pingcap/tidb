@@ -264,7 +264,7 @@ type PhysicalPlan interface {
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx context.Context) (*tipb.Executor, error)
 
-	// ExplainInfo returns operator informations to be explained.
+	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
 	// getChildrenPossibleProps tries to push the required properties to its children and return all the possible properties.

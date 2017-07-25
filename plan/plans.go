@@ -190,7 +190,7 @@ func (e *Explain) prepareExplainInfo(p Plan, parent Plan) error {
 	return nil
 }
 
-// prepareExplainInfo4DAGTask generates the following informations for every plan:
+// prepareExplainInfo4DAGTask generates the following information for every plan:
 // ["id", "parents", "task", "operator info"].
 func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
 	parents := p.Parents()
@@ -204,7 +204,7 @@ func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
 	e.Rows = append(e.Rows, row)
 }
 
-// prepareCopTaskInfo generates explain informations for cop-tasks.
+// prepareCopTaskInfo generates explain information for cop-tasks.
 // Only PhysicalTableReader, PhysicalIndexReader and PhysicalIndexLookUpReader have cop-tasks currently.
 func (e *Explain) prepareCopTaskInfo(plans []PhysicalPlan) {
 	for _, p := range plans {
@@ -212,7 +212,7 @@ func (e *Explain) prepareCopTaskInfo(plans []PhysicalPlan) {
 	}
 }
 
-// prepareRootTaskInfo generates explain informations for root-tasks.
+// prepareRootTaskInfo generates explain information for root-tasks.
 func (e *Explain) prepareRootTaskInfo(p PhysicalPlan) {
 	e.explainedPlans[p.ID()] = true
 	for _, child := range p.Children() {
