@@ -783,7 +783,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	if len(is.filterCondition) > 0 {
 		var indexConds, tableConds []expression.Expression
 		if copTask.tablePlan != nil {
-			tableConds, indexConds = is.splitConditionsByIndexColumns()
+			indexConds, tableConds = ranger.DetachIndexFilterConditions(is.filterCondition, is.Index.Columns, is.Table)
 		} else {
 			indexConds = is.filterCondition
 		}
@@ -902,21 +902,6 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, profile *s
 		copTask.tablePlan = sel
 		copTask.cst += copTask.count() * cpuFactor
 	}
-}
-
-// splitConditionsByIndexColumns splits the conditions by index schema. If some condition only contain the index
-// columns, it will be pushed to index plan.
-func (is *PhysicalIndexScan) splitConditionsByIndexColumns() (tableConds, indexConds expression.CNFExprs) {
-	for _, cond := range is.filterCondition {
-		cols := expression.ExtractColumns(cond)
-		indices := is.schema.ColumnsIndices(cols)
-		if len(indices) == 0 {
-			tableConds = append(tableConds, cond)
-		} else {
-			indexConds = append(indexConds, cond)
-		}
-	}
-	return
 }
 
 func (p *LogicalApply) generatePhysicalPlans() []PhysicalPlan {
