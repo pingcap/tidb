@@ -21,8 +21,8 @@ import (
 )
 
 var (
-	_ functionClass = &andandFunctionClass{}
-	_ functionClass = &ororFunctionClass{}
+	_ functionClass = &logicAndFunctionClass{}
+	_ functionClass = &logicOrFunctionClass{}
 	_ functionClass = &logicXorFunctionClass{}
 	_ functionClass = &bitOpFunctionClass{}
 	_ functionClass = &isTrueOpFunctionClass{}
@@ -31,8 +31,8 @@ var (
 )
 
 var (
-	_ builtinFunc = &builtinAndAndSig{}
-	_ builtinFunc = &builtinOrOrSig{}
+	_ builtinFunc = &builtinLogicAndSig{}
+	_ builtinFunc = &builtinLogicOrSig{}
 	_ builtinFunc = &builtinLogicXorSig{}
 	_ builtinFunc = &builtinBitOpSig{}
 	_ builtinFunc = &builtinIsTrueOpSig{}
@@ -40,11 +40,11 @@ var (
 	_ builtinFunc = &builtinIsNullSig{}
 )
 
-type andandFunctionClass struct {
+type logicAndFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *andandFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *logicAndFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -53,16 +53,16 @@ func (c *andandFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinAndAndSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinLogicAndSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flen = 1
 	return sig.setSelf(sig), nil
 }
 
-type builtinAndAndSig struct {
+type builtinLogicAndSig struct {
 	baseIntBuiltinFunc
 }
 
-func (b *builtinAndAndSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinLogicAndSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil || (!isNull0 && arg0 == 0) {
@@ -78,20 +78,20 @@ func (b *builtinAndAndSig) evalInt(row []types.Datum) (int64, bool, error) {
 	return 1, false, nil
 }
 
-type ororFunctionClass struct {
+type logicOrFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *ororFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinOrOrSig{newBaseBuiltinFunc(args, ctx)}
+func (c *logicOrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	sig := &builtinLogicOrSig{newBaseBuiltinFunc(args, ctx)}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinOrOrSig struct {
+type builtinLogicOrSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinOrOrSig) eval(row []types.Datum) (d types.Datum, err error) {
+func (b *builtinLogicOrSig) eval(row []types.Datum) (d types.Datum, err error) {
 	leftDatum, err := b.args[0].Eval(row)
 	if err != nil {
 		return d, errors.Trace(err)

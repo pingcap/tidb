@@ -839,16 +839,22 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementCo
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
-			var runeCount int
-			var truncateLen int
-			for i := range s {
-				runeCount++
-				if runeCount == flen+1 {
-					// We don't break here because we need to iterate to the end to get runeCount.
-					truncateLen = i
+			if len([]rune(s)) > flen {
+				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
+				//    CREATE TABLE t (a char(0));
+				//    INSERT INTO t VALUES (``);
+				// 2. If len(s) is 10 and flen is 0, truncateLen will be 0 too, but we still need to truncate s.
+				//    SELECT 1, CAST(1234 AS CHAR(0));
+				// So truncateLen is not a suitable variable to determine to do truncate or not.
+				var runeCount int
+				var truncateLen int
+				for i := range s {
+					if runeCount == flen {
+						// We don't break here because we need to iterate to the end to get runeCount.
+						truncateLen = i
+					}
+					runeCount++
 				}
-			}
-			if truncateLen > 0 || flen == 0 {
 				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, runeCount)
 				s = truncateStr(s, truncateLen)
 			}
