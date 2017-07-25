@@ -115,6 +115,10 @@ type builtinRowSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinRowSig) isDeterministic() bool {
+	return false
+}
+
 func (b *builtinRowSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
