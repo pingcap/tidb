@@ -1158,6 +1158,10 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("str2 0"))
 	result = tk.MustQuery("select cast(1234 as char(3))")
 	result.Check(testkit.Rows("123"))
+	result = tk.MustQuery("select cast(1234 as char(0))")
+	result.Check(testkit.Rows(""))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1406 Data Too Long, field len 0, data len 4"))
 
 	// testCase is for like and regexp
 	type testCase struct {
