@@ -316,12 +316,12 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 		return nil
 	}
 	if tp.Flen > mysql.MaxUint32 {
-		return types.ErrTooBigDisplaywidth.Gen("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, mysql.MaxUint32)
+		return types.ErrTooBigDisplayWidth.Gen("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, mysql.MaxUint32)
 	}
 	switch tp.Tp {
 	case mysql.TypeString:
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.MaxFieldCharLength {
-			return types.ErrTooBigFieldlength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
+			return types.ErrTooBigFieldLength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
 		}
 	case mysql.TypeVarchar:
 		maxFlen := mysql.MaxFieldVarCharLength
@@ -338,7 +338,7 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 		}
 		maxFlen /= desc.Maxlen
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > maxFlen {
-			return types.ErrTooBigFieldlength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
+			return types.ErrTooBigFieldLength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
 		}
 	case mysql.TypeDouble:
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.PrecisionForDouble {

@@ -27,10 +27,10 @@ var (
 	ErrOverflow = terror.ClassTypes.New(codeOverflow, msgOverflow)
 	// ErrDivByZero is return when do division by 0.
 	ErrDivByZero = terror.ClassTypes.New(codeDivByZero, "Division by 0")
-	// ErrTooBigDisplaywidth is return when display width out of range for column.
-	ErrTooBigDisplaywidth = terror.ClassTypes.New(codeTooBigDisplaywidth, "Too Big Display width")
-	// ErrTooBigFieldlength is return when column length too big for column.
-	ErrTooBigFieldlength = terror.ClassTypes.New(codeTooBigFieldlength, "Too Big Field length")
+	// ErrTooBigDisplayWidth is return when display width out of range for column.
+	ErrTooBigDisplayWidth = terror.ClassTypes.New(codeTooBigDisplayWidth, "Too Big Display width")
+	// ErrTooBigFieldLength is return when column length too big for column.
+	ErrTooBigFieldLength = terror.ClassTypes.New(codeTooBigFieldLength, "Too Big Field length")
 	// ErrTooBigSet is return when too many strings for column.
 	ErrTooBigSet = terror.ClassTypes.New(codeTooBigSet, "Too Big Set")
 	// ErrWrongFieldSpec is return when incorrect column specifier for column.
@@ -46,8 +46,8 @@ const (
 	codeTruncated          terror.ErrCode = terror.ErrCode(mysql.WarnDataTruncated)
 	codeOverflow           terror.ErrCode = terror.ErrCode(mysql.ErrDataOutOfRange)
 	codeDivByZero          terror.ErrCode = terror.ErrCode(mysql.ErrDivisionByZero)
-	codeTooBigDisplaywidth terror.ErrCode = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
-	codeTooBigFieldlength  terror.ErrCode = terror.ErrCode(mysql.ErrTooBigFieldlength)
+	codeTooBigDisplayWidth terror.ErrCode = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
+	codeTooBigFieldLength  terror.ErrCode = terror.ErrCode(mysql.ErrTooBigFieldlength)
 	codeTooBigSet          terror.ErrCode = terror.ErrCode(mysql.ErrTooBigSet)
 	codeWrongFieldSpec     terror.ErrCode = terror.ErrCode(mysql.ErrWrongFieldSpec)
 )
