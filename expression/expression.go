@@ -443,9 +443,14 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 				return nil, errors.Trace(err)
 			}
 		}
-		newFunc, err := NewFunction(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
-		if err != nil {
-			return nil, errors.Trace(err)
+		var newFunc Expression
+		if x.FuncName.O == ast.Cast {
+			newFunc = NewCastFunc(expr.GetType(), args[0], ctx)
+		} else {
+			newFunc, err = NewFunction(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		return FoldConstant(newFunc), nil
 	case *Column:
