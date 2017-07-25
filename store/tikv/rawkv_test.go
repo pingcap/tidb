@@ -71,6 +71,29 @@ func (s *testRawKVSuite) mustScan(c *C, startKey string, limit int, expect ...st
 	}
 }
 
+func (s *testRawKVSuite) mustMPut(c *C, v ...string) {
+	m := make(map[string][]byte)
+	for i := 0; i < len(v); i += 2 {
+		m[v[i]] = []byte(v[i+1])
+	}
+	err := s.client.MPut(m)
+	c.Assert(err, IsNil)
+}
+
+func (s *testRawKVSuite) mustMGet(c *C, keys []string, expect ...string) {
+	bytesKeys := make([][]byte, 0, len(keys))
+	for _, k := range keys {
+		bytesKeys = append(bytesKeys, []byte(k))
+	}
+	res, err := s.client.MGet(bytesKeys)
+	c.Assert(err, IsNil)
+
+	c.Assert(len(res)*2, Equals, len(expect))
+	for i := 0; i < len(expect); i += 2 {
+		c.Assert(string(res[expect[i]]), Equals, expect[i+1])
+	}
+}
+
 func (s *testRawKVSuite) TestSimple(c *C) {
 	s.mustNotExist(c, []byte("key"))
 	s.mustPut(c, []byte("key"), []byte("value"))
@@ -120,4 +143,11 @@ func (s *testRawKVSuite) TestScan(c *C) {
 	check()
 	split("k2", "k5")
 	check()
+}
+
+func (s *testRawKVSuite) TestMGetMPut(c *C) {
+	s.mustPut(c, []byte("k1"), []byte("v1"))
+	s.mustPut(c, []byte("k2"), []byte("v2"))
+	s.mustMPut(c, "k2", "vv2", "k3", "v3")
+	s.mustMGet(c, []string{"k1", "k2", "k3", "k4"}, "k1", "v1", "k2", "vv2", "k3", "v3")
 }

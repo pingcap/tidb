@@ -242,6 +242,8 @@ type RawKV interface {
 	RawScan(startKey, endKey []byte, limit int) []Pair
 	RawPut(key, value []byte)
 	RawDelete(key []byte)
+	RawMGet(keys [][]byte) []Pair
+	RawMPut(pairs []Pair)
 }
 
 // MvccStore is an in-memory, multi-versioned, transaction-supported kv storage.
@@ -568,6 +570,27 @@ func (s *MvccStore) RawScan(startKey, endKey []byte, limit int) []Pair {
 	}
 	s.rawkv.AscendGreaterOrEqual(newRawEntry(startKey), iterator)
 	return pairs
+}
+
+// RawMGet queries multiple values with keys.
+func (s *MvccStore) RawMGet(keys [][]byte) []Pair {
+	pairs := make([]Pair, 0, len(keys))
+	for _, k := range keys {
+		if v := s.RawGet(k); len(v) > 0 {
+			pairs = append(pairs, Pair{
+				Key:   k,
+				Value: v,
+			})
+		}
+	}
+	return pairs
+}
+
+// RawMPut stores multiple key-value pairs.
+func (s *MvccStore) RawMPut(pairs []Pair) {
+	for _, pair := range pairs {
+		s.RawPut(pair.Key, pair.Value)
+	}
 }
 
 // MvccKey is the encoded key type.

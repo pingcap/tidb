@@ -41,6 +41,8 @@ const (
 	CmdRawPut
 	CmdRawDelete
 	CmdRawScan
+	CmdRawMGet
+	CmdRawMPut
 
 	CmdCop CmdType = 512 + iota
 )
@@ -63,6 +65,8 @@ type Request struct {
 	RawPut        *kvrpcpb.RawPutRequest
 	RawDelete     *kvrpcpb.RawDeleteRequest
 	RawScan       *kvrpcpb.RawScanRequest
+	RawMGet       *kvrpcpb.RawMGetRequest
+	RawMPut       *kvrpcpb.RawMPutRequest
 	Cop           *coprocessor.Request
 }
 
@@ -98,6 +102,10 @@ func (req *Request) GetContext() (*kvrpcpb.Context, error) {
 		c = req.RawDelete.GetContext()
 	case CmdRawScan:
 		c = req.RawScan.GetContext()
+	case CmdRawMGet:
+		c = req.RawMGet.GetContext()
+	case CmdRawMPut:
+		c = req.RawMPut.GetContext()
 	case CmdCop:
 		c = req.Cop.GetContext()
 	default:
@@ -123,6 +131,8 @@ type Response struct {
 	RawPut        *kvrpcpb.RawPutResponse
 	RawDelete     *kvrpcpb.RawDeleteResponse
 	RawScan       *kvrpcpb.RawScanResponse
+	RawMGet       *kvrpcpb.RawMGetResponse
+	RawMPut       *kvrpcpb.RawMPutResponse
 	Cop           *coprocessor.Response
 }
 
@@ -158,6 +168,10 @@ func SetContext(req *Request, ctx *kvrpcpb.Context) error {
 		req.RawDelete.Context = ctx
 	case CmdRawScan:
 		req.RawScan.Context = ctx
+	case CmdRawMGet:
+		req.RawMGet.Context = ctx
+	case CmdRawMPut:
+		req.RawMPut.Context = ctx
 	case CmdCop:
 		req.Cop.Context = ctx
 	default:
@@ -228,6 +242,14 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.RawScan = &kvrpcpb.RawScanResponse{
 			RegionError: e,
 		}
+	case CmdRawMGet:
+		resp.RawMGet = &kvrpcpb.RawMGetResponse{
+			RegionError: e,
+		}
+	case CmdRawMPut:
+		resp.RawMPut = &kvrpcpb.RawMPutResponse{
+			RegionError: e,
+		}
 	case CmdCop:
 		resp.Cop = &coprocessor.Response{
 			RegionError: e,
@@ -270,6 +292,10 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.RawDelete.GetRegionError()
 	case CmdRawScan:
 		e = resp.RawScan.GetRegionError()
+	case CmdRawMGet:
+		e = resp.RawMGet.GetRegionError()
+	case CmdRawMPut:
+		e = resp.RawMPut.GetRegionError()
 	case CmdCop:
 		e = resp.Cop.GetRegionError()
 	default:

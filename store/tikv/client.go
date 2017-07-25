@@ -186,115 +186,49 @@ func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 func (c *rpcClient) callRPC(ctx goctx.Context, client tikvpb.TikvClient, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	resp := &tikvrpc.Response{}
 	resp.Type = req.Type
+	var err error
 	switch req.Type {
 	case tikvrpc.CmdGet:
-		r, err := client.KvGet(ctx, req.Get)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.Get = r
-		return resp, nil
+		resp.Get, err = client.KvGet(ctx, req.Get)
 	case tikvrpc.CmdScan:
-		r, err := client.KvScan(ctx, req.Scan)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.Scan = r
-		return resp, nil
+		resp.Scan, err = client.KvScan(ctx, req.Scan)
 	case tikvrpc.CmdPrewrite:
-		r, err := client.KvPrewrite(ctx, req.Prewrite)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.Prewrite = r
-		return resp, nil
+		resp.Prewrite, err = client.KvPrewrite(ctx, req.Prewrite)
 	case tikvrpc.CmdCommit:
-		r, err := client.KvCommit(ctx, req.Commit)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.Commit = r
-		return resp, nil
+		resp.Commit, err = client.KvCommit(ctx, req.Commit)
 	case tikvrpc.CmdCleanup:
-		r, err := client.KvCleanup(ctx, req.Cleanup)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.Cleanup = r
-		return resp, nil
+		resp.Cleanup, err = client.KvCleanup(ctx, req.Cleanup)
 	case tikvrpc.CmdBatchGet:
-		r, err := client.KvBatchGet(ctx, req.BatchGet)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.BatchGet = r
-		return resp, nil
+		resp.BatchGet, err = client.KvBatchGet(ctx, req.BatchGet)
 	case tikvrpc.CmdBatchRollback:
-		r, err := client.KvBatchRollback(ctx, req.BatchRollback)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.BatchRollback = r
-		return resp, nil
+		resp.BatchRollback, err = client.KvBatchRollback(ctx, req.BatchRollback)
 	case tikvrpc.CmdScanLock:
-		r, err := client.KvScanLock(ctx, req.ScanLock)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.ScanLock = r
-		return resp, nil
+		resp.ScanLock, err = client.KvScanLock(ctx, req.ScanLock)
 	case tikvrpc.CmdResolveLock:
-		r, err := client.KvResolveLock(ctx, req.ResolveLock)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.ResolveLock = r
-		return resp, nil
+		resp.ResolveLock, err = client.KvResolveLock(ctx, req.ResolveLock)
 	case tikvrpc.CmdGC:
-		r, err := client.KvGC(ctx, req.GC)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.GC = r
-		return resp, nil
+		resp.GC, err = client.KvGC(ctx, req.GC)
 	case tikvrpc.CmdRawGet:
-		r, err := client.RawGet(ctx, req.RawGet)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.RawGet = r
-		return resp, nil
+		resp.RawGet, err = client.RawGet(ctx, req.RawGet)
 	case tikvrpc.CmdRawPut:
-		r, err := client.RawPut(ctx, req.RawPut)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.RawPut = r
-		return resp, nil
+		resp.RawPut, err = client.RawPut(ctx, req.RawPut)
 	case tikvrpc.CmdRawDelete:
-		r, err := client.RawDelete(ctx, req.RawDelete)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.RawDelete = r
-		return resp, nil
+		resp.RawDelete, err = client.RawDelete(ctx, req.RawDelete)
 	case tikvrpc.CmdRawScan:
-		r, err := client.RawScan(ctx, req.RawScan)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.RawScan = r
-		return resp, nil
+		resp.RawScan, err = client.RawScan(ctx, req.RawScan)
+	case tikvrpc.CmdRawMGet:
+		resp.RawMGet, err = client.RawMGet(ctx, req.RawMGet)
+	case tikvrpc.CmdRawMPut:
+		resp.RawMPut, err = client.RawMPut(ctx, req.RawMPut)
 	case tikvrpc.CmdCop:
-		r, err := client.Coprocessor(ctx, req.Cop)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.Cop = r
-		return resp, nil
+		resp.Cop, err = client.Coprocessor(ctx, req.Cop)
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return resp, nil
 }
 
 func (c *rpcClient) Close() error {

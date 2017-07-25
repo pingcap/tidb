@@ -336,6 +336,25 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 	}
 }
 
+func (h *rpcHandler) handleKvRawMGet(req *kvrpcpb.RawMGetRequest) *kvrpcpb.RawMGetResponse {
+	pairs := h.mvccStore.RawMGet(req.Keys)
+	return &kvrpcpb.RawMGetResponse{
+		Kvs: convertToPbPairs(pairs),
+	}
+}
+
+func (h *rpcHandler) handleKvRawMPut(req *kvrpcpb.RawMPutRequest) *kvrpcpb.RawMPutResponse {
+	pairs := make([]Pair, len(req.Kvs))
+	for i, pair := range req.Kvs {
+		pairs[i] = Pair{
+			Key:   pair.Key,
+			Value: pair.Value,
+		}
+	}
+	h.mvccStore.RawMPut(pairs)
+	return &kvrpcpb.RawMPutResponse{}
+}
+
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
 	Cluster   *Cluster
@@ -495,6 +514,20 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 			return resp, nil
 		}
 		resp.RawScan = handler.handleKvRawScan(r)
+	case tikvrpc.CmdRawMGet:
+		r := req.RawMGet
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.RawMGet = &kvrpcpb.RawMGetResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.RawMGet = handler.handleKvRawMGet(r)
+	case tikvrpc.CmdRawMPut:
+		r := req.RawMPut
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.RawMPut = &kvrpcpb.RawMPutResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.RawMPut = handler.handleKvRawMPut(r)
 	case tikvrpc.CmdCop:
 		r := req.Cop
 		if err := handler.checkRequestContext(reqCtx); err != nil {

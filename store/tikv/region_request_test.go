@@ -194,7 +194,9 @@ func (s *mockTikvGrpcServer) KvResolveLock(goctx.Context, *kvrpcpb.ResolveLockRe
 func (s *mockTikvGrpcServer) KvGC(goctx.Context, *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
 	return nil, errors.New("unreachable")
 }
-
+func (s *mockTikvGrpcServer) KvDeleteRange(ctx goctx.Context, in *kvrpcpb.DeleteRangeRequest) (*kvrpcpb.DeleteRangeResponse, error) {
+	return nil, errors.New("unreachable")
+}
 func (s *mockTikvGrpcServer) RawGet(goctx.Context, *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
 	return nil, errors.New("unreachable")
 }
@@ -205,6 +207,12 @@ func (s *mockTikvGrpcServer) RawDelete(goctx.Context, *kvrpcpb.RawDeleteRequest)
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) RawScan(goctx.Context, *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {
+	return nil, errors.New("unreachable")
+}
+func (s *mockTikvGrpcServer) RawMGet(goctx.Context, *kvrpcpb.RawMGetRequest) (*kvrpcpb.RawMGetResponse, error) {
+	return nil, errors.New("unreachable")
+}
+func (s *mockTikvGrpcServer) RawMPut(goctx.Context, *kvrpcpb.RawMPutRequest) (*kvrpcpb.RawMPutResponse, error) {
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) Coprocessor(goctx.Context, *coprocessor.Request) (*coprocessor.Response, error) {
