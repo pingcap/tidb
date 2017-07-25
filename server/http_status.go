@@ -42,10 +42,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/metrics", prometheus.Handler())
 
 	if s.cfg.Store == "tikv" {
-		tikvHandler, err := s.newRegionHandler()
-		if err != nil {
-			log.Fatal("Listening for tikv failed with error ", err)
-		}
+		tikvHandler := s.newRegionHandler()
 		// HTTP path for regions
 		router.Handle("/tables/{db}/{table}/regions", tableRegionsHandler{tikvHandler})
 		router.Handle("/regions/{regionID}", tikvHandler)

@@ -86,17 +86,17 @@ const (
 )
 
 // newRegionHandler checks and prepares for region handler.
-// It returns an err on any error happens.
-func (s *Server) newRegionHandler() (hanler *regionHandler, err error) {
+// It would panic when any error happens.
+func (s *Server) newRegionHandler() (hanler *regionHandler) {
 	var tikvStore kvStore
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
-		err = errors.New("Invalid KvStore with illegal driver")
+		log.Fatal("Invalid KvStore with illegal driver")
 		return
 	}
 
 	if tikvStore, ok = store.store.(kvStore); !ok {
-		err = errors.New("Invalid KvStore with illegal store")
+		log.Fatal("Invalid KvStore with illegal store")
 		return
 	}
 
@@ -110,7 +110,7 @@ func (s *Server) newRegionHandler() (hanler *regionHandler, err error) {
 		bo:          backOffer,
 		store:       tikvStore,
 	}
-	return &regionHandler{tool}, nil
+	return &regionHandler{tool}
 }
 
 // TableRegions is the response data for list table's regions.
