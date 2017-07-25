@@ -72,6 +72,8 @@ func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
 		(&FlushStmt{}),
 		(&PrivElem{}),
 		(&VariableAssignment{Value: &ValueExpr{}}),
+		(&KillStmt{}),
+		(&DropStatsStmt{Table: &TableName{}}),
 	}
 
 	for _, v := range stmts {

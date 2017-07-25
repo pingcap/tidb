@@ -399,7 +399,7 @@ func (b *builtinPasswordSig) evalString(row []types.Datum) (d string, isNull boo
 	sc := b.ctx.GetSessionVars().StmtCtx
 	pass, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return "", false, errors.Trace(err)
 	}
 
 	if len(pass) == 0 {
