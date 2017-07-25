@@ -16,6 +16,7 @@ package expression
 import (
 	"math"
 	"math/rand"
+	"runtime"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -137,6 +138,10 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 		{"0", 1, false, false, ""},
 		{"tidb", 0, false, true, ""},
 		{float64(100000), 0, false, true, "[types:1690]DOUBLE value is out of range in 'exp(100000)'"},
+	}
+
+	if runtime.GOARCH == "ppc64le" {
+		tests[1].expect = 2.7182818284590455
 	}
 
 	for _, test := range tests {
