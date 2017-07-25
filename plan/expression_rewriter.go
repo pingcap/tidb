@@ -994,7 +994,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	if er.err == nil {
 		r, er.err = expression.NewFunction(er.ctx, ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
 	}
-	op = ast.AndAnd
+	op = ast.LogicAnd
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
 		return
