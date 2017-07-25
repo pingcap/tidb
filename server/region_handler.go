@@ -89,12 +89,6 @@ const (
 // newRegionHandler checks and prepares for region handler.
 // It returns an err on any error happens.
 func (s *Server) newRegionHandler() (hanler *regionHandler, err error) {
-	// check store
-	if s.cfg.Store != "tikv" {
-		err = fmt.Errorf("only store tikv support,current store:%s", s.cfg.Store)
-		return
-	}
-
 	var tikvStore kvStore
 	store, ok := s.driver.(*TiDBDriver)
 	if ok {

@@ -40,8 +40,12 @@ func (s *Server) startHTTPServer() {
 	router.HandleFunc("/status", s.handleStatus)
 	// HTTP path for prometheus.
 	router.Handle("/metrics", prometheus.Handler())
-	tikvHandler, err := s.newRegionHandler()
-	if err == nil {
+
+	if s.cfg.Store == "tikv" {
+		tikvHandler, err := s.newRegionHandler()
+		if err != nil {
+			log.Fatal("Listening for tikv failed with error ", err)
+		}
 		// HTTP path for regions
 		router.Handle("/tables/{db}/{table}/regions", tableRegionsHandler{tikvHandler})
 		router.Handle("/regions/{regionID}", tikvHandler)
@@ -55,7 +59,7 @@ func (s *Server) startHTTPServer() {
 	}
 	log.Infof("Listening on %v for status and metrics report.", addr)
 	http.Handle("/", router)
-	err = http.ListenAndServe(addr, nil)
+	err := http.ListenAndServe(addr, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
