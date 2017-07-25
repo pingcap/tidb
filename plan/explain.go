@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"bytes"
 	"fmt"
 )
 
@@ -56,4 +57,42 @@ func setParents4FinalPlan(plan PhysicalPlan) {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *Limit) ExplainInfo() string {
 	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
+}
+
+func (p *Selection) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	for i, cond := range p.Conditions {
+		buffer.WriteString(cond.ExplainInfo())
+		if i+1 < len(p.Conditions) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *Projection) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	for i, expr := range p.Exprs {
+		buffer.WriteString(expr.ExplainInfo())
+		if i+1 < len(p.Exprs) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.String()
+}
+
+func (p *Sort) ExplainInfo() string {
+	buffer := bytes.NewBufferString(fmt.Sprintf(""))
+	for i, item := range p.ByItems {
+		order := "asc"
+		if item.Desc {
+			order = "desc"
+		}
+		buffer.WriteString(fmt.Sprintf("%s:%s", item.Expr.ExplainInfo(), order))
+		if i+1 < len(p.ByItems) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.String()
 }
