@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -871,29 +870,11 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 	return rows, nil
 }
 
-// truncateTrailingSpaces trancates trailing spaces for CHAR[(M)] column.
-// fix: https://github.com/pingcap/tidb/issues/3660
-func (e *InsertValues) truncateTrailingSpaces(v *types.Datum) {
-	if v.Kind() == types.KindNull {
-		return
-	}
-	b := v.GetBytes()
-	len := len(b)
-	for len > 0 && b[len-1] == ' ' {
-		len--
-	}
-	b = b[:len]
-	v.SetString(hack.String(b))
-}
-
 func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ignoreErr bool) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
 		offset := cols[i].Offset
-		if cols[i].Tp == mysql.TypeString && !mysql.HasBinaryFlag(cols[i].Flag) {
-			e.truncateTrailingSpaces(&v)
-		}
 		row[offset] = v
 		hasValue[offset] = true
 	}
