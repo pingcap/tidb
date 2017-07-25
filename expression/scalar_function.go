@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -161,21 +160,6 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	return sf
 }
 
-func (sf *ScalarFunction) convertArgsToDecimal(sc *variable.StatementContext) error {
-	ft := types.NewFieldType(mysql.TypeNewDecimal)
-	for _, arg := range sf.GetArgs() {
-		if constArg, ok := arg.(*Constant); ok {
-			val, err := constArg.Value.ConvertTo(sc, ft)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			constArg.Value = val
-		}
-	}
-
-	return nil
-}
-
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 	sc := sf.GetCtx().GetSessionVars().StmtCtx
@@ -211,16 +195,6 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 		default:
 			res, isNull, err = sf.EvalString(row, sc)
 		}
-	}
-
-	if err != nil && terror.ErrorEqual(err, types.ErrOverflow) &&
-		sf.FuncName.L == ast.UnaryMinus && sc.InSelectStmt {
-		// TODO: fix #3762, overflow convert it to decimal
-		err = sf.convertArgsToDecimal(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		res, isNull, err = sf.EvalDecimal(row, sc)
 	}
 
 	if isNull || err != nil {

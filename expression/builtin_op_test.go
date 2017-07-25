@@ -33,19 +33,29 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 	}{
 		{uint64(9223372036854775809), "-9223372036854775809", true, false},
 		{uint64(9223372036854775810), "-9223372036854775810", true, false},
-		{uint64(9223372036854775808), -9223372036854775808, false, false},
+		{uint64(9223372036854775808), int64(-9223372036854775808), false, false},
 		{int64(math.MinInt64), "9223372036854775808", true, false}, // --9223372036854775808
 	}
+	sc := s.ctx.GetSessionVars().StmtCtx
+	origin := sc.InSelectStmt
+	sc.InSelectStmt = true
+	defer func() {
+		sc.InSelectStmt = origin
+	}()
 
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.UnaryMinus, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(nil)
-
-		if !t.overflow {
-			c.Assert(d.GetValue(), Equals, t.expected)
+		if t.getErr == false {
+			c.Assert(err, IsNil)
+			if !t.overflow {
+				c.Assert(d.GetValue(), Equals, t.expected)
+			} else {
+				c.Assert(d.GetMysqlDecimal().String(), Equals, t.expected)
+			}
 		} else {
-			c.Assert(d.GetMysqlDecimal().String(), Equals, t.expected)
+			c.Assert(err, NotNil)
 		}
 	}
 }
