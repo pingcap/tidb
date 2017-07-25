@@ -52,7 +52,7 @@ func (s *testEvaluatorSuite) TestAndAnd(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.AndAnd, primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.LogicAnd, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(nil)
 		if t.getErr {
@@ -68,10 +68,10 @@ func (s *testEvaluatorSuite) TestAndAnd(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.AndAnd, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.LogicAnd, Zero)
 	c.Assert(err, NotNil)
 
-	f, err := funcs[ast.AndAnd].getFunction([]Expression{Zero, Zero}, s.ctx)
+	f, err := funcs[ast.LogicAnd].getFunction([]Expression{Zero, Zero}, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsTrue)
 }
