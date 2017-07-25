@@ -83,13 +83,11 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
-
 	sf := &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
 	}
-
 	return FoldConstant(sf), nil
 }
 
@@ -162,11 +160,10 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
-	sc := sf.GetCtx().GetSessionVars().StmtCtx
 	if !TurnOnNewExprEval {
-		d, err = sf.Function.eval(row)
-		return
+		return sf.Function.eval(row)
 	}
+	sc := sf.GetCtx().GetSessionVars().StmtCtx
 	var (
 		res    interface{}
 		isNull bool
@@ -176,7 +173,6 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 	case types.ClassInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(row, sc)
-
 		if mysql.HasUnsignedFlag(tp.Flag) {
 			res = uint64(intRes)
 		} else {

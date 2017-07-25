@@ -58,6 +58,10 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 			c.Assert(err, NotNil)
 		}
 	}
+
+	f, err := funcs[ast.UnaryMinus].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAndAnd(c *C) {

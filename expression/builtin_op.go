@@ -341,53 +341,6 @@ func (b *builtinUnaryOpSig) eval(row []types.Datum) (d types.Datum, err error) {
 		default:
 			return d, errInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
 		}
-	case opcode.Minus:
-		switch aDatum.Kind() {
-		case types.KindInt64:
-			val := aDatum.GetInt64()
-			if val == math.MinInt64 {
-				err = types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("-%v", val))
-			}
-			d.SetInt64(-val)
-		case types.KindUint64:
-			uval := aDatum.GetUint64()
-			if uval > uint64(-math.MinInt64) { // 9223372036854775808
-				// -uval will overflow
-				err = types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("-%v", uval))
-			} else {
-				d.SetInt64(-int64(uval))
-			}
-		case types.KindFloat64:
-			d.SetFloat64(-aDatum.GetFloat64())
-		case types.KindFloat32:
-			d.SetFloat32(-aDatum.GetFloat32())
-		case types.KindMysqlDuration:
-			dec := new(types.MyDecimal)
-			err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlDuration().ToNumber(), dec)
-			d.SetMysqlDecimal(dec)
-		case types.KindMysqlTime:
-			dec := new(types.MyDecimal)
-			err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlTime().ToNumber(), dec)
-			d.SetMysqlDecimal(dec)
-		case types.KindString, types.KindBytes:
-			f, err1 := types.StrToFloat(sc, aDatum.GetString())
-			err = errors.Trace(err1)
-			d.SetFloat64(-f)
-		case types.KindMysqlDecimal:
-			dec := new(types.MyDecimal)
-			err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlDecimal(), dec)
-			d.SetMysqlDecimal(dec)
-		case types.KindMysqlHex:
-			d.SetFloat64(-aDatum.GetMysqlHex().ToNumber())
-		case types.KindMysqlBit:
-			d.SetFloat64(-aDatum.GetMysqlBit().ToNumber())
-		case types.KindMysqlEnum:
-			d.SetFloat64(-aDatum.GetMysqlEnum().ToNumber())
-		case types.KindMysqlSet:
-			d.SetFloat64(-aDatum.GetMysqlSet().ToNumber())
-		default:
-			return d, errInvalidOperation.Gen("Unsupported type %v for op.Minus", aDatum.Kind())
-		}
 	default:
 		return d, errInvalidOperation.Gen("Unsupported op %v for unary op", b.op)
 	}
@@ -408,20 +361,25 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression) (evalTp, bool) {
 	}
 
 	overflow := false
-	// TODO: handle float overflow
+	// TODO: Handle float overflow
 	if arg, ok := argExpr.(*Constant); ok {
-		switch arg.Value.Kind() {
-		case types.KindUint64:
-			uval := arg.Value.GetUint64()
-			if uval > uint64(-math.MinInt64) {
-				overflow = true
-				tp = tpDecimal
-			}
-		case types.KindInt64:
-			val := arg.Value.GetInt64()
-			if val == math.MinInt64 {
-				overflow = true
-				tp = tpDecimal
+		if arg.GetTypeClass() == types.ClassInt {
+			if mysql.HasUnsignedFlag(arg.GetType().Flag) {
+				uval := arg.Value.GetUint64()
+				// -math.MinInt64 is 9223372036854775808, so if uval is more than 9223372036854775808, like
+				// 9223372036854775809, -9223372036854775809 is less than math.MinInt64, overflow occured
+				if uval > uint64(-math.MinInt64) {
+					overflow = true
+					tp = tpDecimal
+				}
+			} else {
+				val := arg.Value.GetInt64()
+				// The math.MinInt64 is -9223372036854775808, the math.MaxInt64 is 9223372036854775807,
+				// which is less than abs(-9223372036854775808). when val == math.MinInt64, overflow occured
+				if val == math.MinInt64 {
+					overflow = true
+					tp = tpDecimal
+				}
 			}
 		}
 	}
@@ -488,7 +446,7 @@ func (b *builtinUnaryMinusIntSig) evalInt(row []types.Datum) (res int64, isNull 
 	} else if val == math.MinInt64 {
 		return 0, false, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("-%v", val))
 	}
-	return -val, false, err
+	return -val, false, errors.Trace(err)
 }
 
 type builtinUnaryMinusDecimalSig struct {
@@ -512,7 +470,7 @@ func (b *builtinUnaryMinusDecimalSig) evalDecimal(row []types.Datum) (*types.MyD
 
 	to := new(types.MyDecimal)
 	err = types.DecimalSub(new(types.MyDecimal), dec, to)
-	return to, false, err
+	return to, false, errors.Trace(err)
 }
 
 type builtinUnaryMinusRealSig struct {
