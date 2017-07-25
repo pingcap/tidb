@@ -171,7 +171,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 		return res, val.IsNull(), errors.Trace(err)
 	}
 	switch expr.GetTypeClass() {
-	case types.ClassDecimal, types.ClassInt:
+	case types.ClassDecimal:
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
 		// TODO: We maintain two sets of type systems, one for Expression, one for Datum.

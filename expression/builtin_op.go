@@ -398,16 +398,15 @@ type unaryMinusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, bf *baseBuiltinFunc) bool {
-	bf.tp.Init(mysql.TypeLonglong)
+func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression) (evalTp, bool) {
+	tp := tpInt
 	switch argExpr.GetType().Tp {
 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat,
 		mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
-		bf.tp.Tp = mysql.TypeDouble
+		tp = tpReal
 	case mysql.TypeNewDecimal:
-		bf.tp.Tp = mysql.TypeNewDecimal
+		tp = tpDecimal
 	}
-	types.SetBinChsClnFlag(bf.tp)
 
 	overflow := false
 	// TODO: handle float overflow
@@ -417,42 +416,69 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, bf *baseBuiltinF
 			uval := arg.Value.GetUint64()
 			if uval > uint64(-math.MinInt64) {
 				overflow = true
-				bf.tp.Tp = mysql.TypeNewDecimal
+				tp = tpDecimal
 			}
 		case types.KindInt64:
 			val := arg.Value.GetInt64()
 			if val == math.MinInt64 {
 				overflow = true
-				bf.tp.Tp = mysql.TypeNewDecimal
+				tp = tpDecimal
 			}
 		}
 	}
-	return overflow
+	return tp, overflow
 }
 
 func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	bf := newBaseBuiltinFunc(args, ctx)
 	argExpr := args[0]
-	overflow := b.typeInfer(argExpr, &bf)
-	if overflow {
-		sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, true}
-		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
-	}
+	retTp, intOverflow := b.typeInfer(argExpr)
 
 	switch argExpr.GetTypeClass() {
 	case types.ClassInt:
-		sig = &builtinUnaryMinusIntSig{baseIntBuiltinFunc{bf}}
+		if intOverflow {
+			bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
+		} else {
+			bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			sig = &builtinUnaryMinusIntSig{baseIntBuiltinFunc{bf}}
+		}
 	case types.ClassDecimal:
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 	case types.ClassReal:
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		sig = &builtinUnaryMinusRealSig{baseRealBuiltinFunc{bf}}
 	case types.ClassString:
 		tp := argExpr.GetType().Tp
 		if types.IsTypeTime(tp) {
+			bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 		} else if tp == mysql.TypeDuration {
+			bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 		} else {
+			bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			sig = &builtinUnaryMinusRealSig{baseRealBuiltinFunc{bf}}
 		}
 	}
@@ -502,28 +528,13 @@ func (b *builtinUnaryMinusDecimalSig) evalDecimal(row []types.Datum) (*types.MyD
 	)
 
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	aDatum, err := b.args[0].Eval(row)
-	if err != nil || aDatum.IsNull() {
-		return nil, aDatum.IsNull(), errors.Trace(err)
-	}
-	switch aDatum.Kind() {
-	case types.KindMysqlTime:
-		dec := new(types.MyDecimal)
-		err := types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlTime().ToNumber(), dec)
-		return dec, false, err
-	case types.KindMysqlDuration:
-		dec := new(types.MyDecimal)
-		err := types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlDuration().ToNumber(), dec)
-		return dec, false, err
+	if !sc.InSelectStmt && b.constantArgOverflow {
+		return dec, false, types.ErrOverflow.GenByArgs("DECIMAL", dec.String())
 	}
 
 	dec, isNull, err := b.args[0].EvalDecimal(row, sc)
 	if err != nil || isNull {
 		return dec, isNull, errors.Trace(err)
-	}
-
-	if !sc.InSelectStmt && b.constantArgOverflow {
-		return dec, false, types.ErrOverflow.GenByArgs("DECIMAL", dec.String())
 	}
 
 	to, err = unaryMinusDecimal(dec)
@@ -536,30 +547,9 @@ type builtinUnaryMinusRealSig struct {
 
 func (b *builtinUnaryMinusRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	var aDatum types.Datum
-	aDatum, err = b.args[0].Eval(row)
-	if err != nil || aDatum.IsNull() {
-		return res, aDatum.IsNull(), errors.Trace(err)
-	}
-
-	switch aDatum.Kind() {
-	case types.KindFloat32:
-		res = float64(-aDatum.GetFloat32())
-	case types.KindFloat64:
-		res = float64(-aDatum.GetFloat64())
-	case types.KindString, types.KindBytes:
-		f, err1 := types.StrToFloat(sc, aDatum.GetString())
-		err = errors.Trace(err1)
-		res = float64(-f)
-	case types.KindMysqlHex:
-		res = float64(-aDatum.GetMysqlHex().ToNumber())
-	case types.KindMysqlBit:
-		res = float64(-aDatum.GetMysqlBit().ToNumber())
-	case types.KindMysqlEnum:
-		res = float64(-aDatum.GetMysqlEnum().ToNumber())
-	case types.KindMysqlSet:
-		res = float64(-aDatum.GetMysqlSet().ToNumber())
-	}
+	var val float64
+	val, isNull, err = b.args[0].EvalReal(row, sc)
+	res = -val
 	return
 }
 
