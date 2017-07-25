@@ -99,7 +99,7 @@ type Expression interface {
 	// ResolveIndices resolves indices by the given schema.
 	ResolveIndices(schema *Schema)
 
-	// ExplainInfo returns operator informations to be explained
+	// ExplainInfo returns operator informations to be explained.
 	ExplainInfo() string
 }
 

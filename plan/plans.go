@@ -191,7 +191,7 @@ func (e *Explain) prepareExplainInfo(p Plan, parent Plan) error {
 }
 
 // prepareExplainInfo4DAGTask generates the following informations for every plan:
-// ["id", "parents", "schema", "key", "task", "operator info"]
+// ["id", "parents", "task", "operator info"].
 func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
 	parents := p.Parents()
 	parentIDs := make([]string, 0, len(parents))

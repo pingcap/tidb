@@ -23,7 +23,7 @@ func (expr *ScalarFunction) ExplainInfo() string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", expr.FuncName.L))
 	for i, arg := range expr.GetArgs() {
 		buffer.WriteString(fmt.Sprintf("%s", arg.ExplainInfo()))
-		if i < len(expr.GetArgs()) {
+		if i+1 < len(expr.GetArgs()) {
 			buffer.WriteString(", ")
 		}
 	}
