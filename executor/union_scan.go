@@ -152,7 +152,7 @@ func (us *UnionScanExec) getSnapshotRow() (*Row, error) {
 			if us.snapshotRow == nil {
 				break
 			}
-			if len(us.snapshotRow.RowKeys) != 1 {
+			if len(us.children[0].Schema().TblID2handle) != 1 {
 				return nil, ErrRowKeyCount
 			}
 			snapshotHandle := us.snapshotRow.Data[len(us.snapshotRow.Data)-1].GetInt64()
@@ -249,15 +249,9 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 		if !matched {
 			continue
 		}
-		rowKeyEntry := &RowKeyEntry{Handle: h, Tbl: t}
 		newData = append(newData, types.NewIntDatum(h))
-		if asName != nil && asName.L != "" {
-			rowKeyEntry.TableName = asName.L
-		} else {
-			rowKeyEntry.TableName = t.Meta().Name.L
-		}
 
-		row := &Row{Data: newData, RowKeys: []*RowKeyEntry{rowKeyEntry}}
+		row := &Row{Data: newData}
 		us.addedRows = append(us.addedRows, row)
 	}
 	if us.desc {

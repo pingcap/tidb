@@ -90,18 +90,6 @@ const (
 type Row struct {
 	// Data is the output record data for current Plan.
 	Data []types.Datum
-	// RowKeys contains all table row keys in the row.
-	RowKeys []*RowKeyEntry
-}
-
-// RowKeyEntry represents a row key read from a table.
-type RowKeyEntry struct {
-	// Tbl is the table which this row come from.
-	Tbl table.Table
-	// Handle is Row key.
-	Handle int64
-	// TableName is table alias name.
-	TableName string
 }
 
 type baseExecutor struct {
@@ -375,8 +363,7 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 		return nil, nil
 	}
 	row := &Row{
-		RowKeys: srcRow.RowKeys,
-		Data:    make([]types.Datum, 0, len(e.exprs)),
+		Data: make([]types.Datum, 0, len(e.exprs)),
 	}
 	for _, expr := range e.exprs {
 		val, err := expr.Eval(srcRow.Data)
@@ -619,17 +606,6 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// Put rowKey to the tail of record row.
-	rke := &RowKeyEntry{
-		Tbl:    e.t,
-		Handle: handle,
-	}
-	if e.asName != nil && e.asName.L != "" {
-		rke.TableName = e.asName.L
-	} else {
-		rke.TableName = e.t.Meta().Name.L
-	}
-	row.RowKeys = append(row.RowKeys, rke)
 	return row, nil
 }
 
