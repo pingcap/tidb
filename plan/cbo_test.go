@@ -14,6 +14,8 @@
 package plan_test
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -32,6 +34,80 @@ var _ = Suite(&testAnalyzeSuite{})
 type testAnalyzeSuite struct {
 }
 
+func constructInsertSQL(i, n int) string {
+	sql := "insert into t values "
+	for j := 0; j < n; j++ {
+		sql += fmt.Sprintf("(%d, %d, '%d')", i*n+j, i, i+j)
+		if j != n-1 {
+			sql += ", "
+		}
+	}
+	return sql
+}
+
+func (s *testAnalyzeSuite) TestIndexRead(c *C) {
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int primary key, b int, c varchar(200))")
+	testKit.MustExec("create index b on t (b)")
+	for i := 0; i < 100; i++ {
+		testKit.MustExec(constructInsertSQL(i, 100))
+	}
+	testKit.MustExec("analyze table t")
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select count(c) from t where t.b <= 20",
+			best: "IndexLookUp(Index(t.b)[[-inf,20]], Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(c) from t where t.b <= 30",
+			best: "IndexLookUp(Index(t.b)[[-inf,30]], Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(c) from t where t.b <= 40",
+			best: "IndexLookUp(Index(t.b)[[-inf,40]], Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(c) from t where t.b <= 50",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select * from t where t.b <= 40",
+			best: "IndexLookUp(Index(t.b)[[-inf,40]], Table(t))",
+		},
+		{
+			sql:  "select * from t where t.b <= 50",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
+		},
+	}
+	for _, tt := range tests {
+		ctx := testKit.Se.(context.Context)
+		stmts, err := tidb.Parse(ctx, tt.sql)
+		c.Assert(err, IsNil)
+		c.Assert(stmts, HasLen, 1)
+		stmt := stmts[0]
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		err = plan.ResolveName(stmt, is, ctx)
+		c.Assert(err, IsNil)
+		err = expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
+		c.Assert(err, IsNil)
+		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+	}
+}
+
 func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	defer func() {
 		testleak.AfterTest(c)()
@@ -40,10 +116,10 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	defer func() {
-		testKit.MustExec("drop table t, t1, t2")
 		store.Close()
 	}()
 	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t, t1, t2")
 	testKit.MustExec("create table t (a int, b int)")
 	testKit.MustExec("create index a on t (a)")
 	testKit.MustExec("create index b on t (b)")
