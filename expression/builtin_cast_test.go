@@ -81,6 +81,15 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 		res, err = f.Eval(nil)
 		c.Assert(err, IsNil)
 	}
+
+	// cast(1234 as char(0))
+	tp.Flen = 0
+	tp.Charset = charset.CharsetUTF8
+	f = NewCastFunc(tp, &Constant{Value: types.NewDatum(1234), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(len(res.GetString()), Equals, 0)
+	c.Assert(res.GetString(), Equals, "")
 }
 
 var (
