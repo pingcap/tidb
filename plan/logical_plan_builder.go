@@ -929,7 +929,8 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		tblName := field.WildCard.Table
 		for _, col := range p.Schema().Columns {
 			if (dbName.L == "" || dbName.L == col.DBName.L) &&
-				(tblName.L == "" || tblName.L == col.TblName.L) {
+				(tblName.L == "" || tblName.L == col.TblName.L) &&
+				col.ID != -1 {
 				colName := &ast.ColumnNameExpr{
 					Name: &ast.ColumnName{
 						Schema: col.DBName,
@@ -988,12 +989,9 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 
-	// This will uncommented after rowMeta is totally removed.
-	/*
-		if sel.LockTp == ast.SelectLockForUpdate {
-			b.needColHandle = true
-		}
-	*/
+	if sel.LockTp == ast.SelectLockForUpdate {
+		b.needColHandle = true
+	}
 
 	hasAgg := b.detectSelectAgg(sel)
 	var (
@@ -1078,7 +1076,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 	sel.Fields.Fields = originalFields
-	// b.needColHandle = false
+	b.needColHandle = false
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.allocator, b.ctx)
 		addChild(proj, p)

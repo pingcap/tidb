@@ -821,10 +821,6 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 			return nil, errors.Trace(err)
 		}
 		err = decodeRawValues(values, e.Schema(), e.ctx.GetSessionVars().GetTimeZone())
-		log.Warnf("value len: %v", len(values))
-		for _, d := range values {
-			log.Warnf("d: %v", d.GetString())
-		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

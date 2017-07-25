@@ -262,12 +262,15 @@ func (e *SelectLockExec) Next() (*Row, error) {
 	if row == nil {
 		return nil, nil
 	}
-	if len(row.RowKeys) != 0 && e.Lock == ast.SelectLockForUpdate {
+	if len(e.Schema().TblID2handle) > 0 && e.Lock == ast.SelectLockForUpdate {
 		e.ctx.GetSessionVars().TxnCtx.ForUpdate = true
 		txn := e.ctx.Txn()
-		for _, k := range row.RowKeys {
-			lockKey := tablecodec.EncodeRowKeyWithHandle(k.Tbl.Meta().ID, k.Handle)
-			err = txn.LockKeys(lockKey)
+		for id, cols := range e.Schema().TblID2handle {
+			for _, col := range cols {
+				handle := row.Data[col.Index].GetInt64()
+				lockKey := tablecodec.EncodeRowKeyWithHandle(id, handle)
+				err = txn.LockKeys(lockKey)
+			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

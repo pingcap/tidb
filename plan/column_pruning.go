@@ -266,18 +266,25 @@ func (p *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) {
 	p.mergeSchema()
 }
 
-// This will be uncommented after remove the table info from rowMeta.
-/*
+// PruneColumns implements LogicalPlan interface.
 func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
-	for _, col := range p.schema.Columns {
-		if col.ID == -1 && col.ColName.L == "_rowid" {
-			parentUsedCols = append(parentUsedCols, col)
+	if p.Lock == ast.SelectLockForUpdate {
+		used := getUsedList(parentUsedCols, p.schema)
+		for _, cols := range p.children[0].Schema().TblID2handle {
+			for _, col := range cols {
+				col.ResolveIndices(p.children[0].Schema())
+				if !used[col.Index] {
+					used[col.Index] = true
+					parentUsedCols = append(parentUsedCols, col)
+				}
+			}
 		}
+		log.Warnf("lock schema: %v", p.schema)
+		p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
+	} else {
+		p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	}
-	p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
-	p.SetSchema(p.children[0].Schema())
 }
-*/
 
 // PruneColumns implements LogicalPlan interface.
 func (p *Update) PruneColumns(parentUsedCols []*expression.Column) {

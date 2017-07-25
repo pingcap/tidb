@@ -336,7 +336,7 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 // Then we hold the returning rows and finish this task.
 func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Context) {
 	var (
-		err error
+		err       error
 		handleCol *expression.Column
 	)
 	schema := e.schema.Clone()
@@ -347,7 +347,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		handleCol = e.schema.TblID2handle[e.tableID][0]
 	} else if e.keepOrder {
 		handleCol = &expression.Column{
-			ID: -1,
+			ID:    -1,
 			Index: e.schema.Len(),
 		}
 		schema.Append(handleCol)
@@ -384,7 +384,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		}
 		if !e.needColHandle {
 			for _, row := range task.rows {
-				row.Data = row.Data[:len(row.Data) - 1]
+				row.Data = row.Data[:len(row.Data)-1]
 			}
 		}
 	}
