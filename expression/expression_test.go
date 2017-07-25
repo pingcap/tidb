@@ -26,9 +26,10 @@ func (s *testEvaluatorSuite) TestNewCastFunc(c *C) {
 	defer testleak.AfterTest(c)()
 
 	res := NewCastFunc(types.NewFieldType(mysql.TypeJSON), &Constant{RetType: types.NewFieldType(mysql.TypeLonglong), Value: types.NewIntDatum(1)}, s.ctx)
-	c.Assert(res.FuncName.O, Equals, "cast")
-	c.Assert(res.RetType.Tp, Equals, mysql.TypeJSON)
-	_, ok := res.Function.(*builtinCastSig)
+	castFunc := res.(*ScalarFunction)
+	c.Assert(castFunc.FuncName.L, Equals, "cast")
+	c.Assert(castFunc.RetType.Tp, Equals, mysql.TypeJSON)
+	_, ok := castFunc.Function.(*builtinCastSig)
 	c.Assert(ok, IsTrue)
 }
 
