@@ -37,10 +37,10 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 		{int64(math.MinInt64), "9223372036854775808", true, false}, // --9223372036854775808
 	}
 	sc := s.ctx.GetSessionVars().StmtCtx
-	origin := sc.InSelectStmt
-	sc.InSelectStmt = true
+	origin := sc.IgnoreOverflow
+	sc.IgnoreOverflow = true
 	defer func() {
-		sc.InSelectStmt = origin
+		sc.IgnoreOverflow = origin
 	}()
 
 	for _, t := range cases {

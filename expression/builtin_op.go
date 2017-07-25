@@ -351,7 +351,27 @@ type unaryMinusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression) (evalTp, bool) {
+func (b *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow bool) {
+	overflow = false
+	if mysql.HasUnsignedFlag(arg.GetType().Flag) {
+		uval := arg.Value.GetUint64()
+		// -math.MinInt64 is 9223372036854775808, so if uval is more than 9223372036854775808, like
+		// 9223372036854775809, -9223372036854775809 is less than math.MinInt64, overflow occurs.
+		if uval > uint64(-math.MinInt64) {
+			overflow = true
+		}
+	} else {
+		val := arg.Value.GetInt64()
+		// The math.MinInt64 is -9223372036854775808, the math.MaxInt64 is 9223372036854775807,
+		// which is less than abs(-9223372036854775808). When val == math.MinInt64, overflow occurs.
+		if val == math.MinInt64 {
+			overflow = true
+		}
+	}
+	return
+}
+
+func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Context) (evalTp, bool) {
 	tp := tpInt
 	switch argExpr.GetTypeClass() {
 	case types.ClassString, types.ClassReal:
@@ -360,27 +380,14 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression) (evalTp, bool) {
 		tp = tpDecimal
 	}
 
+	sc := ctx.GetSessionVars().StmtCtx
 	overflow := false
-	// TODO: Handle float overflow
-	if arg, ok := argExpr.(*Constant); ok {
-		if arg.GetTypeClass() == types.ClassInt {
-			if mysql.HasUnsignedFlag(arg.GetType().Flag) {
-				uval := arg.Value.GetUint64()
-				// -math.MinInt64 is 9223372036854775808, so if uval is more than 9223372036854775808, like
-				// 9223372036854775809, -9223372036854775809 is less than math.MinInt64, overflow occured
-				if uval > uint64(-math.MinInt64) {
-					overflow = true
-					tp = tpDecimal
-				}
-			} else {
-				val := arg.Value.GetInt64()
-				// The math.MinInt64 is -9223372036854775808, the math.MaxInt64 is 9223372036854775807,
-				// which is less than abs(-9223372036854775808). when val == math.MinInt64, overflow occured
-				if val == math.MinInt64 {
-					overflow = true
-					tp = tpDecimal
-				}
-			}
+	// TODO: Handle float overflow.
+	if arg, ok := argExpr.(*Constant); sc.IgnoreOverflow && ok &&
+		arg.GetTypeClass() == types.ClassInt {
+		overflow = b.handleIntOverflow(arg)
+		if overflow {
+			tp = tpDecimal
 		}
 	}
 	return tp, overflow
@@ -393,14 +400,14 @@ func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Con
 	}
 
 	argExpr := args[0]
-	retTp, intOverflow := b.typeInfer(argExpr)
+	retTp, intOverflow := b.typeInfer(argExpr, ctx)
 
 	var bf baseBuiltinFunc
 	switch argExpr.GetTypeClass() {
 	case types.ClassInt:
 		if intOverflow {
 			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
-			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
+			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, true}
 		} else {
 			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
 			sig = &builtinUnaryMinusIntSig{baseIntBuiltinFunc{bf}}
@@ -462,10 +469,6 @@ func (b *builtinUnaryMinusDecimalSig) evalDecimal(row []types.Datum) (*types.MyD
 	dec, isNull, err := b.args[0].EvalDecimal(row, sc)
 	if err != nil || isNull {
 		return dec, isNull, errors.Trace(err)
-	}
-
-	if !sc.InSelectStmt && b.constantArgOverflow {
-		return dec, false, types.ErrOverflow.GenByArgs("DECIMAL", dec.String())
 	}
 
 	to := new(types.MyDecimal)
