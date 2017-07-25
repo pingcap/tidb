@@ -529,6 +529,9 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 // should be less than `gcRunInterval`.
 const maxTxnTimeUse = 590000
 
+// testingCommit is set when running testCommitSuite.
+var testingCommit bool
+
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute() error {
 	defer func() {

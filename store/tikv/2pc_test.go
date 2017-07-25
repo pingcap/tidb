@@ -36,8 +36,6 @@ type testCommitterSuite struct {
 
 var _ = Suite(&testCommitterSuite{})
 
-var testingCommit bool
-
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
