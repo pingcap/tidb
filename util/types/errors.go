@@ -42,14 +42,14 @@ var (
 const (
 	codeBadNumber terror.ErrCode = 1
 
-	codeDataTooLong terror.ErrCode = terror.ErrCode(mysql.ErrDataTooLong)
-	codeTruncated   terror.ErrCode = terror.ErrCode(mysql.WarnDataTruncated)
-	codeOverflow    terror.ErrCode = terror.ErrCode(mysql.ErrDataOutOfRange)
-	codeDivByZero   terror.ErrCode = terror.ErrCode(mysql.ErrDivisionByZero)
-	codeTooBigDisplaywidth   terror.ErrCode = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
-	codeTooBigFieldlength terror.ErrCode = terror.ErrCode(mysql.ErrTooBigFieldlength)
-	codeTooBigSet terror.ErrCode = terror.ErrCode(mysql.ErrTooBigSet)
-	codeWrongFieldSpec terror.ErrCode = terror.ErrCode(mysql.ErrWrongFieldSpec)
+	codeDataTooLong        terror.ErrCode = terror.ErrCode(mysql.ErrDataTooLong)
+	codeTruncated          terror.ErrCode = terror.ErrCode(mysql.WarnDataTruncated)
+	codeOverflow           terror.ErrCode = terror.ErrCode(mysql.ErrDataOutOfRange)
+	codeDivByZero          terror.ErrCode = terror.ErrCode(mysql.ErrDivisionByZero)
+	codeTooBigDisplaywidth terror.ErrCode = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
+	codeTooBigFieldlength  terror.ErrCode = terror.ErrCode(mysql.ErrTooBigFieldlength)
+	codeTooBigSet          terror.ErrCode = terror.ErrCode(mysql.ErrTooBigSet)
+	codeWrongFieldSpec     terror.ErrCode = terror.ErrCode(mysql.ErrWrongFieldSpec)
 )
 
 var (
