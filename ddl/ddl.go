@@ -147,6 +147,8 @@ type DDL interface {
 	OwnerManager() OwnerManager
 	// WorkerVars gets the session variables for DDL worker.
 	WorkerVars() *variable.SessionVars
+	// SetHook sets the hook. It's exported for testing.
+	SetHook(h Callback)
 }
 
 // Event is an event that a ddl operation happened.
@@ -451,7 +453,8 @@ func (d *ddl) callHookOnChanged(err error) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) setHook(h Callback) {
+// SetHook implements DDL.SetHook interface.
+func (d *ddl) SetHook(h Callback) {
 	d.hookMu.Lock()
 	defer d.hookMu.Unlock()
 

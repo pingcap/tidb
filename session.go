@@ -77,6 +77,8 @@ type Session interface {
 	// Cancel the execution of current transaction.
 	Cancel()
 	ShowProcess() util.ProcessInfo
+	// PrePareTxnCtx is exported for test.
+	PrepareTxnCtx()
 }
 
 var (
@@ -361,7 +363,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 	nh := getHistory(s)
 	var err error
 	for {
-		s.prepareTxnCtx()
+		s.PrepareTxnCtx()
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
@@ -585,7 +587,7 @@ func (s *session) SetProcessInfo(sql string) {
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
-	s.prepareTxnCtx()
+	s.PrepareTxnCtx()
 	startTS := time.Now()
 
 	charset, collation := s.sessionVars.GetCharsetInfo()
@@ -600,7 +602,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	var rs []ast.RecordSet
 	ph := sessionctx.GetDomain(s).PerfSchema()
 	for i, rst := range rawStmts {
-		s.prepareTxnCtx()
+		s.PrepareTxnCtx()
 		startTS := time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
 		executor.ResetStmtCtx(s, rst)
@@ -706,7 +708,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s.prepareTxnCtx()
+	s.PrepareTxnCtx()
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 
 	r, err := runStmt(s, st)
@@ -1079,9 +1081,9 @@ func (s *session) getTxnFuture() *txnFuture {
 	return &txnFuture{tsFuture, s.store}
 }
 
-// prepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
+// PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
 // It is called before we execute a sql query.
-func (s *session) prepareTxnCtx() {
+func (s *session) PrepareTxnCtx() {
 	if s.txn != nil && s.txn.Valid() {
 		return
 	}
