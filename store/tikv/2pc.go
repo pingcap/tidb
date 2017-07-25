@@ -529,9 +529,6 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 // should be less than `gcRunInterval`.
 const maxTxnTimeUse = 590000
 
-// testingCommit is set when running testCommitSuite.
-var testingCommit bool
-
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute() error {
 	defer func() {
@@ -592,12 +589,7 @@ func (c *twoPhaseCommitter) execute() error {
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
-	backoffTimeout := commitMaxBackoff
-	if testingCommit {
-		// Set to a small value to accelerate testing.
-		backoffTimeout = 2000
-	}
-	err = c.commitKeys(NewBackoffer(backoffTimeout, ctx), c.keys)
+	err = c.commitKeys(NewBackoffer(commitMaxBackoff, ctx), c.keys)
 	if err != nil {
 		if errors.Cause(err) == terror.ErrResultUndetermined {
 			c.mu.undetermined = true
