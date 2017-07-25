@@ -171,6 +171,10 @@ func (s *testSuite) TestInsert(c *C) {
 	r.Check(testkit.Rows("1035651600"))
 	tk.MustExec("set @@time_zone = @origin_time_zone")
 
+	// issue 3832
+	tk.MustExec("create table t1 (b char(0));")
+	_, err = tk.Exec(`insert into t1 values ("");`)
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
