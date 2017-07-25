@@ -589,7 +589,12 @@ func (c *twoPhaseCommitter) execute() error {
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
-	err = c.commitKeys(NewBackoffer(commitMaxBackoff, ctx), c.keys)
+	backoffTimeout := commitMaxBackoff
+	if testingCommit {
+		// Set to a small value to accelerate testing.
+		backoffTimeout = 2000
+	}
+	err = c.commitKeys(NewBackoffer(backoffTimeout, ctx), c.keys)
 	if err != nil {
 		if errors.Cause(err) == terror.ErrResultUndetermined {
 			c.mu.undetermined = true

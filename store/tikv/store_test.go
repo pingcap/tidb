@@ -338,11 +338,16 @@ type checkRequestClient struct {
 }
 
 func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	if c.priority != req.Priority {
-		return nil, errors.New("request check error")
-	}
 
-	return c.Client.SendReq(ctx, addr, req)
+	resp, err := c.Client.SendReq(ctx, addr, req)
+	if c.priority != req.Priority {
+		if resp.Get != nil {
+			resp.Get.Error = &pb.KeyError{
+				Abort: "request check error",
+			}
+		}
+	}
+	return resp, err
 }
 
 func (s *testStoreSuite) TestRequestPriority(c *C) {

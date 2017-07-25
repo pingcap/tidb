@@ -36,6 +36,8 @@ type testCommitterSuite struct {
 
 var _ = Suite(&testCommitterSuite{})
 
+var testingCommit bool
+
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
@@ -45,6 +47,11 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	store, err := newTikvStore("mock-tikv-store", pdCli, client, false)
 	c.Assert(err, IsNil)
 	s.store = store
+	testingCommit = true
+}
+
+func (s *testCommitterSuite) TearDownSuite(c *C) {
+	testingCommit = false
 }
 
 func (s *testCommitterSuite) begin(c *C) *tikvTxn {
