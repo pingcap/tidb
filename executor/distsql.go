@@ -21,6 +21,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/distsql/xeval"
@@ -661,12 +662,20 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	sc := e.ctx.GetSessionVars().StmtCtx
+	sv := e.ctx.GetSessionVars()
+	sc := sv.StmtCtx
 	keyRanges, err := indexRangesToKVRanges(sc, e.table.Meta().ID, e.index.ID, e.ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return distsql.Select(e.ctx.GetClient(), e.ctx.GoCtx(), selIdxReq, keyRanges, e.scanConcurrency, !e.outOfOrder)
+	return distsql.Select(e.ctx.GetClient(), e.ctx.GoCtx(), selIdxReq, keyRanges, e.scanConcurrency, !e.outOfOrder, getIsolationLevel(sv))
+}
+
+func getIsolationLevel(sv *variable.SessionVars) kv.IsoLevel {
+	if sv.Systems[variable.TxnIsolation] == ast.ReadCommitted {
+		return kv.RC
+	}
+	return kv.SI
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -811,7 +820,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
 	// Use the table scan concurrency variable to do table request.
 	concurrency := e.ctx.GetSessionVars().DistSQLScanConcurrency
-	resp, err := distsql.Select(e.ctx.GetClient(), goctx.Background(), selTableReq, keyRanges, concurrency, false)
+	resp, err := distsql.Select(e.ctx.GetClient(), goctx.Background(), selTableReq, keyRanges, concurrency, false, getIsolationLevel(e.ctx.GetSessionVars()))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -891,7 +900,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.GroupBy = e.byItems
 
 	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
-	e.result, err = distsql.Select(e.ctx.GetClient(), goctx.Background(), selReq, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder)
+	e.result, err = distsql.Select(e.ctx.GetClient(), goctx.Background(), selReq, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, getIsolationLevel(e.ctx.GetSessionVars()))
 	if err != nil {
 		return errors.Trace(err)
 	}

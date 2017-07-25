@@ -129,8 +129,7 @@ func getBuildStatsConcurrency(ctx context.Context) (int, error) {
 type taskType int
 
 const (
-	pkTask taskType = iota
-	colTask
+	colTask taskType = iota
 	idxTask
 )
 
@@ -139,6 +138,7 @@ type analyzeTask struct {
 	tableInfo *model.TableInfo
 	indexInfo *model.IndexInfo
 	Columns   []*model.ColumnInfo
+	PKInfo    *model.ColumnInfo
 	src       Executor
 }
 
@@ -153,8 +153,6 @@ type analyzeResult struct {
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- analyzeResult) {
 	for task := range taskCh {
 		switch task.taskType {
-		case pkTask:
-			resultCh <- e.analyzePK(task)
 		case colTask:
 			resultCh <- e.analyzeColumns(task)
 		case idxTask:
@@ -163,17 +161,18 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 	}
 }
 
-func (e *AnalyzeExec) analyzePK(task *analyzeTask) analyzeResult {
-	count, hg, err := statistics.BuildPK(e.ctx, defaultBucketCount, task.Columns[0].ID, &recordSet{executor: task.src})
-	return analyzeResult{tableID: task.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 0, err: err}
-}
-
 func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) analyzeResult {
-	collectors, err := CollectSamplesAndEstimateNDVs(&recordSet{executor: task.src}, len(task.Columns))
+	collectors, pkBuilder, err := CollectSamplesAndEstimateNDVs(e.ctx, &recordSet{executor: task.src}, len(task.Columns), task.PKInfo)
 	if err != nil {
 		return analyzeResult{err: err}
 	}
-	result := analyzeResult{tableID: task.tableInfo.ID, count: collectors[0].Count + collectors[0].NullCount, isIndex: 0}
+	result := analyzeResult{tableID: task.tableInfo.ID, isIndex: 0}
+	if task.PKInfo != nil {
+		result.count = pkBuilder.Count
+		result.hist = []*statistics.Histogram{pkBuilder.Hist}
+	} else {
+		result.count = collectors[0].Count + collectors[0].NullCount
+	}
 	for i, col := range task.Columns {
 		hg, err := statistics.BuildColumn(e.ctx, defaultBucketCount, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].samples)
 		result.hist = append(result.hist, hg)
@@ -216,11 +215,16 @@ func (c *SampleCollector) collect(d types.Datum) error {
 }
 
 // CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
-// and estimates NDVs using FM Sketch during the collecting process. It returns the sample collectors which contain total
-// count, null count and distinct values count.
+// and estimates NDVs using FM Sketch during the collecting process. Also, if pkInfo is not nil, it will directly build
+// histogram for PK. It returns the sample collectors which contain total count, null count and distinct values count.
+// It also returns the statistic builder for PK which contains the histogram.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 // Exported for test.
-func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) ([]*SampleCollector, error) {
+func CollectSamplesAndEstimateNDVs(ctx context.Context, e ast.RecordSet, numCols int, pkInfo *model.ColumnInfo) ([]*SampleCollector, *statistics.SortedBuilder, error) {
+	var pkBuilder *statistics.SortedBuilder
+	if pkInfo != nil {
+		pkBuilder = statistics.NewSortedBuilder(ctx, defaultBucketCount, pkInfo.ID, true)
+	}
 	collectors := make([]*SampleCollector, numCols)
 	for i := range collectors {
 		collectors[i] = &SampleCollector{
@@ -230,15 +234,22 @@ func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) ([]*SampleColle
 	for {
 		row, err := e.Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		if row == nil {
-			return collectors, nil
+			return collectors, pkBuilder, nil
+		}
+		if pkInfo != nil {
+			err := pkBuilder.Iterate(row.Data)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			row.Data = row.Data[1:]
 		}
 		for i, val := range row.Data {
 			err = collectors[i].collect(val)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, errors.Trace(err)
 			}
 		}
 	}

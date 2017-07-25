@@ -190,8 +190,8 @@ func (pc pbConverter) likeToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		return nil
 	}
 	// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
-	escape := expr.GetArgs()[2].(*Constant).Value
-	if escape.IsNull() || byte(escape.GetInt64()) != '\\' {
+	escape, ok := expr.GetArgs()[2].(*Constant)
+	if !ok || escape.Value.IsNull() || byte(escape.Value.GetInt64()) != '\\' {
 		return nil
 	}
 	pattern, ok := expr.GetArgs()[1].(*Constant)

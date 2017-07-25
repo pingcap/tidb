@@ -71,6 +71,12 @@ func (s *Schema) Clone() *Schema {
 	return schema
 }
 
+// ExprFromSchema checks if all columns of this expression are from the same schema.
+func ExprFromSchema(expr Expression, schema *Schema) bool {
+	cols := ExtractColumns(expr)
+	return len(schema.ColumnsIndices(cols)) > 0
+}
+
 // FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
 func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
@@ -162,6 +168,18 @@ func (s *Schema) ColumnsIndices(cols []*Column) (ret []int) {
 		}
 	}
 	return
+}
+
+// ColumnsByIndices returns columns by multiple offsets.
+// Callers should guarantee that all the offsets provided should be valid, which means offset should:
+// 1. not smaller than 0, and
+// 2. not exceed len(s.Columns)
+func (s *Schema) ColumnsByIndices(offsets []int) []*Column {
+	cols := make([]*Column, 0, len(offsets))
+	for _, offset := range offsets {
+		cols = append(cols, s.Columns[offset])
+	}
+	return cols
 }
 
 // MergeSchema will merge two schema into one schema.

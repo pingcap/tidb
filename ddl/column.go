@@ -161,7 +161,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
 		columnInfo.State = model.StatePublic
 		job.SchemaState = model.StatePublic
-		ver, err := updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -249,7 +249,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 		tblInfo.Columns = newColumns
 		job.SchemaState = model.StateNone
-		ver, err := updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

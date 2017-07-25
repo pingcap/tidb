@@ -99,7 +99,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateDeleteOnly:
 		tblInfo.State = model.StateNone
 		job.SchemaState = model.StateNone
-		ver, err := updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

@@ -109,9 +109,16 @@ func (e *IndexLookUpJoin) Next() (*Row, error) {
 			}
 			if match {
 				joinDatums := make([]types.Datum, 0, len(e.outerJoinKeys))
-				for _, col := range e.outerJoinKeys {
-					datum, _ := col.Eval(outerRow.Data)
-					joinDatums = append(joinDatums, datum)
+				for i, col := range e.outerJoinKeys {
+					datum, err := col.Eval(outerRow.Data)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					innerDatum, err := datum.ConvertTo(e.ctx.GetSessionVars().StmtCtx, e.innerJoinKeys[i].GetType())
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					joinDatums = append(joinDatums, innerDatum)
 				}
 				joinOuterEncodeKey, err := codec.EncodeValue(nil, joinDatums...)
 				if err != nil {
