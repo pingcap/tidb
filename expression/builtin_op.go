@@ -442,42 +442,24 @@ func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Con
 	case types.ClassInt:
 		if intOverflow {
 			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
 			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 		} else {
 			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
 			sig = &builtinUnaryMinusIntSig{baseIntBuiltinFunc{bf}}
 		}
 	case types.ClassDecimal:
 		bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 	case types.ClassReal:
 		bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		sig = &builtinUnaryMinusRealSig{baseRealBuiltinFunc{bf}}
 	case types.ClassString:
 		tp := argExpr.GetType().Tp
 		if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
 			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
 			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 		} else {
 			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
 			sig = &builtinUnaryMinusRealSig{baseRealBuiltinFunc{bf}}
 		}
 	}
