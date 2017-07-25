@@ -369,6 +369,7 @@ type Delete struct {
 type DashbaseSelect struct {
 	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	SQL string
 }
@@ -377,6 +378,7 @@ type DashbaseSelect struct {
 type DashbaseInsert struct {
 	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 	// TODO
 }
 

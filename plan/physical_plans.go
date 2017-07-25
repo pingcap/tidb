@@ -1104,6 +1104,24 @@ func (p *Show) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
+func (p *DashbaseSelect) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *DashbaseInsert) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
