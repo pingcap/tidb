@@ -18,8 +18,7 @@ import (
 )
 
 func setParents4FinalPlan(plan PhysicalPlan) {
-	allPlans := []PhysicalPlan{}
-	allPlans = append(allPlans, plan)
+	allPlans := []PhysicalPlan{plan}
 	planMark := map[string]bool{}
 	planMark[plan.ID()] = true
 	for pID := 0; pID < len(allPlans); pID++ {

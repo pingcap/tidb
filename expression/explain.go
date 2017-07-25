@@ -45,7 +45,7 @@ func (expr *Constant) ExplainInfo() string {
 	return fmt.Sprintf("const(%s)", valStr)
 }
 
-// ExplainAggFunc generates explain informations for a aggregation function.
+// ExplainAggFunc generates explain information for a aggregation function.
 func ExplainAggFunc(agg AggregationFunction) string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", agg.GetName()))
 	if agg.IsDistinct() {
