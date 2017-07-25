@@ -58,10 +58,14 @@ var (
 
 func init() {
 	typesMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDataTooLong: mysql.ErrDataTooLong,
-		codeTruncated:   mysql.WarnDataTruncated,
-		codeOverflow:    mysql.ErrDataOutOfRange,
-		codeDivByZero:   mysql.ErrDivisionByZero,
+		codeDataTooLong:        mysql.ErrDataTooLong,
+		codeTruncated:          mysql.WarnDataTruncated,
+		codeOverflow:           mysql.ErrDataOutOfRange,
+		codeDivByZero:          mysql.ErrDivisionByZero,
+		codeTooBigDisplayWidth: mysql.ErrTooBigDisplaywidth,
+		codeTooBigFieldLength:  mysql.ErrTooBigFieldlength,
+		codeTooBigSet:          mysql.ErrTooBigSet,
+		codeWrongFieldSpec:     mysql.ErrWrongFieldSpec,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTypes] = typesMySQLErrCodes
 }

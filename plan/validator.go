@@ -308,7 +308,7 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 	return nil
 }
 
-// checkFieldLengthLimitation check the maximum length of the column
+// checkFieldLengthLimitation checks the maximum length of the column.
 // See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
 func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 	tp := colDef.Tp

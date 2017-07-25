@@ -136,7 +136,7 @@ func GetCharsetInfo(cs string) (string, string, error) {
 	return c.Name, c.DefaultCollation, nil
 }
 
-// GetCharsetDesc get charset descriptions in the local charsets.
+// GetCharsetDesc gets charset descriptions in the local charsets.
 func GetCharsetDesc(cs string) (*Desc, error) {
 	c, ok := charsets[strings.ToLower(cs)]
 	if !ok {
