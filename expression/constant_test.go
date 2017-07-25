@@ -65,7 +65,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn("b"), newColumn("c")),
 				newFunction(ast.EQ, newColumn("c"), newColumn("d")),
 				newFunction(ast.EQ, newColumn("d"), newLonglong(1)),
-				newFunction(ast.OrOr, newLonglong(1), newColumn("a")),
+				newFunction(ast.LogicOr, newLonglong(1), newColumn("a")),
 			},
 			result: "1, eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, 1), eq(test.t.d, 1)",
 		},
