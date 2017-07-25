@@ -640,7 +640,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "explain select * from t union all select * from t limit 1, 1",
-			plan: "UnionAll{Table(t)->Table(t)->Limit}->*plan.Explain",
+			plan: "*plan.Explain",
 		},
 		{
 			sql:  "insert into t select * from t",

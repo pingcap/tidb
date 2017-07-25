@@ -39,11 +39,11 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	tk.MustExec("insert into t1 (a) values (1)")
 	result := tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr := fmt.Sprintf("%s", result.Rows())
-	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[IndexReader_8 ")
+	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[IndexScan_7  cop ] [IndexReader_8  root ]]")
 	tk.MustExec("analyze table t1")
 	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr = fmt.Sprintf("%s", result.Rows())
-	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[TableReader_6 ")
+	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[TableScan_4 Selection_5 cop ] [Selection_5  cop ] [TableReader_6  root ]]")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
@@ -52,7 +52,7 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	tk.MustExec("analyze table t1 index ind_a")
 	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr = fmt.Sprintf("%s", result.Rows())
-	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[TableReader_6 ")
+	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[TableScan_4 Selection_5 cop ] [Selection_5  cop ] [TableReader_6  root ]]")
 }
 
 type recordSet struct {
