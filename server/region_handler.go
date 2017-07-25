@@ -90,11 +90,13 @@ const (
 func (s *Server) newRegionHandler() (hanler *regionHandler, err error) {
 	var tikvStore kvStore
 	store, ok := s.driver.(*TiDBDriver)
-	if ok {
-		tikvStore, ok = store.store.(kvStore)
-	}
 	if !ok {
-		err = errors.New("Invalid KvStore")
+		log.Fatal("Invalid KvStore with illegal driver")
+		return
+	}
+
+	if tikvStore, ok = store.store.(kvStore); !ok {
+		log.Fatal("Invalid KvStore with illegal store")
 		return
 	}
 
