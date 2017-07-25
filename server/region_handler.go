@@ -16,7 +16,6 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -95,7 +94,7 @@ func (s *Server) newRegionHandler() (hanler *regionHandler, err error) {
 		tikvStore, ok = store.store.(kvStore)
 	}
 	if !ok {
-		err = fmt.Errorf("Invalid KvStore")
+		err = errors.New("Invalid KvStore")
 		return
 	}
 
