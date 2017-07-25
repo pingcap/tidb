@@ -17,7 +17,6 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -103,7 +102,6 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		log.Warnf("need: %v, handle col: %v, len: %v", e.needColHandle, e.handleCol, len(e.schema.TblID2handle))
 		if e.needColHandle && e.handleCol.ID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
@@ -337,22 +335,31 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
 func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Context) {
-	var err error
+	var (
+		err error
+		handleCol *expression.Column
+	)
+	schema := e.schema.Clone()
 	defer func() {
 		task.doneCh <- errors.Trace(err)
 	}()
-	var handleCol *expression.Column
 	if e.needColHandle {
 		handleCol = e.schema.TblID2handle[e.tableID][0]
+	} else if e.keepOrder {
+		handleCol = &expression.Column{
+			ID: -1,
+			Index: e.schema.Len(),
+		}
+		schema.Append(handleCol)
 	}
 	tableReader := &TableReaderExecutor{
 		asName:        e.asName,
 		table:         e.table,
 		tableID:       e.tableID,
 		dagPB:         e.tableRequest,
-		schema:        e.schema,
+		schema:        schema,
 		ctx:           e.ctx,
-		needColHandle: e.needColHandle,
+		needColHandle: e.needColHandle || e.keepOrder,
 		handleCol:     handleCol,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
@@ -369,11 +376,16 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 	if e.keepOrder {
 		// Restore the index order.
-		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows}
+		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: handleCol.Index}
 		if e.desc {
 			sort.Sort(sort.Reverse(sorter))
 		} else {
 			sort.Sort(sorter)
+		}
+		if !e.needColHandle {
+			for _, row := range task.rows {
+				row.Data = row.Data[:len(row.Data) - 1]
+			}
 		}
 	}
 }
