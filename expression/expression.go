@@ -533,8 +533,9 @@ func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) (sf *
 		}
 	}
 	// We ignore error here because buildCastFunction will only get errIncorrectParameterCount
-	// which can be guaranteed to not happen.
-	sf, _ = buildCastFunction(arg, tp, ctx)
+	// which can be guaranteed to not happen, and sf is promised to be a ScalarFunction.
+	f, _ := buildCastFunction(arg, tp, ctx)
+	sf, _ = FoldConstant(f).(*ScalarFunction)
 	return
 }
 
