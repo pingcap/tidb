@@ -227,7 +227,7 @@ func (ts *TidbRegionHandlerTestSuite) TestGetMvcc(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Info, NotNil)
-	c.Assert(len(data.Info.Writes) > 0, IsTrue)
+	c.Assert(len(data.Info.Writes), Greater, 0)
 	startTs := data.Info.Writes[0].StartTs
 
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/%d", startTs))
