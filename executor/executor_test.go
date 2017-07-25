@@ -986,7 +986,7 @@ func (s *testSuite) TestEncryptionBuiltin(c *C) {
 	tk.MustExec("create table t(a char(41), b char(41), c char(41))")
 	tk.MustExec(`insert into t values(NULL, '', 'abc')`)
 	result := tk.MustQuery("select password(a) from t")
-	result.Check(testkit.Rows("<nil>"))
+	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("select password(b) from t")
 	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("select password(c) from t")

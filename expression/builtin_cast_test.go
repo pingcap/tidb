@@ -42,8 +42,8 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	// cast(str as char(N)), N < len([]rune(str)).
 	// cast("你好world" as char(5))
-	f := NewCastFunc(tp, &Constant{Value: types.NewDatum("你好world"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
 	tp.Charset = charset.CharsetUTF8
+	f := NewCastFunc(tp, &Constant{Value: types.NewDatum("你好world"), RetType: tp}, ctx)
 	res, err := f.Eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(res.GetString(), Equals, "你好wor")
