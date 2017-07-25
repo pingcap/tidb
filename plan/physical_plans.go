@@ -446,6 +446,8 @@ type PhysicalApply struct {
 
 	PhysicalJoin PhysicalPlan
 	OuterSchema  []*expression.CorrelatedColumn
+
+	rightChOffset int
 }
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
@@ -512,6 +514,8 @@ type PhysicalHashSemiJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+
+	rightChOffset int
 }
 
 // AggregationType stands for the mode of aggregation plan.
