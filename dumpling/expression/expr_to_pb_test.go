@@ -91,9 +91,9 @@ func (dg *dataGen4Expr2PbTest) genColumn(tp byte, id int64) *Column {
 }
 
 func (s *testEvaluatorSuite) TestConstant2Pb(c *C) {
+	var constExprs []Expression
 	sc := new(variable.StatementContext)
 	client := new(mockKvClient)
-	constExprs := make([]Expression, 0)
 
 	// can be transformed
 	constValue := new(Constant)
@@ -176,10 +176,10 @@ func (s *testEvaluatorSuite) TestConstant2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
+	var colExprs []Expression
 	sc := new(variable.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
-	colExprs := make([]Expression, 0)
 
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeBit, 1))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeSet, 2))
@@ -278,10 +278,10 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
+	var compareExprs []Expression
 	sc := new(variable.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
-	compareExprs := make([]Expression, 0)
 
 	funcNames := []string{ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE, ast.NullEQ}
 	for _, funcName := range funcNames {
@@ -318,11 +318,13 @@ func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestInFunc2Pb(c *C) {
+	var (
+		compareExprs []Expression
+		args         []Expression
+	)
 	sc := new(variable.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
-	compareExprs := make([]Expression, 0)
-	args := make([]Expression, 0)
 
 	args = append(args, dg.genColumn(mysql.TypeLonglong, 1))
 	args = append(args, &Constant{RetType: nil, Value: types.NewDatum(nil)})
@@ -363,9 +365,9 @@ func (s *testEvaluatorSuite) TestInFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
+	var likeFuncs []Expression
 	sc := new(variable.StatementContext)
 	client := new(mockKvClient)
-	likeFuncs := make([]Expression, 0)
 
 	retTp := types.NewFieldType(mysql.TypeString)
 	retTp.Charset = charset.CharsetUTF8
@@ -395,10 +397,10 @@ func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
+	var arithmeticalFuncs []Expression
 	sc := new(variable.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
-	arithmeticalFuncs := make([]Expression, 0)
 
 	funcNames := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv}
 	for _, funcName := range funcNames {
@@ -431,10 +433,10 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
+	var logicalFuncs []Expression
 	sc := new(variable.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
-	logicalFuncs := make([]Expression, 0)
 
 	funcNames := []string{ast.AndAnd, ast.OrOr, ast.LogicXor, ast.UnaryNot}
 	for i, funcName := range funcNames {
@@ -467,10 +469,10 @@ func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
+	var bitwiseFuncs []Expression
 	sc := new(variable.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
-	bitwiseFuncs := make([]Expression, 0)
 
 	funcNames := []string{ast.And, ast.Or, ast.Xor, ast.LeftShift, ast.RightShift, ast.BitNeg}
 	for i, funcName := range funcNames {
@@ -497,10 +499,10 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
+	var controlFuncs []Expression
 	sc := new(variable.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
-	controlFuncs := make([]Expression, 0)
 
 	funcNames := []string{
 		ast.Case,
@@ -539,10 +541,10 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
+	var otherFuncs []Expression
 	sc := new(variable.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
-	otherFuncs := make([]Expression, 0)
 
 	funcNames := []string{ast.Coalesce, ast.IsNull}
 	for _, funcName := range funcNames {
