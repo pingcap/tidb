@@ -903,22 +903,25 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		b.err = errors.Trace(err)
 		return nil
 	}
+	setParents4FinalPlan(targetPlan.(PhysicalPlan))
 	p := &Explain{StmtPlan: targetPlan}
-	addChild(p, targetPlan)
-	schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
-	schema.Append(&expression.Column{
-		ColName: model.NewCIStr("ID"),
-		RetType: types.NewFieldType(mysql.TypeString),
-	})
-	schema.Append(&expression.Column{
-		ColName: model.NewCIStr("Json"),
-		RetType: types.NewFieldType(mysql.TypeString),
-	})
-	schema.Append(&expression.Column{
-		ColName: model.NewCIStr("ParentID"),
-		RetType: types.NewFieldType(mysql.TypeString),
-	})
-	p.SetSchema(schema)
+	if UseDAGPlanBuilder(b.ctx) {
+		retFields := []string{"id", "parents", "task", "operator info"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		for _, fieldName := range retFields {
+			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		}
+		p.SetSchema(schema)
+		p.explainedPlans = map[string]bool{}
+		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+	} else {
+		schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
+		schema.Append(buildColumn("", "ID", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "Json", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "ParentID", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
+		p.prepareExplainInfo(p.StmtPlan, nil)
+	}
 	return p
 }
 
