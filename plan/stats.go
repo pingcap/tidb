@@ -251,4 +251,22 @@ func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 	return p.profile
 }
 
+func (p *LogicalApply) prepareStatsProfile() *statsProfile {
+	leftProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
+	_ = p.children[1].(LogicalPlan).prepareStatsProfile()
+	p.profile = &statsProfile{
+		count:       leftProfile.count,
+		cardinality: make([]float64, p.schema.Len()),
+	}
+	copy(p.profile.cardinality, leftProfile.cardinality)
+	if p.JoinType == LeftOuterSemiJoin {
+		p.profile.cardinality[len(p.profile.cardinality)-1] = 2.0
+	} else {
+		for i := p.children[0].Schema().Len(); i < p.schema.Len(); i++ {
+			p.profile.cardinality[i] = leftProfile.count
+		}
+	}
+	return p.profile
+}
+
 // TODO: Implement Exists, MaxOneRow plan.
