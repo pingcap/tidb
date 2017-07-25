@@ -318,7 +318,6 @@ func (s *testSuite) TestAggPrune(c *C) {
 		testleak.AfterTest(c)()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
-
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, b varchar(50), c int)")

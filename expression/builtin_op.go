@@ -400,11 +400,10 @@ type unaryMinusFunctionClass struct {
 
 func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression) (evalTp, bool) {
 	tp := tpInt
-	switch argExpr.GetType().Tp {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat,
-		mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
+	switch argExpr.GetTypeClass() {
+	case types.ClassString, types.ClassReal:
 		tp = tpReal
-	case mysql.TypeNewDecimal:
+	case types.ClassDecimal:
 		tp = tpDecimal
 	}
 
@@ -430,52 +429,52 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression) (evalTp, bool) {
 }
 
 func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	err = b.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	argExpr := args[0]
 	retTp, intOverflow := b.typeInfer(argExpr)
 
+	var bf baseBuiltinFunc
 	switch argExpr.GetTypeClass() {
 	case types.ClassInt:
 		if intOverflow {
-			bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 		} else {
-			bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
+			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			sig = &builtinUnaryMinusIntSig{baseIntBuiltinFunc{bf}}
 		}
 	case types.ClassDecimal:
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 	case types.ClassReal:
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		sig = &builtinUnaryMinusRealSig{baseRealBuiltinFunc{bf}}
 	case types.ClassString:
 		tp := argExpr.GetType().Tp
-		if types.IsTypeTime(tp) {
-			bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
-		} else if tp == mysql.TypeDuration {
-			bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+		if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
+			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 		} else {
-			bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
+			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -483,13 +482,7 @@ func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Con
 		}
 	}
 
-	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
-}
-
-func unaryMinusDecimal(dec *types.MyDecimal) (to *types.MyDecimal, err error) {
-	to = new(types.MyDecimal)
-	err = types.DecimalSub(new(types.MyDecimal), dec, to)
-	return
+	return sig.setSelf(sig), errors.Trace(err)
 }
 
 type builtinUnaryMinusIntSig struct {
@@ -523,21 +516,20 @@ type builtinUnaryMinusDecimalSig struct {
 }
 
 func (b *builtinUnaryMinusDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	var (
-		dec, to *types.MyDecimal
-	)
-
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	if !sc.InSelectStmt && b.constantArgOverflow {
-		return dec, false, types.ErrOverflow.GenByArgs("DECIMAL", dec.String())
-	}
 
+	var dec *types.MyDecimal
 	dec, isNull, err := b.args[0].EvalDecimal(row, sc)
 	if err != nil || isNull {
 		return dec, isNull, errors.Trace(err)
 	}
 
-	to, err = unaryMinusDecimal(dec)
+	if !sc.InSelectStmt && b.constantArgOverflow {
+		return dec, false, types.ErrOverflow.GenByArgs("DECIMAL", dec.String())
+	}
+
+	to := new(types.MyDecimal)
+	err = types.DecimalSub(new(types.MyDecimal), dec, to)
 	return to, false, err
 }
 
