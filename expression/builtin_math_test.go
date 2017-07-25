@@ -937,25 +937,45 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 
 func (s *testEvaluatorSuite) TestCot(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+
+	tests := []struct {
+		args   interface{}
+		expect float64
+		isNil  bool
+		getErr bool
+		errMsg string
 	}{
-		{nil, nil},
-		{math.Pi / 4, math.Cos(math.Pi/4) / math.Sin(math.Pi/4)}, // cot pi/4 does not return 1 actually
-		{-math.Pi / 4, math.Cos(-math.Pi/4) / math.Sin(-math.Pi/4)},
-		{math.Pi * 3 / 4, math.Cos(math.Pi*3/4) / math.Sin(math.Pi*3/4)},
-		{"3.1415926", math.Cos(3.1415926) / math.Sin(3.1415926)},
+		{nil, 0, true, false, ""},
+		{float64(0), 0, false, true, "[types:1690]DOUBLE value is out of range in 'cot(0)'"},
+		{float64(-1), -0.6420926159343308, false, false, ""},
+		{float64(1), 0.6420926159343308, false, false, ""},
+		{math.Pi / 4, 1 / math.Tan(math.Pi/4), false, false, ""},
+		{math.Pi / 2, 1 / math.Tan(math.Pi/2), false, false, ""},
+		{math.Pi, 1 / math.Tan(math.Pi), false, false, ""},
+		{"tidb", 0, false, true, ""},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-	for _, t := range Dtbl {
-		fc := funcs[ast.Cot]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Cot, primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Log(t)
-		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+			if test.errMsg != "" {
+				c.Assert(err.Error(), Equals, test.errMsg)
+			}
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Cot].getFunction([]Expression{One}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }

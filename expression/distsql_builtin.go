@@ -46,8 +46,8 @@ var distFuncs = map[tipb.ExprType]string{
 	tipb.ExprType_BitNeg:    ast.BitNeg,
 
 	// logical op
-	tipb.ExprType_And: ast.AndAnd,
-	tipb.ExprType_Or:  ast.OrOr,
+	tipb.ExprType_And: ast.LogicAnd,
+	tipb.ExprType_Or:  ast.LogicOr,
 	tipb.ExprType_Xor: ast.LogicXor,
 	tipb.ExprType_Not: ast.UnaryNot,
 
