@@ -871,6 +871,8 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 	return rows, nil
 }
 
+// truncateTrailingSpaces trancates trailing spaces for CHAR[(M)] column.
+// fix: https://github.com/pingcap/tidb/issues/3660
 func (e *InsertValues) truncateTrailingSpaces(v *types.Datum) {
 	if v.Kind() == types.KindNull {
 		return
