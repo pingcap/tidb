@@ -986,7 +986,7 @@ func (s *testSuite) TestEncryptionBuiltin(c *C) {
 	tk.MustExec("create table t(a char(41), b char(41), c char(41))")
 	tk.MustExec(`insert into t values(NULL, '', 'abc')`)
 	result := tk.MustQuery("select password(a) from t")
-	result.Check(testkit.Rows("<nil>"))
+	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("select password(b) from t")
 	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("select password(c) from t")
@@ -1171,6 +1171,10 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("str2 0"))
 	result = tk.MustQuery("select cast(1234 as char(3))")
 	result.Check(testkit.Rows("123"))
+	result = tk.MustQuery("select cast(1234 as char(0))")
+	result.Check(testkit.Rows(""))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1406 Data Too Long, field len 0, data len 4"))
 
 	// testCase is for like and regexp
 	type testCase struct {

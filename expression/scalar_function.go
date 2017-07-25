@@ -67,6 +67,9 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 
 // NewFunction creates a new scalar function or constant.
 func NewFunction(ctx context.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	if funcName == ast.Cast {
+		return NewCastFunc(retType, args[0], ctx), nil
+	}
 	fc, ok := funcs[funcName]
 	if !ok {
 		return nil, errFunctionNotExists.GenByArgs(funcName)

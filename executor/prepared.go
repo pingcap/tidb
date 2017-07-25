@@ -352,7 +352,9 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 	case *ast.SelectStmt:
 		sc.IgnoreOverflow = true
-		sc.IgnoreTruncate = true
+		// Return warning for truncate error in selection.
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = true
 	default:
 		sc.IgnoreTruncate = true
 		sc.IgnoreOverflow = false
