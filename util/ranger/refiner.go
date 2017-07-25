@@ -371,7 +371,7 @@ func (c *conditionChecker) findEqOrInFunc(conditions []expression.Expression) in
 
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
 	switch scalar.FuncName.L {
-	case ast.OrOr, ast.AndAnd:
+	case ast.LogicOr, ast.LogicAnd:
 		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
 		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
