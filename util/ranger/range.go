@@ -398,9 +398,9 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE:
 		return r.buildFormBinOp(expr)
-	case ast.AndAnd:
+	case ast.LogicAnd:
 		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
-	case ast.OrOr:
+	case ast.LogicOr:
 		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.IsTruth:
 		return r.buildFromIsTrue(expr, 0)

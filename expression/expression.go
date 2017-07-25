@@ -381,12 +381,12 @@ func composeConditionWithBinaryOp(ctx context.Context, conditions []Expression, 
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
 func ComposeCNFCondition(ctx context.Context, conditions ...Expression) Expression {
-	return composeConditionWithBinaryOp(ctx, conditions, ast.AndAnd)
+	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
 func ComposeDNFCondition(ctx context.Context, conditions ...Expression) Expression {
-	return composeConditionWithBinaryOp(ctx, conditions, ast.OrOr)
+	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicOr)
 }
 
 // Assignment represents a set assignment in Update, such as
@@ -424,13 +424,13 @@ func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
 // SplitCNFItems splits CNF items.
 // CNF means conjunctive normal form, e.g. "a and b and c".
 func SplitCNFItems(onExpr Expression) []Expression {
-	return splitNormalFormItems(onExpr, ast.AndAnd)
+	return splitNormalFormItems(onExpr, ast.LogicAnd)
 }
 
 // SplitDNFItems splits DNF items.
 // DNF means disjunctive normal form, e.g. "a or b or c".
 func SplitDNFItems(onExpr Expression) []Expression {
-	return splitNormalFormItems(onExpr, ast.OrOr)
+	return splitNormalFormItems(onExpr, ast.LogicOr)
 }
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
