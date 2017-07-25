@@ -98,6 +98,9 @@ type Expression interface {
 
 	// ResolveIndices resolves indices by the given schema.
 	ResolveIndices(schema *Schema)
+
+	// ExplainInfo returns operator information to be explained.
+	ExplainInfo() string
 }
 
 // CNFExprs stands for a CNF expression.
