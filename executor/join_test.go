@@ -321,8 +321,8 @@ func (s *testSuite) TestNaturalJoin(c *C) {
 	tk.MustExec("insert t2 values (1, 3), (100, 200)")
 
 	tk.MustQuery("select * from t1 natural join t2").Check(testkit.Rows("1 2 3"))
-	tk.MustQuery("select * from t1 natural left join t2").Check(testkit.Rows("1 2 3", "10 20 <nil>"))
-	tk.MustQuery("select * from t1 natural right join t2").Check(testkit.Rows("1 3 2", "100 200 <nil>"))
+	tk.MustQuery("select * from t1 natural left join t2 order by a").Check(testkit.Rows("1 2 3", "10 20 <nil>"))
+	tk.MustQuery("select * from t1 natural right join t2 order by a").Check(testkit.Rows("1 3 2", "100 200 <nil>"))
 }
 
 func (s *testSuite) TestMultiJoin(c *C) {
