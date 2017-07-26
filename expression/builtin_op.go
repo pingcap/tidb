@@ -265,7 +265,7 @@ func (b *builtinLeftShiftSig) evalInt(row []types.Datum) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	return arg0 << arg1, false, nil
+	return int64(uint64(arg0) << uint64(arg1)), false, nil
 }
 
 type isTrueOpFunctionClass struct {

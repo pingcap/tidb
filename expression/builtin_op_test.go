@@ -122,13 +122,6 @@ func (s *testEvaluatorSuite) TestAndAnd(c *C) {
 func (s *testEvaluatorSuite) TestLeftShift(c *C) {
 	defer testleak.AfterTest(c)()
 
-	sc := s.ctx.GetSessionVars().StmtCtx
-	origin := sc.IgnoreTruncate
-	defer func() {
-		sc.IgnoreTruncate = origin
-	}()
-	sc.IgnoreTruncate = true
-
 	cases := []struct {
 		args     []interface{}
 		expected uint64
@@ -136,7 +129,7 @@ func (s *testEvaluatorSuite) TestLeftShift(c *C) {
 		getErr   bool
 	}{
 		{[]interface{}{123, 2}, uint64(492), false, false},
-		{[]interface{}{-123, 0}, uint64(18446744073709551124), false, false},
+		{[]interface{}{-123, 2}, uint64(18446744073709551124), false, false},
 		{[]interface{}{nil, 1}, 0, true, false},
 
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
@@ -153,7 +146,7 @@ func (s *testEvaluatorSuite) TestLeftShift(c *C) {
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(d.GetInt64(), Equals, t.expected)
+				c.Assert(d.GetUint64(), Equals, t.expected)
 			}
 		}
 	}
