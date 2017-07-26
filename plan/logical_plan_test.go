@@ -540,6 +540,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			sql:  "select a, count(a) cnt from t group by a having cnt < 1",
 			best: "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Selection->Projection",
 		},
+		// issue #3873
+		{
+			sql:  "select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0",
+			best: "Join{DataScan(t1)->Selection->DataScan(t2)}(t1.a,t2.a)->Projection",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)

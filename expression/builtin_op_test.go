@@ -14,12 +14,55 @@
 package expression
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
+
+func (s *testEvaluatorSuite) TestUnary(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		args     interface{}
+		expected interface{}
+		overflow bool
+		getErr   bool
+	}{
+		{uint64(9223372036854775809), "-9223372036854775809", true, false},
+		{uint64(9223372036854775810), "-9223372036854775810", true, false},
+		{uint64(9223372036854775808), int64(-9223372036854775808), false, false},
+		{int64(math.MinInt64), "9223372036854775808", true, false}, // --9223372036854775808
+	}
+	sc := s.ctx.GetSessionVars().StmtCtx
+	origin := sc.IgnoreOverflow
+	sc.IgnoreOverflow = true
+	defer func() {
+		sc.IgnoreOverflow = origin
+	}()
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.UnaryMinus, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr == false {
+			c.Assert(err, IsNil)
+			if !t.overflow {
+				c.Assert(d.GetValue(), Equals, t.expected)
+			} else {
+				c.Assert(d.GetMysqlDecimal().String(), Equals, t.expected)
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+
+	f, err := funcs[ast.UnaryMinus].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
 
 func (s *testEvaluatorSuite) TestAndAnd(c *C) {
 	defer testleak.AfterTest(c)()
