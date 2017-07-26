@@ -667,7 +667,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	}
 }
 
-func (s *testAnalyzeSuite) TestDAGPlanEmptyTable(c *C) {
+func (s *testPlanSuite) TestDAGPlanEmptyTable(c *C) {
 	defer func() {
 		testleak.AfterTest(c)()
 	}()
