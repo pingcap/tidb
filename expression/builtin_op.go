@@ -97,6 +97,7 @@ func (c *logicOrFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 1
 	sig := &builtinLogicOrSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
