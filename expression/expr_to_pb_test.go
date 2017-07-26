@@ -438,7 +438,7 @@ func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
 
-	funcNames := []string{ast.AndAnd, ast.OrOr, ast.LogicXor, ast.UnaryNot}
+	funcNames := []string{ast.LogicAnd, ast.LogicOr, ast.LogicXor, ast.UnaryNot}
 	for i, funcName := range funcNames {
 		args := []Expression{dg.genColumn(mysql.TypeTiny, 1)}
 		if i+1 < len(funcNames) {

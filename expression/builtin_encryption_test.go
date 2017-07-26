@@ -317,7 +317,7 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 		isNil    bool
 		getErr   bool
 	}{
-		{nil, "", true, false},
+		{nil, "", false, false},
 		{"", "", false, false},
 		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", false, false},
 		{123, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", false, false},
@@ -329,15 +329,11 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.PasswordFunc, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
+		if t.isNil {
+			c.Assert(d.Kind(), Equals, types.KindNull)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(d.GetString(), Equals, t.expected)
-			}
+			c.Assert(d.GetString(), Equals, t.expected)
 		}
 	}
 
