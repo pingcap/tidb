@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -39,7 +38,7 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	tk.MustExec("insert into t1 (a) values (1)")
 	result := tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr := fmt.Sprintf("%s", result.Rows())
-	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[IndexScan_7  cop ] [IndexReader_8  root ]]")
+	c.Check(rowStr, Equals, "[[IndexScan_7  cop ] [IndexReader_8  root ]]")
 	tk.MustExec("analyze table t1")
 	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr = fmt.Sprintf("%s", result.Rows())
