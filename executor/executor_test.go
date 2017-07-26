@@ -1027,7 +1027,7 @@ func (s *testSuite) TestOpBuiltin(c *C) {
 	tk.MustExec("use test")
 
 	// for logical and
-	result := tk.MustQuery("select 1 and 1, 1 and 0, 0 and 1, 0 and 0, 2 and -1, null and 1, '1a' and 'a'")
+	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
 	// for logical xor
 	result = tk.MustQuery("select 1 xor 1, 1 xor 0, 0 xor 1, 0 xor 0, 2 xor -1, null xor 1, '1a' xor 'a'")
