@@ -16,6 +16,8 @@ package plan
 import (
 	"bytes"
 	"fmt"
+
+	"github.com/pingcap/tidb/expression"
 )
 
 func setParents4FinalPlan(plan PhysicalPlan) {
@@ -55,10 +57,6 @@ func setParents4FinalPlan(plan PhysicalPlan) {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *Limit) ExplainInfo() string {
-	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
-}
-
 func (p *Selection) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	for i, cond := range p.Conditions {
@@ -82,8 +80,14 @@ func (p *Projection) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainInfo implements PhysicalPlan interface.
+func (p *TableDual) ExplainInfo() string {
+	return fmt.Sprintf("rows:%v", p.RowCount)
+}
+
+// ExplainInfo implements PhysicalPlan interface.
 func (p *Sort) ExplainInfo() string {
-	buffer := bytes.NewBufferString(fmt.Sprintf(""))
+	buffer := bytes.NewBufferString("")
 	for i, item := range p.ByItems {
 		order := "asc"
 		if item.Desc {
@@ -91,6 +95,33 @@ func (p *Sort) ExplainInfo() string {
 		}
 		buffer.WriteString(fmt.Sprintf("%s:%s", item.Expr.ExplainInfo(), order))
 		if i+1 < len(p.ByItems) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *Limit) ExplainInfo() string {
+	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalAggregation) ExplainInfo() string {
+	buffer := bytes.NewBufferString(fmt.Sprintf("type:%s", p.AggType))
+	if p.HasGby {
+		buffer.WriteString(", group by:")
+		for i, gby := range p.GroupByItems {
+			buffer.WriteString(gby.ExplainInfo())
+			if i+1 < len(p.GroupByItems) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	buffer.WriteString(", funcs:")
+	for i, agg := range p.AggFuncs {
+		buffer.WriteString(expression.ExplainAggFunc(agg))
+		if i+1 < len(p.AggFuncs) {
 			buffer.WriteString(", ")
 		}
 	}
