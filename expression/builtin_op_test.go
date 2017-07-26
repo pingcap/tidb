@@ -122,8 +122,6 @@ func (s *testEvaluatorSuite) TestAndAnd(c *C) {
 func (s *testEvaluatorSuite) TestBitAnd(c *C) {
 	defer testleak.AfterTest(c)()
 
-	sc := s.ctx.GetSessionVars().StmtCtx
-
 	cases := []struct {
 		args     []interface{}
 		expected int64
