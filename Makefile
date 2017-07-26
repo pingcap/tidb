@@ -20,10 +20,9 @@ GOVERALLS := goveralls
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGES  := $$(go list ./...| grep -vE 'vendor')
-FILES     := $$(find . -name '*.go' | grep -vE 'vendor')
-TOPDIRS   := $$(find . -type d -d 1 | grep -vE "\./\.|_vendor")
-TOPFILES  := $$(ls *.go)
+PACKAGES  := $$(go list ./...| grep -vE "vendor")
+FILES     := $$(find . -name "*.go" | grep -vE "vendor")
+TOPDIRS   := $$(ls -d */ | grep -vE "vendor")
 
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
@@ -76,11 +75,10 @@ check:
 	go get github.com/golang/lint/golint
 
 	@echo "vet"
-	@ go tool vet $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
-	@ go tool vet $(TOPFILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
-	@echo "vet --shadow"
-	@ go tool vet --shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
-	@ go tool vet --shadow $(TOPFILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
+	@ go vet $(PACKAGES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
+	@echo "vet -shadow"
+	@ go tool vet -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
+	@ go tool vet -shadow *.go 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
 	@ golint ./... 2>&1 | grep -vE 'context\.Context|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "gofmt (simplify)"
