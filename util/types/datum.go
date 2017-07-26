@@ -1120,7 +1120,13 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.State
 		} else if frac != decimal {
 			dec.Round(dec, decimal, ModeHalfEven)
 			if !dec.IsZero() && frac > decimal {
-				err = sc.HandleTruncate(ErrTruncated)
+				if sc.InInsertStmt {
+					// fix https://github.com/pingcap/tidb/issues/3895
+					sc.AppendWarning(ErrTruncated)
+					err = nil
+				} else {
+					err = sc.HandleTruncate(ErrTruncated)
+				}
 			}
 		}
 	}
