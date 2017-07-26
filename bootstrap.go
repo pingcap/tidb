@@ -535,9 +535,9 @@ func upgradeToVer14(s Session) {
 	}
 }
 
-func upgradeToVer14(s Session) {
+func upgradeToVer15(s Session) {
 	_, err := s.Execute(CreateGCDeleteRangeTable)
-	if err != nil && !terror.ErrorEqual(err, nil) {
+	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableExists) {
 		log.Fatal(err)
 	}
 }
