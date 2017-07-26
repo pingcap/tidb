@@ -159,7 +159,6 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	ctx := testNewContext(s.d)
 
 	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
-
 	t := testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 
 	num := 10
@@ -277,7 +276,6 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	values, err = t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
-
 	c.Assert(values, HasLen, 5)
 	c.Assert(values[0].GetInt64(), Equals, int64(202))
 	c.Assert(values[4].GetInt64(), Equals, int64(101))
@@ -812,7 +810,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	var hookErr error
 	checkOK := false
 
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -841,7 +839,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 		}
 	}
 
-	d.setHook(tc)
+	d.SetHook(tc)
 
 	// Use local ddl for callback test.
 	s.d.Stop()
@@ -882,7 +880,6 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	colName := "c4"
@@ -898,7 +895,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	var hookErr error
 	var mu sync.Mutex
 
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -917,7 +914,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 		}
 	}
 
-	d.setHook(tc)
+	d.SetHook(tc)
 
 	// Use local ddl for callback test.
 	s.d.Stop()

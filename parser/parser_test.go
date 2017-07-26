@@ -1052,6 +1052,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT JSON_UNQUOTE();`, true},
 		{`SELECT JSON_TYPE('[123]');`, true},
 		{`SELECT JSON_TYPE();`, true},
+
+		// For two json grammar sugar.
+		{`SELECT a->'$.a' FROM t`, true},
+		{`SELECT a->>'$.a' FROM t`, true},
+		{`SELECT '{}'->'$.a' FROM t`, false},
+		{`SELECT '{}'->>'$.a' FROM t`, false},
+		{`SELECT a->3 FROM t`, false},
+		{`SELECT a->>3 FROM t`, false},
 	}
 	s.RunTest(c, table)
 }

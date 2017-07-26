@@ -986,7 +986,7 @@ func (s *testSuite) TestEncryptionBuiltin(c *C) {
 	tk.MustExec("create table t(a char(41), b char(41), c char(41))")
 	tk.MustExec(`insert into t values(NULL, '', 'abc')`)
 	result := tk.MustQuery("select password(a) from t")
-	result.Check(testkit.Rows("<nil>"))
+	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("select password(b) from t")
 	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("select password(c) from t")
@@ -1016,6 +1016,19 @@ func (s *testSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
 	result := tk.MustQuery("select makedate(a,a), makedate(b,b), makedate(c,c), makedate(d,d), makedate(e,e), makedate(f,f), makedate(null,null), makedate(a,b) from t")
 	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
+}
+
+func (s *testSuite) TestOpBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for logical and
+	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
+	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
 }
 
 func (s *testSuite) TestBuiltin(c *C) {
@@ -1066,6 +1079,19 @@ func (s *testSuite) TestBuiltin(c *C) {
 	tk.MustExec("insert into t value('12:59:59.999999')")
 	result = tk.MustQuery("select cast(a as signed) from t")
 	result.Check(testkit.Rows("130000"))
+
+	// fixed issue #3762
+	result = tk.MustQuery("select -9223372036854775809;")
+	result.Check(testkit.Rows("-9223372036854775809"))
+	result = tk.MustQuery("select --9223372036854775809;")
+	result.Check(testkit.Rows("9223372036854775809"))
+	result = tk.MustQuery("select -9223372036854775808;")
+	result.Check(testkit.Rows("-9223372036854775808"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(30));")
+	_, err := tk.Exec("insert into t values(-9223372036854775809)")
+	c.Assert(err, NotNil)
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
@@ -1145,6 +1171,10 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("str2 0"))
 	result = tk.MustQuery("select cast(1234 as char(3))")
 	result.Check(testkit.Rows("123"))
+	result = tk.MustQuery("select cast(1234 as char(0))")
+	result.Check(testkit.Rows(""))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1406 Data Too Long, field len 0, data len 4"))
 
 	// testCase is for like and regexp
 	type testCase struct {
@@ -1356,6 +1386,30 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("-10 -10"))
 	result = tk.MustQuery("select ceil(t.c_decimal), ceiling(t.c_decimal) from (select cast('-10.01' as decimal(10,1)) as c_decimal) as t")
 	result.Check(testkit.Rows("-10 -10"))
+
+	// for cot
+	result = tk.MustQuery("select cot(1), cot(-1), cot(NULL)")
+	result.Check(testkit.Rows("0.6420926159343308 -0.6420926159343308 <nil>"))
+	result = tk.MustQuery("select cot('1tidb')")
+	result.Check(testkit.Rows("0.6420926159343308"))
+	rs, err := tk.Exec("select cot(0)")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+
+	//for exp
+	result = tk.MustQuery("select exp(0), exp(1), exp(-1), exp(1.2), exp(NULL)")
+	result.Check(testkit.Rows("1 2.718281828459045 0.36787944117144233 3.3201169227365472 <nil>"))
+	result = tk.MustQuery("select exp('tidb'), exp('1tidb')")
+	result.Check(testkit.Rows("1 2.718281828459045"))
+	rs, err = tk.Exec("select exp(1000000)")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 }
 
 func (s *testSuite) TestJSON(c *C) {
@@ -1384,11 +1438,11 @@ func (s *testSuite) TestJSON(c *C) {
 	result = tk.MustQuery(`select tj.a from test_json tj order by tj.id`)
 	result.Check(testkit.Rows(`{"a":[1,"2",{"aa":"bb"},4],"b":true}`, "null", "<nil>", "true", "3", "4", `"string"`))
 
-	// check json_type function
+	// Check json_type function
 	result = tk.MustQuery(`select json_type(a) from test_json tj order by tj.id`)
 	result.Check(testkit.Rows("OBJECT", "NULL", "<nil>", "BOOLEAN", "INTEGER", "DOUBLE", "STRING"))
 
-	// check json compare with primitives.
+	// Check json compare with primitives.
 	result = tk.MustQuery(`select a from test_json tj where a = 3`)
 	result.Check(testkit.Rows("3"))
 	result = tk.MustQuery(`select a from test_json tj where a = 4.0`)
@@ -1398,7 +1452,13 @@ func (s *testSuite) TestJSON(c *C) {
 	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
 	result.Check(testkit.Rows(`"string"`))
 
-	// check some DDL limits for TEXT/BLOB/JSON column.
+	// Check two json grammar sugar.
+	result = tk.MustQuery(`select a->>'$.a[2].aa' as x, a->'$.b' as y from test_json having x is not null order by id`)
+	result.Check(testkit.Rows(`bb true`))
+	result = tk.MustQuery(`select a->'$.a[2].aa' as x, a->>'$.b' as y from test_json having x is not null order by id`)
+	result.Check(testkit.Rows(`"bb" true`))
+
+	// Check some DDL limits for TEXT/BLOB/JSON column.
 	var err error
 	var terr *terror.Error
 

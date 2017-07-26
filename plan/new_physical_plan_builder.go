@@ -373,6 +373,7 @@ func (p *LogicalJoin) getSemiJoin() PhysicalPlan {
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		Anti:            p.anti,
+		rightChOffset:   p.children[0].Schema().Len(),
 	}.init(p.allocator, p.ctx)
 	semiJoin.SetSchema(p.schema)
 	semiJoin.profile = p.profile
@@ -479,7 +480,11 @@ func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			limit := Limit{Offset: p.Offset, Count: p.Count}.init(p.allocator, p.ctx)
+			limit := Limit{
+				Offset:  p.Offset,
+				Count:   p.Count,
+				partial: p.partial,
+			}.init(p.allocator, p.ctx)
 			limit.SetSchema(p.schema)
 			limit.profile = p.profile
 			orderedTask = limit.attach2Task(orderedTask)
@@ -778,7 +783,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	if len(is.filterCondition) > 0 {
 		var indexConds, tableConds []expression.Expression
 		if copTask.tablePlan != nil {
-			tableConds, indexConds = is.splitConditionsByIndexColumns()
+			indexConds, tableConds = ranger.DetachIndexFilterConditions(is.filterCondition, is.Index.Columns, is.Table)
 		} else {
 			indexConds = is.filterCondition
 		}
@@ -899,21 +904,6 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, profile *s
 	}
 }
 
-// splitConditionsByIndexColumns splits the conditions by index schema. If some condition only contain the index
-// columns, it will be pushed to index plan.
-func (is *PhysicalIndexScan) splitConditionsByIndexColumns() (tableConds, indexConds expression.CNFExprs) {
-	for _, cond := range is.filterCondition {
-		cols := expression.ExtractColumns(cond)
-		indices := is.schema.ColumnsIndices(cols)
-		if len(indices) == 0 {
-			tableConds = append(tableConds, cond)
-		} else {
-			indexConds = append(indexConds, cond)
-		}
-	}
-	return
-}
-
 func (p *LogicalApply) generatePhysicalPlans() []PhysicalPlan {
 	var join PhysicalPlan
 	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin {
@@ -922,8 +912,9 @@ func (p *LogicalApply) generatePhysicalPlans() []PhysicalPlan {
 		join = p.getHashJoin(1)
 	}
 	apply := PhysicalApply{
-		PhysicalJoin: join,
-		OuterSchema:  p.corCols,
+		PhysicalJoin:  join,
+		OuterSchema:   p.corCols,
+		rightChOffset: p.children[0].Schema().Len(),
 	}.init(p.allocator, p.ctx)
 	apply.SetSchema(p.schema)
 	apply.profile = p.profile
@@ -954,8 +945,8 @@ func (p *PhysicalHashJoin) getChildrenPossibleProps(prop *requiredProp) [][]*req
 func (p *PhysicalHashSemiJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols}
 	for _, col := range lProp.cols {
-		// FIXME: This condition may raise a panic, fix it in the future.
-		if p.children[0].Schema().ColumnIndex(col) == -1 {
+		idx := p.Schema().ColumnIndex(col)
+		if idx == -1 || idx >= p.rightChOffset {
 			return nil
 		}
 	}
@@ -965,8 +956,8 @@ func (p *PhysicalHashSemiJoin) getChildrenPossibleProps(prop *requiredProp) [][]
 func (p *PhysicalApply) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols}
 	for _, col := range lProp.cols {
-		// FIXME: This condition may raise a panic, fix it in the future.
-		if p.children[0].Schema().ColumnIndex(col) == -1 {
+		idx := p.Schema().ColumnIndex(col)
+		if idx == -1 || idx >= p.rightChOffset {
 			return nil
 		}
 	}

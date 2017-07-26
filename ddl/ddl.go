@@ -75,6 +75,8 @@ var (
 	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 
+	// errWrongKeyColumn is for table column cannot be indexed.
+	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
 	// errUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
 	errUnsupportedOnGeneratedColumn = terror.ClassDDL.New(codeUnsupportedOnGeneratedColumn, mysql.MySQLErrName[mysql.ErrUnsupportedOnGeneratedColumn])
 	// errGeneratedColumnNonPrior forbiddens to refer generated column non prior to it.
@@ -148,6 +150,8 @@ type DDL interface {
 	OwnerManager() OwnerManager
 	// WorkerVars gets the session variables for DDL worker.
 	WorkerVars() *variable.SessionVars
+	// SetHook sets the hook. It's exported for testing.
+	SetHook(h Callback)
 }
 
 // Event is an event that a ddl operation happened.
@@ -454,7 +458,8 @@ func (d *ddl) callHookOnChanged(err error) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) setHook(h Callback) {
+// SetHook implements DDL.SetHook interface.
+func (d *ddl) SetHook(h Callback) {
 	d.hookMu.Lock()
 	defer d.hookMu.Unlock()
 
@@ -511,16 +516,17 @@ const (
 	codeIncorrectPrefixKey           = 1089
 	codeCantRemoveAllFields          = 1090
 	codeCantDropFieldOrKey           = 1091
+	codeBlobCantHaveDefault          = 1101
 	codeWrongDBName                  = 1102
 	codeWrongTableName               = 1103
 	codeInvalidUseOfNull             = 1138
+	codeWrongKeyColumn               = 1167
 	codeBlobKeyWithoutLength         = 1170
 	codeInvalidOnUpdate              = 1294
 	codeUnsupportedOnGeneratedColumn = 3106
 	codeGeneratedColumnNonPrior      = 3107
 	codeDependentByGeneratedColumn   = 3108
 	codeJSONUsedAsKey                = 3152
-	codeBlobCantHaveDefault          = 1101
 )
 
 func init() {
@@ -547,6 +553,7 @@ func init() {
 		codeDependentByGeneratedColumn:   mysql.ErrDependentByGeneratedColumn,
 		codeJSONUsedAsKey:                mysql.ErrJSONUsedAsKey,
 		codeBlobCantHaveDefault:          mysql.ErrBlobCantHaveDefault,
+		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
