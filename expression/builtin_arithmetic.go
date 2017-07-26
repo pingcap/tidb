@@ -31,6 +31,7 @@ var (
 var (
 	_ builtinFunc = &builtinArithmeticPlusRealSig{}
 	_ builtinFunc = &builtinArithmeticPlusIntSig{}
+	_ builtinFunc = &builtinArithmeticPlusIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticPlusDecimalSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 )
@@ -89,14 +90,21 @@ func (c *arithmeticPlusFunctionClass) getFunction(args []Expression, ctx context
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	evalTpA := c.getEvalTp(args[0].GetType())
-	evalTpB := c.getEvalTp(args[1].GetType())
+	tpA, tpB := args[0].GetType(), args[1].GetType()
+	evalTpA, evalTpB := c.getEvalTp(tpA), c.getEvalTp(tpB)
 	if evalTpA == tpInt && evalTpB == tpInt {
 		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		}
 		c.setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
+		if mysql.HasUnsignedFlag(bf.tp.Flag) {
+			sig := &builtinArithmeticPlusIntUnsignedSig{baseIntBuiltinFunc{bf}}
+			return sig.setSelf(sig), nil
+		}
 		sig := &builtinArithmeticPlusIntSig{baseIntBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	} else if evalTpA == tpReal || evalTpB == tpReal {
@@ -133,6 +141,23 @@ func (s *builtinArithmeticPlusIntSig) evalInt(row []types.Datum) (val int64, isN
 		return 0, isNull, errors.Trace(err)
 	}
 	return a + b, false, nil
+}
+
+type builtinArithmeticPlusIntUnsignedSig struct {
+	baseIntBuiltinFunc
+}
+
+func (s *builtinArithmeticPlusIntUnsignedSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	a, isNull, err := s.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	b, isNull, err := s.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return int64(uint64(a) + uint64(b)), false, nil
 }
 
 type builtinArithmeticPlusDecimalSig struct {
@@ -184,7 +209,7 @@ func (c *arithmeticFunctionClass) getFunction(args []Expression, ctx context.Con
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinArithmeticSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinArithmeticSig struct {

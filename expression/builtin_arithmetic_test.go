@@ -60,7 +60,7 @@ func (s *testEvaluatorSuite) TestPlusGetEvalTp(c *C) {
 		if i < 8 {
 			c.Assert(retEvalTp, Equals, tpInt)
 		} else if i < 10 {
-			c.Assert(retEvalTp, Equals, tpDecimal)
+			c.Assert(retEvalTp, Equals, tpDecimal, Commentf("for field type: \"%s\"", ft))
 		} else {
 			c.Assert(retEvalTp, Equals, tpReal)
 		}
