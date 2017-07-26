@@ -2088,21 +2088,6 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
 }
 
-func (s *testSuite) TestInsertDecimalTruncated(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("USE test;")
-	tk.MustExec("DROP TABLE IF EXISTS t;")
-	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
-	tk.MustExec("INSERT INTO t SELECT CAST(1.000 AS DECIMAL(4,2));")
-	result := tk.MustQuery("SHOW WARNINGS;")
-	result.Check(testkit.Rows("Warning 1265 Data Truncated"))
-}
-
 func (s *testSuite) TestSelectForUpdate(c *C) {
 	defer func() {
 		s.cleanEnv(c)
