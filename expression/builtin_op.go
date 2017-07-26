@@ -33,6 +33,7 @@ var (
 	_ functionClass = &unaryOpFunctionClass{}
 	_ functionClass = &unaryMinusFunctionClass{}
 	_ functionClass = &isNullFunctionClass{}
+	_ functionClass = &unaryNotFunctionClass{}
 )
 
 var (
@@ -44,6 +45,7 @@ var (
 	_ builtinFunc = &builtinUnaryOpSig{}
 	_ builtinFunc = &builtinUnaryMinusIntSig{}
 	_ builtinFunc = &builtinIsNullSig{}
+	_ builtinFunc = &builtinUnaryNotSig{}
 )
 
 type logicAndFunctionClass struct {
@@ -345,6 +347,41 @@ func (b *builtinUnaryOpSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errInvalidOperation.Gen("Unsupported op %v for unary op", b.op)
 	}
 	return
+}
+
+type unaryNotFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *unaryNotFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 1
+
+	sig := &builtinUnaryNotSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinUnaryNotSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinUnaryNotSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if arg != 0 {
+		return 0, false, nil
+	}
+	return 1, false, nil
 }
 
 type unaryMinusFunctionClass struct {
