@@ -258,9 +258,9 @@ func (e *SelectLockExec) Next() (*Row, error) {
 				handle := row.Data[col.Index].GetInt64()
 				lockKey := tablecodec.EncodeRowKeyWithHandle(id, handle)
 				err = txn.LockKeys(lockKey)
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 		}
 	}

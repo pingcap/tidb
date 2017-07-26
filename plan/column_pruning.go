@@ -279,7 +279,6 @@ func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
 				}
 			}
 		}
-		log.Warnf("lock schema: %v", p.schema)
 		p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
 	} else {
 		p.baseLogicalPlan.PruneColumns(parentUsedCols)

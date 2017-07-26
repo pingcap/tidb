@@ -42,10 +42,6 @@ const (
 	minLogDuration = 50 * time.Millisecond
 )
 
-func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *model.CIStr) *Row {
-	return &Row{Data: data}
-}
-
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
 var LookupTableTaskChannelSize = 50
 
@@ -502,7 +498,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if e.needColHandle && e.handleCol.ID == -1 {
 			values[len(values)-1].SetInt64(h)
 		}
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return &Row{Data: values}, nil
 	}
 }
 
@@ -815,7 +811,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row := resultRowToRow(t, h, values, e.asName)
+		row := &Row{Data: values}
 		rows = append(rows, row)
 	}
 	return rows, nil
@@ -1020,7 +1016,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			// compose aggregate row
 			return &Row{Data: values}, nil
 		}
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return &Row{Data: values}, nil
 	}
 }
 

@@ -115,7 +115,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return &Row{Data: values}, nil
 	}
 }
 
@@ -229,7 +229,7 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return &Row{Data: values}, nil
 	}
 }
 
