@@ -545,7 +545,7 @@ func (d *Datum) compareString(sc *variable.StatementContext, s string) (int, err
 		return CompareString(d.GetString(), s), nil
 	case KindMysqlDecimal:
 		dec := new(MyDecimal)
-		err := dec.FromString([]byte(s))
+		err := sc.HandleTruncate(dec.FromString(hack.Slice(s)))
 		return d.GetMysqlDecimal().Compare(dec), err
 	case KindMysqlTime:
 		dt, err := ParseDatetime(s)
@@ -589,7 +589,7 @@ func (d *Datum) compareMysqlDecimal(sc *variable.StatementContext, dec *MyDecima
 		return d.GetMysqlDecimal().Compare(dec), nil
 	case KindString, KindBytes:
 		dDec := new(MyDecimal)
-		err := dDec.FromString(d.GetBytes())
+		err := sc.HandleTruncate(dDec.FromString(d.GetBytes()))
 		return dDec.Compare(dec), err
 	default:
 		fVal, _ := dec.ToFloat64()
@@ -839,16 +839,22 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementCo
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
-			var runeCount int
-			var truncateLen int
-			for i := range s {
-				runeCount++
-				if runeCount == flen+1 {
-					// We don't break here because we need to iterate to the end to get runeCount.
-					truncateLen = i
+			if len([]rune(s)) > flen {
+				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
+				//    CREATE TABLE t (a char(0));
+				//    INSERT INTO t VALUES (``);
+				// 2. If len(s) is 10 and flen is 0, truncateLen will be 0 too, but we still need to truncate s.
+				//    SELECT 1, CAST(1234 AS CHAR(0));
+				// So truncateLen is not a suitable variable to determine to do truncate or not.
+				var runeCount int
+				var truncateLen int
+				for i := range s {
+					if runeCount == flen {
+						// We don't break here because we need to iterate to the end to get runeCount.
+						truncateLen = i
+					}
+					runeCount++
 				}
-			}
-			if truncateLen > 0 || flen == 0 {
 				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, runeCount)
 				s = truncateStr(s, truncateLen)
 			}
@@ -1325,7 +1331,7 @@ func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, 
 	case KindFloat64:
 		err = dec.FromFloat64(d.GetFloat64())
 	case KindString:
-		err = dec.FromString(d.GetBytes())
+		err = sc.HandleTruncate(dec.FromString(d.GetBytes()))
 	case KindMysqlDecimal:
 		*dec = *d.GetMysqlDecimal()
 	case KindMysqlHex:
@@ -1578,11 +1584,7 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 	if a.IsNull() || b.IsNull() {
 		return x, y, nil
 	}
-	var (
-		hasUint    bool
-		hasDecimal bool
-		hasFloat   bool
-	)
+	var hasUint, hasDecimal, hasFloat bool
 	x = a.convergeType(&hasUint, &hasDecimal, &hasFloat)
 	y = b.convergeType(&hasUint, &hasDecimal, &hasFloat)
 	if hasFloat {
@@ -1692,6 +1694,12 @@ func NewFloat32Datum(f float32) (d Datum) {
 // NewDurationDatum creates a new Datum from a Duration value.
 func NewDurationDatum(dur Duration) (d Datum) {
 	d.SetMysqlDuration(dur)
+	return d
+}
+
+// NewTimeDatum creates a new Time from a Time value.
+func NewTimeDatum(t Time) (d Datum) {
+	d.SetMysqlTime(t)
 	return d
 }
 

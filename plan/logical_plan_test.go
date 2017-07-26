@@ -540,6 +540,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			sql:  "select a, count(a) cnt from t group by a having cnt < 1",
 			best: "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Selection->Projection",
 		},
+		// issue #3873
+		{
+			sql:  "select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0",
+			best: "Join{DataScan(t1)->Selection->DataScan(t2)}(t1.a,t2.a)->Projection",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
@@ -617,16 +622,15 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
 			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection->Selection->Projection",
 		},
-		// FIXME: sum(s.a) is NewDecimal, so a will be added cast to decimal.
-		/*{
+		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}->Projection",
 		},
 		{
 			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
-		},*/
+			plan: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}->Projection",
+		},
 		{
 			sql:  "select * from t for update",
 			plan: "DataScan(t)->Lock->Projection",
@@ -641,7 +645,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "explain select * from t union all select * from t limit 1, 1",
-			plan: "UnionAll{Table(t)->Table(t)->Limit}->*plan.Explain",
+			plan: "*plan.Explain",
 		},
 		{
 			sql:  "insert into t select * from t",

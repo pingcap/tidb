@@ -304,6 +304,7 @@ const (
 	CharacterSetResults = "character_set_results"
 	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
+	TxnIsolation        = "tx_isolation"
 )
 
 // TableDelta stands for the changed count for one table.
@@ -318,6 +319,7 @@ type StatementContext struct {
 	// Set the following variables before execution
 
 	InUpdateOrDeleteStmt bool
+	IgnoreOverflow       bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
 	InShowWarning        bool
@@ -402,6 +404,8 @@ func (sc *StatementContext) AppendWarning(warn error) {
 
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
+	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
+	// We will do that later, and then append WarnDataTruncated instead of the error itself.
 	if err == nil {
 		return nil
 	}

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -68,6 +67,9 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 
 // NewFunction creates a new scalar function or constant.
 func NewFunction(ctx context.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	if funcName == ast.Cast {
+		return NewCastFunc(retType, args[0], ctx), nil
+	}
 	fc, ok := funcs[funcName]
 	if !ok {
 		return nil, errFunctionNotExists.GenByArgs(funcName)
@@ -84,11 +86,12 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
-	return &ScalarFunction{
+	sf := &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
-	}, nil
+	}
+	return FoldConstant(sf), nil
 }
 
 // ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
@@ -158,40 +161,12 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	return sf
 }
 
-func (sf *ScalarFunction) convertArgsToDecimal(sc *variable.StatementContext) error {
-	ft := types.NewFieldType(mysql.TypeNewDecimal)
-	for _, arg := range sf.GetArgs() {
-		if constArg, ok := arg.(*Constant); ok {
-			val, err := constArg.Value.ConvertTo(sc, ft)
-			if err != nil {
-				return err
-			}
-			constArg.Value = val
-		}
-	}
-
-	return nil
-}
-
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
-	sc := sf.GetCtx().GetSessionVars().StmtCtx
 	if !TurnOnNewExprEval {
-		d, err = sf.Function.eval(row)
-		// TODO: fix #3762, maybe better way
-		if err != nil && terror.ErrorEqual(err, types.ErrOverflow) && sf.GetTypeClass() == types.ClassInt &&
-			sf.FuncName.L == ast.UnaryMinus && !sc.InUpdateOrDeleteStmt {
-			err = sf.convertArgsToDecimal(sc)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			d, err = sf.Function.eval(row)
-			// change return type
-			decVal, _ := d.ToDecimal(sc)
-			types.DefaultTypeForValue(decVal, sf.RetType)
-		}
-		return
+		return sf.Function.eval(row)
 	}
+	sc := sf.GetCtx().GetSessionVars().StmtCtx
 	var (
 		res    interface{}
 		isNull bool
@@ -201,7 +176,6 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 	case types.ClassInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(row, sc)
-
 		if mysql.HasUnsignedFlag(tp.Flag) {
 			res = uint64(intRes)
 		} else {
@@ -220,17 +194,6 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 		default:
 			res, isNull, err = sf.EvalString(row, sc)
 		}
-	}
-
-	if err != nil && terror.ErrorEqual(err, types.ErrOverflow) &&
-		sf.FuncName.L == ast.UnaryMinus && !sc.InUpdateOrDeleteStmt {
-		// TODO: fix #3762, overflow convert it to decimal
-		err = sf.convertArgsToDecimal(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		res, isNull, err = sf.EvalDecimal(row, sc)
-		types.DefaultTypeForValue(res, sf.RetType)
 	}
 
 	if isNull || err != nil {

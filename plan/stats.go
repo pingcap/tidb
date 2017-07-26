@@ -148,7 +148,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 		log.Errorf("Cannot find column %s indices from schema %s", cols, schema)
 		return 0
 	}
-	var cardinality float64
+	var cardinality = 1.0
 	for _, idx := range indices {
 		if cardinality < profile.cardinality[idx] {
 			// It is a very elementary estimation.
@@ -247,6 +247,24 @@ func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 	p.profile = &statsProfile{
 		count:       count,
 		cardinality: cardinality,
+	}
+	return p.profile
+}
+
+func (p *LogicalApply) prepareStatsProfile() *statsProfile {
+	leftProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
+	_ = p.children[1].(LogicalPlan).prepareStatsProfile()
+	p.profile = &statsProfile{
+		count:       leftProfile.count,
+		cardinality: make([]float64, p.schema.Len()),
+	}
+	copy(p.profile.cardinality, leftProfile.cardinality)
+	if p.JoinType == LeftOuterSemiJoin {
+		p.profile.cardinality[len(p.profile.cardinality)-1] = 2.0
+	} else {
+		for i := p.children[0].Schema().Len(); i < p.schema.Len(); i++ {
+			p.profile.cardinality[i] = leftProfile.count
+		}
 	}
 	return p.profile
 }

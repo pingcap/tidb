@@ -181,6 +181,16 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 	s.tk.MustExec("insert into test_add_index_with_pk values(2, 2)")
 	s.tk.MustExec("alter table test_add_index_with_pk add index idx1 (a, b)")
 	s.tk.MustQuery("select * from test_add_index_with_pk").Check(testkit.Rows("1 2", "2 2"))
+	s.tk.MustExec("create table test_add_index_with_pk1(a int not null, b int not null default '0', c int, d int, primary key(c))")
+	s.tk.MustExec("insert into test_add_index_with_pk1 values(1, 1, 1, 1)")
+	s.tk.MustExec("alter table test_add_index_with_pk1 add index idx (c)")
+	s.tk.MustExec("insert into test_add_index_with_pk1 values(2, 2, 2, 2)")
+	s.tk.MustQuery("select * from test_add_index_with_pk1").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
+	s.tk.MustExec("create table test_add_index_with_pk2(a int not null, b int not null default '0', c int unsigned, d int, primary key(c))")
+	s.tk.MustExec("insert into test_add_index_with_pk2 values(1, 1, 1, 1)")
+	s.tk.MustExec("alter table test_add_index_with_pk2 add index idx (c)")
+	s.tk.MustExec("insert into test_add_index_with_pk2 values(2, 2, 2, 2)")
+	s.tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 }
 
 func (s *testDBSuite) TestIndex(c *C) {
@@ -571,6 +581,16 @@ func (s *testDBSuite) TestCreateIndexType(c *C) {
 		petsyes enum('Y','N') DEFAULT 'Y' NOT NULL,
 		KEY price (price,area,type,transityes,shopsyes,schoolsyes,petsyes));`
 	s.tk.MustExec(sql)
+}
+
+func (s *testDBSuite) TestIssue3833(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table issue3833 (b char(0))")
+	s.testErrorCode(c, "create index idx on issue3833 (b)", tmysql.ErrWrongKeyColumn)
+	s.testErrorCode(c, "alter table issue3833 add index idx (b)", tmysql.ErrWrongKeyColumn)
+	s.testErrorCode(c, "create table issue3833_2 (b char(0), index (b))", tmysql.ErrWrongKeyColumn)
 }
 
 func (s *testDBSuite) TestColumn(c *C) {

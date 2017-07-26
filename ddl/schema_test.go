@@ -150,7 +150,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	var checkErr error
 	var updatedCount int
 	tc.onBgJobUpdated = func(job *model.Job) {
@@ -169,7 +169,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		}
 		updatedCount++
 	}
-	d.setHook(tc)
+	d.SetHook(tc)
 	job, v := testDropSchema(c, ctx, d, dbInfo)
 	testCheckSchemaState(c, d, dbInfo, model.StateNone)
 	ids := make(map[int64]struct{})

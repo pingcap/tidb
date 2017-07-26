@@ -61,6 +61,8 @@ type Plan interface {
 	SetParents(...Plan)
 	// SetChildren sets the children for the plan.
 	SetChildren(...Plan)
+	// replaceExprColumns replace all the column reference in the plan's expression node.
+	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() context.Context
 
@@ -262,6 +264,9 @@ type PhysicalPlan interface {
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx context.Context) (*tipb.Executor, error)
 
+	// ExplainInfo returns operator information to be explained.
+	ExplainInfo() string
+
 	// getChildrenPossibleProps tries to push the required properties to its children and return all the possible properties.
 	getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp
 
@@ -277,6 +282,11 @@ type baseLogicalPlan struct {
 
 type basePhysicalPlan struct {
 	basePlan *basePlan
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (bp *basePhysicalPlan) ExplainInfo() string {
+	return ""
 }
 
 func (p *baseLogicalPlan) getTask(prop *requiredProp) (task, error) {
@@ -376,7 +386,7 @@ func newBasePhysicalPlan(basePlan *basePlan) basePhysicalPlan {
 	}
 }
 
-func (p *basePhysicalPlan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+func (bp *basePhysicalPlan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
 
@@ -439,6 +449,10 @@ type basePlan struct {
 func (p *basePlan) copy() *basePlan {
 	np := *p
 	return &np
+}
+
+func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
+	return
 }
 
 // MarshalJSON implements json.Marshaler interface.
