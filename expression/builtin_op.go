@@ -176,6 +176,41 @@ func (b *builtinLogicXorSig) eval(row []types.Datum) (d types.Datum, err error) 
 	return
 }
 
+type bitAndFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *bitAndFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := c.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinBitAndSig{baseIntBuiltinFunc{bf}}
+	sig.tp.Flag |= mysql.UnsignedFlag
+	return sig.setSelf(sig), nil
+}
+
+type builtinBitAndSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinBitAndSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	arg1, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return arg0 & arg1, false, nil
+}
+
 type bitOpFunctionClass struct {
 	baseFunctionClass
 
@@ -219,8 +254,6 @@ func (s *builtinBitOpSig) eval(row []types.Datum) (d types.Datum, err error) {
 
 	// use a int64 for bit operator, return uint64
 	switch s.op {
-	case opcode.And:
-		d.SetUint64(uint64(x & y))
 	case opcode.Or:
 		d.SetUint64(uint64(x | y))
 	case opcode.Xor:
