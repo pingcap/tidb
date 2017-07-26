@@ -33,7 +33,7 @@ func (expr *ScalarFunction) ExplainInfo() string {
 
 // ExplainInfo implements the Expression interface.
 func (expr *Column) ExplainInfo() string {
-	return fmt.Sprintf("col(%s)", expr.String())
+	return expr.String()
 }
 
 // ExplainInfo implements the Expression interface.
@@ -42,7 +42,7 @@ func (expr *Constant) ExplainInfo() string {
 	if err != nil {
 		valStr = "not recognized const value"
 	}
-	return fmt.Sprintf("const(%s)", valStr)
+	return valStr
 }
 
 // ExplainAggFunc generates explain information for a aggregation function.
