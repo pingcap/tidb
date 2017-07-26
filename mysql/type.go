@@ -13,7 +13,7 @@
 
 package mysql
 
-// MySQL type informations.
+// MySQL type information.
 const (
 	TypeDecimal   byte = 0
 	TypeTiny      byte = 1
@@ -50,7 +50,7 @@ const (
 // TypeUnspecified is an uninitialized type. TypeDecimal is not used in MySQL.
 const TypeUnspecified = TypeDecimal
 
-// Flag informations.
+// Flag information.
 const (
 	NotNullFlag     = 1   /* Field can't be NULL */
 	PriKeyFlag      = 2   /* Field is part of a primary key */
