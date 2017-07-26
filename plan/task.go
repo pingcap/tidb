@@ -150,6 +150,9 @@ func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
 	if p.SmallTable == 1 {
 		smallTableCnt = rCnt
 	}
+	if smallTableCnt <= 1 {
+		smallTableCnt = 1
+	}
 	return (lCnt + rCnt) * (1 + math.Log2(smallTableCnt))
 }
 
@@ -180,6 +183,9 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalHashSemiJoin) getCost(lCnt, rCnt float64) float64 {
+	if rCnt <= 1 {
+		rCnt = 1
+	}
 	return (lCnt + rCnt) * (1 + math.Log2(rCnt))
 }
 

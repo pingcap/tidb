@@ -447,7 +447,7 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
 }
 
 func buildShowDDLFields() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 6)...)
+	schema := expression.NewSchema(make([]*expression.Column, 0, 7)...)
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "JOB", mysql.TypeVarchar, 128))
