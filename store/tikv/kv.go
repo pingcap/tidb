@@ -290,6 +290,10 @@ func (s *tikvStore) GetOracle() oracle.Oracle {
 	return s.oracle
 }
 
+func (s *tikvStore) SupportDeleteRange() (supported bool) {
+	return true
+}
+
 func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	sender := NewRegionRequestSender(s.regionCache, s.client, kvrpcpb.IsolationLevel_SI)
 	return sender.SendReq(bo, req, regionID, timeout)

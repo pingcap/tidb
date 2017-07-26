@@ -149,6 +149,9 @@ func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
+	if d.store.SupportDeleteRange() {
+		// TODO
+	}
 
 	isFinished, err := d.dropSchemaData(tableIDs, startKey, job, t)
 	if err != nil {
