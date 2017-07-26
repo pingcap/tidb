@@ -142,7 +142,6 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	tblInfo := testTableInfo(c, d1, "t", 3)
 	testCreateTable(c, ctx, d1, dbInfo, tblInfo)
-
 	t := testGetTable(c, d1, dbInfo.ID, tblInfo.ID)
 
 	num := 10
@@ -154,14 +153,14 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	err := ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	tc.onJobRunBefore = func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteReorganization {
 			d1.Stop()
 		}
 	}
 
-	d1.setHook(tc)
+	d1.SetHook(tc)
 
 	testDropSchema(c, ctx, d1, dbInfo)
 

@@ -330,7 +330,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		},
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a ) order by t.a",
-			best: "SemiJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->HashAgg)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection->Sort",
+			best: "SemiJoin{TableReader(Table(t))->Projection->TableReader(Table(t)->HashAgg)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection",
 		},
 		// FIXME: Report error by resolver.
 		//{

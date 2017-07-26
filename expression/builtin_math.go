@@ -1035,34 +1035,31 @@ type expFunctionClass struct {
 }
 
 func (c *expFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinExpSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinExpSig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinExpSig struct {
-	baseBuiltinFunc
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinExpSig.
+// evalReal evals a builtinExpSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_exp
-func (b *builtinExpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinExpSig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
+	exp := math.Exp(val)
+	if math.IsInf(exp, 0) || math.IsNaN(exp) {
+		s := fmt.Sprintf("exp(%s)", strconv.FormatFloat(val, 'f', -1, 64))
+		return 0, false, types.ErrOverflow.GenByArgs("DOUBLE", s)
 	}
-
-	num, err := arg.ToFloat64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	d.SetFloat64(math.Exp(num))
-	return d, nil
+	return exp, false, nil
 }
 
 type piFunctionClass struct {

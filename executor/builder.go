@@ -896,10 +896,11 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &IndexReaderExecutor{
-			table:   table,
-			index:   idxInfo,
-			tableID: tblInfo.ID,
-			ranges:  []*types.IndexRange{idxRange},
+			table:     table,
+			index:     idxInfo,
+			tableID:   tblInfo.ID,
+			ranges:    []*types.IndexRange{idxRange},
+			keepOrder: true,
 			dagPB: &tipb.DAGRequest{
 				StartTs:        b.getStartTS(),
 				TimeZoneOffset: timeZoneOffset(b.ctx),
