@@ -986,7 +986,7 @@ func (s *testSuite) TestEncryptionBuiltin(c *C) {
 	tk.MustExec("create table t(a char(41), b char(41), c char(41))")
 	tk.MustExec(`insert into t values(NULL, '', 'abc')`)
 	result := tk.MustQuery("select password(a) from t")
-	result.Check(testkit.Rows("<nil>"))
+	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("select password(b) from t")
 	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("select password(c) from t")
@@ -1158,6 +1158,10 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("str2 0"))
 	result = tk.MustQuery("select cast(1234 as char(3))")
 	result.Check(testkit.Rows("123"))
+	result = tk.MustQuery("select cast(1234 as char(0))")
+	result.Check(testkit.Rows(""))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1406 Data Too Long, field len 0, data len 4"))
 
 	// testCase is for like and regexp
 	type testCase struct {
@@ -1380,6 +1384,18 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
 	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+
+	//for exp
+	result = tk.MustQuery("select exp(0), exp(1), exp(-1), exp(1.2), exp(NULL)")
+	result.Check(testkit.Rows("1 2.718281828459045 0.36787944117144233 3.3201169227365472 <nil>"))
+	result = tk.MustQuery("select exp('tidb'), exp('1tidb')")
+	result.Check(testkit.Rows("1 2.718281828459045"))
+	rs, err = tk.Exec("select exp(1000000)")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 }
 

@@ -365,10 +365,14 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 }
 
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
-	return &ExplainExec{
+	exec := &ExplainExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		StmtPlan:     v.StmtPlan,
 	}
+	exec.rows = make([]*Row, 0, len(v.Rows))
+	for _, row := range v.Rows {
+		exec.rows = append(exec.rows, &Row{Data: row})
+	}
+	return exec
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor {
@@ -892,10 +896,11 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &IndexReaderExecutor{
-			table:   table,
-			index:   idxInfo,
-			tableID: tblInfo.ID,
-			ranges:  []*types.IndexRange{idxRange},
+			table:     table,
+			index:     idxInfo,
+			tableID:   tblInfo.ID,
+			ranges:    []*types.IndexRange{idxRange},
+			keepOrder: true,
 			dagPB: &tipb.DAGRequest{
 				StartTs:        b.getStartTS(),
 				TimeZoneOffset: timeZoneOffset(b.ctx),

@@ -17,7 +17,7 @@ import (
 	"strings"
 )
 
-// Version informations.
+// Version information.
 const (
 	MinProtocolVersion byte = 10
 	MaxPayloadLen      int  = 1<<24 - 1
@@ -26,7 +26,7 @@ const (
 	ServerVersion string = "5.7.1-TiDB-1.0"
 )
 
-// Header informations.
+// Header information.
 const (
 	OKHeader          byte = 0x00
 	ErrHeader         byte = 0xff
@@ -34,7 +34,7 @@ const (
 	LocalInFileHeader byte = 0xfb
 )
 
-// Server informations.
+// Server information.
 const (
 	ServerStatusInTrans            uint16 = 0x0001
 	ServerStatusAutocommit         uint16 = 0x0002
@@ -57,7 +57,7 @@ const (
 	MaxColumnNameLength   int = 64
 )
 
-// Command informations.
+// Command information.
 const (
 	ComSleep byte = iota
 	ComQuit
@@ -93,7 +93,7 @@ const (
 	ComResetConnection
 )
 
-// Client informations.
+// Client information.
 const (
 	ClientLongPassword uint32 = 1 << iota
 	ClientFoundRows
@@ -119,12 +119,12 @@ const (
 	ClientPluginAuthLenencClientData
 )
 
-// Cache type informations.
+// Cache type information.
 const (
 	TypeNoCache byte = 0xff
 )
 
-// Auth name informations.
+// Auth name information.
 const (
 	AuthName = "mysql_native_password"
 )
