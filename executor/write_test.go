@@ -184,6 +184,9 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("INSERT INTO t SELECT CAST(1.000 AS DECIMAL(4,2));")
 	result := tk.MustQuery("SHOW WARNINGS;")
 	result.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	tk.MustExec("INSERT INTO t VALUES (1.000000);")
+	result = tk.MustQuery("SHOW WARNINGS;")
+	result.Check(testkit.Rows("Warning 1265 Data Truncated"))
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
