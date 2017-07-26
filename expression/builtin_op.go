@@ -89,50 +89,43 @@ type logicOrFunctionClass struct {
 }
 
 func (c *logicOrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLogicOrSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	err := c.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 1
+	sig := &builtinLogicOrSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinLogicOrSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-func (b *builtinLogicOrSig) eval(row []types.Datum) (d types.Datum, err error) {
-	leftDatum, err := b.args[0].Eval(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
+func (b *builtinLogicOrSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if !leftDatum.IsNull() {
-		var x int64
-		x, err = leftDatum.ToBool(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		} else if x == 1 {
-			// false && any other types is false
-			d.SetInt64(x)
-			return
-		}
-	}
-	rightDatum, err := b.args[1].Eval(row)
+	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
-		return d, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
-	if !rightDatum.IsNull() {
-		var y int64
-		y, err = rightDatum.ToBool(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		} else if y == 1 {
-			d.SetInt64(y)
-			return
-		}
+	if !isNull0 && arg0 != 0 {
+		return 1, false, nil
 	}
-	if leftDatum.IsNull() || rightDatum.IsNull() {
-		return
+	arg1, isNull1, err := b.args[1].EvalInt(row, sc)
+	if err != nil {
+		return 0, false, errors.Trace(err)
 	}
-	d.SetInt64(int64(0))
-	return
+	if !isNull1 && arg1 != 0 {
+		return 1, false, nil
+	}
+	if isNull0 || isNull1 {
+		return 0, true, nil
+	}
+	return 0, false, nil
 }
 
 type logicXorFunctionClass struct {
