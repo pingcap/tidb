@@ -93,6 +93,7 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
+
 	return er.ctxStack[0], er.p, nil
 }
 
@@ -142,7 +143,11 @@ func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Exp
 		return ret, errors.Trace(err)
 	}
 	c, _ := e.(*expression.Constant)
-	ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
+	if getRowLen(c) == 2 {
+		ret = &expression.Constant{Value: c.Value.GetRow()[1], RetType: c.GetType()}
+	} else {
+		ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
+	}
 	return
 }
 
