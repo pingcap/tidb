@@ -118,3 +118,44 @@ func (s *testEvaluatorSuite) TestAndAnd(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsTrue)
 }
+
+func (s *testEvaluatorSuite) TestBitXor(c *C) {
+	defer testleak.AfterTest(c)()
+
+	cases := []struct {
+		args     []interface{}
+		expected uint64
+		isNil    bool
+		getErr   bool
+	}{
+		{[]interface{}{123, 321}, uint64(314), false, false},
+		{[]interface{}{-123, 321}, uint64(18446744073709551300), false, false},
+		{[]interface{}{nil, 1}, 0, true, false},
+
+		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Xor, primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetUint64(), Equals, t.expected)
+			}
+		}
+	}
+
+	// Test incorrect parameter count.
+	_, err := newFunctionForTest(s.ctx, ast.Xor, Zero)
+	c.Assert(err, NotNil)
+
+	f, err := funcs[ast.Xor].getFunction([]Expression{Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
