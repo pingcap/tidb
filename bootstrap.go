@@ -174,6 +174,14 @@ const (
 		lower_bound blob ,
 		unique index tbl(table_id, is_index, hist_id, bucket_id)
 	);`
+
+	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
+	CreateGCDeleteRangeTable = `CREATE TABLE IF NOT EXISTS mysql.gc_delete_range (
+		schema_id BIGINT NOT NULL PRIMARY KEY,
+		start_key BLOB NOT NULL,
+		end_key BLOB NOT NULL,
+		ts TIMESTAMP NOT NULL
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -214,6 +222,7 @@ const (
 	version12 = 12
 	version13 = 13
 	version14 = 14
+	version15 = 15
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -322,6 +331,10 @@ func upgrade(s Session) {
 
 	if ver < version14 {
 		upgradeToVer14(s)
+	}
+
+	if ver < version15 {
+		upgradeToVer15(s)
 	}
 
 	updateBootstrapVer(s)
@@ -519,6 +532,13 @@ func upgradeToVer14(s Session) {
 			}
 			log.Fatal(err)
 		}
+	}
+}
+
+func upgradeToVer14(s Session) {
+	_, err := s.Execute(CreateGCDeleteRangeTable)
+	if err != nil && !terror.ErrorEqual(err, nil) {
+		log.Fatal(err)
 	}
 }
 
