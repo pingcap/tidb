@@ -443,8 +443,8 @@ func (e *SelectionExec) initController() error {
 		}
 		x.ranges = ranges
 	case *XSelectIndexExec:
-		accessCondition, newConds, _, accessInAndEqCount := ranger.DetachIndexScanConditions(newConds, x.index)
-		idxConds, tblConds := ranger.DetachIndexFilterConditions(newConds, x.index.Columns, x.tableInfo)
+		accessCondition, detachedConds, _, accessInAndEqCount := ranger.DetachIndexScanConditions(newConds, x.index)
+		idxConds, tblConds := ranger.DetachIndexFilterConditions(detachedConds, x.index.Columns, x.tableInfo)
 		x.indexConditionPBExpr, _, _ = expression.ExpressionsToPB(sc, idxConds, client)
 		tableConditionPBExpr, _, _ := expression.ExpressionsToPB(sc, tblConds, client)
 		var err error

@@ -118,13 +118,13 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 	if h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		exec := h.ctx.(sqlexec.SQLExecutor)
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
-		rs, err := exec.Execute(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
-		if err != nil {
-			return errors.Trace(err)
+		rs, err1 := exec.Execute(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
-		row, err := rs[0].Next()
-		if err != nil {
-			return errors.Trace(err)
+		row, err2 := rs[0].Next()
+		if err2 != nil {
+			return errors.Trace(err2)
 		}
 		count := row.Data[0].GetInt64()
 		value := types.NewDatum(colInfo.OriginDefaultValue)

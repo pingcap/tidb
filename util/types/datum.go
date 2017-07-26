@@ -1609,9 +1609,9 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			x.SetFloat64(x.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := x.ToFloat64(sc)
-			if err != nil {
-				return x, y, errors.Trace(err)
+			fval, err1 := x.ToFloat64(sc)
+			if err1 != nil {
+				return x, y, errors.Trace(err1)
 			}
 			x.SetFloat64(fval)
 		}
@@ -1629,9 +1629,9 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			y.SetFloat64(y.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := y.ToFloat64(sc)
-			if err != nil {
-				return x, y, errors.Trace(err)
+			fval, err1 := y.ToFloat64(sc)
+			if err1 != nil {
+				return x, y, errors.Trace(err1)
 			}
 			y.SetFloat64(fval)
 		}

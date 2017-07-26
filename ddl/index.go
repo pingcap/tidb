@@ -253,11 +253,11 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteReorganization:
 		// reorganization -> public
-		reorgInfo, err := d.getReorgInfo(t, job)
-		if err != nil || reorgInfo.first {
+		reorgInfo, err1 := d.getReorgInfo(t, job)
+		if err1 != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
-			return ver, errors.Trace(err)
+			return ver, errors.Trace(err1)
 		}
 
 		var tbl table.Table

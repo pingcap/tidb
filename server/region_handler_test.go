@@ -44,9 +44,9 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRange(c *C) {
 	startKey := codec.EncodeBytes(nil, tablecodec.EncodeTableIndexPrefix(sTableID, sIndex))
 	endKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(eTableID))
 	region := &tikv.KeyLocation{
-		tikv.RegionVerID{},
-		startKey,
-		endKey,
+		Region:   tikv.RegionVerID{},
+		StartKey: startKey,
+		EndKey:   endKey,
 	}
 	indexRange, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
@@ -69,9 +69,9 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	startKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(sTableID))
 	endKey := codec.EncodeBytes(nil, []byte("z_aaaaafdfd"))
 	region := &tikv.KeyLocation{
-		tikv.RegionVerID{},
-		startKey,
-		endKey,
+		Region:   tikv.RegionVerID{},
+		StartKey: startKey,
+		EndKey:   endKey,
 	}
 	indexRange, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
@@ -94,9 +94,9 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C)
 	startKey := codec.EncodeBytes(nil, []byte("m_aaaaafdfd"))
 	endKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(eTableID))
 	region := &tikv.KeyLocation{
-		tikv.RegionVerID{},
-		startKey,
-		endKey,
+		Region:   tikv.RegionVerID{},
+		StartKey: startKey,
+		EndKey:   endKey,
 	}
 	indexRange, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)

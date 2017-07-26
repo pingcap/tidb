@@ -65,9 +65,9 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	}
 	var chunks []tipb.Chunk
 	for {
-		handle, row, err := e.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
+		handle, row, err1 := e.Next()
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		if row == nil {
 			break
@@ -185,9 +185,9 @@ func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) 
 	var err error
 	var relatedColOffsets []int
 	for _, expr := range executor.Aggregation.AggFunc {
-		aggExpr, err := expression.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
-		if err != nil {
-			return nil, errors.Trace(err)
+		aggExpr, err1 := expression.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		aggs = append(aggs, aggExpr)
 		relatedColOffsets, err = extractOffsetsInExpr(expr, ctx.evalCtx.columnInfos, relatedColOffsets)

@@ -405,9 +405,9 @@ func decimal2RoundUint(x *MyDecimal) (uint64, error) {
 		err   error
 	)
 	if roundX.IsNegative() {
-		intX, err := roundX.ToInt()
-		if err != nil && err != ErrTruncated {
-			return 0, errors.Trace(err)
+		intX, err1 := roundX.ToInt()
+		if err1 != nil && err1 != ErrTruncated {
+			return 0, errors.Trace(err1)
 		}
 		uintX = uint64(intX)
 	} else {

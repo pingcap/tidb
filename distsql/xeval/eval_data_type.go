@@ -58,11 +58,11 @@ func (e *Evaluator) evalColumnRef(val []byte) (types.Datum, error) {
 
 	// TODO: Remove this case.
 	if e.ColVals == nil {
-		d, ok := e.Row[i]
+		d1, ok := e.Row[i]
 		if !ok {
-			return d, ErrInvalid.Gen("column % x not found", val)
+			return d1, ErrInvalid.Gen("column % x not found", val)
 		}
-		return d, nil
+		return d1, nil
 	}
 
 	offset, ok := e.ColIDs[i]

@@ -110,8 +110,8 @@ func (t *copTask) finishIndexPlan() {
 }
 
 func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
-	task := finishCopTask(tasks[0].copy(), p.basePlan.ctx, p.basePlan.allocator)
-	return attachPlan2Task(p.basePlan.self.(PhysicalPlan).Copy(), task)
+	taskV := finishCopTask(tasks[0].copy(), p.basePlan.ctx, p.basePlan.allocator)
+	return attachPlan2Task(p.basePlan.self.(PhysicalPlan).Copy(), taskV)
 }
 
 func (p *PhysicalApply) attach2Task(tasks ...task) task {
@@ -270,8 +270,8 @@ func (p *Limit) attach2Task(tasks ...task) task {
 	if tasks[0].plan() == nil {
 		return tasks[0]
 	}
-	task := tasks[0].copy()
-	if cop, ok := task.(*copTask); ok {
+	taskV := tasks[0].copy()
+	if cop, ok := taskV.(*copTask); ok {
 		// If the task is copTask, the Limit can always be pushed down.
 		// When limit be pushed down, it should remove its offset.
 		pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
@@ -282,12 +282,12 @@ func (p *Limit) attach2Task(tasks ...task) task {
 			pushedDownLimit.SetSchema(cop.indexPlan.Schema())
 		}
 		cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
-		task = finishCopTask(cop, p.ctx, p.allocator)
+		taskV = finishCopTask(cop, p.ctx, p.allocator)
 	}
 	if !p.partial {
-		task = attachPlan2Task(p.Copy(), task)
+		taskV = attachPlan2Task(p.Copy(), taskV)
 	}
-	return task
+	return taskV
 }
 
 func (p *Sort) getCost(count float64) float64 {
@@ -317,11 +317,11 @@ func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 }
 
 func (p *Sort) attach2Task(tasks ...task) task {
-	task := tasks[0].copy()
-	task = finishCopTask(task, p.ctx, p.allocator)
-	task = attachPlan2Task(p.Copy(), task)
-	task.addCost(p.getCost(task.count()))
-	return task
+	taskV := tasks[0].copy()
+	taskV = finishCopTask(taskV, p.ctx, p.allocator)
+	taskV = attachPlan2Task(p.Copy(), taskV)
+	taskV.addCost(p.getCost(taskV.count()))
+	return taskV
 }
 
 func (p *TopN) attach2Task(tasks ...task) task {
@@ -329,9 +329,9 @@ func (p *TopN) attach2Task(tasks ...task) task {
 	if tasks[0].plan() == nil {
 		return tasks[0]
 	}
-	task := tasks[0].copy()
+	taskV := tasks[0].copy()
 	// This is a topN plan.
-	if copTask, ok := task.(*copTask); ok && p.canPushDown() {
+	if copTask, ok := taskV.(*copTask); ok && p.canPushDown() {
 		pushedDownTopN := p.Copy().(*TopN)
 		// When topN is pushed down, it should remove its offset.
 		pushedDownTopN.Count, pushedDownTopN.Offset = p.Count+p.Offset, 0
@@ -349,25 +349,25 @@ func (p *TopN) attach2Task(tasks ...task) task {
 			copTask.tablePlan = pushedDownTopN
 			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 		}
-		copTask.addCost(pushedDownTopN.getCost(task.count()))
+		copTask.addCost(pushedDownTopN.getCost(taskV.count()))
 	}
-	task = finishCopTask(task, p.ctx, p.allocator)
+	taskV = finishCopTask(taskV, p.ctx, p.allocator)
 	if !p.partial {
-		task = attachPlan2Task(p.Copy(), task)
-		task.addCost(p.getCost(task.count()))
+		taskV = attachPlan2Task(p.Copy(), taskV)
+		taskV.addCost(p.getCost(taskV.count()))
 	}
-	return task
+	return taskV
 }
 
 func (p *Projection) attach2Task(tasks ...task) task {
-	task := tasks[0].copy()
+	taskV := tasks[0].copy()
 	np := p.Copy()
-	switch t := task.(type) {
+	switch t := taskV.(type) {
 	case *copTask:
 		// TODO: Support projection push down.
-		task := finishCopTask(task, p.ctx, p.allocator)
-		task = attachPlan2Task(np, task)
-		return task
+		taskV = finishCopTask(taskV, p.ctx, p.allocator)
+		taskV = attachPlan2Task(np, taskV)
+		return taskV
 	case *rootTask:
 		return attachPlan2Task(np, t)
 	}
@@ -388,10 +388,10 @@ func (p *Union) attach2Task(tasks ...task) task {
 }
 
 func (sel *Selection) attach2Task(tasks ...task) task {
-	task := finishCopTask(tasks[0].copy(), sel.ctx, sel.allocator)
-	task.addCost(task.count() * cpuFactor)
-	task = attachPlan2Task(sel.Copy(), task)
-	return task
+	taskV := finishCopTask(tasks[0].copy(), sel.ctx, sel.allocator)
+	taskV.addCost(taskV.count() * cpuFactor)
+	taskV = attachPlan2Task(sel.Copy(), taskV)
+	return taskV
 }
 
 func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *PhysicalAggregation) {

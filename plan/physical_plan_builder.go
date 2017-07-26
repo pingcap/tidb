@@ -65,7 +65,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	resultPlan = ts
 	table := p.tableInfo
 	sc := p.ctx.GetSessionVars().StmtCtx
-	ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	ts.Ranges = []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
 	if len(p.parents) > 0 {
 		if sel, ok := p.parents[0].(*Selection); ok {
 			newSel := sel.Copy().(*Selection)
@@ -976,9 +976,9 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 			}
 		}
 
-		nljInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, false)
-		if err != nil {
-			return nil, errors.Trace(err)
+		nljInfo, err1 := p.convert2IndexNestedLoopJoinLeft(prop, false)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		if nljInfo != nil {
 			info = nljInfo
@@ -999,9 +999,9 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 				break
 			}
 		}
-		nljInfo, err := p.convert2IndexNestedLoopJoinRight(prop, false)
-		if err != nil {
-			return nil, errors.Trace(err)
+		nljInfo, err1 := p.convert2IndexNestedLoopJoinRight(prop, false)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		if nljInfo != nil {
 			info = nljInfo

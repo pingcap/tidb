@@ -384,7 +384,7 @@ func (fs *FileSorter) externalSort() (*comparableRow, error) {
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
-			im := &item{
+			im = &item{
 				index: im.index,
 				value: row,
 			}

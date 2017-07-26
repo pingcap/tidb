@@ -150,11 +150,11 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Get the current version for reorganization if we don't have it.
-		reorgInfo, err := d.getReorgInfo(t, job)
-		if err != nil || reorgInfo.first {
+		reorgInfo, err1 := d.getReorgInfo(t, job)
+		if err1 != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
-			return ver, errors.Trace(err)
+			return ver, errors.Trace(err1)
 		}
 
 		// Adjust column offset.
@@ -233,11 +233,11 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		reorgInfo, err := d.getReorgInfo(t, job)
-		if err != nil || reorgInfo.first {
+		reorgInfo, err1 := d.getReorgInfo(t, job)
+		if err1 != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
-			return ver, errors.Trace(err)
+			return ver, errors.Trace(err1)
 		}
 
 		// All reorganization jobs are done, drop this column.

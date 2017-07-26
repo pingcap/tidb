@@ -87,13 +87,13 @@ func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int
 		} else {
 			count = bucket.Count - hg.Buckets[i-1].Count
 		}
-		upperBound, err := bucket.UpperBound.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
-		if err != nil {
-			return errors.Trace(err)
+		upperBound, err1 := bucket.UpperBound.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
-		lowerBound, err := bucket.LowerBound.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
-		if err != nil {
-			return errors.Trace(err)
+		lowerBound, err2 := bucket.LowerBound.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+		if err2 != nil {
+			return errors.Trace(err2)
 		}
 		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, bucket.Repeats, lowerBound.GetBytes(), upperBound.GetBytes())
 		_, err = exec.Execute(insertSQL)
@@ -389,9 +389,9 @@ func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []*type
 		if cmp == 0 {
 			// the point case.
 			if !rg.LowExcl && !rg.HighExcl {
-				cnt, err := c.equalRowCount(sc, rg.Low)
-				if err != nil {
-					return 0, errors.Trace(err)
+				cnt, err1 := c.equalRowCount(sc, rg.Low)
+				if err1 != nil {
+					return 0, errors.Trace(err1)
 				}
 				rowCount += cnt
 			}
