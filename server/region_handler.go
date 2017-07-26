@@ -91,13 +91,11 @@ func (s *Server) newRegionHandler() (hanler *regionHandler) {
 	var tikvStore kvStore
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
-		log.Fatal("Invalid KvStore with illegal driver")
-		return
+		panic("Invalid KvStore with illegal driver")
 	}
 
 	if tikvStore, ok = store.store.(kvStore); !ok {
-		log.Fatal("Invalid KvStore with illegal store")
-		return
+		panic("Invalid KvStore with illegal store")
 	}
 
 	regionCache := tikvStore.GetRegionCache()
