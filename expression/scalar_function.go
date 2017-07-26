@@ -195,6 +195,7 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 			res, isNull, err = sf.EvalString(row, sc)
 		}
 	}
+
 	if isNull || err != nil {
 		d.SetValue(nil)
 		return d, errors.Trace(err)
