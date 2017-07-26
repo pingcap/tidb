@@ -457,8 +457,8 @@ func upgradeToVer12(s Session) {
 			log.Fatal(err)
 			return
 		}
-		sql = fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
-		sqls = append(sqls, sql)
+		updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
+		sqls = append(sqls, updateSQL)
 		row, err = r.Next()
 	}
 
