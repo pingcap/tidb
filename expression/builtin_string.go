@@ -1936,9 +1936,10 @@ func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error)
 	)
 	switch len(args) {
 	case 5:
-		arg, err1 := args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-		if err1 != nil {
-			return d, errors.Trace(err1)
+		var arg int64
+		arg, err = args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
 		}
 		if arg >= 0 && arg < 64 {
 			numberOfBits = int(arg)

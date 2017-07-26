@@ -215,8 +215,9 @@ func (s *testJSONSuite) TestJSONModify(c *C) {
 		obtain, err := base.Modify([]PathExpression{pathExpr}, []JSON{value}, tt.mt)
 		if tt.success {
 			c.Assert(err, IsNil)
-			cmp, err1 := CompareJSON(obtain, expected)
-			c.Assert(err1, IsNil)
+			var cmp int
+			cmp, err = CompareJSON(obtain, expected)
+			c.Assert(err, IsNil)
 			c.Assert(cmp, Equals, 0)
 		} else {
 			c.Assert(err, NotNil)

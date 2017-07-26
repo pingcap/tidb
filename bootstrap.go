@@ -451,12 +451,13 @@ func upgradeToVer12(s Session) {
 		user := row.Data[0].GetString()
 		host := row.Data[1].GetString()
 		pass := row.Data[2].GetString()
-		newpass, err1 := oldPasswordUpgrade(pass)
-		if err1 != nil {
-			log.Fatal(err1)
+		var newPass string
+		newPass, err = oldPasswordUpgrade(pass)
+		if err != nil {
+			log.Fatal(err)
 			return
 		}
-		sql = fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newpass, user, host)
+		sql = fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
 		sqls = append(sqls, sql)
 		row, err = r.Next()
 	}

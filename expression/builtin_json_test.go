@@ -94,11 +94,13 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 			c.Assert(err, IsNil)
 			switch x := t.Expected.(type) {
 			case string:
-				j1, err1 := json.ParseFromString(x)
-				c.Assert(err1, IsNil)
+				var j1 json.JSON
+				j1, err = json.ParseFromString(x)
+				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
-				cmp, err2 := json.CompareJSON(j1, j2)
-				c.Assert(err2, IsNil)
+				var cmp int
+				cmp, err = json.CompareJSON(j1, j2)
+				c.Assert(err, IsNil)
 				c.Assert(cmp, Equals, 0)
 			}
 		} else {
@@ -134,11 +136,13 @@ func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 			c.Assert(err, IsNil)
 			switch x := t.Expected.(type) {
 			case string:
-				j1, err1 := json.ParseFromString(x)
-				c.Assert(err1, IsNil)
+				var j1 json.JSON
+				j1, err = json.ParseFromString(x)
+				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
-				cmp, err2 := json.CompareJSON(j1, j2)
-				c.Assert(err2, IsNil)
+				var cmp int
+				cmp, err = json.CompareJSON(j1, j2)
+				c.Assert(err, IsNil)
 				c.Assert(cmp, Equals, 0)
 			}
 		} else {
@@ -228,12 +232,14 @@ func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 			c.Assert(err, IsNil)
 			switch x := t.Expected.(type) {
 			case string:
-				j1, err1 := json.ParseFromString(x)
-				c.Assert(err1, IsNil)
-				j2 := d.GetMysqlJSON()
-				cmp, err2 := json.CompareJSON(j1, j2)
+				var j1 json.JSON
+				j1, err = json.ParseFromString(x)
 				c.Assert(err, IsNil)
-				c.Assert(cmp2, Equals, 0)
+				j2 := d.GetMysqlJSON()
+				var cmp int
+				cmp, err = json.CompareJSON(j1, j2)
+				c.Assert(err, IsNil)
+				c.Assert(cmp, Equals, 0)
 			}
 		} else {
 			c.Assert(err, NotNil)
@@ -277,11 +283,13 @@ func (s *testEvaluatorSuite) TestJSONORemove(c *C) {
 			c.Assert(err, IsNil)
 			switch x := t.Expected.(type) {
 			case string:
-				j1, err1 := json.ParseFromString(x)
-				c.Assert(err1, IsNil)
+				var j1 json.JSON
+				j1, err = json.ParseFromString(x)
+				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
-				cmp, err2 := json.CompareJSON(j1, j2)
-				c.Assert(err2, IsNil)
+				var cmp int
+				cmp, err = json.CompareJSON(j1, j2)
+				c.Assert(err, IsNil)
 				c.Assert(cmp, Equals, 0)
 			}
 		} else {

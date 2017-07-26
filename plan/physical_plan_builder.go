@@ -976,9 +976,10 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 			}
 		}
 
-		nljInfo, err1 := p.convert2IndexNestedLoopJoinLeft(prop, false)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
+		var nljInfo *physicalPlanInfo
+		nljInfo, err = p.convert2IndexNestedLoopJoinLeft(prop, false)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		if nljInfo != nil {
 			info = nljInfo
@@ -999,9 +1000,10 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 				break
 			}
 		}
-		nljInfo, err1 := p.convert2IndexNestedLoopJoinRight(prop, false)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
+		var nljInfo *physicalPlanInfo
+		nljInfo, err = p.convert2IndexNestedLoopJoinRight(prop, false)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		if nljInfo != nil {
 			info = nljInfo

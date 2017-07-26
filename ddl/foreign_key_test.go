@@ -139,9 +139,10 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-		if err1 != nil {
-			hookErr = errors.Trace(err1)
+		var t table.Table
+		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		if err != nil {
+			hookErr = errors.Trace(err)
 			return
 		}
 		fk := getForeignKey(t, "c1_fk")
@@ -178,9 +179,10 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		t, err2 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-		if err2 != nil {
-			hookErr = errors.Trace(err2)
+		var t table.Table
+		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		if err != nil {
+			hookErr = errors.Trace(err)
 			return
 		}
 		fk := getForeignKey(t, "c1_fk")

@@ -962,7 +962,8 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 
 	if s.op != opcode.NullEQ {
-		if aa, bb, err1 := types.CoerceDatum(sc, a, b); err1 == nil {
+		var aa, bb types.Datum
+		if aa, bb, err = types.CoerceDatum(sc, a, b); err == nil {
 			a = aa
 			b = bb
 		}
