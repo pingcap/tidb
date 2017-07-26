@@ -175,6 +175,18 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("create table t1 (b char(0));")
 	_, err = tk.Exec(`insert into t1 values ("");`)
 	c.Assert(err, IsNil)
+
+	// issue 3895
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
+	tk.MustExec("INSERT INTO t VALUES (1.000001);")
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	tk.MustExec("INSERT INTO t VALUES (1.000000);")
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
