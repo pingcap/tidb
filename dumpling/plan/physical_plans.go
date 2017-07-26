@@ -530,6 +530,19 @@ const (
 	CompleteAgg
 )
 
+// String implements fmt.Stringer interface.
+func (at AggregationType) String() string {
+	switch at {
+	case StreamedAgg:
+		return "stream"
+	case FinalAgg:
+		return "final"
+	case CompleteAgg:
+		return "complete"
+	}
+	return "unsupported aggregation type"
+}
+
 // PhysicalAggregation is Aggregation's physical plan.
 type PhysicalAggregation struct {
 	*basePlan
