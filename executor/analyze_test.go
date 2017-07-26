@@ -43,7 +43,7 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	tk.MustExec("analyze table t1")
 	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr = fmt.Sprintf("%s", result.Rows())
-	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[TableScan_4 Selection_5 cop ] [Selection_5  cop eq(col(test.t1.a), const(1))] [TableReader_6  root ]]")
+	c.Check(rowStr, Equals, "[[TableScan_4 Selection_5 cop ] [Selection_5  cop eq(col(test.t1.a), const(1))] [TableReader_6  root ]]")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
@@ -52,7 +52,7 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	tk.MustExec("analyze table t1 index ind_a")
 	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr = fmt.Sprintf("%s", result.Rows())
-	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[TableScan_4 Selection_5 cop ] [Selection_5  cop eq(col(test.t1.a), const(1))] [TableReader_6  root ]]")
+	c.Check(rowStr, Equals, "[[TableScan_4 Selection_5 cop ] [Selection_5  cop eq(col(test.t1.a), const(1))] [TableReader_6  root ]]")
 }
 
 type recordSet struct {

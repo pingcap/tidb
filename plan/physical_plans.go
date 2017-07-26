@@ -530,6 +530,7 @@ const (
 	CompleteAgg
 )
 
+// String implements fmt.Stringer interface
 func (at AggregationType) String() string {
 	switch at {
 	case StreamedAgg:
