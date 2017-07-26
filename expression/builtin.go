@@ -784,7 +784,7 @@ var funcs = map[string]functionClass{
 	ast.Or:         &bitOpFunctionClass{baseFunctionClass{ast.Or, 2, 2}, opcode.Or},
 	ast.Xor:        &bitOpFunctionClass{baseFunctionClass{ast.Xor, 2, 2}, opcode.Xor},
 	ast.UnaryNot:   &unaryOpFunctionClass{baseFunctionClass{ast.UnaryNot, 1, 1}, opcode.Not},
-	ast.BitNeg:     &unaryOpFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}, opcode.BitNeg},
+	ast.BitNeg:     &bitNegFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}},
 	ast.UnaryPlus:  &unaryOpFunctionClass{baseFunctionClass{ast.UnaryPlus, 1, 1}, opcode.Plus},
 	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
 	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 1, -1}},
