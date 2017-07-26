@@ -315,8 +315,8 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 	if tp == nil {
 		return nil
 	}
-	if tp.Flen > mysql.MaxUint32 {
-		return types.ErrTooBigDisplayWidth.Gen("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, mysql.MaxUint32)
+	if tp.Flen > math.MaxUint32 {
+		return types.ErrTooBigDisplayWidth.Gen("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
 	}
 	switch tp.Tp {
 	case mysql.TypeString:

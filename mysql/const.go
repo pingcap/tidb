@@ -221,9 +221,6 @@ const (
 	PrecisionForFloat  = 24
 )
 
-// MaxUint32 is the max uint32.
-const MaxUint32 = (1 << 32) - 1
-
 // MaxTypeSetMembers is the number of set members.
 const MaxTypeSetMembers = 64
 
