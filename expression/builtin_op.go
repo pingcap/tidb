@@ -370,8 +370,8 @@ func (b *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow boo
 	return false
 }
 
-// typeInfer infer unary Minus Function return type. when arg is int constant and overflow,
-// typerInfer will infer the return type as tpDecimal, not tpInt.
+// typeInfer infers unaryMinus function return type. when the arg is an int constant and overflow,
+// typerInfer will infers the return type as tpDecimal, not tpInt.
 func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Context) (evalTp, bool) {
 	tp := tpInt
 	switch argExpr.GetTypeClass() {
