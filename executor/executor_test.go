@@ -1074,10 +1074,18 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("3 2"))
 	result = tk.MustQuery("select cast(-1 as unsigned)")
 	result.Check(testkit.Rows("18446744073709551615"))
-	result = tk.MustQuery("select cast(1 as signed int)")
-	result.Check(testkit.Rows("1"))
+
+	// Fix issue #3691, cast compabilities.
 	result = tk.MustQuery("select cast('18446744073709551616' as unsigned);")
 	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast('18446744073709551616' as signed);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast('9223372036854775808' as signed);")
+	result.Check(testkit.Rows("-9223372036854775808"))
+	result = tk.MustQuery("select cast('9223372036854775809' as signed);")
+	result.Check(testkit.Rows("-9223372036854775807"))
+	result = tk.MustQuery("select cast('9223372036854775807' as signed);")
+	result.Check(testkit.Rows("9223372036854775807"))
 	result = tk.MustQuery("select cast('18446744073709551615' as signed);")
 	result.Check(testkit.Rows("-1"))
 	result = tk.MustQuery("select cast('18446744073709551614' as signed);")
@@ -1100,8 +1108,6 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("18446744073709551615"))
 	result = tk.MustQuery("select cast(18446744073709551614.4 as unsigned);") // Round down
 	result.Check(testkit.Rows("18446744073709551614"))
-
-	// TODO: not pass yet
 	result = tk.MustQuery("select cast(-9223372036854775809 as signed);")
 	result.Check(testkit.Rows("-9223372036854775808"))
 	result = tk.MustQuery("select cast(-9223372036854775809 as unsigned);")
@@ -1110,8 +1116,14 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("9223372036854775808"))
 	result = tk.MustQuery("select cast('-9223372036854775809' as unsigned);")
 	result.Check(testkit.Rows("9223372036854775808"))
+	result = tk.MustQuery("select cast('-9223372036854775807' as unsigned);")
+	result.Check(testkit.Rows("9223372036854775809"))
 	result = tk.MustQuery("select cast('-2' as unsigned);")
 	result.Check(testkit.Rows("18446744073709551614"))
+	result = tk.MustQuery("select cast(cast(1-2 as unsigned) as signed integer);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast(1 as signed int)")
+	result.Check(testkit.Rows("1"))
 
 	// fixed issue #3471
 	tk.MustExec("drop table if exists t")

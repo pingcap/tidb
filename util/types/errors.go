@@ -32,7 +32,9 @@ var (
 	// ErrBadNumber is return when parsing an invalid binary decimal number.
 	ErrBadNumber = terror.ClassTypes.New(codeBadNumber, "Bad Number")
 	// ErrCastSignedOverflow is returned when positive out-of-range integer, and convert to it's negative complement
-	ErrCastSignedOverflow = terror.ClassTypes.New(codeCastSignedOverflow, msgCastSignedOverflow)
+	ErrCastSignedOverflow = terror.ClassTypes.New(codeUnknown, msgCastSignedOverflow)
+	// ErrCastNegIntToUnsigned is returned when a negative integer cast to unsigned
+	ErrCastNegIntToUnsigned = terror.ClassTypes.New(codeUnknown, msgCastNegIntToUnsigned)
 )
 
 const (
@@ -44,14 +46,14 @@ const (
 	codeDivByZero           terror.ErrCode = terror.ErrCode(mysql.ErrDivisionByZero)
 	codeTruncatedWrongValue terror.ErrCode = terror.ErrCode(mysql.ErrTruncatedWrongValue)
 
-	// warning caused by `select cast('18446744073709551614' as signed);`
-	codeCastSignedOverflow terror.ErrCode = terror.ErrCode(mysql.ErrUnknown)
+	codeUnknown terror.ErrCode = terror.ErrCode(mysql.ErrUnknown)
 )
 
 var (
-	msgOverflow           = mysql.MySQLErrName[mysql.ErrDataOutOfRange]
-	msgTruncatedWrongVal  = mysql.MySQLErrName[mysql.ErrTruncatedWrongValue]
-	msgCastSignedOverflow = "Cast to signed converted positive out-of-range integer to it's negative complement"
+	msgOverflow             = mysql.MySQLErrName[mysql.ErrDataOutOfRange]
+	msgTruncatedWrongVal    = mysql.MySQLErrName[mysql.ErrTruncatedWrongValue]
+	msgCastSignedOverflow   = "Cast to signed converted positive out-of-range integer to it's negative complement"
+	msgCastNegIntToUnsigned = "Cast to unsigned converted negative integer to it's positive complement"
 )
 
 func init() {
@@ -61,7 +63,7 @@ func init() {
 		codeOverflow:            mysql.ErrDataOutOfRange,
 		codeDivByZero:           mysql.ErrDivisionByZero,
 		codeTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
-		codeCastSignedOverflow:  mysql.ErrUnknown,
+		codeUnknown:             mysql.ErrUnknown,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTypes] = typesMySQLErrCodes
 }

@@ -563,7 +563,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNu
 	// said "For statements such as SELECT that do not change data, invalid values
 	// generate a warning in strict mode, not an error."
 	// and and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-	if terror.ErrorEqual(err, types.ErrOverflow) {
+	if sc.IgnoreOverflow && terror.ErrorEqual(err, types.ErrOverflow) {
 		err = nil
 		sc.AppendWarning(types.ErrTruncatedWrongVal.GenByArgs("DECIMAL", val))
 	}
@@ -646,6 +646,28 @@ type builtinCastStringAsIntSig struct {
 	baseIntBuiltinFunc
 }
 
+func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string, origErr error, isNegative bool) (res int64, err error) {
+	res, err = origRes, origErr
+	sc := b.getCtx().GetSessionVars().StmtCtx
+
+	// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
+	// said "For statements such as SELECT that do not change data, invalid values
+	// generate a warning in strict mode, not an error."
+	// and and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
+	if sc.IgnoreOverflow && terror.ErrorEqual(origErr, types.ErrOverflow) {
+		err = nil
+		if isNegative {
+			res = math.MinInt64
+		} else {
+			uval := uint64(math.MaxUint64)
+			res = int64(uval)
+		}
+
+		sc.AppendWarning(types.ErrTruncatedWrongVal.GenByArgs("INTEGER", origStr))
+	}
+	return
+}
+
 func (b *builtinCastStringAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	if IsHybridType(b.args[0]) {
@@ -661,54 +683,24 @@ func (b *builtinCastStringAsIntSig) evalInt(row []types.Datum) (res int64, isNul
 	if len(val) > 1 && val[0] == '-' { // negative number
 		isNegative = true
 	}
-	if mysql.HasUnsignedFlag(b.tp.Flag) {
-		var ures uint64
-		if isNegative {
-			res, err = types.StrToInt(sc, val)
-		} else {
-			ures, err = types.StrToUint(sc, val)
-			res = int64(ures)
+
+	var ures uint64
+	if isNegative {
+		res, err = types.StrToInt(sc, val)
+		if err == nil {
+			// If overflow, don't append this warnings
+			sc.AppendWarning(types.ErrCastNegIntToUnsigned)
 		}
 	} else {
-		res, err = types.StrToInt(sc, val)
-	}
+		ures, err = types.StrToUint(sc, val)
+		res = int64(ures)
 
-	// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
-	// said "For statements such as SELECT that do not change data, invalid values
-	// generate a warning in strict mode, not an error."
-	// and and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-	if terror.ErrorEqual(err, types.ErrOverflow) {
-		err = nil
-		if mysql.HasUnsignedFlag(b.tp.Flag) {
-			if isNegative {
-				var ures uint64
-				res = math.MinInt64
-				ures = uint64(-res)
-				res = int64(ures)
-			} else {
-				var ures uint64
-				ures = math.MaxUint64
-				res = int64(ures)
-			}
-			sc.AppendWarning(types.ErrTruncatedWrongVal.GenByArgs("INTEGER", val))
-		} else {
-			// signed overflow will be handled in two case:
-			// 1. the number is overflow uint64, so it will truncate to math.MaxUint64
-			// and convert to it's negative complement
-			// 2. the number is overflow int64, but is a valid uint64 range, just convert to
-			// it's negative complement
-			var ures uint64
-			ures, err1 := types.StrToUint(sc, val)
-			if terror.ErrorEqual(err1, types.ErrOverflow) {
-				ures = math.MaxUint64
-				sc.AppendWarning(types.ErrTruncatedWrongVal.GenByArgs("INTEGER", val))
-			} else {
-				sc.AppendWarning(types.ErrCastSignedOverflow)
-			}
-			res = int64(ures)
+		if err == nil && !mysql.HasUnsignedFlag(b.tp.Flag) && ures > uint64(math.MaxInt64) {
+			sc.AppendWarning(types.ErrCastSignedOverflow)
 		}
 	}
 
+	res, err = b.handleOverflow(res, val, err, isNegative)
 	return res, false, errors.Trace(err)
 }
 

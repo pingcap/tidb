@@ -76,6 +76,8 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(len(res.GetString()), Equals, 5)
 	c.Assert(res.GetString(), Equals, string([]byte{'a', 0x00, 0x00, 0x00, 0x00}))
 
+	orig := sc.IgnoreOverflow
+	sc.IgnoreOverflow = true
 	// cast('18446744073709551616' as unsigned);
 	tp1 := types.NewFieldType(mysql.TypeLonglong)
 	tp1.Flag |= mysql.UnsignedFlag
@@ -90,6 +92,26 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings := sc.GetWarnings()
 	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+
+	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(res.GetUint64() == 18446744073709551615, IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrCastNegIntToUnsigned, lastWarn), IsTrue)
+
+	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("-18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	t := math.MinInt64
+	// 9223372036854775808
+	c.Assert(res.GetUint64() == uint64(t), IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
 
 	// cast('18446744073709551616' as signed);
@@ -113,6 +135,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrCastSignedOverflow, lastWarn), IsTrue)
+	sc.IgnoreOverflow = orig
 
 	// cast(bad_string as decimal)
 	for _, s := range []string{"hello", ""} {
