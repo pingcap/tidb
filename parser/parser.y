@@ -1157,19 +1157,12 @@ Symbol:
  * Currently it is only useful for syncer which depends heavily on tidb parser to do some dirty work.
  *******************************************************************************************/
 RenameTableStmt:
-	 "RENAME" "TABLE" TableName "TO" TableName
-	 {
-		$$ = &ast.RenameTableStmt{
-			OldTable: $3.(*ast.TableName),
-			NewTable: $5.(*ast.TableName),
-		}
-	 }
-|	"RENAME" "TABLE" TableToTableList ',' TableToTable
+	"RENAME" "TABLE" TableToTableList 
 	{
 		$$ = &ast.RenameTableStmt{
 			OldTable: $3.([]*ast.TableToTable)[0].OldTable,
 			NewTable: $3.([]*ast.TableToTable)[0].NewTable,
-			TableToTables: append($3.([]*ast.TableToTable), $5.(*ast.TableToTable)),
+			TableToTables: $3.([]*ast.TableToTable),
 		}
 	}
 

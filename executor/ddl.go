@@ -103,7 +103,7 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 }
 
 func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
-	if len(s.TableToTables) != 0 {
+	if len(s.TableToTables) != 1 {
 		// Now we only allow one schema changing at the same time.
 		return errors.Errorf("can't run multi schema change")
 	}
