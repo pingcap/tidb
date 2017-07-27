@@ -26,11 +26,11 @@ var (
 
 // List scalar function names.
 const (
-	AndAnd     = "and"
+	LogicAnd   = "and"
 	Cast       = "cast"
 	LeftShift  = "leftshift"
 	RightShift = "rightshift"
-	OrOr       = "or"
+	LogicOr    = "or"
 	GE         = "ge"
 	LE         = "le"
 	EQ         = "eq"

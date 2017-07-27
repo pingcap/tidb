@@ -554,6 +554,8 @@ import (
 
 	ge		">="
 	le		"<="
+	jss		"->"
+	juss		"->>"
 	lsh		"<<"
 	neq		"!="
 	neqSynonym	"<>"
@@ -1028,7 +1030,7 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableAlterColumn,
 			NewColumn:	&ast.ColumnDef{
-						Name: 	 $3.(*ast.ColumnName), 
+						Name: 	 $3.(*ast.ColumnName),
 						Options: []*ast.ColumnOption{option},
 			},
 		}
@@ -1071,7 +1073,7 @@ AlterTableSpec:
 		}
 	}
 
-LockClause: 
+LockClause:
 	"LOCK" eq "NONE"
 	{
 		$$ = ast.LockTypeNone
@@ -1152,9 +1154,9 @@ RenameTableStmt:
 	 "RENAME" "TABLE" TableName "TO" TableName
 	 {
 		$$ = &ast.RenameTableStmt{
-			OldTable: $3.(*ast.TableName), 
+			OldTable: $3.(*ast.TableName),
 			NewTable: $5.(*ast.TableName),
-		}	
+		}
 	 }
 
 /*******************************************************************************************/
@@ -1943,7 +1945,7 @@ Expression:
 	}
 |	Expression logOr Expression %prec oror
 	{
-		$$ = &ast.BinaryOperationExpr{Op: opcode.OrOr, L: $1.(ast.ExprNode), R: $3.(ast.ExprNode)}
+		$$ = &ast.BinaryOperationExpr{Op: opcode.LogicOr, L: $1.(ast.ExprNode), R: $3.(ast.ExprNode)}
 	}
 |	Expression "XOR" Expression %prec xor
 	{
@@ -1951,7 +1953,7 @@ Expression:
 	}
 |	Expression logAnd Expression %prec andand
 	{
-		$$ = &ast.BinaryOperationExpr{Op: opcode.AndAnd, L: $1.(ast.ExprNode), R: $3.(ast.ExprNode)}
+		$$ = &ast.BinaryOperationExpr{Op: opcode.LogicAnd, L: $1.(ast.ExprNode), R: $3.(ast.ExprNode)}
 	}
 |	"NOT" Expression %prec not
 	{
@@ -2399,7 +2401,7 @@ ReservedKeyword:
 | "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "KILL" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
-| "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ" 
+| "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ"
 | "REAL" | "REFERENCES" | "REGEXP" | "RENAME" | "REPEAT" | "REPLACE" | "RESTRICT" | "REVOKE" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
 | "STARTING" | "TABLE" | "STORED" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
@@ -2761,6 +2763,29 @@ Function:
 |	FunctionCallNonKeyword
 |	FunctionCallConflict
 |	FunctionCallAgg
+|	Identifier jss stringLit
+	{
+	    col := &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: model.NewCIStr($1)}}
+
+	    tp := types.NewFieldType(mysql.TypeString)
+	    tp.Charset, tp.Collate = parser.charset, parser.collation
+	    expr := ast.NewValueExpr($3)
+	    expr.SetType(tp)
+
+	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{col, expr}}
+	}
+|	Identifier juss stringLit
+	{
+	    col := &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: model.NewCIStr($1)}}
+
+	    tp := types.NewFieldType(mysql.TypeString)
+	    tp.Charset, tp.Collate = parser.charset, parser.collation
+	    expr := ast.NewValueExpr($3)
+	    expr.SetType(tp)
+
+	    extract := &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{col, expr}}
+	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONUnquote), Args: []ast.ExprNode{extract}}
+	}
 
 FunctionNameConflict:
 	"DATABASE"
@@ -4635,7 +4660,7 @@ LimitClause:
 LimitOption:
 	LengthNum
 	{
-		$$ = ast.NewValueExpr($1)	
+		$$ = ast.NewValueExpr($1)
 	}
 |	"PLACEHOLDER"
 	{
@@ -5171,7 +5196,7 @@ ShowStmt:
 			Table:	$4.(*ast.TableName),
 		}
 	}
-|	"SHOW" "CREATE" "DATABASE" DBName 
+|	"SHOW" "CREATE" "DATABASE" DBName
 	{
 		$$ = &ast.ShowStmt{
 			Tp:	ast.ShowCreateDatabase,
@@ -6516,7 +6541,7 @@ LoadDataStmt:
 
 LocalOpt:
 	{
-		$$ = nil 
+		$$ = nil
 	}
 |	"LOCAL"
 	{
@@ -6623,7 +6648,7 @@ UnlockTablesStmt:
 LockTablesStmt:
 	"LOCK" TablesTerminalSym TableLockList
 	{}
-	
+
 TablesTerminalSym:
 	"TABLES"
 |	"TABLE"
