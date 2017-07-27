@@ -558,6 +558,9 @@ func (s *testSuite) TestUnion(c *C) {
 	// #issue3771
 	r = tk.MustQuery("SELECT 'a' UNION SELECT CONCAT('a', -4)")
 	r.Sort().Check(testkit.Rows("a", "a-4"))
+
+	// test race
+	tk.MustQuery("SELECT @x:=0 UNION ALL SELECT @x:=0 UNION ALL SELECT @x")
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -1028,9 +1031,30 @@ func (s *testSuite) TestOpBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	// for logical and
+	// for logicAnd
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
+	// for logicalXor
+	result = tk.MustQuery("select 1 xor 1, 1 xor 0, 0 xor 1, 0 xor 0, 2 xor -1, null xor 1, '1a' xor 'a'")
+	result.Check(testkit.Rows("0 1 1 0 0 <nil> 1"))
+	// for bitAnd
+	result = tk.MustQuery("select 123 & 321, -123 & 321, null & 1")
+	result.Check(testkit.Rows("65 257 <nil>"))
+	// for bitOr
+	result = tk.MustQuery("select 123 | 321, -123 | 321, null | 1")
+	result.Check(testkit.Rows("379 18446744073709551557 <nil>"))
+	// for bitXor
+	result = tk.MustQuery("select 123 ^ 321, -123 ^ 321, null ^ 1")
+	result.Check(testkit.Rows("314 18446744073709551300 <nil>"))
+	// for leftShift
+	result = tk.MustQuery("select 123 << 2, -123 << 2, null << 1")
+	result.Check(testkit.Rows("492 18446744073709551124 <nil>"))
+	// for rightShift
+	result = tk.MustQuery("select 123 >> 2, -123 >> 2, null >> 1")
+	result.Check(testkit.Rows("30 4611686018427387873 <nil>"))
+	// for logicOr
+	result = tk.MustQuery("select 1 || 1, 1 || 0, 0 || 1, 0 || 0, 2 || -1, null || 1, '1a' || 'a'")
+	result.Check(testkit.Rows("1 1 1 0 1 1 1"))
 }
 
 func (s *testSuite) TestBuiltin(c *C) {
@@ -1243,6 +1267,16 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1406 Data Too Long, field len 0, data len 4"))
+
+	// issue 3884
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (c1 date, c2 datetime, c3 timestamp, c4 time, c5 year);")
+	tk.MustExec("INSERT INTO t values ('2000-01-01', '2000-01-01 12:12:12', '2000-01-01 12:12:12', '12:12:12', '2000');")
+	tk.MustExec("INSERT INTO t values ('2000-02-01', '2000-02-01 12:12:12', '2000-02-01 12:12:12', '13:12:12', 2000);")
+	tk.MustExec("INSERT INTO t values ('2000-03-01', '2000-03-01', '2000-03-01 12:12:12', '1 12:12:12', 2000);")
+	tk.MustExec("INSERT INTO t SET c1 = '2000-04-01', c2 = '2000-04-01', c3 = '2000-04-01 12:12:12', c4 = '-1 13:12:12', c5 = 2000;")
+	result = tk.MustQuery("SELECT c4 FROM t where c4 < '-13:12:12';")
+	result.Check(testkit.Rows("-37:12:12"))
 
 	// testCase is for like and regexp
 	type testCase struct {

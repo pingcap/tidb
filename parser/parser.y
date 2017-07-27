@@ -5818,12 +5818,7 @@ NumericType:
 		x := types.NewFieldType($1.(byte))
 		x.Flen = fopt.Flen
 		if x.Tp == mysql.TypeFloat {
-			// Fix issue #312
-			if x.Flen > 53 {
-				yylex.Errorf("Float len(%d) should not be greater than 53", x.Flen)
-				return 1
-			}
-			if x.Flen > 24 {
+			if x.Flen > mysql.PrecisionForFloat {
 				x.Tp = mysql.TypeDouble
 			}
 		}

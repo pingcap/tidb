@@ -1118,9 +1118,16 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.State
 			// select (cast 111 as decimal(1)) causes a warning in MySQL.
 			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
 		} else if frac != decimal {
+			old := *dec
 			dec.Round(dec, decimal, ModeHalfEven)
-			if !dec.IsZero() && frac > decimal {
-				err = sc.HandleTruncate(ErrTruncated)
+			if !dec.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
+				if sc.InInsertStmt {
+					// fix https://github.com/pingcap/tidb/issues/3895
+					sc.AppendWarning(ErrTruncated)
+					err = nil
+				} else {
+					err = sc.HandleTruncate(ErrTruncated)
+				}
 			}
 		}
 	}

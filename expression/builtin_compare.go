@@ -303,7 +303,7 @@ func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Contex
 		// duration <cmp> duration
 		// compare as duration
 		sig, err = c.generateCmpSigs(args, tpDuration, ctx)
-	} else if cmpType == types.ClassReal {
+	} else if cmpType == types.ClassReal || cmpType == types.ClassString {
 		_, isConst0 := args[0].(*Constant)
 		_, isConst1 := args[1].(*Constant)
 		if (tc0 == types.ClassDecimal && !isConst0 && tc1 == types.ClassString && isConst1) ||
@@ -319,13 +319,21 @@ func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Contex
 		} else if isTemporalColumn(args[0]) && isConst1 ||
 			isTemporalColumn(args[1]) && isConst0 {
 			/*
-				<time column> <cmp> <non-time constant>
+				<temporal column> <cmp> <non-temporal constant>
 				or
-				<non-time constant> <cmp> <time column>
+				<non-temporal constant> <cmp> <temporal column>
 
-				Convert the constant to time type.
+				Convert the constant to temporal type.
 			*/
-			sig, err = c.generateCmpSigs(args, tpTime, ctx)
+			col, isColumn0 := args[0].(*Column)
+			if !isColumn0 {
+				col = args[1].(*Column)
+			}
+			if col.GetType().Tp == mysql.TypeDuration {
+				sig, err = c.generateCmpSigs(args, tpDuration, ctx)
+			} else {
+				sig, err = c.generateCmpSigs(args, tpTime, ctx)
+			}
 		}
 	}
 	if err != nil {
