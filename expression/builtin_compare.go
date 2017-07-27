@@ -323,7 +323,7 @@ func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Contex
 				or
 				<non-temporal constant> <cmp> <temporal column>
 
-				Convert the constant to time type.
+				Convert the constant to temporal type.
 			*/
 			col, isColumn0 := args[0].(*Column)
 			if !isColumn0 {
