@@ -27,6 +27,14 @@ var (
 	ErrOverflow = terror.ClassTypes.New(codeOverflow, msgOverflow)
 	// ErrDivByZero is return when do division by 0.
 	ErrDivByZero = terror.ClassTypes.New(codeDivByZero, "Division by 0")
+	// ErrTooBigDisplayWidth is return when display width out of range for column.
+	ErrTooBigDisplayWidth = terror.ClassTypes.New(codeTooBigDisplayWidth, "Too Big Display width")
+	// ErrTooBigFieldLength is return when column length too big for column.
+	ErrTooBigFieldLength = terror.ClassTypes.New(codeTooBigFieldLength, "Too Big Field length")
+	// ErrTooBigSet is return when too many strings for column.
+	ErrTooBigSet = terror.ClassTypes.New(codeTooBigSet, "Too Big Set")
+	// ErrWrongFieldSpec is return when incorrect column specifier for column.
+	ErrWrongFieldSpec = terror.ClassTypes.New(codeWrongFieldSpec, "Wrong Field Spec")
 	// ErrBadNumber is return when parsing an invalid binary decimal number.
 	ErrBadNumber = terror.ClassTypes.New(codeBadNumber, "Bad Number")
 )
@@ -34,10 +42,14 @@ var (
 const (
 	codeBadNumber terror.ErrCode = 1
 
-	codeDataTooLong terror.ErrCode = terror.ErrCode(mysql.ErrDataTooLong)
-	codeTruncated   terror.ErrCode = terror.ErrCode(mysql.WarnDataTruncated)
-	codeOverflow    terror.ErrCode = terror.ErrCode(mysql.ErrDataOutOfRange)
-	codeDivByZero   terror.ErrCode = terror.ErrCode(mysql.ErrDivisionByZero)
+	codeDataTooLong        terror.ErrCode = terror.ErrCode(mysql.ErrDataTooLong)
+	codeTruncated          terror.ErrCode = terror.ErrCode(mysql.WarnDataTruncated)
+	codeOverflow           terror.ErrCode = terror.ErrCode(mysql.ErrDataOutOfRange)
+	codeDivByZero          terror.ErrCode = terror.ErrCode(mysql.ErrDivisionByZero)
+	codeTooBigDisplayWidth terror.ErrCode = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
+	codeTooBigFieldLength  terror.ErrCode = terror.ErrCode(mysql.ErrTooBigFieldlength)
+	codeTooBigSet          terror.ErrCode = terror.ErrCode(mysql.ErrTooBigSet)
+	codeWrongFieldSpec     terror.ErrCode = terror.ErrCode(mysql.ErrWrongFieldSpec)
 )
 
 var (
@@ -46,10 +58,14 @@ var (
 
 func init() {
 	typesMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDataTooLong: mysql.ErrDataTooLong,
-		codeTruncated:   mysql.WarnDataTruncated,
-		codeOverflow:    mysql.ErrDataOutOfRange,
-		codeDivByZero:   mysql.ErrDivisionByZero,
+		codeDataTooLong:        mysql.ErrDataTooLong,
+		codeTruncated:          mysql.WarnDataTruncated,
+		codeOverflow:           mysql.ErrDataOutOfRange,
+		codeDivByZero:          mysql.ErrDivisionByZero,
+		codeTooBigDisplayWidth: mysql.ErrTooBigDisplaywidth,
+		codeTooBigFieldLength:  mysql.ErrTooBigFieldlength,
+		codeTooBigSet:          mysql.ErrTooBigSet,
+		codeWrongFieldSpec:     mysql.ErrWrongFieldSpec,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTypes] = typesMySQLErrCodes
 }
