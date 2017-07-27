@@ -136,6 +136,21 @@ func GetCharsetInfo(cs string) (string, string, error) {
 	return c.Name, c.DefaultCollation, nil
 }
 
+// GetCharsetDesc gets charset descriptions in the local charsets.
+func GetCharsetDesc(cs string) (*Desc, error) {
+	c, ok := charsets[strings.ToLower(cs)]
+	if !ok {
+		return nil, errors.Errorf("Unknown charset %s", cs)
+	}
+	desc := &Desc{
+		Name:             c.Name,
+		DefaultCollation: c.DefaultCollation,
+		Desc:             c.Desc,
+		Maxlen:           c.Maxlen,
+	}
+	return desc, nil
+}
+
 // GetCollations returns a list for all collations.
 func GetCollations() []*Collation {
 	return collations
