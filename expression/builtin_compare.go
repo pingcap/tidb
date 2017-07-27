@@ -303,7 +303,7 @@ func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Contex
 		// duration <cmp> duration
 		// compare as duration
 		sig, err = c.generateCmpSigs(args, tpDuration, ctx)
-	} else if cmpType == types.ClassReal {
+	} else if cmpType == types.ClassReal || cmpType == types.ClassString{
 		_, isConst0 := args[0].(*Constant)
 		_, isConst1 := args[1].(*Constant)
 		if (tc0 == types.ClassDecimal && !isConst0 && tc1 == types.ClassString && isConst1) ||
