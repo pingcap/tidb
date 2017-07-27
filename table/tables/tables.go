@@ -208,6 +208,8 @@ func (t *Table) FirstKey() kv.Key {
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
+// `touched` means which columns are really modified, used for secondary indices.
+// Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	txn := ctx.Txn()
 	bs := kv.NewBufferStore(txn)
