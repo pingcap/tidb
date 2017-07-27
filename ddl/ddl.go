@@ -112,7 +112,7 @@ var (
 	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
 
 	// ErrWrongDBName returns for wrong database name.
-	ErrWrongDBName           = terror.ClassDDL.New(codeWrongDBName, mysql.MySQLErrName[mysql.ErrWrongDBName])
+	ErrWrongDBName = terror.ClassDDL.New(codeWrongDBName, mysql.MySQLErrName[mysql.ErrWrongDBName])
 	// ErrWrongTableName returns for wrong table name.
 	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
 	// ErrWrongColumnName returns for wrong column name.
