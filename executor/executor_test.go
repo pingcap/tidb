@@ -1029,6 +1029,9 @@ func (s *testSuite) TestOpBuiltin(c *C) {
 	// for logicAnd
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
+	// for bitXor
+	result = tk.MustQuery("select 123 ^ 321, -123 ^ 321, null ^ 1")
+	result.Check(testkit.Rows("314 18446744073709551300 <nil>"))
 	// for leftShift
 	result = tk.MustQuery("select 123 << 2, -123 << 2, null << 1")
 	result.Check(testkit.Rows("492 18446744073709551124 <nil>"))
