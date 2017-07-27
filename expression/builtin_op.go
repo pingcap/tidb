@@ -89,50 +89,43 @@ type logicOrFunctionClass struct {
 }
 
 func (c *logicOrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLogicOrSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	err := c.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 1
+	sig := &builtinLogicOrSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinLogicOrSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-func (b *builtinLogicOrSig) eval(row []types.Datum) (d types.Datum, err error) {
-	leftDatum, err := b.args[0].Eval(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
+func (b *builtinLogicOrSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if !leftDatum.IsNull() {
-		var x int64
-		x, err = leftDatum.ToBool(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		} else if x == 1 {
-			// false && any other types is false
-			d.SetInt64(x)
-			return
-		}
-	}
-	rightDatum, err := b.args[1].Eval(row)
+	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
 	if err != nil {
-		return d, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
-	if !rightDatum.IsNull() {
-		var y int64
-		y, err = rightDatum.ToBool(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		} else if y == 1 {
-			d.SetInt64(y)
-			return
-		}
+	if !isNull0 && arg0 != 0 {
+		return 1, false, nil
 	}
-	if leftDatum.IsNull() || rightDatum.IsNull() {
-		return
+	arg1, isNull1, err := b.args[1].EvalInt(row, sc)
+	if err != nil {
+		return 0, false, errors.Trace(err)
 	}
-	d.SetInt64(int64(0))
-	return
+	if !isNull1 && arg1 != 0 {
+		return 1, false, nil
+	}
+	if isNull0 || isNull1 {
+		return 0, true, nil
+	}
+	return 0, false, nil
 }
 
 type logicXorFunctionClass struct {
@@ -225,14 +218,80 @@ func (s *builtinBitOpSig) eval(row []types.Datum) (d types.Datum, err error) {
 		d.SetUint64(uint64(x | y))
 	case opcode.Xor:
 		d.SetUint64(uint64(x ^ y))
-	case opcode.RightShift:
-		d.SetUint64(uint64(x) >> uint64(y))
-	case opcode.LeftShift:
-		d.SetUint64(uint64(x) << uint64(y))
 	default:
 		return d, errInvalidOperation.Gen("invalid op %v in bit operation", s.op)
 	}
 	return
+}
+
+type leftShiftFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *leftShiftFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := c.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinLeftShiftSig{baseIntBuiltinFunc{bf}}
+	sig.tp.Flag |= mysql.UnsignedFlag
+	return sig.setSelf(sig), nil
+}
+
+type builtinLeftShiftSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinLeftShiftSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	arg1, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return int64(uint64(arg0) << uint64(arg1)), false, nil
+}
+
+type rightShiftFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *rightShiftFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := c.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinRightShiftSig{baseIntBuiltinFunc{bf}}
+	sig.tp.Flag |= mysql.UnsignedFlag
+	return sig.setSelf(sig), nil
+}
+
+type builtinRightShiftSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinRightShiftSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	arg1, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return int64(uint64(arg0) >> uint64(arg1)), false, nil
 }
 
 type isTrueOpFunctionClass struct {
