@@ -131,40 +131,37 @@ type logicXorFunctionClass struct {
 }
 
 func (c *logicXorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLogicXorSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	err := c.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinLogicXorSig{baseIntBuiltinFunc{bf}}
+	sig.tp.Flen = 1
+	return sig.setSelf(sig), nil
 }
 
 type builtinLogicXorSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-func (b *builtinLogicXorSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	leftDatum := args[0]
-	righDatum := args[1]
-	if leftDatum.IsNull() || righDatum.IsNull() {
-		return
-	}
+func (b *builtinLogicXorSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	x, err := leftDatum.ToBool(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	arg0, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-
-	y, err := righDatum.ToBool(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	arg1, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	if x == y {
-		d.SetInt64(zeroI64)
-	} else {
-		d.SetInt64(oneI64)
+	if (arg0 != 0 && arg1 != 0) || (arg0 == 0 && arg1 == 0) {
+		return 0, false, nil
 	}
-	return
+	return 1, false, nil
 }
 
 type bitAndFunctionClass struct {
