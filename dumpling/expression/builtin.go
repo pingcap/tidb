@@ -778,7 +778,7 @@ var funcs = map[string]functionClass{
 	ast.Div:        &arithmeticFunctionClass{baseFunctionClass{ast.Div, 2, 2}, opcode.Div},
 	ast.Mul:        &arithmeticFunctionClass{baseFunctionClass{ast.Mul, 2, 2}, opcode.Mul},
 	ast.IntDiv:     &arithmeticFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}, opcode.IntDiv},
-	ast.LeftShift:  &bitOpFunctionClass{baseFunctionClass{ast.LeftShift, 2, 2}, opcode.LeftShift},
+	ast.LeftShift:  &leftShiftFunctionClass{baseFunctionClass{ast.LeftShift, 2, 2}},
 	ast.RightShift: &rightShiftFunctionClass{baseFunctionClass{ast.RightShift, 2, 2}},
 	ast.And:        &bitOpFunctionClass{baseFunctionClass{ast.And, 2, 2}, opcode.And},
 	ast.Or:         &bitOpFunctionClass{baseFunctionClass{ast.Or, 2, 2}, opcode.Or},

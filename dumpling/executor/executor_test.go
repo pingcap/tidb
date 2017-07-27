@@ -1026,13 +1026,16 @@ func (s *testSuite) TestOpBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	// for logical and
+	// for logicAnd
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
+	// for leftShift
+	result = tk.MustQuery("select 123 << 2, -123 << 2, null << 1")
+	result.Check(testkit.Rows("492 18446744073709551124 <nil>"))
 	// for rightShift
 	result = tk.MustQuery("select 123 >> 2, -123 >> 2, null >> 1")
 	result.Check(testkit.Rows("30 4611686018427387873 <nil>"))
-	// for logical or
+	// for logicOr
 	result = tk.MustQuery("select 1 || 1, 1 || 0, 0 || 1, 0 || 0, 2 || -1, null || 1, '1a' || 'a'")
 	result.Check(testkit.Rows("1 1 1 0 1 1 1"))
 }
