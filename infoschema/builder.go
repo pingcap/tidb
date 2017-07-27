@@ -153,10 +153,10 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 	tableNames := b.is.schemaMap[roDBInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
 	bucketIdx := tableBucketIdx(tableID)
-	sortedTablesV := b.is.sortedTablesBuckets[bucketIdx]
-	sortedTablesV = append(sortedTablesV, tbl)
-	sort.Sort(sortedTablesV)
-	b.is.sortedTablesBuckets[bucketIdx] = sortedTablesV
+	s := b.is.sortedTablesBuckets[bucketIdx]
+	s = append(s, tbl)
+	sort.Sort(s)
+	b.is.sortedTablesBuckets[bucketIdx] = s
 
 	newTbl, ok := b.is.TableByID(tableID)
 	if ok {
@@ -167,16 +167,16 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 
 func (b *Builder) applyDropTable(roDBInfo *model.DBInfo, tableID int64) {
 	bucketIdx := tableBucketIdx(tableID)
-	sortedTablesV := b.is.sortedTablesBuckets[bucketIdx]
-	idx := sortedTablesV.searchTable(tableID)
+	s := b.is.sortedTablesBuckets[bucketIdx]
+	idx := s.searchTable(tableID)
 	if idx == -1 {
 		return
 	}
 	if tableNames, ok := b.is.schemaMap[roDBInfo.Name.L]; ok {
-		delete(tableNames.tables, sortedTablesV[idx].Meta().Name.L)
+		delete(tableNames.tables, s[idx].Meta().Name.L)
 	}
 	// Remove the table in sorted table slice.
-	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTablesV[0:idx], sortedTablesV[idx+1:]...)
+	b.is.sortedTablesBuckets[bucketIdx] = append(s[0:idx], s[idx+1:]...)
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	for i, tblInfo := range roDBInfo.Tables {

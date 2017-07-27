@@ -110,8 +110,8 @@ func (t *copTask) finishIndexPlan() {
 }
 
 func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
-	taskV := finishCopTask(tasks[0].copy(), p.basePlan.ctx, p.basePlan.allocator)
-	return attachPlan2Task(p.basePlan.self.(PhysicalPlan).Copy(), taskV)
+	t := finishCopTask(tasks[0].copy(), p.basePlan.ctx, p.basePlan.allocator)
+	return attachPlan2Task(p.basePlan.self.(PhysicalPlan).Copy(), t)
 }
 
 func (p *PhysicalApply) attach2Task(tasks ...task) task {
@@ -270,8 +270,8 @@ func (p *Limit) attach2Task(tasks ...task) task {
 	if tasks[0].plan() == nil {
 		return tasks[0]
 	}
-	taskV := tasks[0].copy()
-	if cop, ok := taskV.(*copTask); ok {
+	t := tasks[0].copy()
+	if cop, ok := t.(*copTask); ok {
 		// If the task is copTask, the Limit can always be pushed down.
 		// When limit be pushed down, it should remove its offset.
 		pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
@@ -282,12 +282,12 @@ func (p *Limit) attach2Task(tasks ...task) task {
 			pushedDownLimit.SetSchema(cop.indexPlan.Schema())
 		}
 		cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
-		taskV = finishCopTask(cop, p.ctx, p.allocator)
+		t = finishCopTask(cop, p.ctx, p.allocator)
 	}
 	if !p.partial {
-		taskV = attachPlan2Task(p.Copy(), taskV)
+		t = attachPlan2Task(p.Copy(), t)
 	}
-	return taskV
+	return t
 }
 
 func (p *Sort) getCost(count float64) float64 {
@@ -317,11 +317,11 @@ func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 }
 
 func (p *Sort) attach2Task(tasks ...task) task {
-	taskV := tasks[0].copy()
-	taskV = finishCopTask(taskV, p.ctx, p.allocator)
-	taskV = attachPlan2Task(p.Copy(), taskV)
-	taskV.addCost(p.getCost(taskV.count()))
-	return taskV
+	t := tasks[0].copy()
+	t = finishCopTask(t, p.ctx, p.allocator)
+	t = attachPlan2Task(p.Copy(), t)
+	t.addCost(p.getCost(t.count()))
+	return t
 }
 
 func (p *TopN) attach2Task(tasks ...task) task {
@@ -329,9 +329,9 @@ func (p *TopN) attach2Task(tasks ...task) task {
 	if tasks[0].plan() == nil {
 		return tasks[0]
 	}
-	taskV := tasks[0].copy()
+	t := tasks[0].copy()
 	// This is a topN plan.
-	if copTask, ok := taskV.(*copTask); ok && p.canPushDown() {
+	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
 		pushedDownTopN := p.Copy().(*TopN)
 		// When topN is pushed down, it should remove its offset.
 		pushedDownTopN.Count, pushedDownTopN.Offset = p.Count+p.Offset, 0
@@ -349,27 +349,27 @@ func (p *TopN) attach2Task(tasks ...task) task {
 			copTask.tablePlan = pushedDownTopN
 			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 		}
-		copTask.addCost(pushedDownTopN.getCost(taskV.count()))
+		copTask.addCost(pushedDownTopN.getCost(t.count()))
 	}
-	taskV = finishCopTask(taskV, p.ctx, p.allocator)
+	t = finishCopTask(t, p.ctx, p.allocator)
 	if !p.partial {
-		taskV = attachPlan2Task(p.Copy(), taskV)
-		taskV.addCost(p.getCost(taskV.count()))
+		t = attachPlan2Task(p.Copy(), t)
+		t.addCost(p.getCost(t.count()))
 	}
-	return taskV
+	return t
 }
 
 func (p *Projection) attach2Task(tasks ...task) task {
-	taskV := tasks[0].copy()
+	t := tasks[0].copy()
 	np := p.Copy()
-	switch t := taskV.(type) {
+	switch tp := t.(type) {
 	case *copTask:
 		// TODO: Support projection push down.
-		taskV = finishCopTask(taskV, p.ctx, p.allocator)
-		taskV = attachPlan2Task(np, taskV)
-		return taskV
+		t = finishCopTask(t, p.ctx, p.allocator)
+		t = attachPlan2Task(np, t)
+		return t
 	case *rootTask:
-		return attachPlan2Task(np, t)
+		return attachPlan2Task(np, tp)
 	}
 	return nil
 }
@@ -388,10 +388,10 @@ func (p *Union) attach2Task(tasks ...task) task {
 }
 
 func (sel *Selection) attach2Task(tasks ...task) task {
-	taskV := finishCopTask(tasks[0].copy(), sel.ctx, sel.allocator)
-	taskV.addCost(taskV.count() * cpuFactor)
-	taskV = attachPlan2Task(sel.Copy(), taskV)
-	return taskV
+	t := finishCopTask(tasks[0].copy(), sel.ctx, sel.allocator)
+	t.addCost(t.count() * cpuFactor)
+	t = attachPlan2Task(sel.Copy(), t)
+	return t
 }
 
 func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *PhysicalAggregation) {

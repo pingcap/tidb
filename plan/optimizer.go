@@ -156,11 +156,11 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc 
 func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	logic.preparePossibleProperties()
 	logic.prepareStatsProfile()
-	taskV, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
+	t, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := taskV.plan()
+	p := t.plan()
 	p.ResolveIndices()
 	return p, nil
 }
