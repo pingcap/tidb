@@ -91,6 +91,62 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 			sql:  "select * from t where t.b <= 50",
 			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
 		},
+		{
+			sql:  "select * from t where t.b <= 100 order by t.a limit 1",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 100)])->Limit)->Limit",
+		},
+		{
+			sql:  "select * from t where t.b <= 1 order by t.a limit 10",
+			best: "IndexLookUp(Index(t.b)[[-inf,1]]->TopN([test.t.a],0,10), Table(t))->TopN([test.t.a],0,10)",
+		},
+	}
+	for _, tt := range tests {
+		ctx := testKit.Se.(context.Context)
+		stmts, err := tidb.Parse(ctx, tt.sql)
+		c.Assert(err, IsNil)
+		c.Assert(stmts, HasLen, 1)
+		stmt := stmts[0]
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		err = plan.ResolveName(stmt, is, ctx)
+		c.Assert(err, IsNil)
+		err = expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
+		c.Assert(err, IsNil)
+		p, err := plan.Optimize(ctx, stmt, is)
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+	}
+}
+
+func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t, t1")
+	testKit.MustExec("create table t (c1 int)")
+	testKit.MustExec("create table t1 (c1 int)")
+	testKit.MustExec("analyze table t, t1")
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from t where t.c1 <= 50",
+			best: "TableReader(Table(t)->Sel([le(test.t.c1, 50)]))",
+		},
+		{
+			sql:  "select * from t where c1 in (select c1 from t1)",
+			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t1))}(test.t.c1,test.t1.c1)",
+		},
+		{
+			sql:  "select * from t, t1 where t.c1 = t1.c1",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t1))}(test.t.c1,test.t1.c1)",
+		},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
