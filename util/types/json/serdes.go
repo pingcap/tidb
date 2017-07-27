@@ -232,7 +232,7 @@ func decodeJSONString(s *string, data []byte) (err error) {
 	var length uint64
 	var reader = bytes.NewReader(data)
 	length, err = binary.ReadUvarint(reader)
-	if err == nil {
+	if err == nil && length > 0 {
 		var buf = make([]byte, length)
 		_, err = reader.Read(buf)
 		if err == nil {
