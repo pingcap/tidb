@@ -1197,6 +1197,16 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1406 Data Too Long, field len 0, data len 4"))
 
+	// issue 3884
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (c1 date, c2 datetime, c3 timestamp, c4 time, c5 year);")
+	tk.MustExec("INSERT INTO t values ('2000-01-01', '2000-01-01 12:12:12', '2000-01-01 12:12:12', '12:12:12', '2000');")
+	tk.MustExec("INSERT INTO t values ('2000-02-01', '2000-02-01 12:12:12', '2000-02-01 12:12:12', '13:12:12', 2000);")
+	tk.MustExec("INSERT INTO t values ('2000-03-01', '2000-03-01', '2000-03-01 12:12:12', '1 12:12:12', 2000);")
+	tk.MustExec("INSERT INTO t SET c1 = '2000-04-01', c2 = '2000-04-01', c3 = '2000-04-01 12:12:12', c4 = '-1 13:12:12', c5 = 2000;")
+	result = tk.MustQuery("SELECT c4 FROM t where c4 < '-13:12:12';")
+	result.Check(testkit.Rows("-37:12:12"))
+
 	// testCase is for like and regexp
 	type testCase struct {
 		pattern string
