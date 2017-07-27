@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -212,10 +213,8 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
-		tp := colDef.Tp
-		if tp.Tp == mysql.TypeString &&
-			tp.Flen != types.UnspecifiedLength && tp.Flen > 255 {
-			v.err = errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
+		if err := checkFieldLengthLimitation(colDef); err != nil {
+			v.err = errors.Trace(err)
 			return
 		}
 		countPrimaryKey += isPrimary(colDef.Options)
@@ -264,6 +263,12 @@ func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	specs := stmt.Specs
 	for _, spec := range specs {
+		if spec.NewColumn != nil {
+			if err := checkFieldLengthLimitation(spec.NewColumn); err != nil {
+				v.err = err
+				return
+			}
+		}
 		switch spec.Tp {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
@@ -299,6 +304,52 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 				return infoschema.ErrColumnExists.GenByArgs(name2)
 			}
 		}
+	}
+	return nil
+}
+
+// checkFieldLengthLimitation checks the maximum length of the column.
+// See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
+func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
+	tp := colDef.Tp
+	if tp == nil {
+		return nil
+	}
+	if tp.Flen > math.MaxUint32 {
+		return types.ErrTooBigDisplayWidth.Gen("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
+	}
+	switch tp.Tp {
+	case mysql.TypeString:
+		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.MaxFieldCharLength {
+			return types.ErrTooBigFieldLength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
+		}
+	case mysql.TypeVarchar:
+		maxFlen := mysql.MaxFieldVarCharLength
+		cs := tp.Charset
+		// TODO: TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
+		// TODO: Change TableOption parser to parse collate.
+		// Reference https://github.com/pingcap/tidb/blob/b091e828cfa1d506b014345fb8337e424a4ab905/ddl/ddl_api.go#L185-L204
+		if len(tp.Charset) == 0 {
+			cs = mysql.DefaultCharset
+		}
+		desc, err := charset.GetCharsetDesc(cs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		maxFlen /= desc.Maxlen
+		if tp.Flen != types.UnspecifiedLength && tp.Flen > maxFlen {
+			return types.ErrTooBigFieldLength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
+		}
+	case mysql.TypeDouble:
+		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.PrecisionForDouble {
+			return types.ErrWrongFieldSpec.Gen("Incorrect column specifier for column '%s'", colDef.Name.Name.O)
+		}
+	case mysql.TypeSet:
+		if len(tp.Elems) > mysql.MaxTypeSetMembers {
+			return types.ErrTooBigSet.Gen("Too many strings for column %s and SET", colDef.Name.Name.O)
+		}
+	default:
+		// TODO: Add more types.
 	}
 	return nil
 }
