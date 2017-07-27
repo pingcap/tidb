@@ -76,6 +76,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[autoid:3]No support for setting auto_increment using alter_table")},
 		{"alter table t add column c int auto_increment key", true, nil},
 		{"create table `` (a int)", true, errors.New("[ddl:1103]Incorrect table name ''")},
+
 		{"alter table t add column char4294967295 char(255)", true, nil},
 		{"create table t (c float(53))", true, nil},
 		{"alter table t add column c float(53)", true, nil},
@@ -115,6 +116,17 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[types:1074]Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
 		{"alter table t add column c varchar(4294967295) CHARACTER SET ascii", true,
 			errors.New("[types:1074]Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
+
+		{"create table `t ` (a int)", true, errors.New("[ddl:1103]Incorrect table name 't '")},
+		{"create table t (`` int)", true, errors.New("[ddl:1166]Incorrect column name ''")},
+		{"create table t (`a ` int)", true, errors.New("[ddl:1166]Incorrect column name 'a '")},
+		{"drop table if exists ``", true, errors.New("[ddl:1103]Incorrect table name ''")},
+		{"drop table `t `", true, errors.New("[ddl:1103]Incorrect table name 't '")},
+		{"create database ``", true, errors.New("[ddl:1102]Incorrect database name ''")},
+		{"create database `test `", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
+		{"drop database ``", true, errors.New("[ddl:1102]Incorrect database name ''")},
+		{"drop database `test `", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
+		{"drop database `test `", true, errors.New("[ddl:1102]Incorrect database name 'test '")},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)

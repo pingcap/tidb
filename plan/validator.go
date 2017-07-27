@@ -57,6 +57,11 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if v.err != nil {
 			return in, true
 		}
+	case *ast.DropTableStmt:
+		v.checkDropTableGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
 	case *ast.CreateIndexStmt:
 		v.checkCreateIndexGrammar(node)
 		if v.err != nil {
@@ -64,6 +69,16 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.AlterTableStmt:
 		v.checkAlterTableGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
+	case *ast.CreateDatabaseStmt:
+		v.checkCreateDatabaseGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
+	case *ast.DropDatabaseStmt:
+		v.checkDropDatabaseGrammar(node)
 		if v.err != nil {
 			return in, true
 		}
@@ -205,14 +220,39 @@ func (v *validator) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	}
 }
 
+func (v *validator) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
+	if isIncorrectName(stmt.Name) {
+		v.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
+	}
+	return
+}
+
+func (v *validator) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
+	if isIncorrectName(stmt.Name) {
+		v.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
+	}
+	return
+}
+
 func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
-	if stmt.Table == nil || stmt.Table.Name.String() == "" {
+	if stmt.Table == nil {
 		v.err = ddl.ErrWrongTableName.GenByArgs("")
+		return
+	}
+
+	tName := stmt.Table.Name.String()
+	if isIncorrectName(tName) {
+		v.err = ddl.ErrWrongTableName.GenByArgs(tName)
 		return
 	}
 
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
+		cName := colDef.Name.Name.String()
+		if isIncorrectName(cName) {
+			v.err = ddl.ErrWrongColumnName.GenByArgs(cName)
+			return
+		}
 		if err := checkFieldLengthLimitation(colDef); err != nil {
 			v.err = errors.Trace(err)
 			return
@@ -246,6 +286,20 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 }
 
+func (v *validator) checkDropTableGrammar(stmt *ast.DropTableStmt) {
+	if stmt.Tables == nil {
+		v.err = ddl.ErrWrongTableName.GenByArgs("")
+		return
+	}
+	for _, t := range stmt.Tables {
+		if isIncorrectName(t.Name.String()) {
+			v.err = ddl.ErrWrongTableName.GenByArgs(t.Name.String())
+			return
+		}
+	}
+	return
+}
+
 func isPrimary(ops []*ast.ColumnOption) int {
 	for _, op := range ops {
 		if op.Tp == ast.ColumnOptionPrimaryKey {
@@ -256,6 +310,12 @@ func isPrimary(ops []*ast.ColumnOption) int {
 }
 
 func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
+	for _, col := range stmt.IndexColNames {
+		if isIncorrectName(col.Column.Name.String()) {
+			v.err = ddl.ErrWrongColumnName.GenByArgs(col.Column.Name.String())
+			return
+		}
+	}
 	v.err = checkDuplicateColumnName(stmt.IndexColNames)
 	return
 }
@@ -274,6 +334,12 @@ func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
 				ast.ConstraintUniqKey:
+				for _, col := range spec.Constraint.Keys {
+					if isIncorrectName(col.Column.Name.String()) {
+						v.err = ddl.ErrWrongColumnName.GenByArgs(col.Column.Name.String())
+						return
+					}
+				}
 				v.err = checkDuplicateColumnName(spec.Constraint.Keys)
 				if v.err != nil {
 					return
@@ -352,4 +418,15 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 		// TODO: Add more types.
 	}
 	return nil
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func isIncorrectName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
+	return false
 }

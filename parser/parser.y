@@ -1636,9 +1636,9 @@ CreateDatabaseStmt:
 
 DBName:
 	Identifier
-  {
-    $$ = $1
-  }
+	{
+		$$ = $1
+	}
 
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt CharsetName
