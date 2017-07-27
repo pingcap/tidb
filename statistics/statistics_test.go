@@ -243,13 +243,13 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	sc := new(variable.StatementContext)
 	count, err := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 3333333)
+	c.Assert(int(count), Equals, 3333)
 	count, err = tbl.ColumnEqualRowCount(sc, types.NewIntDatum(1000), colInfo)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 10000)
+	c.Assert(int(count), Equals, 10)
 	count, err = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 250000)
+	c.Assert(int(count), Equals, 250)
 }
 
 func (s *testStatisticsSuite) TestColumnRange(c *C) {

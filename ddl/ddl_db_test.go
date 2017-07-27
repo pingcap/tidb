@@ -583,6 +583,16 @@ func (s *testDBSuite) TestCreateIndexType(c *C) {
 	s.tk.MustExec(sql)
 }
 
+func (s *testDBSuite) TestIssue3833(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table issue3833 (b char(0))")
+	s.testErrorCode(c, "create index idx on issue3833 (b)", tmysql.ErrWrongKeyColumn)
+	s.testErrorCode(c, "alter table issue3833 add index idx (b)", tmysql.ErrWrongKeyColumn)
+	s.testErrorCode(c, "create table issue3833_2 (b char(0), index (b))", tmysql.ErrWrongKeyColumn)
+}
+
 func (s *testDBSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
