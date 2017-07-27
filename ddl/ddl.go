@@ -192,8 +192,7 @@ type ddl struct {
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *Event
-	// Drop database/table job that runs in the background.
-	bgJobCh chan struct{}
+
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
@@ -270,7 +269,6 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		lease:        lease,
 		ddlJobCh:     make(chan struct{}, 1),
 		ddlJobDoneCh: make(chan struct{}, 1),
-		bgJobCh:      make(chan struct{}, 1),
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		workerVars:   variable.NewSessionVars(),
@@ -300,13 +298,11 @@ func (d *ddl) start(ctx goctx.Context) {
 	d.ownerManager.CampaignOwners(ctx)
 
 	d.wait.Add(2)
-	go d.onBackgroundWorker()
 	go d.onDDLWorker()
 
 	// For every start, we will send a fake job to let worker
 	// check owner firstly and try to find whether a job exists and run.
 	asyncNotify(d.ddlJobCh)
-	asyncNotify(d.bgJobCh)
 }
 
 func (d *ddl) close() {
