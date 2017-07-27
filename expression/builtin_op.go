@@ -28,7 +28,6 @@ var (
 	_ functionClass = &logicAndFunctionClass{}
 	_ functionClass = &logicOrFunctionClass{}
 	_ functionClass = &logicXorFunctionClass{}
-	_ functionClass = &bitOpFunctionClass{}
 	_ functionClass = &isTrueOpFunctionClass{}
 	_ functionClass = &unaryOpFunctionClass{}
 	_ functionClass = &unaryMinusFunctionClass{}
@@ -39,7 +38,6 @@ var (
 	_ builtinFunc = &builtinLogicAndSig{}
 	_ builtinFunc = &builtinLogicOrSig{}
 	_ builtinFunc = &builtinLogicXorSig{}
-	_ builtinFunc = &builtinBitOpSig{}
 	_ builtinFunc = &builtinIsTrueOpSig{}
 	_ builtinFunc = &builtinUnaryOpSig{}
 	_ builtinFunc = &builtinUnaryMinusIntSig{}
@@ -169,55 +167,39 @@ func (b *builtinLogicXorSig) eval(row []types.Datum) (d types.Datum, err error) 
 	return
 }
 
-type bitOpFunctionClass struct {
+type bitAndFunctionClass struct {
 	baseFunctionClass
-
-	op opcode.Op
 }
 
-func (c *bitOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinBitOpSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *bitAndFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := c.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinBitAndSig{baseIntBuiltinFunc{bf}}
+	sig.tp.Flag |= mysql.UnsignedFlag
+	return sig.setSelf(sig), nil
 }
 
-type builtinBitOpSig struct {
-	baseBuiltinFunc
-
-	op opcode.Op
+type builtinBitAndSig struct {
+	baseIntBuiltinFunc
 }
 
-func (s *builtinBitOpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := s.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinBitAndSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	sc := s.ctx.GetSessionVars().StmtCtx
-	a, b, err := types.CoerceDatum(sc, args[0], args[1])
-	if err != nil {
-		return d, errors.Trace(err)
+	arg1, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	if a.IsNull() || b.IsNull() {
-		return
-	}
-
-	x, err := a.ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	y, err := b.ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	// use a int64 for bit operator, return uint64
-	switch s.op {
-	case opcode.And:
-		d.SetUint64(uint64(x & y))
-	default:
-		return d, errInvalidOperation.Gen("invalid op %v in bit operation", s.op)
-	}
-	return
+	return arg0 & arg1, false, nil
 }
 
 type bitOrFunctionClass struct {
