@@ -214,3 +214,44 @@ func (s *testEvaluatorSuite) TestRightShift(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsTrue)
 }
+
+func (s *testEvaluatorSuite) TestLeftShift(c *C) {
+	defer testleak.AfterTest(c)()
+
+	cases := []struct {
+		args     []interface{}
+		expected uint64
+		isNil    bool
+		getErr   bool
+	}{
+		{[]interface{}{123, 2}, uint64(492), false, false},
+		{[]interface{}{-123, 2}, uint64(18446744073709551124), false, false},
+		{[]interface{}{nil, 1}, 0, true, false},
+
+		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.LeftShift, primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetUint64(), Equals, t.expected)
+			}
+		}
+	}
+
+	// Test incorrect parameter count.
+	_, err := newFunctionForTest(s.ctx, ast.LeftShift, Zero)
+	c.Assert(err, NotNil)
+
+	f, err := funcs[ast.LeftShift].getFunction([]Expression{Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
