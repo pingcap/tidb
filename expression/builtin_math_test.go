@@ -122,34 +122,51 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 
 func (s *testEvaluatorSuite) TestExp(c *C) {
 	defer testleak.AfterTest(c)()
-	testcases := []struct {
-		num interface{}
-		ret interface{}
-		err Checker
+
+	tests := []struct {
+		args   interface{}
+		expect float64
+		isNil  bool
+		getErr bool
+		errMsg string
 	}{
-		{int64(1), float64(2.718281828459045), IsNil},
-		{float64(1.23), float64(3.4212295362896734), IsNil},
-		{float64(-1.23), float64(0.2922925776808594), IsNil},
-		{float64(-1), float64(0.36787944117144233), IsNil},
-		{float64(0), float64(1), IsNil},
-		{"1.23", float64(3.4212295362896734), IsNil},
-		{"-1.23", float64(0.2922925776808594), IsNil},
-		{"0", float64(1), IsNil},
-		{nil, nil, IsNil},
-		{"abce", nil, NotNil},
-		{"", nil, NotNil},
+		{nil, 0, true, false, ""},
+		{int64(1), 2.718281828459045, false, false, ""},
+		{float64(1.23), 3.4212295362896734, false, false, ""},
+		{float64(-1.23), 0.2922925776808594, false, false, ""},
+		{float64(0), 1, false, false, ""},
+		{"0", 1, false, false, ""},
+		{"tidb", 0, false, true, ""},
+		{float64(100000), 0, false, true, "[types:1690]DOUBLE value is out of range in 'exp(100000)'"},
 	}
-	for _, t := range testcases {
-		if runtime.GOARCH == "ppc64le" && t.num == int64(1) {
-			t.ret = float64(2.7182818284590455)
-		}
-		fc := funcs[ast.Exp]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.num)), s.ctx)
+
+	if runtime.GOARCH == "ppc64le" {
+		tests[1].expect = 2.7182818284590455
+	}
+
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Exp, primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, t.err)
-		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+			if test.errMsg != "" {
+				c.Assert(err.Error(), Equals, test.errMsg)
+			}
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Exp].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestFloor(c *C) {
