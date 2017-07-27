@@ -53,9 +53,8 @@ type TableReaderExecutor struct {
 	ctx       context.Context
 	schema    *expression.Schema
 	// columns are only required by union scan.
-	columns       []*model.ColumnInfo
-	needColHandle bool
-	handleCol     *expression.Column
+	columns   []*model.ColumnInfo
+	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -102,7 +101,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		if e.needColHandle && e.handleCol.ID == -1 {
+		if e.handleCol != nil && e.handleCol.ID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
@@ -156,18 +155,17 @@ func (e *TableReaderExecutor) doRequestForDatums(datums [][]types.Datum, goCtx g
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
-	asName        *model.CIStr
-	table         table.Table
-	index         *model.IndexInfo
-	tableID       int64
-	keepOrder     bool
-	desc          bool
-	ranges        []*types.IndexRange
-	dagPB         *tipb.DAGRequest
-	ctx           context.Context
-	schema        *expression.Schema
-	needColHandle bool
-	handleCol     *expression.Column
+	asName    *model.CIStr
+	table     table.Table
+	index     *model.IndexInfo
+	tableID   int64
+	keepOrder bool
+	desc      bool
+	ranges    []*types.IndexRange
+	dagPB     *tipb.DAGRequest
+	ctx       context.Context
+	schema    *expression.Schema
+	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -216,7 +214,7 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		if e.needColHandle && e.handleCol.ID == -1 {
+		if e.handleCol != nil && e.handleCol.ID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
@@ -267,18 +265,17 @@ func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
-	asName        *model.CIStr
-	table         table.Table
-	index         *model.IndexInfo
-	tableID       int64
-	keepOrder     bool
-	desc          bool
-	ranges        []*types.IndexRange
-	dagPB         *tipb.DAGRequest
-	ctx           context.Context
-	schema        *expression.Schema
-	needColHandle bool
-	handleCol     *expression.Column
+	asName    *model.CIStr
+	table     table.Table
+	index     *model.IndexInfo
+	tableID   int64
+	keepOrder bool
+	desc      bool
+	ranges    []*types.IndexRange
+	dagPB     *tipb.DAGRequest
+	ctx       context.Context
+	schema    *expression.Schema
+	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult.
 	result distsql.SelectResult
@@ -343,8 +340,8 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	defer func() {
 		task.doneCh <- errors.Trace(err)
 	}()
-	if e.needColHandle {
-		handleCol = e.schema.TblID2handle[e.tableID][0]
+	if e.handleCol != nil {
+		handleCol = e.handleCol
 	} else if e.keepOrder {
 		handleCol = &expression.Column{
 			ID:    -1,
@@ -353,14 +350,13 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		schema.Append(handleCol)
 	}
 	tableReader := &TableReaderExecutor{
-		asName:        e.asName,
-		table:         e.table,
-		tableID:       e.tableID,
-		dagPB:         e.tableRequest,
-		schema:        schema,
-		ctx:           e.ctx,
-		needColHandle: e.needColHandle || e.keepOrder,
-		handleCol:     handleCol,
+		asName:    e.asName,
+		table:     e.table,
+		tableID:   e.tableID,
+		dagPB:     e.tableRequest,
+		schema:    schema,
+		ctx:       e.ctx,
+		handleCol: handleCol,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {
@@ -382,7 +378,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		} else {
 			sort.Sort(sorter)
 		}
-		if !e.needColHandle {
+		if e.handleCol == nil {
 			for _, row := range task.rows {
 				row.Data = row.Data[:len(row.Data)-1]
 			}

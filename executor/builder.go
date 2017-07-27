@@ -378,10 +378,8 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		return nil
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src), needColHandle: v.NeedColHandle}
-	if len(src.Schema().TblID2handle) > 0 {
-		for _, cols := range src.Schema().TblID2handle {
-			us.handleCol = cols[0]
-		}
+	for _, cols := range src.Schema().TblID2handle {
+		us.handleCol = cols[0]
 	}
 	switch x := src.(type) {
 	case *XSelectTableExec:
@@ -625,25 +623,29 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
+	var handleCol *expression.Column
+	if v.NeedColHandle {
+		handleCol = v.Schema().TblID2handle[v.Table.ID][0]
+	}
 	e := &XSelectTableExec{
-		tableInfo:     v.Table,
-		ctx:           b.ctx,
-		startTS:       startTS,
-		supportDesc:   supportDesc,
-		asName:        v.TableAsName,
-		table:         table,
-		schema:        v.Schema(),
-		Columns:       v.Columns,
-		ranges:        v.Ranges,
-		desc:          v.Desc,
-		limitCount:    v.LimitCount,
-		keepOrder:     v.KeepOrder,
-		where:         v.TableConditionPBExpr,
-		aggregate:     v.Aggregated,
-		aggFuncs:      v.AggFuncsPB,
-		byItems:       v.GbyItemsPB,
-		orderByList:   v.SortItemsPB,
-		needColHandle: v.NeedColHandle,
+		tableInfo:   v.Table,
+		ctx:         b.ctx,
+		startTS:     startTS,
+		supportDesc: supportDesc,
+		asName:      v.TableAsName,
+		table:       table,
+		schema:      v.Schema(),
+		Columns:     v.Columns,
+		ranges:      v.Ranges,
+		desc:        v.Desc,
+		limitCount:  v.LimitCount,
+		keepOrder:   v.KeepOrder,
+		where:       v.TableConditionPBExpr,
+		aggregate:   v.Aggregated,
+		aggFuncs:    v.AggFuncsPB,
+		byItems:     v.GbyItemsPB,
+		orderByList: v.SortItemsPB,
+		handleCol:   handleCol,
 	}
 	return e
 }
@@ -681,7 +683,6 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggregate:            v.Aggregated,
 		aggFuncs:             v.AggFuncsPB,
 		byItems:              v.GbyItemsPB,
-		needColHandle:        v.NeedColHandle,
 		handleCol:            handleCol,
 	}
 	vars := b.ctx.GetSessionVars()
@@ -703,7 +704,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 				RetType: &colInfo.FieldType,
 			}
 		}
-		if e.needColHandle {
+		if e.handleCol != nil {
 			schemaColumns = append(schemaColumns, &expression.Column{
 				FromID: v.ID(),
 				ID:     -1,
@@ -1033,25 +1034,25 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		handleCol = v.Schema().TblID2handle[ts.Table.ID][0]
 	}
 	e := &TableReaderExecutor{
-		ctx:           b.ctx,
-		schema:        v.Schema(),
-		dagPB:         dagReq,
-		asName:        ts.TableAsName,
-		tableID:       ts.Table.ID,
-		table:         table,
-		keepOrder:     ts.KeepOrder,
-		desc:          ts.Desc,
-		ranges:        ts.Ranges,
-		columns:       ts.Columns,
-		needColHandle: v.NeedColHandle,
-		handleCol:     handleCol,
+		ctx:       b.ctx,
+		schema:    v.Schema(),
+		dagPB:     dagReq,
+		asName:    ts.TableAsName,
+		tableID:   ts.Table.ID,
+		table:     table,
+		keepOrder: ts.KeepOrder,
+		desc:      ts.Desc,
+		ranges:    ts.Ranges,
+		columns:   ts.Columns,
+		handleCol: handleCol,
 	}
 
 	for i := range v.Schema().Columns {
+		// If it's id is -1, then it must is the tail of the slice.
+		if v.Schema().Columns[i].ID == -1 {
+			break
+		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
-	}
-	if e.needColHandle && e.handleCol.ID == -1 {
-		dagReq.OutputOffsets = dagReq.OutputOffsets[:len(dagReq.OutputOffsets)-1]
 	}
 
 	return e
@@ -1069,26 +1070,26 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		handleCol = v.Schema().TblID2handle[is.Table.ID][0]
 	}
 	e := &IndexReaderExecutor{
-		ctx:           b.ctx,
-		schema:        v.Schema(),
-		dagPB:         dagReq,
-		asName:        is.TableAsName,
-		tableID:       is.Table.ID,
-		table:         table,
-		index:         is.Index,
-		keepOrder:     !is.OutOfOrder,
-		desc:          is.Desc,
-		ranges:        is.Ranges,
-		columns:       is.Columns,
-		needColHandle: v.NeedColHandle,
-		handleCol:     handleCol,
+		ctx:       b.ctx,
+		schema:    v.Schema(),
+		dagPB:     dagReq,
+		asName:    is.TableAsName,
+		tableID:   is.Table.ID,
+		table:     table,
+		index:     is.Index,
+		keepOrder: !is.OutOfOrder,
+		desc:      is.Desc,
+		ranges:    is.Ranges,
+		columns:   is.Columns,
+		handleCol: handleCol,
 	}
 
 	for _, col := range v.OutputColumns {
+		// If it's id is -1, then it must is the tail of the slice.
+		if col.ID == -1 {
+			break
+		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
-	}
-	if e.needColHandle && handleCol.ID == -1 {
-		dagReq.OutputOffsets = dagReq.OutputOffsets[:len(dagReq.OutputOffsets)-1]
 	}
 
 	return e
@@ -1118,20 +1119,19 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 
 	e := &IndexLookUpExecutor{
-		ctx:           b.ctx,
-		schema:        v.Schema(),
-		dagPB:         indexReq,
-		asName:        is.TableAsName,
-		tableID:       is.Table.ID,
-		table:         table,
-		index:         is.Index,
-		keepOrder:     !is.OutOfOrder,
-		desc:          is.Desc,
-		ranges:        is.Ranges,
-		tableRequest:  tableReq,
-		columns:       is.Columns,
-		needColHandle: v.NeedColHandle,
-		handleCol:     handleCol,
+		ctx:          b.ctx,
+		schema:       v.Schema(),
+		dagPB:        indexReq,
+		asName:       is.TableAsName,
+		tableID:      is.Table.ID,
+		table:        table,
+		index:        is.Index,
+		keepOrder:    !is.OutOfOrder,
+		desc:         is.Desc,
+		ranges:       is.Ranges,
+		tableRequest: tableReq,
+		columns:      is.Columns,
+		handleCol:    handleCol,
 	}
 	return e
 }

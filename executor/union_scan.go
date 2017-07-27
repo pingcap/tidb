@@ -152,9 +152,6 @@ func (us *UnionScanExec) getSnapshotRow() (*Row, error) {
 			if us.snapshotRow == nil {
 				break
 			}
-			if len(us.children[0].Schema().TblID2handle) != 1 {
-				return nil, ErrRowKeyCount
-			}
 			snapshotHandle := us.snapshotRow.Data[len(us.snapshotRow.Data)-1].GetInt64()
 			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
 				continue

@@ -370,7 +370,6 @@ type XSelectIndexExec struct {
 	desc                 bool
 	outOfOrder           bool
 	indexConditionPBExpr *tipb.Expr
-	needColHandle        bool
 	handleCol            *expression.Column
 
 	/*
@@ -478,7 +477,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			schema = e.idxColsSchema
 		}
 		values := make([]types.Datum, schema.Len())
-		if e.needColHandle && e.handleCol.ID == -1 {
+		if e.handleCol != nil && e.handleCol.ID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
@@ -495,7 +494,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			return &Row{Data: values}, nil
 		}
 		values = e.indexRowToTableRow(h, values)
-		if e.needColHandle && e.handleCol.ID == -1 {
+		if e.handleCol != nil && e.handleCol.ID == -1 {
 			values[len(values)-1].SetInt64(h)
 		}
 		return &Row{Data: values}, nil
@@ -739,10 +738,10 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 	if !e.outOfOrder {
 		// Restore the index order.
 		var handleIdx int
-		if !e.needColHandle {
+		if e.handleCol == nil {
 			handleIdx = e.schema.Len()
 		} else {
-			handleIdx = e.schema.TblID2handle[e.tableInfo.ID][0].Index
+			handleIdx = e.handleCol.Index
 		}
 		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: handleIdx}
 		if e.desc && !e.supportDesc {
@@ -751,7 +750,7 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 			sort.Sort(sorter)
 		}
 		// If this executor don't need handle, we should cut it off.
-		if !e.needColHandle {
+		if e.handleCol == nil {
 			for _, row := range task.rows {
 				row.Data = row.Data[:len(row.Data)-1]
 			}
@@ -792,13 +791,13 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 			break
 		}
 		length := e.Schema().Len()
-		if !e.needColHandle && !e.outOfOrder {
+		if e.handleCol == nil && !e.outOfOrder {
 			length++
 		}
 		values := make([]types.Datum, length)
 		// If the handle col is not pk or we need it to sort the rows, it should be generated
 		// and cannot set value by SetRawValues.
-		if (e.needColHandle && e.handleCol.ID == -1) || length > e.schema.Len() {
+		if (e.handleCol != nil && e.handleCol.ID == -1) || length > e.schema.Len() {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
@@ -864,17 +863,17 @@ type XSelectTableExec struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 
-	where         *tipb.Expr
-	Columns       []*model.ColumnInfo
-	schema        *expression.Schema
-	ranges        []types.IntColumnRange
-	desc          bool
-	limitCount    *int64
-	returnedRows  uint64 // returned rowCount
-	keepOrder     bool
-	startTS       uint64
-	orderByList   []*tipb.ByItem
-	needColHandle bool
+	where        *tipb.Expr
+	Columns      []*model.ColumnInfo
+	schema       *expression.Schema
+	ranges       []types.IntColumnRange
+	desc         bool
+	limitCount   *int64
+	returnedRows uint64 // returned rowCount
+	keepOrder    bool
+	startTS      uint64
+	orderByList  []*tipb.ByItem
+	handleCol    *expression.Column
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -963,10 +962,6 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-	var handleID int64
-	if e.needColHandle {
-		handleID = e.schema.TblID2handle[e.tableInfo.ID][0].ID
-	}
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -999,7 +994,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		e.returnedRows++
 		values := make([]types.Datum, e.schema.Len())
-		if e.needColHandle && handleID == -1 {
+		if e.handleCol != nil && e.handleCol.ID == -1 {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
