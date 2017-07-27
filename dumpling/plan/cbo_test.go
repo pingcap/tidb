@@ -91,6 +91,14 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 			sql:  "select * from t where t.b <= 50",
 			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
 		},
+		{
+			sql:  "select * from t where t.b <= 100 order by t.a limit 1",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 100)])->Limit)->Limit",
+		},
+		{
+			sql:  "select * from t where t.b <= 1 order by t.a limit 10",
+			best: "IndexLookUp(Index(t.b)[[-inf,1]]->TopN([test.t.a],0,10), Table(t))->TopN([test.t.a],0,10)",
+		},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
