@@ -16,6 +16,7 @@ package expression
 import (
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -268,6 +269,37 @@ func getCmpType(a types.TypeClass, b types.TypeClass) types.TypeClass {
 	return types.ClassReal
 }
 
+func smartCheckType(expr Expression, pt, t types.TypeClass) types.TypeClass {
+	if pt == t || t != types.ClassString {
+		return t
+	}
+	c, ok := expr.(*Constant)
+	if !ok {
+		return t
+	}
+	val, ok := c.Value.GetValue().(string)
+	if !ok {
+		return t
+	}
+	if strings.Contains(val, ".") && (pt == types.ClassInt || pt == types.ClassDecimal) {
+		return types.ClassDecimal
+	}
+	return pt
+}
+
+// Try to fix Issue3911
+func getCmpTypeByExpr(a, b Expression, ta, tb types.TypeClass) types.TypeClass {
+	_, aIsCol := a.(*Column)
+	_, bIsCol := b.(*Column)
+	if aIsCol != bIsCol {
+		if bIsCol {
+			return getCmpType(tb, smartCheckType(a, tb, ta))
+		}
+		return getCmpType(ta, smartCheckType(b, ta, tb))
+	}
+	return getCmpType(ta, tb)
+}
+
 // isTemporalColumn checks if a expression is a temporal column,
 // temporal column indicates time column or duration column.
 func isTemporalColumn(expr Expression) bool {
@@ -293,7 +325,7 @@ func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Contex
 	}
 	ft0, ft1 := args[0].GetType(), args[1].GetType()
 	tc0, tc1 := ft0.ToClass(), ft1.ToClass()
-	cmpType := getCmpType(tc0, tc1)
+	cmpType := getCmpTypeByExpr(args[0], args[1], tc0, tc1)
 	if cmpType == types.ClassString && (types.IsTypeTime(ft0.Tp) || types.IsTypeTime(ft1.Tp)) {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
