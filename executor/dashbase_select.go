@@ -14,19 +14,25 @@
 package executor
 
 import (
+	"encoding/json"
 	"fmt"
+
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/dashbase"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // DashbaseSelectExec represents a DashbaseSelect executor.
 type DashbaseSelectExec struct {
 	baseExecutor
 
-	TableInfo *model.TableInfo
-	SQL       string
+	TableInfo       *model.TableInfo
+	SrcColumns      []*dashbase.Column
+	Lo2HiConverters []dashbase.Lo2HiConverter
+	SQL             string
 
 	fetched bool
 	rows    []*Row
@@ -59,8 +65,31 @@ func (e *DashbaseSelectExec) fetchAll() error {
 		return errors.Trace(err)
 	}
 
-	fmt.Println("Dashbase Fetch All Result ===============")
-	fmt.Println(result)
-
+	for _, hit := range result.Hits {
+		// recordString is json serialized record
+		recordString := hit.Payload.Stored
+		// recordRaw is the deserialized record
+		recordRaw := make(map[string]interface{})
+		// record is the key-upper-cased record
+		record := make(map[string]interface{})
+		err := json.Unmarshal([]byte(recordString), &recordRaw)
+		if err != nil {
+			return errors.Trace(fmt.Errorf("Failed to deserialize Dashbase record %s", recordString))
+		}
+		for key, value := range recordRaw {
+			record[strings.ToLower(key)] = value
+		}
+		datums := make([]types.Datum, len(e.SrcColumns))
+		for i, column := range e.SrcColumns {
+			raw, ok := record[column.Name]
+			if !ok {
+				datums[i] = types.NewDatum(nil)
+			} else {
+				data := e.Lo2HiConverters[i](raw)
+				datums[i] = types.NewDatum(data)
+			}
+		}
+		e.rows = append(e.rows, &Row{Data: datums})
+	}
 	return nil
 }

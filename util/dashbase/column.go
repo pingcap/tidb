@@ -13,6 +13,14 @@
 
 package dashbase
 
+import (
+	"fmt"
+
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
+)
+
 // ColumnType is the column type
 type ColumnType string
 
@@ -30,7 +38,61 @@ const (
 	TypeText ColumnType = "text"
 )
 
+type Lo2HiConverter func(interface{}) interface{}
+
 type Column struct {
-	Name string
-	Type ColumnType
+	Name     string     `json:"name"`
+	LowType  ColumnType `json:"ltp"` // Dashbase Type
+	HighType byte       `json:"htp"` // MySQL Type
+}
+
+type columnConverterDefinition struct {
+	lowType  ColumnType
+	highType byte
+	lo2hi    Lo2HiConverter
+}
+
+var typeConverters = []*columnConverterDefinition{
+	{TypeText, mysql.TypeBlob, func(input interface{}) interface{} {
+		return input
+	}},
+	{TypeMeta, mysql.TypeBlob, func(input interface{}) interface{} {
+		return input
+	}},
+	{TypeNumeric, mysql.TypeDouble, func(input interface{}) interface{} {
+		return input.(float64)
+	}},
+	{TypeTime, mysql.TypeDatetime, func(input interface{}) interface{} {
+		timestamp := int64(input.(float64) / 1000)
+		time, err := types.ParseDatetimeFromNum(timestamp)
+		if err != nil {
+			time = types.Time{Time: types.ZeroTime, Type: mysql.TypeDatetime}
+		}
+		return time
+	}},
+}
+
+var lo2HiConverters map[ColumnType]map[byte]Lo2HiConverter
+
+func init() {
+	lo2HiConverters = make(map[ColumnType]map[byte]Lo2HiConverter)
+	for _, converter := range typeConverters {
+		_, ok := lo2HiConverters[converter.lowType]
+		if !ok {
+			lo2HiConverters[converter.lowType] = make(map[byte]Lo2HiConverter)
+		}
+		lo2HiConverters[converter.lowType][converter.highType] = converter.lo2hi
+	}
+}
+
+func GetLo2HiConverter(column *Column) (Lo2HiConverter, error) {
+	_, ok := lo2HiConverters[column.LowType]
+	if !ok {
+		return nil, errors.Trace(fmt.Errorf("Unsupported Dashbase type %s", column.LowType))
+	}
+	converter, ok := lo2HiConverters[column.LowType][column.HighType]
+	if !ok {
+		return nil, errors.Trace(fmt.Errorf("Unsupported MySQL type %d", column.HighType))
+	}
+	return converter, nil
 }

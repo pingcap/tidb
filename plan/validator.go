@@ -234,7 +234,7 @@ func (v *validator) checkDashbase(stmt *ast.CreateTableStmt) {
 			}
 			for _, colDef := range stmt.Cols {
 				if colDef.Name.Name.L == constraint.Keys[0].Column.Name.L {
-					if colDef.Tp.Tp != mysql.TypeVarString {
+					if colDef.Tp.Tp != mysql.TypeBlob {
 						v.err = errors.New("Incorrect table definition; Dashbase table index column must be text type")
 						return
 					}

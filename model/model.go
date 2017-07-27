@@ -104,6 +104,7 @@ type TableInfo struct {
 	// The followings are Dashbase options.
 	DashbaseConnection *dashbase.ConnectionOption `json:"dashbase_conn"`
 	DashbaseTableName  string                     `json:"dashbase_tablename"`
+	DashbaseColumns    []*dashbase.Column         `json:"dashbase_columns"`
 }
 
 // Clone clones TableInfo.

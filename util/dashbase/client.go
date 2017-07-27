@@ -37,7 +37,7 @@ type ApiClient struct {
 type ApiSqlResponse struct {
 	Hits []struct {
 		Payload struct {
-			Fields map[string]interface{}
+			Stored string
 		}
 	}
 }

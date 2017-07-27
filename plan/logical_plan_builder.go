@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/dashbase"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -985,13 +986,36 @@ func (b *planBuilder) buildDashbaseSelect(sel *ast.SelectStmt) LogicalPlan {
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	fields := b.unfoldWildStar(p, sel.Fields.Fields)
 	tableInfo := p.(*DataSource).tableInfo
+	dashbaseColumns := make(map[string]*dashbase.Column)
+	for _, column := range tableInfo.DashbaseColumns {
+		dashbaseColumns[column.Name] = column
+	}
 
 	var totalMap map[*ast.AggregateFuncExpr]int
 	p, _ = b.buildProjection(p, fields, totalMap)
 
+	var srcColumns []*dashbase.Column
+	var converters []dashbase.Lo2HiConverter
+	for _, expr := range p.(*Projection).Exprs {
+		columnExpr, ok := expr.(*expression.Column)
+		if !ok || columnExpr.IsAggOrSubq {
+			b.err = errors.Trace(errors.New("Unsupported projection"))
+			return nil
+		}
+		column := dashbaseColumns[columnExpr.ColName.L]
+		converter, err := dashbase.GetLo2HiConverter(column)
+		if err != nil {
+			b.err = errors.Trace(err)
+		}
+		srcColumns = append(srcColumns, column)
+		converters = append(converters, converter)
+	}
+
 	plan := DashbaseSelect{
-		SQL:       sel.Text(),
-		TableInfo: tableInfo,
+		SQL:             sel.Text(),
+		TableInfo:       tableInfo,
+		SrcColumns:      srcColumns,
+		Lo2HiConverters: converters,
 	}.init(b.allocator, b.ctx)
 	plan.SetSchema(p.Schema().Clone())
 

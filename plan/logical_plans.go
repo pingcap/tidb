@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/dashbase"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -373,8 +374,10 @@ type DashbaseSelect struct {
 	baseLogicalPlan
 	basePhysicalPlan
 
-	TableInfo *model.TableInfo
-	SQL       string
+	TableInfo       *model.TableInfo
+	SrcColumns      []*dashbase.Column
+	Lo2HiConverters []dashbase.Lo2HiConverter
+	SQL             string
 }
 
 // DashbaseInsert represents a plan of inserting into a dashbase table

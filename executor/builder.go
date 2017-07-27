@@ -264,9 +264,11 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 
 func (b *executorBuilder) buildDashbaseSelect(v *plan.DashbaseSelect) Executor {
 	return &DashbaseSelectExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		TableInfo:    v.TableInfo,
-		SQL:          v.SQL,
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx),
+		TableInfo:       v.TableInfo,
+		SrcColumns:      v.SrcColumns,
+		Lo2HiConverters: v.Lo2HiConverters,
+		SQL:             v.SQL,
 	}
 }
 

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/dashbase"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -1404,6 +1405,13 @@ func (s *testDBSuite) TestDashbaseCreateTable(c *C) {
 	c.Assert(tblInfo.DashbaseConnection.ProxyHostname, Equals, "192.168.0.2")
 	c.Assert(tblInfo.DashbaseConnection.ProxyPort, Equals, 4321)
 	c.Assert(tblInfo.DashbaseTableName, Equals, "")
+	c.Assert(len(tblInfo.DashbaseColumns), Equals, 2)
+	c.Assert(tblInfo.DashbaseColumns[0].Name, Equals, "a")
+	c.Assert(tblInfo.DashbaseColumns[0].LowType, Equals, dashbase.TypeTime)
+	c.Assert(tblInfo.DashbaseColumns[0].HighType, Equals, mysql.TypeDatetime)
+	c.Assert(tblInfo.DashbaseColumns[1].Name, Equals, "b")
+	c.Assert(tblInfo.DashbaseColumns[1].LowType, Equals, dashbase.TypeText)
+	c.Assert(tblInfo.DashbaseColumns[1].HighType, Equals, mysql.TypeBlob)
 	s.mustExec(c, "drop table t")
 
 	// Test dashbase_table_name is stored.
@@ -1423,6 +1431,18 @@ func (s *testDBSuite) TestDashbaseCreateTable(c *C) {
 
 	// Allow PK via constraints.
 	s.tk.MustExec("create table t (a datetime, b text, primary key (a)) engine=dashbase dashbase_conn='localhost'")
+	ctx = s.tk.Se.(context.Context)
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	c.Assert(len(tblInfo.DashbaseColumns), Equals, 2)
+	c.Assert(tblInfo.DashbaseColumns[0].Name, Equals, "a")
+	c.Assert(tblInfo.DashbaseColumns[0].LowType, Equals, dashbase.TypeTime)
+	c.Assert(tblInfo.DashbaseColumns[0].HighType, Equals, mysql.TypeDatetime)
+	c.Assert(tblInfo.DashbaseColumns[1].Name, Equals, "b")
+	c.Assert(tblInfo.DashbaseColumns[1].LowType, Equals, dashbase.TypeText)
+	c.Assert(tblInfo.DashbaseColumns[1].HighType, Equals, mysql.TypeBlob)
 	s.mustExec(c, "drop table t")
 
 	// Multi PK is not allowed.
@@ -1483,4 +1503,20 @@ func (s *testDBSuite) TestDashbaseCreateTable(c *C) {
 	_, err = s.tk.Exec("create table t (a datetime key, b datetime, index (b)) engine=dashbase dashbase_conn='localhost'")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table index column must be text type")
+
+	// Index column becomes meta
+	s.tk.MustExec("create table t (aAa datetime key, bBB text, index (bbb(128))) engine=dashbase dashbase_conn='localhost'")
+	ctx = s.tk.Se.(context.Context)
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	c.Assert(len(tblInfo.DashbaseColumns), Equals, 2)
+	c.Assert(tblInfo.DashbaseColumns[0].Name, Equals, "aaa")
+	c.Assert(tblInfo.DashbaseColumns[0].LowType, Equals, dashbase.TypeTime)
+	c.Assert(tblInfo.DashbaseColumns[0].HighType, Equals, mysql.TypeDatetime)
+	c.Assert(tblInfo.DashbaseColumns[1].Name, Equals, "bbb")
+	c.Assert(tblInfo.DashbaseColumns[1].LowType, Equals, dashbase.TypeMeta)
+	c.Assert(tblInfo.DashbaseColumns[1].HighType, Equals, mysql.TypeBlob)
+	s.mustExec(c, "drop table t")
 }
