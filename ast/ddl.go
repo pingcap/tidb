@@ -469,7 +469,7 @@ type RenameTableStmt struct {
 
 	OldTable *TableName
 	NewTable *TableName
-	// TODO: refactor this when you are going to add full support for multiple schema changes.
+	// TODO: Refactor this when you are going to add full support for multiple schema changes.
 	// Currently it is only useful for syncer which depends heavily on tidb parser to do some dirty work.
 	TableToTables []*TableToTable
 }
@@ -503,7 +503,7 @@ func (n *RenameTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// TableToTable represents renaming old table to new table used in RenameTableStmt
+// TableToTable represents renaming old table to new table used in RenameTableStmt.
 type TableToTable struct {
 	node
 	OldTable *TableName
