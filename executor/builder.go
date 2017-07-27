@@ -133,6 +133,10 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildIndexReader(v)
 	case *plan.PhysicalIndexLookUpReader:
 		return b.buildIndexLookUpReader(v)
+	case *plan.DashbaseSelect:
+		return b.buildDashbaseSelect(v)
+	case *plan.DashbaseInsert:
+		return b.buildDashbaseInsert(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -256,6 +260,20 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 		e.User = e.ctx.GetSessionVars().User
 	}
 	return e
+}
+
+func (b *executorBuilder) buildDashbaseSelect(v *plan.DashbaseSelect) Executor {
+	return &DashbaseSelectExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		TableInfo:    v.TableInfo,
+		SQL:          v.SQL,
+	}
+}
+
+func (b *executorBuilder) buildDashbaseInsert(v *plan.DashbaseInsert) Executor {
+	return &DashbaseInsertExec{
+		Table: v.Table,
+	}
 }
 
 func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {

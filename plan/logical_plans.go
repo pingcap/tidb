@@ -371,7 +371,8 @@ type DashbaseSelect struct {
 	baseLogicalPlan
 	basePhysicalPlan
 
-	SQL string
+	TableInfo *model.TableInfo
+	SQL       string
 }
 
 // DashbaseInsert represents a plan of inserting into a dashbase table
@@ -379,6 +380,8 @@ type DashbaseInsert struct {
 	*basePlan
 	baseLogicalPlan
 	basePhysicalPlan
+
+	Table *ast.TableName
 	// TODO
 }
 

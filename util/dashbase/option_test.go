@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,9 +25,9 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testDashbaseSuite{})
+var _ = Suite(&testDashbaseOptionSuite{})
 
-type testDashbaseSuite struct {
+type testDashbaseOptionSuite struct {
 }
 
 func checkParseConnectionOption(c *C, input string, expected *ConnectionOption) {
@@ -45,7 +45,7 @@ func checkParseConnectionOption(c *C, input string, expected *ConnectionOption) 
 	}
 }
 
-func (s *testDashbaseSuite) TestParseConnectionOption(c *C) {
+func (s *testDashbaseOptionSuite) TestParseConnectionOption(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		input    string

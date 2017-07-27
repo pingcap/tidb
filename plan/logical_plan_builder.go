@@ -981,6 +981,23 @@ func (b *planBuilder) TableHints() *tableHintInfo {
 	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
 }
 
+func (b *planBuilder) buildDashbaseSelect(sel *ast.SelectStmt) LogicalPlan {
+	p := b.buildResultSetNode(sel.From.TableRefs)
+	fields := b.unfoldWildStar(p, sel.Fields.Fields)
+	tableInfo := p.(*DataSource).tableInfo
+
+	var totalMap map[*ast.AggregateFuncExpr]int
+	p, _ = b.buildProjection(p, fields, totalMap)
+
+	plan := DashbaseSelect{
+		SQL:       sel.Text(),
+		TableInfo: tableInfo,
+	}.init(b.allocator, b.ctx)
+	plan.SetSchema(p.Schema().Clone())
+
+	return plan
+}
+
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if sel.TableHints != nil {
 		// table hints without query block support only visible in current SELECT
@@ -1005,9 +1022,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 			b.err = errors.New("Cannot select from multiple tables when at least one of them is dashbase table")
 			return nil
 		}
-		// Create a dashbase select plan instead of a select plan.
-		plan := DashbaseSelect{SQL: sel.Text()}.init(b.allocator, b.ctx)
-		return plan
+		return b.buildDashbaseSelect(sel)
 	}
 
 	hasAgg := b.detectSelectAgg(sel)
