@@ -155,7 +155,9 @@ func (b *builtinSetVarSig) eval(row []types.Datum) (types.Datum, error) {
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
+		sessionVars.Lock()
 		sessionVars.Users[varName] = strings.ToLower(strVal)
+		sessionVars.Unlock()
 	}
 	return args[1], nil
 }
@@ -182,6 +184,8 @@ func (b *builtinGetVarSig) eval(row []types.Datum) (types.Datum, error) {
 	}
 	sessionVars := b.ctx.GetSessionVars()
 	varName, _ := args[0].ToString()
+	sessionVars.RLock()
+	defer sessionVars.RUnlock()
 	if v, ok := sessionVars.Users[varName]; ok {
 		return types.NewDatum(v), nil
 	}
