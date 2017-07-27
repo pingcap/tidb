@@ -125,7 +125,7 @@ func (v *typeInferrer) selectStmt(x *ast.SelectStmt) {
 
 func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 	switch x.Op {
-	case opcode.AndAnd, opcode.OrOr, opcode.LogicXor:
+	case opcode.LogicAnd, opcode.LogicOr, opcode.LogicXor:
 		x.Type.Init(mysql.TypeLonglong)
 	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
 		x.Type.Init(mysql.TypeLonglong)

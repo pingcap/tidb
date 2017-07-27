@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
 )
@@ -63,7 +64,7 @@ func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 		done:        make(chan error),
 	}
 	var ctx goctx.Context
-	ctx, worker.cancel = goctx.WithCancel(goctx.Background())
+	ctx, worker.cancel = util.WithCancel(goctx.Background())
 	go worker.start(ctx)
 	return worker, nil
 }

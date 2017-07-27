@@ -26,7 +26,7 @@ func TestT(t *testing.T) {
 }
 
 type testMockTiKVSuite struct {
-	store *MvccStore
+	store MVCCStore
 }
 
 var _ = Suite(&testMockTiKVSuite{})
@@ -237,6 +237,21 @@ func (s *testMockTiKVSuite) TestScan(c *C) {
 	checkV40()
 }
 
+func (s *testMockTiKVSuite) TestBatchGet(c *C) {
+	s.mustPutOK(c, "k1", "v1", 1, 2)
+	s.mustPutOK(c, "k2", "v2", 1, 2)
+	s.mustPutOK(c, "k2", "v2", 3, 4)
+	s.mustPutOK(c, "k3", "v3", 1, 2)
+	batchKeys := [][]byte{[]byte("k1"), []byte("k2"), []byte("k3")}
+	pairs := s.store.BatchGet(batchKeys, 5, kvrpcpb.IsolationLevel_SI)
+	for _, pair := range pairs {
+		c.Assert(pair.Err, IsNil)
+	}
+	c.Assert(string(pairs[0].Value), Equals, "v1")
+	c.Assert(string(pairs[1].Value), Equals, "v2")
+	c.Assert(string(pairs[2].Value), Equals, "v3")
+}
+
 func (s *testMockTiKVSuite) TestScanLock(c *C) {
 	s.mustPutOK(c, "k1", "v1", 1, 2)
 	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
@@ -248,6 +263,28 @@ func (s *testMockTiKVSuite) TestScanLock(c *C) {
 		lock("s1", "p1", 5),
 		lock("s2", "p2", 10),
 	})
+}
+
+func (s *testMockTiKVSuite) TestCommitConflict(c *C) {
+	// txn A want set x to A
+	// txn B want set x to B
+	// A prewrite.
+	s.mustPrewriteOK(c, putMutations("x", "A"), "x", 5)
+	// B prewrite and find A's lock.
+	errs := s.store.Prewrite(putMutations("x", "B"), []byte("x"), 10, 0)
+	c.Assert(errs[0], NotNil)
+	// B find rollback A because A exist too long.
+	s.mustRollbackOK(c, [][]byte{[]byte("x")}, 5)
+	// if A commit here, it would find its lock removed, report error txn not found.
+	s.mustCommitErr(c, [][]byte{[]byte("x")}, 5, 10)
+	// B prewrite itself after it rollback A.
+	s.mustPrewriteOK(c, putMutations("x", "B"), "x", 10)
+	// if A commit here, it would find its lock replaced by others and commit fail.
+	s.mustCommitErr(c, [][]byte{[]byte("x")}, 5, 20)
+	// B commit success.
+	s.mustCommitOK(c, [][]byte{[]byte("x")}, 10, 20)
+	// if B commit again, it will success because the key already committed.
+	s.mustCommitOK(c, [][]byte{[]byte("x")}, 10, 20)
 }
 
 func (s *testMockTiKVSuite) TestResolveLock(c *C) {

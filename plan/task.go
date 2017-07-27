@@ -150,6 +150,9 @@ func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
 	if p.SmallTable == 1 {
 		smallTableCnt = rCnt
 	}
+	if smallTableCnt <= 1 {
+		smallTableCnt = 1
+	}
 	return (lCnt + rCnt) * (1 + math.Log2(smallTableCnt))
 }
 
@@ -180,6 +183,9 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalHashSemiJoin) getCost(lCnt, rCnt float64) float64 {
+	if rCnt <= 1 {
+		rCnt = 1
+	}
 	return (lCnt + rCnt) * (1 + math.Log2(rCnt))
 }
 
@@ -274,7 +280,9 @@ func (p *Limit) attach2Task(tasks ...task) task {
 		cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		task = finishCopTask(cop, p.ctx, p.allocator)
 	}
-	task = attachPlan2Task(p.Copy(), task)
+	if !p.partial {
+		task = attachPlan2Task(p.Copy(), task)
+	}
 	return task
 }
 
@@ -340,8 +348,10 @@ func (p *TopN) attach2Task(tasks ...task) task {
 		copTask.addCost(pushedDownTopN.getCost(task.count()))
 	}
 	task = finishCopTask(task, p.ctx, p.allocator)
-	task = attachPlan2Task(p.Copy(), task)
-	task.addCost(p.getCost(task.count()))
+	if !p.partial {
+		task = attachPlan2Task(p.Copy(), task)
+		task.addCost(p.getCost(task.count()))
+	}
 	return task
 }
 

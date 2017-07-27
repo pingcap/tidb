@@ -1052,6 +1052,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT JSON_UNQUOTE();`, true},
 		{`SELECT JSON_TYPE('[123]');`, true},
 		{`SELECT JSON_TYPE();`, true},
+
+		// For two json grammar sugar.
+		{`SELECT a->'$.a' FROM t`, true},
+		{`SELECT a->>'$.a' FROM t`, true},
+		{`SELECT '{}'->'$.a' FROM t`, false},
+		{`SELECT '{}'->>'$.a' FROM t`, false},
+		{`SELECT a->3 FROM t`, false},
+		{`SELECT a->>3 FROM t`, false},
 	}
 	s.RunTest(c, table)
 }
@@ -1406,10 +1414,6 @@ func (s *testParserSuite) TestType(c *C) {
 
 		// for national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},
-
-		// for https://github.com/pingcap/tidb/issues/312
-		{`create table t (c float(53));`, true},
-		{`create table t (c float(54));`, false},
 
 		// for json type
 		{`create table t (a JSON);`, true},
