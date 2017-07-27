@@ -333,10 +333,11 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(variable.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
+
 	switch s.(type) {
 	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
-		sc.IgnoreOverflow = false
+		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 		if _, ok := s.(*ast.InsertStmt); !ok {
 			sc.InUpdateOrDeleteStmt = true
@@ -344,20 +345,27 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 		sc.IgnoreTruncate = false
-		sc.IgnoreOverflow = false
+		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = false
 	case *ast.LoadDataStmt:
 		sc.IgnoreTruncate = false
-		sc.IgnoreOverflow = false
+		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 	case *ast.SelectStmt:
-		sc.IgnoreOverflow = true
+		sc.InSelectStmt = true
+
+		// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
+		// said "For statements such as SELECT that do not change data, invalid values
+		// generate a warning in strict mode, not an error."
+		// and and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
+		sc.OverflowAsWarning = true
+
 		// Return warning for truncate error in selection.
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = true
 	default:
 		sc.IgnoreTruncate = true
-		sc.IgnoreOverflow = false
+		sc.OverflowAsWarning = false
 		if show, ok := s.(*ast.ShowStmt); ok {
 			if show.Tp == ast.ShowWarnings {
 				sc.InShowWarning = true

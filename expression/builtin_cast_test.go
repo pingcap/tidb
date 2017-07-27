@@ -76,8 +76,10 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(len(res.GetString()), Equals, 5)
 	c.Assert(res.GetString(), Equals, string([]byte{'a', 0x00, 0x00, 0x00, 0x00}))
 
-	orig := sc.IgnoreOverflow
-	sc.IgnoreOverflow = true
+	origSc := sc
+	sc.InSelectStmt = true
+	sc.OverflowAsWarning = true
+
 	// cast('18446744073709551616' as unsigned);
 	tp1 := types.NewFieldType(mysql.TypeLonglong)
 	tp1.Flag |= mysql.UnsignedFlag
@@ -135,7 +137,28 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrCastSignedOverflow, lastWarn), IsTrue)
-	sc.IgnoreOverflow = orig
+
+	// create table t1(s1 time);
+	// insert into t1 values('11:11:11');
+	// select cast(s1 as decimal(7, 2)) from t1;
+	tpDecimal := types.NewFieldType(mysql.TypeNewDecimal)
+	tpDecimal.Flag |= mysql.UnsignedFlag
+	tpDecimal.Charset = charset.CharsetBin
+	tpDecimal.Collate = charset.CollationBin
+	tpDecimal.Flag |= mysql.BinaryFlag
+	tpDecimal.Flen = 7
+	tpDecimal.Decimal = 2
+	f = NewCastFunc(tpDecimal, &Constant{Value: timeDatum, RetType: types.NewFieldType(mysql.TypeDatetime)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	resDecimal := new(types.MyDecimal)
+	resDecimal.FromString([]byte("99999.99"))
+	c.Assert(res.GetMysqlDecimal().Compare(resDecimal), Equals, 0)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn), IsTrue)
+	sc = origSc
 
 	// cast(bad_string as decimal)
 	for _, s := range []string{"hello", ""} {

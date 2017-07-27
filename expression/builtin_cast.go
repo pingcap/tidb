@@ -559,13 +559,9 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNu
 		res, err = to.ToInt()
 	}
 
-	// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
-	// said "For statements such as SELECT that do not change data, invalid values
-	// generate a warning in strict mode, not an error."
-	// and and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-	if sc.IgnoreOverflow && terror.ErrorEqual(err, types.ErrOverflow) {
-		err = nil
-		sc.AppendWarning(types.ErrTruncatedWrongVal.GenByArgs("DECIMAL", val))
+	if terror.ErrorEqual(err, types.ErrOverflow) {
+		warnErr := types.ErrTruncatedWrongVal.GenByArgs("DECIMAL", val)
+		err = sc.HandleOverflow(err, warnErr)
 	}
 
 	return res, false, errors.Trace(err)
@@ -648,22 +644,21 @@ type builtinCastStringAsIntSig struct {
 
 func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string, origErr error, isNegative bool) (res int64, err error) {
 	res, err = origRes, origErr
+	if err == nil {
+		return
+	}
+
 	sc := b.getCtx().GetSessionVars().StmtCtx
 
-	// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
-	// said "For statements such as SELECT that do not change data, invalid values
-	// generate a warning in strict mode, not an error."
-	// and and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-	if sc.IgnoreOverflow && terror.ErrorEqual(origErr, types.ErrOverflow) {
-		err = nil
+	if sc.InSelectStmt && terror.ErrorEqual(origErr, types.ErrOverflow) {
 		if isNegative {
 			res = math.MinInt64
 		} else {
 			uval := uint64(math.MaxUint64)
 			res = int64(uval)
 		}
-
-		sc.AppendWarning(types.ErrTruncatedWrongVal.GenByArgs("INTEGER", origStr))
+		warnErr := types.ErrTruncatedWrongVal.GenByArgs("INTEGER", origStr)
+		err = sc.HandleOverflow(origErr, warnErr)
 	}
 	return
 }
