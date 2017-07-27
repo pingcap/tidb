@@ -556,6 +556,9 @@ func (s *testSuite) TestUnion(c *C) {
 	// #issue3771
 	r = tk.MustQuery("SELECT 'a' UNION SELECT CONCAT('a', -4)")
 	r.Sort().Check(testkit.Rows("a", "a-4"))
+
+	// test race
+	tk.MustQuery("SELECT @x:=0 UNION ALL SELECT @x:=0 UNION ALL SELECT @x")
 }
 
 func (s *testSuite) TestIn(c *C) {
