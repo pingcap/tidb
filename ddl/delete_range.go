@@ -16,8 +16,11 @@ package ddl
 import (
 	"encoding/base64"
 	"fmt"
+	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -26,31 +29,29 @@ import (
 )
 
 const (
-	insertDeleteRangeSQL = `INSERT INTO gc_delete_range VALUES ("%d", "%s", "%s", "%d")`
+	insertDeleteRangeSQL = `INSERT INTO mysql.gc_delete_range VALUES ("%d", "%s", "%s", "%d")`
 )
 
-func LoadPendingBgJobs(store kv.Storage) (jobs []*model.Job, err error) {
-	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		for i := 0; ; i++ {
-			job, err := m.GetBgJob(i)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if job == nil {
-				break
-			}
-			jobs = append(jobs, job)
+// LoadPendingBgJobsIntoDeleteTable loads all pending DDL backgroud jobs
+// into table `gc_delete_range` so that gc worker can deal with them.
+// NOTE: This function WILL NOT start and run in a new transaction internally.
+func LoadPendingBgJobsIntoDeleteTable(ctx context.Context) (err error) {
+	var met = meta.NewMeta(ctx.Txn())
+	for {
+		var job *model.Job
+		job, err = met.DeQueueBgJob()
+		if err != nil || job == nil {
+			break
 		}
-		return nil
-	})
-	return
+		err = InsertBgJobIntoDeleteRangeTable(ctx.(sqlexec.SQLExecutor), job)
+		if err != nil {
+			break
+		}
+	}
+	return errors.Trace(err)
 }
 
 func InsertBgJobIntoDeleteRangeTable(s sqlexec.SQLExecutor, job *model.Job) (err error) {
-	if _, err = s.Execute("COMMIT"); err != nil {
-		return errors.Trace(err)
-	}
 	switch job.Type {
 	case model.ActionDropSchema:
 		var tableIDs []int64
@@ -60,7 +61,7 @@ func InsertBgJobIntoDeleteRangeTable(s sqlexec.SQLExecutor, job *model.Job) (err
 		for _, tableID := range tableIDs {
 			startKey := tablecodec.EncodeTablePrefix(tableID)
 			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-			sql := getInsertDeleteRangeSQL(tableID, startKey, endKey, 1) // TODO real timestamp.
+			sql := getInsertDeleteRangeSQL(tableID, startKey, endKey, time.Now().Unix())
 			s.Execute(sql)
 		}
 	case model.ActionDropTable, model.ActionTruncateTable:
@@ -73,17 +74,15 @@ func InsertBgJobIntoDeleteRangeTable(s sqlexec.SQLExecutor, job *model.Job) (err
 			return errors.Trace(err)
 		}
 		endKey = tablecodec.EncodeTablePrefix(tableID + 1)
-		sql := getInsertDeleteRangeSQL(tableID, startKey, endKey, 1) // TODO real timestamp.
+		sql := getInsertDeleteRangeSQL(tableID, startKey, endKey, time.Now().Unix())
 		s.Execute(sql)
-	}
-	if _, err = s.Execute("COMMIT"); err != nil {
-		return errors.Trace(err)
 	}
 	return
 }
 
-func getInsertDeleteRangeSQL(id int64, startKey, endKey kv.Key, ts uint64) string {
+func getInsertDeleteRangeSQL(id int64, startKey, endKey kv.Key, ts int64) string {
 	startKeyEncoded := base64.StdEncoding.EncodeToString(startKey)
 	endKeyEncoded := base64.StdEncoding.EncodeToString(endKey)
+	log.Errorf("move bg job SQL: %s", fmt.Sprintf(insertDeleteRangeSQL, id, startKeyEncoded, endKeyEncoded, ts))
 	return fmt.Sprintf(insertDeleteRangeSQL, id, startKeyEncoded, endKeyEncoded, ts)
 }

@@ -177,10 +177,10 @@ const (
 
 	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
 	CreateGCDeleteRangeTable = `CREATE TABLE IF NOT EXISTS mysql.gc_delete_range (
-		schema_id BIGINT NOT NULL PRIMARY KEY,
-		start_key BLOB NOT NULL,
-		end_key BLOB NOT NULL,
-		ts TIMESTAMP NOT NULL
+		id BIGINT NOT NULL PRIMARY KEY COMMENT "the schema element's ID",
+		start_key VARCHAR(255) NOT NULL COMMENT "encoded in base64",
+		end_key VARCHAR(255) NOT NULL COMMENT "encoded in base64",
+		ts BIGINT NOT NULL COMMENT "timestamp in int64"
 	);`
 )
 
@@ -536,8 +536,18 @@ func upgradeToVer14(s Session) {
 }
 
 func upgradeToVer15(s Session) {
-	_, err := s.Execute(CreateGCDeleteRangeTable)
+	var err error
+	_, err = s.Execute(CreateGCDeleteRangeTable)
 	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableExists) {
+		log.Fatal(err)
+	}
+	s.NewTxn()
+	err = ddl.LoadPendingBgJobsIntoDeleteTable(s)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = s.CommitTxn()
+	if err != nil {
 		log.Fatal(err)
 	}
 }
