@@ -214,12 +214,45 @@ func (s *builtinBitOpSig) eval(row []types.Datum) (d types.Datum, err error) {
 	switch s.op {
 	case opcode.And:
 		d.SetUint64(uint64(x & y))
-	case opcode.Or:
-		d.SetUint64(uint64(x | y))
 	default:
 		return d, errInvalidOperation.Gen("invalid op %v in bit operation", s.op)
 	}
 	return
+}
+
+type bitOrFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *bitOrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := c.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinBitOrSig{baseIntBuiltinFunc{bf}}
+	sig.tp.Flag |= mysql.UnsignedFlag
+	return sig.setSelf(sig), nil
+}
+
+type builtinBitOrSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinBitOrSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	arg1, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return arg0 | arg1, false, nil
 }
 
 type bitXorFunctionClass struct {
