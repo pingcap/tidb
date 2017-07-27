@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,15 +26,14 @@ import (
 )
 
 const (
-	DeleteRangeTableName string = "gc_delete_range"
-	insertDeleteRangeSQL        = `INSERT INTO gc_delete_range VALUES ("%d", "%s", "%s", "%d")`
+	insertDeleteRangeSQL = `INSERT INTO gc_delete_range VALUES ("%d", "%s", "%s", "%d")`
 )
 
-func LoadPendingBgJobsIntoDeleteRangeTable(store kv.Storage) (jobs []*model.Job, err error) {
+func LoadPendingBgJobs(store kv.Storage) (jobs []*model.Job, err error) {
 	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		for {
-			job, err := m.DeQueueBgJob()
+		for i := 0; ; i++ {
+			job, err := m.GetBgJob(i)
 			if err != nil {
 				return errors.Trace(err)
 			}
