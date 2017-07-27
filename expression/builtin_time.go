@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -324,7 +323,6 @@ func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	log.Infof("args[0]:%v args[1]:%v t1:%v, t2:%v", args[0], args[1], t1, t2)
 	t := t1.Sub(&t2)
 	d.SetMysqlDuration(t)
 	return

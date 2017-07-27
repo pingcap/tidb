@@ -547,7 +547,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNu
 		return res, isNull, errors.Trace(err)
 	}
 
-	// despite of unsigned or signed, Round is need
+	// despite of unsigned or signed, Round is needed
 	var to types.MyDecimal
 	val.Round(&to, 0, types.ModeHalfEven)
 
