@@ -55,10 +55,10 @@ type columnConverterDefinition struct {
 
 var typeConverters = []*columnConverterDefinition{
 	{TypeText, mysql.TypeBlob, func(input interface{}) interface{} {
-		return input
+		return input.(string)
 	}},
 	{TypeMeta, mysql.TypeBlob, func(input interface{}) interface{} {
-		return input
+		return input.(string)
 	}},
 	{TypeNumeric, mysql.TypeDouble, func(input interface{}) interface{} {
 		return input.(float64)
