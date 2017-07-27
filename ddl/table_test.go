@@ -226,7 +226,7 @@ func (s *testTableSuite) TestTable(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	var checkErr error
 	var updatedCount int
 	tc.onBgJobUpdated = func(job *model.Job) {
@@ -245,7 +245,7 @@ func (s *testTableSuite) TestTable(c *C) {
 		}
 		updatedCount++
 	}
-	d.setHook(tc)
+	d.SetHook(tc)
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 

@@ -318,7 +318,9 @@ type TableDelta struct {
 type StatementContext struct {
 	// Set the following variables before execution
 
+	InInsertStmt         bool
 	InUpdateOrDeleteStmt bool
+	IgnoreOverflow       bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
 	InShowWarning        bool
