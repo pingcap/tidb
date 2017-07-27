@@ -15,6 +15,7 @@ package dashbase
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
@@ -63,12 +64,14 @@ var typeConverters = []*columnConverterDefinition{
 		return input.(float64)
 	}},
 	{TypeTime, mysql.TypeDatetime, func(input interface{}) interface{} {
-		timestamp := int64(input.(float64) / 1000)
-		time, err := types.ParseDatetimeFromNum(timestamp)
-		if err != nil {
-			time = types.Time{Time: types.ZeroTime, Type: mysql.TypeDatetime}
+		timestampMilliseconds := int64(input.(float64))
+		// TODO: support milliseconds.
+		value := time.Unix(timestampMilliseconds/1000, 0)
+		return types.Time{
+			Time:     types.FromGoTime(value),
+			Type:     mysql.TypeDatetime,
+			TimeZone: time.UTC,
 		}
-		return time
 	}},
 }
 
