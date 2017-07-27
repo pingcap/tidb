@@ -16,7 +16,7 @@ package expression
 import (
 	"math"
 	"sort"
-	"strings"
+	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -281,8 +281,15 @@ func smartCheckType(expr Expression, pt, t types.TypeClass) types.TypeClass {
 	if !ok {
 		return t
 	}
-	if strings.Contains(val, ".") && (pt == types.ClassInt || pt == types.ClassDecimal) {
-		return types.ClassDecimal
+	_, errf := strconv.ParseFloat(val, 64)
+	_, erri := strconv.ParseInt(val, 10, 64)
+	if pt == types.ClassInt || pt == types.ClassDecimal {
+		if erri != nil && errf == nil {
+			return types.ClassDecimal
+		}
+		if erri != nil && errf != nil {
+			return t
+		}
 	}
 	return pt
 }
