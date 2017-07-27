@@ -1026,9 +1026,24 @@ func (s *testSuite) TestOpBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	// for logical and
+	// for logicAnd
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
+	// for bitOr
+	result = tk.MustQuery("select 123 | 321, -123 | 321, null | 1")
+	result.Check(testkit.Rows("379 18446744073709551557 <nil>"))
+	// for bitXor
+	result = tk.MustQuery("select 123 ^ 321, -123 ^ 321, null ^ 1")
+	result.Check(testkit.Rows("314 18446744073709551300 <nil>"))
+	// for leftShift
+	result = tk.MustQuery("select 123 << 2, -123 << 2, null << 1")
+	result.Check(testkit.Rows("492 18446744073709551124 <nil>"))
+	// for rightShift
+	result = tk.MustQuery("select 123 >> 2, -123 >> 2, null >> 1")
+	result.Check(testkit.Rows("30 4611686018427387873 <nil>"))
+	// for logicOr
+	result = tk.MustQuery("select 1 || 1, 1 || 0, 0 || 1, 0 || 0, 2 || -1, null || 1, '1a' || 'a'")
+	result.Check(testkit.Rows("1 1 1 0 1 1 1"))
 }
 
 func (s *testSuite) TestBuiltin(c *C) {
@@ -1079,6 +1094,19 @@ func (s *testSuite) TestBuiltin(c *C) {
 	tk.MustExec("insert into t value('12:59:59.999999')")
 	result = tk.MustQuery("select cast(a as signed) from t")
 	result.Check(testkit.Rows("130000"))
+
+	// fixed issue #3762
+	result = tk.MustQuery("select -9223372036854775809;")
+	result.Check(testkit.Rows("-9223372036854775809"))
+	result = tk.MustQuery("select --9223372036854775809;")
+	result.Check(testkit.Rows("9223372036854775809"))
+	result = tk.MustQuery("select -9223372036854775808;")
+	result.Check(testkit.Rows("-9223372036854775808"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(30));")
+	_, err := tk.Exec("insert into t values(-9223372036854775809)")
+	c.Assert(err, NotNil)
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")

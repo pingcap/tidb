@@ -334,25 +334,33 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sc := new(variable.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
 	switch s.(type) {
-	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
+	case *ast.UpdateStmt, *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
+		sc.IgnoreOverflow = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
-		if _, ok := s.(*ast.InsertStmt); !ok {
-			sc.InUpdateOrDeleteStmt = true
-		}
+		sc.InUpdateOrDeleteStmt = true
+	case *ast.InsertStmt:
+		sc.IgnoreTruncate = false
+		sc.IgnoreOverflow = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.InInsertStmt = true
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 		sc.IgnoreTruncate = false
+		sc.IgnoreOverflow = false
 		sc.TruncateAsWarning = false
 	case *ast.LoadDataStmt:
 		sc.IgnoreTruncate = false
+		sc.IgnoreOverflow = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 	case *ast.SelectStmt:
+		sc.IgnoreOverflow = true
 		// Return warning for truncate error in selection.
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = true
 	default:
 		sc.IgnoreTruncate = true
+		sc.IgnoreOverflow = false
 		if show, ok := s.(*ast.ShowStmt); ok {
 			if show.Tp == ast.ShowWarnings {
 				sc.InShowWarning = true
