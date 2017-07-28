@@ -1209,6 +1209,24 @@ func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
 }
 
+func (s *testDBSuite) TestRenameMultiTables(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://rename_multi_tables")
+	c.Assert(err, IsNil)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	s.tk = testkit.NewTestKit(c, store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t1(id int)")
+	s.tk.MustExec("create table t2(id int)")
+	// Currently it will fail only.
+	sql := fmt.Sprintf("rename table t1 to t3, t2 to t4")
+	_, err = s.tk.Exec(sql)
+	c.Assert(err, NotNil)
+	originErr := errors.Cause(err)
+	c.Assert(originErr.Error(), Equals, "can't run multi schema change")
+}
+
 func (s *testDBSuite) TestAddNotNullColumn(c *C) {
 	defer testleak.AfterTest(c)
 	s.tk = testkit.NewTestKit(c, s.store)
