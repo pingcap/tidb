@@ -118,6 +118,8 @@ type requiredProp struct {
 	// must be finished and increase its cost in sometime, but we can't make sure the finishing time. So the best way
 	// to let the comparison fair is to add taskType to required property.
 	taskTp taskType
+	// expectedCnt means this operator may be closed after fetching expectedCnt records.
+	expectedCnt float64
 }
 
 func (p *requiredProp) equal(prop *requiredProp) bool {
@@ -141,19 +143,20 @@ func (p *requiredProp) isEmpty() bool {
 
 // getHashKey encodes prop to a unique key. The key will be stored in the memory table.
 func (p *requiredProp) getHashKey() ([]byte, error) {
-	datums := make([]types.Datum, 0, len(p.cols)*2+2)
+	datums := make([]types.Datum, 0, len(p.cols)*2+3)
 	datums = append(datums, types.NewDatum(p.desc))
 	for _, c := range p.cols {
 		datums = append(datums, types.NewDatum(c.FromID), types.NewDatum(c.Position))
 	}
 	datums = append(datums, types.NewDatum(int(p.taskTp)))
+	datums = append(datums, types.NewDatum(p.expectedCnt))
 	bytes, err := codec.EncodeValue(nil, datums...)
 	return bytes, errors.Trace(err)
 }
 
 // String implements fmt.Stringer interface. Just for test.
 func (p *requiredProp) String() string {
-	return fmt.Sprintf("Prop{cols: %s, desc: %v, taskTp: %s}", p.cols, p.desc, p.taskTp)
+	return fmt.Sprintf("Prop{cols: %s, desc: %v, taskTp: %s, expectedCount: %v}", p.cols, p.desc, p.taskTp, p.expectedCnt)
 }
 
 type requiredProperty struct {
