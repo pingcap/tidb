@@ -21,6 +21,7 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 )
 
 type TidbTestSuite struct {
@@ -37,12 +38,13 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
-	cfg := &Config{
+	cfg := &config.Config{
 		Addr:         ":4001",
 		LogLevel:     "debug",
 		StatusAddr:   ":10090",
 		ReportStatus: true,
 	}
+
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
@@ -117,11 +119,12 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 
 func (ts *TidbTestSuite) TestSocket(c *C) {
 	c.Parallel()
-	cfg := &Config{
+	cfg := &config.Config{
 		LogLevel:   "debug",
 		StatusAddr: ":10091",
 		Socket:     "/tmp/tidbtest.sock",
 	}
+
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	go server.Run()
