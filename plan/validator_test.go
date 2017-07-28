@@ -75,7 +75,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"alter table t add column c int auto_increment key, auto_increment=10", true,
 			errors.New("[autoid:3]No support for setting auto_increment using alter_table")},
 		{"alter table t add column c int auto_increment key", true, nil},
-
 		{"alter table t add column char4294967295 char(255)", true, nil},
 		{"create table t (c float(53))", true, nil},
 		{"alter table t add column c float(53)", true, nil},
