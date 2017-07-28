@@ -24,6 +24,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
@@ -38,11 +39,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -2255,4 +2258,52 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 			c.Assert(len(list[4]), Equals, 12)
 		}
 	}
+}
+
+type checkRequestClient struct {
+	tikv.Client
+	priority pb.CommandPri
+	turnOn   bool
+}
+
+func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendReq(ctx, addr, req)
+	if c.turnOn && c.priority != req.Priority {
+		return nil, errors.New("fail to set priority")
+	}
+	return resp, err
+}
+
+func (s *testSuite) TestCoprocessorPriority(c *C) {
+	cli := &checkRequestClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+
+	store, err := tikv.NewMockTikvStore(
+		tikv.WithHijackClient(hijackClient),
+	)
+	defer store.Close()
+	c.Assert(err, IsNil)
+	dom, err := tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("insert into t values (1)")
+
+	cli.turnOn = true
+	cli.priority = pb.CommandPri_High
+	tk.MustExec("select id from t where id = 1")
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustExec("select count(*) from t")
+
+	cli.priority = pb.CommandPri_Normal
+	tk.MustExec("insert into t values (2)")
+
+	tk.Se.Close()
 }

@@ -47,8 +47,9 @@ type executorBuilder struct {
 
 func newExecutorBuilder(ctx context.Context, is infoschema.InfoSchema, priority int) *executorBuilder {
 	return &executorBuilder{
-		ctx: ctx,
-		is:  is,
+		ctx:      ctx,
+		is:       is,
+		priority: priority,
 	}
 }
 
