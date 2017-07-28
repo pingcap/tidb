@@ -984,6 +984,10 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 }
 
 func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
+	batchSize := 1
+	if !v.KeepOrder {
+		batchSize = b.ctx.GetSessionVars().IndexLookupSize
+	}
 	return &IndexLookUpJoin{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 		innerExec:       b.build(v.Children()[1]).(DataReader),
@@ -994,6 +998,7 @@ func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
 		rightConditions: v.RightConditions,
 		otherConditions: v.OtherConditions,
 		defaultValues:   v.DefaultValues,
+		batchSize:       batchSize,
 	}
 }
 
