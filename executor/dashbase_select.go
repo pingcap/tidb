@@ -85,8 +85,7 @@ func (e *DashbaseSelectExec) fetchAll() error {
 			if !ok {
 				datums[i] = types.NewDatum(nil)
 			} else {
-				data := e.Lo2HiConverters[i](raw)
-				datums[i] = types.NewDatum(data)
+				datums[i] = e.Lo2HiConverters[i](raw)
 			}
 		}
 		e.rows = append(e.rows, &Row{Data: datums})

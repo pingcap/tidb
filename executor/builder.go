@@ -274,7 +274,13 @@ func (b *executorBuilder) buildDashbaseSelect(v *plan.DashbaseSelect) Executor {
 
 func (b *executorBuilder) buildDashbaseInsert(v *plan.DashbaseInsert) Executor {
 	return &DashbaseInsertExec{
-		Table: v.Table,
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx),
+		TableInfo:       v.TableInfo,
+		HiColumns:       v.HiColumns,
+		LoColumns:       v.LoColumns,
+		Hi2LoConverters: v.Hi2LoConverters,
+		Values:          v.Values,
+		ctx:             b.ctx,
 	}
 }
 

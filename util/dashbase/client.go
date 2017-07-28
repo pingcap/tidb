@@ -14,6 +14,7 @@
 package dashbase
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,9 +25,67 @@ import (
 )
 
 type FirehoseClient struct {
-	Host    string
-	Port    string
-	Columns *[]Column
+	Host string
+	Port int
+}
+
+type firehoseSchemaItem struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+type FirehoseInsertResponse struct {
+	IsError bool
+}
+
+const (
+	firehoseTimeout time.Duration = 30 * time.Second
+)
+
+func (client *FirehoseClient) InsertOne(payload map[string]interface{}, columns []*Column) (*FirehoseInsertResponse, error) {
+	schema := make([]firehoseSchemaItem, len(columns))
+	for i, column := range columns {
+		schema[i] = firehoseSchemaItem{
+			Name: column.Name,
+			Type: string(column.LowType),
+		}
+	}
+
+	postBody := make(map[string]interface{})
+	postBody["_schema"] = schema
+	for k, v := range payload {
+		postBody[k] = v
+	}
+	postJSONBody, err := json.Marshal(postBody)
+	if err != nil {
+		panic("Unexpected Json serialize error")
+	}
+
+	fmt.Printf("Insert JSON: %s\n", string(postJSONBody))
+
+	req, err := http.NewRequest(
+		"POST",
+		fmt.Sprintf("http://%s:%d/v1/firehose/http/insertOne", client.Host, client.Port),
+		bytes.NewBuffer(postJSONBody))
+	req.Header.Set("Content-Type", "application/json")
+	if err != nil {
+		return nil, errors.Trace(fmt.Errorf("Failed to connect Dashbase Firehose service at %s:%d", client.Host, client.Port))
+	}
+
+	httpClient := http.Client{Timeout: firehoseTimeout}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Trace(fmt.Errorf("Failed to connect Dashbase Firehose service at %s:%d", client.Host, client.Port))
+	}
+	defer resp.Body.Close()
+
+	var ret FirehoseInsertResponse
+	err = json.NewDecoder(resp.Body).Decode(&ret)
+	if err != nil {
+		return nil, errors.Trace(fmt.Errorf("Failed to decode Dashbase Firehose response data"))
+	}
+
+	return &ret, nil
 }
 
 type ApiClient struct {
@@ -34,7 +93,7 @@ type ApiClient struct {
 	Port int
 }
 
-type ApiSqlResponse struct {
+type ApiSQLResponse struct {
 	Hits []struct {
 		Payload struct {
 			Stored string
@@ -47,9 +106,9 @@ const (
 )
 
 // Query sends a SQL query to remote Dashbase API client
-func (client *ApiClient) Query(SqlStatement string) (*ApiSqlResponse, error) {
+func (client *ApiClient) Query(SQLStatement string) (*ApiSQLResponse, error) {
 	param := url.Values{}
-	param.Add("sql", SqlStatement)
+	param.Add("sql", SQLStatement)
 	param.Add("timezone", "GMT")
 
 	httpClient := http.Client{Timeout: apiTimeout}
@@ -59,7 +118,7 @@ func (client *ApiClient) Query(SqlStatement string) (*ApiSqlResponse, error) {
 	}
 	defer resp.Body.Close()
 
-	var ret ApiSqlResponse
+	var ret ApiSQLResponse
 	err = json.NewDecoder(resp.Body).Decode(&ret)
 	if err != nil {
 		return nil, errors.Trace(fmt.Errorf("Failed to decode Dashbase API response data"))

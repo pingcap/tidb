@@ -386,8 +386,11 @@ type DashbaseInsert struct {
 	baseLogicalPlan
 	basePhysicalPlan
 
-	Table *ast.TableName
-	// TODO
+	TableInfo       *model.TableInfo
+	HiColumns       []*model.ColumnInfo
+	LoColumns       []*dashbase.Column
+	Hi2LoConverters []dashbase.Hi2LoConverter
+	Values          []*expression.Constant
 }
 
 // AddChild for parent.

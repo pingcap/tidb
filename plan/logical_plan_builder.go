@@ -1006,6 +1006,7 @@ func (b *planBuilder) buildDashbaseSelect(sel *ast.SelectStmt) LogicalPlan {
 		converter, err := dashbase.GetLo2HiConverter(column)
 		if err != nil {
 			b.err = errors.Trace(err)
+			return nil
 		}
 		srcColumns = append(srcColumns, column)
 		converters = append(converters, converter)

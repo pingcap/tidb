@@ -17,17 +17,56 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/dashbase"
 )
 
 // DashbaseInsertExec represents a DashbaseInsert executor.
 type DashbaseInsertExec struct {
 	baseExecutor
 
-	Table *ast.TableName
+	TableInfo       *model.TableInfo
+	HiColumns       []*model.ColumnInfo
+	LoColumns       []*dashbase.Column
+	Hi2LoConverters []dashbase.Hi2LoConverter
+	Values          []*expression.Constant
+	ctx             context.Context
+	finished        bool
 }
 
-// Next implements Execution Next interface.
+// Next implements Execution Next interface.Insert
 func (e *DashbaseInsertExec) Next() (*Row, error) {
-	return nil, errors.Trace(fmt.Errorf("Unsupported"))
+	if e.finished {
+		return nil, nil
+	}
+
+	row := make(map[string]interface{})
+	for i, value := range e.Values {
+		castedValue, err := table.CastValue(e.ctx, value.Value, e.HiColumns[i])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jsonValue := e.Hi2LoConverters[i](castedValue)
+		row[e.LoColumns[i].Name] = jsonValue
+	}
+
+	client := dashbase.FirehoseClient{
+		Host: e.TableInfo.DashbaseConnection.FirehoseHostname,
+		Port: e.TableInfo.DashbaseConnection.FirehosePort,
+	}
+
+	// Pass all columns two the second parameter.
+	result, err := client.InsertOne(row, e.TableInfo.DashbaseColumns)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	fmt.Printf("======== Dashbase Response ========\n")
+	fmt.Printf("%v\n", result)
+
+	e.finished = true
+	return nil, nil
 }
