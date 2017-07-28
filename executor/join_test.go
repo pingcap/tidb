@@ -220,6 +220,13 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t values(1),(2), (3)")
 	tk.MustQuery("select @a := @a + 1 from t, (select @a := 0) b;").Check(testkit.Rows("1", "2", "3"))
 
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int primary key, b int, key s(b))")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t values(1, 3), (2, 2), (3, 1)")
+	tk.MustExec("insert into t1 values(1, 2), (1, 3), (3, 4)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t) */ * from t join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("3 1 3 4", "1 3 1 2", "1 3 1 3"))
+
 }
 
 func (s *testSuite) TestJoinCast(c *C) {

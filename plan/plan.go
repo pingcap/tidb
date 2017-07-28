@@ -285,6 +285,8 @@ type baseLogicalPlan struct {
 
 type basePhysicalPlan struct {
 	basePlan *basePlan
+	// expectedCnt means this operator may be closed after fetching expectedCnt records.
+	expectedCnt float64
 }
 
 // ExplainInfo implements PhysicalPlan interface.

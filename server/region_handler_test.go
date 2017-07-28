@@ -14,12 +14,15 @@
 package server
 
 import (
+	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -170,7 +173,6 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	mocktikv.BootstrapWithSingleStore(cluster)
 	store, err := tikv.NewMockTikvStore(tikv.WithCluster(cluster))
 	c.Assert(err, IsNil)
-	pdCli := mocktikv.NewPDClient(cluster)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tidbdrv := NewTiDBDriver(store)
@@ -184,9 +186,7 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
-	once.Do(func() {
-		go server.startHTTPServer(pdCli)
-	})
+	go server.Run()
 	waitUntilServerOnline(cfg.StatusAddr)
 }
 
@@ -194,4 +194,81 @@ func (ts *TidbRegionHandlerTestSuite) stopServer(c *C) {
 	if ts.server != nil {
 		ts.server.Close()
 	}
+}
+
+func (ts *TidbRegionHandlerTestSuite) prepareData(c *C) {
+	db, err := sql.Open("mysql", dsn)
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	dbt.mustExec("create database tidb;")
+	dbt.mustExec("use tidb;")
+	dbt.mustExec("create table tidb.test (a int auto_increment primary key, b int);")
+	dbt.mustExec("insert tidb.test values (1, 1);")
+	txn1, err := dbt.db.Begin()
+	c.Assert(err, IsNil)
+	_, err = txn1.Exec("update tidb.test set b = b + 1 where a = 1;")
+	c.Assert(err, IsNil)
+	_, err = txn1.Exec("insert tidb.test values (2,2);")
+	c.Assert(err, IsNil)
+	err = txn1.Commit()
+	c.Assert(err, IsNil)
+}
+
+func (ts *TidbRegionHandlerTestSuite) TestGetMvcc(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1"))
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var data kvrpcpb.MvccGetByKeyResponse
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(data.Info, NotNil)
+	c.Assert(len(data.Info.Writes), Greater, 0)
+	startTs := data.Info.Writes[0].StartTs
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/%d", startTs))
+	c.Assert(err, IsNil)
+	var p1 kvrpcpb.MvccGetByStartTsResponse
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&p1)
+	c.Assert(err, IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/%d/tidb/test", startTs))
+	c.Assert(err, IsNil)
+	var p2 kvrpcpb.MvccGetByStartTsResponse
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&p2)
+	c.Assert(err, IsNil)
+
+	for id, expect := range data.Info.Values {
+		v1 := p1.Info.Values[id].Value
+		v2 := p2.Info.Values[id].Value
+		c.Assert(bytes.Equal(v1, expect.Value), IsTrue)
+		c.Assert(bytes.Equal(v2, expect.Value), IsTrue)
+	}
+}
+
+func (ts *TidbRegionHandlerTestSuite) TestGetMvccNotFound(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1234"))
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var data kvrpcpb.MvccGetByKeyResponse
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(data.Info, IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/0"))
+	c.Assert(err, IsNil)
+	var p kvrpcpb.MvccGetByStartTsResponse
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&p)
+	c.Assert(err, IsNil)
+	c.Assert(p.Info, IsNil)
 }
