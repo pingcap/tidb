@@ -1011,12 +1011,13 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 
 	// Add a new column in write only state.
 	newColumn := &model.ColumnInfo{
-		ID:           100,
-		Name:         model.NewCIStr("c3"),
-		Offset:       2,
-		DefaultValue: 9,
-		FieldType:    *types.NewFieldType(tmysql.TypeLonglong),
-		State:        model.StateWriteOnly,
+		ID:                 100,
+		Name:               model.NewCIStr("c3"),
+		Offset:             2,
+		DefaultValue:       9,
+		OriginDefaultValue: 9,
+		FieldType:          *types.NewFieldType(tmysql.TypeLonglong),
+		State:              model.StateWriteOnly,
 	}
 	t1Info.Columns = append(t1Info.Columns, newColumn)
 
