@@ -142,7 +142,11 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
-	return lCnt * netWorkStartFactor
+	cst := lCnt * netWorkStartFactor
+	if p.KeepOrder {
+		return cst * 2
+	}
+	return cst
 }
 
 func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
