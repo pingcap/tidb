@@ -766,6 +766,9 @@ import (
 	TableOptionListOpt	"create table option list opt"
 	TableRef 		"table reference"
 	TableRefs 		"table references"
+	TableToTable 		"rename table to table"
+	TableToTableList 	"rename table to table by list"
+
 	TransactionChar		"Transaction characteristic"
 	TransactionChars	"Transaction characteristic list"
 	TrimDirection		"Trim string direction"
@@ -1149,15 +1152,39 @@ Symbol:
 
 /**************************************RenameTableStmt***************************************
  * See http://dev.mysql.com/doc/refman/5.7/en/rename-table.html
+ *
+ * TODO: refactor this when you are going to add full support for multiple schema changes.
+ * Currently it is only useful for syncer which depends heavily on tidb parser to do some dirty work.
  *******************************************************************************************/
 RenameTableStmt:
-	 "RENAME" "TABLE" TableName "TO" TableName
-	 {
+	"RENAME" "TABLE" TableToTableList 
+	{
 		$$ = &ast.RenameTableStmt{
-			OldTable: $3.(*ast.TableName),
-			NewTable: $5.(*ast.TableName),
+			OldTable: $3.([]*ast.TableToTable)[0].OldTable,
+			NewTable: $3.([]*ast.TableToTable)[0].NewTable,
+			TableToTables: $3.([]*ast.TableToTable),
 		}
-	 }
+	}
+
+TableToTableList:
+	TableToTable
+	{
+		$$ = []*ast.TableToTable{$1.(*ast.TableToTable)}
+	}
+|	TableToTableList ',' TableToTable
+	{
+		$$ = append($1.([]*ast.TableToTable), $3.(*ast.TableToTable))
+	}
+
+TableToTable:
+	TableName "TO" TableName
+	{
+		$$ = &ast.TableToTable{
+			OldTable: $1.(*ast.TableName),
+			NewTable: $3.(*ast.TableName),
+		}
+	}
+
 
 /*******************************************************************************************/
 

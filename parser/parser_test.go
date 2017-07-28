@@ -1334,6 +1334,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"RENAME TABLE t TO t1", true},
 		{"RENAME TABLE t t1", false},
 		{"RENAME TABLE d.t TO d1.t1", true},
+		{"RENAME TABLE t1 TO t2, t3 TO t4", true},
 
 		// for truncate statement
 		{"TRUNCATE TABLE t1", true},
