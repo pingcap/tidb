@@ -377,6 +377,36 @@ func (b *builtinIsTrueOpSig) eval(row []types.Datum) (d types.Datum, err error) 
 	return
 }
 
+type bitNegFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *bitNegFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flag |= mysql.UnsignedFlag
+	sig := &builtinBitNegSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinBitNegSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinBitNegSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return ^arg, false, nil
+}
+
 type unaryOpFunctionClass struct {
 	baseFunctionClass
 
@@ -420,14 +450,6 @@ func (b *builtinUnaryOpSig) eval(row []types.Datum) (d types.Datum, err error) {
 		} else {
 			d.SetInt64(0)
 		}
-	case opcode.BitNeg:
-		var n int64
-		// for bit operation, we will use int64 first, then return uint64
-		n, err = aDatum.ToInt64(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetUint64(uint64(^n))
 	case opcode.Plus:
 		switch aDatum.Kind() {
 		case types.KindInt64,

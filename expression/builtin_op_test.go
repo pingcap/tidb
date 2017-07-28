@@ -337,57 +337,6 @@ func (s *testEvaluatorSuite) TestLogicOr(c *C) {
 	c.Assert(f.isDeterministic(), IsTrue)
 }
 
-func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
-	defer testleak.AfterTest(c)()
-
-	sc := s.ctx.GetSessionVars().StmtCtx
-	origin := sc.IgnoreTruncate
-	defer func() {
-		sc.IgnoreTruncate = origin
-	}()
-	sc.IgnoreTruncate = true
-
-	cases := []struct {
-		args     []interface{}
-		expected int64
-		isNil    bool
-		getErr   bool
-	}{
-		{[]interface{}{1}, 0, false, false},
-		{[]interface{}{0}, 1, false, false},
-		{[]interface{}{123}, 0, false, false},
-		{[]interface{}{-123}, 0, false, false},
-		{[]interface{}{"123"}, 0, false, false},
-		{[]interface{}{nil}, 0, true, false},
-
-		{[]interface{}{errors.New("must error")}, 0, false, true},
-	}
-
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.UnaryNot, primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
-		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(d.GetInt64(), Equals, t.expected)
-			}
-		}
-	}
-
-	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.UnaryNot, Zero, Zero)
-	c.Assert(err, NotNil)
-
-	f, err := funcs[ast.UnaryNot].getFunction([]Expression{Zero}, s.ctx)
-	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
-}
-
 func (s *testEvaluatorSuite) TestBitAnd(c *C) {
 	defer testleak.AfterTest(c)()
 
@@ -425,6 +374,54 @@ func (s *testEvaluatorSuite) TestBitAnd(c *C) {
 	c.Assert(err, NotNil)
 
 	f, err := funcs[ast.And].getFunction([]Expression{Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestBitNeg(c *C) {
+	defer testleak.AfterTest(c)()
+
+	sc := s.ctx.GetSessionVars().StmtCtx
+	origin := sc.IgnoreTruncate
+	defer func() {
+		sc.IgnoreTruncate = origin
+	}()
+	sc.IgnoreTruncate = true
+
+	cases := []struct {
+		args     []interface{}
+		expected uint64
+		isNil    bool
+		getErr   bool
+	}{
+		{[]interface{}{123}, uint64(18446744073709551492), false, false},
+		{[]interface{}{-123}, uint64(122), false, false},
+		{[]interface{}{nil}, 0, true, false},
+
+		{[]interface{}{errors.New("must error")}, 0, false, true},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.BitNeg, primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetUint64(), Equals, t.expected)
+			}
+		}
+	}
+
+	// Test incorrect parameter count.
+	_, err := newFunctionForTest(s.ctx, ast.BitNeg, Zero, Zero)
+	c.Assert(err, NotNil)
+
+	f, err := funcs[ast.BitNeg].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsTrue)
 }
