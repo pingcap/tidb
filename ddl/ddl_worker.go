@@ -114,17 +114,20 @@ func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, updateTS uint64) error 
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) error {
-	log.Infof("[ddl] finish DDL job %v", job)
-	// Job is finished, notice and run the next job.
+	switch job.Type {
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable:
+		// TODO: Now we split DDL and DelRangeWorker because cycle import problems.
+		// In future, we should resolve them and do delete-range directly here.
+		DelRangeReqCh <- job
+		<-DelRangeRspCh
+	}
+
 	_, err := t.DeQueueDDLJob()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	switch job.Type {
-	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable:
-		DelRangeReqCh <- job
-		<-DelRangeRspCh
-	}
+
+	log.Infof("[ddl] finish DDL job %v", job)
 
 	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)

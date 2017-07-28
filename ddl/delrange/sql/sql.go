@@ -14,7 +14,7 @@
 package delrangesql
 
 import (
-	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	insertDeleteRangeSQL = `INSERT INTO mysql.gc_delete_range VALUES ("%d", "%s", "%s", "%d")`
+	insertDeleteRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d")`
 )
 
 // LoadPendingBgJobsIntoDeleteTable loads all pending DDL backgroud jobs
@@ -51,7 +51,10 @@ func LoadPendingBgJobsIntoDeleteTable(ctx context.Context) (err error) {
 	return errors.Trace(err)
 }
 
-func InsertBgJobIntoDeleteRangeTable(s sqlexec.SQLExecutor, job *model.Job) (err error) {
+// InsertBgJobIntoDeleteRangeTable parses the job into delete-range arguments,
+// and inserts a new record into gc_delete_range table. The primary key is
+// job ID, so we ignore key conflict error.
+func InsertBgJobIntoDeleteRangeTable(s sqlexec.SQLExecutor, job *model.Job) error {
 	switch job.Type {
 	case model.ActionDropSchema:
 		var tableIDs []int64
@@ -61,28 +64,24 @@ func InsertBgJobIntoDeleteRangeTable(s sqlexec.SQLExecutor, job *model.Job) (err
 		for _, tableID := range tableIDs {
 			startKey := tablecodec.EncodeTablePrefix(tableID)
 			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-			sql := getInsertDeleteRangeSQL(tableID, startKey, endKey, time.Now().Unix())
-			s.Execute(sql)
+			if err := doInsert(s, job.ID, tableID, startKey, endKey, time.Now().Unix()); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	case model.ActionDropTable, model.ActionTruncateTable:
-		var startKey, endKey kv.Key
-		if err := job.DecodeArgs(&startKey); err != nil {
-			return errors.Trace(err)
-		}
-		tableID, _, _, err := tablecodec.DecodeKeyHead(startKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		endKey = tablecodec.EncodeTablePrefix(tableID + 1)
-		sql := getInsertDeleteRangeSQL(tableID, startKey, endKey, time.Now().Unix())
-		s.Execute(sql)
+		tableID := job.TableID
+		startKey := tablecodec.EncodeTablePrefix(tableID)
+		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+		return doInsert(s, job.ID, tableID, startKey, endKey, time.Now().Unix())
 	}
-	return
+	return nil
 }
 
-func getInsertDeleteRangeSQL(id int64, startKey, endKey kv.Key, ts int64) string {
-	startKeyEncoded := base64.StdEncoding.EncodeToString(startKey)
-	endKeyEncoded := base64.StdEncoding.EncodeToString(endKey)
-	log.Errorf("move bg job SQL: %s", fmt.Sprintf(insertDeleteRangeSQL, id, startKeyEncoded, endKeyEncoded, ts))
-	return fmt.Sprintf(insertDeleteRangeSQL, id, startKeyEncoded, endKeyEncoded, ts)
+func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts int64) error {
+	log.Infof("[ddl] insert into delete-range table with key: (%d,%d)", jobID, elementID)
+	startKeyEncoded := hex.EncodeToString(startKey)
+	endKeyEncoded := hex.EncodeToString(endKey)
+	sql := fmt.Sprintf(insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
+	_, err := s.Execute(sql)
+	return errors.Trace(err)
 }

@@ -147,7 +147,10 @@ func main() {
 	}
 
 	// Start DelRangeWorker.
-	delrange.NewAndStartDelRangeWorker(store)
+	err = delrange.NewAndStartDelRangeWorker(store)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
 
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)

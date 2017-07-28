@@ -114,9 +114,9 @@ var (
 	// ErrWrongTableName return for wrong table name.
 	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
 
-	// DelRangeReqCh
+	// DelRangeReqCh is for communicating between DDL and DelRangeWorker.
 	DelRangeReqCh = make(chan *model.Job, 1)
-	// DelRangeRspCh
+	// DelRangeRspCh is for communicating between DDL and DelRangeWorker.
 	DelRangeRspCh = make(chan struct{}, 1)
 )
 

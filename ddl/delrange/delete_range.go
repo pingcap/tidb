@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/util/sqlexec"
-	goctx "golang.org/x/net/context"
 )
 
 // DelRangeWorker deals with DDL jobs which can speed up by delete-range.
@@ -33,6 +32,8 @@ type DelRangeWorker struct {
 	RspCh    chan<- struct{}
 }
 
+// NewAndStartDelRangeWorker starts a new DelRangeWorker, which gets tasks
+// from ddl.DelRangeReqCh, and run them with a session without privileges.
 func NewAndStartDelRangeWorker(store kv.Storage) error {
 	s, err := tidb.CreateSession(store)
 	if err != nil {
@@ -45,20 +46,21 @@ func NewAndStartDelRangeWorker(store kv.Storage) error {
 		ReqCh:    ddl.DelRangeReqCh,
 		RspCh:    ddl.DelRangeRspCh,
 	}
-	go worker.start(s.GoCtx())
+	go worker.start()
 	return nil
 }
 
-func (worker *DelRangeWorker) start(ctx goctx.Context) {
+func (worker *DelRangeWorker) start() {
 	for {
 		select {
-		case <-ctx.Done():
-			return
 		case job := <-worker.ReqCh:
+			worker.executor.Execute("BEGIN")
 			err := delrangesql.InsertBgJobIntoDeleteRangeTable(worker.executor, job)
 			if err != nil {
+				worker.executor.Execute("ROLLBACK")
 				log.Errorf("[ddl] handle delete-range job err %v", errors.ErrorStack(err))
 			}
+			worker.executor.Execute("COMMIT")
 			worker.RspCh <- struct{}{}
 		}
 	}
