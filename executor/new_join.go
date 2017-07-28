@@ -65,6 +65,7 @@ type IndexLookUpJoin struct {
 	otherConditions expression.CNFExprs
 	defaultValues   []types.Datum
 	outer           bool
+	batchSize       int
 }
 
 // Open implements the Executor Open interface.
@@ -90,11 +91,10 @@ func (e *IndexLookUpJoin) Next() (*Row, error) {
 		if e.exhausted {
 			return nil, nil
 		}
-		batchSize := e.ctx.GetSessionVars().IndexLookupSize
 		e.outerRows = e.outerRows[:0]
 		e.resultRows = e.resultRows[:0]
 		e.innerDatums = e.innerDatums[:0]
-		for i := 0; i < batchSize; i++ {
+		for i := 0; i < e.batchSize; i++ {
 			outerRow, err := e.children[0].Next()
 			if err != nil {
 				return nil, errors.Trace(err)

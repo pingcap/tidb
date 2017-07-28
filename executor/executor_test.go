@@ -1032,6 +1032,19 @@ func (s *testSuite) TestOpBuiltin(c *C) {
 	// for logicAnd
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
+
+	// for bitNeg
+	result = tk.MustQuery("select ~123, ~-123, ~null")
+	result.Check(testkit.Rows("18446744073709551492 122 <nil>"))
+	// for logicNot
+	result = tk.MustQuery("select !1, !123, !0, !null")
+	result.Check(testkit.Rows("0 0 1 <nil>"))
+	// for logicalXor
+	result = tk.MustQuery("select 1 xor 1, 1 xor 0, 0 xor 1, 0 xor 0, 2 xor -1, null xor 1, '1a' xor 'a'")
+	result.Check(testkit.Rows("0 1 1 0 0 <nil> 1"))
+	// for bitAnd
+	result = tk.MustQuery("select 123 & 321, -123 & 321, null & 1")
+	result.Check(testkit.Rows("65 257 <nil>"))
 	// for bitOr
 	result = tk.MustQuery("select 123 | 321, -123 | 321, null | 1")
 	result.Check(testkit.Rows("379 18446744073709551557 <nil>"))
@@ -1193,6 +1206,16 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1406 Data Too Long, field len 0, data len 4"))
+
+	// issue 3884
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (c1 date, c2 datetime, c3 timestamp, c4 time, c5 year);")
+	tk.MustExec("INSERT INTO t values ('2000-01-01', '2000-01-01 12:12:12', '2000-01-01 12:12:12', '12:12:12', '2000');")
+	tk.MustExec("INSERT INTO t values ('2000-02-01', '2000-02-01 12:12:12', '2000-02-01 12:12:12', '13:12:12', 2000);")
+	tk.MustExec("INSERT INTO t values ('2000-03-01', '2000-03-01', '2000-03-01 12:12:12', '1 12:12:12', 2000);")
+	tk.MustExec("INSERT INTO t SET c1 = '2000-04-01', c2 = '2000-04-01', c3 = '2000-04-01 12:12:12', c4 = '-1 13:12:12', c5 = 2000;")
+	result = tk.MustQuery("SELECT c4 FROM t where c4 < '-13:12:12';")
+	result.Check(testkit.Rows("-37:12:12"))
 
 	// testCase is for like and regexp
 	type testCase struct {
@@ -1366,6 +1389,10 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("1.5707963267948966 <nil> <nil> 0"))
 	result = tk.MustQuery("select acos('tidb')")
 	result.Check(testkit.Rows("1.5707963267948966"))
+
+	// for pi
+	result = tk.MustQuery("select pi()")
+	result.Check(testkit.Rows("3.141592653589793"))
 
 	// for floor
 	result = tk.MustQuery("select floor(0), floor(null), floor(1.23), floor(-1.23), floor(1)")
