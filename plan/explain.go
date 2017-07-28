@@ -96,7 +96,8 @@ func (p *Limit) ExplainInfo() string {
 func (p *PhysicalAggregation) ExplainInfo() string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("type:%s", p.AggType))
 	if p.HasGby && len(p.GroupByItems) > 0 {
-		buffer.WriteString(fmt.Sprintf(", group by:%s", expression.ExplainExpressionList(p.GroupByItems)))
+		buffer.WriteString(fmt.Sprintf(", group by:%s",
+			expression.ExplainExpressionList(p.GroupByItems)))
 	}
 	buffer.WriteString(", funcs:")
 	for i, agg := range p.AggFuncs {
@@ -117,21 +118,27 @@ func (p *PhysicalApply) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("outer:%s", p.Children()[p.outerIndex].ID()))
+	buffer := bytes.NewBufferString(fmt.Sprintf("outer:%s",
+		p.Children()[p.outerIndex].ID()))
 	if len(p.OuterJoinKeys) > 0 {
-		buffer.WriteString(fmt.Sprintf(", outer key:%s", expression.ExplainColumnList(p.OuterJoinKeys)))
+		buffer.WriteString(fmt.Sprintf(", outer key:%s",
+			expression.ExplainColumnList(p.OuterJoinKeys)))
 	}
 	if len(p.InnerJoinKeys) > 0 {
-		buffer.WriteString(fmt.Sprintf(", inner key:%s", expression.ExplainColumnList(p.InnerJoinKeys)))
+		buffer.WriteString(fmt.Sprintf(", inner key:%s",
+			expression.ExplainColumnList(p.InnerJoinKeys)))
 	}
 	if len(p.LeftConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", left cond:%s", expression.ExplainExpressionList(p.LeftConditions)))
+		buffer.WriteString(fmt.Sprintf(", left cond:%s",
+			expression.ExplainExpressionList(p.LeftConditions)))
 	}
 	if len(p.RightConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", right cond:%s", expression.ExplainExpressionList(p.RightConditions)))
+		buffer.WriteString(fmt.Sprintf(", right cond:%s",
+			expression.ExplainExpressionList(p.RightConditions)))
 	}
 	if len(p.OtherConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", other cond:%s", expression.ExplainExpressionList(p.OtherConditions)))
+		buffer.WriteString(fmt.Sprintf(", other cond:%s",
+			expression.ExplainExpressionList(p.OtherConditions)))
 	}
 	return buffer.String()
 }
@@ -147,10 +154,12 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 		buffer.WriteString(fmt.Sprintf(", left cond:%s", p.LeftConditions))
 	}
 	if len(p.RightConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", right cond:%s", expression.ExplainExpressionList(p.RightConditions)))
+		buffer.WriteString(fmt.Sprintf(", right cond:%s",
+			expression.ExplainExpressionList(p.RightConditions)))
 	}
 	if len(p.OtherConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", other cond:%s", expression.ExplainExpressionList(p.OtherConditions)))
+		buffer.WriteString(fmt.Sprintf(", other cond:%s",
+			expression.ExplainExpressionList(p.OtherConditions)))
 	}
 	return buffer.String()
 }
@@ -171,10 +180,12 @@ func (p *PhysicalHashSemiJoin) ExplainInfo() string {
 		buffer.WriteString(fmt.Sprintf(", left cond:%s", p.LeftConditions))
 	}
 	if len(p.RightConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", right cond:%s", expression.ExplainExpressionList(p.RightConditions)))
+		buffer.WriteString(fmt.Sprintf(", right cond:%s",
+			expression.ExplainExpressionList(p.RightConditions)))
 	}
 	if len(p.OtherConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", other cond:%s", expression.ExplainExpressionList(p.OtherConditions)))
+		buffer.WriteString(fmt.Sprintf(", other cond:%s",
+			expression.ExplainExpressionList(p.OtherConditions)))
 	}
 	return buffer.String()
 }
@@ -189,10 +200,12 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 		buffer.WriteString(fmt.Sprintf(", left cond:%s", p.LeftConditions))
 	}
 	if len(p.RightConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", right cond:%s", expression.ExplainExpressionList(p.RightConditions)))
+		buffer.WriteString(fmt.Sprintf(", right cond:%s",
+			expression.ExplainExpressionList(p.RightConditions)))
 	}
 	if len(p.OtherConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", other cond:%s", expression.ExplainExpressionList(p.OtherConditions)))
+		buffer.WriteString(fmt.Sprintf(", other cond:%s",
+			expression.ExplainExpressionList(p.OtherConditions)))
 	}
 	if len(p.DefaultValues) > 0 {
 		buffer.WriteString("default vals:")
@@ -213,10 +226,12 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 		buffer.WriteString("asc")
 	}
 	if len(p.leftKeys) > 0 {
-		buffer.WriteString(fmt.Sprintf("left key:%s", expression.ExplainColumnList(p.leftKeys)))
+		buffer.WriteString(fmt.Sprintf("left key:%s",
+			expression.ExplainColumnList(p.leftKeys)))
 	}
 	if len(p.rightKeys) > 0 {
-		buffer.WriteString(fmt.Sprintf("right key:%s", expression.ExplainColumnList(p.rightKeys)))
+		buffer.WriteString(fmt.Sprintf("right key:%s",
+			expression.ExplainColumnList(p.rightKeys)))
 	}
 	return buffer.String()
 }

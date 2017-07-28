@@ -20,7 +20,6 @@ import (
 )
 
 func (s *testSuite) TestExplain(c *C) {
-	//c.Skip("new planner use different explain, reopen this test in the future.")
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
@@ -105,10 +104,10 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
 			[]string{
-				"TableScan_22 HashAgg_16 cop ",
+				"TableScan_17 HashAgg_16 cop ",
 				"HashAgg_16  cop type:complete, group by:b.c2, funcs:count(b.c2), firstrow(b.c2)",
-				"TableReader_26 HashAgg_25 root ",
-				"HashAgg_25 IndexJoin_9 root type:final, group by:, funcs:count(col_0), firstrow(col_1)",
+				"TableReader_21 HashAgg_20 root ",
+				"HashAgg_20 IndexJoin_9 root type:final, group by:, funcs:count(col_0), firstrow(col_1)",
 				"TableScan_12  cop ",
 				"TableReader_31 IndexJoin_9 root ",
 				"IndexJoin_9 Projection_8 root outer:TableReader_31, outer key:b.c2, inner key:a.c1",
@@ -118,9 +117,9 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select * from t2 order by t2.c2 limit 0, 1",
 			[]string{
-				"TableScan_12 TopN_5 cop ",
+				"TableScan_7 TopN_5 cop ",
 				"TopN_5  cop ",
-				"TableReader_15 TopN_5 root ",
+				"TableReader_10 TopN_5 root ",
 				"TopN_5  root ",
 			},
 		},
@@ -145,10 +144,10 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
 			[]string{
-				"TableScan_15 HashAgg_10 cop ",
+				"TableScan_11 HashAgg_10 cop ",
 				"HashAgg_10  cop type:complete, funcs:sum(in(test.t1.c1, 1, 2))",
-				"TableReader_18 HashAgg_17 root ",
-				"HashAgg_17  root type:final, funcs:sum(col_0)",
+				"TableReader_14 HashAgg_13 root ",
+				"HashAgg_13  root type:final, funcs:sum(col_0)",
 			},
 		},
 		{
