@@ -24,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/tablecodec"
@@ -176,13 +177,15 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tidbdrv := NewTiDBDriver(store)
-	cfg := &Config{
+
+	cfg := &config.Config{
 		Addr:         ":4001",
 		LogLevel:     "debug",
 		StatusAddr:   ":10090",
 		ReportStatus: true,
 		Store:        "tikv",
 	}
+
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
