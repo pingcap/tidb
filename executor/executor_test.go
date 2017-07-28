@@ -1165,6 +1165,9 @@ func (s *testSuite) TestBuiltin(c *C) {
 	CAST(0xffffffffffffffff as unsigned) c;`)
 	result.Check(testkit.Rows("-8070450532247928833 -2 18446744073709551615"))
 
+	result = tk.MustQuery(`select cast("1:2:3" as TIME) = "1:02:03"`)
+	result.Check(testkit.Rows("0"))
+
 	// fixed issue #3471
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(6));")
