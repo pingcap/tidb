@@ -57,6 +57,11 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if v.err != nil {
 			return in, true
 		}
+	case *ast.DropTableStmt:
+		v.checkDropTableGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
 	case *ast.CreateIndexStmt:
 		v.checkCreateIndexGrammar(node)
 		if v.err != nil {
@@ -64,6 +69,16 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.AlterTableStmt:
 		v.checkAlterTableGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
+	case *ast.CreateDatabaseStmt:
+		v.checkCreateDatabaseGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
+	case *ast.DropDatabaseStmt:
+		v.checkDropDatabaseGrammar(node)
 		if v.err != nil {
 			return in, true
 		}
@@ -205,14 +220,39 @@ func (v *validator) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	}
 }
 
+func (v *validator) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
+	if isIncorrectName(stmt.Name) {
+		v.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
+	}
+	return
+}
+
+func (v *validator) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
+	if isIncorrectName(stmt.Name) {
+		v.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
+	}
+	return
+}
+
 func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
-	if stmt.Table == nil || stmt.Table.Name.String() == "" {
+	if stmt.Table == nil {
 		v.err = ddl.ErrWrongTableName.GenByArgs("")
+		return
+	}
+
+	tName := stmt.Table.Name.String()
+	if isIncorrectName(tName) {
+		v.err = ddl.ErrWrongTableName.GenByArgs(tName)
 		return
 	}
 
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
+		cName := colDef.Name.Name.String()
+		if isIncorrectName(cName) {
+			v.err = ddl.ErrWrongColumnName.GenByArgs(cName)
+			return
+		}
 		if err := checkFieldLengthLimitation(colDef); err != nil {
 			v.err = errors.Trace(err)
 			return
@@ -246,6 +286,20 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 }
 
+func (v *validator) checkDropTableGrammar(stmt *ast.DropTableStmt) {
+	if stmt.Tables == nil {
+		v.err = ddl.ErrWrongTableName.GenByArgs("")
+		return
+	}
+	for _, t := range stmt.Tables {
+		if isIncorrectName(t.Name.String()) {
+			v.err = ddl.ErrWrongTableName.GenByArgs(t.Name.String())
+			return
+		}
+	}
+	return
+}
+
 func isPrimary(ops []*ast.ColumnOption) int {
 	for _, op := range ops {
 		if op.Tp == ast.ColumnOptionPrimaryKey {
@@ -256,14 +310,43 @@ func isPrimary(ops []*ast.ColumnOption) int {
 }
 
 func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
+	tName := stmt.Table.Name.String()
+	if isIncorrectName(tName) {
+		v.err = ddl.ErrWrongTableName.GenByArgs(tName)
+		return
+	}
+	// We do not check column name here, due to MySQL returns "ERROR 1072 (42000): Key column 'a ' doesn't exist in table",
+	// if column name is `` or contains space at the end.
 	v.err = checkDuplicateColumnName(stmt.IndexColNames)
 	return
 }
 
 func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
+	if stmt.Table == nil {
+		v.err = ddl.ErrWrongTableName.GenByArgs("")
+		return
+	}
+
+	tName := stmt.Table.Name.String()
+	if isIncorrectName(tName) {
+		v.err = ddl.ErrWrongTableName.GenByArgs(tName)
+		return
+	}
 	specs := stmt.Specs
 	for _, spec := range specs {
+		if spec.NewTable != nil {
+			ntName := spec.NewTable.Name.String()
+			if isIncorrectName(ntName) {
+				v.err = ddl.ErrWrongTableName.GenByArgs(ntName)
+				return
+			}
+		}
 		if spec.NewColumn != nil {
+			cName := spec.NewColumn.Name.Name.String()
+			if isIncorrectName(cName) {
+				v.err = ddl.ErrWrongColumnName.GenByArgs(cName)
+				return
+			}
 			if err := checkFieldLengthLimitation(spec.NewColumn); err != nil {
 				v.err = err
 				return
@@ -352,4 +435,15 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 		// TODO: Add more types.
 	}
 	return nil
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func isIncorrectName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
+	return false
 }
