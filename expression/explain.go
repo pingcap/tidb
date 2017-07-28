@@ -60,3 +60,25 @@ func ExplainAggFunc(agg AggregationFunction) string {
 	buffer.WriteString(")")
 	return buffer.String()
 }
+
+func ExplainExpressionList(exprs []Expression) []byte {
+	buffer := bytes.NewBufferString("")
+	for i, expr := range exprs {
+		buffer.WriteString(expr.ExplainInfo())
+		if i+1 < len(exprs) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.Bytes()
+}
+
+func ExplainColumnList(cols []*Column) []byte {
+	buffer := bytes.NewBufferString("")
+	for i, col := range cols {
+		buffer.WriteString(col.ExplainInfo())
+		if i+1 < len(cols) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.Bytes()
+}
