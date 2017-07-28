@@ -479,6 +479,8 @@ type PhysicalIndexJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 	outerIndex      int
+	KeepOrder       bool
+	outerSchema     *expression.Schema
 
 	DefaultValues []types.Datum
 }
