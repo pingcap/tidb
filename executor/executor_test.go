@@ -1032,6 +1032,10 @@ func (s *testSuite) TestOpBuiltin(c *C) {
 	// for logicAnd
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
+
+	// for logicNot
+	result = tk.MustQuery("select !1, !123, !0, !null")
+	result.Check(testkit.Rows("0 0 1 <nil>"))
 	// for logicalXor
 	result = tk.MustQuery("select 1 xor 1, 1 xor 0, 0 xor 1, 0 xor 0, 2 xor -1, null xor 1, '1a' xor 'a'")
 	result.Check(testkit.Rows("0 1 1 0 0 <nil> 1"))
