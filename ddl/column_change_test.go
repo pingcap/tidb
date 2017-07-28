@@ -151,7 +151,7 @@ func (s *testColumnChangeSuite) TestAddColumnJobArgsChangeInRunning(c *C) {
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	s.testCheckAddColumn(c, ctx, d, tc, tblInfo, "c2", &ast.ColumnPosition{Tp: ast.ColumnPositionFirst},
 		types.MakeDatums(1, 2))
 	s.testCheckAddColumn(c, ctx, d, tc, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone},
@@ -163,7 +163,7 @@ func (s *testColumnChangeSuite) TestAddColumnJobArgsChangeInRunning(c *C) {
 	assertEqualColumnNames(c, t.Cols(), []string{"c2", "c4", "c1", "c3"})
 }
 
-func (s *testColumnChangeSuite) testCheckAddColumn(c *C, ctx context.Context, d *ddl, tc *testDDLCallback,
+func (s *testColumnChangeSuite) testCheckAddColumn(c *C, ctx context.Context, d *ddl, tc *TestDDLCallback,
 	tblInfo *model.TableInfo, colName string, pos *ast.ColumnPosition, newRecord []types.Datum) {
 	col := &model.ColumnInfo{
 		Name:               model.NewCIStr(colName),
@@ -217,7 +217,7 @@ func (s *testColumnChangeSuite) testCheckAddColumn(c *C, ctx context.Context, d 
 			checkErr = errors.Trace(err)
 		}
 	}
-	d.setHook(tc)
+	d.SetHook(tc)
 	d.start(goctx.Background())
 
 	job := testAddColumnJob(c, ctx, d, s.dbInfo, tblInfo, col, pos)
@@ -239,7 +239,7 @@ func (s *testColumnChangeSuite) testAddMultipleColumns(c *C, ctx context.Context
 	testCheckJobDone(c, d, job, true)
 
 	d.Stop()
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
 	var checkErr error
@@ -278,7 +278,7 @@ func (s *testColumnChangeSuite) testAddMultipleColumns(c *C, ctx context.Context
 			checkErr = errors.Trace(err)
 		}
 	}
-	d.setHook(tc)
+	d.SetHook(tc)
 	d.start(goctx.Background())
 	positions := []*ast.ColumnPosition{
 		{Tp: ast.ColumnPositionNone},
