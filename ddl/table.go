@@ -176,7 +176,7 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 // dropTableData deletes data in a limited number. If limit < 0, deletes all data.
 func (d *ddl) dropTableData(startKey kv.Key, job *model.Job, limit int) (int, error) {
 	prefix := tablecodec.EncodeTablePrefix(job.TableID)
-	delCount, nextStartKey, err := d.delKeysWithStartKey(prefix, startKey, bgJobFlag, job, limit)
+	delCount, nextStartKey, err := d.delKeysWithStartKey(prefix, startKey, job, limit)
 	job.Args = []interface{}{nextStartKey}
 	return delCount, errors.Trace(err)
 }

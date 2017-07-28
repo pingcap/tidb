@@ -118,6 +118,8 @@ var (
 	DelRangeReqCh = make(chan *model.Job, 1)
 	// DelRangeRspCh is for communicating between DDL and DelRangeWorker.
 	DelRangeRspCh = make(chan struct{}, 1)
+	// DelRangeStopCh is for shuting down DelRangeWorker.
+	DelRangeStopCh = make(chan struct{}, 1)
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -322,6 +324,9 @@ func (d *ddl) close() {
 		log.Errorf("[ddl] remove self version path failed %v", err)
 	}
 
+	DelRangeStopCh <- struct{}{}
+	close(DelRangeStopCh)
+	close(DelRangeReqCh)
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)
 }
@@ -412,16 +417,15 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	// But we use etcd to speed up, normally it takes less than 1s now, so we use 3s as the max value.
 	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 3*time.Second))
 	startTime := time.Now()
-	jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Inc()
+	jobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
 		ticker.Stop()
-		jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Dec()
+		jobsGauge.WithLabelValues(job.Type.String()).Dec()
 		retLabel := handleJobSucc
 		if err != nil {
 			retLabel = handleJobFailed
 		}
-		handleJobHistogram.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String(),
-			retLabel).Observe(time.Since(startTime).Seconds())
+		handleJobHistogram.WithLabelValues(job.Type.String(), retLabel).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
 		select {

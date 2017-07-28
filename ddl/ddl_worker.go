@@ -69,14 +69,9 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) isOwner(flag JobType) bool {
-	if flag == ddlJobFlag {
-		isOwner := d.ownerManager.IsOwner()
-		log.Debugf("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
-		return isOwner
-	}
-	isOwner := d.ownerManager.IsBgOwner()
-	log.Debugf("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
+func (d *ddl) isOwner() bool {
+	isOwner := d.ownerManager.IsOwner()
+	log.Debugf("[ddl] it's the job owner %v, self id %s", isOwner, d.uuid)
 	return isOwner
 }
 
@@ -147,25 +142,6 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-// JobType is job type, including ddl/background.
-type JobType int
-
-const (
-	ddlJobFlag = iota + 1
-	bgJobFlag
-)
-
-func (j JobType) String() string {
-	switch j {
-	case ddlJobFlag:
-		return "ddl"
-	case bgJobFlag:
-		return "background"
-	}
-
-	return "unknown"
-}
-
 func (d *ddl) handleDDLJobQueue() error {
 	once := true
 	for {
@@ -178,7 +154,7 @@ func (d *ddl) handleDDLJobQueue() error {
 		var schemaVer int64
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			// We are not owner, return and retry checking later.
-			if !d.isOwner(ddlJobFlag) {
+			if !d.isOwner() {
 				return nil
 			}
 

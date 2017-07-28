@@ -28,12 +28,13 @@ import (
 // DelRangeWorker deals with DDL jobs which can speed up by delete-range.
 type DelRangeWorker struct {
 	executor sqlexec.SQLExecutor
-	ReqCh    <-chan *model.Job
-	RspCh    chan<- struct{}
+	reqCh    <-chan *model.Job
+	rspCh    chan<- struct{}
+	stopCh   <-chan struct{}
 }
 
 // NewAndStartDelRangeWorker starts a new DelRangeWorker, which gets tasks
-// from ddl.DelRangeReqCh, and run them with a session without privileges.
+// from ddl.DelRangereqCh, and run them with a session without privileges.
 func NewAndStartDelRangeWorker(store kv.Storage) error {
 	s, err := tidb.CreateSession(store)
 	if err != nil {
@@ -43,17 +44,18 @@ func NewAndStartDelRangeWorker(store kv.Storage) error {
 
 	worker := DelRangeWorker{
 		executor: s.(sqlexec.SQLExecutor),
-		ReqCh:    ddl.DelRangeReqCh,
-		RspCh:    ddl.DelRangeRspCh,
+		reqCh:    ddl.DelRangeReqCh,
+		rspCh:    ddl.DelRangeRspCh,
 	}
 	go worker.start()
+	log.Infof("[ddl] DelRangeWorker started")
 	return nil
 }
 
 func (worker *DelRangeWorker) start() {
 	for {
 		select {
-		case job := <-worker.ReqCh:
+		case job := <-worker.reqCh:
 			worker.executor.Execute("BEGIN")
 			err := delrangesql.InsertBgJobIntoDeleteRangeTable(worker.executor, job)
 			if err != nil {
@@ -61,7 +63,10 @@ func (worker *DelRangeWorker) start() {
 				log.Errorf("[ddl] handle delete-range job err %v", errors.ErrorStack(err))
 			}
 			worker.executor.Execute("COMMIT")
-			worker.RspCh <- struct{}{}
+			worker.rspCh <- struct{}{}
+		case <-worker.stopCh:
+			close(worker.rspCh)
+			return
 		}
 	}
 }
