@@ -40,6 +40,7 @@ const (
 	CmdRawGet CmdType = 256 + iota
 	CmdRawPut
 	CmdRawDelete
+	CmdDeleteRange
 	CmdRawScan
 
 	CmdCop CmdType = 512 + iota
@@ -65,6 +66,7 @@ type Request struct {
 	RawGet           *kvrpcpb.RawGetRequest
 	RawPut           *kvrpcpb.RawPutRequest
 	RawDelete        *kvrpcpb.RawDeleteRequest
+	DeleteRange      *kvrpcpb.DeleteRangeRequest
 	RawScan          *kvrpcpb.RawScanRequest
 	Cop              *coprocessor.Request
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyRequest
@@ -101,6 +103,8 @@ func (req *Request) GetContext() (*kvrpcpb.Context, error) {
 		c = req.RawPut.GetContext()
 	case CmdRawDelete:
 		c = req.RawDelete.GetContext()
+	case CmdDeleteRange:
+		c = req.DeleteRange.GetContext()
 	case CmdRawScan:
 		c = req.RawScan.GetContext()
 	case CmdCop:
@@ -131,6 +135,7 @@ type Response struct {
 	RawGet           *kvrpcpb.RawGetResponse
 	RawPut           *kvrpcpb.RawPutResponse
 	RawDelete        *kvrpcpb.RawDeleteResponse
+	DeleteRange      *kvrpcpb.DeleteRangeResponse
 	RawScan          *kvrpcpb.RawScanResponse
 	Cop              *coprocessor.Response
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyResponse
@@ -167,6 +172,8 @@ func SetContext(req *Request, ctx *kvrpcpb.Context) error {
 		req.RawPut.Context = ctx
 	case CmdRawDelete:
 		req.RawDelete.Context = ctx
+	case CmdDeleteRange:
+		req.DeleteRange.Context = ctx
 	case CmdRawScan:
 		req.RawScan.Context = ctx
 	case CmdCop:
@@ -239,6 +246,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.RawDelete = &kvrpcpb.RawDeleteResponse{
 			RegionError: e,
 		}
+	case CmdDeleteRange:
+		resp.DeleteRange = &kvrpcpb.DeleteRangeResponse{
+			RegionError: e,
+		}
 	case CmdRawScan:
 		resp.RawScan = &kvrpcpb.RawScanResponse{
 			RegionError: e,
@@ -291,6 +302,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.RawPut.GetRegionError()
 	case CmdRawDelete:
 		e = resp.RawDelete.GetRegionError()
+	case CmdDeleteRange:
+		e = resp.DeleteRange.GetRegionError()
 	case CmdRawScan:
 		e = resp.RawScan.GetRegionError()
 	case CmdCop:

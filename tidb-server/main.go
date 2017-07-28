@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/delrange"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
@@ -144,6 +145,12 @@ func main() {
 
 	// Bootstrap a session to load information schema.
 	domain, err := tidb.BootstrapSession(store)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
+
+	// Start DelRangeWorker.
+	err = delrange.NewAndStartDelRangeWorker(store)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}

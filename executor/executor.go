@@ -164,7 +164,6 @@ type ShowDDLExec struct {
 	bgOwnerID  string
 	selfID     string
 	ddlInfo    *inspectkv.DDLInfo
-	bgInfo     *inspectkv.DDLInfo
 	done       bool
 }
 
@@ -178,19 +177,12 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	if e.ddlInfo.Job != nil {
 		ddlJob = e.ddlInfo.Job.String()
 	}
-	var bgJob string
-	if e.bgInfo.Job != nil {
-		bgJob = e.bgInfo.Job.String()
-	}
 
 	row := &Row{}
 	row.Data = types.MakeDatums(
 		e.ddlInfo.SchemaVer,
 		e.ddlOwnerID,
 		ddlJob,
-		e.bgInfo.SchemaVer,
-		e.bgOwnerID,
-		bgJob,
 		e.selfID,
 	)
 	e.done = true

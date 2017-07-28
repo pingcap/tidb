@@ -45,7 +45,6 @@ var (
 	// errNotOwner means we are not owner and can't handle DDL jobs.
 	errNotOwner              = terror.ClassDDL.New(codeNotOwner, "not Owner")
 	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid ddl job")
-	errInvalidBgJob          = terror.ClassDDL.New(codeInvalidBgJob, "invalid background job")
 	errInvalidJobFlag        = terror.ClassDDL.New(codeInvalidJobFlag, "invalid job flag")
 	errRunMultiSchemaChanges = terror.ClassDDL.New(codeRunMultiSchemaChanges, "can't run multi schema change")
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
@@ -113,6 +112,13 @@ var (
 	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
 	// ErrWrongTableName return for wrong table name.
 	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
+
+	// DelRangeReqCh is for communicating between DDL and DelRangeWorker.
+	DelRangeReqCh = make(chan *model.Job, 1)
+	// DelRangeRspCh is for communicating between DDL and DelRangeWorker.
+	DelRangeRspCh = make(chan struct{}, 1)
+	// DelRangeStopCh is for shuting down DelRangeWorker.
+	DelRangeStopCh = make(chan struct{}, 1)
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -192,8 +198,7 @@ type ddl struct {
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *Event
-	// Drop database/table job that runs in the background.
-	bgJobCh chan struct{}
+
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
@@ -270,7 +275,6 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		lease:        lease,
 		ddlJobCh:     make(chan struct{}, 1),
 		ddlJobDoneCh: make(chan struct{}, 1),
-		bgJobCh:      make(chan struct{}, 1),
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		workerVars:   variable.NewSessionVars(),
@@ -300,13 +304,11 @@ func (d *ddl) start(ctx goctx.Context) {
 	d.ownerManager.CampaignOwners(ctx)
 
 	d.wait.Add(2)
-	go d.onBackgroundWorker()
 	go d.onDDLWorker()
 
 	// For every start, we will send a fake job to let worker
 	// check owner firstly and try to find whether a job exists and run.
 	asyncNotify(d.ddlJobCh)
-	asyncNotify(d.bgJobCh)
 }
 
 func (d *ddl) close() {
@@ -321,6 +323,9 @@ func (d *ddl) close() {
 		log.Errorf("[ddl] remove self version path failed %v", err)
 	}
 
+	DelRangeStopCh <- struct{}{}
+	close(DelRangeStopCh)
+	close(DelRangeReqCh)
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)
 }
@@ -411,16 +416,15 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	// But we use etcd to speed up, normally it takes less than 1s now, so we use 3s as the max value.
 	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 3*time.Second))
 	startTime := time.Now()
-	jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Inc()
+	jobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
 		ticker.Stop()
-		jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Dec()
+		jobsGauge.WithLabelValues(job.Type.String()).Dec()
 		retLabel := handleJobSucc
 		if err != nil {
 			retLabel = handleJobFailed
 		}
-		handleJobHistogram.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String(),
-			retLabel).Observe(time.Since(startTime).Seconds())
+		handleJobHistogram.WithLabelValues(job.Type.String(), retLabel).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
 		select {
@@ -479,7 +483,6 @@ const (
 	codeInvalidWorker         terror.ErrCode = 1
 	codeNotOwner                             = 2
 	codeInvalidDDLJob                        = 3
-	codeInvalidBgJob                         = 4
 	codeInvalidJobFlag                       = 5
 	codeRunMultiSchemaChanges                = 6
 	codeWaitReorgTimeout                     = 7

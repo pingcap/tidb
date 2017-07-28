@@ -76,9 +76,9 @@ func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) (*m
 }
 
 func isDDLJobDone(c *C, t *meta.Meta) bool {
-	bgJob, err := t.GetBgJob(0)
+	job, err := t.GetDDLJob(0)
 	c.Assert(err, IsNil)
-	if bgJob == nil {
+	if job == nil {
 		return true
 	}
 
@@ -153,22 +153,6 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	tc := &TestDDLCallback{}
 	var checkErr error
 	var updatedCount int
-	tc.onBgJobUpdated = func(job *model.Job) {
-		if job == nil || checkErr != nil {
-			return
-		}
-		job.Mu.Lock()
-		count := job.RowCount
-		job.Mu.Unlock()
-		if updatedCount == 0 && count != defaultBatchCnt+100 {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, defaultBatchCnt+100)
-			return
-		}
-		if updatedCount == 1 && count != defaultBatchCnt+110 {
-			checkErr = errors.Errorf("row count %v isn't equal to %v", count, defaultBatchCnt+110)
-		}
-		updatedCount++
-	}
 	d.SetHook(tc)
 	job, v := testDropSchema(c, ctx, d, dbInfo)
 	testCheckSchemaState(c, d, dbInfo, model.StateNone)
@@ -176,8 +160,6 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	ids[tblInfo1.ID] = struct{}{}
 	ids[tblInfo2.ID] = struct{}{}
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
-	// check background ddl info
-	verifyBgJobState(c, d, job, model.JobDone, testLease*350)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)
 
@@ -198,7 +180,6 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	job, _ = testDropSchema(c, ctx, d, dbInfo1)
 	testCheckSchemaState(c, d, dbInfo1, model.StateNone)
 	testCheckJobDone(c, d, job, false)
-	verifyBgJobState(c, d, job, model.JobDone, testLease*5)
 }
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
@@ -209,7 +190,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	d1 := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
 
-	testCheckOwner(c, d1, true, ddlJobFlag)
+	testCheckOwner(c, d1, true)
 
 	d2 := newDDL(goctx.Background(), nil, store, nil, nil, testLease*4)
 	defer d2.Stop()
@@ -217,7 +198,6 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 
 	// d2 must not be owner.
 	d2.ownerManager.SetOwner(false)
-	d2.ownerManager.SetBgOwner(false)
 
 	dbInfo := testSchemaInfo(c, d2, "test")
 	testCreateSchema(c, ctx, d2, dbInfo)
@@ -263,7 +243,7 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	d1 := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
 
-	testCheckOwner(c, d1, true, ddlJobFlag)
+	testCheckOwner(c, d1, true)
 
 	dbInfo := testSchemaInfo(c, d1, "test")
 

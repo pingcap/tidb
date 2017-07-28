@@ -69,14 +69,9 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) isOwner(flag JobType) bool {
-	if flag == ddlJobFlag {
-		isOwner := d.ownerManager.IsOwner()
-		log.Debugf("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
-		return isOwner
-	}
-	isOwner := d.ownerManager.IsBgOwner()
-	log.Debugf("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
+func (d *ddl) isOwner() bool {
+	isOwner := d.ownerManager.IsOwner()
+	log.Debugf("[ddl] it's the job owner %v, self id %s", isOwner, d.uuid)
 	return isOwner
 }
 
@@ -114,18 +109,20 @@ func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, updateTS uint64) error 
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) error {
-	log.Infof("[ddl] finish DDL job %v", job)
-	// Job is finished, notice and run the next job.
+	switch job.Type {
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable:
+		// TODO: Now we split DDL and DelRangeWorker because cycle import problems.
+		// In future, we should resolve them and do delete-range directly here.
+		DelRangeReqCh <- job
+		<-DelRangeRspCh
+	}
+
 	_, err := t.DeQueueDDLJob()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	switch job.Type {
-	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable:
-		if err = d.prepareBgJob(t, job); err != nil {
-			return errors.Trace(err)
-		}
-	}
+
+	log.Infof("[ddl] finish DDL job %v", job)
 
 	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
@@ -145,25 +142,6 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-// JobType is job type, including ddl/background.
-type JobType int
-
-const (
-	ddlJobFlag = iota + 1
-	bgJobFlag
-)
-
-func (j JobType) String() string {
-	switch j {
-	case ddlJobFlag:
-		return "ddl"
-	case bgJobFlag:
-		return "background"
-	}
-
-	return "unknown"
-}
-
 func (d *ddl) handleDDLJobQueue() error {
 	once := true
 	for {
@@ -176,7 +154,7 @@ func (d *ddl) handleDDLJobQueue() error {
 		var schemaVer int64
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			// We are not owner, return and retry checking later.
-			if !d.isOwner(ddlJobFlag) {
+			if !d.isOwner() {
 				return nil
 			}
 
@@ -244,7 +222,6 @@ func (d *ddl) handleDDLJobQueue() error {
 			d.waitSchemaChanged(waitTime, schemaVer)
 		}
 		if job.IsSynced() {
-			d.startBgJob(job.Type)
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
