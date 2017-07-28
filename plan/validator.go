@@ -310,20 +310,43 @@ func isPrimary(ops []*ast.ColumnOption) int {
 }
 
 func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
-	for _, col := range stmt.IndexColNames {
-		if isIncorrectName(col.Column.Name.String()) {
-			v.err = ddl.ErrWrongColumnName.GenByArgs(col.Column.Name.String())
-			return
-		}
+	tName := stmt.Table.Name.String()
+	if isIncorrectName(tName) {
+		v.err = ddl.ErrWrongTableName.GenByArgs(tName)
+		return
 	}
+	// We do not check column name here, due to MySQL returns "ERROR 1072 (42000): Key column 'a ' doesn't exist in table",
+	// if column name is `` or contains space at the end.
 	v.err = checkDuplicateColumnName(stmt.IndexColNames)
 	return
 }
 
 func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
+	if stmt.Table == nil {
+		v.err = ddl.ErrWrongTableName.GenByArgs("")
+		return
+	}
+
+	tName := stmt.Table.Name.String()
+	if isIncorrectName(tName) {
+		v.err = ddl.ErrWrongTableName.GenByArgs(tName)
+		return
+	}
 	specs := stmt.Specs
 	for _, spec := range specs {
+		if spec.NewTable != nil {
+			ntName := spec.NewTable.Name.String()
+			if isIncorrectName(ntName) {
+				v.err = ddl.ErrWrongTableName.GenByArgs(ntName)
+				return
+			}
+		}
 		if spec.NewColumn != nil {
+			cName := spec.NewColumn.Name.Name.String()
+			if isIncorrectName(cName) {
+				v.err = ddl.ErrWrongColumnName.GenByArgs(cName)
+				return
+			}
 			if err := checkFieldLengthLimitation(spec.NewColumn); err != nil {
 				v.err = err
 				return
@@ -334,12 +357,6 @@ func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
 				ast.ConstraintUniqKey:
-				for _, col := range spec.Constraint.Keys {
-					if isIncorrectName(col.Column.Name.String()) {
-						v.err = ddl.ErrWrongColumnName.GenByArgs(col.Column.Name.String())
-						return
-					}
-				}
 				v.err = checkDuplicateColumnName(spec.Constraint.Keys)
 				if v.err != nil {
 					return
