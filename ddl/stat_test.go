@@ -83,7 +83,6 @@ LOOP:
 			// TODO: Get this information from etcd.
 			// m, err := d.Stats()
 			// c.Assert(err, IsNil)
-			// c.Assert(m[bgOwnerID], Equals, d.uuid)
 			break LOOP
 		}
 	}

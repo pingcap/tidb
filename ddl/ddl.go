@@ -45,7 +45,6 @@ var (
 	// errNotOwner means we are not owner and can't handle DDL jobs.
 	errNotOwner              = terror.ClassDDL.New(codeNotOwner, "not Owner")
 	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid ddl job")
-	errInvalidBgJob          = terror.ClassDDL.New(codeInvalidBgJob, "invalid background job")
 	errInvalidJobFlag        = terror.ClassDDL.New(codeInvalidJobFlag, "invalid job flag")
 	errRunMultiSchemaChanges = terror.ClassDDL.New(codeRunMultiSchemaChanges, "can't run multi schema change")
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
@@ -484,7 +483,6 @@ const (
 	codeInvalidWorker         terror.ErrCode = 1
 	codeNotOwner                             = 2
 	codeInvalidDDLJob                        = 3
-	codeInvalidBgJob                         = 4
 	codeInvalidJobFlag                       = 5
 	codeRunMultiSchemaChanges                = 6
 	codeWaitReorgTimeout                     = 7
