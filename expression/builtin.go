@@ -46,6 +46,7 @@ type baseBuiltinFunc struct {
 	ctx           context.Context
 	deterministic bool
 	tp            *types.FieldType
+	funcName      string
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
 	self builtinFunc
@@ -193,6 +194,10 @@ func (b *baseBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
 	}
 	strVal, err := val.ToString()
 	return strVal, false, errors.Trace(err)
+}
+
+func (b *baseBuiltinFunc) getFuncName() string {
+	return b.funcName
 }
 
 func (b *baseBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
@@ -535,6 +540,8 @@ type builtinFunc interface {
 	getRetTp() *types.FieldType
 	// setSelf sets a pointer to itself.
 	setSelf(builtinFunc) builtinFunc
+	// pass changed funcName
+	getFuncName() string
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.

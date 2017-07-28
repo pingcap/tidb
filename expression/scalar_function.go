@@ -86,8 +86,14 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
+	var fname string
+	if name := f.getFuncName(); name != "" {
+		fname = name
+	} else {
+		fname = funcName
+	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(funcName),
+		FuncName: model.NewCIStr(fname),
 		RetType:  retType,
 		Function: f,
 	}
