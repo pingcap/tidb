@@ -100,6 +100,8 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
+	// UsersLock is a lock for user defined variables.
+	UsersLock sync.RWMutex
 	// Users are user defined variables.
 	Users map[string]string
 	// Systems are system variables.
