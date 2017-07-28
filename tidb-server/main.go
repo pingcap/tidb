@@ -28,6 +28,7 @@ import (
 	"github.com/ngaut/systimemon"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/delrange"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
@@ -144,6 +145,9 @@ func main() {
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
+
+	// Start DelRangeWorker.
+	delrange.NewAndStartDelRangeWorker(store)
 
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)

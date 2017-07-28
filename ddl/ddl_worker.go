@@ -122,9 +122,8 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) error {
 	}
 	switch job.Type {
 	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable:
-		if err = d.prepareBgJob(t, job); err != nil {
-			return errors.Trace(err)
-		}
+		DelRangeReqCh <- job
+		<-DelRangeRspCh
 	}
 
 	err = t.AddHistoryDDLJob(job)
@@ -244,7 +243,6 @@ func (d *ddl) handleDDLJobQueue() error {
 			d.waitSchemaChanged(waitTime, schemaVer)
 		}
 		if job.IsSynced() {
-			d.startBgJob(job.Type)
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}

@@ -28,6 +28,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/delrange/sql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -542,7 +543,7 @@ func upgradeToVer15(s Session) {
 		log.Fatal(err)
 	}
 	s.NewTxn()
-	err = ddl.LoadPendingBgJobsIntoDeleteTable(s)
+	err = delrangesql.LoadPendingBgJobsIntoDeleteTable(s)
 	if err != nil {
 		log.Fatal(err)
 	}

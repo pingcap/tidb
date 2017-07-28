@@ -113,6 +113,11 @@ var (
 	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
 	// ErrWrongTableName return for wrong table name.
 	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
+
+	// DelRangeReqCh
+	DelRangeReqCh = make(chan *model.Job, 1)
+	// DelRangeRspCh
+	DelRangeRspCh = make(chan struct{}, 1)
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
