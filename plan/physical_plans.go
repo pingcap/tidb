@@ -479,6 +479,8 @@ type PhysicalIndexJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 	outerIndex      int
+	KeepOrder       bool
+	outerSchema     *expression.Schema
 
 	DefaultValues []types.Datum
 }
@@ -529,6 +531,19 @@ const (
 	// CompleteAgg supposes its input is original results.
 	CompleteAgg
 )
+
+// String implements fmt.Stringer interface.
+func (at AggregationType) String() string {
+	switch at {
+	case StreamedAgg:
+		return "stream"
+	case FinalAgg:
+		return "final"
+	case CompleteAgg:
+		return "complete"
+	}
+	return "unsupported aggregation type"
+}
 
 // PhysicalAggregation is Aggregation's physical plan.
 type PhysicalAggregation struct {
