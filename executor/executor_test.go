@@ -974,6 +974,12 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("MySQL 123 123 "))
 	result = tk.MustQuery(`select unhex('string'), unhex('你好'), unhex(123.4), unhex(null)`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+
+	// for ltrim and rtrim
+	result = tk.MustQuery(`select ltrim('   bar   '), ltrim('bar'), ltrim(''), ltrim(null)`)
+	result.Check(testutil.RowsWithSep(",", "bar   ,bar,,<nil>"))
+	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
+	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {
