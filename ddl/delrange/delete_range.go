@@ -49,6 +49,14 @@ func NewAndStartDelRangeWorker(store kv.Storage) error {
 	}
 	go worker.start()
 	log.Infof("[ddl] DelRangeWorker started")
+	if !store.SupportDeleteRange() {
+		s, err := tidb.CreateSession(store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		privilege.BindPrivilegeManager(s, nil)
+		go startEmulator(s.(sqlexec.SQLExecutor))
+	}
 	return nil
 }
 
@@ -68,5 +76,24 @@ func (worker *DelRangeWorker) start() {
 			close(worker.rspCh)
 			return
 		}
+	}
+}
+
+func startEmulator(executor sqlexec.SQLExecutor) {
+	emulator := &delRangeEmulator{
+		executor: executor,
+	}
+	emulator.start()
+}
+
+// delRangeEmulator is used for localstorage, which
+// doesn't have GC worker in engine level.
+type delRangeEmulator struct {
+	executor sqlexec.SQLExecutor
+}
+
+func (dre *delRangeEmulator) start() {
+	for {
+		// TODO: fetch, delete, update loop.
 	}
 }

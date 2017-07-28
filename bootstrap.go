@@ -181,7 +181,7 @@ const (
 		job_id BIGINT NOT NULL COMMENT "the DDL job ID",
 		element_id BIGINT NOT NULL COMMENT "the schema element ID",
 		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
-		end_key VARCHAR(255) NOT NULL COMMENT "encoded in base64",
+		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		ts BIGINT NOT NULL COMMENT "timestamp in int64",
 		UNIQUE KEY (job_id, element_id)
 	);`
