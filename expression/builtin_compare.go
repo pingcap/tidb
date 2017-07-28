@@ -269,41 +269,72 @@ func getCmpType(a types.TypeClass, b types.TypeClass) types.TypeClass {
 	return types.ClassReal
 }
 
-func smartCheckType(expr Expression, pt, t types.TypeClass) types.TypeClass {
-	if pt == t || t != types.ClassString {
+// smartConvertType will check expression's value and compare to primary type (tp)
+// then find out best type for secondary type to cast.
+// a is ClassInt Column:
+//    a > "1"       => ClassInt
+//    a > "1.0"     => ClassInt
+//    a > "1.1"     => ClassDecimal
+//    a > "notNum"  => ClassString
+//    a > 1.1       => ClassDecimal
+//    a > 1.0       => ClassInt
+// a is ClassDecimal Column:
+//    a > "1"       => ClassDecimal
+//    a > "1.1"     => ClassDecimal
+//    a > "notNum"  => ClassString
+func smartConvertType(expr Expression, pt, t types.TypeClass) types.TypeClass {
+	if pt == t {
 		return t
 	}
 	c, ok := expr.(*Constant)
 	if !ok {
 		return t
 	}
-	val, ok := c.Value.GetValue().(string)
-	if !ok {
-		return t
-	}
-	_, errf := strconv.ParseFloat(val, 64)
-	_, erri := strconv.ParseInt(val, 10, 64)
-	if pt == types.ClassInt || pt == types.ClassDecimal {
-		if erri != nil && errf == nil {
-			return types.ClassDecimal
+	switch val := c.Value.GetValue().(type) {
+	case string:
+		vf, errf := strconv.ParseFloat(val, 64)
+		_, erri := strconv.ParseInt(val, 10, 64)
+		// primary type is number
+		if pt == types.ClassInt || pt == types.ClassDecimal {
+			// expression can cast to float
+			if erri != nil && errf == nil {
+				// not x.0
+				if vf > math.Floor(vf) {
+					return types.ClassDecimal
+				}
+			}
+			// expression can not cast to number just return origin type
+			if erri != nil && errf != nil {
+				return t
+			}
 		}
-		if erri != nil && errf != nil {
-			return t
+		// follow primary type
+		return pt
+	case *types.MyDecimal:
+		if pt == types.ClassInt {
+			f64val, err := val.ToFloat64()
+			if err == nil {
+				if !(f64val > math.Floor(f64val)) {
+					return types.ClassInt
+				}
+			}
 		}
+	default:
 	}
-	return pt
+	return t
 }
 
-// Try to fix Issue3911
 func getCmpTypeByExpr(a, b Expression, ta, tb types.TypeClass) types.TypeClass {
 	_, aIsCol := a.(*Column)
 	_, bIsCol := b.(*Column)
 	if aIsCol != bIsCol {
+		// Compare has a column, so we use column's type as primary type
 		if bIsCol {
-			return getCmpType(tb, smartCheckType(a, tb, ta))
+			return getCmpType(tb, smartConvertType(a, tb, ta))
 		}
-		return getCmpType(ta, smartCheckType(b, ta, tb))
+		return getCmpType(ta, smartConvertType(b, ta, tb))
 	}
+	// No column just process as normal
 	return getCmpType(ta, tb)
 }
 
