@@ -2297,10 +2297,10 @@ func (s *testSuite) TestCoprocessorPriority(c *C) {
 
 	cli.turnOn = true
 	cli.priority = pb.CommandPri_High
-	tk.MustExec("select id from t where id = 1")
+	tk.MustQuery("select id from t where id = 1")
 
 	cli.priority = pb.CommandPri_Low
-	tk.MustExec("select count(*) from t")
+	tk.MustQuery("select count(*) from t")
 
 	cli.priority = pb.CommandPri_Normal
 	tk.MustExec("insert into t values (2)")
