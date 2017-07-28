@@ -91,7 +91,7 @@ const (
 	// After the row count of the inner table is accurate, this variable will be removed.
 	TiDBMaxRowCountForINLJ = "tidb_max_row_count_for_inlj"
 
-	// tidb_cbo will use new planner with cost based optimizer.
+	// tidb_cbo uses new planner with cost based optimizer.
 	TiDBCBO = "tidb_cbo"
 )
 
