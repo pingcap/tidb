@@ -14,9 +14,12 @@
 package plan
 
 import (
+	"bytes"
+	"fmt"
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -54,6 +57,21 @@ type logicalOptRule interface {
 	optimize(LogicalPlan, context.Context, *idAllocator) (LogicalPlan, error)
 }
 
+func GenDot(p Plan) string {
+	buffer := bytes.NewBufferString(fmt.Sprintf("digraph %s {\n", p.ID()))
+	planQueue := []Plan{p}
+	for len(planQueue) > 0 {
+		curPlan := planQueue[0]
+		for _, child := range curPlan.Children() {
+			buffer.WriteString(fmt.Sprintf("%s -> %s\n", curPlan.ID(), child.ID()))
+			planQueue = append(planQueue, child)
+		}
+		planQueue = planQueue[1:]
+	}
+	buffer.WriteString(fmt.Sprintln("}"))
+	return buffer.String()
+}
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
@@ -84,6 +102,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	if logic, ok := p.(LogicalPlan); ok {
 		return doOptimize(builder.optFlag, logic, ctx, allocator)
 	}
+
 	return p, nil
 }
 
@@ -133,6 +152,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 		return nil, errors.Trace(err)
 	}
 	finalPlan := eliminatePhysicalProjection(physical)
+	log.Debugf("physical plan:\n%s\n", GenDot(finalPlan))
 	return finalPlan, nil
 }
 
