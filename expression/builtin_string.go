@@ -1127,6 +1127,10 @@ type trimFunctionClass struct {
 // The syntax of trim in mysql is 'TRIM([{BOTH | LEADING | TRAILING} [remstr] FROM] str), TRIM([remstr FROM] str)',
 // but we wil convert it into trim(str), trim(str, remstr) and trim(str, remstr, direction) in AST.
 func (c *trimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	switch len(args) {
 	case 1:
 		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
@@ -1139,7 +1143,7 @@ func (c *trimFunctionClass) getFunction(args []Expression, ctx context.Context) 
 			types.SetBinChsClnFlag(bf.tp)
 		}
 		sig := &builtinTrim1ArgSig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+		return sig.setSelf(sig), nil
 
 	case 2:
 		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
@@ -1152,7 +1156,7 @@ func (c *trimFunctionClass) getFunction(args []Expression, ctx context.Context) 
 			types.SetBinChsClnFlag(bf.tp)
 		}
 		sig := &builtinTrim2ArgsSig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+		return sig.setSelf(sig), nil
 
 	case 3:
 		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString, tpInt)
@@ -1165,7 +1169,7 @@ func (c *trimFunctionClass) getFunction(args []Expression, ctx context.Context) 
 			types.SetBinChsClnFlag(bf.tp)
 		}
 		sig := &builtinTrim3ArgsSig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+		return sig.setSelf(sig), nil
 
 	default:
 		return nil, errors.Trace(c.verifyArgs(args))
