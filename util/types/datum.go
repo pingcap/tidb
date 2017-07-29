@@ -24,6 +24,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types/json"
@@ -1114,7 +1115,6 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.State
 		prec, frac := dec.PrecisionAndFrac()
 		if !dec.IsZero() && prec-frac > flen-decimal {
 			dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
-			// TODO: we may need a OverlowAsWarning.
 			// select (cast 111 as decimal(1)) causes a warning in MySQL.
 			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
 		} else if frac != decimal {
@@ -1130,6 +1130,11 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.State
 				}
 			}
 		}
+	}
+
+	if terror.ErrorEqual(err, ErrOverflow) {
+		// TODO: warnErr need to be ErrWarnDataOutOfRange
+		err = sc.HandleOverflow(err, err)
 	}
 	return dec, errors.Trace(err)
 }
@@ -1427,8 +1432,7 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		}
 		return ival, err
 	case KindMysqlHex:
-		fval := d.GetMysqlHex().ToNumber()
-		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
+		return d.GetMysqlHex().Value, nil
 	case KindMysqlBit:
 		fval := d.GetMysqlBit().ToNumber()
 		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
