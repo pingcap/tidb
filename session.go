@@ -191,7 +191,8 @@ func (s *session) GetSessionManager() util.SessionManager {
 
 type schemaLeaseChecker struct {
 	domain.SchemaValidator
-	schemaVer int64
+	schemaVer       int64
+	relatedTableIDs []int64
 }
 
 const (
@@ -217,12 +218,16 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 }
 
 func (s *schemaLeaseChecker) checkOnce(txnTS uint64) error {
-	succ := s.SchemaValidator.Check(txnTS, s.schemaVer)
-	if !succ {
-		if s.SchemaValidator.Latest() > s.schemaVer {
+	isChanged := s.SchemaValidator.Check(txnTS, s.schemaVer)
+	if !isChanged {
+		if s.SchemaValidator.IsAllExpired(txnTS) {
+			return domain.ErrInfoSchemaExpired
+		}
+		if s.SchemaValidator.IsRelatedTablesChanged(txnTS, s.schemaVer, s.relatedTableIDs) {
 			return domain.ErrInfoSchemaChanged
 		}
-		return domain.ErrInfoSchemaExpired
+		log.Infof("schema checker txnTS %d ver %d doesn't change related tables %v",
+			txnTS, s.schemaVer, s.relatedTableIDs)
 	}
 	return nil
 }
@@ -253,10 +258,17 @@ func (s *session) doCommit() error {
 		}
 	}
 
+	// Get the related table IDs.
+	relatedTables := s.GetSessionVars().TxnCtx.TableDeltaMap
+	tableIDs := make([]int64, 0, len(relatedTables))
+	for id, _ := range relatedTables {
+		tableIDs = append(tableIDs, id)
+	}
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
 		SchemaValidator: sessionctx.GetDomain(s).SchemaValidator,
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
+		relatedTableIDs: tableIDs,
 	})
 	if err := s.txn.Commit(); err != nil {
 		return errors.Trace(err)
@@ -343,7 +355,12 @@ func (s *session) String() string {
 
 const sqlLogMaxLen = 1024
 
+var MockSchemaChangedCanotRetry bool
+
 func (s *session) isRetryableError(err error) bool {
+	if MockSchemaChangedCanotRetry {
+		return kv.IsRetryableError(err)
+	}
 	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
 }
 
