@@ -1336,6 +1336,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"RENAME TABLE t TO t1", true},
 		{"RENAME TABLE t t1", false},
 		{"RENAME TABLE d.t TO d1.t1", true},
+		{"RENAME TABLE t1 TO t2, t3 TO t4", true},
 
 		// for truncate statement
 		{"TRUNCATE TABLE t1", true},
@@ -1416,10 +1417,6 @@ func (s *testParserSuite) TestType(c *C) {
 
 		// for national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},
-
-		// for https://github.com/pingcap/tidb/issues/312
-		{`create table t (c float(53));`, true},
-		{`create table t (c float(54));`, false},
 
 		// for json type
 		{`create table t (a JSON);`, true},

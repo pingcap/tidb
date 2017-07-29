@@ -1223,10 +1223,10 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	changedNewColumn := spec.NewColumns[0]
 	if len(changedNewColumn.Name.Schema.O) != 0 && ident.Schema.L != changedNewColumn.Name.Schema.L {
-		return errWrongDBName.GenByArgs(changedNewColumn.Name.Schema.O)
+		return ErrWrongDBName.GenByArgs(changedNewColumn.Name.Schema.O)
 	}
 	if len(spec.OldColumnName.Schema.O) != 0 && ident.Schema.L != spec.OldColumnName.Schema.L {
-		return errWrongDBName.GenByArgs(spec.OldColumnName.Schema.O)
+		return ErrWrongDBName.GenByArgs(spec.OldColumnName.Schema.O)
 	}
 	if len(changedNewColumn.Name.Table.O) != 0 && ident.Name.L != changedNewColumn.Name.Table.L {
 		return ErrWrongTableName.GenByArgs(changedNewColumn.Name.Table.O)
@@ -1250,7 +1250,7 @@ func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	changedNewColumn := spec.NewColumns[0]
 	if len(changedNewColumn.Name.Schema.O) != 0 && ident.Schema.L != changedNewColumn.Name.Schema.L {
-		return errWrongDBName.GenByArgs(changedNewColumn.Name.Schema.O)
+		return ErrWrongDBName.GenByArgs(changedNewColumn.Name.Schema.O)
 	}
 	if len(changedNewColumn.Name.Table.O) != 0 && ident.Name.L != changedNewColumn.Name.Table.L {
 		return ErrWrongTableName.GenByArgs(changedNewColumn.Name.Table.O)
