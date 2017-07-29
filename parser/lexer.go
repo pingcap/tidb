@@ -206,7 +206,7 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 
 	if ch0 == '\\' {
-		if s.r.dataByIndex(pos.Offset+1) == 'N' {
+		if s.r.charByIndex(pos.Offset+1) == 'N' {
 			s.r.incN(2)
 			return null, pos, "\\N"
 		}
@@ -748,7 +748,7 @@ func (r *reader) data(from *Pos) string {
 	return r.s[from.Offset:r.p.Offset]
 }
 
-func (r *reader) dataByIndex(index int) rune {
+func (r *reader) charByIndex(index int) rune {
 	return rune(r.s[index])
 }
 
