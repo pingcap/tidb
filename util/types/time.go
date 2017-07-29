@@ -165,7 +165,8 @@ type Time struct {
 	Fsp int
 	// TODO: Define a type for timestamp, remove its representation from here.
 	// TimeZone is valid when Type is mysql.Timestamp, it's meaningless for date/datetime.
-	TimeZone *gotime.Location
+	TimeZone   *gotime.Location
+	IsNegative bool
 }
 
 // CurrentTime returns current time with type tp.

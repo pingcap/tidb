@@ -168,12 +168,18 @@ func StrToDateTime(str string, fsp int) (Time, error) {
 	return ParseTime(str, mysql.TypeDatetime, fsp)
 }
 
-func StrToDuration(sc *variable.StatementContext, str string, fsp int) (Time, error) {
+func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, err error) {
 	str = strings.TrimSpace(str)
-
-	// Longest valid mysql time is '-10 100:00:00', which length is 13.
-	if len(str) >= 13 {
-		t, err := StrToDateTime(str, fsp)
+	length := len(str)
+	t.IsNegative = false
+	if length > 0 && str[0] == '-' {
+		length--
+		t.IsNegative = true
+	}
+	// Timestamp format is 'YYYYMMDDHHMMSS' or 'YYMMDDHHMMSS', which length is 12.
+	// See #3923, it explains what we do here.
+	if len(str) >= 12 {
+		t, err = StrToDateTime(str, fsp)
 		if err == nil {
 			return t, nil
 		}
