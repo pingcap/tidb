@@ -67,6 +67,16 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		types.SetBinChsClnFlag(&x.Type)
 	case *ast.FuncCallExpr:
 		v.handleFuncCallExpr(x)
+	case *ast.FuncCastExpr:
+		// Copy a new field type.
+		tp := *x.Tp
+		x.SetType(&tp)
+		if len(x.Type.Charset) == 0 {
+			x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
+		}
+		if x.Type.Charset == charset.CharsetBin {
+			x.Type.Flag |= mysql.BinaryFlag
+		}
 	case *ast.IsNullExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		types.SetBinChsClnFlag(&x.Type)
@@ -115,6 +125,13 @@ func (v *typeInferrer) selectStmt(x *ast.SelectStmt) {
 
 func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 	switch x.Op {
+	case opcode.LogicAnd, opcode.LogicOr, opcode.LogicXor:
+		x.Type.Init(mysql.TypeLonglong)
+	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
+		x.Type.Init(mysql.TypeLonglong)
+	case opcode.RightShift, opcode.LeftShift, opcode.And, opcode.Or, opcode.Xor:
+		x.Type.Init(mysql.TypeLonglong)
+		x.Type.Flag |= mysql.UnsignedFlag
 	case opcode.IntDiv:
 		x.Type.Init(mysql.TypeLonglong)
 	case opcode.Plus, opcode.Minus, opcode.Mul, opcode.Mod:
