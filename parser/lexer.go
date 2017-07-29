@@ -206,6 +206,7 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 
 	if ch0 == '\\' {
+		// support \N as shortcut for NULL
 		if s.r.charByIndex(pos.Offset+1) == 'N' {
 			s.r.incN(2)
 			return null, pos, "\\N"
