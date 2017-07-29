@@ -11,30 +11,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package parser
+package table
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
 )
 
-type testParserSuite struct{}
+var _ = Suite(&testTableSuite{})
 
-func (s *testParserSuite) TestParseExpression(c *C) {
-	tests := []struct {
-		input   string
-		output  string
-		success bool
-	}{
-		{"json_extract(a, '$.a')", "json_extract", true},
-	}
-	for _, tt := range tests {
-		node, err := ParseExpression(tt.input)
-		if tt.success {
-			fc := node.(*ast.FuncCallExpr)
-			c.Assert(fc.FnName.L, Equals, tt.output)
-		} else {
-			c.Assert(err, NotNil)
-		}
-	}
+type testTableSuite struct{}
+
+func (ts *testTableSuite) TestSlice(c *C) {
+	sl := make(Slice, 2)
+	len := sl.Len()
+	c.Assert(len, Equals, 2)
+	sl.Swap(0, 1)
 }

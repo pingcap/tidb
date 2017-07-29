@@ -171,6 +171,22 @@ func (s *testSuite) TestInsert(c *C) {
 	r.Check(testkit.Rows("1035651600"))
 	tk.MustExec("set @@time_zone = @origin_time_zone")
 
+	// issue 3832
+	tk.MustExec("create table t1 (b char(0));")
+	_, err = tk.Exec(`insert into t1 values ("");`)
+	c.Assert(err, IsNil)
+
+	// issue 3895
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
+	tk.MustExec("INSERT INTO t VALUES (1.000001);")
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	tk.MustExec("INSERT INTO t VALUES (1.000000);")
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
@@ -1005,4 +1021,69 @@ func (s *testSuite) TestBatchInsert(c *C) {
 	tk.MustExec("rollback;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+}
+
+func (s *testSuite) TestNullDefault(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists test_null_default;")
+	tk.MustExec("set timestamp = 1234")
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustExec("create table test_null_default (ts timestamp null default current_timestamp)")
+	tk.MustExec("insert into test_null_default values (null)")
+	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into test_null_default values ()")
+	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
+}
+
+func (s *testSuite) TestGetFieldsFromLine(c *C) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{
+			`"1","a string","100.20"`,
+			[]string{"1", "a string", "100.20"},
+		},
+		{
+			`"2","a string containing a , comma","102.20"`,
+			[]string{"2", "a string containing a , comma", "102.20"},
+		},
+		{
+			`"3","a string containing a \" quote","102.20"`,
+			[]string{"3", "a string containing a \" quote", "102.20"},
+		},
+		{
+			`"4","a string containing a \", quote and comma","102.20"`,
+			[]string{"4", "a string containing a \", quote and comma", "102.20"},
+		},
+		// Test some escape char.
+		{
+			`"\0\b\n\r\t\Z\\\  \c\'\""`,
+			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
+		},
+	}
+	fieldsInfo := &ast.FieldsClause{
+		Enclosed:   '"',
+		Terminated: ",",
+	}
+
+	for _, test := range tests {
+		got, err := executor.GetFieldsFromLine([]byte(test.input), fieldsInfo)
+		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
+		assertEqualStrings(c, got, test.expected)
+	}
+
+	_, err := executor.GetFieldsFromLine([]byte(`1,a string,100.20`), fieldsInfo)
+	c.Assert(err, NotNil)
+}
+
+func assertEqualStrings(c *C, got []string, expect []string) {
+	c.Assert(len(got), Equals, len(expect))
+	for i := 0; i < len(got); i++ {
+		c.Assert(got[i], Equals, expect[i])
+	}
 }

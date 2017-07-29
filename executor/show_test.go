@@ -78,10 +78,24 @@ func (s *testSuite) TestShow(c *C) {
 
 	// Test case for index type and comment
 	tk.MustExec(`create table show_index (id int, c int, primary key (id), index cIdx using hash (c) comment "index_comment_for_cIdx");`)
+	tk.MustExec(`create index idx1 on show_index (id) using hash;`)
+	tk.MustExec(`create index idx2 on show_index (id) comment 'idx';`)
+	tk.MustExec(`create index idx3 on show_index (id) using hash comment 'idx';`)
+	tk.MustExec(`alter table show_index add index idx4 (id) using btree comment 'idx';`)
+	tk.MustExec(`create index idx5 using hash on show_index (id) using btree comment 'idx';`)
+	tk.MustExec(`create index idx6 using hash on show_index (id);`)
+	tk.MustExec(`create index idx7 on show_index (id);`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
 		"show_index|0|PRIMARY|1|id|utf8_bin|0|<nil>|<nil>||BTREE||",
 		"show_index|1|cIdx|1|c|utf8_bin|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx",
+		"show_index|1|idx1|1|id|utf8_bin|0|<nil>|<nil>|YES|HASH||",
+		"show_index|1|idx2|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||idx",
+		"show_index|1|idx3|1|id|utf8_bin|0|<nil>|<nil>|YES|HASH||idx",
+		"show_index|1|idx4|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||idx",
+		"show_index|1|idx5|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||idx",
+		"show_index|1|idx6|1|id|utf8_bin|0|<nil>|<nil>|YES|HASH||",
+		"show_index|1|idx7|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||",
 	))
 
 	// For show like with escape
@@ -126,52 +140,34 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk.MustExec(`create user 'show'@'%'`)
 	tk.MustExec(`flush privileges`)
 
+	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
 	c.Assert(se.Auth(`show@%`, nil, nil), IsTrue)
+	tk1.Se = se
 
-	// No ShowDatabases privilege, this user would see nothing.
-	rs, err := se.Execute("show databases")
-	c.Assert(err, IsNil)
-	rows, err := tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 0)
+	// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA.
+	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// After grant, the user can see the database.
 	tk.MustExec(`grant select on showdatabase.t1 to 'show'@'%'`)
 	tk.MustExec(`flush privileges`)
-	rs, err = se.Execute("show databases")
-	c.Assert(err, IsNil)
-	rows, err = tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 1)
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "showdatabase"))
 
-	_, err = se.Execute("use showdatabase")
-	c.Assert(err, IsNil)
-	rs, err = se.Execute("show tables")
-	c.Assert(err, IsNil)
-	rows, err = tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	// The user can see t2 but not t1.
-	c.Assert(rows, HasLen, 1)
+	// The user can see t1 but not t2.
+	tk1.MustExec("use showdatabase")
+	tk1.MustQuery("show tables").Check(testkit.Rows("t1"))
 
-	// After revoke, show database result should be empty.
+	// After revoke, show database result should be just except INFORMATION_SCHEMA.
 	tk.MustExec(`revoke select on showdatabase.t1 from 'show'@'%'`)
 	tk.MustExec(`flush privileges`)
-	rs, err = se.Execute("show databases")
-	c.Assert(err, IsNil)
-	rows, err = tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 0)
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Grant any global privilege would make show databases available.
 	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
 	tk.MustExec(`flush privileges`)
-	rs, err = se.Execute("show databases")
-	c.Assert(err, IsNil)
-	rows, err = tidb.GetRows(rs[0])
-	c.Assert(err, IsNil)
-	c.Assert(len(rows), GreaterEqual, 1)
+	rows := tk1.MustQuery("show databases").Rows()
+	c.Assert(len(rows), GreaterEqual, 2) // At least INFORMATION_SCHEMA and showdatabase
 
 	privileges.Enable = save
 	tk.MustExec(`drop user 'show'@'%'`)
@@ -277,21 +273,6 @@ func (s *testSuite) TestShowWarnings(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-}
-
-func (s *testSuite) TestShowStatsMeta(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int)")
-	tk.MustExec("create table t1 (a int, b int)")
-	tk.MustExec("analyze table t, t1")
-	result := tk.MustQuery("show stats_meta")
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][1], Equals, "t")
-	c.Assert(result.Rows()[1][1], Equals, "t1")
-	result = tk.MustQuery("show stats_meta where table_name = 't'")
-	c.Assert(len(result.Rows()), Equals, 1)
-	c.Assert(result.Rows()[0][1], Equals, "t")
 }
 
 func (s *testSuite) TestIssue3641(c *C) {

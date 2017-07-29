@@ -416,11 +416,8 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 		for _, idx := range idxInfo {
 			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx})
 		}
-		if len(colInfo) > 0 {
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, ColsInfo: colInfo})
-		}
-		if pkInfo != nil {
-			p.PkTasks = append(p.PkTasks, AnalyzePKTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo})
+		if len(colInfo) > 0 || pkInfo != nil {
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo})
 		}
 	}
 	p.SetSchema(&expression.Schema{})
@@ -450,7 +447,7 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
 }
 
 func buildShowDDLFields() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 6)...)
+	schema := expression.NewSchema(make([]*expression.Column, 0, 7)...)
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "JOB", mysql.TypeVarchar, 128))
@@ -492,7 +489,7 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 	switch x := where.(type) {
 	case nil:
 	case *ast.BinaryOperationExpr:
-		if x.Op == opcode.AndAnd {
+		if x.Op == opcode.LogicAnd {
 			conditions = append(conditions, splitWhere(x.L)...)
 			conditions = append(conditions, splitWhere(x.R)...)
 		} else {
@@ -906,22 +903,25 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		b.err = errors.Trace(err)
 		return nil
 	}
+	setParents4FinalPlan(targetPlan.(PhysicalPlan))
 	p := &Explain{StmtPlan: targetPlan}
-	addChild(p, targetPlan)
-	schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
-	schema.Append(&expression.Column{
-		ColName: model.NewCIStr("ID"),
-		RetType: types.NewFieldType(mysql.TypeString),
-	})
-	schema.Append(&expression.Column{
-		ColName: model.NewCIStr("Json"),
-		RetType: types.NewFieldType(mysql.TypeString),
-	})
-	schema.Append(&expression.Column{
-		ColName: model.NewCIStr("ParentID"),
-		RetType: types.NewFieldType(mysql.TypeString),
-	})
-	p.SetSchema(schema)
+	if UseDAGPlanBuilder(b.ctx) {
+		retFields := []string{"id", "parents", "task", "operator info"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		for _, fieldName := range retFields {
+			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		}
+		p.SetSchema(schema)
+		p.explainedPlans = map[string]bool{}
+		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+	} else {
+		schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
+		schema.Append(buildColumn("", "ID", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "Json", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "ParentID", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
+		p.prepareExplainInfo(p.StmtPlan, nil)
+	}
 	return p
 }
 
@@ -1074,6 +1074,15 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 	case ast.ShowStatsMeta:
 		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
+	case ast.ShowStatsHistograms:
+		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeDatetime,
+			mysql.TypeLonglong, mysql.TypeLonglong}
+	case ast.ShowStatsBuckets:
+		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Bucket_id", "Count",
+			"Repeats", "Lower_Bound", "Upper_Bound"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 	return composeShowSchema(names, ftypes)
 }

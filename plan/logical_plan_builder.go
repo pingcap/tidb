@@ -17,11 +17,13 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -91,7 +93,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 				ColName:     model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, position)),
 				Position:    position,
 				IsAggOrSubq: true,
-				RetType:     aggFunc.GetType()})
+				RetType:     newFunc.GetType()})
 		}
 	}
 	for _, col := range p.Schema().Columns {
@@ -390,6 +392,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
+	b.optFlag |= flagEliminateProjection
 	proj := Projection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.allocator, b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
@@ -423,7 +426,8 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
 					colName = model.NewCIStr(innerExpr.Text())
 				} else {
-					colName = model.NewCIStr(field.Text())
+					// Remove special comment code for field part, see issue #3739 for detail.
+					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
 				}
 			}
 		}
@@ -473,8 +477,13 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			return nil
 		}
 		if _, ok := sel.(*Projection); !ok {
+			b.optFlag |= flagEliminateProjection
 			proj := Projection{Exprs: expression.Column2Exprs(sel.Schema().Columns)}.init(b.allocator, b.ctx)
-			proj.SetSchema(sel.Schema().Clone())
+			schema := sel.Schema().Clone()
+			for _, col := range schema.Columns {
+				col.FromID = proj.ID()
+			}
+			proj.SetSchema(schema)
 			sel.SetParents(proj)
 			proj.SetChildren(sel)
 			sel = proj
@@ -491,14 +500,12 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			 * | bbbbbbbbbb    |
 			 * +---------------+
 			 */
-			if col.RetType.Flen > firstSchema.Columns[i].RetType.Flen {
-				firstSchema.Columns[i].RetType.Flen = col.RetType.Flen
-			}
-			// For select nul union select "abc", we should not convert "abc" to nil.
-			// And the result field type should be VARCHAR.
-			if firstSchema.Columns[i].RetType.Tp == 0 || firstSchema.Columns[i].RetType.Tp == mysql.TypeNull {
-				firstSchema.Columns[i].RetType.Tp = col.RetType.Tp
-			}
+			schemaTp := firstSchema.Columns[i].RetType
+			colTp := col.RetType
+			schemaTp.Decimal = mathutil.Max(colTp.Decimal, schemaTp.Decimal)
+			// `Flen - Decimal` is the fraction before '.'
+			schemaTp.Flen = mathutil.Max(colTp.Flen-colTp.Decimal, schemaTp.Flen-schemaTp.Decimal) + schemaTp.Decimal
+			schemaTp.Tp = types.MergeFieldType(schemaTp.Tp, colTp.Tp)
 		}
 		sel.SetParents(u)
 	}
@@ -1067,7 +1074,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.allocator, b.ctx)
 		addChild(proj, p)
-		proj.SetSchema(expression.NewSchema(p.Schema().Columns[:oldLen]...))
+		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
+		for _, col := range schema.Columns {
+			col.FromID = proj.ID()
+		}
+		proj.SetSchema(schema)
 		return proj
 	}
 
@@ -1089,9 +1100,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		statisticTable = handle.GetTableStats(tn.TableInfo.ID)
 	}
-	if b.err != nil {
-		return nil
-	}
+
 	schemaName := tn.Schema
 	if schemaName.L == "" {
 		schemaName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -1108,20 +1117,19 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		tableInfo:      tableInfo,
 		statisticTable: statisticTable,
 		DBName:         schemaName,
-		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
 	}.init(b.allocator, b.ctx)
-
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	var columns []*table.Column
 	if b.inUpdateStmt {
 		columns = tbl.WritableCols()
 	} else {
 		columns = tbl.Cols()
 	}
+	p.Columns = make([]*model.ColumnInfo, 0, len(columns))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
-		p.Columns = append(p.Columns, col.ColumnInfo)
+		p.Columns = append(p.Columns, col.ToInfo())
 		schema.Append(&expression.Column{
 			FromID:   p.id,
 			ColName:  col.Name,
@@ -1148,7 +1156,9 @@ func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.init(b.allocator, b.ctx)
-
+	if tp == LeftOuterJoin {
+		ap.DefaultValues = make([]types.Datum, innerPlan.Schema().Len())
+	}
 	addChild(ap, outerPlan)
 	addChild(ap, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))

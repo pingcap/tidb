@@ -686,7 +686,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 		if decimal == types.UnspecifiedLength {
 			decimal = 0
 		}
-		columnType := col.FieldType.CompactStr()
+		columnType := col.FieldType.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
@@ -1116,6 +1116,14 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+func (it *infoschemaTable) WritableIndices() []table.Index {
+	return nil
+}
+
+func (it *infoschemaTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
 }
@@ -1140,7 +1148,7 @@ func (it *infoschemaTable) RemoveRecord(ctx context.Context, h int64, r []types.
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum, newData []types.Datum, touched map[int]bool) error {
+func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 

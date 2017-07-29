@@ -39,6 +39,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -54,13 +55,13 @@ var (
 	errInvalidPayloadLen = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
 	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
 	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
-	errNotAllowedCommand = terror.ClassServer.New(codeNotAllowedCommand,
-		"the used command is not allowed with this TiDB version")
+	errNotAllowedCommand = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
+	errAccessDenied      = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
 // Server is the MySQL protocol server
 type Server struct {
-	cfg               *Config
+	cfg               *config.Config
 	driver            IDriver
 	listener          net.Listener
 	rwlock            *sync.RWMutex
@@ -126,7 +127,7 @@ func (s *Server) skipAuth() bool {
 const tokenLimit = 1000
 
 // NewServer creates a new Server.
-func NewServer(cfg *Config, driver IDriver) (*Server, error) {
+func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
@@ -263,11 +264,13 @@ const (
 	codeInvalidType       = 4
 
 	codeNotAllowedCommand = 1148
+	codeAccessDenied      = mysql.ErrAccessDenied
 )
 
 func init() {
 	serverMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeNotAllowedCommand: mysql.ErrNotAllowedCommand,
+		codeAccessDenied:      mysql.ErrAccessDenied,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }

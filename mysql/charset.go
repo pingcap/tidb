@@ -547,7 +547,7 @@ var CollationNames = map[string]uint8{
 	"utf8mb4_vietnamese_ci":    247,
 }
 
-// MySQL collation informations.
+// MySQL collation information.
 const (
 	UTF8Charset          = "utf8"
 	UTF8MB4Charset       = "utf8mb4"

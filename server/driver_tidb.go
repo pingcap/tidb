@@ -129,12 +129,6 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	}
 	session.SetClientCapability(capability)
 	session.SetConnectionID(connID)
-	if dbname != "" {
-		_, err = session.Execute("use " + dbname)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
 	tc := &TiDBContext{
 		session:   session,
 		currentDB: dbname,

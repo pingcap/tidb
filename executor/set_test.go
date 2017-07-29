@@ -123,6 +123,33 @@ func (s *testSuite) TestSetVar(c *C) {
 	c.Assert(vars.SkipConstraintCheck, IsTrue)
 	tk.MustExec("set @@tidb_skip_constraint_check = '0'")
 	c.Assert(vars.SkipConstraintCheck, IsFalse)
+
+	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
+	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+	tk.MustExec("SET GLOBAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("SERIALIZABLE"))
+
+	// Even the transaction fail, set session variable would success.
+	tk.MustExec("BEGIN")
+	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+	_, err = tk.Se.Execute(`INSERT INTO t VALUES ("sdfsdf")`)
+	c.Assert(err, NotNil)
+	tk.MustExec("COMMIT")
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+
+	tk.MustExec("set global avoid_temporal_upgrade = on")
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("ON"))
+	tk.MustExec("set @@global.avoid_temporal_upgrade = off")
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("off"))
+	tk.MustExec("set session sql_log_bin = on")
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
+	tk.MustExec("set sql_log_bin = off")
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("off"))
+	tk.MustExec("set @@sql_log_bin = on")
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {

@@ -21,6 +21,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/util"
 	goctx "golang.org/x/net/context"
 )
 
@@ -118,17 +119,18 @@ func (t backoffType) String() string {
 const (
 	copBuildTaskMaxBackoff  = 5000
 	tsoMaxBackoff           = 5000
-	scannerNextMaxBackoff   = 15000
-	batchGetMaxBackoff      = 15000
-	copNextMaxBackoff       = 15000
-	getMaxBackoff           = 15000
-	prewriteMaxBackoff      = 15000
-	commitMaxBackoff        = 15000
-	cleanupMaxBackoff       = 15000
+	scannerNextMaxBackoff   = 20000
+	batchGetMaxBackoff      = 20000
+	copNextMaxBackoff       = 20000
+	getMaxBackoff           = 20000
+	prewriteMaxBackoff      = 20000
+	cleanupMaxBackoff       = 20000
 	gcMaxBackoff            = 100000
 	gcResolveLockMaxBackoff = 100000
-	rawkvMaxBackoff         = 15000
+	rawkvMaxBackoff         = 20000
 )
+
+var commitMaxBackoff = 20000
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
@@ -207,7 +209,7 @@ func (b *Backoffer) Clone() *Backoffer {
 // Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors, and holds
 // a child context of current Backoffer's context.
 func (b *Backoffer) Fork() (*Backoffer, goctx.CancelFunc) {
-	ctx, cancel := goctx.WithCancel(b.ctx)
+	ctx, cancel := util.WithCancel(b.ctx)
 	return &Backoffer{
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,

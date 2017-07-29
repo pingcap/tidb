@@ -52,7 +52,7 @@ func newSchemaValidator(lease time.Duration) SchemaValidator {
 func (s *schemaValidator) Stop() {
 	log.Info("the schema validator stops")
 	s.mux.Lock()
-	defer s.mux.Lock()
+	defer s.mux.Unlock()
 	s.items = nil
 	s.latestSchemaVer = 0
 }
@@ -60,7 +60,7 @@ func (s *schemaValidator) Stop() {
 func (s *schemaValidator) Restart() {
 	log.Info("the schema validator restarts")
 	s.mux.Lock()
-	defer s.mux.Lock()
+	defer s.mux.Unlock()
 	s.items = make(map[int64]time.Time)
 }
 

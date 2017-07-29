@@ -84,7 +84,7 @@ func (s *testStatsCacheSuite) TestDDLTable(c *C) {
 	statsTbl = h.GetTableStats(tableInfo.ID)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 
-	testKit.MustExec("create table t1 (c1 int, c2 int)")
+	testKit.MustExec("create table t1 (c1 int, c2 int, index idx(c1))")
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)

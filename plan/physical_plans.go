@@ -446,6 +446,8 @@ type PhysicalApply struct {
 
 	PhysicalJoin PhysicalPlan
 	OuterSchema  []*expression.CorrelatedColumn
+
+	rightChOffset int
 }
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
@@ -476,6 +478,9 @@ type PhysicalIndexJoin struct {
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
+	outerIndex      int
+	KeepOrder       bool
+	outerSchema     *expression.Schema
 
 	DefaultValues []types.Datum
 }
@@ -494,6 +499,9 @@ type PhysicalMergeJoin struct {
 
 	DefaultValues []types.Datum
 	Desc          bool
+
+	leftKeys  []*expression.Column
+	rightKeys []*expression.Column
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.
@@ -508,6 +516,8 @@ type PhysicalHashSemiJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+
+	rightChOffset int
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -521,6 +531,19 @@ const (
 	// CompleteAgg supposes its input is original results.
 	CompleteAgg
 )
+
+// String implements fmt.Stringer interface.
+func (at AggregationType) String() string {
+	switch at {
+	case StreamedAgg:
+		return "stream"
+	case FinalAgg:
+		return "final"
+	case CompleteAgg:
+		return "complete"
+	}
+	return "unsupported aggregation type"
+}
 
 // PhysicalAggregation is Aggregation's physical plan.
 type PhysicalAggregation struct {

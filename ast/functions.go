@@ -26,11 +26,11 @@ var (
 
 // List scalar function names.
 const (
-	AndAnd     = "and"
+	LogicAnd   = "and"
 	Cast       = "cast"
 	LeftShift  = "leftshift"
 	RightShift = "rightshift"
-	OrOr       = "or"
+	LogicOr    = "or"
 	GE         = "ge"
 	LE         = "le"
 	EQ         = "eq"
@@ -228,6 +228,7 @@ const (
 	SystemUser   = "system_user"
 	User         = "user"
 	Version      = "version"
+	TiDBVersion  = "tidb_version"
 
 	// control functions
 	If     = "if"
