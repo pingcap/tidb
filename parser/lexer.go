@@ -207,7 +207,7 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 
 	if ch0 == '\\' {
 		if s.r.dataByIndex(pos.Offset+1) == 'N' {
-			s.r.inc()
+			s.r.incN(2)
 			return null, pos, "\\N"
 		}
 	}
