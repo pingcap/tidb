@@ -675,8 +675,10 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 
 func (s *testEvaluatorSuite) TestPi(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.PI]
-	f, _ := fc.getFunction(nil, s.ctx)
+	f, err := funcs[ast.PI].getFunction(nil, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+
 	pi, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(pi, testutil.DatumEquals, types.NewDatum(math.Pi))

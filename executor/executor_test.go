@@ -1034,6 +1034,13 @@ func (s *testSuite) TestOpBuiltin(c *C) {
 	// for logicAnd
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
+
+	// for bitNeg
+	result = tk.MustQuery("select ~123, ~-123, ~null")
+	result.Check(testkit.Rows("18446744073709551492 122 <nil>"))
+	// for logicNot
+	result = tk.MustQuery("select !1, !123, !0, !null")
+	result.Check(testkit.Rows("0 0 1 <nil>"))
 	// for logicalXor
 	result = tk.MustQuery("select 1 xor 1, 1 xor 0, 0 xor 1, 0 xor 0, 2 xor -1, null xor 1, '1a' xor 'a'")
 	result.Check(testkit.Rows("0 1 1 0 0 <nil> 1"))
@@ -1270,6 +1277,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1406 Data Too Long, field len 0, data len 4"))
+	result = tk.MustQuery("select CAST( - 8 AS DECIMAL ) * + 52 + 87 < - 86")
+	result.Check(testkit.Rows("1"))
 
 	// issue 3884
 	tk.MustExec("drop table if exists t")
@@ -1453,6 +1462,10 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("1.5707963267948966 <nil> <nil> 0"))
 	result = tk.MustQuery("select acos('tidb')")
 	result.Check(testkit.Rows("1.5707963267948966"))
+
+	// for pi
+	result = tk.MustQuery("select pi()")
+	result.Check(testkit.Rows("3.141592653589793"))
 
 	// for floor
 	result = tk.MustQuery("select floor(0), floor(null), floor(1.23), floor(-1.23), floor(1)")

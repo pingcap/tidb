@@ -65,7 +65,6 @@ var (
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
 	errKeyColumnDoesNotExits = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
 	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
-	errWrongDBName           = terror.ClassDDL.New(codeWrongDBName, "Incorrect database name '%s'")
 	errUnknownTypeLength     = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
 	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
@@ -111,8 +110,12 @@ var (
 	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
 	// ErrTooLongIdent returns for too long name of database/table/column.
 	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
-	// ErrWrongTableName return for wrong table name.
-	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
+	// ErrWrongDBName returns for wrong database name.
+	ErrWrongDBName = terror.ClassDDL.New(codeWrongDBName, mysql.MySQLErrName[mysql.ErrWrongDBName])
+	// ErrWrongTableName returns for wrong table name.
+	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
+	// ErrWrongColumnName returns for wrong column name.
+	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -516,6 +519,7 @@ const (
 	codeWrongDBName                  = 1102
 	codeWrongTableName               = 1103
 	codeInvalidUseOfNull             = 1138
+	codeWrongColumnName              = 1166
 	codeWrongKeyColumn               = 1167
 	codeBlobKeyWithoutLength         = 1170
 	codeInvalidOnUpdate              = 1294
@@ -549,6 +553,7 @@ func init() {
 		codeDependentByGeneratedColumn:   mysql.ErrDependentByGeneratedColumn,
 		codeJSONUsedAsKey:                mysql.ErrJSONUsedAsKey,
 		codeBlobCantHaveDefault:          mysql.ErrBlobCantHaveDefault,
+		codeWrongColumnName:              mysql.ErrWrongColumnName,
 		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
