@@ -1019,6 +1019,12 @@ func (s *testSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
 	result := tk.MustQuery("select makedate(a,a), makedate(b,b), makedate(c,c), makedate(d,d), makedate(e,e), makedate(f,f), makedate(null,null), makedate(a,b) from t")
 	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
+
+	// Fix issue #3923
+	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:00' as time), '12:00:00');")
+	result.Check(testkit.Rows("00:00:00"))
+	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:00' as time), '2004-12-30 12:00:00');")
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuite) TestOpBuiltin(c *C) {

@@ -164,6 +164,28 @@ func StrToUint(sc *variable.StatementContext, str string) (uint64, error) {
 	return uVal, errors.Trace(err)
 }
 
+func StrToDateTime(str string, fsp int) (Time, error) {
+	return ParseTime(str, mysql.TypeDatetime, fsp)
+}
+
+func StrToDuration(sc *variable.StatementContext, str string, fsp int) (Time, error) {
+	str = strings.TrimSpace(str)
+
+	// Longest valid mysql time is '-10 100:00:00', which length is 13.
+	if len(str) >= 13 {
+		t, err := StrToDateTime(str, fsp)
+		if err == nil {
+			return t, nil
+		}
+	}
+
+	duration, err := ParseDuration(str, fsp)
+	if err != nil {
+		return Time{}, errors.Trace(err)
+	}
+	return duration.ConvertToTime(mysql.TypeDuration)
+}
+
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
 func getValidIntPrefix(sc *variable.StatementContext, str string) (string, error) {
 	floatPrefix, err := getValidFloatPrefix(sc, str)
