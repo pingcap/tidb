@@ -103,7 +103,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrCastNegIntToUnsigned, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn), IsTrue)
 
 	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("-18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
 	res, err = f.Eval(nil)
@@ -136,7 +136,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrCastSignedOverflow, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrCastAsSignedOverflow, lastWarn), IsTrue)
 
 	// create table t1(s1 time);
 	// insert into t1 values('11:11:11');

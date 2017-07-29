@@ -39,10 +39,10 @@ var (
 	ErrWrongFieldSpec = terror.ClassTypes.New(codeWrongFieldSpec, "Wrong Field Spec")
 	// ErrBadNumber is return when parsing an invalid binary decimal number.
 	ErrBadNumber = terror.ClassTypes.New(codeBadNumber, "Bad Number")
-	// ErrCastSignedOverflow is returned when positive out-of-range integer, and convert to it's negative complement
-	ErrCastSignedOverflow = terror.ClassTypes.New(codeUnknown, msgCastSignedOverflow)
-	// ErrCastNegIntToUnsigned is returned when a negative integer cast to unsigned
-	ErrCastNegIntToUnsigned = terror.ClassTypes.New(codeUnknown, msgCastNegIntToUnsigned)
+	// ErrCastAsSignedOverflow is returned when positive out-of-range integer, and convert to it's negative complement.
+	ErrCastAsSignedOverflow = terror.ClassTypes.New(codeUnknown, msgCastSignedOverflow)
+	// ErrCastNegIntAsUnsigned is returned when a negative integer be casted to an unsigned int.
+	ErrCastNegIntAsUnsigned = terror.ClassTypes.New(codeUnknown, msgCastNegIntToUnsigned)
 )
 
 const (

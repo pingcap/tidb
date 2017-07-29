@@ -22,10 +22,9 @@
 package expression
 
 import (
+	"math"
 	"strconv"
 	"strings"
-
-	"math"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -547,14 +546,14 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNu
 		return res, isNull, errors.Trace(err)
 	}
 
-	// despite of unsigned or signed, Round is needed
+	// Round is needed for both unsigned and signed.
 	var to types.MyDecimal
 	val.Round(&to, 0, types.ModeHalfEven)
 
 	if mysql.HasUnsignedFlag(b.tp.Flag) {
-		var ures uint64
-		ures, err = to.ToUint()
-		res = int64(ures)
+		var uintRes uint64
+		uintRes, err = to.ToUint()
+		res = int64(uintRes)
 	} else {
 		res, err = to.ToInt()
 	}
@@ -684,14 +683,14 @@ func (b *builtinCastStringAsIntSig) evalInt(row []types.Datum) (res int64, isNul
 		res, err = types.StrToInt(sc, val)
 		if err == nil {
 			// If overflow, don't append this warnings
-			sc.AppendWarning(types.ErrCastNegIntToUnsigned)
+			sc.AppendWarning(types.ErrCastNegIntAsUnsigned)
 		}
 	} else {
 		ures, err = types.StrToUint(sc, val)
 		res = int64(ures)
 
 		if err == nil && !mysql.HasUnsignedFlag(b.tp.Flag) && ures > uint64(math.MaxInt64) {
-			sc.AppendWarning(types.ErrCastSignedOverflow)
+			sc.AppendWarning(types.ErrCastAsSignedOverflow)
 		}
 	}
 

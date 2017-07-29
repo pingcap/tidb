@@ -1099,7 +1099,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(-1 as unsigned)")
 	result.Check(testkit.Rows("18446744073709551615"))
 
-	// Fix issue #3691, cast compabilities.
+	// Fix issue #3691, cast compability.
 	result = tk.MustQuery("select cast('18446744073709551616' as unsigned);")
 	result.Check(testkit.Rows("18446744073709551615"))
 	result = tk.MustQuery("select cast('18446744073709551616' as signed);")
