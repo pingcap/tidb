@@ -965,7 +965,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 	case 3:
 		// Time format maybe HH:MM:SS or HHH:MM:SS.
 		// See https://dev.mysql.com/doc/refman/5.7/en/time.html
-		if !dayExists && len(seps[0]) == 3 {
+		if len(seps[0]) == 3 {
 			_, err = fmt.Sscanf(str, "%3d:%2d:%2d", &hour, &minute, &second)
 		} else {
 			_, err = fmt.Sscanf(str, "%2d:%2d:%2d", &hour, &minute, &second)
