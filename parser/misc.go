@@ -119,6 +119,7 @@ func init() {
 	initTokenString("<>", neqSynonym)
 	initTokenString("<<", lsh)
 	initTokenString(">>", rsh)
+	initTokenString("\\N", null)
 
 	initTokenFunc("@", startWithAt)
 	initTokenFunc("/", startWithSlash)

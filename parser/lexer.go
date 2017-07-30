@@ -205,14 +205,6 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 	}
 	pos = s.r.pos()
 
-	if ch0 == '\\' {
-		// support \N as shortcut for NULL
-		if s.r.charByIndex(pos.Offset+1) == 'N' {
-			s.r.incN(2)
-			return null, pos, "\\N"
-		}
-	}
-
 	if s.r.eof() {
 		// when scanner meets EOF, the returned token should be 0,
 		// because 0 is a special token id to remind the parser that stream is end.
@@ -747,10 +739,6 @@ func (r *reader) pos() Pos {
 
 func (r *reader) data(from *Pos) string {
 	return r.s[from.Offset:r.p.Offset]
-}
-
-func (r *reader) charByIndex(index int) rune {
-	return rune(r.s[index])
 }
 
 func (r *reader) incAsLongAs(fn func(rune) bool) rune {
