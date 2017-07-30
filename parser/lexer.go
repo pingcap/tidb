@@ -204,7 +204,6 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		ch0 = s.skipWhitespace()
 	}
 	pos = s.r.pos()
-
 	if s.r.eof() {
 		// when scanner meets EOF, the returned token should be 0,
 		// because 0 is a special token id to remind the parser that stream is end.
