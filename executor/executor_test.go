@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2292,39 +2293,51 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 type checkRequestClient struct {
 	tikv.Client
 	priority pb.CommandPri
-	turnOn   bool
+	mu       struct {
+		sync.RWMutex
+		turnOn bool
+	}
 }
 
 func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendReq(ctx, addr, req)
-	if c.turnOn && c.priority != req.Priority {
+	c.mu.RLock()
+	turnOn := c.mu.turnOn
+	c.mu.RUnlock()
+	if turnOn && c.priority != req.Priority {
 		return nil, errors.New("fail to set priority")
 	}
 	return resp, err
 }
 
-func (s *testSuite) TestCoprocessorPriority(c *C) {
+type testPrioritySuite struct{}
+
+var _ = Suite(testPrioritySuite{})
+
+func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
 	cli := &checkRequestClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
 		return cli
 	}
 
-	store, err := tikv.NewMockTikvStore(
+	tmpStore, err := tikv.NewMockTikvStore(
 		tikv.WithHijackClient(hijackClient),
 	)
-	defer store.Close()
+	defer tmpStore.Close()
 	c.Assert(err, IsNil)
-	dom, err := tidb.BootstrapSession(store)
+	dom, err := tidb.BootstrapSession(tmpStore)
 	c.Assert(err, IsNil)
 	defer dom.Close()
 
-	tk := testkit.NewTestKit(c, store)
+	tk := testkit.NewTestKit(c, tmpStore)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
 	tk.MustExec("insert into t values (1)")
 
-	cli.turnOn = true
+	cli.mu.Lock()
+	cli.mu.turnOn = true
+	cli.mu.Unlock()
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
 
@@ -2333,6 +2346,4 @@ func (s *testSuite) TestCoprocessorPriority(c *C) {
 
 	cli.priority = pb.CommandPri_Normal
 	tk.MustExec("insert into t values (2)")
-
-	tk.Se.Close()
 }
