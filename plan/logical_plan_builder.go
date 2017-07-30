@@ -1100,9 +1100,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		statisticTable = handle.GetTableStats(tn.TableInfo.ID)
 	}
-	if b.err != nil {
-		return nil
-	}
+
 	schemaName := tn.Schema
 	if schemaName.L == "" {
 		schemaName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -1119,20 +1117,19 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		tableInfo:      tableInfo,
 		statisticTable: statisticTable,
 		DBName:         schemaName,
-		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
 	}.init(b.allocator, b.ctx)
-
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	var columns []*table.Column
 	if b.inUpdateStmt {
 		columns = tbl.WritableCols()
 	} else {
 		columns = tbl.Cols()
 	}
+	p.Columns = make([]*model.ColumnInfo, 0, len(columns))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
-		p.Columns = append(p.Columns, col.ColumnInfo)
+		p.Columns = append(p.Columns, col.ToInfo())
 		schema.Append(&expression.Column{
 			FromID:   p.id,
 			ColName:  col.Name,
