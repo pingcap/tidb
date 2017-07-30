@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
@@ -307,10 +306,6 @@ func (trs *tidbResultSet) Columns() ([]*ColumnInfo, error) {
 	}
 	var columns []*ColumnInfo
 	for _, v := range fields {
-		if v.ColumnAsName.O == "\\N" {
-			v.ColumnAsName = model.NewCIStr("NULL")
-		}
-
 		columns = append(columns, convertColumnInfo(v))
 	}
 	return columns, nil
