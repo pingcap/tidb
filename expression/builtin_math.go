@@ -1067,19 +1067,34 @@ type piFunctionClass struct {
 }
 
 func (c *piFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinPISig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	var (
+		bf  baseBuiltinFunc
+		sig builtinFunc
+		err error
+	)
+
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpReal); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bf.tp.Decimal = 15
+	bf.tp.Flen = 17
+	sig = &builtinPISig{baseRealBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinPISig struct {
-	baseBuiltinFunc
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinPISig.
+// evalReal evals a builtinPISig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pi
-func (b *builtinPISig) eval(row []types.Datum) (d types.Datum, err error) {
-	d.SetFloat64(math.Pi)
-	return d, nil
+func (b *builtinPISig) evalReal(row []types.Datum) (float64, bool, error) {
+	return float64(math.Pi), false, nil
 }
 
 type radiansFunctionClass struct {

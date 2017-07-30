@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -222,19 +223,15 @@ func (a *statement) buildExecutor(ctx context.Context) (Executor, error) {
 	return e, nil
 }
 
-const (
-	queryLogMaxLen = 2048
-	slowThreshold  = 300 * time.Millisecond
-)
-
 func (a *statement) logSlowQuery() {
+	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
 	sql := a.text
-	if len(sql) > queryLogMaxLen {
-		sql = sql[:queryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+	if len(sql) > cfg.QueryLogMaxlen {
+		sql = sql[:cfg.QueryLogMaxlen] + fmt.Sprintf("(len:%d)", len(sql))
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
-	if costTime < slowThreshold {
+	if costTime < time.Duration(cfg.SlowThreshold)*time.Millisecond {
 		log.Debugf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
 	} else {
 		log.Warnf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
