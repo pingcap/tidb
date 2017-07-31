@@ -166,7 +166,7 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalHashSemiJoin) ExplainInfo() string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("right:%s", p.Children()[p.rightChOffset].ID()))
+	buffer := bytes.NewBufferString(fmt.Sprintf("right:%s", p.Children()[1].ID()))
 	if p.WithAux {
 		buffer.WriteString(", aux")
 	}
@@ -206,19 +206,6 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 	if len(p.OtherConditions) > 0 {
 		buffer.WriteString(fmt.Sprintf(", other cond:%s",
 			expression.ExplainExpressionList(p.OtherConditions)))
-	}
-	if len(p.DefaultValues) > 0 {
-		buffer.WriteString("default vals:")
-		for i, val := range p.DefaultValues {
-			str, err := val.ToString()
-			if err != nil {
-				str = err.Error()
-			}
-			buffer.WriteString(str)
-			if i+1 < len(p.DefaultValues) {
-				buffer.WriteString(", ")
-			}
-		}
 	}
 	if p.Desc {
 		buffer.WriteString("desc")
