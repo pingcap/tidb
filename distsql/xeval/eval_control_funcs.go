@@ -76,7 +76,8 @@ func (e *Evaluator) evalIf(expr *tipb.Expr) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	if !child1.IsNull() {
-		x, err := child1.ToBool(e.StatementCtx)
+		var x int64
+		x, err = child1.ToBool(e.StatementCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}

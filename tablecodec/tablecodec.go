@@ -538,19 +538,15 @@ func TruncateToRowKeyLen(key kv.Key) kv.Key {
 
 // GetTableHandleKeyRange returns table handle's key range with tableID.
 func GetTableHandleKeyRange(tableID int64) (startKey, endKey []byte) {
-	tableStartKey := EncodeRowKeyWithHandle(tableID, math.MinInt64)
-	tableEndKey := EncodeRowKeyWithHandle(tableID, math.MaxInt64)
-	startKey = codec.EncodeBytes(nil, tableStartKey)
-	endKey = codec.EncodeBytes(nil, tableEndKey)
+	startKey = EncodeRowKeyWithHandle(tableID, math.MinInt64)
+	endKey = EncodeRowKeyWithHandle(tableID, math.MaxInt64)
 	return
 }
 
 // GetTableIndexKeyRange returns table index's key range with tableID and indexID.
 func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
-	start := EncodeIndexSeekKey(tableID, indexID, nil)
-	end := EncodeIndexSeekKey(tableID, indexID, []byte{255})
-	startKey = codec.EncodeBytes(nil, start)
-	endKey = codec.EncodeBytes(nil, end)
+	startKey = EncodeIndexSeekKey(tableID, indexID, nil)
+	endKey = EncodeIndexSeekKey(tableID, indexID, []byte{255})
 	return
 }
 

@@ -60,6 +60,7 @@ var (
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalAggregation{}
 	_ PhysicalPlan = &PhysicalApply{}
+	_ PhysicalPlan = &PhysicalIndexJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalHashSemiJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
@@ -499,6 +500,8 @@ type PhysicalIndexJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 	outerIndex      int
+	KeepOrder       bool
+	outerSchema     *expression.Schema
 
 	DefaultValues []types.Datum
 }
@@ -1151,4 +1154,46 @@ func (p *Cache) Copy() PhysicalPlan {
 	np.basePlan = p.basePlan.copy()
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
+}
+
+func buildSchema(p PhysicalPlan) {
+	switch x := p.(type) {
+	case *Limit, *TopN, *Sort, *Selection, *MaxOneRow, *SelectLock:
+		p.SetSchema(p.Children()[0].Schema())
+	case *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexJoin:
+		p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
+	case *PhysicalApply:
+		buildSchema(x.PhysicalJoin)
+		x.schema = x.PhysicalJoin.Schema()
+	case *PhysicalHashSemiJoin:
+		if x.WithAux {
+			auxCol := x.schema.Columns[x.Schema().Len()-1]
+			x.SetSchema(x.children[0].Schema().Clone())
+			x.schema.Append(auxCol)
+		} else {
+			x.SetSchema(x.children[0].Schema().Clone())
+		}
+	case *Union:
+		panic("Union shouldn't rebuild schema")
+	}
+}
+
+// rebuildSchema rebuilds the schema for physical plans, because new planner may change indexjoin's schema.
+func rebuildSchema(p PhysicalPlan) bool {
+	need2Rebuild := false
+	for _, ch := range p.Children() {
+		need2Rebuild = need2Rebuild || rebuildSchema(ch.(PhysicalPlan))
+	}
+	if need2Rebuild {
+		buildSchema(p)
+	}
+	switch x := p.(type) {
+	case *PhysicalIndexJoin:
+		if x.outerIndex == 1 {
+			need2Rebuild = true
+		}
+	case *Projection, *PhysicalAggregation:
+		need2Rebuild = false
+	}
+	return need2Rebuild
 }

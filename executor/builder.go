@@ -310,7 +310,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		return nil
 	}
 	insertVal := &InsertValues{ctx: b.ctx, Table: tbl, Columns: v.Columns}
-	tableCols := tbl.WritableCols()
+	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {
 		b.err = errors.Trace(err)
@@ -869,7 +869,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk 
 		cols = append([]*model.ColumnInfo{pk}, cols...)
 	}
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
-	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	ranges := []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &TableReaderExecutor{
 			table:     table,
@@ -1014,6 +1014,10 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 }
 
 func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
+	batchSize := 1
+	if !v.KeepOrder {
+		batchSize = b.ctx.GetSessionVars().IndexLookupSize
+	}
 	return &IndexLookUpJoin{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 		innerExec:       b.build(v.Children()[1]).(DataReader),
@@ -1024,6 +1028,7 @@ func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
 		rightConditions: v.RightConditions,
 		otherConditions: v.OtherConditions,
 		defaultValues:   v.DefaultValues,
+		batchSize:       batchSize,
 	}
 }
 

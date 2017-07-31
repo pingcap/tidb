@@ -220,6 +220,14 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t values(1),(2), (3)")
 	tk.MustQuery("select @a := @a + 1 from t, (select @a := 0) b;").Check(testkit.Rows("1", "2", "3"))
 
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int primary key, b int, key s(b))")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t values(1, 3), (2, 2), (3, 1)")
+	tk.MustExec("insert into t1 values(1, 2), (1, 3), (3, 4)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t) */ * from t join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("3 1 3 4", "1 3 1 2", "1 3 1 3"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t.a, t.b from t join t1 on t.a=t1.a where t1.b = 4 limit 1").Check(testkit.Rows("3 1"))
+
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
@@ -543,6 +551,7 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Check(testkit.Rows("1 0", "2 1"))
 	result = tk.MustQuery("select (select count(*) from t k where t.id = id) from s, t where t.id = s.id limit 1")
 	result.Check(testkit.Rows("1"))
+
 	tk.MustExec("drop table if exists t, s")
 	tk.MustExec("create table t(id int primary key)")
 	tk.MustExec("create table s(id int, index k(id))")
@@ -550,6 +559,14 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("insert into s values(2), (2)")
 	result = tk.MustQuery("select (select id from s where s.id = t.id order by s.id limit 1) from t")
 	result.Check(testkit.Rows("<nil>", "2"))
+
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("create table s(id int)")
+	tk.MustExec("insert into t values(2), (2)")
+	tk.MustExec("insert into s values(2)")
+	result = tk.MustQuery("select (select id from s where s.id = t.id order by s.id) from t")
+	result.Check(testkit.Rows("2", "2"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
