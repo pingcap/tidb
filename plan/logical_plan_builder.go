@@ -1141,6 +1141,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	p.SetSchema(schema)
 	// for not stored generated column
+	p.GenValues = make(map[int]expression.Expression)
 	for _, col := range schema.Columns {
 		idx := col.Position
 		colInfo := tableInfo.Columns[idx]
