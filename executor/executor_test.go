@@ -2304,8 +2304,13 @@ func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrp
 	c.mu.RLock()
 	turnOn := c.mu.turnOn
 	c.mu.RUnlock()
-	if turnOn && c.priority != req.Priority {
-		return nil, errors.New("fail to set priority")
+	if !turnOn {
+		switch req.Type {
+		case tikvrpc.CmdCop:
+			if c.priority != req.Priority {
+				return nil, errors.New("fail to set priority")
+			}
+		}
 	}
 	return resp, err
 }
@@ -2344,6 +2349,17 @@ func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select count(*) from t")
 
+	cli.priority = pb.CommandPri_Low
+	tk.MustExec("update t set id = 3")
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustExec("delete from t")
+
 	cli.priority = pb.CommandPri_Normal
 	tk.MustExec("insert into t values (2)")
+
+	// TODO: Those are not point get, but they should be high priority.
+	// cli.priority = pb.CommandPri_High
+	// tk.MustExec("delete from t where id = 2")
+	// tk.MustExec("update t set id = 2 where id = 1")
 }
