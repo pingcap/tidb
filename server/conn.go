@@ -56,12 +56,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
-	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
-	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts
-
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
@@ -135,11 +129,6 @@ func (cc *clientConn) Close() error {
 func (cc *clientConn) writeInitialHandshake() error {
 	data := make([]byte, 4, 128)
 
-	var serverCapability = defaultCapability
-	if cc.server.cfg.SSLEnabled {
-		serverCapability |= mysql.ClientSSL
-	}
-
 	// min version 10
 	data = append(data, 10)
 	// server version[00]
@@ -152,14 +141,14 @@ func (cc *clientConn) writeInitialHandshake() error {
 	// filler [00]
 	data = append(data, 0)
 	// capability flag lower 2 bytes, using default capability here
-	data = append(data, byte(serverCapability), byte(serverCapability>>8))
+	data = append(data, byte(cc.server.capability), byte(cc.server.capability>>8))
 	// charset, utf-8 default
 	data = append(data, uint8(mysql.DefaultCollationID))
 	// status
 	data = append(data, dumpUint16(mysql.ServerStatusAutocommit)...)
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
-	data = append(data, byte(serverCapability>>16), byte(serverCapability>>24))
+	data = append(data, byte(cc.server.capability>>16), byte(cc.server.capability>>24))
 	// length of auth-plugin-data
 	data = append(data, byte(len(cc.salt)+1))
 	// reserved 10 [00]
@@ -343,7 +332,7 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 		return errors.Trace(err)
 	}
 
-	cc.capability = resp.Capability & defaultCapability
+	cc.capability = resp.Capability & cc.server.capability
 	cc.user = resp.User
 	cc.dbname = resp.DBName
 	cc.collation = resp.Collation

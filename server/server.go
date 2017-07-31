@@ -69,6 +69,7 @@ type Server struct {
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
+	capability        uint32
 
 	// When a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
@@ -138,6 +139,16 @@ func NewServer(cfg *config.Config, tlsConfig *tls.Config, driver IDriver) (*Serv
 		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
+	}
+
+	s.capability = mysql.ClientLongPassword | mysql.ClientLongFlag |
+		mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
+		mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
+		mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
+		mysql.ClientConnectAtts
+
+	if cfg.SSLEnabled {
+		s.capability |= mysql.ClientSSL
 	}
 
 	var err error
