@@ -248,6 +248,18 @@ const (
 	SelectLockInShareMode
 )
 
+func (slt SelectLockType) String() string {
+	switch slt {
+	case SelectLockNone:
+		return "none"
+	case SelectLockForUpdate:
+		return "for update"
+	case SelectLockInShareMode:
+		return "in share mode"
+	}
+	return "unsupported select lock type"
+}
+
 // WildCardField is a special type of select field content.
 type WildCardField struct {
 	node

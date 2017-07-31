@@ -57,6 +57,134 @@ func setParents4FinalPlan(plan PhysicalPlan) {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
+func (p *SelectLock) ExplainInfo() string {
+	return p.Lock.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalIndexScan) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	tblName := p.Table.Name.O
+	if p.TableAsName != nil && p.TableAsName.O != "" {
+		tblName = p.TableAsName.O
+	}
+	buffer.WriteString(fmt.Sprintf("table:%s", tblName))
+	if len(p.Index.Columns) > 0 {
+		buffer.WriteString(", index:")
+		for i, idxCol := range p.Index.Columns {
+			buffer.WriteString(idxCol.Name.O)
+			if i+1 < len(p.Index.Columns) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	if len(p.Ranges) > 0 {
+		buffer.WriteString(", range:")
+		for i, idxRange := range p.Ranges {
+			buffer.WriteString(idxRange.String())
+			if i+1 < len(p.Ranges) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	buffer.WriteString(fmt.Sprintf(", OutOfOrder:%v", p.OutOfOrder))
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *physicalTableSource) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	buffer.WriteString(fmt.Sprintf("read only:%v", p.readOnly))
+
+	if p.Aggregated && len(p.aggFuncs) > 0 {
+		buffer.WriteString(", aggregations:")
+		for i, aggFunc := range p.aggFuncs {
+			buffer.WriteString(expression.ExplainAggFunc(aggFunc))
+			if i+1 < len(p.aggFuncs) {
+				buffer.WriteString(", ")
+			}
+		}
+		if len(p.gbyItems) > 0 {
+			buffer.WriteString(fmt.Sprintf(", group by:%s",
+				expression.ExplainExpressionList(p.gbyItems)))
+		}
+	}
+
+	if len(p.sortItems) > 0 {
+		buffer.WriteString(", sort by:")
+		for i, item := range p.sortItems {
+			order := "asc"
+			if item.Desc {
+				order = "desc"
+			}
+			buffer.WriteString(fmt.Sprintf("%s:%s", item.Expr.ExplainInfo(), order))
+			if i+1 < len(p.sortItems) {
+				buffer.WriteString(", ")
+			}
+		}
+		return buffer.String()
+	}
+
+	if len(p.indexFilterConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", index filter:%s",
+			expression.ExplainExpressionList(p.indexFilterConditions)))
+	}
+	if len(p.tableFilterConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", table filter:%s",
+			expression.ExplainExpressionList(p.tableFilterConditions)))
+	}
+	if len(p.filterCondition) > 0 {
+		buffer.WriteString(fmt.Sprintf(", filter:%s",
+			expression.ExplainExpressionList(p.filterCondition)))
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalTableScan) ExplainInfo() string {
+	buffer := bytes.NewBufferString(p.physicalTableSource.ExplainInfo())
+	tblName := p.Table.Name.O
+	if p.TableAsName != nil && p.TableAsName.O != "" {
+		tblName = p.TableAsName.O
+	}
+	buffer.WriteString(fmt.Sprintf(", table:%s", tblName))
+	if p.pkCol != nil {
+		buffer.WriteString(fmt.Sprintf(", pk col:%s", p.pkCol.ExplainInfo()))
+	}
+	if len(p.Ranges) > 0 {
+		buffer.WriteString(", range:")
+		for i, idxRange := range p.Ranges {
+			buffer.WriteString(idxRange.String())
+			if i+1 < len(p.Ranges) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	buffer.WriteString(fmt.Sprintf(", keep order:%v", p.KeepOrder))
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalTableReader) ExplainInfo() string {
+	return fmt.Sprintf("data:%s", p.tablePlan.ID())
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalIndexReader) ExplainInfo() string {
+	return fmt.Sprintf("index:%s", p.indexPlan.ID())
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
+	return fmt.Sprintf("index:%s, table:%s", p.indexPlan.ID(), p.tablePlan.ID())
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalUnionScan) ExplainInfo() string {
+	return string(expression.ExplainExpressionList(p.Conditions))
+}
+
+// ExplainInfo implements PhysicalPlan interface.
 func (p *Selection) ExplainInfo() string {
 	return string(expression.ExplainExpressionList(p.Conditions))
 }
