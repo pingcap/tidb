@@ -65,32 +65,43 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
+// getAndOptimizeFunction will get builtinFunc by funcName and do some optimization.
+func getAndOptimizeFunction(ctx context.Context, funcName string, args ...Expression) (string, builtinFunc, error) {
+	var fname string
+	var fargs []Expression
+	optimizeType := getScalarFuncOptimizeType(funcName, args...)
+	if optimizeType != noOpt {
+		fname, fargs = optimizeScalarFunc(optimizeType, funcName, args...)
+	} else {
+		fname = funcName
+		fargs = make([]Expression, len(args))
+		copy(fargs, args)
+	}
+	fc, ok := funcs[fname]
+	if !ok {
+		return fname, nil, errFunctionNotExists.GenByArgs(fname)
+	}
+	f, err := fc.getFunction(fargs, ctx)
+	if err != nil {
+		return fname, f, errors.Trace(err)
+	}
+	return fname, f, nil
+}
+
 // NewFunction creates a new scalar function or constant.
 func NewFunction(ctx context.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if funcName == ast.Cast {
 		return NewCastFunc(retType, args[0], ctx), nil
 	}
-	fc, ok := funcs[funcName]
-	if !ok {
-		return nil, errFunctionNotExists.GenByArgs(funcName)
-	}
-	funcArgs := make([]Expression, len(args))
-	copy(funcArgs, args)
-	f, err := fc.getFunction(funcArgs, ctx)
+	fname, f, err := getAndOptimizeFunction(ctx, funcName, args...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
 	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified {
 		retType = builtinRetTp
-	}
-	var fname string
-	if name := f.getFuncName(); name != "" {
-		fname = name
-	} else {
-		fname = funcName
 	}
 	sf := &ScalarFunction{
 		FuncName: model.NewCIStr(fname),

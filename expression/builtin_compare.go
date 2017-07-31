@@ -16,10 +16,8 @@ package expression
 import (
 	"math"
 	"sort"
-	"strconv"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -270,75 +268,6 @@ func getCmpType(a types.TypeClass, b types.TypeClass) types.TypeClass {
 	return types.ClassReal
 }
 
-// smartConvertType will check expression's value and compare to primary type (tp)
-// then find out best type for secondary type to cast.
-// a is ClassInt Column:
-//    a > "1"       => ClassInt
-//    a > "1.0"     => ClassInt
-//    a > "1.1"     => ClassDecimal
-//    a > "notNum"  => ClassString
-//    a > 1.1       => ClassDecimal
-//    a > 1.0       => ClassInt
-// a is ClassDecimal Column:
-//    a > "1"       => ClassDecimal
-//    a > "1.1"     => ClassDecimal
-//    a > "notNum"  => ClassString
-func smartConvertType(expr Expression, pt, t types.TypeClass) types.TypeClass {
-	if pt == t {
-		return t
-	}
-	c, ok := expr.(*Constant)
-	if !ok {
-		return t
-	}
-	switch val := c.Value.GetValue().(type) {
-	case string:
-		vf, errf := strconv.ParseFloat(val, 64)
-		_, erri := strconv.ParseInt(val, 10, 64)
-		// primary type is number
-		if pt == types.ClassInt || pt == types.ClassDecimal {
-			// expression can cast to float
-			if erri != nil && errf == nil {
-				// not x.0
-				if vf > math.Floor(vf) {
-					return types.ClassDecimal
-				}
-			}
-			// expression can not cast to number just return origin type
-			if erri != nil && errf != nil {
-				return t
-			}
-		}
-		// follow primary type
-		return pt
-	case *types.MyDecimal:
-		if pt == types.ClassInt {
-			f64val, err := val.ToFloat64()
-			if err == nil {
-				if !(f64val > math.Floor(f64val)) {
-					return types.ClassInt
-				}
-			}
-		}
-	default:
-	}
-	return t
-}
-
-func getCmpTypeByExpr(a, b Expression, ta, tb types.TypeClass) types.TypeClass {
-	_, aIsCol := a.(*Column)
-	_, bIsCol := b.(*Column)
-	if aIsCol != bIsCol {
-		// Compare has a column, so we use column's type as primary type
-		if bIsCol {
-			return getCmpType(tb, smartConvertType(a, tb, ta))
-		}
-		return getCmpType(ta, smartConvertType(b, ta, tb))
-	}
-	// No column just process as normal
-	return getCmpType(ta, tb)
-}
-
 // isTemporalColumn checks if a expression is a temporal column,
 // temporal column indicates time column or duration column.
 func isTemporalColumn(expr Expression) bool {
@@ -350,87 +279,6 @@ func isTemporalColumn(expr Expression) bool {
 		return false
 	}
 	return true
-}
-
-// tpInt
-func (c *compareFunctionClass) optimizeColumnIntAndConstDecimal(left Expression, right Expression, ctx context.Context, opReverse bool) (builtinFunc, error) {
-	// Filter support opcode
-	switch c.op {
-	case opcode.LT, opcode.LE, opcode.GT, opcode.GE:
-	default:
-		return nil, nil
-	}
-	// reverse op if required
-	op := c.op
-	if opReverse {
-		switch c.op {
-		case opcode.LT:
-			op = opcode.GT
-		case opcode.LE:
-			op = opcode.GE
-		case opcode.GT:
-			op = opcode.LT
-		case opcode.GE:
-			op = opcode.LE
-		}
-	}
-	// Try to get float64 value for right Constant
-	// If we got any error just ignore this optimization.
-	rconst, ok := right.(*Constant)
-	if !ok {
-		return nil, nil
-	}
-	var rval float64
-	var err error
-	switch val := rconst.Value.GetValue().(type) {
-	case string:
-		rval, err = strconv.ParseFloat(val, 64)
-		if err != nil {
-			return nil, nil
-		}
-	case *types.MyDecimal:
-		rval, err = val.ToFloat64()
-		if err != nil {
-			return nil, nil
-		}
-	default:
-		return nil, nil
-	}
-	// Check for convert op
-	var cop opcode.Op
-	switch op {
-	case opcode.LT, opcode.LE:
-		// a < 1.1
-		// a <= 1.1
-		cop = opcode.LE
-		rval = math.Floor(rval)
-		rconst.Value.SetInt64(int64(rval))
-	case opcode.GT, opcode.GE:
-		// a > 1.1
-		// a >= 1.1
-		cop = opcode.GE
-		rval = math.Ceil(rval)
-		rconst.Value.SetInt64(int64(rval))
-	}
-	args := []Expression{left, right}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	bf.tp.Flen = 1
-	var sig builtinFunc
-	// We should also let outer function know we change funcName
-	switch cop {
-	case opcode.LE:
-		bf.funcName = ast.LE
-		intBf := baseIntBuiltinFunc{bf}
-		sig = &builtinLEIntSig{intBf}
-	case opcode.GE:
-		bf.funcName = ast.GE
-		intBf := baseIntBuiltinFunc{bf}
-		sig = &builtinGEIntSig{intBf}
-	}
-	return sig, nil
 }
 
 // getFunction sets compare built-in function signatures for various types.
@@ -445,7 +293,7 @@ func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Contex
 	}
 	ft0, ft1 := args[0].GetType(), args[1].GetType()
 	tc0, tc1 := ft0.ToClass(), ft1.ToClass()
-	cmpType := getCmpTypeByExpr(args[0], args[1], tc0, tc1)
+	cmpType := getCmpType(tc0, tc1)
 	if cmpType == types.ClassString && (types.IsTypeTime(ft0.Tp) || types.IsTypeTime(ft1.Tp)) {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
@@ -455,17 +303,6 @@ func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Contex
 		// duration <cmp> duration
 		// compare as duration
 		sig, err = c.generateCmpSigs(args, tpDuration, ctx)
-	} else if cmpType == types.ClassDecimal && (tc0 == types.ClassInt || tc1 == types.ClassInt) {
-		// If we got there, mean one column cast from int to decimal
-		_, isColumn0 := args[0].(*Column)
-		_, isColumn1 := args[1].(*Column)
-		_, isConst0 := args[0].(*Constant)
-		_, isConst1 := args[1].(*Constant)
-		if isColumn0 && isConst1 && tc0 == types.ClassInt {
-			sig, err = c.optimizeColumnIntAndConstDecimal(args[0], args[1], ctx, false)
-		} else if isColumn1 && isConst0 && tc1 == types.ClassInt {
-			sig, err = c.optimizeColumnIntAndConstDecimal(args[1], args[0], ctx, true)
-		}
 	} else if cmpType == types.ClassReal || cmpType == types.ClassString {
 		_, isConst0 := args[0].(*Constant)
 		_, isConst1 := args[1].(*Constant)
