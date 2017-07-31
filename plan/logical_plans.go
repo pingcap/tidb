@@ -284,10 +284,6 @@ type DataSource struct {
 	pushedDownConds []expression.Expression
 
 	statisticTable *statistics.Table
-
-	// GenValues is for virtual generated columns without indices.
-	// the key is the offset in row datums, like expression.Column.Index.
-	GenValues map[int]expression.Expression
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {
@@ -373,11 +369,6 @@ type Update struct {
 	basePhysicalPlan
 
 	OrderedList []*expression.Assignment
-
-	// NormalAssignLength is for those assignments calculated by generation expressions.
-	// They are appended into OrderedList, so we need a length to know how many normal
-	// entries in OrderedList.
-	NormalAssignLength int
 }
 
 // Delete represents a delete plan.
