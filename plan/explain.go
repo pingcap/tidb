@@ -58,26 +58,12 @@ func setParents4FinalPlan(plan PhysicalPlan) {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *Selection) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	for i, cond := range p.Conditions {
-		buffer.WriteString(cond.ExplainInfo())
-		if i+1 < len(p.Conditions) {
-			buffer.WriteString(", ")
-		}
-	}
-	return buffer.String()
+	return string(expression.ExplainExpressionList(p.Conditions))
 }
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *Projection) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	for i, expr := range p.Exprs {
-		buffer.WriteString(expr.ExplainInfo())
-		if i+1 < len(p.Exprs) {
-			buffer.WriteString(", ")
-		}
-	}
-	return buffer.String()
+	return string(expression.ExplainExpressionList(p.Exprs))
 }
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -109,14 +95,9 @@ func (p *Limit) ExplainInfo() string {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalAggregation) ExplainInfo() string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("type:%s", p.AggType))
-	if p.HasGby {
-		buffer.WriteString(", group by:")
-		for i, gby := range p.GroupByItems {
-			buffer.WriteString(gby.ExplainInfo())
-			if i+1 < len(p.GroupByItems) {
-				buffer.WriteString(", ")
-			}
-		}
+	if p.HasGby && len(p.GroupByItems) > 0 {
+		buffer.WriteString(fmt.Sprintf(", group by:%s",
+			expression.ExplainExpressionList(p.GroupByItems)))
 	}
 	buffer.WriteString(", funcs:")
 	for i, agg := range p.AggFuncs {
@@ -124,6 +105,133 @@ func (p *PhysicalAggregation) ExplainInfo() string {
 		if i+1 < len(p.AggFuncs) {
 			buffer.WriteString(", ")
 		}
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalApply) ExplainInfo() string {
+	buffer := bytes.NewBufferString(p.PhysicalJoin.ExplainInfo())
+	buffer.WriteString(fmt.Sprintf(", right:%s", p.Children()[p.rightChOffset].ID()))
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalIndexJoin) ExplainInfo() string {
+	buffer := bytes.NewBufferString(fmt.Sprintf("outer:%s",
+		p.Children()[p.outerIndex].ID()))
+	if len(p.OuterJoinKeys) > 0 {
+		buffer.WriteString(fmt.Sprintf(", outer key:%s",
+			expression.ExplainColumnList(p.OuterJoinKeys)))
+	}
+	if len(p.InnerJoinKeys) > 0 {
+		buffer.WriteString(fmt.Sprintf(", inner key:%s",
+			expression.ExplainColumnList(p.InnerJoinKeys)))
+	}
+	if len(p.LeftConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", left cond:%s",
+			expression.ExplainExpressionList(p.LeftConditions)))
+	}
+	if len(p.RightConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", right cond:%s",
+			expression.ExplainExpressionList(p.RightConditions)))
+	}
+	if len(p.OtherConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", other cond:%s",
+			expression.ExplainExpressionList(p.OtherConditions)))
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalHashJoin) ExplainInfo() string {
+	buffer := bytes.NewBufferString(p.JoinType.String())
+	buffer.WriteString(fmt.Sprintf(", small:%s", p.Children()[p.SmallTable].ID()))
+	if len(p.EqualConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", equal:%s", p.EqualConditions))
+	}
+	if len(p.LeftConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", left cond:%s", p.LeftConditions))
+	}
+	if len(p.RightConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", right cond:%s",
+			expression.ExplainExpressionList(p.RightConditions)))
+	}
+	if len(p.OtherConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", other cond:%s",
+			expression.ExplainExpressionList(p.OtherConditions)))
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalHashSemiJoin) ExplainInfo() string {
+	buffer := bytes.NewBufferString(fmt.Sprintf("right:%s", p.Children()[p.rightChOffset].ID()))
+	if p.WithAux {
+		buffer.WriteString(", aux")
+	}
+	if p.Anti {
+		buffer.WriteString(", anti")
+	}
+	if len(p.EqualConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", equal:%s", p.EqualConditions))
+	}
+	if len(p.LeftConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", left cond:%s", p.LeftConditions))
+	}
+	if len(p.RightConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", right cond:%s",
+			expression.ExplainExpressionList(p.RightConditions)))
+	}
+	if len(p.OtherConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", other cond:%s",
+			expression.ExplainExpressionList(p.OtherConditions)))
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalMergeJoin) ExplainInfo() string {
+	buffer := bytes.NewBufferString(p.JoinType.String())
+	if len(p.EqualConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", equal:%s", p.EqualConditions))
+	}
+	if len(p.LeftConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", left cond:%s", p.LeftConditions))
+	}
+	if len(p.RightConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", right cond:%s",
+			expression.ExplainExpressionList(p.RightConditions)))
+	}
+	if len(p.OtherConditions) > 0 {
+		buffer.WriteString(fmt.Sprintf(", other cond:%s",
+			expression.ExplainExpressionList(p.OtherConditions)))
+	}
+	if len(p.DefaultValues) > 0 {
+		buffer.WriteString("default vals:")
+		for i, val := range p.DefaultValues {
+			str, err := val.ToString()
+			if err != nil {
+				str = err.Error()
+			}
+			buffer.WriteString(str)
+			if i+1 < len(p.DefaultValues) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	if p.Desc {
+		buffer.WriteString("desc")
+	} else {
+		buffer.WriteString("asc")
+	}
+	if len(p.leftKeys) > 0 {
+		buffer.WriteString(fmt.Sprintf("left key:%s",
+			expression.ExplainColumnList(p.leftKeys)))
+	}
+	if len(p.rightKeys) > 0 {
+		buffer.WriteString(fmt.Sprintf("right key:%s",
+			expression.ExplainColumnList(p.rightKeys)))
 	}
 	return buffer.String()
 }
