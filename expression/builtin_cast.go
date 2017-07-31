@@ -641,6 +641,10 @@ type builtinCastStringAsIntSig struct {
 	baseIntBuiltinFunc
 }
 
+// handleOverflow handle the overflow caused by cast string as int,
+// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html.
+// When an out-of-range value is assigned to an integer column, MySQL stores the value representing the corresponding endpoint of the column data type range. If it is in select statement, it will return the
+// endpoint value with a warning.
 func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string, origErr error, isNegative bool) (res int64, err error) {
 	res, err = origRes, origErr
 	if err == nil {
@@ -648,7 +652,6 @@ func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string
 	}
 
 	sc := b.getCtx().GetSessionVars().StmtCtx
-
 	if sc.InSelectStmt && terror.ErrorEqual(origErr, types.ErrOverflow) {
 		if isNegative {
 			res = math.MinInt64

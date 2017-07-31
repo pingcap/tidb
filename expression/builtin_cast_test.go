@@ -81,12 +81,13 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	sc.OverflowAsWarning = true
 
 	// cast('18446744073709551616' as unsigned);
-	tp1 := types.NewFieldType(mysql.TypeLonglong)
-	tp1.Flag |= mysql.UnsignedFlag
-	tp1.Flen = mysql.MaxIntWidth
-	tp1.Charset = charset.CharsetBin
-	tp1.Collate = charset.CollationBin
-	tp1.Flag |= mysql.BinaryFlag
+	tp1 := &types.FieldType{
+		Tp:      mysql.TypeLonglong,
+		Flag:    mysql.BinaryFlag,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+		Flen:    mysql.MaxIntWidth,
+	}
 	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
@@ -141,13 +142,14 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	// create table t1(s1 time);
 	// insert into t1 values('11:11:11');
 	// select cast(s1 as decimal(7, 2)) from t1;
-	tpDecimal := types.NewFieldType(mysql.TypeNewDecimal)
-	tpDecimal.Flag |= mysql.UnsignedFlag
-	tpDecimal.Charset = charset.CharsetBin
-	tpDecimal.Collate = charset.CollationBin
-	tpDecimal.Flag |= mysql.BinaryFlag
-	tpDecimal.Flen = 7
-	tpDecimal.Decimal = 2
+	tpDecimal := &types.FieldType{
+		Tp:      mysql.TypeNewDecimal,
+		Flag:    mysql.BinaryFlag | mysql.UnsignedFlag,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+		Flen:    7,
+		Decimal: 2,
+	}
 	f = NewCastFunc(tpDecimal, &Constant{Value: timeDatum, RetType: types.NewFieldType(mysql.TypeDatetime)}, ctx)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
