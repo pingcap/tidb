@@ -27,6 +27,10 @@ type Config struct {
 	Store          string `json:"store" toml:"store"`
 	SlowThreshold  int    `json:"slow_threshold" toml:"slow_threshold"`
 	QueryLogMaxlen int    `json:"query_log_max_len" toml:"query_log_max_len"`
+	SSLEnabled     bool   `json:"ssl_enabled" toml:"ssl_enabled"`
+	SSLCAPath      string `json:"ssl_ca_path" toml:"ssl_ca_path"`
+	SSLCertPath    string `json:"ssl_cert_path" toml:"ssl_cert_path"`
+	SSLKeyPath     string `json:"ssl_key_path" toml:"ssl_key_path"`
 }
 
 var cfg *Config
