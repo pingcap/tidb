@@ -22,7 +22,7 @@ import (
 
 var statisticsList []Statistics
 
-// DefaultStatusVarScopeFlag is the default scope of system variables.
+// DefaultStatusVarScopeFlag is the default scope of status variables.
 var DefaultStatusVarScopeFlag = ScopeGlobal | ScopeSession
 
 // StatusVal is the value of the corresponding status variable.

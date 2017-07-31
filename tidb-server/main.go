@@ -74,7 +74,6 @@ var (
 	skipGrantTable  = flag.Bool("skip-grant-table", false, "This option causes the server to start without using the privilege system at all.")
 	slowThreshold   = flag.Int("slow-threshold", 300, "Queries with execution time greater than this value will be logged. (Milliseconds)")
 	queryLogMaxlen  = flag.Int("query-log-max-len", 2048, "Maximum query length recorded in log")
-	sslEnabled      = flag.Bool("ssl", false, "Enable secure connection")
 	sslCAPath       = flag.String("ssl-ca", "", "Path of file that contains list of trusted SSL CAs")
 	sslCertPath     = flag.String("ssl-cert", "", "Path of file that contains X509 certificate in PEM format")
 	sslKeyPath      = flag.String("ssl-key", "", "Path of file that contains X509 key in PEM format")
@@ -122,14 +121,9 @@ func main() {
 	cfg.StorePath = *storePath
 	cfg.SlowThreshold = *slowThreshold
 	cfg.QueryLogMaxlen = *queryLogMaxlen
-	cfg.SSLEnabled = *sslEnabled
 	cfg.SSLCAPath = *sslCAPath
 	cfg.SSLCertPath = *sslCertPath
 	cfg.SSLKeyPath = *sslKeyPath
-	if len(*sslCAPath) > 0 || len(*sslCertPath) > 0 || len(*sslKeyPath) > 0 {
-		// assigning sslCAPath, sslCertPath or sslKeyPath implies sslEnabled=true
-		cfg.SSLEnabled = true
-	}
 
 	// set log options
 	if len(*logFile) > 0 {
@@ -149,47 +143,10 @@ func main() {
 	printer.PrintTiDBInfo()
 	log.SetLevelByString(cfg.LogLevel)
 
-	var tlsConfig *tls.Config
-
 	// Try loading TLS certificates.
-	if cfg.SSLEnabled {
-		tlsCert, err := tls.LoadX509KeyPair(*sslCertPath, *sslKeyPath)
-		if err != nil {
-			log.Warn(errors.ErrorStack(err))
-			cfg.SSLEnabled = false
-		} else {
-			variable.SysVars["ssl_cert"].Value = *sslCertPath
-			variable.SysVars["ssl_key"].Value = *sslKeyPath
-			// Try loading CA cert.
-			clientAuthPolicy := tls.NoClientCert
-			var certPool *x509.CertPool
-			if len(*sslCAPath) > 0 {
-				caCert, err := ioutil.ReadFile(*sslCAPath)
-				if err != nil {
-					log.Warn(errors.ErrorStack(err))
-				} else {
-					certPool = x509.NewCertPool()
-					if certPool.AppendCertsFromPEM(caCert) {
-						clientAuthPolicy = tls.VerifyClientCertIfGiven
-					}
-					variable.SysVars["ssl_ca"].Value = *sslCAPath
-				}
-			}
-			tlsConfig = &tls.Config{
-				Certificates: []tls.Certificate{tlsCert},
-				ClientCAs:    certPool,
-				ClientAuth:   clientAuthPolicy,
-				MinVersion:   0,
-			}
-		}
-	}
-
-	if cfg.SSLEnabled {
-		log.Info("Secure connection is enabled")
-		variable.SysVars["have_openssl"].Value = "YES"
-		variable.SysVars["have_ssl"].Value = "YES"
-	} else {
-		log.Warn("Secure connection is NOT ENABLED")
+	tlsConfig := loadTLSCertificates(*sslCAPath, *sslCertPath, *sslKeyPath)
+	if tlsConfig != nil {
+		cfg.SSLEnabled = true
 	}
 
 	store := createStore()
@@ -212,7 +169,7 @@ func main() {
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)
 	var svr *server.Server
-	svr, err = server.NewServer(cfg, tlsConfig, driver)
+	svr, err = server.NewServer(cfg, driver, tlsConfig)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
@@ -318,4 +275,50 @@ func parseLease(lease string) time.Duration {
 
 func hasRootPrivilege() bool {
 	return os.Geteuid() == 0
+}
+
+func loadTLSCertificates(CAPath string, certPath string, keyPath string) (tlsConfig *tls.Config) {
+	defer func() {
+		if tlsConfig != nil {
+			log.Info("Secure connection is enabled")
+			variable.SysVars["have_openssl"].Value = "YES"
+			variable.SysVars["have_ssl"].Value = "YES"
+			variable.SysVars["ssl_cert"].Value = certPath
+			variable.SysVars["ssl_key"].Value = keyPath
+		} else {
+			log.Warn("Secure connection is NOT ENABLED")
+		}
+	}()
+
+	if len(CAPath) == 0 && len(certPath) == 0 && len(keyPath) == 0 {
+		return nil
+	}
+
+	tlsCert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		log.Warn(errors.ErrorStack(err))
+		return nil
+	}
+
+	// Try loading CA cert.
+	clientAuthPolicy := tls.NoClientCert
+	var certPool *x509.CertPool
+	if len(CAPath) > 0 {
+		caCert, err := ioutil.ReadFile(CAPath)
+		if err != nil {
+			log.Warn(errors.ErrorStack(err))
+		} else {
+			certPool = x509.NewCertPool()
+			if certPool.AppendCertsFromPEM(caCert) {
+				clientAuthPolicy = tls.VerifyClientCertIfGiven
+			}
+			variable.SysVars["ssl_ca"].Value = CAPath
+		}
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		ClientCAs:    certPool,
+		ClientAuth:   clientAuthPolicy,
+		MinVersion:   0,
+	}
 }

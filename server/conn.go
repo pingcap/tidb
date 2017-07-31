@@ -180,8 +180,7 @@ type handshakeResponse41 struct {
 	Attrs      map[string]string
 }
 
-// SSLRequest and HandshakeResponse41 shares a common header.
-// The function parses this header.
+// parseHandshakeResponseHeader parses the common header of SSLRequest and HandshakeResponse41.
 func parseHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
@@ -344,7 +343,7 @@ func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	cc.ctx, err = cc.server.driver.OpenCtx(tlsStatePtr, uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname)
+	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname, tlsStatePtr)
 	if err != nil {
 		return errors.Trace(err)
 	}

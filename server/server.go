@@ -130,7 +130,7 @@ func (s *Server) skipAuth() bool {
 const tokenLimit = 1000
 
 // NewServer creates a new Server.
-func NewServer(cfg *config.Config, tlsConfig *tls.Config, driver IDriver) (*Server, error) {
+func NewServer(cfg *config.Config, driver IDriver, tlsConfig *tls.Config) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		tlsConfig:         tlsConfig, // tlsConfig will be NotNil only if SSLEnabled and valid certs are provided
