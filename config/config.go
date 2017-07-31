@@ -37,7 +37,10 @@ var once sync.Once
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
 	once.Do(func() {
-		cfg = &Config{}
+		cfg = &Config{
+			SlowThreshold:  300,
+			QueryLogMaxlen: 2048,
+		}
 	})
 	return cfg
 }
