@@ -447,12 +447,12 @@ func (p *TopN) generatePhysicalPlans() []PhysicalPlan {
 // If this sort is a topN plan, we will try to push the sort down and leave the limit.
 // TODO: If this is a sort plan and the coming prop is not nil, this plan is redundant and can be removed.
 func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
+	t, err := p.getTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if task != nil {
-		return task, nil
+	if t != nil {
+		return t, nil
 	}
 	if prop.taskTp != rootTaskType {
 		// TODO: This is a trick here, because an operator that can be pushed to Coprocessor can never be pushed across sort.
@@ -462,11 +462,11 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		return invalidTask, p.storeTask(prop, invalidTask)
 	}
 	// enforce branch
-	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
+	t, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	task = p.attach2Task(task)
+	t = p.attach2Task(t)
 	newProp, canPassProp := getPropByOrderByItems(p.ByItems)
 	if canPassProp {
 		newProp.expectedCnt = prop.expectedCnt
@@ -474,52 +474,52 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if orderedTask.cost() < task.cost() {
-			task = orderedTask
+		if orderedTask.cost() < t.cost() {
+			t = orderedTask
 		}
 	}
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
-	return task, p.storeTask(prop, task)
+	t = prop.enforceProperty(t, p.ctx, p.allocator)
+	return t, p.storeTask(prop, t)
 }
 
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	// look up the task map
-	task, err := p.getTask(prop)
+	t, err := p.getTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if task != nil {
-		return task, nil
+	if t != nil {
+		return t, nil
 	}
-	task = invalidTask
+	t = invalidTask
 	if prop.taskTp != rootTaskType {
 		// Currently all plan cannot totally push down.
-		return task, p.storeTask(prop, task)
+		return t, p.storeTask(prop, t)
 	}
 	// Now we only consider rootTask.
 	if len(p.basePlan.children) == 0 {
 		// When the children length is 0, we process it specially.
-		task = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
-		task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
-		return task, p.storeTask(prop, task)
+		t = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
+		t = prop.enforceProperty(t, p.basePlan.ctx, p.basePlan.allocator)
+		return t, p.storeTask(prop, t)
 	}
 	// Else we suppose it only has one child.
 	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
 		// We consider to add enforcer firstly.
-		task, err = p.getBestTask(task, prop, pp, true)
+		t, err = p.getBestTask(t, prop, pp, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if prop.isEmpty() {
 			continue
 		}
-		task, err = p.getBestTask(task, prop, pp, false)
+		t, err = p.getBestTask(t, prop, pp, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	return task, p.storeTask(prop, task)
+	return t, p.storeTask(prop, t)
 }
 
 func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan, enforced bool) (task, error) {
@@ -553,13 +553,13 @@ func tryToAddUnionScan(cop *copTask, conds []expression.Expression, ctx context.
 	if ctx.Txn() == nil || ctx.Txn().IsReadOnly() {
 		return cop
 	}
-	task := finishCopTask(cop, ctx, allocator)
+	t := finishCopTask(cop, ctx, allocator)
 	us := PhysicalUnionScan{
 		Conditions: conds,
 	}.init(allocator, ctx)
-	us.SetSchema(task.plan().Schema())
-	us.profile = task.plan().statsProfile()
-	return us.attach2Task(task)
+	us.SetSchema(t.plan().Schema())
+	us.profile = t.plan().statsProfile()
+	return us.attach2Task(t)
 }
 
 // tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task and store it.
@@ -618,32 +618,32 @@ func (p *DataSource) tryToGetDualTask() (task, error) {
 // convert2NewPhysicalPlan implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
+	t, err := p.getTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if task != nil {
-		return task, nil
+	if t != nil {
+		return t, nil
 	}
-	task, err = p.tryToGetDualTask()
+	t, err = p.tryToGetDualTask()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if task != nil {
-		return task, p.storeTask(prop, task)
+	if t != nil {
+		return t, p.storeTask(prop, t)
 	}
-	task, err = p.tryToGetMemTask(prop)
+	t, err = p.tryToGetMemTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if task != nil {
-		return task, p.storeTask(prop, task)
+	if t != nil {
+		return t, p.storeTask(prop, t)
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
-	task = invalidTask
+	t = invalidTask
 	if includeTableScan {
-		task, err = p.convertToTableScan(prop)
+		t, err = p.convertToTableScan(prop)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -653,11 +653,11 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if idxTask.cost() < task.cost() {
-			task = idxTask
+		if idxTask.cost() < t.cost() {
+			t = idxTask
 		}
 	}
-	return task, p.storeTask(prop, task)
+	return t, p.storeTask(prop, t)
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
