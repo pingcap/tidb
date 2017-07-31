@@ -367,7 +367,8 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row []types.Datum) (res *types.
 	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = types.NewDecFromInt(val)
 	} else {
-		uVal, err := types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		var uVal uint64
+		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		if err != nil {
 			return res, false, errors.Trace(err)
 		}
@@ -390,7 +391,8 @@ func (b *builtinCastIntAsStringSig) evalString(row []types.Datum) (res string, i
 	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = strconv.FormatInt(val, 10)
 	} else {
-		uVal, err := types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		var uVal uint64
+		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		if err != nil {
 			return res, false, errors.Trace(err)
 		}

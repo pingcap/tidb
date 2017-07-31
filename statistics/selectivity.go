@@ -84,7 +84,7 @@ func pseudoSelectivity(exprs []expression.Expression) float64 {
 // Currently the time complexity is o(n^2).
 func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) (float64, error) {
 	if t.Count == 0 {
-		return 0, nil
+		return 1, nil
 	}
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.

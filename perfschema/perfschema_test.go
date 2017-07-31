@@ -193,7 +193,8 @@ func mustQuery(c *C, se tidb.Session, s string) int {
 	_, err := r.Fields()
 	c.Assert(err, IsNil)
 	cnt := 0
-	for row, err := r.Next(); row != nil && err == nil; row, err = r.Next() {
+	var row *ast.Row
+	for row, err = r.Next(); row != nil && err == nil; row, err = r.Next() {
 		cnt++
 	}
 	c.Assert(err, IsNil)
