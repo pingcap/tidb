@@ -1194,20 +1194,34 @@ type lTrimFunctionClass struct {
 }
 
 func (c *lTrimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLTrimSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	if mysql.HasBinaryFlag(argType.Flag) {
+		types.SetBinChsClnFlag(bf.tp)
+	}
+	sig := &builtinLTrimSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinLTrimSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-func (b *builtinLTrimSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+// evalString evals a builtinLTrimSig
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
+func (b *builtinLTrimSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	return trimFn(strings.TrimLeft, spaceChars)(args, b.ctx)
+	return strings.TrimLeft(d, spaceChars), false, nil
 }
 
 type rTrimFunctionClass struct {
@@ -1215,37 +1229,34 @@ type rTrimFunctionClass struct {
 }
 
 func (c *rTrimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRTrimSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	if mysql.HasBinaryFlag(argType.Flag) {
+		types.SetBinChsClnFlag(bf.tp)
+	}
+	sig := &builtinRTrimSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinRTrimSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-func (b *builtinRTrimSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return trimFn(strings.TrimRight, spaceChars)(args, b.ctx)
-}
-
-// trimFn returns a BuildFunc for ltrim and rtrim.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
+// evalString evals a builtinRTrimSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
-func trimFn(fn func(string, string) string, cutset string) BuiltinFunc {
-	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-		if args[0].IsNull() {
-			return d, nil
-		}
-		str, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(fn(str, cutset))
-		return d, nil
+func (b *builtinRTrimSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
+	return strings.TrimRight(d, spaceChars), false, nil
 }
 
 func trimLeft(str, remstr string) string {
