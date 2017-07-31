@@ -698,7 +698,7 @@ LOOP:
 	matchRows(c, rows, [][]interface{}{{count - int64(step)}})
 
 	for i := num; i < num+step; i++ {
-		rows := s.mustQuery(c, "select c4 from t2 where c4 = ?", i)
+		rows = s.mustQuery(c, "select c4 from t2 where c4 = ?", i)
 		matchRows(c, rows, [][]interface{}{{i}})
 	}
 

@@ -64,9 +64,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			if newData[i].IsNull() {
 				return false, errors.Errorf("Column '%v' cannot be null", col.Name.O)
 			}
-			val, err := newData[i].ToInt64(sc)
-			if err != nil {
-				return false, errors.Trace(err)
+			val, errTI := newData[i].ToInt64(sc)
+			if errTI != nil {
+				return false, errors.Trace(errTI)
 			}
 			t.RebaseAutoID(val, true)
 		}
@@ -106,9 +106,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
-			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
-			if err != nil {
-				return false, errors.Trace(err)
+			v, errGT := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
+			if errGT != nil {
+				return false, errors.Trace(errGT)
 			}
 			newData[i] = v
 		}
