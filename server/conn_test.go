@@ -22,6 +22,14 @@ type ConnTestSuite struct{}
 
 var _ = Suite(ConnTestSuite{})
 
+func (ts ConnTestSuite) TestMalformHandshakeHeader(c *C) {
+	c.Parallel()
+	data := []byte{0x00}
+	var p handshakeResponse41
+	_, err := parseHandshakeResponseHeader(&p, data)
+	c.Assert(err, NotNil)
+}
+
 func (ts ConnTestSuite) TestParseHandshakeResponse(c *C) {
 	c.Parallel()
 	// test data from http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse41

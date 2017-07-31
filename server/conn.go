@@ -90,7 +90,7 @@ func (cc *clientConn) handshake() error {
 	if err := cc.writeInitialHandshake(); err != nil {
 		return errors.Trace(err)
 	}
-	if err := cc.readSSLRequestAndHandshakeResponse(); err != nil {
+	if err := cc.readOptionalSSLRequestAndHandshakeResponse(); err != nil {
 		cc.writeError(err)
 		return errors.Trace(err)
 	}
@@ -182,13 +182,12 @@ type handshakeResponse41 struct {
 
 // parseHandshakeResponseHeader parses the common header of SSLRequest and HandshakeResponse41.
 func parseHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
-	defer func() {
-		// Check malformat packet cause out of range is disgusting, but don't panic!
-		if r := recover(); r != nil {
-			log.Errorf("handshake panic, packet data: %v", data)
-			err = mysql.ErrMalformPacket
-		}
-	}()
+	// Ensure there are enough data to read:
+	// http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
+	if len(data) < 4+4+1+23 {
+		log.Errorf("handshake panic, packet data: %v", data)
+		return 0, mysql.ErrMalformPacket
+	}
 
 	offset := 0
 	// capability
@@ -296,7 +295,7 @@ func parseAttrs(data []byte) (map[string]string, error) {
 	return attrs, nil
 }
 
-func (cc *clientConn) readSSLRequestAndHandshakeResponse() error {
+func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 	// Read a packet. It may be a SSLRequest or HandshakeResponse.
 	data, err := cc.readPacket()
 	if err != nil {
