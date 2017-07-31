@@ -40,6 +40,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -61,7 +62,7 @@ var (
 
 // Server is the MySQL protocol server
 type Server struct {
-	cfg               *Config
+	cfg               *config.Config
 	tlsConfig         *tls.Config
 	driver            IDriver
 	listener          net.Listener
@@ -128,7 +129,7 @@ func (s *Server) skipAuth() bool {
 const tokenLimit = 1000
 
 // NewServer creates a new Server.
-func NewServer(cfg *Config, tlsConfig *tls.Config, driver IDriver) (*Server, error) {
+func NewServer(cfg *config.Config, tlsConfig *tls.Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		tlsConfig:         tlsConfig, // tlsConfig will be NotNil only if SSLEnabled and valid certs are provided

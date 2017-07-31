@@ -115,7 +115,6 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{"0x3c26", hexLit},
 		{"x'13181C76734725455A'", hexLit},
 		{"0b01", bitLit},
-		{fmt.Sprintf("%c", 0), invalid},
 		{fmt.Sprintf("t1%c", 0), identifier},
 		{".*", int('.')},
 		{".1_t_1_x", int('.')},
@@ -314,4 +313,16 @@ func (s *testLexerSuite) TestSQLModeANSIQuotes(c *C) {
 		c.Assert(tok, Equals, t.tok)
 		c.Assert(v.ident, Equals, t.ident)
 	}
+}
+
+func (s *testLexerSuite) TestIllegal(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCaseItem{
+		{"'", 0},
+		{"'fu", 0},
+		{"'\\n", 0},
+		{"'\\", 0},
+		{fmt.Sprintf("%c", 0), invalid},
+	}
+	runTest(c, table)
 }

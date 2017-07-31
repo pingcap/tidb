@@ -87,7 +87,7 @@ func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
 
 type rpcHandler struct {
 	cluster   *Cluster
-	mvccStore *MvccStore
+	mvccStore MVCCStore
 
 	// store id for current request
 	storeID uint64
@@ -281,6 +281,21 @@ func (h *rpcHandler) handleKvBatchGet(req *kvrpcpb.BatchGetRequest) *kvrpcpb.Bat
 	}
 }
 
+func (h *rpcHandler) handleMvccGetByKey(req *kvrpcpb.MvccGetByKeyRequest) *kvrpcpb.MvccGetByKeyResponse {
+	if !h.checkKeyInRegion(req.Key) {
+		panic("MvccGetByKey: key not in region")
+	}
+	var resp kvrpcpb.MvccGetByKeyResponse
+	resp.Info = h.mvccStore.MvccGetByKey(req.Key)
+	return &resp
+}
+
+func (h *rpcHandler) handleMvccGetByStartTS(req *kvrpcpb.MvccGetByStartTsRequest) *kvrpcpb.MvccGetByStartTsResponse {
+	var resp kvrpcpb.MvccGetByStartTsResponse
+	resp.Info, resp.Key = h.mvccStore.MvccGetByStartTS(h.startKey, h.endKey, req.StartTs)
+	return &resp
+}
+
 func (h *rpcHandler) handleKvBatchRollback(req *kvrpcpb.BatchRollbackRequest) *kvrpcpb.BatchRollbackResponse {
 	err := h.mvccStore.Rollback(req.Keys, req.StartVersion)
 	if err != nil {
@@ -339,11 +354,11 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
 	Cluster   *Cluster
-	MvccStore *MvccStore
+	MvccStore MVCCStore
 }
 
 // NewRPCClient creates an RPCClient.
-func NewRPCClient(cluster *Cluster, mvccStore *MvccStore) *RPCClient {
+func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
 	return &RPCClient{
 		Cluster:   cluster,
 		MvccStore: mvccStore,
@@ -508,6 +523,20 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 			return nil, err
 		}
 		resp.Cop = res
+	case tikvrpc.CmdMvccGetByKey:
+		r := req.MvccGetByKey
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.MvccGetByKey = &kvrpcpb.MvccGetByKeyResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.MvccGetByKey = handler.handleMvccGetByKey(r)
+	case tikvrpc.CmdMvccGetByStartTs:
+		r := req.MvccGetByStartTs
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.MvccGetByStartTS = &kvrpcpb.MvccGetByStartTsResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.MvccGetByStartTS = handler.handleMvccGetByStartTS(r)
 	default:
 		return nil, errors.Errorf("unsupport this request type %v", req.Type)
 	}

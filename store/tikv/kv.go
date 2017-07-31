@@ -139,7 +139,7 @@ func (s *tikvStore) EtcdAddrs() []string {
 
 type mockOptions struct {
 	cluster        *mocktikv.Cluster
-	mvccStore      *mocktikv.MvccStore
+	mvccStore      mocktikv.MVCCStore
 	clientHijack   func(Client) Client
 	pdClientHijack func(pd.Client) pd.Client
 }
@@ -171,7 +171,7 @@ func WithCluster(cluster *mocktikv.Cluster) MockTiKVStoreOption {
 }
 
 // WithMVCCStore provides the customized mvcc store.
-func WithMVCCStore(store *mocktikv.MvccStore) MockTiKVStoreOption {
+func WithMVCCStore(store mocktikv.MVCCStore) MockTiKVStoreOption {
 	return func(c *mockOptions) {
 		c.mvccStore = store
 	}
@@ -293,6 +293,10 @@ func (s *tikvStore) GetOracle() oracle.Oracle {
 func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	sender := NewRegionRequestSender(s.regionCache, s.client, kvrpcpb.IsolationLevel_SI)
 	return sender.SendReq(bo, req, regionID, timeout)
+}
+
+func (s *tikvStore) GetRegionCache() *RegionCache {
+	return s.regionCache
 }
 
 // ParseEtcdAddr parses path to etcd address list

@@ -49,6 +49,10 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
 		}
 
+		if col.Flen == 0 {
+			return nil, errors.Trace(errWrongKeyColumn.GenByArgs(ic.Column.Name))
+		}
+
 		// JSON column cannot index.
 		if col.FieldType.Tp == mysql.TypeJSON {
 			return nil, errors.Trace(errJSONUsedAsKey.GenByArgs(col.Name.O))
@@ -190,8 +194,9 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		unique      bool
 		indexName   model.CIStr
 		idxColNames []*ast.IndexColName
+		indexOption *ast.IndexOption
 	)
-	err = job.DecodeArgs(&unique, &indexName, &idxColNames)
+	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption)
 	if err != nil {
 		job.State = model.JobCancelled
 		return ver, errors.Trace(err)
@@ -208,6 +213,18 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		if err != nil {
 			job.State = model.JobCancelled
 			return ver, errors.Trace(err)
+		}
+		if indexOption != nil {
+			indexInfo.Comment = indexOption.Comment
+			if indexOption.Tp == model.IndexTypeInvalid {
+				// Use btree as default index type.
+				indexInfo.Tp = model.IndexTypeBtree
+			} else {
+				indexInfo.Tp = indexOption.Tp
+			}
+		} else {
+			// Use btree as default index type.
+			indexInfo.Tp = model.IndexTypeBtree
 		}
 		indexInfo.Primary = false
 		indexInfo.Unique = unique

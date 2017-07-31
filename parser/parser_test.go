@@ -1052,6 +1052,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT JSON_UNQUOTE();`, true},
 		{`SELECT JSON_TYPE('[123]');`, true},
 		{`SELECT JSON_TYPE();`, true},
+
+		// For two json grammar sugar.
+		{`SELECT a->'$.a' FROM t`, true},
+		{`SELECT a->>'$.a' FROM t`, true},
+		{`SELECT '{}'->'$.a' FROM t`, false},
+		{`SELECT '{}'->>'$.a' FROM t`, false},
+		{`SELECT a->3 FROM t`, false},
+		{`SELECT a->>3 FROM t`, false},
 	}
 	s.RunTest(c, table)
 }
@@ -1314,10 +1322,19 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD UNIQUE KEY (a) COMMENT 'a'", true},
 		{"ALTER TABLE t ADD UNIQUE INDEX (a) COMMENT 'a'", true},
 
+		// For create index statement
+		{"CREATE INDEX idx ON t (a)", true},
+		{"CREATE INDEX idx ON t (a) USING HASH", true},
+		{"CREATE INDEX idx ON t (a) COMMENT 'foo'", true},
+		{"CREATE INDEX idx ON t (a) USING HASH COMMENT 'foo'", true},
+		{"CREATE INDEX idx USING BTREE ON t (a) USING HASH COMMENT 'foo'", true},
+		{"CREATE INDEX idx USING BTREE ON t (a)", true},
+
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
 		{"RENAME TABLE t t1", false},
 		{"RENAME TABLE d.t TO d1.t1", true},
+		{"RENAME TABLE t1 TO t2, t3 TO t4", true},
 
 		// for truncate statement
 		{"TRUNCATE TABLE t1", true},
@@ -1398,10 +1415,6 @@ func (s *testParserSuite) TestType(c *C) {
 
 		// for national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},
-
-		// for https://github.com/pingcap/tidb/issues/312
-		{`create table t (c float(53));`, true},
-		{`create table t (c float(54));`, false},
 
 		// for json type
 		{`create table t (a JSON);`, true},

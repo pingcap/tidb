@@ -60,6 +60,7 @@ var (
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalAggregation{}
 	_ PhysicalPlan = &PhysicalApply{}
+	_ PhysicalPlan = &PhysicalIndexJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalHashSemiJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
@@ -446,6 +447,8 @@ type PhysicalApply struct {
 
 	PhysicalJoin PhysicalPlan
 	OuterSchema  []*expression.CorrelatedColumn
+
+	rightChOffset int
 }
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
@@ -477,6 +480,8 @@ type PhysicalIndexJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 	outerIndex      int
+	KeepOrder       bool
+	outerSchema     *expression.Schema
 
 	DefaultValues []types.Datum
 }
@@ -512,6 +517,8 @@ type PhysicalHashSemiJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+
+	rightChOffset int
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -525,6 +532,19 @@ const (
 	// CompleteAgg supposes its input is original results.
 	CompleteAgg
 )
+
+// String implements fmt.Stringer interface.
+func (at AggregationType) String() string {
+	switch at {
+	case StreamedAgg:
+		return "stream"
+	case FinalAgg:
+		return "final"
+	case CompleteAgg:
+		return "complete"
+	}
+	return "unsupported aggregation type"
+}
 
 // PhysicalAggregation is Aggregation's physical plan.
 type PhysicalAggregation struct {

@@ -914,6 +914,76 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestLTrim(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		arg    interface{}
+		isNil  bool
+		getErr bool
+		res    string
+	}{
+		{"   bar   ", false, false, "bar   "},
+		{"bar", false, false, "bar"},
+		{"", false, false, ""},
+		{nil, true, false, ""},
+		{errors.New("must error"), false, true, ""},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.LTrim, primitiveValsToConstants([]interface{}{t.arg})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
+	}
+
+	f, err := funcs[ast.LTrim].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestRTrim(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		arg    interface{}
+		isNil  bool
+		getErr bool
+		res    string
+	}{
+		{"   bar   ", false, false, "   bar"},
+		{"bar", false, false, "bar"},
+		{"", false, false, ""},
+		{nil, true, false, ""},
+		{errors.New("must error"), false, true, ""},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.RTrim, primitiveValsToConstants([]interface{}{t.arg})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
+	}
+
+	f, err := funcs[ast.RTrim].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
@@ -962,25 +1032,43 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 
 func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Input  interface{}
-		Expect string
+	cases := []struct {
+		arg    interface{}
+		isNil  bool
+		getErr bool
+		res    string
 	}{
-		{"4D7953514C", "MySQL"},
-		{"31323334", "1234"},
-		{"", ""},
+		{"4D7953514C", false, false, "MySQL"},
+		{"1267", false, false, string([]byte{0x12, 0x67})},
+		{"126", false, false, string([]byte{0x01, 0x26})},
+		{"", false, false, ""},
+		{1267, false, false, string([]byte{0x12, 0x67})},
+		{126, false, false, string([]byte{0x01, 0x26})},
+		{1267.3, true, false, ""},
+		{"string", true, false, ""},
+		{"你好", true, false, ""},
+		{nil, true, false, ""},
+		{errors.New("must error"), false, true, ""},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Unhex, primitiveValsToConstants([]interface{}{t.arg})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
 	}
 
-	dtbl := tblToDtbl(tbl)
-	fc := funcs[ast.Unhex]
-	for _, t := range dtbl {
-		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
-		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
-
-	}
+	f, err := funcs[ast.Unhex].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestRpad(c *C) {

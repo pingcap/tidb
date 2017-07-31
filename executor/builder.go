@@ -309,7 +309,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		return nil
 	}
 	insertVal := &InsertValues{ctx: b.ctx, Table: tbl, Columns: v.Columns}
-	tableCols := tbl.WritableCols()
+	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {
 		b.err = errors.Trace(err)
@@ -365,10 +365,14 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 }
 
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
-	return &ExplainExec{
+	exec := &ExplainExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		StmtPlan:     v.StmtPlan,
 	}
+	exec.rows = make([]*Row, 0, len(v.Rows))
+	for _, row := range v.Rows {
+		exec.rows = append(exec.rows, &Row{Data: row})
+	}
+	return exec
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor {
@@ -892,10 +896,11 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &IndexReaderExecutor{
-			table:   table,
-			index:   idxInfo,
-			tableID: tblInfo.ID,
-			ranges:  []*types.IndexRange{idxRange},
+			table:     table,
+			index:     idxInfo,
+			tableID:   tblInfo.ID,
+			ranges:    []*types.IndexRange{idxRange},
+			keepOrder: true,
 			dagPB: &tipb.DAGRequest{
 				StartTs:        b.getStartTS(),
 				TimeZoneOffset: timeZoneOffset(b.ctx),
@@ -979,6 +984,10 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 }
 
 func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
+	batchSize := 1
+	if !v.KeepOrder {
+		batchSize = b.ctx.GetSessionVars().IndexLookupSize
+	}
 	return &IndexLookUpJoin{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 		innerExec:       b.build(v.Children()[1]).(DataReader),
@@ -989,6 +998,7 @@ func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
 		rightConditions: v.RightConditions,
 		otherConditions: v.OtherConditions,
 		defaultValues:   v.DefaultValues,
+		batchSize:       batchSize,
 	}
 }
 

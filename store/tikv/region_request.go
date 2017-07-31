@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -106,7 +107,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.KVCtx); e != nil {
 		return nil, false, errors.Trace(e)
 	}
-	context, cancel := goctx.WithTimeout(bo.ctx, timeout)
+	context, cancel := util.WithTimeout(bo.ctx, timeout)
 	defer cancel()
 	resp, err = s.client.SendReq(context, ctx.Addr, req)
 	if err != nil {
