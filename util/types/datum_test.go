@@ -221,10 +221,12 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 			c.Assert(err, IsNil)
 
 			sd := NewStringDatum(tt.expected)
-			expected, err := sd.ConvertTo(sc, ft)
+			var expected Datum
+			expected, err = sd.ConvertTo(sc, ft)
 			c.Assert(err, IsNil)
 
-			cmp, err := obtain.CompareDatum(sc, expected)
+			var cmp int
+			cmp, err = obtain.CompareDatum(sc, expected)
 			c.Assert(err, IsNil)
 			c.Assert(cmp, Equals, 0)
 		} else {

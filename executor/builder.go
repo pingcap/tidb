@@ -839,7 +839,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk 
 		cols = append([]*model.ColumnInfo{pk}, cols...)
 	}
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
-	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	ranges := []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &TableReaderExecutor{
 			table:     table,

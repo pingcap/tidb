@@ -452,6 +452,9 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 
 func startString(s *Scanner) (tok int, pos Pos, lit string) {
 	tok, pos, lit = s.scanString()
+	if tok == unicode.ReplacementChar {
+		return
+	}
 
 	// Quoted strings placed next to each other are concatenated to a single string.
 	// See http://dev.mysql.com/doc/refman/5.7/en/string-literals.html
@@ -527,8 +530,10 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 			ch0 = handleEscape(s)
 		}
 		mb.writeRune(ch0, s.r.w)
-		s.r.inc()
-		ch0 = s.r.peek()
+		if !s.r.eof() {
+			s.r.inc()
+			ch0 = s.r.peek()
+		}
 	}
 
 	tok = unicode.ReplacementChar
