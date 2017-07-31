@@ -108,7 +108,7 @@ git remote set-url --push upstream no_push
 # origin    git@github.com:$(user)/tidb.git (fetch)
 # origin    git@github.com:$(user)/tidb.git (push)
 # upstream  https://github.com/pingcap/tidb (fetch)
-# upstream  https://github.com/pingcap/tidb (push)
+# upstream  no_push (push)
 git remote -v
 ```
 

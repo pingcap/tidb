@@ -72,7 +72,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	c.Assert(err, IsNil)
 
 	var mu sync.Mutex
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
 	var (
@@ -125,7 +125,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			checkErr = errors.Trace(err)
 		}
 	}
-	d.setHook(tc)
+	d.SetHook(tc)
 	defaultValue := int64(3)
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
@@ -139,7 +139,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 
 func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {
 	d.Stop()
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
 	var checkErr error
@@ -177,7 +177,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 			checkErr = errors.Trace(err)
 		}
 	}
-	d.setHook(tc)
+	d.SetHook(tc)
 	d.start(goctx.Background())
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
@@ -187,7 +187,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl, tbl table.Table) {
 	d.Stop()
 	dropCol := tbl.Cols()[2]
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
 	var checkErr error
@@ -206,7 +206,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl
 			}
 		}
 	}
-	d.setHook(tc)
+	d.SetHook(tc)
 	d.start(goctx.Background())
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)

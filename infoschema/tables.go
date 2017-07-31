@@ -686,7 +686,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 		if decimal == types.UnspecifiedLength {
 			decimal = 0
 		}
-		columnType := col.FieldType.CompactStr()
+		columnType := col.FieldType.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {

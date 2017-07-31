@@ -204,6 +204,9 @@ func (s *mockTikvGrpcServer) RawPut(goctx.Context, *kvrpcpb.RawPutRequest) (*kvr
 func (s *mockTikvGrpcServer) RawDelete(goctx.Context, *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
 	return nil, errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) KvDeleteRange(goctx.Context, *kvrpcpb.DeleteRangeRequest) (*kvrpcpb.DeleteRangeResponse, error) {
+	return nil, errors.New("unreachable")
+}
 func (s *mockTikvGrpcServer) RawScan(goctx.Context, *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {
 	return nil, errors.New("unreachable")
 }
