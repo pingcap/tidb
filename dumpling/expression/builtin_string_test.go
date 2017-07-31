@@ -914,6 +914,76 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestLTrim(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		arg    interface{}
+		isNil  bool
+		getErr bool
+		res    string
+	}{
+		{"   bar   ", false, false, "bar   "},
+		{"bar", false, false, "bar"},
+		{"", false, false, ""},
+		{nil, true, false, ""},
+		{errors.New("must error"), false, true, ""},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.LTrim, primitiveValsToConstants([]interface{}{t.arg})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
+	}
+
+	f, err := funcs[ast.LTrim].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestRTrim(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		arg    interface{}
+		isNil  bool
+		getErr bool
+		res    string
+	}{
+		{"   bar   ", false, false, "   bar"},
+		{"bar", false, false, "bar"},
+		{"", false, false, ""},
+		{nil, true, false, ""},
+		{errors.New("must error"), false, true, ""},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.RTrim, primitiveValsToConstants([]interface{}{t.arg})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
+	}
+
+	f, err := funcs[ast.RTrim].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
