@@ -530,11 +530,10 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 			ch0 = handleEscape(s)
 		}
 		mb.writeRune(ch0, s.r.w)
-		if s.r.eof() {
-			break
+		if !s.r.eof() {
+			s.r.inc()
+			ch0 = s.r.peek()
 		}
-		s.r.inc()
-		ch0 = s.r.peek()
 	}
 
 	tok = unicode.ReplacementChar
