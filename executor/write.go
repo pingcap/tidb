@@ -623,6 +623,9 @@ type InsertValues struct {
 	Lists     [][]expression.Expression
 	Setlist   []*expression.Assignment
 	IsPrepare bool
+
+	GenColumns []*ast.ColumnName
+	GenExprs   []expression.Expression
 }
 
 // InsertExec represents an insert executor.
@@ -748,30 +751,32 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		for _, v := range e.Setlist {
 			columns = append(columns, v.Col.ColName.O)
 		}
-
-		cols, err = table.FindCols(tableCols, columns)
-		if err != nil {
-			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
-		}
-
-		if len(cols) == 0 {
-			return nil, errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
-		}
-	} else {
-		// Process `name` type column.
-		columns := make([]string, 0, len(e.Columns))
-		for _, v := range e.Columns {
+		for _, v := range e.GenColumns {
 			columns = append(columns, v.Name.O)
 		}
 		cols, err = table.FindCols(tableCols, columns)
 		if err != nil {
 			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
-
-		// If cols are empty, use all columns instead.
 		if len(cols) == 0 {
-			cols = tableCols
+			return nil, errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
 		}
+	} else if len(e.Columns) > 0 {
+		// Process `name` type column.
+		columns := make([]string, 0, len(e.Columns))
+		for _, v := range e.Columns {
+			columns = append(columns, v.Name.O)
+		}
+		for _, v := range e.GenColumns {
+			columns = append(columns, v.Name.O)
+		}
+		cols, err = table.FindCols(tableCols, columns)
+		if err != nil {
+			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
+		}
+	} else {
+		// If e.Columns are empty, use all columns instead.
+		cols = tableCols
 	}
 
 	// Check column whether is specified only once.
@@ -797,7 +802,7 @@ func (e *InsertValues) fillValueList() error {
 	return nil
 }
 
-func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, cols []*table.Column) error {
+func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCount int, num int, cols []*table.Column) error {
 	// TODO: This check should be done in plan builder.
 	if insertValueCount != valueCount {
 		// "insert into t values (), ()" is valid.
@@ -810,8 +815,18 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	if valueCount == 0 && len(e.Columns) > 0 {
 		// "insert into t (c1) values ()" is not valid.
 		return ErrWrongValueCountOnRow.GenByArgs(num + 1)
-	} else if valueCount > 0 && valueCount != len(cols) {
-		return ErrWrongValueCountOnRow.GenByArgs(num + 1)
+	} else if valueCount > 0 {
+		explicitSetLen := 0
+		if len(e.Columns) != 0 {
+			explicitSetLen = len(e.Columns)
+		} else {
+			explicitSetLen = len(e.Setlist)
+		}
+		if explicitSetLen > 0 && valueCount+genColsCount != len(cols) {
+			return ErrWrongValueCountOnRow.GenByArgs(num + 1)
+		} else if explicitSetLen == 0 && valueCount != len(cols) {
+			return ErrWrongValueCountOnRow.GenByArgs(num + 1)
+		}
 	}
 	return nil
 }
@@ -825,7 +840,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 	rows = make([][]types.Datum, len(e.Lists))
 	length := len(e.Lists[0])
 	for i, list := range e.Lists {
-		if err = e.checkValueCount(length, len(list), i, cols); err != nil {
+		if err = e.checkValueCount(length, len(list), len(e.GenColumns), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
 		e.currRow = int64(i)
@@ -888,6 +903,14 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
 		return nil, errors.Trace(err)
 	}
+	for i, expr := range e.GenExprs {
+		val, err := expr.Eval(row)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		offset := cols[len(vals)+i].Offset
+		row[offset] = val
+	}
 	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -919,7 +942,9 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 			needDefaultValue = true
 			// TODO: Append Warning ErrColumnCantNull.
 		}
-		if mysql.HasAutoIncrementFlag(c.Flag) {
+		if mysql.HasAutoIncrementFlag(c.Flag) || len(c.GeneratedExprString) != 0 {
+			// Just leave generated column as null. It will be calculated later
+			// but before we check whether the column can be null or not.
 			needDefaultValue = false
 		}
 		if needDefaultValue {
