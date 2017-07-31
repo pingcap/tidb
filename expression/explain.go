@@ -61,7 +61,7 @@ func ExplainAggFunc(agg AggregationFunction) string {
 	return buffer.String()
 }
 
-// ExplainExpressionList generates explain information for a list of expressions
+// ExplainExpressionList generates explain information for a list of expressions.
 func ExplainExpressionList(exprs []Expression) []byte {
 	buffer := bytes.NewBufferString("")
 	for i, expr := range exprs {
@@ -73,7 +73,7 @@ func ExplainExpressionList(exprs []Expression) []byte {
 	return buffer.Bytes()
 }
 
-// ExplainColumnList generates explain information for a list of columns
+// ExplainColumnList generates explain information for a list of columns.
 func ExplainColumnList(cols []*Column) []byte {
 	buffer := bytes.NewBufferString("")
 	for i, col := range cols {
