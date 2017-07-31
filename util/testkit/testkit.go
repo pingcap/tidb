@@ -138,6 +138,8 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	tk.c.Assert(rs, check.NotNil, comment)
 	rows, err := tidb.GetRows(rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	err = rs.Close()
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	sRows := make([][]string, len(rows))
 	for i := range rows {
 		row := rows[i]
