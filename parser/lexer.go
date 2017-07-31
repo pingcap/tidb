@@ -162,6 +162,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return tok
 	case null:
 		v.item = nil
+		v.ident = "NULL"
 	case quotedIdentifier:
 		tok = identifier
 	}

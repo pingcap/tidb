@@ -431,11 +431,6 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				}
 			}
 		}
-
-		if colName.O == "\\N" {
-			colName = model.NewCIStr("NULL")
-		}
-
 		col := &expression.Column{
 			FromID:  proj.id,
 			TblName: tblName,
