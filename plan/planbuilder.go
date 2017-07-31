@@ -624,12 +624,17 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 }
 
 func (b *planBuilder) calculateGeneratedColumns(columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns) {
+	sc := b.ctx.GetSessionVars().StmtCtx
 	for _, column := range columns {
 		if len(column.GeneratedExprString) == 0 {
 			continue
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
 		columnName.SetText(column.Name.O)
+		if err := expression.InferType(sc, column.GeneratedExpr); err != nil {
+			b.err = errors.Trace(err)
+			return
+		}
 		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -642,17 +647,12 @@ func (b *planBuilder) calculateGeneratedColumns(columns []*table.Column, onDups 
 		}
 		for dep := range column.Dependences {
 			if _, ok := onDups[dep]; ok {
-				expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
-				if err != nil {
-					b.err = errors.Trace(err)
-					return
-				}
 				col, _, err := mockPlan.findColumn(columnName)
 				if err != nil {
 					b.err = errors.Trace(err)
 					return
 				}
-				assign := &expression.Assignment{Col: col, Expr: expr}
+				assign := &expression.Assignment{Col: col, Expr: expr.Clone()}
 				igc.OnDups = append(igc.OnDups, assign)
 				break
 			}

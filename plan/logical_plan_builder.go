@@ -1140,13 +1140,20 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			ID:       col.ID})
 	}
 	p.SetSchema(schema)
-	// for not stored generated column
+
+	// for calculate generated column
+	sc := b.ctx.GetSessionVars().StmtCtx
 	p.GenValues = make(map[int]expression.Expression)
 	for _, col := range schema.Columns {
 		idx := col.Position
 		colInfo := tableInfo.Columns[idx]
 		if len(colInfo.GeneratedExprString) != 0 && !colInfo.GeneratedStored {
 			column := columns[idx]
+			// TODO: should we take a clone of GeneratedExpr or not?
+			if err := expression.InferType(sc, column.GeneratedExpr); err != nil {
+				b.err = errors.Trace(err)
+				return nil
+			}
 			expr, _, err := b.rewrite(column.GeneratedExpr, p, nil, true)
 			if err != nil {
 				b.err = errors.Trace(err)
@@ -1310,6 +1317,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
+	sc := b.ctx.GetSessionVars().StmtCtx
 	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
 	for _, assign := range list {
 		col, _, err := p.findColumn(assign.Column)
@@ -1338,18 +1346,23 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
 				return nil, nil
 			}
+			genExpr := table.Cols()[i].GeneratedExpr
+			if err := expression.InferType(sc, genExpr); err != nil {
+				b.err = errors.Trace(err)
+				return nil, nil
+			}
 			if asNames, ok := tableAsName[tableInfo]; ok {
 				// Because "UPDATE t m t n SET m.a = m.a+10, n.a = n.a+10" will set a to a+10.
 				for _, asName := range asNames {
 					virtualAssignments = append(virtualAssignments, &ast.Assignment{
 						Column: &ast.ColumnName{Table: asName, Name: colInfo.Name},
-						Expr:   table.Cols()[i].GeneratedExpr,
+						Expr:   genExpr,
 					})
 				}
 			} else {
 				virtualAssignments = append(virtualAssignments, &ast.Assignment{
 					Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
-					Expr:   table.Cols()[i].GeneratedExpr,
+					Expr:   genExpr,
 				})
 			}
 		}
