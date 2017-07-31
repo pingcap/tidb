@@ -1947,7 +1947,8 @@ func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error)
 	)
 	switch len(args) {
 	case 5:
-		arg, err := args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+		var arg int64
+		arg, err = args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}

@@ -404,7 +404,8 @@ func (s *testSuite) TestIssue2612(c *C) {
 	c.Assert(err, IsNil)
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	row.Data[0].GetMysqlDuration().String()
+	str := row.Data[0].GetMysqlDuration().String()
+	c.Assert(str, Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -1236,7 +1237,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 		tk.MustExec("create table t (a varchar(255), b int)")
 		for i, d := range data {
 			tk.MustExec(fmt.Sprintf("insert into t values('%s', %d)", d.val, i))
-			result := tk.MustQuery(fmt.Sprintf("select * from t where a %s '%s'", queryOp, d.pattern))
+			result = tk.MustQuery(fmt.Sprintf("select * from t where a %s '%s'", queryOp, d.pattern))
 			if d.result == 1 {
 				rowStr := fmt.Sprintf("%s %d", d.val, i)
 				result.Check(testkit.Rows(rowStr))
