@@ -711,7 +711,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		if e.handleCol != nil {
 			schemaColumns = append(schemaColumns, &expression.Column{
 				FromID: v.ID(),
-				ID:     -1,
+				ID:     model.ExtraHandleID,
 			})
 		}
 		e.idxColsSchema = expression.NewSchema(schemaColumns...)
@@ -1053,8 +1053,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	}
 
 	for i := range v.Schema().Columns {
-		// If it's id is -1, then it must is the tail of the slice.
-		if v.Schema().Columns[i].ID == -1 {
+		if v.Schema().Columns[i].ID == model.ExtraHandleID {
 			break
 		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
@@ -1116,11 +1115,13 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		handleCol = v.Schema().TblID2handle[is.Table.ID][0]
 	}
 
-	for i := range v.Schema().Columns {
-		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
+	len := v.Schema().Len()
+	if handleCol != nil && handleCol.ID == model.ExtraHandleID {
+		len--
 	}
-	if v.NeedColHandle && handleCol.ID == -1 {
-		tableReq.OutputOffsets = tableReq.OutputOffsets[:len(tableReq.OutputOffsets)-1]
+
+	for i := 0; i < len; i++ {
+		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
 	e := &IndexLookUpExecutor{

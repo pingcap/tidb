@@ -185,7 +185,7 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 		if pkIsHandle && mysql.HasPriKeyFlag(colInfo.Flag) {
 			continue
 		}
-		if colInfo.ID == -1 {
+		if colInfo.ID == model.ExtraHandleID {
 			continue
 		}
 		isIndexColumn := false

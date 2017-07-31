@@ -268,7 +268,9 @@ func (p *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
-	if p.Lock == ast.SelectLockForUpdate {
+	if p.Lock != ast.SelectLockForUpdate {
+		p.baseLogicalPlan.PruneColumns(parentUsedCols)
+	} else {
 		used := getUsedList(parentUsedCols, p.schema)
 		for _, cols := range p.children[0].Schema().TblID2handle {
 			for _, col := range cols {
@@ -280,8 +282,6 @@ func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
 			}
 		}
 		p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
-	} else {
-		p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	}
 }
 

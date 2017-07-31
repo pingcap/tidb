@@ -53,7 +53,8 @@ type TableReaderExecutor struct {
 	ctx       context.Context
 	schema    *expression.Schema
 	// columns are only required by union scan.
-	columns   []*model.ColumnInfo
+	columns []*model.ColumnInfo
+	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
@@ -101,7 +102,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		if e.handleCol != nil && e.handleCol.ID == -1 {
+		if e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
@@ -165,6 +166,7 @@ type IndexReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
+	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
@@ -214,7 +216,7 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		if e.handleCol != nil && e.handleCol.ID == -1 {
+		if e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
@@ -275,6 +277,7 @@ type IndexLookUpExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
+	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult.
@@ -344,7 +347,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		handleCol = e.handleCol
 	} else if e.keepOrder {
 		handleCol = &expression.Column{
-			ID:    -1,
+			ID:    model.ExtraHandleID,
 			Index: e.schema.Len(),
 		}
 		schema.Append(handleCol)

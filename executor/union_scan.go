@@ -234,7 +234,7 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 	for h, data := range us.dirty.addedRows {
 		newData := make([]types.Datum, 0, newLen)
 		for _, col := range us.columns {
-			if col.ID == -1 {
+			if col.ID == model.ExtraHandleID {
 				continue
 			}
 			newData = append(newData, data[col.Offset])

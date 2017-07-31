@@ -370,7 +370,8 @@ type XSelectIndexExec struct {
 	desc                 bool
 	outOfOrder           bool
 	indexConditionPBExpr *tipb.Expr
-	handleCol            *expression.Column
+	// This is the column that represent the handle, we can use handleCol.Index to know its position.
+	handleCol *expression.Column
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -477,9 +478,8 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			schema = e.idxColsSchema
 		}
 		values := make([]types.Datum, schema.Len())
-		if e.handleCol != nil && e.handleCol.ID == -1 {
+		if e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
-			values[len(values)-1].SetInt64(h)
 		} else {
 			err = codec.SetRawValues(rowData, values)
 		}
@@ -494,7 +494,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			return &Row{Data: values}, nil
 		}
 		values = e.indexRowToTableRow(h, values)
-		if e.handleCol != nil && e.handleCol.ID == -1 {
+		if e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID {
 			values[len(values)-1].SetInt64(h)
 		}
 		return &Row{Data: values}, nil
@@ -515,8 +515,7 @@ func decodeRawValues(values []types.Datum, schema *expression.Schema, loc *time.
 }
 
 func (e *XSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Datum) []types.Datum {
-	rowLen := len(e.columns)
-	tableRow := make([]types.Datum, rowLen)
+	tableRow := make([]types.Datum, len(e.columns))
 	for i, tblCol := range e.columns {
 		if table.ToColumn(tblCol).IsPKHandleColumn(e.tableInfo) {
 			if mysql.HasUnsignedFlag(tblCol.FieldType.Flag) {
@@ -797,9 +796,9 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		values := make([]types.Datum, length)
 		// If the handle col is not pk or we need it to sort the rows, it should be generated
 		// and cannot set value by SetRawValues.
-		if (e.handleCol != nil && e.handleCol.ID == -1) || length > e.schema.Len() {
-			err = codec.SetRawValues(rowData, values[:len(values)-1])
-			values[len(values)-1].SetInt64(h)
+		if (e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID) || length > e.schema.Len() {
+			err = codec.SetRawValues(rowData, values[:length-1])
+			values[length-1].SetInt64(h)
 		} else {
 			err = codec.SetRawValues(rowData, values)
 		}
@@ -873,7 +872,8 @@ type XSelectTableExec struct {
 	keepOrder    bool
 	startTS      uint64
 	orderByList  []*tipb.ByItem
-	handleCol    *expression.Column
+	// This is the column that represent the handle, we can use handleCol.Index to know its position.
+	handleCol *expression.Column
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -994,7 +994,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		e.returnedRows++
 		values := make([]types.Datum, e.schema.Len())
-		if e.handleCol != nil && e.handleCol.ID == -1 {
+		if e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {

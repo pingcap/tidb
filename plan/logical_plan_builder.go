@@ -930,7 +930,7 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		for _, col := range p.Schema().Columns {
 			if (dbName.L == "" || dbName.L == col.DBName.L) &&
 				(tblName.L == "" || tblName.L == col.TblName.L) &&
-				col.ID != -1 {
+				col.ID != model.ExtraHandleID {
 				colName := &ast.ColumnNameExpr{
 					Name: &ast.ColumnName{
 						Schema: col.DBName,
@@ -1154,37 +1154,39 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		}
 	}
 	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
-	if b.needColHandle || needUnionScan {
-		if pkCol == nil || needUnionScan {
-			idCol := &expression.Column{
-				FromID:   p.id,
-				DBName:   schemaName,
-				TblName:  tableInfo.Name,
-				ColName:  model.NewCIStr("_rowid"),
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				Position: schema.Len(),
-				Index:    schema.Len(),
-				ID:       -1,
-			}
-			if needUnionScan {
-				p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
-				for _, col := range schema.Columns {
-					p.unionScanSchema.Append(col)
-				}
-				if b.needColHandle {
-					p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
-					p.unionScanSchema.TblID2handle[tableInfo.ID] = []*expression.Column{idCol}
-				}
-			}
-			p.Columns = append(p.Columns, &model.ColumnInfo{
-				ID:   -1,
-				Name: model.NewCIStr("_rowid"),
-			})
-			schema.Append(idCol)
-			schema.TblID2handle[tableInfo.ID] = []*expression.Column{idCol}
-		} else {
-			schema.TblID2handle[tableInfo.ID] = []*expression.Column{pkCol}
+	if !b.needColHandle && !needUnionScan {
+		p.SetSchema(schema)
+		return p
+	}
+	if pkCol == nil || needUnionScan {
+		idCol := &expression.Column{
+			FromID:   p.id,
+			DBName:   schemaName,
+			TblName:  tableInfo.Name,
+			ColName:  model.NewCIStr("_rowid"),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Position: schema.Len(),
+			Index:    schema.Len(),
+			ID:       model.ExtraHandleID,
 		}
+		if needUnionScan {
+			p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+			for _, col := range schema.Columns {
+				p.unionScanSchema.Append(col)
+			}
+			if b.needColHandle {
+				p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
+				p.unionScanSchema.TblID2handle[tableInfo.ID] = []*expression.Column{idCol}
+			}
+		}
+		p.Columns = append(p.Columns, &model.ColumnInfo{
+			ID:   model.ExtraHandleID,
+			Name: model.NewCIStr("_rowid"),
+		})
+		schema.Append(idCol)
+		schema.TblID2handle[tableInfo.ID] = []*expression.Column{idCol}
+	} else {
+		schema.TblID2handle[tableInfo.ID] = []*expression.Column{pkCol}
 	}
 	p.SetSchema(schema)
 	return p

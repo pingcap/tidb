@@ -250,17 +250,19 @@ func (e *SelectLockExec) Next() (*Row, error) {
 	if row == nil {
 		return nil, nil
 	}
-	if len(e.Schema().TblID2handle) > 0 && e.Lock == ast.SelectLockForUpdate {
-		e.ctx.GetSessionVars().TxnCtx.ForUpdate = true
-		txn := e.ctx.Txn()
-		for id, cols := range e.Schema().TblID2handle {
-			for _, col := range cols {
-				handle := row.Data[col.Index].GetInt64()
-				lockKey := tablecodec.EncodeRowKeyWithHandle(id, handle)
-				err = txn.LockKeys(lockKey)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
+	// If there's no handle or it isn't a `select for update`.
+	if len(e.Schema().TblID2handle) == 0 || e.Lock != ast.SelectLockForUpdate {
+		return row, nil
+	}
+	e.ctx.GetSessionVars().TxnCtx.ForUpdate = true
+	txn := e.ctx.Txn()
+	for id, cols := range e.Schema().TblID2handle {
+		for _, col := range cols {
+			handle := row.Data[col.Index].GetInt64()
+			lockKey := tablecodec.EncodeRowKeyWithHandle(id, handle)
+			err = txn.LockKeys(lockKey)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 	}

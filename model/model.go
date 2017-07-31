@@ -78,6 +78,9 @@ func (c *ColumnInfo) Clone() *ColumnInfo {
 	return &nc
 }
 
+// ExtraHandleID is the column ID when we need to append an extra column as a handle.
+const ExtraHandleID = -1
+
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
 	ID      int64  `json:"id"`
