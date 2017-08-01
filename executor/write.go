@@ -203,7 +203,7 @@ func (e *DeleteExec) deleteMultiTables() error {
 		for id, cols := range e.SelectExec.Schema().TblID2handle {
 			tbl := e.tblID2Table[id]
 			for _, col := range cols {
-				if !isMatchTableNameNew(id, col, tblMap) {
+				if names, ok := tblMap[id]; ok && !isMatchTableName(names, col) {
 					continue
 				}
 				if tblRowMap[id] == nil {
@@ -229,11 +229,7 @@ func (e *DeleteExec) deleteMultiTables() error {
 	return nil
 }
 
-func isMatchTableNameNew(tid int64, col *expression.Column, tblMap map[int64][]*ast.TableName) bool {
-	names, ok := tblMap[tid]
-	if !ok {
-		return false
-	}
+func isMatchTableName(names []*ast.TableName, col *expression.Column) bool {
 	for _, n := range names {
 		if (col.DBName.L == "" || col.DBName.L == n.Schema.L) && col.TblName.L == n.Name.L {
 			return true
@@ -250,8 +246,9 @@ func (e *DeleteExec) deleteSingleTable() error {
 	)
 	for i, t := range e.tblID2Table {
 		id, tbl = i, t
+		handleCol = e.SelectExec.Schema().TblID2handle[id][0]
+		break
 	}
-	handleCol = e.SelectExec.Schema().TblID2handle[id][0]
 	for {
 		row, err := e.SelectExec.Next()
 		if err != nil {
@@ -1264,8 +1261,7 @@ func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int
 			return i
 		}
 	}
-	log.Errorf("Couldn't get column information when do update/delete")
-	return 0
+	panic("Couldn't get column information when do update/delete")
 }
 
 // Close implements the Executor Close interface.
