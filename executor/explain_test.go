@@ -20,7 +20,6 @@ import (
 )
 
 func (s *testSuite) TestExplain(c *C) {
-	c.Skip("new planner use different explain, reopen this test in the future.")
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
@@ -34,655 +33,154 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("insert into t2 values(1, 0), (2, 1)")
 
 	tests := []struct {
-		sql       string
-		ids       []string
-		parentIds []string
-		result    []string
+		sql    string
+		expect []string
 	}{
 		{
 			"select * from t1",
 			[]string{
-				"TableScan_3",
-			},
-			[]string{
-				"",
-			},
-			[]string{
-				`{
-    "db": "test",
-    "table": "t1",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
+				"TableScan_3  cop ",
+				"TableReader_4  root ",
 			},
 		},
 		{
 			"select * from t1 order by c2",
 			[]string{
-				"IndexScan_5",
-			},
-			[]string{
-				"",
-			},
-			[]string{
-				`{
-    "db": "test",
-    "table": "t1",
-    "index": "c2",
-    "ranges": "[[\u003cnil\u003e,+inf]]",
-    "desc": false,
-    "out of order": false,
-    "double read": true,
-    "push down info": {
-        "limit": 0,
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
+				"IndexScan_13  cop ",
+				"TableScan_14  cop ",
+				"IndexLookUp_15  root ",
 			},
 		},
 		{
 			"select * from t2 order by c2",
 			[]string{
-				"TableScan_6", "Sort_3",
-			},
-			[]string{
-				"Sort_3", "",
-			},
-			[]string{
-				`{
-    "db": "test",
-    "table": "t2",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "exprs": [
-        {
-            "Expr": "t2.c2",
-            "Desc": false
-        }
-    ],
-    "limit": null,
-    "child": "TableScan_6"
-}`,
+				"TableScan_4  cop ",
+				"TableReader_5 Sort_3 root ",
+				"Sort_3  root t2.c2:asc",
 			},
 		},
 		{
 			"select * from t1 where t1.c1 > 0",
 			[]string{
-				"TableScan_4",
-			},
-			[]string{
-				"",
-			},
-			[]string{`{
-    "db": "test",
-    "table": "t1",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": [
-            "gt(test.t1.c1, 0)"
-        ],
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
+				"TableScan_4  cop ",
+				"TableReader_5  root ",
 			},
 		},
 		{
 			"select t1.c1, t1.c2 from t1 where t1.c2 = 1",
 			[]string{
-				"IndexScan_5",
-			},
-			[]string{
-				"",
-			},
-			[]string{`{
-    "db": "test",
-    "table": "t1",
-    "index": "c2",
-    "ranges": "[[1,1]]",
-    "desc": false,
-    "out of order": true,
-    "double read": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": [
-            "eq(test.t1.c2, 1)"
-        ],
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
+				"IndexScan_7  cop ",
+				"IndexReader_8  root ",
 			},
 		},
 		{
 			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
 			[]string{
-				"TableScan_7", "TableScan_10", "HashLeftJoin_9",
-			},
-			[]string{
-				"HashLeftJoin_9", "HashLeftJoin_9", "",
-			},
-			[]string{
-				`{
-    "db": "test",
-    "table": "t1",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": [
-            "gt(test.t1.c1, 1)"
-        ],
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "db": "test",
-    "table": "t2",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "eqCond": [
-        "eq(test.t1.c2, test.t2.c1)"
-    ],
-    "leftCond": null,
-    "rightCond": null,
-    "otherCond": null,
-    "leftPlan": "TableScan_7",
-    "rightPlan": "TableScan_10"
-}`,
+				"TableScan_22  cop ",
+				"TableReader_23 IndexJoin_7 root ",
+				"IndexScan_33  cop ",
+				"TableScan_34  cop ",
+				"IndexLookUp_35 IndexJoin_7 root ",
+				"IndexJoin_7  root outer:TableReader_23, outer key:test.t1.c2, inner key:test.t2.c1",
 			},
 		},
 		{
 			"update t1 set t1.c2 = 2 where t1.c1 = 1",
 			[]string{
-				"TableScan_4", "Update_3",
-			},
-			[]string{
-				"Update_3", "",
-			},
-			[]string{`{
-    "db": "test",
-    "table": "t1",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": [
-            "eq(test.t1.c1, 1)"
-        ],
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "children": [
-        "TableScan_4"
-    ]
-}`,
+				"TableScan_4  cop ",
+				"TableReader_5 Update_3 root ",
+				"Update_3  root ",
 			},
 		},
 		{
 			"delete from t1 where t1.c2 = 1",
 			[]string{
-				"IndexScan_5", "Delete_3",
-			},
-			[]string{
-				"Delete_3", "",
-			},
-			[]string{`{
-    "db": "test",
-    "table": "t1",
-    "index": "c2",
-    "ranges": "[[1,1]]",
-    "desc": false,
-    "out of order": true,
-    "double read": true,
-    "push down info": {
-        "limit": 0,
-        "access conditions": [
-            "eq(test.t1.c2, 1)"
-        ],
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "children": [
-        "IndexScan_5"
-    ]
-}`,
+				"IndexScan_7  cop ",
+				"TableScan_8  cop ",
+				"IndexLookUp_9 Delete_3 root ",
+				"Delete_3  root ",
 			},
 		},
 		{
 			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
 			[]string{
-				"TableScan_16", "TableScan_10", "HashAgg_11", "HashLeftJoin_15", "Projection_9",
-			},
-			[]string{
-				"HashLeftJoin_15", "HashAgg_11", "HashLeftJoin_15", "Projection_9", "",
-			},
-			[]string{`{
-    "db": "test",
-    "table": "t1",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "db": "test",
-    "table": "t2",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "aggregated push down": true,
-        "gby items": [
-            "b.c2"
-        ],
-        "agg funcs": [
-            "count(b.c2)",
-            "firstrow(b.c2)"
-        ],
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "AggFuncs": [
-        "count([b.c2])",
-        "firstrow([b.c2])"
-    ],
-    "GroupByItems": [
-        "[b.c2]"
-    ],
-    "child": "TableScan_10"
-}`,
-				`{
-    "eqCond": [
-        "eq(a.c1, b.c2)"
-    ],
-    "leftCond": null,
-    "rightCond": null,
-    "otherCond": null,
-    "leftPlan": "TableScan_16",
-    "rightPlan": "HashAgg_11"
-}`,
-				`{
-    "exprs": [
-        "cast(join_agg_0)"
-    ],
-    "child": "HashLeftJoin_15"
-}`,
+				"TableScan_17 HashAgg_16 cop ",
+				"HashAgg_16  cop type:complete, group by:b.c2, funcs:count(b.c2), firstrow(b.c2)",
+				"TableReader_21 HashAgg_20 root ",
+				"HashAgg_20 IndexJoin_9 root type:final, group by:, funcs:count(col_0), firstrow(col_1)",
+				"TableScan_12  cop ",
+				"TableReader_31 IndexJoin_9 root ",
+				"IndexJoin_9 Projection_8 root outer:TableReader_31, outer key:b.c2, inner key:a.c1",
+				"Projection_8  root cast(join_agg_0)",
 			},
 		},
 		{
 			"select * from t2 order by t2.c2 limit 0, 1",
 			[]string{
-				"TableScan_5", "Sort_6",
-			},
-			[]string{
-				"Sort_6", "",
-			},
-			[]string{
-				`{
-    "db": "test",
-    "table": "t2",
-    "desc": false,
-    "keep order": true,
-    "push down info": {
-        "limit": 1,
-        "sort items": [
-            {
-                "Expr": "test.t2.c2",
-                "Desc": false
-            }
-        ],
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "exprs": [
-        {
-            "Expr": "test.t2.c2",
-            "Desc": false
-        }
-    ],
-    "limit": 1,
-    "child": "TableScan_5"
-}`,
+				"TableScan_7 TopN_5 cop ",
+				"TopN_5  cop ",
+				"TableReader_10 TopN_5 root ",
+				"TopN_5  root ",
 			},
 		},
 		{
 			"select * from t1 where c1 > 1 and c2 = 1 and c3 < 1",
 			[]string{
-				"IndexScan_5",
-			},
-			[]string{
-				"",
-			},
-			[]string{
-				`{
-    "db": "test",
-    "table": "t1",
-    "index": "c2",
-    "ranges": "[[1,1]]",
-    "desc": false,
-    "out of order": true,
-    "double read": true,
-    "push down info": {
-        "limit": 0,
-        "access conditions": [
-            "eq(test.t1.c2, 1)"
-        ],
-        "index filter conditions": [
-            "gt(test.t1.c1, 1)"
-        ],
-        "table filter conditions": [
-            "lt(test.t1.c3, 1)"
-        ]
-    }
-}`,
+				"IndexScan_7 Selection_9 cop ",
+				"Selection_9  cop gt(test.t1.c1, 1)",
+				"TableScan_8 Selection_10 cop ",
+				"Selection_10  cop lt(test.t1.c3, 1)",
+				"IndexLookUp_11  root ",
 			},
 		},
 		{
 			"select * from t1 where c1 =1 and c2 > 1",
 			[]string{
-				"TableScan_4",
-			},
-			[]string{
-				"",
-			},
-			[]string{
-				`{
-    "db": "test",
-    "table": "t1",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": [
-            "eq(test.t1.c1, 1)"
-        ],
-        "index filter conditions": null,
-        "table filter conditions": [
-            "gt(test.t1.c2, 1)"
-        ]
-    }
-}`,
+				"TableScan_4 Selection_5 cop ",
+				"Selection_5  cop gt(test.t1.c2, 1)",
+				"TableReader_6  root ",
 			},
 		},
 		{
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
-			[]string{"TableScan_7", "HashAgg_8"},
-			[]string{"HashAgg_8", ""},
 			[]string{
-				`{
-    "db": "test",
-    "table": "t1",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "aggregated push down": true,
-        "gby items": null,
-        "agg funcs": [
-            "sum(in(test.t1.c1, 1, 2))"
-        ],
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "AggFuncs": [
-        "sum([in(test.t1.c1, 1, 2)])"
-    ],
-    "GroupByItems": [
-        "[]"
-    ],
-    "child": "TableScan_7"
-}`,
-			},
-		},
-		{
-			"select sum(t1.c1 in (select c1 from t2 where false)) from t1",
-			[]string{"TableScan_8", "HashAgg_9"},
-			[]string{"HashAgg_9", ""},
-			[]string{
-				`{
-    "db": "test",
-    "table": "t1",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "aggregated push down": true,
-        "gby items": null,
-        "agg funcs": [
-            "sum(0)"
-        ],
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "AggFuncs": [
-        "sum([0])"
-    ],
-    "GroupByItems": [
-        "[]"
-    ],
-    "child": "TableScan_8"
-}`,
+				"TableScan_11 HashAgg_10 cop ",
+				"HashAgg_10  cop type:complete, funcs:sum(in(test.t1.c1, 1, 2))",
+				"TableReader_14 HashAgg_13 root ",
+				"HashAgg_13  root type:final, funcs:sum(col_0)",
 			},
 		},
 		{
 			"select c1 from t1 where c1 in (select c2 from t2)",
-			[]string{"TableScan_7"},
-			[]string{""},
 			[]string{
-				`{
-    "db": "test",
-    "table": "t1",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": [
-            "in(test.t1.c1, 0, 1)"
-        ],
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
+				"TableScan_11  cop ",
+				"TableReader_12  root ",
 			},
 		},
 		{
 			"select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1",
 			[]string{
-				"TableScan_12", "TableScan_13", "Selection_4", "StreamAgg_15", "Selection_10", "Apply_16", "Projection_2",
-			},
-			[]string{
-				"Apply_16", "Selection_4", "StreamAgg_15", "Selection_10", "Apply_16", "Projection_2", "",
-			},
-			[]string{
-				`{
-    "db": "test",
-    "table": "t1",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "db": "test",
-    "table": "t1",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "condition": [
-        "eq(s.c1, test.t1.c1)"
-    ],
-    "scanController": true,
-    "child": "TableScan_13"
-}`,
-				`{
-    "AggFuncs": [
-        "count(1)"
-    ],
-    "GroupByItems": null,
-    "child": "Selection_4"
-}`,
-				`{
-    "condition": [
-        "ne(aggregation_5_col_0, 0)"
-    ],
-    "scanController": false,
-    "child": "StreamAgg_15"
-}`,
-				`{
-    "innerPlan": "Selection_10",
-    "outerPlan": "TableScan_12",
-    "join": {
-        "eqCond": null,
-        "leftCond": null,
-        "rightCond": null,
-        "otherCond": null,
-        "leftPlan": "TableScan_12",
-        "rightPlan": "Selection_10"
-    }
-}`,
-				`{
-    "exprs": [
-        "k"
-    ],
-    "child": "Apply_16"
-}`,
+				"TableScan_13  cop ",
+				"TableReader_14 Apply_12 root ",
+				"TableScan_18  cop ",
+				"TableReader_19 Selection_4 root ",
+				"Selection_4 HashAgg_17 root eq(s.c1, test.t1.c1)",
+				"HashAgg_17 Selection_10 root type:complete, funcs:count(1)",
+				"Selection_10 Apply_12 root ne(k, 0)",
+				"Apply_12 Projection_2 root left outer join, small:Selection_10, right:Selection_10",
+				"Projection_2  root k",
 			},
 		},
 		{
 			"select * from information_schema.columns",
-			[]string{"MemTableScan_3"},
-			[]string{""},
 			[]string{
-				`{
-    "db": "information_schema",
-    "table": "COLUMNS"
-}`,
-			},
-		},
-		{
-			"select s.c1 from t2 s left outer join t2 t on s.c2 = t.c2 limit 10",
-			[]string{"TableScan_6", "Limit_7", "TableScan_10", "HashLeftJoin_9", "Limit_11", "Projection_4"},
-			[]string{"Limit_7", "HashLeftJoin_9", "HashLeftJoin_9", "Limit_11", "Projection_4", ""},
-			[]string{
-				`{
-    "db": "test",
-    "table": "t2",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 10,
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "limit": 10,
-    "offset": 0,
-    "child": "TableScan_6"
-}`,
-				`{
-    "db": "test",
-    "table": "t2",
-    "desc": false,
-    "keep order": false,
-    "push down info": {
-        "limit": 0,
-        "access conditions": null,
-        "index filter conditions": null,
-        "table filter conditions": null
-    }
-}`,
-				`{
-    "eqCond": [
-        "eq(s.c2, t.c2)"
-    ],
-    "leftCond": null,
-    "rightCond": null,
-    "otherCond": null,
-    "leftPlan": "Limit_7",
-    "rightPlan": "TableScan_10"
-}`,
-				`{
-    "limit": 10,
-    "offset": 0,
-    "child": "HashLeftJoin_9"
-}`,
-				`{
-    "exprs": [
-        "s.c1"
-    ],
-    "child": "Limit_11"
-}`,
+				"MemTableScan_3  root ",
 			},
 		},
 	}
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
 	for _, tt := range tests {
 		result := tk.MustQuery("explain " + tt.sql)
-		var resultList []string
-		for i := range tt.ids {
-			resultList = append(resultList, tt.ids[i]+" "+tt.result[i]+" "+tt.parentIds[i])
-		}
-		result.Check(testkit.Rows(resultList...))
+		result.Check(testkit.Rows(tt.expect...))
 	}
 }
