@@ -122,34 +122,51 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 
 func (s *testEvaluatorSuite) TestExp(c *C) {
 	defer testleak.AfterTest(c)()
-	testcases := []struct {
-		num interface{}
-		ret interface{}
-		err Checker
+
+	tests := []struct {
+		args   interface{}
+		expect float64
+		isNil  bool
+		getErr bool
+		errMsg string
 	}{
-		{int64(1), float64(2.718281828459045), IsNil},
-		{float64(1.23), float64(3.4212295362896734), IsNil},
-		{float64(-1.23), float64(0.2922925776808594), IsNil},
-		{float64(-1), float64(0.36787944117144233), IsNil},
-		{float64(0), float64(1), IsNil},
-		{"1.23", float64(3.4212295362896734), IsNil},
-		{"-1.23", float64(0.2922925776808594), IsNil},
-		{"0", float64(1), IsNil},
-		{nil, nil, IsNil},
-		{"abce", nil, NotNil},
-		{"", nil, NotNil},
+		{nil, 0, true, false, ""},
+		{int64(1), 2.718281828459045, false, false, ""},
+		{float64(1.23), 3.4212295362896734, false, false, ""},
+		{float64(-1.23), 0.2922925776808594, false, false, ""},
+		{float64(0), 1, false, false, ""},
+		{"0", 1, false, false, ""},
+		{"tidb", 0, false, true, ""},
+		{float64(100000), 0, false, true, "[types:1690]DOUBLE value is out of range in 'exp(100000)'"},
 	}
-	for _, t := range testcases {
-		if runtime.GOARCH == "ppc64le" && t.num == int64(1) {
-			t.ret = float64(2.7182818284590455)
-		}
-		fc := funcs[ast.Exp]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.num)), s.ctx)
+
+	if runtime.GOARCH == "ppc64le" {
+		tests[1].expect = 2.7182818284590455
+	}
+
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Exp, primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, t.err)
-		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+			if test.errMsg != "" {
+				c.Assert(err.Error(), Equals, test.errMsg)
+			}
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Exp].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestFloor(c *C) {
@@ -658,8 +675,10 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 
 func (s *testEvaluatorSuite) TestPi(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.PI]
-	f, _ := fc.getFunction(nil, s.ctx)
+	f, err := funcs[ast.PI].getFunction(nil, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+
 	pi, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(pi, testutil.DatumEquals, types.NewDatum(math.Pi))
@@ -937,25 +956,45 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 
 func (s *testEvaluatorSuite) TestCot(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+
+	tests := []struct {
+		args   interface{}
+		expect float64
+		isNil  bool
+		getErr bool
+		errMsg string
 	}{
-		{nil, nil},
-		{math.Pi / 4, math.Cos(math.Pi/4) / math.Sin(math.Pi/4)}, // cot pi/4 does not return 1 actually
-		{-math.Pi / 4, math.Cos(-math.Pi/4) / math.Sin(-math.Pi/4)},
-		{math.Pi * 3 / 4, math.Cos(math.Pi*3/4) / math.Sin(math.Pi*3/4)},
-		{"3.1415926", math.Cos(3.1415926) / math.Sin(3.1415926)},
+		{nil, 0, true, false, ""},
+		{float64(0), 0, false, true, "[types:1690]DOUBLE value is out of range in 'cot(0)'"},
+		{float64(-1), -0.6420926159343308, false, false, ""},
+		{float64(1), 0.6420926159343308, false, false, ""},
+		{math.Pi / 4, 1 / math.Tan(math.Pi/4), false, false, ""},
+		{math.Pi / 2, 1 / math.Tan(math.Pi/2), false, false, ""},
+		{math.Pi, 1 / math.Tan(math.Pi), false, false, ""},
+		{"tidb", 0, false, true, ""},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-	for _, t := range Dtbl {
-		fc := funcs[ast.Cot]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+	for _, test := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.Cot, primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Log(t)
-		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+
+		result, err := f.Eval(nil)
+		if test.getErr {
+			c.Assert(err, NotNil)
+			if test.errMsg != "" {
+				c.Assert(err.Error(), Equals, test.errMsg)
+			}
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetFloat64(), Equals, test.expect)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Cot].getFunction([]Expression{One}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }

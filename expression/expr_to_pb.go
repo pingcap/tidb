@@ -145,7 +145,7 @@ func (pc pbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		return pc.compareOpsToPBExpr(expr)
 	case ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv:
 		return pc.arithmeticalOpsToPBExpr(expr)
-	case ast.AndAnd, ast.OrOr, ast.UnaryNot, ast.LogicXor:
+	case ast.LogicAnd, ast.LogicOr, ast.UnaryNot, ast.LogicXor:
 		return pc.logicalOpsToPBExpr(expr)
 	case ast.And, ast.Or, ast.BitNeg, ast.Xor, ast.LeftShift, ast.RightShift:
 		return pc.bitwiseFuncToPBExpr(expr)
@@ -243,9 +243,9 @@ func (pc pbConverter) arithmeticalOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
 func (pc pbConverter) logicalOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
 	switch expr.FuncName.L {
-	case ast.AndAnd:
+	case ast.LogicAnd:
 		tp = tipb.ExprType_And
-	case ast.OrOr:
+	case ast.LogicOr:
 		tp = tipb.ExprType_Or
 	case ast.LogicXor:
 		tp = tipb.ExprType_Xor

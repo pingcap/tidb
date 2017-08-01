@@ -80,13 +80,13 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
 	eqFunc := newFunction(ast.EQ, col, One)
-	orFunc := newFunction(ast.OrOr, eqFunc, eqFunc)
-	andFunc := newFunction(ast.AndAnd, orFunc, eqFunc)
+	orFunc := newFunction(ast.LogicOr, eqFunc, eqFunc)
+	andFunc := newFunction(ast.LogicAnd, orFunc, eqFunc)
 	notFunc := newFunction(ast.UnaryNot, andFunc)
 	// (a!=1&&a!=1)||a=1
 	neFunc := newFunction(ast.NE, col, One)
-	andFunc2 := newFunction(ast.AndAnd, neFunc, neFunc)
-	orFunc2 := newFunction(ast.OrOr, andFunc2, neFunc)
+	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
+	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
 	ret := PushDownNot(notFunc, false, ctx)
 	c.Assert(ret.Equal(orFunc2, ctx), check.IsTrue)
 }
