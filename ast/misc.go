@@ -681,7 +681,7 @@ func (i Ident) Full(ctx context.Context) (full Ident) {
 	return
 }
 
-// String implements fmt.Stringer interface
+// String implements fmt.Stringer interface.
 func (i Ident) String() string {
 	if i.Schema.O == "" {
 		return i.Name.O

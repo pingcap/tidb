@@ -399,7 +399,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	if ebd, ok := store.(etcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
-			cli, err := clientv3.New(clientv3.Config{
+			var cli *clientv3.Client
+			cli, err = clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
 				DialTimeout: 5 * time.Second,
 			})

@@ -93,6 +93,7 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
+
 	return er.ctxStack[0], er.p, nil
 }
 
@@ -142,7 +143,11 @@ func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Exp
 		return ret, errors.Trace(err)
 	}
 	c, _ := e.(*expression.Constant)
-	ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
+	if getRowLen(c) == 2 {
+		ret = &expression.Constant{Value: c.Value.GetRow()[1], RetType: c.GetType()}
+	} else {
+		ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
+	}
 	return
 }
 
@@ -185,11 +190,12 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 			expr1, _ = expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 			expr2, _ = expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		}
-		l, err := popRowArg(er.ctx, l)
+		var err error
+		l, err = popRowArg(er.ctx, l)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		r, err := popRowArg(er.ctx, r)
+		r, err = popRowArg(er.ctx, r)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
