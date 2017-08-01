@@ -423,7 +423,7 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	return err
 }
 
-// HandleOverflow treats ErrOverflow as warnings or returns the error bases on the StmtCtx.OverflowAsWarning state.
+// HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
 func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
 	if err == nil {
 		return nil

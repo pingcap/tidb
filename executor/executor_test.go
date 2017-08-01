@@ -217,6 +217,68 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	r.Check(testkit.Rows("string"))
 }
 
+func (s *testSuite) TestSelectBackslashN(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	sql := `select \N;`
+	r := tk.MustQuery(sql)
+	r.Check(testkit.Rows("<nil>"))
+	rs, err := tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err := rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "NULL")
+
+	sql = `select "\N";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("N"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `"\N"`)
+
+	tk.MustExec("use test;")
+	tk.MustExec("create table test (`\\N` int);")
+	tk.MustExec("insert into test values (1);")
+	tk.CheckExecResult(1, 0)
+	sql = "select * from test;"
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("1"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+
+	sql = "select \\N from test;"
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("<nil>"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+
+	sql = "select `\\N` from test;"
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("1"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+}
+
 func (s *testSuite) TestSelectLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
@@ -404,7 +466,8 @@ func (s *testSuite) TestIssue2612(c *C) {
 	c.Assert(err, IsNil)
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	row.Data[0].GetMysqlDuration().String()
+	str := row.Data[0].GetMysqlDuration().String()
+	c.Assert(str, Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -814,6 +877,11 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
 	result := tk.MustQuery("select length(a), length(b), length(c), length(d), length(e), length(f), length(null) from t")
 	result.Check(testkit.Rows("1 3 19 8 6 2 <nil>"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20))")
+	tk.MustExec(`insert into t values("tidb  "), (concat("a  ", "b  "))`)
+	result = tk.MustQuery("select a, length(a) from t")
+	result.Check(testkit.Rows("tidb 4", "a  b 4"))
 
 	// for concat
 	tk.MustExec("drop table if exists t")
@@ -976,6 +1044,23 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("MySQL 123 123 "))
 	result = tk.MustQuery(`select unhex('string'), unhex('你好'), unhex(123.4), unhex(null)`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+
+	// for ltrim and rtrim
+	result = tk.MustQuery(`select ltrim('   bar   '), ltrim('bar'), ltrim(''), ltrim(null)`)
+	result.Check(testutil.RowsWithSep(",", "bar   ,bar,,<nil>"))
+	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
+	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
+
+	// for trim
+	result = tk.MustQuery(`select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx')`)
+	result.Check(testkit.Rows("bar barxxx barx bar"))
+	result = tk.MustQuery(`select trim(leading from '   bar'), trim('x' from 'xxxbarxxx'), trim('x' from 'bar'), trim('' from '   bar   ')`)
+	result.Check(testutil.RowsWithSep(",", "bar,bar,bar,   bar   "))
+	result = tk.MustQuery(`select trim(''), trim('x' from '')`)
+	result.Check(testutil.RowsWithSep(",", ","))
+	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
+	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
+	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {
@@ -1035,6 +1120,9 @@ func (s *testSuite) TestOpBuiltin(c *C) {
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
 
+	// for bitNeg
+	result = tk.MustQuery("select ~123, ~-123, ~null")
+	result.Check(testkit.Rows("18446744073709551492 122 <nil>"))
 	// for logicNot
 	result = tk.MustQuery("select !1, !123, !0, !null")
 	result.Check(testkit.Rows("0 0 1 <nil>"))
@@ -1282,6 +1370,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1406 Data Too Long, field len 0, data len 4"))
+	result = tk.MustQuery("select CAST( - 8 AS DECIMAL ) * + 52 + 87 < - 86")
+	result.Check(testkit.Rows("1"))
 
 	// issue 3884
 	tk.MustExec("drop table if exists t")
@@ -1304,7 +1394,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 		tk.MustExec("create table t (a varchar(255), b int)")
 		for i, d := range data {
 			tk.MustExec(fmt.Sprintf("insert into t values('%s', %d)", d.val, i))
-			result := tk.MustQuery(fmt.Sprintf("select * from t where a %s '%s'", queryOp, d.pattern))
+			result = tk.MustQuery(fmt.Sprintf("select * from t where a %s '%s'", queryOp, d.pattern))
 			if d.result == 1 {
 				rowStr := fmt.Sprintf("%s %d", d.val, i)
 				result.Check(testkit.Rows(rowStr))

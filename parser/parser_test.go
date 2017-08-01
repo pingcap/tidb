@@ -312,6 +312,11 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 join t2 left join t3 using (id)", true},
 		{"select * from t1 right join t2 using (id) left join t3 using (id)", true},
 		{"select * from t1 right join t2 using (id) left join t3", false},
+		{"select * from t1 natural join t2", true},
+		{"select * from t1 natural right join t2", true},
+		{"select * from t1 natural left outer join t2", true},
+		{"select * from t1 natural inner join t2", false},
+		{"select * from t1 natural cross join t2", false},
 
 		// for admin
 		{"admin show ddl;", true},
@@ -656,6 +661,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// for cast as JSON
 		{"SELECT *, CAST(data AS JSON) FROM t;", true},
+
+		// for cast as signed int, fix issue #3691.
+		{"select cast(1 as signed int);", true},
 
 		// for last_insert_id
 		{"SELECT last_insert_id();", true},

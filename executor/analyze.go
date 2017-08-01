@@ -240,7 +240,7 @@ func CollectSamplesAndEstimateNDVs(ctx context.Context, e ast.RecordSet, numCols
 			return collectors, pkBuilder, nil
 		}
 		if pkInfo != nil {
-			err := pkBuilder.Iterate(row.Data)
+			err = pkBuilder.Iterate(row.Data)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

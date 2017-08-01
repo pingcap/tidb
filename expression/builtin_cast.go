@@ -370,7 +370,8 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row []types.Datum) (res *types.
 	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = types.NewDecFromInt(val)
 	} else {
-		uVal, err := types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		var uVal uint64
+		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		if err != nil {
 			return res, false, errors.Trace(err)
 		}
@@ -393,7 +394,8 @@ func (b *builtinCastIntAsStringSig) evalString(row []types.Datum) (res string, i
 	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = strconv.FormatInt(val, 10)
 	} else {
-		uVal, err := types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		var uVal uint64
+		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		if err != nil {
 			return res, false, errors.Trace(err)
 		}
@@ -641,6 +643,10 @@ type builtinCastStringAsIntSig struct {
 	baseIntBuiltinFunc
 }
 
+// handleOverflow handles the overflow caused by cast string as int,
+// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html.
+// When an out-of-range value is assigned to an integer column, MySQL stores the value representing the corresponding endpoint of the column data type range. If it is in select statement, it will return the
+// endpoint value with a warning.
 func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string, origErr error, isNegative bool) (res int64, err error) {
 	res, err = origRes, origErr
 	if err == nil {
@@ -648,7 +654,6 @@ func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string
 	}
 
 	sc := b.getCtx().GetSessionVars().StmtCtx
-
 	if sc.InSelectStmt && terror.ErrorEqual(origErr, types.ErrOverflow) {
 		if isNegative {
 			res = math.MinInt64
