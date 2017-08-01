@@ -867,51 +867,55 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 
 func (s *testEvaluatorSuite) TestTrim(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		str    interface{}
-		remstr interface{}
-		dir    ast.TrimDirectionType
-		result interface{}
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    string
 	}{
-		{"  bar   ", nil, ast.TrimBothDefault, "bar"},
-		{"xxxbarxxx", "x", ast.TrimLeading, "barxxx"},
-		{"xxxbarxxx", "x", ast.TrimBoth, "bar"},
-		{"barxxyz", "xyz", ast.TrimTrailing, "barx"},
-		{nil, "xyz", ast.TrimBoth, nil},
-		{1, 2, ast.TrimBoth, "1"},
-		{"  \t\rbar\n   ", nil, ast.TrimBothDefault, "bar"},
+		{[]interface{}{"   bar   "}, false, false, "bar"},
+		{[]interface{}{""}, false, false, ""},
+		{[]interface{}{nil}, true, false, ""},
+		{[]interface{}{"xxxbarxxx", "x"}, false, false, "bar"},
+		{[]interface{}{"bar", "x"}, false, false, "bar"},
+		{[]interface{}{"   bar   ", ""}, false, false, "   bar   "},
+		{[]interface{}{"", "x"}, false, false, ""},
+		{[]interface{}{"bar", nil}, true, false, ""},
+		{[]interface{}{nil, "x"}, true, false, ""},
+		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimLeading)}, false, false, "barxxx"},
+		{[]interface{}{"barxxyz", "xyz", int(ast.TrimTrailing)}, false, false, "barx"},
+		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimBoth)}, false, false, "bar"},
+		// FIXME: the result for this test shuold be nil, current is "bar"
+		{[]interface{}{"bar", nil, int(ast.TrimLeading)}, false, false, "bar"},
+		{[]interface{}{errors.New("must error")}, false, true, ""},
 	}
-	for _, v := range tbl {
-		fc := funcs[ast.Trim]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.remstr, v.dir)), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Trim, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
 	}
 
-	for _, v := range []struct {
-		str, result interface{}
-		fn          string
-	}{
-		{"  ", "", ast.LTrim},
-		{"  ", "", ast.RTrim},
-		{"foo0", "foo0", ast.LTrim},
-		{"bar0", "bar0", ast.RTrim},
-		{"  foo1", "foo1", ast.LTrim},
-		{"bar1  ", "bar1", ast.RTrim},
-		{spaceChars + "foo2  ", "foo2  ", ast.LTrim},
-		{"  bar2" + spaceChars, "  bar2", ast.RTrim},
-		{nil, nil, ast.LTrim},
-		{nil, nil, ast.RTrim},
-	} {
-		fc := funcs[v.fn]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str)), s.ctx)
-		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
-	}
+	f, err := funcs[ast.Trim].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+
+	f, err = funcs[ast.Trim].getFunction([]Expression{Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+
+	f, err = funcs[ast.Trim].getFunction([]Expression{Zero, Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLTrim(c *C) {

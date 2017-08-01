@@ -981,6 +981,17 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testutil.RowsWithSep(",", "bar   ,bar,,<nil>"))
 	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
 	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
+
+	// for trim
+	result = tk.MustQuery(`select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx')`)
+	result.Check(testkit.Rows("bar barxxx barx bar"))
+	result = tk.MustQuery(`select trim(leading from '   bar'), trim('x' from 'xxxbarxxx'), trim('x' from 'bar'), trim('' from '   bar   ')`)
+	result.Check(testutil.RowsWithSep(",", "bar,bar,bar,   bar   "))
+	result = tk.MustQuery(`select trim(''), trim('x' from '')`)
+	result.Check(testutil.RowsWithSep(",", ","))
+	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
+	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
+	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {
