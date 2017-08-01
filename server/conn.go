@@ -351,6 +351,9 @@ func (cc *clientConn) Run() {
 				log.Errorf("[%d] read packet error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
 			}
+			if cc.killed {
+				log.Warnf("[%d] session is killed.", cc.connectionID)
+			}
 			return
 		}
 
