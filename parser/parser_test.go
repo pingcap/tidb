@@ -662,6 +662,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for cast as JSON
 		{"SELECT *, CAST(data AS JSON) FROM t;", true},
 
+		// for cast as signed int, fix issue #3691.
+		{"select cast(1 as signed int);", true},
+
 		// for last_insert_id
 		{"SELECT last_insert_id();", true},
 		{"SELECT last_insert_id(1);", true},

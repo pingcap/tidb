@@ -5918,6 +5918,7 @@ IntegerType:
 OptInteger:
 	{}
 |	"INTEGER"
+|	"INT"
 
 FixedPointType:
 	"DECIMAL"

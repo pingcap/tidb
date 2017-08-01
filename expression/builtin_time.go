@@ -323,7 +323,6 @@ func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
 	t := t1.Sub(&t2)
 	d.SetMysqlDuration(t)
 	return

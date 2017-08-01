@@ -615,7 +615,9 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t (a DECIMAL(4,2))")
 	tk.MustExec("INSERT INTO t VALUE(12.34)")
 	r = tk.MustQuery("SELECT 1 AS c UNION select a FROM t")
+	r.Check(testkit.Rows("1.00", "12.34"))
 	r.Sort().Check(testkit.Rows("1.00", "12.34"))
+
 	// #issue3771
 	r = tk.MustQuery("SELECT 'a' UNION SELECT CONCAT('a', -4)")
 	r.Sort().Check(testkit.Rows("a", "a-4"))
@@ -1189,6 +1191,75 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(-1 as unsigned)")
 	result.Check(testkit.Rows("18446744073709551615"))
 
+	// Fix issue #3691, cast compability.
+	result = tk.MustQuery("select cast('18446744073709551616' as unsigned);")
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast('18446744073709551616' as signed);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast('9223372036854775808' as signed);")
+	result.Check(testkit.Rows("-9223372036854775808"))
+	result = tk.MustQuery("select cast('9223372036854775809' as signed);")
+	result.Check(testkit.Rows("-9223372036854775807"))
+	result = tk.MustQuery("select cast('9223372036854775807' as signed);")
+	result.Check(testkit.Rows("9223372036854775807"))
+	result = tk.MustQuery("select cast('18446744073709551615' as signed);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast('18446744073709551614' as signed);")
+	result.Check(testkit.Rows("-2"))
+	result = tk.MustQuery("select cast(18446744073709551615 as unsigned);")
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast(18446744073709551616 as unsigned);")
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast(18446744073709551616 as signed);")
+	result.Check(testkit.Rows("9223372036854775807"))
+	result = tk.MustQuery("select cast(18446744073709551617 as signed);")
+	result.Check(testkit.Rows("9223372036854775807"))
+	result = tk.MustQuery("select cast(18446744073709551615 as signed);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast(18446744073709551614 as signed);")
+	result.Check(testkit.Rows("-2"))
+	result = tk.MustQuery("select cast(-18446744073709551616 as signed);")
+	result.Check(testkit.Rows("-9223372036854775808"))
+	result = tk.MustQuery("select cast(18446744073709551614.9 as unsigned);") // Round up
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast(18446744073709551614.4 as unsigned);") // Round down
+	result.Check(testkit.Rows("18446744073709551614"))
+	result = tk.MustQuery("select cast(-9223372036854775809 as signed);")
+	result.Check(testkit.Rows("-9223372036854775808"))
+	result = tk.MustQuery("select cast(-9223372036854775809 as unsigned);")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select cast(-9223372036854775808 as unsigned);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	result = tk.MustQuery("select cast('-9223372036854775809' as unsigned);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	result = tk.MustQuery("select cast('-9223372036854775807' as unsigned);")
+	result.Check(testkit.Rows("9223372036854775809"))
+	result = tk.MustQuery("select cast('-2' as unsigned);")
+	result.Check(testkit.Rows("18446744073709551614"))
+	result = tk.MustQuery("select cast(cast(1-2 as unsigned) as signed integer);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast(1 as signed int)")
+	result.Check(testkit.Rows("1"))
+
+	// test cast time as decimal overflow
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(s1 time);")
+	tk.MustExec("insert into t1 values('11:11:11');")
+	result = tk.MustQuery("select cast(s1 as decimal(7, 2)) from t1;")
+	result.Check(testkit.Rows("99999.99"))
+	result = tk.MustQuery("select cast(s1 as decimal(8, 2)) from t1;")
+	result.Check(testkit.Rows("111111.00"))
+	_, err := tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
+	c.Assert(err, NotNil)
+
+	result = tk.MustQuery(`select CAST(0x8fffffffffffffff as signed) a,
+	CAST(0xfffffffffffffffe as signed) b,
+	CAST(0xffffffffffffffff as unsigned) c;`)
+	result.Check(testkit.Rows("-8070450532247928833 -2 18446744073709551615"))
+
+	result = tk.MustQuery(`select cast("1:2:3" as TIME) = "1:02:03"`)
+	result.Check(testkit.Rows("0"))
+
 	// fixed issue #3471
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(6));")
@@ -1206,7 +1277,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint(30));")
-	_, err := tk.Exec("insert into t values(-9223372036854775809)")
+	_, err = tk.Exec("insert into t values(-9223372036854775809)")
 	c.Assert(err, NotNil)
 
 	// test unhex and hex
