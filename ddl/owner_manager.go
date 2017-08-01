@@ -184,9 +184,9 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		case <-ctx.Done():
 			// Revoke the session lease.
 			// If revoke takes longer than the ttl, lease is expired anyway.
-			ctx, cancel := goctx.WithTimeout(goctx.Background(),
+			cancelCtx, cancel := goctx.WithTimeout(goctx.Background(),
 				time.Duration(ManagerSessionTTL)*time.Second)
-			_, err = m.etcdCli.Revoke(ctx, etcdSession.Lease())
+			_, err = m.etcdCli.Revoke(cancelCtx, etcdSession.Lease())
 			cancel()
 			log.Infof("[ddl] %s break campaign loop err %v", idInfo, err)
 			return

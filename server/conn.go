@@ -346,10 +346,13 @@ func (cc *clientConn) Run() {
 	for !cc.killed {
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
-		if err != nil {
+		if err != nil || cc.killed {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				log.Errorf("[%d] read packet error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
+			}
+			if cc.killed {
+				log.Warnf("[%d] session is killed.", cc.connectionID)
 			}
 			return
 		}

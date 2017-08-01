@@ -698,7 +698,7 @@ LOOP:
 	matchRows(c, rows, [][]interface{}{{count - int64(step)}})
 
 	for i := num; i < num+step; i++ {
-		rows := s.mustQuery(c, "select c4 from t2 where c4 = ?", i)
+		rows = s.mustQuery(c, "select c4 from t2 where c4 = ?", i)
 		matchRows(c, rows, [][]interface{}{{i}})
 	}
 
@@ -1011,12 +1011,13 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 
 	// Add a new column in write only state.
 	newColumn := &model.ColumnInfo{
-		ID:           100,
-		Name:         model.NewCIStr("c3"),
-		Offset:       2,
-		DefaultValue: 9,
-		FieldType:    *types.NewFieldType(tmysql.TypeLonglong),
-		State:        model.StateWriteOnly,
+		ID:                 100,
+		Name:               model.NewCIStr("c3"),
+		Offset:             2,
+		DefaultValue:       9,
+		OriginDefaultValue: 9,
+		FieldType:          *types.NewFieldType(tmysql.TypeLonglong),
+		State:              model.StateWriteOnly,
 	}
 	t1Info.Columns = append(t1Info.Columns, newColumn)
 

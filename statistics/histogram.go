@@ -87,11 +87,13 @@ func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int
 		} else {
 			count = bucket.Count - hg.Buckets[i-1].Count
 		}
-		upperBound, err := bucket.UpperBound.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+		var upperBound types.Datum
+		upperBound, err = bucket.UpperBound.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		lowerBound, err := bucket.LowerBound.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+		var lowerBound types.Datum
+		lowerBound, err = bucket.LowerBound.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -389,7 +391,8 @@ func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []*type
 		if cmp == 0 {
 			// the point case.
 			if !rg.LowExcl && !rg.HighExcl {
-				cnt, err := c.equalRowCount(sc, rg.Low)
+				var cnt float64
+				cnt, err = c.equalRowCount(sc, rg.Low)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
