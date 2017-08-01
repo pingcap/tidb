@@ -205,6 +205,8 @@ func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context
 	for i := range args {
 		argType := args[i].GetType()
 		if types.IsBinaryStr(argType) {
+			types.SetBinChsClnFlag(bf.tp)
+		} else if mysql.HasBinaryFlag(argType.Flag) {
 			bf.tp.Flag |= mysql.BinaryFlag
 		}
 
@@ -256,6 +258,8 @@ func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Conte
 	for i := range args {
 		argType := args[i].GetType()
 		if types.IsBinaryStr(argType) {
+			types.SetBinChsClnFlag(bf.tp)
+		} else if mysql.HasBinaryFlag(argType.Flag) {
 			bf.tp.Flag |= mysql.BinaryFlag
 		}
 
@@ -412,6 +416,8 @@ func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context
 	}
 	bf.tp.Flen = mysql.MaxBlobWidth
 	if mysql.HasBinaryFlag(args[0].GetType().Flag) {
+		bf.tp.Flag |= mysql.BinaryFlag
+	} else if types.IsBinaryStr(args[0].GetType()) {
 		types.SetBinChsClnFlag(bf.tp)
 	}
 	sig := &builtinRepeatSig{baseStringBuiltinFunc{bf}}
@@ -459,8 +465,10 @@ func (c *lowerFunctionClass) getFunction(args []Expression, ctx context.Context)
 	}
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
-	if mysql.HasBinaryFlag(argTp.Flag) {
+	if types.IsBinaryStr(argTp) {
 		types.SetBinChsClnFlag(bf.tp)
+	}else if mysql.HasBinaryFlag(argTp.Flag) {
+		bf.tp.Flag |= mysql.BinaryFlag
 	}
 	sig := &builtinLowerSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
@@ -566,8 +574,10 @@ func (c *upperFunctionClass) getFunction(args []Expression, ctx context.Context)
 	}
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
-	if mysql.HasBinaryFlag(argTp.Flag) {
+	if types.IsBinaryStr(argTp) {
 		types.SetBinChsClnFlag(bf.tp)
+	}else if mysql.HasBinaryFlag(argTp.Flag) {
+		bf.tp.Flag |= mysql.BinaryFlag
 	}
 	sig := &builtinUpperSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
@@ -644,9 +654,10 @@ func (c *replaceFunctionClass) getFunction(args []Expression, ctx context.Contex
 	}
 	bf.tp.Flen = c.fixLength(args)
 	for _, a := range args {
-		if mysql.HasBinaryFlag(a.GetType().Flag) {
+		if types.IsBinaryStr(a.GetType()) {
 			types.SetBinChsClnFlag(bf.tp)
-			break
+		}else if mysql.HasBinaryFlag(a.GetType().Flag) {
+			bf.tp.Flag |= mysql.BinaryFlag
 		}
 	}
 	sig := &builtinReplaceSig{baseStringBuiltinFunc{bf}}
@@ -763,8 +774,10 @@ func (c *substringFunctionClass) getFunction(args []Expression, ctx context.Cont
 	}
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
-	if mysql.HasBinaryFlag(argType.Flag) {
+	if types.IsBinaryStr(argType) {
 		types.SetBinChsClnFlag(bf.tp)
+	}else if mysql.HasBinaryFlag(argType.Flag) {
+		bf.tp.Flag |= mysql.BinaryFlag
 	}
 	if hasLen {
 		sig := &builtinSubstring3ArgsSig{baseStringBuiltinFunc{bf}}
@@ -861,8 +874,10 @@ func (c *substringIndexFunctionClass) getFunction(args []Expression, ctx context
 	}
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
-	if mysql.HasBinaryFlag(argType.Flag) {
+	if types.IsBinaryStr(argType) {
 		types.SetBinChsClnFlag(bf.tp)
+	}else if mysql.HasBinaryFlag(argType.Flag) {
+		bf.tp.Flag |= mysql.BinaryFlag
 	}
 	sig := &builtinSubstringIndexSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
@@ -1139,8 +1154,10 @@ func (c *trimFunctionClass) getFunction(args []Expression, ctx context.Context) 
 		}
 		argType := args[0].GetType()
 		bf.tp.Flen = argType.Flen
-		if mysql.HasBinaryFlag(argType.Flag) {
+		if types.IsBinaryStr(argType) {
 			types.SetBinChsClnFlag(bf.tp)
+		}else if mysql.HasBinaryFlag(argType.Flag) {
+			bf.tp.Flag |= mysql.BinaryFlag
 		}
 		sig := &builtinTrim1ArgSig{baseStringBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
@@ -1152,8 +1169,10 @@ func (c *trimFunctionClass) getFunction(args []Expression, ctx context.Context) 
 		}
 		argType := args[0].GetType()
 		bf.tp.Flen = argType.Flen
-		if mysql.HasBinaryFlag(argType.Flag) {
+		if types.IsBinaryStr(argType) {
 			types.SetBinChsClnFlag(bf.tp)
+		}else if mysql.HasBinaryFlag(argType.Flag) {
+			bf.tp.Flag |= mysql.BinaryFlag
 		}
 		sig := &builtinTrim2ArgsSig{baseStringBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
@@ -1165,8 +1184,10 @@ func (c *trimFunctionClass) getFunction(args []Expression, ctx context.Context) 
 		}
 		argType := args[0].GetType()
 		bf.tp.Flen = argType.Flen
-		if mysql.HasBinaryFlag(argType.Flag) {
+		if types.IsBinaryStr(argType) {
 			types.SetBinChsClnFlag(bf.tp)
+		}else if mysql.HasBinaryFlag(argType.Flag) {
+			bf.tp.Flag |= mysql.BinaryFlag
 		}
 		sig := &builtinTrim3ArgsSig{baseStringBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
@@ -1277,8 +1298,10 @@ func (c *lTrimFunctionClass) getFunction(args []Expression, ctx context.Context)
 	}
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
-	if mysql.HasBinaryFlag(argType.Flag) {
+	if types.IsBinaryStr(argType) {
 		types.SetBinChsClnFlag(bf.tp)
+	}else if mysql.HasBinaryFlag(argType.Flag) {
+		bf.tp.Flag |= mysql.BinaryFlag
 	}
 	sig := &builtinLTrimSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -1312,8 +1335,10 @@ func (c *rTrimFunctionClass) getFunction(args []Expression, ctx context.Context)
 	}
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
-	if mysql.HasBinaryFlag(argType.Flag) {
+	if types.IsBinaryStr(argType) {
 		types.SetBinChsClnFlag(bf.tp)
+	}else if mysql.HasBinaryFlag(argType.Flag) {
+		bf.tp.Flag |= mysql.BinaryFlag
 	}
 	sig := &builtinRTrimSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
