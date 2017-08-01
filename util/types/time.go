@@ -533,7 +533,7 @@ func parseDateFormat(format string) []string {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-// Said the only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
+// the only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 func splitDateTime(format string) (seps []string, fracStr string) {
 	if i := strings.LastIndex(format, "."); i > 0 {
 		fracStr = strings.TrimSpace(format[i+1:])
