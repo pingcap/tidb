@@ -234,6 +234,9 @@ func (s *Server) ShowProcessList() []util.ProcessInfo {
 	var rs []util.ProcessInfo
 	s.rwlock.RLock()
 	for _, client := range s.clients {
+		if client.killed {
+			continue
+		}
 		rs = append(rs, client.ctx.ShowProcess())
 	}
 	s.rwlock.RUnlock()
