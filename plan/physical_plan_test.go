@@ -438,7 +438,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select sum(b.a) from t a, t b where a.c = b.c and cast(b.d as char) group by b.d",
-			best: "RightHashJoin{Index(t.c_d_e)[[<nil>,+inf]]->Selection->StreamAgg->Table(t)}(b.c,a.c)->HashAgg",
+			best: "LeftHashJoin{Table(t)->Index(t.c_d_e)[[<nil>,+inf]]->Selection->StreamAgg}(a.c,b.c)->HashAgg",
 		},
 		{
 			sql:  "select count(*) from t group by e order by d limit 1",

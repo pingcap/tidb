@@ -444,7 +444,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
-			best: "Join{DataScan(t2)->Selection->DataScan(t1)->Selection}(t2.b,t1.a)(t2.d,t1.d)->Projection",
+			best: "Join{DataScan(t1)->Selection->DataScan(t2)->Selection}(t1.a,t2.b)(t1.d,t2.d)->Projection",
 		},
 		{
 			sql:  "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
@@ -698,60 +698,6 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		}
 		c.Assert(builder.err, IsNil)
 		c.Assert(ToString(p), Equals, ca.plan, Commentf("for %s", ca.sql))
-	}
-}
-
-func (s *testPlanSuite) TestJoinReOrder(c *C) {
-	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql  string
-		best string
-	}{
-		{
-			sql:  "select * from t t1, t t2, t t3, t t4, t t5, t t6 where t1.a = t2.b and t2.a = t3.b and t3.c = t4.a and t4.d = t2.c and t5.d = t6.d",
-			best: "Join{Join{Join{Join{DataScan(t1)->DataScan(t2)}(t1.a,t2.b)->DataScan(t3)}(t2.a,t3.b)->DataScan(t4)}(t3.c,t4.a)(t2.c,t4.d)->Join{DataScan(t5)->DataScan(t6)}(t5.d,t6.d)}->Projection",
-		},
-		{
-			sql:  "select * from t t1, t t2, t t3, t t4, t t5, t t6, t t7, t t8 where t1.a = t8.a",
-			best: "Join{Join{Join{Join{DataScan(t1)->DataScan(t8)}(t1.a,t8.a)->DataScan(t2)}->Join{DataScan(t3)->DataScan(t4)}}->Join{Join{DataScan(t5)->DataScan(t6)}->DataScan(t7)}}->Projection",
-		},
-		{
-			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t5.b < 8",
-			best: "Join{Join{Join{Join{DataScan(t5)->Selection->DataScan(t1)}(t5.a,t1.a)->DataScan(t2)}(t1.a,t2.a)->DataScan(t3)}(t2.a,t3.a)(t1.a,t3.a)->DataScan(t4)}(t5.a,t4.a)(t3.a,t4.a)(t2.a,t4.a)->Projection",
-		},
-		{
-			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
-			best: "Join{Join{Join{Join{DataScan(t3)->Selection->DataScan(t4)->Selection}->DataScan(t5)->Selection}->DataScan(t1)->Selection}->DataScan(t2)->Selection}->Projection",
-		},
-		{
-			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t2)->Selection->DataScan(t3)}(t2.a,t3.a)->DataScan(t1)}(t3.a,t1.a)->Projection}->Projection",
-		},
-		{
-			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->Selection->DataScan(t3)->Selection}->DataScan(t2)->Selection}->Projection}->Projection",
-		},
-	}
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
-
-		is, err := MockResolve(stmt)
-		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			is:        is,
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-		p, err = logicalOptimize(flagPredicatePushDown, lp.(LogicalPlan), builder.ctx, builder.allocator)
-		c.Assert(err, IsNil)
-		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
