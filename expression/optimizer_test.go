@@ -209,7 +209,7 @@ func (s *testEvaluatorSuite) TestOptimizerOptimizeIntColumnCmpDecimalConstant(c 
 			op:           ast.GT,
 			args:         []Expression{col, newConstRealForTest(1.1)},
 			expectedOp:   ast.GE,
-			expectedArgs: []Expression{col, newConstForTest(1)},
+			expectedArgs: []Expression{col, newConstForTest(2)},
 		},
 		{
 			op:           ast.GE,
@@ -227,7 +227,7 @@ func (s *testEvaluatorSuite) TestOptimizerOptimizeIntColumnCmpDecimalConstant(c 
 			op:           ast.GE,
 			args:         []Expression{col, newConstRealForTest(1.1)},
 			expectedOp:   ast.GE,
-			expectedArgs: []Expression{col, newConstForTest(1)},
+			expectedArgs: []Expression{col, newConstForTest(2)},
 		},
 		{
 			op:           ast.LT,
