@@ -116,11 +116,25 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{"x'13181C76734725455A'", hexLit},
 		{"0b01", bitLit},
 		{fmt.Sprintf("t1%c", 0), identifier},
-		{".*", int('.')},
-		{".1_t_1_x", int('.')},
 		{"N'some text'", underscoreCS},
 		{"n'some text'", underscoreCS},
 		{"\\N", null},
+		{".*", int('.')},       // `.`, `*`
+		{".1_t_1_x", int('.')}, // `.`, `1_t_1_x`
+		// Issue #3954
+		{".1e23", floatLit}, // `.1e23`
+		{".123", decLit},    // `.123`
+		{".1*23", decLit},   // `.1`, `*`, `23`
+		{".1,23", decLit},   // `.1`, `,`, `23`
+		{".1 23", decLit},   // `.1`, `23`
+		// TODO: See #3963. The following test cases do not test the ambiguity.
+		{".1$23", int('.')},    // `.`, `1$23`
+		{".1a23", int('.')},    // `.`, `1a23`
+		{".1e23$23", int('.')}, // `.`, `1e23$23`
+		{".1e23a23", int('.')}, // `.`, `1e23a23`
+		{".1C23", int('.')},    // `.`, `1C23`
+		{".1\u0081", int('.')}, // `.`, `1\u0081`
+		{".1\uff34", int('.')}, // `.`, `1\uff34`
 	}
 	runTest(c, table)
 }

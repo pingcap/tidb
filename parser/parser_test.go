@@ -1101,6 +1101,27 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{"create table `123` (123a1 int)", true},
 		{"create table 123 (123a1 int)", false},
 		{fmt.Sprintf("select * from t%cble", 0), false},
+		{"select 1 full, 1 row, 1 abs", true},
+		{"select * from t full, t1 row, t2 abs", true},
+		// for issue 3954, should NOT be recognized as identifiers.
+		{`select .78+123`, true},
+		{`select .78+.21`, true},
+		{`select .78-123`, true},
+		{`select .78-.21`, true},
+		{`select .78--123`, true},
+		{`select .78*123`, true},
+		{`select .78*.21`, true},
+		{`select .78/123`, true},
+		{`select .78/.21`, true},
+		{`select .78,123`, true},
+		{`select .78,.21`, true},
+		{`select .78 , 123`, true},
+		{`select .78.123`, false},
+		{`select .78#123`, true}, // select .78
+		{`insert float_test values(.67, 'string');`, true},
+		{`select .78'123'`, true}, // select .78 as '123'
+		{"select .78`123`", true}, // select .78 as `123`
+		{`select .78"123"`, true}, // select .78 as "123"
 	}
 	s.RunTest(c, table)
 }
