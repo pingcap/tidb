@@ -110,7 +110,7 @@ type tikvStore struct {
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
-	oracle, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
+	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -118,7 +118,7 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 	store := &tikvStore{
 		clusterID:   pdClient.GetClusterID(goctx.TODO()),
 		uuid:        uuid,
-		oracle:      oracle,
+		oracle:      o,
 		client:      client,
 		regionCache: NewRegionCache(pdClient),
 		mock:        mock,

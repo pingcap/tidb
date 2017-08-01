@@ -363,9 +363,9 @@ func commitKey(txn *leveldb.Transaction, key []byte, startTS, commitTS uint64) e
 		return errors.Trace(err)
 	}
 	if !ok || lock.startTS != startTS {
-		c, ok, err := getTxnCommitInfo(iter, key, startTS)
-		if err != nil {
-			return errors.Trace(err)
+		c, ok, err1 := getTxnCommitInfo(iter, key, startTS)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		if ok && c.valueType != typeRollback {
 			return nil
@@ -373,7 +373,7 @@ func commitKey(txn *leveldb.Transaction, key []byte, startTS, commitTS uint64) e
 		return ErrRetryable("txn not found")
 	}
 
-	if err := commitLock(txn, lock, key, startTS, commitTS); err != nil {
+	if err = commitLock(txn, lock, key, startTS, commitTS); err != nil {
 		return errors.Trace(err)
 	}
 	err = txn.Delete(startKey, nil)
@@ -456,10 +456,10 @@ func rollbackKey(txn *leveldb.Transaction, key []byte, startTS uint64) error {
 		}
 		// If current transaction's lock exist.
 		if ok && lock.startTS == startTS {
-			if err := rollbackLock(txn, lock, key, startTS); err != nil {
+			if err = rollbackLock(txn, lock, key, startTS); err != nil {
 				return errors.Trace(err)
 			}
-			err := txn.Delete(startKey, nil)
+			err = txn.Delete(startKey, nil)
 			return errors.Trace(err)
 		}
 

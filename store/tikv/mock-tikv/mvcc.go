@@ -412,7 +412,6 @@ func (e *rawEntry) Less(than llrb.Item) bool {
 
 // MVCCStore is a mvcc key-value storage.
 type MVCCStore interface {
-	RawKV
 	Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error)
 	Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
 	ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
@@ -423,8 +422,6 @@ type MVCCStore interface {
 	Cleanup(key []byte, startTS uint64) error
 	ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error)
 	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
-	MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte)
-	MvccGetByKey(key []byte) *kvrpcpb.MvccInfo
 }
 
 // RawKV is a key-value storage. MVCCStore can be implemented upon it with timestamp encoded into key.
@@ -433,6 +430,12 @@ type RawKV interface {
 	RawScan(startKey, endKey []byte, limit int) []Pair
 	RawPut(key, value []byte)
 	RawDelete(key []byte)
+}
+
+// MVCCDebugger is for debugging.
+type MVCCDebugger interface {
+	MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte)
+	MvccGetByKey(key []byte) *kvrpcpb.MvccInfo
 }
 
 // MvccStore is an in-memory, multi-versioned, transaction-supported kv storage.
