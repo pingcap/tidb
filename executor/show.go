@@ -606,6 +606,7 @@ func (e *ShowExec) fetchShowWarnings() error {
 	for _, warn := range warns {
 		datums := make([]types.Datum, 3)
 		datums[0] = types.NewStringDatum("Warning")
+		warn = errors.Cause(warn)
 		switch x := warn.(type) {
 		case *terror.Error:
 			sqlErr := x.ToSQLError()
