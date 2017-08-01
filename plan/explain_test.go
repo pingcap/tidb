@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package plan_test
 
 import (
 	. "github.com/pingcap/check"
@@ -19,10 +19,16 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-func (s *testSuite) TestExplain(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+var _ = Suite(&testExplainSuite{})
+
+type testExplainSuite struct {
+}
+
+func (s *testExplainSuite) TestExplain(c *C) {
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
 	defer func() {
-		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 		tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
 	}()
