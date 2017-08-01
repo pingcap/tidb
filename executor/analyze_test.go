@@ -42,7 +42,7 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	tk.MustExec("analyze table t1")
 	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr = fmt.Sprintf("%s", result.Rows())
-	c.Check(rowStr, Equals, "[[TableScan_4 Selection_5 cop read only:false, filter:eq(test.t1.a, 1), table:t1, range:(-inf,+inf), keep order:false] [Selection_5  cop eq(test.t1.a, 1)] [TableReader_6  root data:Selection_5]]")
+	c.Check(rowStr, Equals, "[[TableScan_4 Selection_5 cop filter:eq(test.t1.a, 1), table:t1, range:(-inf,+inf), keep order:false] [Selection_5  cop eq(test.t1.a, 1)] [TableReader_6  root data:Selection_5]]")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
@@ -51,7 +51,7 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	tk.MustExec("analyze table t1 index ind_a")
 	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr = fmt.Sprintf("%s", result.Rows())
-	c.Check(rowStr, Equals, "[[TableScan_4 Selection_5 cop read only:false, filter:eq(test.t1.a, 1), table:t1, range:(-inf,+inf), keep order:false] [Selection_5  cop eq(test.t1.a, 1)] [TableReader_6  root data:Selection_5]]")
+	c.Check(rowStr, Equals, "[[TableScan_4 Selection_5 cop filter:eq(test.t1.a, 1), table:t1, range:(-inf,+inf), keep order:false] [Selection_5  cop eq(test.t1.a, 1)] [TableReader_6  root data:Selection_5]]")
 }
 
 type recordSet struct {

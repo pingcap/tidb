@@ -94,24 +94,12 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *physicalTableSource) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	buffer.WriteString(fmt.Sprintf("read only:%v", p.readOnly))
-
-	if p.Aggregated && len(p.aggFuncs) > 0 {
-		buffer.WriteString(", aggregations:")
-		for i, aggFunc := range p.aggFuncs {
-			buffer.WriteString(expression.ExplainAggFunc(aggFunc))
-			if i+1 < len(p.aggFuncs) {
-				buffer.WriteString(", ")
-			}
-		}
-		if len(p.gbyItems) > 0 {
-			buffer.WriteString(fmt.Sprintf(", group by:%s",
-				expression.ExplainExpressionList(p.gbyItems)))
-		}
-	}
 
 	if len(p.sortItems) > 0 {
-		buffer.WriteString(", sort by:")
+		if buffer.Len() != 0 {
+			buffer.WriteString(", ")
+		}
+		buffer.WriteString("sort by:")
 		for i, item := range p.sortItems {
 			order := "asc"
 			if item.Desc {
@@ -126,15 +114,24 @@ func (p *physicalTableSource) ExplainInfo() string {
 	}
 
 	if len(p.indexFilterConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", index filter:%s",
+		if buffer.Len() != 0 {
+			buffer.WriteString(", ")
+		}
+		buffer.WriteString(fmt.Sprintf("index filter:%s",
 			expression.ExplainExpressionList(p.indexFilterConditions)))
 	}
 	if len(p.tableFilterConditions) > 0 {
-		buffer.WriteString(fmt.Sprintf(", table filter:%s",
+		if buffer.Len() != 0 {
+			buffer.WriteString(", ")
+		}
+		buffer.WriteString(fmt.Sprintf("table filter:%s",
 			expression.ExplainExpressionList(p.tableFilterConditions)))
 	}
 	if len(p.filterCondition) > 0 {
-		buffer.WriteString(fmt.Sprintf(", filter:%s",
+		if buffer.Len() != 0 {
+			buffer.WriteString(", ")
+		}
+		buffer.WriteString(fmt.Sprintf("filter:%s",
 			expression.ExplainExpressionList(p.filterCondition)))
 	}
 	return buffer.String()
@@ -147,7 +144,10 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	if p.TableAsName != nil && p.TableAsName.O != "" {
 		tblName = p.TableAsName.O
 	}
-	buffer.WriteString(fmt.Sprintf(", table:%s", tblName))
+	if buffer.Len() != 0 {
+		buffer.WriteString(", ")
+	}
+	buffer.WriteString(fmt.Sprintf("table:%s", tblName))
 	if p.pkCol != nil {
 		buffer.WriteString(fmt.Sprintf(", pk col:%s", p.pkCol.ExplainInfo()))
 	}
