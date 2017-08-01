@@ -18,6 +18,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -32,7 +33,7 @@ const (
 // For now we only support EQ, GT, GE, LT, LE for optimize
 func isCmpFuncName(funcName string) bool {
 	switch funcName {
-	case ast.EQ, ast.GT, ast.GE, ast.LT, ast.LE:
+	case ast.EQ, ast.GT, ast.GE, ast.LT, ast.LE, ast.NE:
 		return true
 	}
 	return false
@@ -90,12 +91,12 @@ func getScalarFuncOptimizeType(funcName string, args ...Expression) exprOptimize
 }
 
 // optimizeBuiltinFunc do optimize by given optimize type.
-func optimizeScalarFunc(optimizeType exprOptimizeType, funcName string, args ...Expression) (string, []Expression) {
+func optimizeScalarFunc(ctx context.Context, optimizeType exprOptimizeType, funcName string, args ...Expression) (string, []Expression) {
 	fargs := make([]Expression, len(args))
 	copy(fargs, args)
 	switch optimizeType {
 	case intColCmpDecimalConstOpt:
-		return optimizeIntColumnCmpDecimalConstant(funcName, fargs...)
+		return optimizeIntColumnCmpDecimalConstant(ctx, funcName, fargs...)
 	default:
 		panic("We should not get there! BUG!")
 	}
@@ -149,7 +150,7 @@ func convertConstant2Float64(arg *Constant) (ret float64) {
 //    a >= 1.1  =>  a >= 2
 //    a <= 1.1  =>  a <= 1
 //    a != 1.1  =>  0 == 1
-func optimizeIntColumnCmpDecimalConstant(funcName string, args ...Expression) (string, []Expression) {
+func optimizeIntColumnCmpDecimalConstant(ctx context.Context, funcName string, args ...Expression) (string, []Expression) {
 	var colArg, constArg Expression
 	var needReverseOp = false
 	if args[0].GetType().ToClass() == types.ClassInt {
@@ -202,6 +203,27 @@ func optimizeIntColumnCmpDecimalConstant(funcName string, args ...Expression) (s
 		cop = ast.EQ
 		intConstArg = Zero
 		colArg = One
+	case ast.NE:
+		// a != 1.1  =>  a <= 1 || a >= 2
+		cop = ast.LogicOr
+		laVal, raVal := math.Floor(constVal), math.Ceil(constVal)
+		laConst := &Constant{
+			Value:   types.NewDatum(int64(laVal)),
+			RetType: retType,
+		}
+		leftArg, err := NewFunction(ctx, ast.LE, retType, colArg, laConst)
+		if err != nil {
+			panic("Bug! we should not got any error")
+		}
+		raConst := &Constant{
+			Value:   types.NewDatum(int64(raVal)),
+			RetType: retType,
+		}
+		rightArg, err := NewFunction(ctx, ast.GE, retType, colArg, raConst)
+		if err != nil {
+			panic("Bug! we should not got any error")
+		}
+		return cop, []Expression{leftArg, rightArg}
 	}
 	return cop, []Expression{colArg, intConstArg}
 }

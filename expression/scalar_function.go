@@ -71,7 +71,7 @@ func getAndOptimizeFunction(ctx context.Context, funcName string, args ...Expres
 	var fargs []Expression
 	optimizeType := getScalarFuncOptimizeType(funcName, args...)
 	if optimizeType != noOpt {
-		fname, fargs = optimizeScalarFunc(optimizeType, funcName, args...)
+		fname, fargs = optimizeScalarFunc(ctx, optimizeType, funcName, args...)
 	} else {
 		fname = funcName
 		fargs = make([]Expression, len(args))

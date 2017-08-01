@@ -33,8 +33,8 @@ func (s *testEvaluatorSuite) TestOptimizerIsCmpFuncName(c *C) {
 		{ast.LT, true},
 		{ast.GE, true},
 		{ast.LE, true},
+		{ast.NE, true},
 		{ast.In, false},
-		{ast.NE, false},
 	}
 	for _, t := range tests {
 		ret := isCmpFuncName(t.funcName)
@@ -265,10 +265,28 @@ func (s *testEvaluatorSuite) TestOptimizerOptimizeIntColumnCmpDecimalConstant(c 
 			expectedOp:   ast.LE,
 			expectedArgs: []Expression{col, newConstForTest(1)},
 		},
+		{
+			op:           ast.NE,
+			args:         []Expression{col, newConstRealForTest(1.0)},
+			expectedOp:   ast.NE,
+			expectedArgs: []Expression{col, newConstForTest(1)},
+		},
+		{
+			op:           ast.NE,
+			args:         []Expression{col, newConstForTest(1.0)},
+			expectedOp:   ast.NE,
+			expectedArgs: []Expression{col, newConstForTest(1)},
+		},
+		{
+			op:           ast.NE,
+			args:         []Expression{col, newConstForTest("1.0")},
+			expectedOp:   ast.NE,
+			expectedArgs: []Expression{col, newConstForTest(1)},
+		},
 	}
 	ctx := s.ctx
 	for _, t := range tests {
-		retOp, retArgs := optimizeIntColumnCmpDecimalConstant(t.op, t.args...)
+		retOp, retArgs := optimizeIntColumnCmpDecimalConstant(ctx, t.op, t.args...)
 		c.Assert(retOp, Equals, t.expectedOp)
 		for i, arg := range retArgs {
 			c.Assert(t.expectedArgs[i].Equal(arg, ctx), IsTrue,
@@ -279,4 +297,30 @@ func (s *testEvaluatorSuite) TestOptimizerOptimizeIntColumnCmpDecimalConstant(c 
 				))
 		}
 	}
+}
+
+func (s *testEvaluatorSuite) TestOptimizerOptimizeIntColumnCmpDecimalConstantWithNotEqualOp(c *C) {
+	defer testleak.AfterTest(c)()
+
+	ctx := s.ctx
+	col := newColForTest("a", 1)
+	retOp, retArgs := optimizeIntColumnCmpDecimalConstant(ctx, ast.NE, col, newConstRealForTest(1.1))
+	c.Assert(retOp, Equals, ast.LogicOr)
+	c.Assert(len(retArgs), Equals, 2)
+
+	lfunc, ok := retArgs[0].(*ScalarFunction)
+	c.Assert(ok, IsTrue)
+	c.Assert(lfunc.FuncName.String(), Equals, ast.LE)
+	largs := lfunc.GetArgs()
+	c.Assert(len(largs), Equals, 2)
+	c.Assert(largs[0].Equal(col, ctx), IsTrue)
+	c.Assert(largs[1].Equal(newConstForTest(1), ctx), IsTrue)
+
+	rfunc, ok := retArgs[1].(*ScalarFunction)
+	c.Assert(ok, IsTrue)
+	c.Assert(rfunc.FuncName.String(), Equals, ast.GE)
+	rargs := rfunc.GetArgs()
+	c.Assert(len(rargs), Equals, 2)
+	c.Assert(rargs[0].Equal(col, ctx), IsTrue)
+	c.Assert(rargs[1].Equal(newConstForTest(2), ctx), IsTrue)
 }
