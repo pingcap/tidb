@@ -27,15 +27,31 @@ func (s *testSuite) TestExplain(c *C) {
 		tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
 	}()
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2))")
 	tk.MustExec("create table t2 (c1 int unique, c2 int)")
 	tk.MustExec("insert into t2 values(1, 0), (2, 1)")
+	tk.MustExec("create table t3 (a bigint, b bigint, c bigint, d bigint)")
 
 	tests := []struct {
 		sql    string
 		expect []string
 	}{
+		{
+			//	"select * from t1 where c2 in (select s.c3 from t1 s) order by t1.c3",
+			"select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a )",
+			[]string{
+				"TableScan_15  cop table:t3, range:(-inf,+inf), keep order:false",
+				"TableReader_16 Projection_12 root data:TableScan_15",
+				"Projection_12 HashSemiJoin_14 root test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a)",
+				"TableScan_18 HashAgg_17 cop table:s, range:(-inf,+inf), keep order:false",
+				"HashAgg_17  cop type:complete, funcs:sum(s.a)",
+				"TableReader_20 HashAgg_19 root data:HashAgg_17",
+				"HashAgg_19 HashSemiJoin_14 root type:final, funcs:sum(col_0)",
+				"HashSemiJoin_14 Projection_11 root right:HashAgg_19, equal:[eq(cast(test.t3.a), sel_agg_1)]",
+				"Projection_11  root test.t3.a, test.t3.b, test.t3.c, test.t3.d",
+			},
+		},
 		{
 			"select * from t1",
 			[]string{
