@@ -116,8 +116,17 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{"x'13181C76734725455A'", hexLit},
 		{"0b01", bitLit},
 		{fmt.Sprintf("t1%c", 0), identifier},
-		{".*", int('.')},
-		{".1_t_1_x", int('.')},
+		{".*", int('.')},       // `.`, `*`
+		{".1_t_1_x", int('.')}, // `.`, `1_t_1_x`
+		{".1$23", int('.')},    // `.`, `1$23`
+		{".1a23", int('.')},    // `.`, `1a23`
+		{".1C23", int('.')},    // `.`, `1C23`
+		{".1\u0081", int('.')}, // `.`, `1\u0081`
+		{".1\uff34", int('.')}, // `.`, `1\uff34`
+		{".123", decLit},       // `.123`
+		{".1*23", decLit},      // `.1`, `*`, `23`
+		{".1,23", decLit},      // `.1`, `,`, `23`
+		{".1 23", decLit},      // `.1`, `23`
 		{"N'some text'", underscoreCS},
 		{"n'some text'", underscoreCS},
 	}
