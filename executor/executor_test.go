@@ -217,6 +217,68 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	r.Check(testkit.Rows("string"))
 }
 
+func (s *testSuite) TestSelectBackslashN(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	sql := `select \N;`
+	r := tk.MustQuery(sql)
+	r.Check(testkit.Rows("<nil>"))
+	rs, err := tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err := rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "NULL")
+
+	sql = `select "\N";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("N"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `"\N"`)
+
+	tk.MustExec("use test;")
+	tk.MustExec("create table test (`\\N` int);")
+	tk.MustExec("insert into test values (1);")
+	tk.CheckExecResult(1, 0)
+	sql = "select * from test;"
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("1"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+
+	sql = "select \\N from test;"
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("<nil>"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+
+	sql = "select `\\N` from test;"
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("1"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+}
+
 func (s *testSuite) TestSelectLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {

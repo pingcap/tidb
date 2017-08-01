@@ -129,6 +129,7 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{".1 23", decLit},      // `.1`, `23`
 		{"N'some text'", underscoreCS},
 		{"n'some text'", underscoreCS},
+		{"\\N", null},
 	}
 	runTest(c, table)
 }
