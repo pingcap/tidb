@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -135,7 +136,7 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 			}
 		}
 		rec[c.Offset] = converted
-		if c.Tp == mysql.TypeString && !mysql.HasBinaryFlag(c.Flag) {
+		if c.Tp == mysql.TypeString && c.Collate != charset.CollationBin {
 			truncateTrailingSpaces(&rec[c.Offset])
 		}
 	}

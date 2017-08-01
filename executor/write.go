@@ -655,7 +655,6 @@ func (e *InsertExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txn := e.ctx.Txn()
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
