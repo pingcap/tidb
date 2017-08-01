@@ -92,60 +92,11 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *physicalTableSource) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-
-	if len(p.sortItems) > 0 {
-		if buffer.Len() != 0 {
-			buffer.WriteString(", ")
-		}
-		buffer.WriteString("sort by:")
-		for i, item := range p.sortItems {
-			order := "asc"
-			if item.Desc {
-				order = "desc"
-			}
-			buffer.WriteString(fmt.Sprintf("%s:%s", item.Expr.ExplainInfo(), order))
-			if i+1 < len(p.sortItems) {
-				buffer.WriteString(", ")
-			}
-		}
-		return buffer.String()
-	}
-
-	if len(p.indexFilterConditions) > 0 {
-		if buffer.Len() != 0 {
-			buffer.WriteString(", ")
-		}
-		buffer.WriteString(fmt.Sprintf("index filter:%s",
-			expression.ExplainExpressionList(p.indexFilterConditions)))
-	}
-	if len(p.tableFilterConditions) > 0 {
-		if buffer.Len() != 0 {
-			buffer.WriteString(", ")
-		}
-		buffer.WriteString(fmt.Sprintf("table filter:%s",
-			expression.ExplainExpressionList(p.tableFilterConditions)))
-	}
-	if len(p.filterCondition) > 0 {
-		if buffer.Len() != 0 {
-			buffer.WriteString(", ")
-		}
-		buffer.WriteString(fmt.Sprintf("filter:%s",
-			expression.ExplainExpressionList(p.filterCondition)))
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalTableScan) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.physicalTableSource.ExplainInfo())
+	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
 	if p.TableAsName != nil && p.TableAsName.O != "" {
 		tblName = p.TableAsName.O
-	}
-	if buffer.Len() != 0 {
-		buffer.WriteString(", ")
 	}
 	buffer.WriteString(fmt.Sprintf("table:%s", tblName))
 	if p.pkCol != nil {
@@ -294,7 +245,7 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalHashSemiJoin) ExplainInfo() string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("right:%s", p.Children()[1].ID()))
+	buffer := bytes.NewBufferString(fmt.Sprintf("right:%s", p.Children()[p.rightChOffset].ID()))
 	if p.WithAux {
 		buffer.WriteString(", aux")
 	}
@@ -334,6 +285,19 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 	if len(p.OtherConditions) > 0 {
 		buffer.WriteString(fmt.Sprintf(", other cond:%s",
 			expression.ExplainExpressionList(p.OtherConditions)))
+	}
+	if len(p.DefaultValues) > 0 {
+		buffer.WriteString("default vals:")
+		for i, val := range p.DefaultValues {
+			str, err := val.ToString()
+			if err != nil {
+				str = err.Error()
+			}
+			buffer.WriteString(str)
+			if i+1 < len(p.DefaultValues) {
+				buffer.WriteString(", ")
+			}
+		}
 	}
 	if p.Desc {
 		buffer.WriteString("desc")

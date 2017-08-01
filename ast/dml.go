@@ -248,6 +248,7 @@ const (
 	SelectLockInShareMode
 )
 
+// String implements fmt.Stringer.
 func (slt SelectLockType) String() string {
 	switch slt {
 	case SelectLockNone:

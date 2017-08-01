@@ -136,7 +136,7 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select * from t1 where c1 =1 and c2 > 1",
 			[]string{
-				"TableScan_4 Selection_5 cop filter:gt(test.t1.c2, 1), table:t1, range:[1,1], keep order:false",
+				"TableScan_4 Selection_5 cop table:t1, range:[1,1], keep order:false",
 				"Selection_5  cop gt(test.t1.c2, 1)",
 				"TableReader_6  root data:Selection_5",
 			},
