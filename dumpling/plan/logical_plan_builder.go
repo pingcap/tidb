@@ -445,8 +445,14 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
 					colName = model.NewCIStr(innerExpr.Text())
 				} else {
+					//Change column name \N to NULL, just when original sql contains \N column
+					fieldText := field.Text()
+					if fieldText == "\\N" {
+						fieldText = "NULL"
+					}
+
 					// Remove special comment code for field part, see issue #3739 for detail.
-					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
+					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(fieldText, parser.TrimComment))
 				}
 			}
 		}
