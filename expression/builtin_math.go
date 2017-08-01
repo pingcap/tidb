@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -248,7 +247,6 @@ func (b *builtinCeilDecToDecSig) evalDecimal(row []types.Datum) (*types.MyDecima
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
 	}
-	log.Warning(val.GetDigitsFrac())
 	if val.GetDigitsFrac() > 0 {
 		types.DecimalAdd(val, types.NewDecFromInt(1), val)
 	}
