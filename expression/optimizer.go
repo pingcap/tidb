@@ -61,14 +61,14 @@ func isIntColCmpDecimalConst(args ...Expression) bool {
 	_, rcolumn := args[1].(*Column)
 	ltype, rtype := args[0].GetType().ToClass(), args[1].GetType().ToClass()
 	if lconst && rcolumn {
-		if rtype == types.ClassInt && ltype == types.ClassDecimal {
+		if rtype == types.ClassInt && (ltype == types.ClassDecimal || ltype == types.ClassReal) {
 			return true
 		}
 		if rtype == types.ClassInt && ltype == types.ClassString && canConvertToDecimal(args[0]) {
 			return true
 		}
 	} else if rconst && lcolumn {
-		if ltype == types.ClassInt && rtype == types.ClassDecimal {
+		if ltype == types.ClassInt && (rtype == types.ClassDecimal || rtype == types.ClassReal) {
 			return true
 		}
 		if ltype == types.ClassInt && rtype == types.ClassString && canConvertToDecimal(args[1]) {
@@ -130,6 +130,12 @@ func convertConstant2Float64(arg *Constant) (ret float64) {
 		if err != nil {
 			panic("BUG! we should not got error")
 		}
+		return
+	case float32:
+		ret = float64(val)
+		return
+	case float64:
+		ret = val
 		return
 	default:
 		panic("BUG! we should not got here")
