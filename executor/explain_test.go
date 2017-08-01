@@ -38,7 +38,6 @@ func (s *testSuite) TestExplain(c *C) {
 		expect []string
 	}{
 		{
-			//	"select * from t1 where c2 in (select s.c3 from t1 s) order by t1.c3",
 			"select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a )",
 			[]string{
 				"TableScan_15  cop table:t3, range:(-inf,+inf), keep order:false",
