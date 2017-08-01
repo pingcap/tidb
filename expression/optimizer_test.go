@@ -68,6 +68,15 @@ func newConstForTest(val interface{}) Expression {
 	}
 }
 
+func newConstRealForTest(val float64) Expression {
+	var retType types.FieldType
+	types.DefaultTypeForValue(val, &retType)
+	return &Constant{
+		Value:   types.NewDatum(val),
+		RetType: &retType,
+	}
+}
+
 func newColForTest(name string, val interface{}) Expression {
 	cval := convertFloatToDecimal(val)
 	var retType types.FieldType
@@ -124,6 +133,9 @@ func (s *testEvaluatorSuite) TestOptimizerGetScalarFuncOptimizeType(c *C) {
 		{ast.GT, []Expression{newConstForTest("string"), newColForTest("a", 1)}, noOpt},
 		{ast.GT, []Expression{newConstForTest(1), newColForTest("a", 1.0)}, noOpt},
 		{ast.GT, []Expression{newColForTest("a", "string"), newConstForTest(1.0)}, noOpt},
+		{ast.GT, []Expression{newConstRealForTest(1.1), newColForTest("a", 1)}, intColCmpDecimalConstOpt},
+		{ast.GT, []Expression{newConstRealForTest(1.0), newColForTest("a", 1)}, intColCmpDecimalConstOpt},
+		{ast.GT, []Expression{newConstRealForTest(float64(1)), newColForTest("a", 1)}, intColCmpDecimalConstOpt},
 	}
 
 	for _, t := range tests {
@@ -159,6 +171,18 @@ func (s *testEvaluatorSuite) TestOptimizerOptimizeIntColumnCmpDecimalConstant(c 
 		},
 		{
 			op:           ast.EQ,
+			args:         []Expression{newConstRealForTest(1.0), col},
+			expectedOp:   ast.EQ,
+			expectedArgs: []Expression{col, newConstForTest(1)},
+		},
+		{
+			op:           ast.EQ,
+			args:         []Expression{newConstRealForTest(1.1), col},
+			expectedOp:   ast.EQ,
+			expectedArgs: []Expression{One, Zero},
+		},
+		{
+			op:           ast.EQ,
 			args:         []Expression{col, newConstForTest(1.1)},
 			expectedOp:   ast.EQ,
 			expectedArgs: []Expression{One, Zero},
@@ -182,6 +206,12 @@ func (s *testEvaluatorSuite) TestOptimizerOptimizeIntColumnCmpDecimalConstant(c 
 			expectedArgs: []Expression{col, newConstForTest(2)},
 		},
 		{
+			op:           ast.GT,
+			args:         []Expression{col, newConstRealForTest(1.1)},
+			expectedOp:   ast.GE,
+			expectedArgs: []Expression{col, newConstForTest(1)},
+		},
+		{
 			op:           ast.GE,
 			args:         []Expression{col, newConstForTest(1.1)},
 			expectedOp:   ast.GE,
@@ -192,6 +222,12 @@ func (s *testEvaluatorSuite) TestOptimizerOptimizeIntColumnCmpDecimalConstant(c 
 			args:         []Expression{col, newConstForTest("1.1")},
 			expectedOp:   ast.GE,
 			expectedArgs: []Expression{col, newConstForTest(2)},
+		},
+		{
+			op:           ast.GE,
+			args:         []Expression{col, newConstRealForTest(1.1)},
+			expectedOp:   ast.GE,
+			expectedArgs: []Expression{col, newConstForTest(1)},
 		},
 		{
 			op:           ast.LT,
@@ -206,6 +242,12 @@ func (s *testEvaluatorSuite) TestOptimizerOptimizeIntColumnCmpDecimalConstant(c 
 			expectedArgs: []Expression{col, newConstForTest(1)},
 		},
 		{
+			op:           ast.LT,
+			args:         []Expression{col, newConstRealForTest(1.1)},
+			expectedOp:   ast.LE,
+			expectedArgs: []Expression{col, newConstForTest(1)},
+		},
+		{
 			op:           ast.LE,
 			args:         []Expression{col, newConstForTest(1.1)},
 			expectedOp:   ast.LE,
@@ -214,6 +256,12 @@ func (s *testEvaluatorSuite) TestOptimizerOptimizeIntColumnCmpDecimalConstant(c 
 		{
 			op:           ast.LE,
 			args:         []Expression{col, newConstForTest("1.1")},
+			expectedOp:   ast.LE,
+			expectedArgs: []Expression{col, newConstForTest(1)},
+		},
+		{
+			op:           ast.LE,
+			args:         []Expression{col, newConstRealForTest(1.1)},
 			expectedOp:   ast.LE,
 			expectedArgs: []Expression{col, newConstForTest(1)},
 		},
