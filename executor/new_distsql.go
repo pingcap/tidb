@@ -447,6 +447,10 @@ func (e *IndexLookUpExecutor) Schema() *expression.Schema {
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
+	// If this executor is closed once, we should not close it second time.
+	if e.taskChan == nil {
+		return nil
+	}
 	// TODO: It's better to notify fetchHandles to close instead of fetching all index handle.
 	// Consume the task channel in case channel is full.
 	for range e.taskChan {

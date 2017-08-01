@@ -226,6 +226,7 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t values(1, 3), (2, 2), (3, 1)")
 	tk.MustExec("insert into t1 values(1, 2), (1, 3), (3, 4)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t) */ * from t join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("3 1 3 4", "1 3 1 2", "1 3 1 3"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t.a, t.b from t join t1 on t.a=t1.a where t1.b = 4 limit 1").Check(testkit.Rows("3 1"))
 
 }
 
@@ -321,6 +322,25 @@ func (s *testSuite) TestUsing(c *C) {
 	tk.MustQuery("select * from t1 join t2 using (b, a)").Check(testkit.Rows("2 1 4 5"))
 
 	tk.MustExec("select * from (t1 join t2 using (a)) join (t3 join t4 using (a)) on (t2.a = t4.a and t1.a = t3.a)")
+}
+
+func (s *testSuite) TestNaturalJoin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, c int)")
+	tk.MustExec("insert t1 values (1, 2), (10, 20)")
+	tk.MustExec("insert t2 values (1, 3), (100, 200)")
+
+	tk.MustQuery("select * from t1 natural join t2").Check(testkit.Rows("1 2 3"))
+	tk.MustQuery("select * from t1 natural left join t2 order by a").Check(testkit.Rows("1 2 3", "10 20 <nil>"))
+	tk.MustQuery("select * from t1 natural right join t2 order by a").Check(testkit.Rows("1 3 2", "100 200 <nil>"))
 }
 
 func (s *testSuite) TestMultiJoin(c *C) {

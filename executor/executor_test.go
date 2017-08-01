@@ -217,6 +217,68 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	r.Check(testkit.Rows("string"))
 }
 
+func (s *testSuite) TestSelectBackslashN(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	sql := `select \N;`
+	r := tk.MustQuery(sql)
+	r.Check(testkit.Rows("<nil>"))
+	rs, err := tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err := rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "NULL")
+
+	sql = `select "\N";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("N"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `"\N"`)
+
+	tk.MustExec("use test;")
+	tk.MustExec("create table test (`\\N` int);")
+	tk.MustExec("insert into test values (1);")
+	tk.CheckExecResult(1, 0)
+	sql = "select * from test;"
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("1"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+
+	sql = "select \\N from test;"
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("<nil>"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+
+	sql = "select `\\N` from test;"
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("1"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+}
+
 func (s *testSuite) TestSelectLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
@@ -981,6 +1043,17 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testutil.RowsWithSep(",", "bar   ,bar,,<nil>"))
 	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
 	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
+
+	// for trim
+	result = tk.MustQuery(`select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx')`)
+	result.Check(testkit.Rows("bar barxxx barx bar"))
+	result = tk.MustQuery(`select trim(leading from '   bar'), trim('x' from 'xxxbarxxx'), trim('x' from 'bar'), trim('' from '   bar   ')`)
+	result.Check(testutil.RowsWithSep(",", "bar,bar,bar,   bar   "))
+	result = tk.MustQuery(`select trim(''), trim('x' from '')`)
+	result.Check(testutil.RowsWithSep(",", ","))
+	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
+	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
+	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {
