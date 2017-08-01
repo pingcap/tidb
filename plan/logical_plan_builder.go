@@ -426,7 +426,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
 					colName = model.NewCIStr(innerExpr.Text())
 				} else {
-					//Change column name \N to NUll, just when original sql contains \N column
+					//Change column name \N to NULL, just when original sql contains \N column
 					fieldText := field.Text()
 					if fieldText == "\\N" {
 						fieldText = "NULL"
