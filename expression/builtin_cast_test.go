@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -74,6 +75,92 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(res.GetString()), Equals, 5)
 	c.Assert(res.GetString(), Equals, string([]byte{'a', 0x00, 0x00, 0x00, 0x00}))
+
+	origSc := sc
+	sc.InSelectStmt = true
+	sc.OverflowAsWarning = true
+
+	// cast('18446744073709551616' as unsigned);
+	tp1 := &types.FieldType{
+		Tp:      mysql.TypeLonglong,
+		Flag:    mysql.BinaryFlag,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+		Flen:    mysql.MaxIntWidth,
+	}
+	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(res.GetUint64() == math.MaxUint64, IsTrue)
+
+	warnings := sc.GetWarnings()
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+
+	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(res.GetUint64() == 18446744073709551615, IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn), IsTrue)
+
+	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("-18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	t := math.MinInt64
+	// 9223372036854775808
+	c.Assert(res.GetUint64() == uint64(t), IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+
+	// cast('18446744073709551616' as signed);
+	mask := ^mysql.UnsignedFlag
+	tp1.Flag &= uint(mask)
+	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Check(res.GetInt64(), Equals, int64(-1))
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+
+	// cast('18446744073709551614' as signed);
+	f = NewCastFunc(tp1, &Constant{Value: types.NewDatum("18446744073709551614"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Check(res.GetInt64(), Equals, int64(-2))
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrCastAsSignedOverflow, lastWarn), IsTrue)
+
+	// create table t1(s1 time);
+	// insert into t1 values('11:11:11');
+	// select cast(s1 as decimal(7, 2)) from t1;
+	tpDecimal := &types.FieldType{
+		Tp:      mysql.TypeNewDecimal,
+		Flag:    mysql.BinaryFlag | mysql.UnsignedFlag,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+		Flen:    7,
+		Decimal: 2,
+	}
+	f = NewCastFunc(tpDecimal, &Constant{Value: timeDatum, RetType: types.NewFieldType(mysql.TypeDatetime)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	resDecimal := new(types.MyDecimal)
+	resDecimal.FromString([]byte("99999.99"))
+	c.Assert(res.GetMysqlDecimal().Compare(resDecimal), Equals, 0)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn), IsTrue)
+	sc = origSc
 
 	// cast(bad_string as decimal)
 	for _, s := range []string{"hello", ""} {
