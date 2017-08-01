@@ -1110,6 +1110,9 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{`select .78.123`, false},
 		{`select .78#123`, true}, // select .78
 		{`insert float_test values(.67, 'string');`, true},
+		{`select .78'123'`, true}, // select .78 as '123'
+		{"select .78`123`", true}, // select .78 as `123`
+		{`select .78"123"`, true}, // select .78 as "123"
 	}
 	s.RunTest(c, table)
 }
