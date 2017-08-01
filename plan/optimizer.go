@@ -161,6 +161,7 @@ func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 		return nil, errors.Trace(err)
 	}
 	p := t.plan()
+	rebuildSchema(p)
 	p.ResolveIndices()
 	return p, nil
 }
