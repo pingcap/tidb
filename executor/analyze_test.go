@@ -38,7 +38,7 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	tk.MustExec("insert into t1 (a) values (1)")
 	result := tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr := fmt.Sprintf("%s", result.Rows())
-	c.Check(rowStr, Equals, "[[IndexScan_7  cop table:t1, index:a, range:[1,1], OutOfOrder:true] [IndexReader_8  root index:IndexScan_7]]")
+	c.Check(rowStr, Equals, "[[IndexScan_7  cop table:t1, index:a, range:[1,1], out of order:true] [IndexReader_8  root index:IndexScan_7]]")
 	tk.MustExec("analyze table t1")
 	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr = fmt.Sprintf("%s", result.Rows())

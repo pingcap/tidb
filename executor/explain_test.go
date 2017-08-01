@@ -61,7 +61,7 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select * from t1 order by c2",
 			[]string{
-				"IndexScan_13  cop table:t1, index:c2, range:[<nil>,+inf], OutOfOrder:false",
+				"IndexScan_13  cop table:t1, index:c2, range:[<nil>,+inf], out of order:false",
 				"TableScan_14  cop table:t1, keep order:false",
 				"IndexLookUp_15  root index:IndexScan_13, table:TableScan_14",
 			},
@@ -84,7 +84,7 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select t1.c1, t1.c2 from t1 where t1.c2 = 1",
 			[]string{
-				"IndexScan_7  cop table:t1, index:c2, range:[1,1], OutOfOrder:true",
+				"IndexScan_7  cop table:t1, index:c2, range:[1,1], out of order:true",
 				"IndexReader_8  root index:IndexScan_7",
 			},
 		},
@@ -93,7 +93,7 @@ func (s *testSuite) TestExplain(c *C) {
 			[]string{
 				"TableScan_22  cop table:t1, range:[2,+inf), keep order:false",
 				"TableReader_23 IndexJoin_7 root data:TableScan_22",
-				"IndexScan_33  cop table:t2, index:c1, range:[<nil>,+inf], OutOfOrder:false",
+				"IndexScan_33  cop table:t2, index:c1, range:[<nil>,+inf], out of order:false",
 				"TableScan_34  cop table:t2, keep order:false",
 				"IndexLookUp_35 IndexJoin_7 root index:IndexScan_33, table:TableScan_34",
 				"IndexJoin_7  root outer:TableReader_23, outer key:test.t1.c2, inner key:test.t2.c1",
@@ -110,7 +110,7 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"delete from t1 where t1.c2 = 1",
 			[]string{
-				"IndexScan_7  cop table:t1, index:c2, range:[1,1], OutOfOrder:true",
+				"IndexScan_7  cop table:t1, index:c2, range:[1,1], out of order:true",
 				"TableScan_8  cop table:t1, keep order:false",
 				"IndexLookUp_9 Delete_3 root index:IndexScan_7, table:TableScan_8",
 				"Delete_3  root ",
@@ -141,7 +141,7 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select * from t1 where c1 > 1 and c2 = 1 and c3 < 1",
 			[]string{
-				"IndexScan_7 Selection_9 cop table:t1, index:c2, range:[1,1], OutOfOrder:true",
+				"IndexScan_7 Selection_9 cop table:t1, index:c2, range:[1,1], out of order:true",
 				"Selection_9  cop gt(test.t1.c1, 1)",
 				"TableScan_8 Selection_10 cop table:t1, keep order:false",
 				"Selection_10  cop lt(test.t1.c3, 1)",
