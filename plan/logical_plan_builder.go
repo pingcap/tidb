@@ -15,7 +15,6 @@ package plan
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
@@ -257,7 +256,12 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 	}
 
-	if join.Using != nil {
+	if join.NaturalJoin {
+		if err := b.buildNaturalJoin(joinPlan, leftPlan, rightPlan, join); err != nil {
+			b.err = err
+			return nil
+		}
+	} else if join.Using != nil {
 		if err := b.buildUsingClause(joinPlan, leftPlan, rightPlan, join); err != nil {
 			b.err = err
 			return nil
@@ -295,71 +299,86 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 // Second, columns unique to the first table, in order in which they occur in that table.
 // Third, columns unique to the second table, in order in which they occur in that table.
 func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
+	filter := make(map[string]bool, len(join.Using))
+	for _, col := range join.Using {
+		filter[col.Name.L] = true
+	}
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, filter)
+}
+
+// buildNaturalJoin build natural join output schema. It find out all the common columns
+// then using the same mechanism as buildUsingClause to eliminate redundant columns and build join conditions.
+// According to standard SQL, producing this display order:
+// 	All the common columns
+// 	Every column in the first (left) table that is not a common column
+// 	Every column in the second (right) table that is not a common column
+func (b *planBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, nil)
+}
+
+// coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
+func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, rightJoin bool, filter map[string]bool) error {
 	lsc := leftPlan.Schema().Clone()
 	rsc := rightPlan.Schema().Clone()
+	lColumns, rColumns := lsc.Columns, rsc.Columns
+	if rightJoin {
+		lColumns, rColumns = rsc.Columns, lsc.Columns
+	}
 
-	schemaCols := make([]*expression.Column, 0, len(lsc.Columns)+len(rsc.Columns)-len(join.Using))
-	redundantCols := make([]*expression.Column, 0, len(join.Using))
-	conds := make([]*expression.ScalarFunction, 0, len(join.Using))
+	// Find out all the common columns and put them ahead.
+	commonLen := 0
+	for i, lCol := range lColumns {
+		for j := commonLen; j < len(rColumns); j++ {
+			if lCol.ColName.L != rColumns[j].ColName.L {
+				continue
+			}
 
-	redundant := make(map[string]bool, len(join.Using))
-	for _, col := range join.Using {
-		var (
-			err    error
-			lc, rc *expression.Column
-			cond   expression.Expression
-		)
+			if len(filter) > 0 {
+				if !filter[lCol.ColName.L] {
+					break
+				}
+				// Mark this column exist.
+				filter[lCol.ColName.L] = false
+			}
 
-		if lc, err = lsc.FindColumn(col); err != nil {
-			return errors.Trace(err)
+			col := rColumns[i]
+			copy(rColumns[commonLen+1:i+1], rColumns[commonLen:i])
+			rColumns[commonLen] = col
+
+			col = lColumns[j]
+			copy(lColumns[commonLen+1:j+1], lColumns[commonLen:j])
+			lColumns[commonLen] = col
+
+			commonLen++
+			break
 		}
-		if rc, err = rsc.FindColumn(col); err != nil {
-			return errors.Trace(err)
-		}
-		redundant[col.Name.L] = true
-		if lc == nil || rc == nil {
-			// Same as MySQL.
-			return ErrUnknownColumn.GenByArgs(col.Name, "from clause")
-		}
+	}
 
-		if cond, err = expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc); err != nil {
+	if len(filter) > 0 && len(filter) != commonLen {
+		for col, notExist := range filter {
+			if notExist {
+				return ErrUnknownColumn.GenByArgs(col, "from clause")
+			}
+		}
+	}
+
+	schemaCols := make([]*expression.Column, len(lColumns)+len(rColumns)-commonLen)
+	copy(schemaCols[:len(lColumns)], lColumns)
+	copy(schemaCols[len(lColumns):], rColumns[commonLen:])
+
+	conds := make([]*expression.ScalarFunction, 0, commonLen)
+	for i := 0; i < commonLen; i++ {
+		lc, rc := lsc.Columns[i], rsc.Columns[i]
+		cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
+		if err != nil {
 			return errors.Trace(err)
 		}
 		conds = append(conds, cond.(*expression.ScalarFunction))
-
-		if join.Tp == ast.RightJoin {
-			schemaCols = append(schemaCols, rc)
-			redundantCols = append(redundantCols, lc)
-		} else {
-			schemaCols = append(schemaCols, lc)
-			redundantCols = append(redundantCols, rc)
-		}
-	}
-
-	// Columns in using clause may not ordered in the order in which they occur in the first table, so reorder them.
-	sort.Slice(schemaCols, func(i, j int) bool {
-		return schemaCols[i].Position < schemaCols[j].Position
-	})
-
-	if join.Tp == ast.RightJoin {
-		lsc, rsc = rsc, lsc
-	}
-	for _, col := range lsc.Columns {
-		if !redundant[col.ColName.L] {
-			schemaCols = append(schemaCols, col)
-		}
-	}
-	for _, col := range rsc.Columns {
-		if !redundant[col.ColName.L] {
-			schemaCols = append(schemaCols, col)
-		}
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
+	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rColumns[:commonLen]...))
 	p.EqualConditions = append(conds, p.EqualConditions...)
-
-	// p.redundantSchema may contains columns which are merged from sub join, so merge it with redundantCols.
-	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(redundantCols...))
 
 	return nil
 }
