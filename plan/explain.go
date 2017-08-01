@@ -57,6 +57,85 @@ func setParents4FinalPlan(plan PhysicalPlan) {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
+func (p *SelectLock) ExplainInfo() string {
+	return p.Lock.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalIndexScan) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	tblName := p.Table.Name.O
+	if p.TableAsName != nil && p.TableAsName.O != "" {
+		tblName = p.TableAsName.O
+	}
+	buffer.WriteString(fmt.Sprintf("table:%s", tblName))
+	if len(p.Index.Columns) > 0 {
+		buffer.WriteString(", index:")
+		for i, idxCol := range p.Index.Columns {
+			buffer.WriteString(idxCol.Name.O)
+			if i+1 < len(p.Index.Columns) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	if len(p.Ranges) > 0 {
+		buffer.WriteString(", range:")
+		for i, idxRange := range p.Ranges {
+			buffer.WriteString(idxRange.String())
+			if i+1 < len(p.Ranges) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	buffer.WriteString(fmt.Sprintf(", out of order:%v", p.OutOfOrder))
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalTableScan) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	tblName := p.Table.Name.O
+	if p.TableAsName != nil && p.TableAsName.O != "" {
+		tblName = p.TableAsName.O
+	}
+	buffer.WriteString(fmt.Sprintf("table:%s", tblName))
+	if p.pkCol != nil {
+		buffer.WriteString(fmt.Sprintf(", pk col:%s", p.pkCol.ExplainInfo()))
+	}
+	if len(p.Ranges) > 0 {
+		buffer.WriteString(", range:")
+		for i, idxRange := range p.Ranges {
+			buffer.WriteString(idxRange.String())
+			if i+1 < len(p.Ranges) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	buffer.WriteString(fmt.Sprintf(", keep order:%v", p.KeepOrder))
+	return buffer.String()
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalTableReader) ExplainInfo() string {
+	return fmt.Sprintf("data:%s", p.tablePlan.ID())
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalIndexReader) ExplainInfo() string {
+	return fmt.Sprintf("index:%s", p.indexPlan.ID())
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
+	return fmt.Sprintf("index:%s, table:%s", p.indexPlan.ID(), p.tablePlan.ID())
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalUnionScan) ExplainInfo() string {
+	return string(expression.ExplainExpressionList(p.Conditions))
+}
+
+// ExplainInfo implements PhysicalPlan interface.
 func (p *Selection) ExplainInfo() string {
 	return string(expression.ExplainExpressionList(p.Conditions))
 }
@@ -208,16 +287,16 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 			expression.ExplainExpressionList(p.OtherConditions)))
 	}
 	if p.Desc {
-		buffer.WriteString("desc")
+		buffer.WriteString(", desc")
 	} else {
-		buffer.WriteString("asc")
+		buffer.WriteString(", asc")
 	}
 	if len(p.leftKeys) > 0 {
-		buffer.WriteString(fmt.Sprintf("left key:%s",
+		buffer.WriteString(fmt.Sprintf(", left key:%s",
 			expression.ExplainColumnList(p.leftKeys)))
 	}
 	if len(p.rightKeys) > 0 {
-		buffer.WriteString(fmt.Sprintf("right key:%s",
+		buffer.WriteString(fmt.Sprintf(", right key:%s",
 			expression.ExplainColumnList(p.rightKeys)))
 	}
 	return buffer.String()

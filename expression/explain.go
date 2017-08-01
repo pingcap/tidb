@@ -16,6 +16,8 @@ package expression
 import (
 	"bytes"
 	"fmt"
+
+	"github.com/pingcap/tidb/util/types"
 )
 
 // ExplainInfo implements the Expression interface.
@@ -40,7 +42,11 @@ func (expr *Column) ExplainInfo() string {
 func (expr *Constant) ExplainInfo() string {
 	valStr, err := expr.Value.ToString()
 	if err != nil {
-		valStr = "not recognized const value"
+		if expr.Value.Kind() == types.KindNull {
+			valStr = "null"
+		} else {
+			valStr = "not recognized const value"
+		}
 	}
 	return valStr
 }
