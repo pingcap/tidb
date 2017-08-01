@@ -875,6 +875,11 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
 	result := tk.MustQuery("select length(a), length(b), length(c), length(d), length(e), length(f), length(null) from t")
 	result.Check(testkit.Rows("1 3 19 8 6 2 <nil>"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20))")
+	tk.MustExec(`insert into t values("tidb  "), (concat("a  ", "b  "))`)
+	result = tk.MustQuery("select a, length(a) from t")
+	result.Check(testkit.Rows("tidb 4", "a  b 4"))
 
 	// for concat
 	tk.MustExec("drop table if exists t")
