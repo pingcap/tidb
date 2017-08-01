@@ -1118,9 +1118,16 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.State
 			// select (cast 111 as decimal(1)) causes a warning in MySQL.
 			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
 		} else if frac != decimal {
+			old := *dec
 			dec.Round(dec, decimal, ModeHalfEven)
-			if !dec.IsZero() && frac > decimal {
-				err = sc.HandleTruncate(ErrTruncated)
+			if !dec.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
+				if sc.InInsertStmt {
+					// fix https://github.com/pingcap/tidb/issues/3895
+					sc.AppendWarning(ErrTruncated)
+					err = nil
+				} else {
+					err = sc.HandleTruncate(ErrTruncated)
+				}
 			}
 		}
 	}
@@ -1602,7 +1609,8 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			x.SetFloat64(x.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := x.ToFloat64(sc)
+			var fval float64
+			fval, err = x.ToFloat64(sc)
 			if err != nil {
 				return x, y, errors.Trace(err)
 			}
@@ -1622,7 +1630,8 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			y.SetFloat64(y.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := y.ToFloat64(sc)
+			var fval float64
+			fval, err = y.ToFloat64(sc)
 			if err != nil {
 				return x, y, errors.Trace(err)
 			}

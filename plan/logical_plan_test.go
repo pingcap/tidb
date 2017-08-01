@@ -185,60 +185,70 @@ func MockTable() *model.TableInfo {
 	}
 	pkColumn := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    0,
 		Name:      model.NewCIStr("a"),
 		FieldType: newLongType(),
 		ID:        1,
 	}
 	col0 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    1,
 		Name:      model.NewCIStr("b"),
 		FieldType: newLongType(),
 		ID:        2,
 	}
 	col1 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    2,
 		Name:      model.NewCIStr("c"),
 		FieldType: newLongType(),
 		ID:        3,
 	}
 	col2 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    3,
 		Name:      model.NewCIStr("d"),
 		FieldType: newLongType(),
 		ID:        4,
 	}
 	col3 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    4,
 		Name:      model.NewCIStr("e"),
 		FieldType: newLongType(),
 		ID:        5,
 	}
 	colStr1 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    5,
 		Name:      model.NewCIStr("c_str"),
 		FieldType: newStringType(),
 		ID:        6,
 	}
 	colStr2 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    6,
 		Name:      model.NewCIStr("d_str"),
 		FieldType: newStringType(),
 		ID:        7,
 	}
 	colStr3 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    7,
 		Name:      model.NewCIStr("e_str"),
 		FieldType: newStringType(),
 		ID:        8,
 	}
 	col4 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    8,
 		Name:      model.NewCIStr("f"),
 		FieldType: newLongType(),
 		ID:        9,
 	}
 	col5 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    9,
 		Name:      model.NewCIStr("g"),
 		FieldType: newLongType(),
 		ID:        10,
