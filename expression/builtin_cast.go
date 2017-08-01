@@ -643,7 +643,7 @@ type builtinCastStringAsIntSig struct {
 	baseIntBuiltinFunc
 }
 
-// handleOverflow handle the overflow caused by cast string as int,
+// handleOverflow handles the overflow caused by cast string as int,
 // see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html.
 // When an out-of-range value is assigned to an integer column, MySQL stores the value representing the corresponding endpoint of the column data type range. If it is in select statement, it will return the
 // endpoint value with a warning.
