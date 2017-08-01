@@ -404,7 +404,8 @@ func (s *testSuite) TestIssue2612(c *C) {
 	c.Assert(err, IsNil)
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	row.Data[0].GetMysqlDuration().String()
+	str := row.Data[0].GetMysqlDuration().String()
+	c.Assert(str, Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -556,6 +557,9 @@ func (s *testSuite) TestUnion(c *C) {
 	// #issue3771
 	r = tk.MustQuery("SELECT 'a' UNION SELECT CONCAT('a', -4)")
 	r.Sort().Check(testkit.Rows("a", "a-4"))
+
+	// test race
+	tk.MustQuery("SELECT @x:=0 UNION ALL SELECT @x:=0 UNION ALL SELECT @x")
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -971,6 +975,23 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("MySQL 123 123 "))
 	result = tk.MustQuery(`select unhex('string'), unhex('你好'), unhex(123.4), unhex(null)`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+
+	// for ltrim and rtrim
+	result = tk.MustQuery(`select ltrim('   bar   '), ltrim('bar'), ltrim(''), ltrim(null)`)
+	result.Check(testutil.RowsWithSep(",", "bar   ,bar,,<nil>"))
+	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
+	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
+
+	// for trim
+	result = tk.MustQuery(`select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx')`)
+	result.Check(testkit.Rows("bar barxxx barx bar"))
+	result = tk.MustQuery(`select trim(leading from '   bar'), trim('x' from 'xxxbarxxx'), trim('x' from 'bar'), trim('' from '   bar   ')`)
+	result.Check(testutil.RowsWithSep(",", "bar,bar,bar,   bar   "))
+	result = tk.MustQuery(`select trim(''), trim('x' from '')`)
+	result.Check(testutil.RowsWithSep(",", ","))
+	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
+	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
+	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
 }
 
 func (s *testSuite) TestEncryptionBuiltin(c *C) {
@@ -1029,6 +1050,19 @@ func (s *testSuite) TestOpBuiltin(c *C) {
 	// for logicAnd
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
+
+	// for bitNeg
+	result = tk.MustQuery("select ~123, ~-123, ~null")
+	result.Check(testkit.Rows("18446744073709551492 122 <nil>"))
+	// for logicNot
+	result = tk.MustQuery("select !1, !123, !0, !null")
+	result.Check(testkit.Rows("0 0 1 <nil>"))
+	// for logicalXor
+	result = tk.MustQuery("select 1 xor 1, 1 xor 0, 0 xor 1, 0 xor 0, 2 xor -1, null xor 1, '1a' xor 'a'")
+	result.Check(testkit.Rows("0 1 1 0 0 <nil> 1"))
+	// for bitAnd
+	result = tk.MustQuery("select 123 & 321, -123 & 321, null & 1")
+	result.Check(testkit.Rows("65 257 <nil>"))
 	// for bitOr
 	result = tk.MustQuery("select 123 | 321, -123 | 321, null | 1")
 	result.Check(testkit.Rows("379 18446744073709551557 <nil>"))
@@ -1190,6 +1224,18 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(""))
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1406 Data Too Long, field len 0, data len 4"))
+	result = tk.MustQuery("select CAST( - 8 AS DECIMAL ) * + 52 + 87 < - 86")
+	result.Check(testkit.Rows("1"))
+
+	// issue 3884
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (c1 date, c2 datetime, c3 timestamp, c4 time, c5 year);")
+	tk.MustExec("INSERT INTO t values ('2000-01-01', '2000-01-01 12:12:12', '2000-01-01 12:12:12', '12:12:12', '2000');")
+	tk.MustExec("INSERT INTO t values ('2000-02-01', '2000-02-01 12:12:12', '2000-02-01 12:12:12', '13:12:12', 2000);")
+	tk.MustExec("INSERT INTO t values ('2000-03-01', '2000-03-01', '2000-03-01 12:12:12', '1 12:12:12', 2000);")
+	tk.MustExec("INSERT INTO t SET c1 = '2000-04-01', c2 = '2000-04-01', c3 = '2000-04-01 12:12:12', c4 = '-1 13:12:12', c5 = 2000;")
+	result = tk.MustQuery("SELECT c4 FROM t where c4 < '-13:12:12';")
+	result.Check(testkit.Rows("-37:12:12"))
 
 	// testCase is for like and regexp
 	type testCase struct {
@@ -1202,7 +1248,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 		tk.MustExec("create table t (a varchar(255), b int)")
 		for i, d := range data {
 			tk.MustExec(fmt.Sprintf("insert into t values('%s', %d)", d.val, i))
-			result := tk.MustQuery(fmt.Sprintf("select * from t where a %s '%s'", queryOp, d.pattern))
+			result = tk.MustQuery(fmt.Sprintf("select * from t where a %s '%s'", queryOp, d.pattern))
 			if d.result == 1 {
 				rowStr := fmt.Sprintf("%s %d", d.val, i)
 				result.Check(testkit.Rows(rowStr))
@@ -1363,6 +1409,10 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("1.5707963267948966 <nil> <nil> 0"))
 	result = tk.MustQuery("select acos('tidb')")
 	result.Check(testkit.Rows("1.5707963267948966"))
+
+	// for pi
+	result = tk.MustQuery("select pi()")
+	result.Check(testkit.Rows("3.141592653589793"))
 
 	// for floor
 	result = tk.MustQuery("select floor(0), floor(null), floor(1.23), floor(-1.23), floor(1)")

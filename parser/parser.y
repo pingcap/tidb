@@ -766,6 +766,9 @@ import (
 	TableOptionListOpt	"create table option list opt"
 	TableRef 		"table reference"
 	TableRefs 		"table references"
+	TableToTable 		"rename table to table"
+	TableToTableList 	"rename table to table by list"
+
 	TransactionChar		"Transaction characteristic"
 	TransactionChars	"Transaction characteristic list"
 	TrimDirection		"Trim string direction"
@@ -1149,15 +1152,39 @@ Symbol:
 
 /**************************************RenameTableStmt***************************************
  * See http://dev.mysql.com/doc/refman/5.7/en/rename-table.html
+ *
+ * TODO: refactor this when you are going to add full support for multiple schema changes.
+ * Currently it is only useful for syncer which depends heavily on tidb parser to do some dirty work.
  *******************************************************************************************/
 RenameTableStmt:
-	 "RENAME" "TABLE" TableName "TO" TableName
-	 {
+	"RENAME" "TABLE" TableToTableList 
+	{
 		$$ = &ast.RenameTableStmt{
-			OldTable: $3.(*ast.TableName),
-			NewTable: $5.(*ast.TableName),
+			OldTable: $3.([]*ast.TableToTable)[0].OldTable,
+			NewTable: $3.([]*ast.TableToTable)[0].NewTable,
+			TableToTables: $3.([]*ast.TableToTable),
 		}
-	 }
+	}
+
+TableToTableList:
+	TableToTable
+	{
+		$$ = []*ast.TableToTable{$1.(*ast.TableToTable)}
+	}
+|	TableToTableList ',' TableToTable
+	{
+		$$ = append($1.([]*ast.TableToTable), $3.(*ast.TableToTable))
+	}
+
+TableToTable:
+	TableName "TO" TableName
+	{
+		$$ = &ast.TableToTable{
+			OldTable: $1.(*ast.TableName),
+			NewTable: $3.(*ast.TableName),
+		}
+	}
+
 
 /*******************************************************************************************/
 
@@ -1636,9 +1663,9 @@ CreateDatabaseStmt:
 
 DBName:
 	Identifier
-  {
-    $$ = $1
-  }
+	{
+		$$ = $1
+	}
 
 DatabaseOption:
 	DefaultKwdOpt CharsetKw EqOpt CharsetName
@@ -3496,7 +3523,7 @@ FunctionCallNonKeyword:
 |	"TRIM" '(' TrimDirection "FROM" Expression ')'
 	{
 		nilVal := ast.NewValueExpr(nil)
-		direction := ast.NewValueExpr($3)
+		direction := ast.NewValueExpr(int($3.(ast.TrimDirectionType)))
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$5.(ast.ExprNode), nilVal, direction},
@@ -3504,7 +3531,7 @@ FunctionCallNonKeyword:
 	}
 |	"TRIM" '(' TrimDirection Expression "FROM" Expression ')'
 	{
-		direction := ast.NewValueExpr($3)
+		direction := ast.NewValueExpr(int($3.(ast.TrimDirectionType)))
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$6.(ast.ExprNode),$4.(ast.ExprNode), direction},
@@ -5818,12 +5845,7 @@ NumericType:
 		x := types.NewFieldType($1.(byte))
 		x.Flen = fopt.Flen
 		if x.Tp == mysql.TypeFloat {
-			// Fix issue #312
-			if x.Flen > 53 {
-				yylex.Errorf("Float len(%d) should not be greater than 53", x.Flen)
-				return 1
-			}
-			if x.Flen > 24 {
+			if x.Flen > mysql.PrecisionForFloat {
 				x.Tp = mysql.TypeDouble
 			}
 		}

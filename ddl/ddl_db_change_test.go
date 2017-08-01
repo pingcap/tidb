@@ -92,8 +92,6 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 	testInfo.sqlInfos[1].cases[2].expectedErr = unknownColErr
 	testInfo.sqlInfos[1].cases[3].expectedErr = unknownColErr
 	testInfo.sqlInfos[2].sql = "update t set c2 = 'c2_update'"
-	// TODO: This code need to be remove after fix this bug.
-	testInfo.sqlInfos[2].cases[3].expectedErr = errors.New("overflow enum boundary")
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')'"
 	testInfo.sqlInfos[3].cases[4].expectedErr = errors.New("Column count doesn't match value count at row 1")
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
@@ -267,10 +265,14 @@ func (t *testExecInfo) execSQL(idx int) error {
 		c := sqlInfo.cases[idx]
 		ctx := c.session.(context.Context)
 		_, err := c.stmt.Exec(ctx)
-		if err != nil {
-			if c.expectedErr != nil && strings.Contains(err.Error(), c.expectedErr.Error()) {
-				return nil
+		if c.expectedErr != nil {
+			if err == nil {
+				err = errors.Errorf("expected error %s but got nil", c.expectedErr)
+			} else if strings.Contains(err.Error(), c.expectedErr.Error()) {
+				err = nil
 			}
+		}
+		if err != nil {
 			return errors.Trace(err)
 		}
 		err = c.session.CommitTxn()
