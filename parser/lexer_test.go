@@ -120,6 +120,7 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{".1_t_1_x", int('.')},
 		{"N'some text'", underscoreCS},
 		{"n'some text'", underscoreCS},
+		{"\\N", null},
 	}
 	runTest(c, table)
 }
