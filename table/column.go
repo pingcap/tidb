@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -104,6 +105,21 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 	return rcols
 }
 
+// truncateTrailingSpaces trancates trailing spaces for CHAR[(M)] column.
+// fix: https://github.com/pingcap/tidb/issues/3660
+func truncateTrailingSpaces(v *types.Datum) {
+	if v.Kind() == types.KindNull {
+		return
+	}
+	b := v.GetBytes()
+	len := len(b)
+	for len > 0 && b[len-1] == ' ' {
+		len--
+	}
+	b = b[:len]
+	v.SetString(hack.String(b))
+}
+
 // CastValues casts values based on columns type.
 func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreErr bool) (err error) {
 	sc := ctx.GetSessionVars().StmtCtx
@@ -119,6 +135,9 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 			}
 		}
 		rec[c.Offset] = converted
+		if c.Tp == mysql.TypeString && !types.IsBinaryStr(&c.FieldType) {
+			truncateTrailingSpaces(&rec[c.Offset])
+		}
 	}
 	return nil
 }
