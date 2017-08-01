@@ -185,7 +185,7 @@ func parseHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (par
 	// Ensure there are enough data to read:
 	// http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
 	if len(data) < 4+4+1+23 {
-		log.Errorf("handshake panic, packet data: %v", data)
+		log.Errorf("Got malformed handshake response, packet data: %v", data)
 		return 0, mysql.ErrMalformPacket
 	}
 

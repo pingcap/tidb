@@ -366,7 +366,7 @@ xxx row5_col1	- 	row5_col3`)
 		dbt.Assert(err, NotNil)
 	})
 
-	// TODO: Fix me. We no longer suuport setting the global capability so that the
+	// TODO: Fix me. We no longer support setting the global capability so that the
 	// following tests are broken.
 
 	// // unsupport ClientLocalFiles capability
