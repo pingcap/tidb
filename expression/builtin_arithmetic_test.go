@@ -22,51 +22,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func (s *testEvaluatorSuite) TestPlusGetEvalTp(c *C) {
-	defer testleak.AfterTest(c)()
-	fieldTps := []*types.FieldType{
-		types.NewFieldType(mysql.TypeTiny),
-		types.NewFieldType(mysql.TypeShort),
-		types.NewFieldType(mysql.TypeInt24),
-		types.NewFieldType(mysql.TypeLong),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeBit),
-		types.NewFieldType(mysql.TypeYear),
-		types.NewFieldType(mysql.TypeDuration),
-		types.NewFieldType(mysql.TypeDatetime),
-		types.NewFieldType(mysql.TypeNewDecimal),
-		types.NewFieldType(mysql.TypeDecimal),
-		types.NewFieldType(mysql.TypeFloat),
-		types.NewFieldType(mysql.TypeDouble),
-		types.NewFieldType(mysql.TypeNull),
-		types.NewFieldType(mysql.TypeTimestamp),
-		types.NewFieldType(mysql.TypeDate),
-		types.NewFieldType(mysql.TypeNewDate),
-		types.NewFieldType(mysql.TypeVarchar),
-		types.NewFieldType(mysql.TypeJSON),
-		types.NewFieldType(mysql.TypeEnum),
-		types.NewFieldType(mysql.TypeSet),
-		types.NewFieldType(mysql.TypeTinyBlob),
-		types.NewFieldType(mysql.TypeMediumBlob),
-		types.NewFieldType(mysql.TypeLongBlob), types.NewFieldType(mysql.TypeBlob),
-		types.NewFieldType(mysql.TypeVarString),
-		types.NewFieldType(mysql.TypeString),
-		types.NewFieldType(mysql.TypeGeometry),
-	}
-	plusFunctionClass, ok := funcs[ast.Plus].(*arithmeticPlusFunctionClass)
-	c.Assert(ok, Equals, true)
-	for i, ft := range fieldTps {
-		retEvalTp := plusFunctionClass.getEvalTp(ft)
-		if i < 8 {
-			c.Assert(retEvalTp, Equals, tpInt)
-		} else if i < 10 {
-			c.Assert(retEvalTp, Equals, tpDecimal, Commentf("for field type: \"%s\"", ft))
-		} else {
-			c.Assert(retEvalTp, Equals, tpReal)
-		}
-	}
-}
-
 func (s *testEvaluatorSuite) TestPlusSetFlenDecimal4RealOrDecimal(c *C) {
 	defer testleak.AfterTest(c)()
 	plusFunctionClass, ok := funcs[ast.Plus].(*arithmeticPlusFunctionClass)

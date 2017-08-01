@@ -16,6 +16,7 @@ package expression
 import (
 	"math"
 
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -36,20 +37,31 @@ var (
 	_ builtinFunc = &builtinArithmeticSig{}
 )
 
-type arithmeticPlusFunctionClass struct {
-	baseFunctionClass
+func IsTemporalType(tp byte) bool {
+	switch tp {
+	case mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp,
+		mysql.TypeDate, mysql.TypeNewDate:
+		return true
+	}
+	return false
 }
 
-// getEvalTp will get the `evalTp` of the argument according to it's return type.
-func (c *arithmeticPlusFunctionClass) getEvalTp(ft *types.FieldType) evalTp {
-	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
-		mysql.TypeLonglong, mysql.TypeBit, mysql.TypeYear, mysql.TypeDuration:
-		return tpInt
-	case mysql.TypeNewDecimal, mysql.TypeDatetime:
-		return tpDecimal
+func NumericContextResultType(ft *types.FieldType) types.TypeClass {
+	if IsTemporalType(ft.Tp) {
+		if ft.Decimal > 0 {
+			return types.ClassDecimal
+		} else {
+			return types.ClassInt
+		}
 	}
-	return tpReal
+	if ft.ToClass() == types.ClassString {
+		return types.ClassReal
+	}
+	return ft.ToClass()
+}
+
+type arithmeticPlusFunctionClass struct {
+	baseFunctionClass
 }
 
 // setFlenDecimal4Int is called to set proper `Flen` and `Decimal` of return
@@ -91,8 +103,27 @@ func (c *arithmeticPlusFunctionClass) getFunction(args []Expression, ctx context
 		return nil, errors.Trace(err)
 	}
 	tpA, tpB := args[0].GetType(), args[1].GetType()
-	evalTpA, evalTpB := c.getEvalTp(tpA), c.getEvalTp(tpB)
-	if evalTpA == tpInt && evalTpB == tpInt {
+	tcA, tcB := NumericContextResultType(tpA), NumericContextResultType(tpB)
+	if tcA == types.ClassReal || tcB == types.ClassReal {
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		}
+		c.setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
+		sig := &builtinArithmeticPlusRealSig{baseRealBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		c.setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
+		sig := &builtinArithmeticPlusDecimalSig{baseDecimalBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	} else {
 		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -101,27 +132,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(args []Expression, ctx context
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		c.setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
-		if mysql.HasUnsignedFlag(bf.tp.Flag) {
-			sig := &builtinArithmeticPlusIntUnsignedSig{baseIntBuiltinFunc{bf}}
-			return sig.setSelf(sig), nil
-		}
 		sig := &builtinArithmeticPlusIntSig{baseIntBuiltinFunc{bf}}
-		return sig.setSelf(sig), nil
-	} else if evalTpA == tpReal || evalTpB == tpReal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		c.setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
-		sig := &builtinArithmeticPlusRealSig{baseRealBuiltinFunc{bf}}
-		return sig.setSelf(sig), nil
-	} else {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		c.setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
-		sig := &builtinArithmeticPlusDecimalSig{baseDecimalBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
 }
@@ -140,6 +151,10 @@ func (s *builtinArithmeticPlusIntSig) evalInt(row []types.Datum) (val int64, isN
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
+	if (a > 0 && b > math.MaxInt64-a) || (a < 0 && b < 0 && a < math.MinInt64-b) {
+		return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+	}
+
 	return a + b, false, nil
 }
 
@@ -153,11 +168,16 @@ func (s *builtinArithmeticPlusIntUnsignedSig) evalInt(row []types.Datum) (val in
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
+	unsignedA := uint64(a)
 	b, isNull, err := s.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	return int64(uint64(a) + uint64(b)), false, nil
+	unsignedB := uint64(b)
+	if unsignedA > math.MaxUint64-unsignedB {
+		return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+	}
+	return a + b, false, nil
 }
 
 type builtinArithmeticPlusDecimalSig struct {
@@ -195,6 +215,9 @@ func (s *builtinArithmeticPlusRealSig) evalReal(row []types.Datum) (float64, boo
 	b, isNull, err := s.args[1].EvalReal(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
+	}
+	if (a > 0 && b > math.MaxFloat64-a) || (a < 0 && b < 0 && a < -math.MaxFloat64-b) {
+		return 0, true, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return a + b, false, nil
 }
