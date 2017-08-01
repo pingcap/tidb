@@ -752,6 +752,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT GET_FORMAT(DATE, 'USA');", true},
 		{"SELECT GET_FORMAT(DATETIME, 'USA');", true},
 		{"SELECT GET_FORMAT(TIME, 'USA');", true},
+		{"SELECT GET_FORMAT(TIMESTAMP, 'USA');", true},
 
 		// for LOCALTIME, LOCALTIMESTAMP
 		{"SELECT LOCALTIME(), LOCALTIME(1)", true},
