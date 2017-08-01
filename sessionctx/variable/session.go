@@ -100,6 +100,8 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
+	// UsersLock is a lock for user defined variables.
+	UsersLock sync.RWMutex
 	// Users are user defined variables.
 	Users map[string]string
 	// Systems are system variables.
@@ -318,7 +320,9 @@ type TableDelta struct {
 type StatementContext struct {
 	// Set the following variables before execution
 
+	InInsertStmt         bool
 	InUpdateOrDeleteStmt bool
+	IgnoreOverflow       bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
 	InShowWarning        bool
@@ -403,6 +407,8 @@ func (sc *StatementContext) AppendWarning(warn error) {
 
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
+	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
+	// We will do that later, and then append WarnDataTruncated instead of the error itself.
 	if err == nil {
 		return nil
 	}

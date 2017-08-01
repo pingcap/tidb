@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -154,11 +156,12 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc 
 func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	logic.preparePossibleProperties()
 	logic.prepareStatsProfile()
-	task, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
+	t, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := task.plan()
+	p := t.plan()
+	rebuildSchema(p)
 	p.ResolveIndices()
 	return p, nil
 }

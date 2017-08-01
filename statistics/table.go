@@ -31,9 +31,9 @@ const (
 	defaultBucketCount = 256
 
 	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
-	// It has row count 10000000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
+	// It has row count 10000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
 	// between condition selects 1/40 of total rows.
-	pseudoRowCount    = 10000000
+	pseudoRowCount    = 10000
 	pseudoEqualRate   = 1000
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 40
@@ -100,7 +100,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, erro
 			for _, idxInfo := range tableInfo.Indices {
 				if histID == idxInfo.ID {
 					if idx == nil || idx.LastUpdateVersion < histVer {
-						hg, err := h.histogramFromStorage(tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
+						hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
@@ -120,7 +120,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo) (*Table, erro
 			for _, colInfo := range tableInfo.Columns {
 				if histID == colInfo.ID {
 					if col == nil || col.LastUpdateVersion < histVer {
-						hg, err := h.histogramFromStorage(tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
+						hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
@@ -273,11 +273,6 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 			count = count / float64(100)
 		}
 		totalCount += count
-	}
-	// To avoid the totalCount become too small.
-	if uint64(totalCount) < 1000 {
-		// We will not let the row count less than 1000 to avoid collapsing too fast in the future calculation.
-		totalCount = 1000.0
 	}
 	if totalCount > tableRowCount {
 		totalCount = tableRowCount / 3.0

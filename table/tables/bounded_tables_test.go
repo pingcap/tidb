@@ -69,6 +69,10 @@ func (ts *testBoundedTableSuite) SetUpSuite(c *C) {
 	}
 	alloc := autoid.NewMemoryAllocator(int64(10))
 	ts.tbl = tables.BoundedTableFromMeta(alloc, tblInfo, 1024)
+
+	tblInfo.Columns[0].Flag |= mysql.PriKeyFlag
+	tblInfo.PKIsHandle = true
+	ts.tbl = tables.BoundedTableFromMeta(alloc, tblInfo, 1024)
 }
 
 func (ts *testBoundedTableSuite) TestBoundedBasic(c *C) {
@@ -81,6 +85,29 @@ func (ts *testBoundedTableSuite) TestBoundedBasic(c *C) {
 	c.Assert(tb.Indices(), IsNil)
 	c.Assert(string(tb.FirstKey()), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
+
+	// Basic test for BoundedTable
+	handle, found, err := tb.Seek(nil, 0)
+	c.Assert(handle, Equals, int64(0))
+	c.Assert(found, Equals, false)
+	c.Assert(err, IsNil)
+	tb.Seek(nil, -1)
+	c.Assert(handle, Equals, int64(0))
+	c.Assert(found, Equals, false)
+	c.Assert(err, IsNil)
+	cols := tb.WritableCols()
+	c.Assert(cols, NotNil)
+
+	key := tb.IndexPrefix()
+	c.Assert(key, IsNil)
+	err = tb.UpdateRecord(nil, 0, nil, nil, nil)
+	c.Assert(err, IsNil)
+	err = tb.RemoveRecord(nil, 0, nil)
+	c.Assert(err, NotNil)
+	alc := tb.Allocator()
+	c.Assert(alc, NotNil)
+	err = tb.RebaseAutoID(0, false)
+	c.Assert(err, IsNil)
 
 	autoid, err := tb.AllocAutoID()
 	c.Assert(err, IsNil)
@@ -107,7 +134,7 @@ func (ts *testBoundedTableSuite) TestBoundedBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
 	c.Assert(vals[0].GetInt64(), Equals, int64(1))
-	cols := []*table.Column{tb.Cols()[1]}
+	cols = []*table.Column{tb.Cols()[1]}
 	vals, err = tb.RowWithCols(ctx, rid, cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
