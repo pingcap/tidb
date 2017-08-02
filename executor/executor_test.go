@@ -1641,6 +1641,16 @@ func (s *testSuite) TestArithmeticBuiltin(c *C) {
 	result.Check(testkit.Rows("13.999 2.009 1.99901 13.99901", "11.900 -0.090 -0.09999 11.90001"))
 	result = tk.MustQuery("SELECT 1+12, 21+0.01, 89+\"11\", 12+\"a\", 12+NULL, NULL+1, NULL+NULL;")
 	result.Check(testkit.Rows("13 21.01 100 12 <nil> <nil> <nil>"))
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);")
+	tk.MustExec("INSERT INTO t SELECT 1<<63, 1<<63;")
+	rs, err := tk.Exec("SELECT a+b FROM t;")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err := tidb.GetRows(rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.t.a + test.t.b)'")
 }
 
 func (s *testSuite) TestJSON(c *C) {
