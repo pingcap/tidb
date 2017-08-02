@@ -862,7 +862,7 @@ import (
 	logAnd			"logical and operator"
 	logOr			"logical or operator"
 	FieldsOrColumns 	"Fields or columns"
-	GetFormatSelector	"{DATE|DATETIME|TIME}"
+	GetFormatSelector	"{DATE|DATETIME|TIME|TIMESTAMP}"
 
 %type	<ident>
 	Identifier			"identifier or unreserved keyword"
@@ -3823,6 +3823,10 @@ GetFormatSelector:
 		$$ = strings.ToUpper($1)
 	}
 |	"TIME"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"TIMESTAMP"
 	{
 		$$ = strings.ToUpper($1)
 	}

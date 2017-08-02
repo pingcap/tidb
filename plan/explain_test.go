@@ -198,6 +198,21 @@ func (s *testExplainSuite) TestExplain(c *C) {
 				"MemTableScan_3  root ",
 			},
 		},
+		{
+			"select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1",
+			[]string{
+				"TableScan_14  cop table:t1, range:(-inf,+inf), keep order:false",
+				"TableReader_15 Apply_13 root data:TableScan_14",
+				"IndexScan_28  cop table:t2, index:c1, range:[<nil>,+inf], out of order:false",
+				"TableScan_29  cop table:t2, keep order:false",
+				"IndexLookUp_30 Selection_4 root index:IndexScan_28, table:TableScan_29",
+				"Selection_4 Limit_18 root eq(test.t1.c1, test.t2.c1)",
+				"Limit_18 MaxOneRow_9 root offset:0, count:1",
+				"MaxOneRow_9 Apply_13 root ",
+				"Apply_13 Projection_2 root left outer join, small:MaxOneRow_9, right:MaxOneRow_9",
+				"Projection_2  root eq(test.t1.c2, test.t2.c2)",
+			},
+		},
 	}
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
 	for _, tt := range tests {
