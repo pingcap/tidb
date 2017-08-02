@@ -1110,6 +1110,16 @@ func (s *testSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
 	result := tk.MustQuery("select makedate(a,a), makedate(b,b), makedate(c,c), makedate(d,d), makedate(e,e), makedate(f,f), makedate(null,null), makedate(a,b) from t")
 	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
+
+	// fixed issue #3986
+	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("SET TIME_ZONE='+03:00';")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (ix TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);")
+	tk.MustExec("INSERT INTO t VALUES (0), (20030101010160), (20030101016001), (20030101240101), (20030132010101), (20031301010101), (20031200000000), (20030000000000);")
+	result = tk.MustQuery("SELECT CAST(ix AS SIGNED) FROM t;")
+	result.Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "0"))
+
 }
 
 func (s *testSuite) TestOpBuiltin(c *C) {
