@@ -37,22 +37,12 @@ var (
 	_ builtinFunc = &builtinArithmeticSig{}
 )
 
-func IsTemporalType(tp byte) bool {
-	switch tp {
-	case mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp,
-		mysql.TypeDate, mysql.TypeNewDate:
-		return true
-	}
-	return false
-}
-
-func NumericContextResultType(ft *types.FieldType) types.TypeClass {
-	if IsTemporalType(ft.Tp) {
+func numericContextResultType(ft *types.FieldType) types.TypeClass {
+	if types.IsTemporalType(ft.Tp) {
 		if ft.Decimal > 0 {
 			return types.ClassDecimal
-		} else {
-			return types.ClassInt
 		}
+		return types.ClassInt
 	}
 	if ft.ToClass() == types.ClassString {
 		return types.ClassReal
@@ -103,7 +93,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(args []Expression, ctx context
 		return nil, errors.Trace(err)
 	}
 	tpA, tpB := args[0].GetType(), args[1].GetType()
-	tcA, tcB := NumericContextResultType(tpA), NumericContextResultType(tpB)
+	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
 	if tcA == types.ClassReal || tcB == types.ClassReal {
 		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		if err != nil {

@@ -1169,3 +1169,13 @@ func SetBinChsClnFlag(ft *FieldType) {
 	ft.Collate = charset.CollationBin
 	ft.Flag |= mysql.BinaryFlag
 }
+
+// IsTemporalType checks if a type is a temporal type.
+func IsTemporalType(tp byte) bool {
+	switch tp {
+	case mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp,
+		mysql.TypeDate, mysql.TypeNewDate:
+		return true
+	}
+	return false
+}
