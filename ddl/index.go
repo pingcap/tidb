@@ -49,6 +49,10 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
 		}
 
+		if col.Flen == 0 {
+			return nil, errors.Trace(errWrongKeyColumn.GenByArgs(ic.Column.Name))
+		}
+
 		// JSON column cannot index.
 		if col.FieldType.Tp == mysql.TypeJSON {
 			return nil, errors.Trace(errJSONUsedAsKey.GenByArgs(col.Name.O))
@@ -249,7 +253,8 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteReorganization:
 		// reorganization -> public
-		reorgInfo, err := d.getReorgInfo(t, job)
+		var reorgInfo *reorgInfo
+		reorgInfo, err = d.getReorgInfo(t, job)
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.

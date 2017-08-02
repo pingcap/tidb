@@ -45,6 +45,11 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	store, err := newTikvStore("mock-tikv-store", pdCli, client, false)
 	c.Assert(err, IsNil)
 	s.store = store
+	commitMaxBackoff = 2000
+}
+
+func (s *testCommitterSuite) TearDownSuite(c *C) {
+	commitMaxBackoff = 20000
 }
 
 func (s *testCommitterSuite) begin(c *C) *tikvTxn {

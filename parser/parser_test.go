@@ -312,6 +312,11 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 join t2 left join t3 using (id)", true},
 		{"select * from t1 right join t2 using (id) left join t3 using (id)", true},
 		{"select * from t1 right join t2 using (id) left join t3", false},
+		{"select * from t1 natural join t2", true},
+		{"select * from t1 natural right join t2", true},
+		{"select * from t1 natural left outer join t2", true},
+		{"select * from t1 natural inner join t2", false},
+		{"select * from t1 natural cross join t2", false},
 
 		// for admin
 		{"admin show ddl;", true},
@@ -657,6 +662,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for cast as JSON
 		{"SELECT *, CAST(data AS JSON) FROM t;", true},
 
+		// for cast as signed int, fix issue #3691.
+		{"select cast(1 as signed int);", true},
+
 		// for last_insert_id
 		{"SELECT last_insert_id();", true},
 		{"SELECT last_insert_id(1);", true},
@@ -744,6 +752,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT GET_FORMAT(DATE, 'USA');", true},
 		{"SELECT GET_FORMAT(DATETIME, 'USA');", true},
 		{"SELECT GET_FORMAT(TIME, 'USA');", true},
+		{"SELECT GET_FORMAT(TIMESTAMP, 'USA');", true},
 
 		// for LOCALTIME, LOCALTIMESTAMP
 		{"SELECT LOCALTIME(), LOCALTIME(1)", true},
@@ -1092,6 +1101,27 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{"create table `123` (123a1 int)", true},
 		{"create table 123 (123a1 int)", false},
 		{fmt.Sprintf("select * from t%cble", 0), false},
+		{"select 1 full, 1 row, 1 abs", true},
+		{"select * from t full, t1 row, t2 abs", true},
+		// for issue 3954, should NOT be recognized as identifiers.
+		{`select .78+123`, true},
+		{`select .78+.21`, true},
+		{`select .78-123`, true},
+		{`select .78-.21`, true},
+		{`select .78--123`, true},
+		{`select .78*123`, true},
+		{`select .78*.21`, true},
+		{`select .78/123`, true},
+		{`select .78/.21`, true},
+		{`select .78,123`, true},
+		{`select .78,.21`, true},
+		{`select .78 , 123`, true},
+		{`select .78.123`, false},
+		{`select .78#123`, true}, // select .78
+		{`insert float_test values(.67, 'string');`, true},
+		{`select .78'123'`, true}, // select .78 as '123'
+		{"select .78`123`", true}, // select .78 as `123`
+		{`select .78"123"`, true}, // select .78 as "123"
 	}
 	s.RunTest(c, table)
 }
@@ -1334,6 +1364,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"RENAME TABLE t TO t1", true},
 		{"RENAME TABLE t t1", false},
 		{"RENAME TABLE d.t TO d1.t1", true},
+		{"RENAME TABLE t1 TO t2, t3 TO t4", true},
 
 		// for truncate statement
 		{"TRUNCATE TABLE t1", true},
@@ -1414,10 +1445,6 @@ func (s *testParserSuite) TestType(c *C) {
 
 		// for national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},
-
-		// for https://github.com/pingcap/tidb/issues/312
-		{`create table t (c float(53));`, true},
-		{`create table t (c float(54));`, false},
 
 		// for json type
 		{`create table t (a JSON);`, true},
