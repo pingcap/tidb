@@ -18,12 +18,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
@@ -38,11 +40,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -615,7 +619,9 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t (a DECIMAL(4,2))")
 	tk.MustExec("INSERT INTO t VALUE(12.34)")
 	r = tk.MustQuery("SELECT 1 AS c UNION select a FROM t")
+	r.Check(testkit.Rows("1.00", "12.34"))
 	r.Sort().Check(testkit.Rows("1.00", "12.34"))
+
 	// #issue3771
 	r = tk.MustQuery("SELECT 'a' UNION SELECT CONCAT('a', -4)")
 	r.Sort().Check(testkit.Rows("a", "a-4"))
@@ -875,6 +881,11 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
 	result := tk.MustQuery("select length(a), length(b), length(c), length(d), length(e), length(f), length(null) from t")
 	result.Check(testkit.Rows("1 3 19 8 6 2 <nil>"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20))")
+	tk.MustExec(`insert into t values("tidb  "), (concat("a  ", "b  "))`)
+	result = tk.MustQuery("select a, length(a) from t")
+	result.Check(testkit.Rows("tidb 4", "a  b 4"))
 
 	// for concat
 	tk.MustExec("drop table if exists t")
@@ -1184,6 +1195,83 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(-1 as unsigned)")
 	result.Check(testkit.Rows("18446744073709551615"))
 
+	// fix issue #3942
+	result = tk.MustQuery("select cast('-24 100:00:00' as time);")
+	result.Check(testkit.Rows("-676:00:00"))
+	result = tk.MustQuery("select cast('12:00:00.000000' as datetime);")
+	result.Check(testkit.Rows("2012-00-00 00:00:00"))
+	result = tk.MustQuery("select cast('-34 100:00:00' as time);")
+	result.Check(testkit.Rows("-838:59:59"))
+
+	// Fix issue #3691, cast compability.
+	result = tk.MustQuery("select cast('18446744073709551616' as unsigned);")
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast('18446744073709551616' as signed);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast('9223372036854775808' as signed);")
+	result.Check(testkit.Rows("-9223372036854775808"))
+	result = tk.MustQuery("select cast('9223372036854775809' as signed);")
+	result.Check(testkit.Rows("-9223372036854775807"))
+	result = tk.MustQuery("select cast('9223372036854775807' as signed);")
+	result.Check(testkit.Rows("9223372036854775807"))
+	result = tk.MustQuery("select cast('18446744073709551615' as signed);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast('18446744073709551614' as signed);")
+	result.Check(testkit.Rows("-2"))
+	result = tk.MustQuery("select cast(18446744073709551615 as unsigned);")
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast(18446744073709551616 as unsigned);")
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast(18446744073709551616 as signed);")
+	result.Check(testkit.Rows("9223372036854775807"))
+	result = tk.MustQuery("select cast(18446744073709551617 as signed);")
+	result.Check(testkit.Rows("9223372036854775807"))
+	result = tk.MustQuery("select cast(18446744073709551615 as signed);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast(18446744073709551614 as signed);")
+	result.Check(testkit.Rows("-2"))
+	result = tk.MustQuery("select cast(-18446744073709551616 as signed);")
+	result.Check(testkit.Rows("-9223372036854775808"))
+	result = tk.MustQuery("select cast(18446744073709551614.9 as unsigned);") // Round up
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select cast(18446744073709551614.4 as unsigned);") // Round down
+	result.Check(testkit.Rows("18446744073709551614"))
+	result = tk.MustQuery("select cast(-9223372036854775809 as signed);")
+	result.Check(testkit.Rows("-9223372036854775808"))
+	result = tk.MustQuery("select cast(-9223372036854775809 as unsigned);")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select cast(-9223372036854775808 as unsigned);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	result = tk.MustQuery("select cast('-9223372036854775809' as unsigned);")
+	result.Check(testkit.Rows("9223372036854775808"))
+	result = tk.MustQuery("select cast('-9223372036854775807' as unsigned);")
+	result.Check(testkit.Rows("9223372036854775809"))
+	result = tk.MustQuery("select cast('-2' as unsigned);")
+	result.Check(testkit.Rows("18446744073709551614"))
+	result = tk.MustQuery("select cast(cast(1-2 as unsigned) as signed integer);")
+	result.Check(testkit.Rows("-1"))
+	result = tk.MustQuery("select cast(1 as signed int)")
+	result.Check(testkit.Rows("1"))
+
+	// test cast time as decimal overflow
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(s1 time);")
+	tk.MustExec("insert into t1 values('11:11:11');")
+	result = tk.MustQuery("select cast(s1 as decimal(7, 2)) from t1;")
+	result.Check(testkit.Rows("99999.99"))
+	result = tk.MustQuery("select cast(s1 as decimal(8, 2)) from t1;")
+	result.Check(testkit.Rows("111111.00"))
+	_, err := tk.Exec("insert into t1 values(cast('111111.00' as decimal(7, 2)));")
+	c.Assert(err, NotNil)
+
+	result = tk.MustQuery(`select CAST(0x8fffffffffffffff as signed) a,
+	CAST(0xfffffffffffffffe as signed) b,
+	CAST(0xffffffffffffffff as unsigned) c;`)
+	result.Check(testkit.Rows("-8070450532247928833 -2 18446744073709551615"))
+
+	result = tk.MustQuery(`select cast("1:2:3" as TIME) = "1:02:03"`)
+	result.Check(testkit.Rows("0"))
+
 	// fixed issue #3471
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(6));")
@@ -1201,7 +1289,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint(30));")
-	_, err := tk.Exec("insert into t values(-9223372036854775809)")
+	_, err = tk.Exec("insert into t values(-9223372036854775809)")
 	c.Assert(err, NotNil)
 
 	// test unhex and hex
@@ -2364,4 +2452,78 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 			c.Assert(len(list[4]), Equals, 12)
 		}
 	}
+}
+
+type checkRequestClient struct {
+	tikv.Client
+	priority pb.CommandPri
+	mu       struct {
+		sync.RWMutex
+		turnOn bool
+	}
+}
+
+func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendReq(ctx, addr, req)
+	c.mu.RLock()
+	turnOn := c.mu.turnOn
+	c.mu.RUnlock()
+	if !turnOn {
+		switch req.Type {
+		case tikvrpc.CmdCop:
+			if c.priority != req.Priority {
+				return nil, errors.New("fail to set priority")
+			}
+		}
+	}
+	return resp, err
+}
+
+type testPrioritySuite struct{}
+
+var _ = Suite(testPrioritySuite{})
+
+func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
+	cli := &checkRequestClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+
+	tmpStore, err := tikv.NewMockTikvStore(
+		tikv.WithHijackClient(hijackClient),
+	)
+	defer tmpStore.Close()
+	c.Assert(err, IsNil)
+	dom, err := tidb.BootstrapSession(tmpStore)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(c, tmpStore)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("insert into t values (1)")
+
+	cli.mu.Lock()
+	cli.mu.turnOn = true
+	cli.mu.Unlock()
+	cli.priority = pb.CommandPri_High
+	tk.MustQuery("select id from t where id = 1")
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustQuery("select count(*) from t")
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustExec("update t set id = 3")
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustExec("delete from t")
+
+	cli.priority = pb.CommandPri_Normal
+	tk.MustExec("insert into t values (2)")
+
+	// TODO: Those are not point get, but they should be high priority.
+	// cli.priority = pb.CommandPri_High
+	// tk.MustExec("delete from t where id = 2")
+	// tk.MustExec("update t set id = 2 where id = 1")
 }
