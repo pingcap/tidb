@@ -202,7 +202,6 @@ func (a *statement) buildExecutor(ctx context.Context) (Executor, error) {
 			priority = kv.PriorityLow
 		}
 	}
-	fmt.Println("priority:", priority)
 
 	b := newExecutorBuilder(ctx, a.is, priority)
 	e := b.build(a.plan)
