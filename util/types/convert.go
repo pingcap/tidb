@@ -171,10 +171,8 @@ func StrToDateTime(str string, fsp int) (Time, error) {
 func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, err error) {
 	str = strings.TrimSpace(str)
 	length := len(str)
-	t.IsNegative = false
 	if length > 0 && str[0] == '-' {
 		length--
-		t.IsNegative = true
 	}
 	// Timestamp format is 'YYYYMMDDHHMMSS' or 'YYMMDDHHMMSS', which length is 12.
 	// See #3923, it explains what we do here.
