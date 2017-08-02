@@ -904,7 +904,8 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 		return nil, errors.Trace(err)
 	}
 	for i, expr := range e.GenExprs {
-		val, err := expr.Eval(row)
+		var val types.Datum
+		val, err = expr.Eval(row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -63,6 +63,8 @@ type TableReaderExecutor struct {
 
 	// genValues is for calculating virtual generated columns.
 	genValues map[int]expression.Expression
+
+	priority int
 }
 
 // Schema implements the Executor Schema interface.
@@ -126,7 +128,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 func (e *TableReaderExecutor) Open() error {
 	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
 	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -139,7 +141,7 @@ func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.C
 	sort.Sort(int64Slice(handles))
 	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
 	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -174,7 +176,8 @@ type IndexReaderExecutor struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 	// columns are only required by union scan.
-	columns []*model.ColumnInfo
+	columns  []*model.ColumnInfo
+	priority int
 }
 
 // Schema implements the Executor Schema interface.
@@ -239,7 +242,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -253,7 +256,7 @@ func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -282,11 +285,13 @@ type IndexLookUpExecutor struct {
 	taskCurr *lookupTableTask
 
 	tableRequest *tipb.DAGRequest
-	// columns are only required by union scan.
+
 	columns []*model.ColumnInfo
 
 	// genValues is for calculating virtual generated columns.
 	genValues map[int]expression.Expression
+
+	priority int
 }
 
 // Open implements the Executor Open interface.
@@ -299,7 +304,7 @@ func (e *IndexLookUpExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -319,7 +324,7 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()))
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
 	if err != nil {
 		return errors.Trace(err)
 	}

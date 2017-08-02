@@ -58,6 +58,9 @@ var (
 	_ PhysicalPlan = &Insert{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
+	_ PhysicalPlan = &PhysicalTableReader{}
+	_ PhysicalPlan = &PhysicalIndexReader{}
+	_ PhysicalPlan = &PhysicalIndexLookUpReader{}
 	_ PhysicalPlan = &PhysicalAggregation{}
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}

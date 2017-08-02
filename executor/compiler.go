@@ -42,11 +42,12 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	stmtCount(node, p)
+	isExpensive := stmtCount(node, p)
 	sa := &statement{
-		is:   is,
-		plan: p,
-		text: node.Text(),
+		is:        is,
+		plan:      p,
+		text:      node.Text(),
+		expensive: isExpensive,
 	}
 	return sa, nil
 }
