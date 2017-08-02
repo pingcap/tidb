@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/privilege"
@@ -280,12 +282,100 @@ func RunGCJob(ctx goctx.Context, store kv.Storage, safePoint uint64, identifier 
 
 func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
-	err := RunGCJob(ctx, w.store, safePoint, w.uuid)
+	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
+	if err != nil {
+		w.done <- errors.Trace(err)
+		return
+	}
+	err = w.deleteRanges(ctx, safePoint)
+	if err != nil {
+		w.done <- errors.Trace(err)
+		return
+	}
+	err = doGC(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
 		w.done <- errors.Trace(err)
 		return
 	}
 	w.done <- nil
+}
+
+func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
+	gcWorkerCounter.WithLabelValues("delete_range").Inc()
+
+	ranges, err := ddl.LoadDeleteRanges(w.session, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	bo := NewBackoffer(gcDeleteRangeMaxBackoff, goctx.Background())
+	log.Infof("[gc worker] %s start delete %v ranges", w.uuid, len(ranges))
+	startTime := time.Now()
+	regions := 0
+
+	for _, r := range ranges {
+		startKey, rangeEndKey := r.Range()
+		for {
+			select {
+			case <-ctx.Done():
+				return errors.New("[gc worker] gc job canceled")
+			default:
+			}
+
+			loc, err := w.store.regionCache.LocateKey(bo, startKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			endKey := loc.EndKey
+			if loc.Contains(rangeEndKey) {
+				endKey = rangeEndKey
+			}
+
+			req := &tikvrpc.Request{
+				Type: tikvrpc.CmdDeleteRange,
+				DeleteRange: &kvrpcpb.DeleteRangeRequest{
+					StartKey: startKey,
+					EndKey:   endKey,
+				},
+			}
+
+			resp, err := w.store.SendReq(bo, req, loc.Region, readTimeoutMedium)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			regionErr, err := resp.GetRegionError()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if regionErr != nil {
+				err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
+				continue
+			}
+			deleteRangeResp := resp.DeleteRange
+			if deleteRangeResp == nil {
+				return errors.Trace(errBodyMissing)
+			}
+			if err := deleteRangeResp.GetError(); err != "" {
+				return errors.Errorf("unexpected delete range err: %v", err)
+			}
+			regions++
+			if bytes.Equal(endKey, rangeEndKey) {
+				break
+			}
+			startKey = endKey
+		}
+		err := ddl.CompleteDeleteRange(w.session, r)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	log.Infof("[gc worker] %s finish delete %v ranges, regions: %v, cost time: %s", w.uuid, len(ranges), regions, time.Since(startTime))
+	gcHistogram.WithLabelValues("delete_ranges").Observe(time.Since(startTime).Seconds())
+	return nil
 }
 
 func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier string) error {

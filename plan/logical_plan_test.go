@@ -377,6 +377,10 @@ func (m *mockStore) CurrentVersion() (kv.Version, error) {
 	return kv.Version{}, nil
 }
 
+func (m *mockStore) SupportDeleteRange() bool {
+	return false
+}
+
 func mockContext() context.Context {
 	ctx := mock.NewContext()
 	ctx.Store = &mockStore{

@@ -125,6 +125,9 @@ type Job struct {
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
+
+	// Version starts at bootstrap version 15.
+	Version int64 `json:"version"`
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.

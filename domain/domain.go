@@ -386,7 +386,7 @@ type etcdBackend interface {
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory) (d *Domain, err error) {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory, sysFactory func(*Domain) (pools.Resource, error)) (d *Domain, err error) {
 	capacity := 200                // capacity of the sysSessionPool size
 	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
 	d = &Domain{
@@ -417,7 +417,13 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 	ctx := goctx.Background()
 	callback := &ddlCallback{do: d}
-	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease)
+
+	sysFac := func() (pools.Resource, error) {
+		return sysFactory(d)
+	}
+	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, idleTimeout)
+	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease, sysCtxPool)
+
 	if err = d.ddl.SchemaSyncer().Init(ctx); err != nil {
 		return nil, errors.Trace(err)
 	}

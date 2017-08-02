@@ -501,6 +501,19 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 	}
 }
 
+func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
+	return func(dom *domain.Domain) (pools.Resource, error) {
+		se, err := createSessionWithDomain(store, dom)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		se.sessionVars.CommonGlobalLoaded = true
+		se.sessionVars.InRestrictedSQL = true
+		return se, nil
+	}
+}
+
 func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
 	var rows []*ast.Row
 	for {
@@ -972,9 +985,23 @@ func createSession(store kv.Storage) (*session, error) {
 	return s, nil
 }
 
+func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
+	s := &session{
+		store:       store,
+		parser:      parser.New(),
+		sessionVars: variable.NewSessionVars(),
+	}
+	s.mu.values = make(map[fmt.Stringer]interface{})
+	sessionctx.BindDomain(s, dom)
+	// session implements variable.GlobalVarAccessor. Bind it to ctx.
+	s.sessionVars.GlobalVarsAccessor = s
+	s.sessionVars.BinlogClient = binloginfo.GetPumpClient()
+	return s, nil
+}
+
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 14
+	currentBootstrapVersion = 15
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
