@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -1361,7 +1362,11 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	extractTableAsNameForUpdate(p, tableAsName)
 	for _, tn := range tableList {
 		tableInfo := tn.TableInfo
-		table, _ := b.is.TableByID(tableInfo.ID)
+		table, found := b.is.TableByID(tableInfo.ID)
+		if !found {
+			b.err = infoschema.ErrTableNotExists.GenByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
+			return nil, nil
+		}
 		for i, colInfo := range tableInfo.Columns {
 			if len(colInfo.GeneratedExprString) == 0 {
 				continue
