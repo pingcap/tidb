@@ -442,8 +442,21 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				}
 			} else {
 				innerExpr := getInnerFromParentheses(field.Expr)
-				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
-					colName = model.NewCIStr(innerExpr.Text())
+				if valueExpr, ok := innerExpr.(*ast.ValueExpr); ok {
+					switch valueExpr.Kind() {
+					case types.KindString:
+						// See #3686
+						colName = model.NewCIStr(valueExpr.GetString())
+					case types.KindNull:
+						// See #3686
+						colName = model.NewCIStr("NULL")
+					default:
+						if innerExpr.Text() != "" {
+							colName = model.NewCIStr(innerExpr.Text())
+						} else {
+							colName = model.NewCIStr(field.Text())
+						}
+					}
 				} else {
 					//Change column name \N to NULL, just when original sql contains \N column
 					fieldText := field.Text()
