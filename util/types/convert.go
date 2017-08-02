@@ -222,6 +222,7 @@ func floatStrToIntStr(validFloat string) (string, error) {
 	if intCnt <= len(digits) {
 		validInt = string(digits[:intCnt])
 	} else {
+		// convert scientific notation decimal number
 		extraZeroCount := intCnt - len(digits)
 		if extraZeroCount > 20 {
 			// Return overflow to avoid allocating too much memory.
