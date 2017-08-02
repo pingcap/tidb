@@ -104,6 +104,7 @@ func (s *testSuite) TestJoin(c *C) {
 		testleak.AfterTest(c)()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_index_lookup_size = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int)")
