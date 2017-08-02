@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -52,12 +53,11 @@ func (*testSuite) TestSchemaValidator(c *C) {
 
 	// Stop the validator, validator's items value is nil.
 	validator.Stop()
-	isTablesChanged := validator.IsRelatedTablesChanged(item.leaseGrantTS, item.schemaVer, nil)
-	c.Assert(isTablesChanged, IsTrue)
+	isTablesChanged, err := validator.IsRelatedTablesChanged(item.leaseGrantTS, item.schemaVer, nil)
+	c.Assert(terror.ErrorEqual(err, ErrInfoSchemaExpired), IsTrue)
+	c.Assert(isTablesChanged, IsFalse)
 	valid = validator.Check(item.leaseGrantTS, item.schemaVer)
 	c.Assert(valid, IsFalse)
-	isAllExpired := validator.IsAllExpired(item.leaseGrantTS)
-	c.Assert(isAllExpired, IsTrue)
 	validator.Restart()
 
 	// Sleep for a long time, check schema is invalid.
@@ -72,16 +72,23 @@ func (*testSuite) TestSchemaValidator(c *C) {
 
 	// Update current schema version to 10 and the delta table IDs is 1, 2, 3.
 	validator.Update(ts, currVer, 10, []int64{1, 2, 3})
-	isTablesChanged = validator.IsRelatedTablesChanged(ts, currVer, nil)
+	// Make sure the updated table IDs don't be covered with the same schema version.
+	validator.Update(ts, 10, 10, nil)
+	isTablesChanged, err = validator.IsRelatedTablesChanged(ts, currVer, nil)
+	c.Assert(err, IsNil)
 	c.Assert(isTablesChanged, IsFalse)
-	isTablesChanged = validator.IsRelatedTablesChanged(ts, currVer, []int64{2})
+	isTablesChanged, err = validator.IsRelatedTablesChanged(ts, currVer, []int64{2})
+	c.Assert(err, IsNil)
 	c.Assert(isTablesChanged, IsTrue)
-
-	isAllExpired = validator.IsAllExpired(ts)
-	c.Assert(isAllExpired, IsFalse)
+	// The current schema version is older than the oldest schema version.
+	isTablesChanged, err = validator.IsRelatedTablesChanged(ts, -1, nil)
+	c.Assert(terror.ErrorEqual(err, ErrInfoSchemaChanged), IsTrue)
+	c.Assert(isTablesChanged, IsFalse)
+	// All schema versions is expired.
 	ts = uint64(time.Now().Add(lease).UnixNano())
-	isAllExpired = validator.IsAllExpired(ts)
-	c.Assert(isAllExpired, IsTrue)
+	isTablesChanged, err = validator.IsRelatedTablesChanged(ts, currVer, nil)
+	c.Assert(terror.ErrorEqual(err, ErrInfoSchemaExpired), IsTrue)
+	c.Assert(isTablesChanged, IsFalse)
 
 	// Check the latest schema version must changed.
 	c.Assert(item.schemaVer, Less, validator.Latest())

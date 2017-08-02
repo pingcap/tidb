@@ -218,12 +218,13 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 }
 
 func (s *schemaLeaseChecker) checkOnce(txnTS uint64) error {
-	isChanged := s.SchemaValidator.Check(txnTS, s.schemaVer)
-	if !isChanged {
-		if s.SchemaValidator.IsAllExpired(txnTS) {
-			return domain.ErrInfoSchemaExpired
+	succ := s.SchemaValidator.Check(txnTS, s.schemaVer)
+	if !succ {
+		isChanged, err := s.SchemaValidator.IsRelatedTablesChanged(txnTS, s.schemaVer, s.relatedTableIDs)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		if s.SchemaValidator.IsRelatedTablesChanged(txnTS, s.schemaVer, s.relatedTableIDs) {
+		if isChanged {
 			return domain.ErrInfoSchemaChanged
 		}
 		log.Infof("schema checker txnTS %d ver %d doesn't change related tables %v",
@@ -261,7 +262,7 @@ func (s *session) doCommit() error {
 	// Get the related table IDs.
 	relatedTables := s.GetSessionVars().TxnCtx.TableDeltaMap
 	tableIDs := make([]int64, 0, len(relatedTables))
-	for id, _ := range relatedTables {
+	for id := range relatedTables {
 		tableIDs = append(tableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
@@ -355,10 +356,11 @@ func (s *session) String() string {
 
 const sqlLogMaxLen = 1024
 
-var MockSchemaChangedCanotRetry bool
+// SchemaChangedWithoutRetry is used for testing.
+var SchemaChangedWithoutRetry bool
 
 func (s *session) isRetryableError(err error) bool {
-	if MockSchemaChangedCanotRetry {
+	if SchemaChangedWithoutRetry {
 		return kv.IsRetryableError(err)
 	}
 	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)

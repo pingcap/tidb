@@ -82,7 +82,8 @@ func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
 
 	// Add some schema versions and delta table IDs.
 	ts := uint64(time.Now().UnixNano())
-	validator.Update(ts, 0, 4, []int64{1, 2})
+	validator.Update(ts, 0, 2, []int64{1})
+	validator.Update(ts, 2, 4, []int64{2})
 
 	// checker's schema version is the same as the current schema version.
 	checker.schemaVer = 4
@@ -95,6 +96,11 @@ func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
 	checker.relatedTableIDs = []int64{3}
 	err = checker.checkOnce(ts)
 	c.Assert(err, IsNil)
+	// The checker's schema version isn't in validator's items.
+	checker.schemaVer = 1
+	checker.relatedTableIDs = []int64{3}
+	err = checker.checkOnce(ts)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
 	// checker's related table ID is in validator's changed table IDs.
 	checker.relatedTableIDs = []int64{2}
 	err = checker.checkOnce(ts)
@@ -102,6 +108,7 @@ func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
 
 	// validator's latest schema version is expired.
 	time.Sleep(lease + time.Microsecond)
+	checker.schemaVer = 2
 	checker.relatedTableIDs = []int64{3}
 	err = checker.checkOnce(ts)
 	c.Assert(err, IsNil)

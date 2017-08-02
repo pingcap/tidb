@@ -18,14 +18,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -46,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
-	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -2314,7 +2311,7 @@ func (s *testSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`insert into t1 values(2, 2);`)
 	tk.MustExec(`commit;`)
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
-	tidb.MockSchemaChangedCanotRetry = true
+	tidb.SchemaChangedWithoutRetry = true
 	tk.MustExec(`begin;`)
 	_, err = se1.Execute(`alter table t add index idx1(c);`)
 	c.Assert(err, IsNil)
