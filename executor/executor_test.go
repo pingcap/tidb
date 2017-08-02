@@ -1191,6 +1191,14 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(-1 as unsigned)")
 	result.Check(testkit.Rows("18446744073709551615"))
 
+	// fix issue #3942
+	result = tk.MustQuery("select cast('-24 100:00:00' as time);")
+	result.Check(testkit.Rows("-676:00:00"))
+	result = tk.MustQuery("select cast('12:00:00.000000' as datetime);")
+	result.Check(testkit.Rows("2012-00-00 00:00:00"))
+	result = tk.MustQuery("select cast('-34 100:00:00' as time);")
+	result.Check(testkit.Rows("-838:59:59"))
+
 	// Fix issue #3691, cast compability.
 	result = tk.MustQuery("select cast('18446744073709551616' as unsigned);")
 	result.Check(testkit.Rows("18446744073709551615"))

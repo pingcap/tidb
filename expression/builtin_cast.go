@@ -768,11 +768,15 @@ type builtinCastStringAsDurationSig struct {
 }
 
 func (b *builtinCastStringAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
 	res, err = types.ParseDuration(val, b.tp.Decimal)
+	if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+		err = sc.HandleTruncate(err)
+	}
 	return res, false, errors.Trace(err)
 }
 
