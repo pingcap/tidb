@@ -45,7 +45,8 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 			return supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
-		return c.store.mock
+		// return c.store.mock
+		return true
 	}
 	return false
 }
