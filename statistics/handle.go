@@ -39,9 +39,10 @@ type Handle struct {
 	// PrevLastVersion will be assigned by LastVersion every time Update is called.
 	PrevLastVersion uint64
 	statsCache      atomic.Value
-	// ddlEventCh is a channel to notify a ddl operation has happened. It is sent only by owner and read by stats handle.
-	ddlEventCh chan *ddl.Event
-
+	// ddlEventCh is a channel to notify a ddl operation has happened.
+	// It is sent only by owner or the drop stats executor, and read by stats handle.
+	ddlEventCh      chan *ddl.Event
+	analyzeResultCh chan *AnalyzeResult
 	// All the stats collector required by session are maintained in this list.
 	listHead *SessionStatsCollector
 	// We collect the delta map and merge them with globalMap.
@@ -60,14 +61,30 @@ func (h *Handle) Clear() {
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 	handle := &Handle{
-		ctx:        ctx,
-		ddlEventCh: make(chan *ddl.Event, 100),
-		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap)},
-		globalMap:  make(tableDeltaMap),
-		Lease:      lease,
+		ctx:             ctx,
+		ddlEventCh:      make(chan *ddl.Event, 100),
+		analyzeResultCh: make(chan *AnalyzeResult, 100),
+		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
+		globalMap:       make(tableDeltaMap),
+		Lease:           lease,
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
+}
+
+// AnalyzeResult is used to represent analyze result.
+type AnalyzeResult struct {
+	TableID int64
+	Hist    []*Histogram
+	Count   int64
+	IsIndex int
+	Ctx     context.Context
+	Err     error
+}
+
+// AnalyzeResultCh returns analyze result channel in handle.
+func (h *Handle) AnalyzeResultCh() chan *AnalyzeResult {
+	return h.analyzeResultCh
 }
 
 // Update reads stats meta from store and updates the stats map.

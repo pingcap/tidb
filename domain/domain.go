@@ -532,11 +532,18 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 				}
 			case <-do.exit:
 				return
-			// This channel is sent only by ddl owner. Only owner know if this ddl is done or not.
+			// This channel is sent only by ddl owner or the drop stats executor.
 			case t := <-do.statsHandle.DDLEventCh():
 				err := do.statsHandle.HandleDDLEvent(t)
 				if err != nil {
 					log.Error(errors.ErrorStack(err))
+				}
+			case t := <-do.statsHandle.AnalyzeResultCh():
+				for _, hg := range t.Hist {
+					err = hg.SaveToStorage(t.Ctx, t.TableID, t.Count, t.IsIndex)
+					if err != nil {
+						log.Error(errors.ErrorStack(err))
+					}
 				}
 			case <-deltaUpdateTicker.C:
 				do.statsHandle.DumpStatsDeltaToKV()
