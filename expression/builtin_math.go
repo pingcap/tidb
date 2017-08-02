@@ -65,12 +65,16 @@ var (
 var (
 	_ builtinFunc = &builtinAbsSig{}
 
-	//_ builtinFunc = &builtinCeilRealSig{}
-	//_ builtinFunc = &builtinCeilIntSig{}
-	//
-	//_ builtinFunc = &builtinFloorRealSig{}
-	//_ builtinFunc = &builtinFloorIntToIntSig{}
-
+	_ builtinFunc = &builtinCeilRealSig{}
+	_ builtinFunc = &builtinCeilIntToDecSig{}
+	_ builtinFunc = &builtinCeilIntToIntSig{}
+	_ builtinFunc = &builtinCeilDecToIntSig{}
+	_ builtinFunc = &builtinCeilDecToDecSig{}
+	_ builtinFunc = &builtinFloorRealSig{}
+	_ builtinFunc = &builtinFloorIntToDecSig{}
+	_ builtinFunc = &builtinFloorIntToIntSig{}
+	_ builtinFunc = &builtinFloorDecToIntSig{}
+	_ builtinFunc = &builtinFloorDecToDecSig{}
 	_ builtinFunc = &builtinLog1ArgSig{}
 	_ builtinFunc = &builtinLog2ArgsSig{}
 	_ builtinFunc = &builtinLog2Sig{}
@@ -161,7 +165,9 @@ func (c *ceilFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen = args[0].GetType().Flen
+	argFieldTp := args[0].GetType()
+	bf.tp.Flen = argFieldTp.Flen
+	bf.tp.Decimal = 0
 
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -230,7 +236,7 @@ func (b *builtinCeilDecToIntSig) evalInt(row []types.Datum) (int64, bool, error)
 	}
 	// err here will only be ErrOverFlow(will never happen) or ErrTruncate(can be ignored).
 	res, err := val.ToInt()
-	if err == types.ErrTruncated {
+	if err == types.ErrTruncated && !val.IsNegative() {
 		err = nil
 		res = res + 1
 	}
@@ -247,7 +253,7 @@ func (b *builtinCeilDecToDecSig) evalDecimal(row []types.Datum) (*types.MyDecima
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
 	}
-	if val.GetDigitsFrac() > 0 {
+	if val.GetDigitsFrac() > 0 && !val.IsNegative() {
 		types.DecimalAdd(val, types.NewDecFromInt(1), val)
 	}
 	res := new(types.MyDecimal)
@@ -298,7 +304,7 @@ func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context)
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = args[0].GetType().Flen
-
+	bf.tp.Decimal = 0
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
 		if retTp == tpInt {
@@ -366,8 +372,9 @@ func (b *builtinFloorDecToIntSig) evalInt(row []types.Datum) (int64, bool, error
 	}
 	// err here will only be ErrOverFlow(will never happen) or ErrTruncate(can be ignored).
 	res, err := val.ToInt()
-	if err == types.ErrTruncated {
+	if err == types.ErrTruncated && val.IsNegative() {
 		err = nil
+		res--
 	}
 	return res, false, nil
 }
@@ -381,6 +388,9 @@ func (b *builtinFloorDecToDecSig) evalDecimal(row []types.Datum) (*types.MyDecim
 	val, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
+	}
+	if val.GetDigitsFrac() > 0 && val.IsNegative() {
+		types.DecimalSub(val, types.NewDecFromInt(1), val)
 	}
 	res := new(types.MyDecimal)
 	val.Round(res, 0, types.ModeTruncate)
