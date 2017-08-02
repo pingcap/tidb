@@ -147,31 +147,29 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 	return false
 }
 
-func (s *schemaValidator) IsRelatedTablesChanged(txnTS uint64, currVer int64, tableIDs []int64) bool {
+func (s *schemaValidator) IsRelatedTablesChanged(txnTS uint64, currVer int64, tableIDs []int64) (bool, error) {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 
 	if s.items == nil {
-		// TODO: It's better to return an error.
 		log.Infof("the schema validator stopped before judging")
-		return true
+		return false, ErrInfoSchemaExpired
 	}
 
 	log.Warnf("curr ver %v, oldest ver %v, ids %v", currVer, s.oldestSchemaVer, tableIDs)
-	// TODO: If the current schema version is deleted.
-	info, ok := s.items[currVer]
-	if !ok {
-		currVer = s.oldestSchemaVer
+	if currVer < s.oldestSchemaVer {
+		log.Infof("the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
+		return false, ErrInfoSchemaChanged
 	}
 
 	for {
-		info, ok = s.items[currVer]
+		info, ok := s.items[currVer]
 		log.Warnf("ok %v, info %v, curr ver %v, tableIDs %v", ok, info, currVer, tableIDs)
 		if !ok {
-			return false
+			return false, nil
 		}
 		if hasRelatedTableID(tableIDs, info.relatedTableIDs) {
-			return true
+			return true, nil
 		}
 		currVer = info.nextSchemaVersion
 	}
