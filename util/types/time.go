@@ -532,6 +532,19 @@ func parseDateFormat(format string) []string {
 	return seps
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
+// The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
+func splitDateTime(format string) (seps []string, fracStr string) {
+	if i := strings.LastIndex(format, "."); i > 0 {
+		fracStr = strings.TrimSpace(format[i+1:])
+		format = format[:i]
+	}
+
+	seps = parseDateFormat(format)
+	return
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 func parseDatetime(str string, fsp int) (Time, error) {
 	// Try to split str with delimiter.
 	// TODO: only punctuation can be the delimiter for date parts or time parts.
@@ -548,37 +561,24 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		err error
 	)
 
-	seps := parseDateFormat(str)
+	seps, fracStr := splitDateTime(str)
 	switch len(seps) {
 	case 1:
+		sep := seps[0]
 		// No delimiter.
-		if len(str) == 14 {
+		if len(sep) == 14 {
 			// YYYYMMDDHHMMSS
-			_, err = fmt.Sscanf(str, "%4d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
-		} else if len(str) == 12 {
+			_, err = fmt.Sscanf(sep, "%4d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
+		} else if len(sep) == 12 {
 			// YYMMDDHHMMSS
-			_, err = fmt.Sscanf(str, "%2d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
+			_, err = fmt.Sscanf(sep, "%2d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
 			year = adjustYear(year)
-		} else if len(str) == 8 {
+		} else if len(sep) == 8 {
 			// YYYYMMDD
-			_, err = fmt.Sscanf(str, "%4d%2d%2d", &year, &month, &day)
-		} else if len(str) == 6 {
+			_, err = fmt.Sscanf(sep, "%4d%2d%2d", &year, &month, &day)
+		} else if len(sep) == 6 {
 			// YYMMDD
-			_, err = fmt.Sscanf(str, "%2d%2d%2d", &year, &month, &day)
-			year = adjustYear(year)
-		} else {
-			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
-		}
-	case 2:
-		s := seps[0]
-		fracStr = seps[1]
-
-		if len(s) == 14 {
-			// YYYYMMDDHHMMSS.fraction
-			_, err = fmt.Sscanf(s, "%4d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
-		} else if len(s) == 12 {
-			// YYMMDDHHMMSS.fraction
-			_, err = fmt.Sscanf(s, "%2d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
+			_, err = fmt.Sscanf(sep, "%2d%2d%2d", &year, &month, &day)
 			year = adjustYear(year)
 		} else {
 			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
@@ -593,15 +593,9 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		// We don't have fractional seconds part.
 		// YYYY-MM-DD HH-MM-SS
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
-	case 7:
-		// We have fractional seconds part.
-		// YYY-MM-DD HH-MM-SS.fraction
-		err = scanTimeArgs(seps[0:len(seps)-1], &year, &month, &day, &hour, &minute, &second)
-		fracStr = seps[len(seps)-1]
 	default:
 		return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
 	}
-
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
 	}
@@ -890,6 +884,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		err       error
 		sign      = 0
 		dayExists = false
+		origStr   = str
 	)
 
 	fsp, err = checkFsp(fsp)
@@ -965,7 +960,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 	case 3:
 		// Time format maybe HH:MM:SS or HHH:MM:SS.
 		// See https://dev.mysql.com/doc/refman/5.7/en/time.html
-		if !dayExists && len(seps[0]) == 3 {
+		if len(seps[0]) == 3 {
 			_, err = fmt.Sscanf(str, "%3d:%2d:%2d", &hour, &minute, &second)
 		} else {
 			_, err = fmt.Sscanf(str, "%2d:%2d:%2d", &hour, &minute, &second)
@@ -989,10 +984,10 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 
 	if d > MaxTime {
 		d = MaxTime
-		err = ErrInvalidTimeFormat
+		err = ErrTruncatedWrongVal.GenByArgs("time", origStr)
 	} else if d < MinTime {
 		d = MinTime
-		err = ErrInvalidTimeFormat
+		err = ErrTruncatedWrongVal.GenByArgs("time", origStr)
 	}
 	return Duration{Duration: d, Fsp: fsp}, errors.Trace(err)
 }
