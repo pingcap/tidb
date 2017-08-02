@@ -242,7 +242,7 @@ func (do *Domain) Store() kv.Storage {
 // GetScope gets the status variables scope.
 func (do *Domain) GetScope(status string) variable.ScopeFlag {
 	// Now domain status variables scope are all default scope.
-	return variable.DefaultScopeFlag
+	return variable.DefaultStatusVarScopeFlag
 }
 
 func (do *Domain) mockReloadFailed() error {

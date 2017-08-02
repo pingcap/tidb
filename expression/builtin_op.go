@@ -547,7 +547,7 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Cont
 	sc := ctx.GetSessionVars().StmtCtx
 	overflow := false
 	// TODO: Handle float overflow.
-	if arg, ok := argExpr.(*Constant); sc.IgnoreOverflow && ok &&
+	if arg, ok := argExpr.(*Constant); sc.InSelectStmt && ok &&
 		arg.GetTypeClass() == types.ClassInt {
 		overflow = b.handleIntOverflow(arg)
 		if overflow {

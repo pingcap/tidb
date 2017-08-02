@@ -616,7 +616,7 @@ func startWithDot(s *Scanner) (tok int, pos Pos, lit string) {
 	save := s.r.pos()
 	if isDigit(s.r.peek()) {
 		tok, _, lit = s.scanFloat(&pos)
-		if s.r.eof() || unicode.IsSpace(s.r.peek()) {
+		if s.r.eof() || !isIdentChar(s.r.peek()) {
 			return
 		}
 		// Fail to parse a float, reset to dot.

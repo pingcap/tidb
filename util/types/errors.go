@@ -23,6 +23,8 @@ var (
 	ErrDataTooLong = terror.ClassTypes.New(codeDataTooLong, "Data Too Long")
 	// ErrTruncated is returned when data has been truncated during conversion.
 	ErrTruncated = terror.ClassTypes.New(codeTruncated, "Data Truncated")
+	// ErrTruncatedWrongVal is returned when data has been truncated during conversion.
+	ErrTruncatedWrongVal = terror.ClassTypes.New(codeTruncatedWrongValue, msgTruncatedWrongVal)
 	// ErrOverflow is returned when data is out of range for a field type.
 	ErrOverflow = terror.ClassTypes.New(codeOverflow, msgOverflow)
 	// ErrDivByZero is return when do division by 0.
@@ -37,35 +39,46 @@ var (
 	ErrWrongFieldSpec = terror.ClassTypes.New(codeWrongFieldSpec, "Wrong Field Spec")
 	// ErrBadNumber is return when parsing an invalid binary decimal number.
 	ErrBadNumber = terror.ClassTypes.New(codeBadNumber, "Bad Number")
+	// ErrCastAsSignedOverflow is returned when positive out-of-range integer, and convert to it's negative complement.
+	ErrCastAsSignedOverflow = terror.ClassTypes.New(codeUnknown, msgCastAsSignedOverflow)
+	// ErrCastNegIntAsUnsigned is returned when a negative integer be casted to an unsigned int.
+	ErrCastNegIntAsUnsigned = terror.ClassTypes.New(codeUnknown, msgCastNegIntAsUnsigned)
 )
 
 const (
 	codeBadNumber terror.ErrCode = 1
 
-	codeDataTooLong        terror.ErrCode = terror.ErrCode(mysql.ErrDataTooLong)
-	codeTruncated          terror.ErrCode = terror.ErrCode(mysql.WarnDataTruncated)
-	codeOverflow           terror.ErrCode = terror.ErrCode(mysql.ErrDataOutOfRange)
-	codeDivByZero          terror.ErrCode = terror.ErrCode(mysql.ErrDivisionByZero)
-	codeTooBigDisplayWidth terror.ErrCode = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
-	codeTooBigFieldLength  terror.ErrCode = terror.ErrCode(mysql.ErrTooBigFieldlength)
-	codeTooBigSet          terror.ErrCode = terror.ErrCode(mysql.ErrTooBigSet)
-	codeWrongFieldSpec     terror.ErrCode = terror.ErrCode(mysql.ErrWrongFieldSpec)
+	codeDataTooLong         terror.ErrCode = terror.ErrCode(mysql.ErrDataTooLong)
+	codeTruncated           terror.ErrCode = terror.ErrCode(mysql.WarnDataTruncated)
+	codeOverflow            terror.ErrCode = terror.ErrCode(mysql.ErrDataOutOfRange)
+	codeDivByZero           terror.ErrCode = terror.ErrCode(mysql.ErrDivisionByZero)
+	codeTooBigDisplayWidth  terror.ErrCode = terror.ErrCode(mysql.ErrTooBigDisplaywidth)
+	codeTooBigFieldLength   terror.ErrCode = terror.ErrCode(mysql.ErrTooBigFieldlength)
+	codeTooBigSet           terror.ErrCode = terror.ErrCode(mysql.ErrTooBigSet)
+	codeWrongFieldSpec      terror.ErrCode = terror.ErrCode(mysql.ErrWrongFieldSpec)
+	codeTruncatedWrongValue terror.ErrCode = terror.ErrCode(mysql.ErrTruncatedWrongValue)
+	codeUnknown             terror.ErrCode = terror.ErrCode(mysql.ErrUnknown)
 )
 
 var (
-	msgOverflow = mysql.MySQLErrName[mysql.ErrDataOutOfRange]
+	msgOverflow             = mysql.MySQLErrName[mysql.ErrDataOutOfRange]
+	msgTruncatedWrongVal    = mysql.MySQLErrName[mysql.ErrTruncatedWrongValue]
+	msgCastAsSignedOverflow = "Cast to signed converted positive out-of-range integer to it's negative complement"
+	msgCastNegIntAsUnsigned = "Cast to unsigned converted negative integer to it's positive complement"
 )
 
 func init() {
 	typesMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDataTooLong:        mysql.ErrDataTooLong,
-		codeTruncated:          mysql.WarnDataTruncated,
-		codeOverflow:           mysql.ErrDataOutOfRange,
-		codeDivByZero:          mysql.ErrDivisionByZero,
-		codeTooBigDisplayWidth: mysql.ErrTooBigDisplaywidth,
-		codeTooBigFieldLength:  mysql.ErrTooBigFieldlength,
-		codeTooBigSet:          mysql.ErrTooBigSet,
-		codeWrongFieldSpec:     mysql.ErrWrongFieldSpec,
+		codeDataTooLong:         mysql.ErrDataTooLong,
+		codeTruncated:           mysql.WarnDataTruncated,
+		codeOverflow:            mysql.ErrDataOutOfRange,
+		codeDivByZero:           mysql.ErrDivisionByZero,
+		codeTooBigDisplayWidth:  mysql.ErrTooBigDisplaywidth,
+		codeTooBigFieldLength:   mysql.ErrTooBigFieldlength,
+		codeTooBigSet:           mysql.ErrTooBigSet,
+		codeWrongFieldSpec:      mysql.ErrWrongFieldSpec,
+		codeTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
+		codeUnknown:             mysql.ErrUnknown,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTypes] = typesMySQLErrCodes
 }
