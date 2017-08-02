@@ -526,7 +526,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 		for {
 			select {
 			case <-loadTicker.C:
-				err := do.statsHandle.Update(do.InfoSchema())
+				err = do.statsHandle.Update(do.InfoSchema())
 				if err != nil {
 					log.Error(errors.ErrorStack(err))
 				}
@@ -534,7 +534,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 				return
 			// This channel is sent only by ddl owner or the drop stats executor.
 			case t := <-do.statsHandle.DDLEventCh():
-				err := do.statsHandle.HandleDDLEvent(t)
+				err = do.statsHandle.HandleDDLEvent(t)
 				if err != nil {
 					log.Error(errors.ErrorStack(err))
 				}
