@@ -571,12 +571,12 @@ func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Con
 	case types.ClassInt:
 		if intOverflow {
 			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
-			bf.tp.Decimal = 0
 			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, true}
 		} else {
 			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
 			sig = &builtinUnaryMinusIntSig{baseIntBuiltinFunc{bf}}
 		}
+		bf.tp.Decimal = 0
 	case types.ClassDecimal:
 		bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
 		bf.tp.Decimal = argExprTp.Decimal
@@ -594,7 +594,7 @@ func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Con
 			sig = &builtinUnaryMinusRealSig{baseRealBuiltinFunc{bf}}
 		}
 	}
-	bf.tp.Flen = argExprTp.Flen
+	bf.tp.Flen = argExprTp.Flen + 1
 	return sig.setSelf(sig), errors.Trace(err)
 }
 
