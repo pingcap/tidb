@@ -95,7 +95,7 @@ var typeConverters = []*columnConverterDefinition{
 			return types.NewDatum(types.Time{
 				Time:     types.FromGoTime(value),
 				Type:     mysql.TypeDatetime,
-				TimeZone: time.UTC,
+				TimeZone: time.Local,
 			})
 		},
 		func(input types.Datum) interface{} {
