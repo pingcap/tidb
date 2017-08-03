@@ -72,16 +72,6 @@ func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 	return handle
 }
 
-// AnalyzeResult is used to represent analyze result.
-type AnalyzeResult struct {
-	TableID int64
-	Hist    []*Histogram
-	Count   int64
-	IsIndex int
-	Ctx     context.Context
-	Err     error
-}
-
 // AnalyzeResultCh returns analyze result channel in handle.
 func (h *Handle) AnalyzeResultCh() chan *AnalyzeResult {
 	return h.analyzeResultCh

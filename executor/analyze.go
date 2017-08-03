@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -89,25 +90,32 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 	dom := sessionctx.GetDomain(e.ctx)
 	lease := dom.StatsHandle().Lease
 	if lease > 0 {
-		for i := 0; i < len(e.tasks); i++ {
-			result := <-resultCh
+		var err1 error
+		for result := range resultCh {
 			if result.Err != nil {
-				return nil, errors.Trace(err)
+				err1 = err
+				log.Error(errors.ErrorStack(err))
+				continue
 			}
 			result.Ctx = e.ctx
 			dom.StatsHandle().AnalyzeResultCh() <- &result
 		}
 		// We sleep two lease to make sure other tidb node has updated this node.
 		time.Sleep(lease * 2)
-		return nil, nil
+		return nil, errors.Trace(err1)
 	}
 	results := make([]statistics.AnalyzeResult, 0, len(e.tasks))
-	for i := 0; i < len(e.tasks); i++ {
-		result := <-resultCh
-		results = append(results, result)
+	var err1 error
+	for result := range resultCh {
 		if result.Err != nil {
-			return nil, errors.Trace(err)
+			err1 = err
+			log.Error(errors.ErrorStack(err))
+			continue
 		}
+		results = append(results, result)
+	}
+	if err1 != nil {
+		return nil, errors.Trace(err1)
 	}
 	for _, result := range results {
 		for _, hg := range result.Hist {
