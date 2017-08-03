@@ -538,7 +538,7 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 	result.Check(testkit.Rows(`202cb962ac59075b964b07152d234b70 202cb962ac59075b964b07152d234b70 d41d8cd98f00b204e9800998ecf8427e 7eca689f0d3389d9dea66ae112e5cfd7 <nil> 0215ac4dab1ecaf71d83f98af5726984`))
 }
 
-func (s *testSuite) TestTimeBuiltin(c *C) {
+func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
