@@ -126,7 +126,6 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			}
 		} else {
 			err = errors.Errorf("DDL job with version %d greater than current %d", job.Version, currentVersion)
-			log.Warnf("[ddl] %s", err)
 		}
 		if err != nil {
 			return errors.Trace(err)

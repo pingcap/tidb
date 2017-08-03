@@ -985,7 +985,7 @@ func createSession(store kv.Storage) (*session, error) {
 	return s, nil
 }
 
-// createSessionWithDomain creates a new Session and bind it with a Domain.
+// createSessionWithDomain creates a new Session and binds it with a Domain.
 // We need this because when we start DDL in Domain, the DDL need a session
 // to change some system tables. But at that time, we have been already in
 // a lock context, which cause we can't call createSesion directly.

@@ -418,7 +418,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	ctx := goctx.Background()
 	callback := &ddlCallback{do: d}
 
-	// TODO: here we create new sessions with sysFac in DDL,
+	// TODO: Here we create new sessions with sysFac in DDL,
 	// which will use `d` as Domain instead of call `domap.Get`.
 	// That's because `domap.Get` requires a lock, but before
 	// we initialize Domain finish, we can't require that again.

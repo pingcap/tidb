@@ -107,7 +107,7 @@ func (dr *delRange) clear() {
 
 // startEmulator is only used for those storage engines which don't support
 // delete-range. The emulator fetches records from gc_delete_range table and
-// delete all keys in each DelRangeTask.
+// deletes all keys in each DelRangeTask.
 func (dr *delRange) startEmulator() {
 	defer dr.d.wait.Done()
 	log.Infof("[ddl] start delRange emulator")
@@ -163,18 +163,19 @@ func (dr *delRange) doTask(r DelRangeTask) error {
 			defer iter.Close()
 
 			for i := 0; i < delBatchSize; i++ {
-				if iter.Valid() {
-					finish = bytes.Compare(iter.Key(), r.endKey) >= 0
-					if !finish {
-						dr.keys = append(dr.keys, iter.Key().Clone())
-						if err := iter.Next(); err != nil {
-							return errors.Trace(err)
-						}
-						continue
-					}
+				if !iter.Valid() {
+					break
 				}
-				break
+				finish = bytes.Compare(iter.Key(), r.endKey) >= 0
+				if finish {
+					break
+				}
+				dr.keys = append(dr.keys, iter.Key().Clone())
+				if err := iter.Next(); err != nil {
+					return errors.Trace(err)
+				}
 			}
+
 			for _, key := range dr.keys {
 				err := txn.Delete(key)
 				if err != nil && !terror.ErrorEqual(err, kv.ErrNotExist) {
