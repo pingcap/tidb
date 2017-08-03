@@ -71,7 +71,7 @@ func IsTypeTime(tp byte) bool {
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
-	if mysql.HasBinaryFlag(ft.Flag) && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp)) {
+	if ft.Collate == charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp)) {
 		return true
 	}
 	return false

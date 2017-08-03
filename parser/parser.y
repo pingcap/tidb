@@ -230,6 +230,7 @@ import (
 	xor 			"XOR"
 	yearMonth		"YEAR_MONTH"
 	zerofill		"ZEROFILL"
+	natural			"NATURAL"
 
 	/* the following tokens belong to NotKeywordToken*/
 	abs				"ABS"
@@ -862,7 +863,7 @@ import (
 	logAnd			"logical and operator"
 	logOr			"logical or operator"
 	FieldsOrColumns 	"Fields or columns"
-	GetFormatSelector	"{DATE|DATETIME|TIME}"
+	GetFormatSelector	"{DATE|DATETIME|TIME|TIMESTAMP}"
 
 %type	<ident>
 	Identifier			"identifier or unreserved keyword"
@@ -895,7 +896,7 @@ import (
 %precedence lowerThanKey
 %precedence key
 
-%left   join inner cross left right full
+%left   join inner cross left right full natural
 /* A dummy token to force the priority of TableRef production in a join. */
 %left   tableRefPriority
 %precedence lowerThanOn
@@ -2461,7 +2462,7 @@ ReservedKeyword:
 | "STARTING" | "TABLE" | "STORED" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRIGGER" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
 | "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "VALUES" | "VARBINARY" | "VARCHAR" | "VIRTUAL"
-| "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL"
+| "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL" | "NATURAL"
  /*
 | "DELAYED" | "HIGH_PRIORITY" | "LOW_PRIORITY"| "WITH"
  */
@@ -3550,7 +3551,7 @@ FunctionCallNonKeyword:
 |	"TRIM" '(' TrimDirection "FROM" Expression ')'
 	{
 		nilVal := ast.NewValueExpr(nil)
-		direction := ast.NewValueExpr($3)
+		direction := ast.NewValueExpr(int($3.(ast.TrimDirectionType)))
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$5.(ast.ExprNode), nilVal, direction},
@@ -3558,7 +3559,7 @@ FunctionCallNonKeyword:
 	}
 |	"TRIM" '(' TrimDirection Expression "FROM" Expression ')'
 	{
-		direction := ast.NewValueExpr($3)
+		direction := ast.NewValueExpr(int($3.(ast.TrimDirectionType)))
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$6.(ast.ExprNode),$4.(ast.ExprNode), direction},
@@ -3849,6 +3850,10 @@ GetFormatSelector:
 		$$ = strings.ToUpper($1)
 	}
 |	"TIME"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"TIMESTAMP"
 	{
 		$$ = strings.ToUpper($1)
 	}
@@ -4681,6 +4686,14 @@ JoinTable:
 |	TableRef JoinType OuterOpt "JOIN" TableRef "USING" '(' ColumnNameList ')'
 	{
 		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $5.(ast.ResultSetNode), Tp: $2.(ast.JoinType), Using: $8.([]*ast.ColumnName)}
+	}
+|	TableRef "NATURAL" "JOIN" TableRef
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $4.(ast.ResultSetNode), NaturalJoin: true}
+	}
+|	TableRef "NATURAL" JoinType OuterOpt "JOIN" TableRef
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $6.(ast.ResultSetNode), Tp: $3.(ast.JoinType), NaturalJoin: true}
 	}
 
 JoinType:
@@ -5936,6 +5949,7 @@ IntegerType:
 OptInteger:
 	{}
 |	"INTEGER"
+|	"INT"
 
 FixedPointType:
 	"DECIMAL"

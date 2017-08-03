@@ -929,13 +929,14 @@ func (d *ddl) AddColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTable
 	if err = checkDuplicateColumn(spec.NewColumns); err != nil {
 		return errors.Trace(err)
 	}
+	var col *table.Column
 	for _, column := range spec.NewColumns {
 		err = validColumnDef(column, t)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		col, err := buildColumnWithDefValue(ctx, t, column)
+		col, err = buildColumnWithDefValue(ctx, t, column)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1181,7 +1182,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := setDefaultAndComment(ctx, newCol, modifiedNewCol.Options); err != nil {
+	if err = setDefaultAndComment(ctx, newCol, modifiedNewCol.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1286,12 +1287,12 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 	}
 
 	// Clean the NoDefaultValueFlag value.
-	col.Flag &= (^uint(mysql.NoDefaultValueFlag))
+	col.Flag &= ^uint(mysql.NoDefaultValueFlag)
 	if len(changedNewColumn.Options) == 0 {
 		col.DefaultValue = nil
 		setNoDefaultValueFlag(col, false)
 	} else {
-		err := setDefaultValue(ctx, col, changedNewColumn.Options[0])
+		err = setDefaultValue(ctx, col, changedNewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
