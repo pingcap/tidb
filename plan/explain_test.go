@@ -97,13 +97,12 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
 			[]string{
-				"TableScan_9  cop table:t1, range:[2,+inf), keep order:false",
-				"TableReader_11 Sort_10 root data:TableScan_9",
-				"Sort_10 MergeJoin_6 root test.t1.c2:asc",
-				"IndexScan_19  cop table:t2, index:c1, range:[<nil>,+inf], out of order:false",
-				"TableScan_20  cop table:t2, keep order:false",
-				"IndexLookUp_21 MergeJoin_6 root index:IndexScan_19, table:TableScan_20",
-				"MergeJoin_6  root left outer join, equal:[eq(test.t1.c2, test.t2.c1)], asc, left key:test.t1.c2, right key:test.t2.c1",
+				"TableScan_22  cop table:t1, range:[2,+inf), keep order:false",
+				"TableReader_23 IndexJoin_7 root data:TableScan_22",
+				"IndexScan_33  cop table:t2, index:c1, range:[<nil>,+inf], out of order:false",
+				"TableScan_34  cop table:t2, keep order:false",
+				"IndexLookUp_35 IndexJoin_7 root index:IndexScan_33, table:TableScan_34",
+				"IndexJoin_7  root outer:TableReader_23, outer key:test.t1.c2, inner key:test.t2.c1",
 			},
 		},
 		{
