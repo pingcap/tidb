@@ -142,16 +142,16 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
-	if lCnt <= 1 {
+	if lCnt < 1 {
 		lCnt = 1
 	}
 	cst := lCnt * netWorkFactor
-	batchSize := p.ctx.GetSessionVars().IndexLookupSize
+	p.BatchSize = p.ctx.GetSessionVars().IndexLookupSize
 	if p.KeepOrder {
-		batchSize = 1
+		p.BatchSize = 1
 	}
-	cst += lCnt * math.Log2(math.Min(float64(batchSize), lCnt)) * 2
-	cst += lCnt / float64(batchSize) * netWorkStartFactor
+	cst += lCnt * math.Log2(math.Min(float64(p.BatchSize), lCnt)) * 2
+	cst += lCnt / float64(p.BatchSize) * netWorkStartFactor
 	if p.KeepOrder {
 		return cst * 2
 	}

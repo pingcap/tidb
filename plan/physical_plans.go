@@ -485,6 +485,7 @@ type PhysicalIndexJoin struct {
 	outerIndex      int
 	KeepOrder       bool
 	outerSchema     *expression.Schema
+	BatchSize       int
 
 	DefaultValues []types.Datum
 }
