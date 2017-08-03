@@ -91,7 +91,8 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 	lease := dom.StatsHandle().Lease
 	if lease > 0 {
 		var err1 error
-		for result := range resultCh {
+		for i := 0; i < len(e.tasks); i++ {
+			result := <-resultCh
 			if result.Err != nil {
 				err1 = err
 				log.Error(errors.ErrorStack(err))
@@ -106,7 +107,8 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 	}
 	results := make([]statistics.AnalyzeResult, 0, len(e.tasks))
 	var err1 error
-	for result := range resultCh {
+	for i := 0; i < len(e.tasks); i++ {
+		result := <-resultCh
 		if result.Err != nil {
 			err1 = err
 			log.Error(errors.ErrorStack(err))
