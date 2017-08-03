@@ -37,6 +37,7 @@ type firehoseSchemaItem struct {
 type FirehoseInsertResponse struct {
 	IsError         bool
 	EventsProcessed int
+	ErrorMessage    string `json:"message"`
 }
 
 const (
@@ -92,6 +93,14 @@ func (client *FirehoseClient) Insert(payload []map[string]interface{}, columns [
 		return nil, errors.Trace(fmt.Errorf("Failed to decode Dashbase Firehose response data"))
 	}
 
+	if ret.IsError {
+		return nil, errors.Trace(fmt.Errorf("Dashbase error: Unknown"))
+	}
+
+	if len(ret.ErrorMessage) > 0 {
+		return nil, errors.Trace(fmt.Errorf("Dashbase error: %s", ret.ErrorMessage))
+	}
+
 	return &ret, nil
 }
 
@@ -106,6 +115,7 @@ type ApiSQLResponse struct {
 			Stored string
 		}
 	}
+	ErrorMessage string `json:"message"`
 }
 
 const (
@@ -129,6 +139,10 @@ func (client *ApiClient) Query(SQLStatement string) (*ApiSQLResponse, error) {
 	err = json.NewDecoder(resp.Body).Decode(&ret)
 	if err != nil {
 		return nil, errors.Trace(fmt.Errorf("Failed to decode Dashbase API response data"))
+	}
+
+	if len(ret.ErrorMessage) > 0 {
+		return nil, errors.Trace(fmt.Errorf("Dashbase error: %s", ret.ErrorMessage))
 	}
 
 	return &ret, nil

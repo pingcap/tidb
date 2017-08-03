@@ -67,10 +67,6 @@ func (e *DashbaseInsertExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if result.IsError {
-		return nil, errors.Trace(errors.New("Dashbase failed to process insertion data"))
-	}
-
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(result.EventsProcessed))
 	e.finished = true
 	return nil, nil
