@@ -242,20 +242,14 @@ func (e *IndexLookUpJoin) doMergeJoin() error {
 			}
 			outerCursor, innerCursor = outerEndCursor, innerEndCursor
 		} else if c < 0 { // outer smaller then inner, move and enlarge outer cursor
+			nextOuterCursor := getNextCursor(outerCursor, e.outerRows)
 			if !e.outer {
-				outerCursor = getNextCursor(outerCursor, e.outerRows)
+				outerCursor = nextOuterCursor
 			} else {
-				for {
+				for outerCursor < nextOuterCursor {
 					outerRow := e.outerRows[outerCursor].row
 					e.resultRows = append(e.resultRows, e.fillDefaultValues(outerRow))
 					outerCursor++
-					if outerCursor >= len(e.outerRows) {
-						break
-					}
-					c := bytes.Compare(e.outerRows[outerCursor].key, e.outerRows[outerCursor-1].key)
-					if c != 0 {
-						break
-					}
 				}
 			}
 		} else {
