@@ -544,7 +544,10 @@ func upgradeToVer15(s Session) {
 	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableExists) {
 		log.Fatal(err)
 	}
-	s.NewTxn()
+	err = s.NewTxn()
+	if err != nil {
+		log.Fatal(err)
+	}
 	err = ddl.LoadPendingBgJobsIntoDeleteTable(s)
 	if err != nil {
 		log.Fatal(err)
