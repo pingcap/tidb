@@ -59,5 +59,13 @@ func (s *testSuite) TestDirtyTransaction(c *C) {
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert t values (3, 4)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("3 4"))
-	tk.Exec("abort")
+	tk.MustExec("commit")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert t values (2, 3), (4, 5), (6, 7)")
+	tk.MustExec("begin")
+	tk.MustExec("insert t values (0, 1)")
+	tk.MustQuery("select * from t where b = 3").Check(testkit.Rows("2 3"))
+	tk.MustExec("commit")
 }
