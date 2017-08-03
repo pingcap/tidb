@@ -41,6 +41,13 @@ type DataReader interface {
 	doRequestForDatums(datums [][]types.Datum, goCtx goctx.Context) error
 }
 
+func handleIsExtra(col *expression.Column) bool {
+	if col != nil && col.ID == model.ExtraHandleID {
+		return true
+	}
+	return false
+}
+
 // TableReaderExecutor sends dag request and reads table data from kv layer.
 type TableReaderExecutor struct {
 	asName    *model.CIStr
@@ -103,7 +110,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		if e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID {
+		if handleIsExtra(e.handleCol) {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {
@@ -218,7 +225,7 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		if e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID {
+		if handleIsExtra(e.handleCol) {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {

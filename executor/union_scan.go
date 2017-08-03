@@ -101,7 +101,6 @@ type UnionScanExec struct {
 	cursor      int
 	sortErr     error
 	snapshotRow *Row
-	handleCol   *expression.Column
 }
 
 // Next implements Execution Next interface.

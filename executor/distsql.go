@@ -480,7 +480,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			schema = e.idxColsSchema
 		}
 		values := make([]types.Datum, schema.Len())
-		if e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID {
+		if handleIsExtra(e.handleCol) {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 		} else {
 			err = codec.SetRawValues(rowData, values)
@@ -496,7 +496,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			return &Row{Data: values}, nil
 		}
 		values = e.indexRowToTableRow(h, values)
-		if e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID {
+		if handleIsExtra(e.handleCol) {
 			values[len(values)-1].SetInt64(h)
 		}
 		return &Row{Data: values}, nil
@@ -798,7 +798,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		values := make([]types.Datum, length)
 		// If the handle col is not pk or we need it to sort the rows, it should be generated
 		// and cannot set value by SetRawValues.
-		if (e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID) || length > e.schema.Len() {
+		if handleIsExtra(e.handleCol) || length > e.schema.Len() {
 			err = codec.SetRawValues(rowData, values[:length-1])
 			values[length-1].SetInt64(h)
 		} else {
@@ -998,7 +998,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		e.returnedRows++
 		values := make([]types.Datum, e.schema.Len())
-		if e.handleCol != nil && e.handleCol.ID == model.ExtraHandleID {
+		if handleIsExtra(e.handleCol) {
 			err = codec.SetRawValues(rowData, values[:len(values)-1])
 			values[len(values)-1].SetInt64(h)
 		} else {

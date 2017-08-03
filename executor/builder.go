@@ -384,9 +384,6 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		return nil
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src), needColHandle: v.NeedColHandle}
-	for _, cols := range src.Schema().TblID2handle {
-		us.handleCol = cols[0]
-	}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc
@@ -1103,8 +1100,8 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	}
 
 	for _, col := range v.OutputColumns {
-		// If it's id is -1, then it must is the tail of the slice.
-		if col.ID == -1 {
+		// If it's id is ExtraHandleID, then it must is the tail of the slice.
+		if col.ID == model.ExtraHandleID {
 			break
 		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))

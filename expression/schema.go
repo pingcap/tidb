@@ -34,8 +34,9 @@ func (ki KeyInfo) Clone() KeyInfo {
 
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
-	Columns      []*Column
-	Keys         []KeyInfo
+	Columns []*Column
+	Keys    []KeyInfo
+	// TblID2Handle stores the tables' handle column information if we need handle in execution phase.
 	TblID2handle map[int64][]*Column
 	MaxOneRow    bool
 }
