@@ -71,8 +71,8 @@ type Server struct {
 	// When a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
-	stopListenerCh chan struct{}
-	ppDecoder      *proxyProtocolDecoder
+	stopListenerCh       chan struct{}
+	proxyProtocolDecoder *proxyProtocolDecoder
 }
 
 // ConnectionCount gets current connection count.
@@ -105,11 +105,11 @@ func randomBuf(size int) []byte {
 	return buf
 }
 
-func (s *Server) getRealRemoteAddr(conn net.Conn) net.Addr {
-	if s.ppDecoder == nil {
+func (s *Server) remoteAddr(conn net.Conn) net.Addr {
+	if s.proxyProtocolDecoder == nil {
 		return conn.RemoteAddr()
 	}
-	return s.ppDecoder.getRealClientAddr(conn)
+	return s.proxyProtocolDecoder.clientAddrBehindProxy(conn)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -145,20 +145,20 @@ const tokenLimit = 1000
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	var err error
 	var ppd *proxyProtocolDecoder
-	if cfg.ProxyProtocol != "" {
-		ppd, err = newProxyProtocolDecoder(cfg.ProxyProtocol)
+	if cfg.ProxyProtocolNetworks != "" {
+		ppd, err = newProxyProtocolDecoder(cfg.ProxyProtocolNetworks)
 		if err != nil {
-			log.Infof("ProxyProtocol parameter is not valid")
+			log.Warn("ProxyProtocolNetworks parameter is not valid")
 		}
 	}
 	s := &Server{
-		cfg:               cfg,
-		driver:            driver,
-		concurrentLimiter: NewTokenLimiter(tokenLimit),
-		rwlock:            &sync.RWMutex{},
-		clients:           make(map[uint32]*clientConn),
-		stopListenerCh:    make(chan struct{}, 1),
-		ppDecoder:         ppd,
+		cfg:                  cfg,
+		driver:               driver,
+		concurrentLimiter:    NewTokenLimiter(tokenLimit),
+		rwlock:               &sync.RWMutex{},
+		clients:              make(map[uint32]*clientConn),
+		stopListenerCh:       make(chan struct{}, 1),
+		proxyProtocolDecoder: ppd,
 	}
 
 	if cfg.Socket != "" {

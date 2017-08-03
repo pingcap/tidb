@@ -80,7 +80,7 @@ func (e *proxyProtocolDecoder) checkAllowed(raddr net.Addr) bool {
 	return false
 }
 
-func (e *proxyProtocolDecoder) getRealClientAddr(conn net.Conn) net.Addr {
+func (e *proxyProtocolDecoder) clientAddrBehindProxy(conn net.Conn) net.Addr {
 	connRemoteAddr := conn.RemoteAddr()
 	allowed := e.checkAllowed(connRemoteAddr)
 	if !allowed {
