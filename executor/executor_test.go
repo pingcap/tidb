@@ -619,7 +619,6 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t (a DECIMAL(4,2))")
 	tk.MustExec("INSERT INTO t VALUE(12.34)")
 	r = tk.MustQuery("SELECT 1 AS c UNION select a FROM t")
-	r.Check(testkit.Rows("1.00", "12.34"))
 	r.Sort().Check(testkit.Rows("1.00", "12.34"))
 
 	// #issue3771
@@ -1611,6 +1610,12 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("-10 -10"))
 	result = tk.MustQuery("select ceil(t.c_decimal), ceiling(t.c_decimal) from (select cast('-10.01' as decimal(10,1)) as c_decimal) as t")
 	result.Check(testkit.Rows("-10 -10"))
+	result = tk.MustQuery("select floor(18446744073709551615), ceil(18446744073709551615)")
+	result.Check(testkit.Rows("18446744073709551615 18446744073709551615"))
+	result = tk.MustQuery("select floor(18446744073709551615.1233), ceil(18446744073709551615.1233)")
+	result.Check(testkit.Rows("18446744073709551615 18446744073709551616"))
+	result = tk.MustQuery("select floor(-18446744073709551617), ceil(-18446744073709551617), floor(-18446744073709551617.11), ceil(-18446744073709551617.11)")
+	result.Check(testkit.Rows("-18446744073709551617 -18446744073709551617 -18446744073709551618 -18446744073709551617"))
 
 	// for cot
 	result = tk.MustQuery("select cot(1), cot(-1), cot(NULL)")
