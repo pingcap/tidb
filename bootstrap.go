@@ -541,7 +541,7 @@ func upgradeToVer14(s Session) {
 func upgradeToVer15(s Session) {
 	var err error
 	_, err = s.Execute(CreateGCDeleteRangeTable)
-	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableExists) {
+	if err != nil {
 		log.Fatal(err)
 	}
 	err = s.NewTxn()

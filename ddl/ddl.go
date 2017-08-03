@@ -42,9 +42,9 @@ import (
 
 const (
 	// currentVersion is for all new DDL jobs.
-	currentVersion = 15
+	currentVersion = 1
 	// Any background job with version greater or equal this should be processed with delete-range.
-	bgJobMigrateVersion = 15
+	bgJobMigrateVersion = 1
 )
 
 var (

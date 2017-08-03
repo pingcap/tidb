@@ -147,8 +147,6 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		select {
 		case <-etcdSession.Done():
 			log.Infof("[ddl] %s etcd session is done, creates a new one", idInfo)
-			// NOTE: Here if we just retry 3 times. If it's keep going to fail,
-			// it's probably caused by the client is shutdown by ourself.
 			etcdSession, err = newSession(ctx, idInfo, m.etcdCli, newSessionRetryUnlimited, ManagerSessionTTL)
 			if err != nil {
 				log.Infof("[ddl] %s break campaign loop, err %v", idInfo, err)

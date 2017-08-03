@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -654,4 +655,63 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 	_, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
+}
+
+// NewMockGCWorker creates a GCWorker instance ONLY for test.
+func NewMockGCWorker(store kv.Storage, jobCh <-chan struct{}, jobRspCh chan<- struct{}) (*GCWorker, error) {
+	ver, err := store.CurrentVersion()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	hostName, err := os.Hostname()
+	if err != nil {
+		hostName = "unknown"
+	}
+	worker := &GCWorker{
+		uuid:        strconv.FormatUint(ver.Ver, 16),
+		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		store:       store.(*tikvStore),
+		gcIsRunning: false,
+		lastFinish:  time.Now(),
+		done:        make(chan error),
+	}
+	var ctx goctx.Context
+	ctx, worker.cancel = util.WithCancel(goctx.Background())
+	go worker.mockStart(ctx, jobCh, jobRspCh)
+	return worker, nil
+}
+
+// mockStart is ONLY for test.
+func (w *GCWorker) mockStart(ctx goctx.Context, jobCh <-chan struct{}, jobRspCh chan<- struct{}) {
+	log.Infof("[gc worker] %s start.", w.uuid)
+	for {
+		select {
+		case <-jobCh:
+			var err error
+			if w.session == nil {
+				w.session, err = tidb.CreateSession(w.store)
+				if err != nil {
+					w.done <- errors.Trace(err)
+					continue
+				}
+				privilege.BindPrivilegeManager(w.session, nil)
+			}
+			err = w.deleteRanges(ctx, math.MaxUint64)
+			jobRspCh <- struct{}{}
+			if err != nil {
+				w.done <- errors.Trace(err)
+				continue
+			}
+		case err := <-w.done:
+			w.gcIsRunning = false
+			w.lastFinish = time.Now()
+			if err != nil {
+				log.Errorf("[gc worker] runGCJob error: %v", err)
+				break
+			}
+		case <-ctx.Done():
+			log.Infof("[gc worker] (%s) quit.", w.uuid)
+			return
+		}
+	}
 }
