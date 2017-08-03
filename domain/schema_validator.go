@@ -31,7 +31,7 @@ type SchemaValidator interface {
 	Check(txnTS uint64, schemaVer int64) bool
 	// Latest returns the latest schema version it knows, but not necessary a valid one.
 	Latest() int64
-	// IsRelatedTablesChanged retruns the result whether realtedTableIDs is changed from usedVer to the latest schema version,
+	// IsRelatedTablesChanged returns the result whether realtedTableIDs is changed from usedVer to the latest schema version,
 	// and an error.
 	IsRelatedTablesChanged(txnTS uint64, usedVer int64, relatedTableIDs []int64) (bool, error)
 	// Stop stops checking the valid of transaction.
@@ -143,10 +143,7 @@ func (s *schemaValidator) isAllExpired(txnTS uint64) bool {
 		return true
 	}
 	t := extractPhysicalTime(txnTS)
-	if t.After(s.latestSchemaInfo.expire) {
-		return true
-	}
-	return false
+	return t.After(s.latestSchemaInfo.expire)
 }
 
 func (s *schemaValidator) IsRelatedTablesChanged(txnTS uint64, currVer int64, tableIDs []int64) (bool, error) {

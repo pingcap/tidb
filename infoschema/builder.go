@@ -31,7 +31,7 @@ type Builder struct {
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
-// Return the detal update table IDs and an error.
+// Return the detal updated table IDs that are produced from SchemaDiff and an error.
 func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
 	if diff.Type == model.ActionCreateSchema {
@@ -57,8 +57,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionTruncateTable:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
-		tblIDs = append(tblIDs, oldTableID)
-		tblIDs = append(tblIDs, newTableID)
+		tblIDs = append(tblIDs, oldTableID, newTableID)
 	default:
 		oldTableID = diff.TableID
 		newTableID = diff.TableID
