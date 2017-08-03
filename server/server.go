@@ -116,6 +116,13 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
 	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
+	if s.cfg.TCPKeepAlive {
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			if err := tcpConn.SetKeepAlive(true); err != nil {
+				log.Error("failed to set tcp keep alive option:", err)
+			}
+		}
+	}
 	cc.salt = randomBuf(20)
 	return cc
 }
