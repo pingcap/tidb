@@ -242,7 +242,7 @@ func (do *Domain) Store() kv.Storage {
 // GetScope gets the status variables scope.
 func (do *Domain) GetScope(status string) variable.ScopeFlag {
 	// Now domain status variables scope are all default scope.
-	return variable.DefaultScopeFlag
+	return variable.DefaultStatusVarScopeFlag
 }
 
 func (do *Domain) mockReloadFailed() error {
@@ -399,7 +399,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	if ebd, ok := store.(etcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
-			cli, err := clientv3.New(clientv3.Config{
+			var cli *clientv3.Client
+			cli, err = clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
 				DialTimeout: 5 * time.Second,
 			})

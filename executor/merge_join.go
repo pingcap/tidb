@@ -371,7 +371,8 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 	for _, lRow := range e.leftRows {
 		// make up for outer join since we ignored single table conditions previously
 		if e.leftFilter != nil {
-			matched, err := expression.EvalBool(e.leftFilter, lRow.Data, e.ctx)
+			var matched bool
+			matched, err = expression.EvalBool(e.leftFilter, lRow.Data, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}

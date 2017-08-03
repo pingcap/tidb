@@ -24,6 +24,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types/json"
@@ -1114,15 +1115,26 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.State
 		prec, frac := dec.PrecisionAndFrac()
 		if !dec.IsZero() && prec-frac > flen-decimal {
 			dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
-			// TODO: we may need a OverlowAsWarning.
 			// select (cast 111 as decimal(1)) causes a warning in MySQL.
 			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
 		} else if frac != decimal {
+			old := *dec
 			dec.Round(dec, decimal, ModeHalfEven)
-			if !dec.IsZero() && frac > decimal {
-				err = sc.HandleTruncate(ErrTruncated)
+			if !dec.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
+				if sc.InInsertStmt {
+					// fix https://github.com/pingcap/tidb/issues/3895
+					sc.AppendWarning(ErrTruncated)
+					err = nil
+				} else {
+					err = sc.HandleTruncate(ErrTruncated)
+				}
 			}
 		}
+	}
+
+	if terror.ErrorEqual(err, ErrOverflow) {
+		// TODO: warnErr need to be ErrWarnDataOutOfRange
+		err = sc.HandleOverflow(err, err)
 	}
 	return dec, errors.Trace(err)
 }
@@ -1420,8 +1432,7 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		}
 		return ival, err
 	case KindMysqlHex:
-		fval := d.GetMysqlHex().ToNumber()
-		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
+		return d.GetMysqlHex().Value, nil
 	case KindMysqlBit:
 		fval := d.GetMysqlBit().ToNumber()
 		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
@@ -1602,7 +1613,8 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			x.SetFloat64(x.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := x.ToFloat64(sc)
+			var fval float64
+			fval, err = x.ToFloat64(sc)
 			if err != nil {
 				return x, y, errors.Trace(err)
 			}
@@ -1622,7 +1634,8 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			y.SetFloat64(y.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := y.ToFloat64(sc)
+			var fval float64
+			fval, err = y.ToFloat64(sc)
 			if err != nil {
 				return x, y, errors.Trace(err)
 			}

@@ -100,6 +100,8 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
+	// UsersLock is a lock for user defined variables.
+	UsersLock sync.RWMutex
 	// Users are user defined variables.
 	Users map[string]string
 	// Systems are system variables.
@@ -318,10 +320,12 @@ type TableDelta struct {
 type StatementContext struct {
 	// Set the following variables before execution
 
+	InInsertStmt         bool
 	InUpdateOrDeleteStmt bool
-	IgnoreOverflow       bool
+	InSelectStmt         bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
+	OverflowAsWarning    bool
 	InShowWarning        bool
 
 	// mu struct holds variables that change during execution.
@@ -414,6 +418,19 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	}
 	if sc.TruncateAsWarning {
 		sc.AppendWarning(err)
+		return nil
+	}
+	return err
+}
+
+// HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
+func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
+	if err == nil {
+		return nil
+	}
+
+	if sc.OverflowAsWarning {
+		sc.AppendWarning(warnErr)
 		return nil
 	}
 	return err

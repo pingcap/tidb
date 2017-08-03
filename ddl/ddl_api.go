@@ -889,7 +889,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 				referableColNames[col.Name.L] = struct{}{}
 			}
 			_, dependColNames := findDependedColumnNames(spec.NewColumn)
-			if err := columnNamesCover(referableColNames, dependColNames); err != nil {
+			if err = columnNamesCover(referableColNames, dependColNames); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1158,7 +1158,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
+	if err = setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1199,10 +1199,10 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 // that do not need to change or check data on the table.
 func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	if len(spec.NewColumn.Name.Schema.O) != 0 && ident.Schema.L != spec.NewColumn.Name.Schema.L {
-		return errWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
+		return ErrWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
 	}
 	if len(spec.OldColumnName.Schema.O) != 0 && ident.Schema.L != spec.OldColumnName.Schema.L {
-		return errWrongDBName.GenByArgs(spec.OldColumnName.Schema.O)
+		return ErrWrongDBName.GenByArgs(spec.OldColumnName.Schema.O)
 	}
 	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
 		return ErrWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
@@ -1225,7 +1225,7 @@ func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 // that do not need to change or check data on the table.
 func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	if len(spec.NewColumn.Name.Schema.O) != 0 && ident.Schema.L != spec.NewColumn.Name.Schema.L {
-		return errWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
+		return ErrWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
 	}
 	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
 		return ErrWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
@@ -1261,12 +1261,12 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 	}
 
 	// Clean the NoDefaultValueFlag value.
-	col.Flag &= (^uint(mysql.NoDefaultValueFlag))
+	col.Flag &= ^uint(mysql.NoDefaultValueFlag)
 	if len(spec.NewColumn.Options) == 0 {
 		col.DefaultValue = nil
 		setNoDefaultValueFlag(col, false)
 	} else {
-		err := setDefaultValue(ctx, col, spec.NewColumn.Options[0])
+		err = setDefaultValue(ctx, col, spec.NewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}

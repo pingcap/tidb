@@ -443,7 +443,8 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 		}
 
 		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdCop,
+			Type:     tikvrpc.CmdCop,
+			Priority: kvPriorityToCommandPri(it.req.Priority),
 			Cop: &coprocessor.Request{
 				Tp:     it.req.Tp,
 				Data:   it.req.Data,
