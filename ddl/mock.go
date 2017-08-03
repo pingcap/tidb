@@ -149,3 +149,26 @@ func (s *mockSchemaSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer in
 		}
 	}
 }
+
+type mockDelRange struct {
+}
+
+// newMockDelRangeManager creates a mock delRangeManager only used for test.
+func newMockDelRangeManager() delRangeManager {
+	return &mockDelRange{}
+}
+
+// addDelRangeJob implements delRangeManager interface.
+func (dr *mockDelRange) addDelRangeJob(job *model.Job) error {
+	return nil
+}
+
+// start implements delRangeManager interface.
+func (dr *mockDelRange) start() {
+	return
+}
+
+// clear implements delRangeManager interface.
+func (dr *mockDelRange) clear() {
+	return
+}

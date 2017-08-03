@@ -94,6 +94,7 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 // start implements delRangeManager interface.
 func (dr *delRange) start() {
 	if !dr.storeSupport {
+		dr.d.wait.Add(1)
 		go dr.startEmulator()
 	}
 }
@@ -104,10 +105,12 @@ func (dr *delRange) clear() {
 	dr.ctxPool.Close()
 }
 
+// startEmulator is only used for those storage engines which don't support
+// delete-range. The emulator fetches records from gc_delete_range table and
+// delete all keys in each DelRangeTask.
 func (dr *delRange) startEmulator() {
-	log.Infof("[ddl] start delRange emulator")
-	dr.d.wait.Add(1)
 	defer dr.d.wait.Done()
+	log.Infof("[ddl] start delRange emulator")
 	for {
 		select {
 		case <-dr.emulatorCh:
@@ -308,27 +311,4 @@ func LoadPendingBgJobsIntoDeleteTable(ctx context.Context) (err error) {
 		}
 	}
 	return errors.Trace(err)
-}
-
-type mockDelRange struct {
-}
-
-// newMockDelRangeManager creates a mock delRangeManager only used for test.
-func newMockDelRangeManager() delRangeManager {
-	return &mockDelRange{}
-}
-
-// addDelRangeJob implements delRangeManager interface.
-func (dr *mockDelRange) addDelRangeJob(job *model.Job) error {
-	return nil
-}
-
-// start implements delRangeManager interface.
-func (dr *mockDelRange) start() {
-	return
-}
-
-// clear implements delRangeManager interface.
-func (dr *mockDelRange) clear() {
-	return
 }
