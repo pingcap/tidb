@@ -85,7 +85,7 @@ const (
 	// Add more as needed.
 )
 
-var tm = map[ErrClass]string{
+var errClz2Str = map[ErrClass]string{
 	ClassAutoid:     "autoid",
 	ClassDDL:        "ddl",
 	ClassDomain:     "domain",
@@ -110,8 +110,7 @@ var tm = map[ErrClass]string{
 
 // String implements fmt.Stringer interface.
 func (ec ErrClass) String() string {
-	s, exists := tm[ec]
-	if exists {
+	if s, exists := errClz2Str[ec]; exists {
 		return s
 	}
 	return strconv.Itoa(int(ec))
