@@ -2493,7 +2493,8 @@ func (s *testSuite) TestSchemaCheckerSQL(c *C) {
 
 	// The schema version is out of date in the first transaction, but the SQL can be retried.
 	tk.MustExec(`begin;`)
-	tk.MustExec(`alter table t add index idx(c);`)
+	_, err = se1.Execute(`alter table t add index idx(c);`)
+	c.Assert(err, IsNil)
 	time.Sleep(lease * 2)
 	tk.MustExec(`insert into t1 values(2, 2);`)
 	tk.MustExec(`commit;`)
@@ -2503,16 +2504,25 @@ func (s *testSuite) TestSchemaCheckerSQL(c *C) {
 	_, err = se1.Execute(`alter table t add index idx1(c);`)
 	c.Assert(err, IsNil)
 	time.Sleep(lease * 2)
-	tk.MustExec(`insert into t values(2, 2);`)
+	tk.MustExec(`insert into t values(3, 3);`)
 	_, err = tk.Exec(`commit;`)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
 	// But the transaction related table IDs aren't in the updated table IDs.
 	tk.MustExec(`begin;`)
-	tk.MustExec(`alter table t add index idx2(c);`)
+	_, err = se1.Execute(`alter table t add index idx2(c);`)
+	c.Assert(err, IsNil)
 	time.Sleep(lease * 2)
-	tk.MustExec(`insert into t1 values(2, 2);`)
+	tk.MustExec(`insert into t1 values(4, 4);`)
 	tk.MustExec(`commit;`)
+	// Test for "select for update".
+	tk.MustExec(`begin;`)
+	_, err = se1.Execute(`alter table t add index idx3(c);`)
+	c.Assert(err, IsNil)
+	time.Sleep(lease * 2)
+	tk.MustQuery(`select * from t for update`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
 }
 
 type checkRequestClient struct {
