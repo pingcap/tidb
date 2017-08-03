@@ -1323,6 +1323,10 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "select 1, t.* from t",
 			err: nil,
 		},
+		{
+			sql: "select 1 from t t1, t t2 where t1.a > all((select a) union (select a))",
+			err: ErrAmbiguous,
+		},
 	}
 	for _, tt := range tests {
 		sql := tt.sql
