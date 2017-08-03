@@ -203,7 +203,7 @@ func (e *DeleteExec) deleteMultiTables() error {
 		for id, cols := range e.SelectExec.Schema().TblID2handle {
 			tbl := e.tblID2Table[id]
 			for _, col := range cols {
-				if names, ok := tblMap[id]; ok && !isMatchTableName(names, col) {
+				if names, ok := tblMap[id]; !ok || !isMatchTableName(names, col) {
 					continue
 				}
 				if tblRowMap[id] == nil {
