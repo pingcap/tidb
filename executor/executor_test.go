@@ -17,7 +17,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2236,35 +2235,6 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustQuery("select * from t where b = 1 and a > 1 limit 1").Check(testkit.Rows("2 1 1"))
 }
 
-func (s *testSuite) TestConvertToBit(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1")
-	tk.MustExec("create table t (a bit(64))")
-	tk.MustExec("create table t1 (a varchar(2))")
-	tk.MustExec(`insert t1 value ('10')`)
-	tk.MustExec(`insert t select a from t1`)
-	tk.MustQuery("select a+0 from t").Check(testkit.Rows("12592"))
-
-	tk.MustExec("drop table if exists t, t1")
-	tk.MustExec("create table t (a bit(64))")
-	tk.MustExec("create table t1 (a binary(2))")
-	tk.MustExec(`insert t1 value ('10')`)
-	tk.MustExec(`insert t select a from t1`)
-	tk.MustQuery("select a+0 from t").Check(testkit.Rows("12592"))
-
-	tk.MustExec("drop table if exists t, t1")
-	tk.MustExec("create table t (a bit(64))")
-	tk.MustExec("create table t1 (a datetime)")
-	tk.MustExec(`insert t1 value ('09-01-01')`)
-	tk.MustExec(`insert t select a from t1`)
-	tk.MustQuery("select a+0 from t").Check(testkit.Rows("20090101000000"))
-}
-
 func (s *testSuite) TestTimestampTimeZone(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -2410,43 +2380,6 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	tk1.MustExec("commit")
 }
 
-func (s *testSuite) TestFuncREPEAT(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-	tk.MustExec("USE test;")
-	tk.MustExec("DROP TABLE IF EXISTS table_string;")
-	tk.MustExec("CREATE TABLE table_string(a CHAR(20), b VARCHAR(20), c TINYTEXT, d TEXT(20), e MEDIUMTEXT, f LONGTEXT, g BIGINT);")
-	tk.MustExec("INSERT INTO table_string (a, b, c, d, e, f, g) VALUES ('a', 'b', 'c', 'd', 'e', 'f', 2);")
-	tk.CheckExecResult(1, 0)
-
-	r := tk.MustQuery("SELECT REPEAT(a, g), REPEAT(b, g), REPEAT(c, g), REPEAT(d, g), REPEAT(e, g), REPEAT(f, g) FROM table_string;")
-	r.Check(testkit.Rows("aa bb cc dd ee ff"))
-
-	r = tk.MustQuery("SELECT REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g) FROM table_string;")
-	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
-
-	r = tk.MustQuery("SELECT REPEAT(a, NULL), REPEAT(b, NULL), REPEAT(c, NULL), REPEAT(d, NULL), REPEAT(e, NULL), REPEAT(f, NULL) FROM table_string;")
-	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
-
-	r = tk.MustQuery("SELECT REPEAT(a, 2), REPEAT(b, 2), REPEAT(c, 2), REPEAT(d, 2), REPEAT(e, 2), REPEAT(f, 2) FROM table_string;")
-	r.Check(testkit.Rows("aa bb cc dd ee ff"))
-
-	r = tk.MustQuery("SELECT REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2) FROM table_string;")
-	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
-
-	r = tk.MustQuery("SELECT REPEAT(a, -1), REPEAT(b, -2), REPEAT(c, -2), REPEAT(d, -2), REPEAT(e, -2), REPEAT(f, -2) FROM table_string;")
-	r.Check(testkit.Rows("     "))
-
-	r = tk.MustQuery("SELECT REPEAT(a, 0), REPEAT(b, 0), REPEAT(c, 0), REPEAT(d, 0), REPEAT(e, 0), REPEAT(f, 0) FROM table_string;")
-	r.Check(testkit.Rows("     "))
-
-	r = tk.MustQuery("SELECT REPEAT(a, 16777217), REPEAT(b, 16777217), REPEAT(c, 16777217), REPEAT(d, 16777217), REPEAT(e, 16777217), REPEAT(f, 16777217) FROM table_string;")
-	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
-}
-
 func (s *testSuite) TestEmptyEnum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
@@ -2469,31 +2402,6 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("", ""))
 	tk.MustExec("insert into t values (null)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
-}
-
-func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	// for uuid
-	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
-	for _, it := range r.Rows() {
-		for _, item := range it {
-			uuid, ok := item.(string)
-			c.Assert(ok, Equals, true)
-			list := strings.Split(uuid, "-")
-			c.Assert(len(list), Equals, 5)
-			c.Assert(len(list[0]), Equals, 8)
-			c.Assert(len(list[1]), Equals, 4)
-			c.Assert(len(list[2]), Equals, 4)
-			c.Assert(len(list[3]), Equals, 4)
-			c.Assert(len(list[4]), Equals, 12)
-		}
-	}
 }
 
 type checkRequestClient struct {
