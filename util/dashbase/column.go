@@ -99,7 +99,7 @@ var typeConverters = []*columnConverterDefinition{
 			})
 		},
 		func(input types.Datum) interface{} {
-			time, err := input.GetMysqlTime().Time.GoTime(time.UTC)
+			time, err := input.GetMysqlTime().Time.GoTime(time.Local)
 			if err != nil {
 				return 0
 			}

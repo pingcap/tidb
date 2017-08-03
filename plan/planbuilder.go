@@ -696,8 +696,9 @@ func (b *planBuilder) buildDashbaseInsert(insert *ast.InsertStmt, tableInfo *mod
 		}
 		planValueRows = append(planValueRows, planValues)
 	} else {
+		// Assign values based on INSERT ... VALUES (....),(....)
 		hasNamedColumns := true
-		for rowIndex, insertRow := range insert.Lists {
+		for _, insertRow := range insert.Lists {
 			maxListItems := len(insertRow)
 			if len(insert.Columns) == 0 {
 				hasNamedColumns = false
@@ -717,17 +718,17 @@ func (b *planBuilder) buildDashbaseInsert(insert *ast.InsertStmt, tableInfo *mod
 					columnName = tableInfo.Columns[i].Name.L
 				}
 				if val, ok := item.(*ast.ValueExpr); ok {
-					planValues = append(planValues, &expression.Constant{
+					planValues[i] = &expression.Constant{
 						Value:   val.Datum,
 						RetType: &val.Type,
-					})
+					}
 					planColumns = append(planColumns, columnsByName[columnName])
 				} else {
 					b.err = fmt.Errorf("Only support constants for Dashbase table")
 					return nil
 				}
 			}
-			planValueRows[rowIndex] = planValues
+			planValueRows = append(planValueRows, planValues)
 		}
 	}
 

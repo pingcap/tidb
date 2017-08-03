@@ -53,17 +53,17 @@ func (client *FirehoseClient) Insert(payload []map[string]interface{}, columns [
 		}
 	}
 
-	postBody := make([]map[string]interface{}, len(payload))
-	for i, payloadRow := range payload {
-		postRow := make(map[string]interface{})
-		postRow["_schema"] = schema
-		for k, v := range payloadRow {
-			postRow[k] = v
+	events := make([]map[string]interface{}, len(payload))
+	for i, row := range payload {
+		event := make(map[string]interface{})
+		event["_schema"] = schema
+		for k, v := range row {
+			event[k] = v
 		}
-		postBody[i] = postRow
+		events[i] = event
 	}
 
-	postJSONBody, err := json.Marshal(postBody)
+	postJSONBody, err := json.Marshal(map[string]interface{}{"eventList": events})
 	if err != nil {
 		panic("Unexpected Json serialize error")
 	}
