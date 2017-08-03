@@ -31,7 +31,7 @@ type SchemaValidator interface {
 	Check(txnTS uint64, schemaVer int64) bool
 	// Latest returns the latest schema version it knows, but not necessary a valid one.
 	Latest() int64
-	// IsRelatedTablesChanged returns the result whether realtedTableIDs is changed from usedVer to the latest schema version,
+	// IsRelatedTablesChanged returns the result whether relatedTableIDs is changed from usedVer to the latest schema version,
 	// and an error.
 	IsRelatedTablesChanged(txnTS uint64, usedVer int64, relatedTableIDs []int64) (bool, error)
 	// Stop stops checking the valid of transaction.
@@ -49,7 +49,7 @@ type deltaSchemaInfo struct {
 type schemaValidator struct {
 	mux        sync.RWMutex
 	lease      time.Duration
-	vaildItems map[int64]time.Time
+	validItems map[int64]time.Time
 	// cacheItemInfos caches the items' information, and some items may be expired.
 	// It's used to cache the updated table IDs, which is produced when the previous item's version is updated to current item's version.
 	cacheItemInfos   map[int64]*deltaSchemaInfo
@@ -61,7 +61,7 @@ type schemaValidator struct {
 func NewSchemaValidator(lease time.Duration) SchemaValidator {
 	return &schemaValidator{
 		lease:          lease,
-		vaildItems:     make(map[int64]time.Time),
+		validItems:     make(map[int64]time.Time),
 		cacheItemInfos: make(map[int64]*deltaSchemaInfo),
 	}
 }
@@ -71,7 +71,7 @@ func (s *schemaValidator) Stop() {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.cacheItemInfos = nil
-	s.vaildItems = nil
+	s.validItems = nil
 	s.latestSchemaVer = 0
 	s.latestSchemaInfo = nil
 }
@@ -80,7 +80,7 @@ func (s *schemaValidator) Restart() {
 	log.Info("the schema validator restarts")
 	s.mux.Lock()
 	defer s.mux.Unlock()
-	s.vaildItems = make(map[int64]time.Time)
+	s.validItems = make(map[int64]time.Time)
 	s.cacheItemInfos = make(map[int64]*deltaSchemaInfo)
 }
 
@@ -96,7 +96,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	// Renew the lease.
 	leaseGrantTime := extractPhysicalTime(leaseGrantTS)
 	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
-	s.vaildItems[currVer] = leaseExpire
+	s.validItems[currVer] = leaseExpire
 	// Update the schema information.
 	if currVer != oldVer || currVer == 0 {
 		s.cacheItemInfos[currVer] = &deltaSchemaInfo{
@@ -116,7 +116,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	// Delete expired cacheItemInfos, leaseGrantTime is server current time, actually.
 	for k, info := range s.cacheItemInfos {
 		if leaseGrantTime.After(info.expire) {
-			delete(s.vaildItems, k)
+			delete(s.validItems, k)
 			// We cache some expired schema versions to store recently updated table IDs.
 			if shouldUpdateAllSchema(currVer, k) {
 				delete(s.cacheItemInfos, k)
@@ -155,7 +155,7 @@ func (s *schemaValidator) IsRelatedTablesChanged(txnTS uint64, currVer int64, ta
 		return false, ErrInfoSchemaExpired
 	}
 	if s.isAllExpired(txnTS) {
-		log.Infof("the schema validator's latest schema version %d is exprired", s.latestSchemaVer)
+		log.Infof("the schema validator's latest schema version %d is expired", s.latestSchemaVer)
 		return false, ErrInfoSchemaExpired
 	}
 
@@ -190,7 +190,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64) bool {
 		return true
 	}
 
-	expire, ok := s.vaildItems[schemaVer]
+	expire, ok := s.validItems[schemaVer]
 	if !ok {
 		// Can't find schema version means it's already expired.
 		return false

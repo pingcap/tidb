@@ -272,6 +272,7 @@ func (e *SelectLockExec) Next() (*Row, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			// This operation is only for schema validator check.
 			txnCtx.UpdateDeltaForTable(k.Tbl.Meta().ID, 0, 0)
 		}
 	}
