@@ -28,6 +28,7 @@ type Config struct {
 	SlowThreshold  int    `json:"slow_threshold" toml:"slow_threshold"`
 	QueryLogMaxlen int    `json:"query_log_max_len" toml:"query_log_max_len"`
 	ProxyProtocol  string `json:"proxy_protocol" toml:"proxy_protocol"`
+	TCPKeepAlive   bool   `json:"tcp_keep_alive" toml:"tcp_keep_alive"`
 }
 
 var cfg *Config

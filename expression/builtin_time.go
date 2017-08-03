@@ -34,9 +34,10 @@ import (
 )
 
 const ( // GET_FORMAT first argument.
-	dateFormat     = "DATE"
-	datetimeFormat = "DATETIME"
-	timeFormat     = "TIME"
+	dateFormat      = "DATE"
+	datetimeFormat  = "DATETIME"
+	timestampFormat = "TIMESTAMP"
+	timeFormat      = "TIME"
 )
 
 const ( // GET_FORMAT location.
@@ -323,7 +324,6 @@ func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
 	t := t1.Sub(&t2)
 	d.SetMysqlDuration(t)
 	return
@@ -1130,7 +1130,7 @@ func (b *builtinGetFormatSig) eval(row []types.Datum) (d types.Datum, err error)
 		case internalLocation:
 			d.SetString("%Y%m%d")
 		}
-	case datetimeFormat:
+	case datetimeFormat, timestampFormat:
 		switch l {
 		case usaLocation:
 			d.SetString("%Y-%m-%d %H.%i.%s")

@@ -322,9 +322,10 @@ type StatementContext struct {
 
 	InInsertStmt         bool
 	InUpdateOrDeleteStmt bool
-	IgnoreOverflow       bool
+	InSelectStmt         bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
+	OverflowAsWarning    bool
 	InShowWarning        bool
 
 	// mu struct holds variables that change during execution.
@@ -417,6 +418,19 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	}
 	if sc.TruncateAsWarning {
 		sc.AppendWarning(err)
+		return nil
+	}
+	return err
+}
+
+// HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
+func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
+	if err == nil {
+		return nil
+	}
+
+	if sc.OverflowAsWarning {
+		sc.AppendWarning(warnErr)
 		return nil
 	}
 	return err
