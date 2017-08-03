@@ -109,7 +109,7 @@ func (s *Server) remoteAddr(conn net.Conn) net.Addr {
 	if s.proxyProtocolDecoder == nil {
 		return conn.RemoteAddr()
 	}
-	return s.proxyProtocolDecoder.clientAddrBehindProxy(conn)
+	return s.proxyProtocolDecoder.readClientAddrBehindProxy(conn)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
