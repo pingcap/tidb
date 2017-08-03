@@ -47,10 +47,12 @@ func init() {
 	prometheus.MustRegister(expensiveQueryCounter)
 }
 
-func stmtCount(node ast.StmtNode, p plan.Plan) {
-	if stmtLabel := StatementLabel(node, p); stmtLabel != IGNORE {
+func stmtCount(node ast.StmtNode, p plan.Plan) bool {
+	var isExpensive bool
+	if stmtLabel := StatementLabel(node, p, &isExpensive); stmtLabel != IGNORE {
 		stmtNodeCounter.WithLabelValues(stmtLabel).Inc()
 	}
+	return isExpensive
 }
 
 const (
@@ -107,7 +109,7 @@ const (
 )
 
 // StatementLabel generates a label for a statement.
-func StatementLabel(node ast.StmtNode, p plan.Plan) string {
+func StatementLabel(node ast.StmtNode, p plan.Plan, isExpensive *bool) string {
 	switch x := node.(type) {
 	case *ast.AlterTableStmt:
 		return AlterTable
@@ -126,7 +128,7 @@ func StatementLabel(node ast.StmtNode, p plan.Plan) string {
 	case *ast.CreateUserStmt:
 		return CreateUser
 	case *ast.DeleteStmt:
-		return getDeleteStmtLabel(x, p)
+		return getDeleteStmtLabel(x, p, isExpensive)
 	case *ast.DropDatabaseStmt:
 		return DropDatabase
 	case *ast.DropIndexStmt:
@@ -145,7 +147,7 @@ func StatementLabel(node ast.StmtNode, p plan.Plan) string {
 	case *ast.RollbackStmt:
 		return RollBack
 	case *ast.SelectStmt:
-		return getSelectStmtLabel(x, p)
+		return getSelectStmtLabel(x, p, isExpensive)
 	case *ast.SetStmt, *ast.SetPwdStmt:
 		return Set
 	case *ast.ShowStmt:
@@ -153,7 +155,7 @@ func StatementLabel(node ast.StmtNode, p plan.Plan) string {
 	case *ast.TruncateTableStmt:
 		return TruncateTable
 	case *ast.UpdateStmt:
-		return getUpdateStmtLabel(x, p)
+		return getUpdateStmtLabel(x, p, isExpensive)
 	case *ast.GrantStmt:
 		return Grant
 	case *ast.RevokeStmt:
@@ -164,30 +166,30 @@ func StatementLabel(node ast.StmtNode, p plan.Plan) string {
 	return "other"
 }
 
-func getSelectStmtLabel(stmt *ast.SelectStmt, p plan.Plan) string {
+func getSelectStmtLabel(stmt *ast.SelectStmt, p plan.Plan, isExpensive *bool) string {
 	var attributes stmtAttributes
 	attributes.fromSelectStmt(stmt)
 	attributes.fromPlan(p)
 	stmtLabel := Select + attributes.toLabel()
-	attributes.logExpensiveStmt(stmtLabel, stmt.Text())
+	attributes.logExpensiveStmt(stmtLabel, stmt.Text(), isExpensive)
 	return stmtLabel
 }
 
-func getDeleteStmtLabel(stmt *ast.DeleteStmt, p plan.Plan) string {
+func getDeleteStmtLabel(stmt *ast.DeleteStmt, p plan.Plan, isExpensive *bool) string {
 	var attributes stmtAttributes
 	attributes.fromDeleteStmt(stmt)
 	attributes.fromPlan(p)
 	stmtLabel := Delete + attributes.toLabel()
-	attributes.logExpensiveStmt(stmtLabel, stmt.Text())
+	attributes.logExpensiveStmt(stmtLabel, stmt.Text(), isExpensive)
 	return stmtLabel
 }
 
-func getUpdateStmtLabel(stmt *ast.UpdateStmt, p plan.Plan) string {
+func getUpdateStmtLabel(stmt *ast.UpdateStmt, p plan.Plan, isExpensive *bool) string {
 	var attributes stmtAttributes
 	attributes.fromUpdateStmt(stmt)
 	attributes.fromPlan(p)
 	stmtLabel := Update + attributes.toLabel()
-	attributes.logExpensiveStmt(stmtLabel, stmt.Text())
+	attributes.logExpensiveStmt(stmtLabel, stmt.Text(), isExpensive)
 	return stmtLabel
 }
 
@@ -330,7 +332,7 @@ func (pa *stmtAttributes) isExpensiveStmt() bool {
 	return true
 }
 
-func (pa *stmtAttributes) logExpensiveStmt(stmtLabel string, sql string) {
+func (pa *stmtAttributes) logExpensiveStmt(stmtLabel string, sql string, isExpensive *bool) {
 	if pa.isExpensiveStmt() {
 		const logSQLLen = 1024
 		if len(sql) > logSQLLen {
@@ -338,5 +340,6 @@ func (pa *stmtAttributes) logExpensiveStmt(stmtLabel string, sql string) {
 		}
 		log.Warnf("[EXPENSIVE_QUERY] %s", sql)
 		expensiveQueryCounter.WithLabelValues(stmtLabel).Inc()
+		*isExpensive = true
 	}
 }
