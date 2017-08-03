@@ -25,6 +25,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 )
 
 func truncateStr(str string, flen int) string {
@@ -164,10 +165,13 @@ func StrToUint(sc *variable.StatementContext, str string) (uint64, error) {
 	return uVal, errors.Trace(err)
 }
 
+// StrToDateTime convert str to MySQL DateTime.
 func StrToDateTime(str string, fsp int) (Time, error) {
 	return ParseTime(str, mysql.TypeDatetime, fsp)
 }
 
+// StrToDuration convert str to MySQL Time.
+// See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-literals.html.
 func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, err error) {
 	str = strings.TrimSpace(str)
 	length := len(str)
@@ -184,6 +188,9 @@ func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, 
 	}
 
 	duration, err := ParseDuration(str, fsp)
+	if terror.ErrorEqual(err, ErrTruncatedWrongVal) {
+		err = sc.HandleTruncate(err)
+	}
 	if err != nil {
 		return Time{}, errors.Trace(err)
 	}

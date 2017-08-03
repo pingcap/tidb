@@ -360,6 +360,12 @@ func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) 
 	}
 
 	t := t0.Sub(&t1)
+	ret, truncated := types.TruncateOverflowMySQLTime(t.Duration)
+	if truncated {
+		err = types.ErrTruncatedWrongVal.GenByArgs("time", t.String())
+		err = sc.HandleTruncate(err)
+	}
+	t.Duration = ret
 	d.SetMysqlDuration(t)
 	return
 }
