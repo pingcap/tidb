@@ -37,6 +37,8 @@ var (
 	_ builtinFunc = &builtinArithmeticSig{}
 )
 
+// numericContextResultType returns TypeClass for numeric function's parameters.
+// the returned TypeClass should be one of: ClassInt, ClassDecimal, ClassReal
 func numericContextResultType(ft *types.FieldType) types.TypeClass {
 	if types.IsTemporalType(ft.Tp) {
 		if ft.Decimal > 0 {
@@ -58,34 +60,31 @@ type arithmeticPlusFunctionClass struct {
 // type according to the two input parameter's types.
 func (c *arithmeticPlusFunctionClass) setFlenDecimal4Int(retTp, a, b *types.FieldType) {
 	retTp.Decimal = 0
-	if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
-		retTp.Flen = mysql.MaxIntWidth
-	} else {
-		retTp.Flen = int(math.Max(float64(a.Flen), float64(b.Flen))) + 1
-		retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxIntWidth)))
-	}
+	retTp.Flen = mysql.MaxIntWidth
 }
 
 // setFlenDecimal4Real is called to set proper `Flen` and `Decimal` of return
 // type according to the two input parameter's types.
 func (c *arithmeticPlusFunctionClass) setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
+	retTp.Decimal = int(math.Max(float64(a.Decimal), float64(b.Decimal)))
+	retTp.Flen = types.UnspecifiedLength
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
 		retTp.Decimal = int(math.Max(float64(a.Decimal), float64(b.Decimal)))
 		if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
 			retTp.Flen = types.UnspecifiedLength
-		} else {
-			digitsInt := int(math.Max(float64(a.Flen-a.Decimal-1), float64(b.Flen-b.Decimal-1)))
-			retTp.Flen = digitsInt + retTp.Decimal + 3
-			if isReal {
-				retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxRealWidth)))
-			} else {
-				retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxDecimalWidth)))
-			}
+			return
 		}
-	} else {
-		retTp.Decimal = types.UnspecifiedLength
-		retTp.Flen = types.UnspecifiedLength
+		digitsInt := int(math.Max(float64(a.Flen-a.Decimal-1), float64(b.Flen-b.Decimal-1)))
+		retTp.Flen = digitsInt + retTp.Decimal + 3
+		if isReal {
+			retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxRealWidth)))
+			return
+		}
+		retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxDecimalWidth)))
+		return
 	}
+	retTp.Decimal = types.UnspecifiedLength
+	retTp.Flen = types.UnspecifiedLength
 }
 
 func (c *arithmeticPlusFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
@@ -98,9 +97,6 @@ func (c *arithmeticPlusFunctionClass) getFunction(args []Expression, ctx context
 		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
-			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		c.setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
 		sig := &builtinArithmeticPlusRealSig{baseRealBuiltinFunc{bf}}

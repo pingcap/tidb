@@ -75,7 +75,7 @@ func (s *testEvaluatorSuite) TestPlusSetFlenDecimal4Int(c *C) {
 	}
 	plusFunctionClass.setFlenDecimal4Int(ret, a, b)
 	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, 4)
+	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
 
 	b.Flen = mysql.MaxIntWidth + 1
 	plusFunctionClass.setFlenDecimal4Int(ret, a, b)
@@ -120,6 +120,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 		sig, err := funcs[ast.Plus].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
+		c.Assert(sig.isDeterministic(), Equals, true)
 		val, err := sig.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
