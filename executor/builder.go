@@ -279,7 +279,7 @@ func (b *executorBuilder) buildDashbaseInsert(v *plan.DashbaseInsert) Executor {
 		HiColumns:       v.HiColumns,
 		LoColumns:       v.LoColumns,
 		Hi2LoConverters: v.Hi2LoConverters,
-		Values:          v.Values,
+		ValueRows:       v.ValueRows,
 		ctx:             b.ctx,
 	}
 }

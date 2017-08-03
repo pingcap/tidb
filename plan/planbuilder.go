@@ -674,13 +674,14 @@ func (b *planBuilder) buildDashbaseInsert(insert *ast.InsertStmt, tableInfo *mod
 		}
 	}
 
-	var planValues []*expression.Constant
+	var planValueRows [][]*expression.Constant
 	var planColumns []*model.ColumnInfo
 	var planDashbaseColumns []*dashbase.Column
 	var planDashbaseConverters []dashbase.Hi2LoConverter
 
 	if len(insert.Setlist) > 0 {
 		// Assign values based on INSERT ... SET ...
+		planValues := make([]*expression.Constant, 0)
 		for _, assignment := range insert.Setlist {
 			if val, ok := assignment.Expr.(*ast.ValueExpr); ok {
 				planValues = append(planValues, &expression.Constant{
@@ -693,36 +694,40 @@ func (b *planBuilder) buildDashbaseInsert(insert *ast.InsertStmt, tableInfo *mod
 				return nil
 			}
 		}
+		planValueRows = append(planValueRows, planValues)
 	} else {
 		hasNamedColumns := true
-		maxListItems := len(insert.Lists[0])
-		if len(insert.Columns) == 0 {
-			hasNamedColumns = false
-			if len(tableInfo.Columns) < maxListItems {
-				maxListItems = len(tableInfo.Columns)
+		for rowIndex, insertRow := range insert.Lists {
+			maxListItems := len(insertRow)
+			if len(insert.Columns) == 0 {
+				hasNamedColumns = false
+				if len(tableInfo.Columns) < maxListItems {
+					maxListItems = len(tableInfo.Columns)
+				}
 			}
-		}
-		// TODO: support multi insert
-		for i, item := range insert.Lists[0] {
-			if i >= maxListItems {
-				break
+			planValues := make([]*expression.Constant, maxListItems)
+			for i, item := range insertRow {
+				if i >= maxListItems {
+					break
+				}
+				var columnName string
+				if hasNamedColumns {
+					columnName = insert.Columns[i].Name.L
+				} else {
+					columnName = tableInfo.Columns[i].Name.L
+				}
+				if val, ok := item.(*ast.ValueExpr); ok {
+					planValues = append(planValues, &expression.Constant{
+						Value:   val.Datum,
+						RetType: &val.Type,
+					})
+					planColumns = append(planColumns, columnsByName[columnName])
+				} else {
+					b.err = fmt.Errorf("Only support constants for Dashbase table")
+					return nil
+				}
 			}
-			var columnName string
-			if hasNamedColumns {
-				columnName = insert.Columns[i].Name.L
-			} else {
-				columnName = tableInfo.Columns[i].Name.L
-			}
-			if val, ok := item.(*ast.ValueExpr); ok {
-				planValues = append(planValues, &expression.Constant{
-					Value:   val.Datum,
-					RetType: &val.Type,
-				})
-				planColumns = append(planColumns, columnsByName[columnName])
-			} else {
-				b.err = fmt.Errorf("Only support constants for Dashbase table")
-				return nil
-			}
+			planValueRows[rowIndex] = planValues
 		}
 	}
 
@@ -748,7 +753,7 @@ func (b *planBuilder) buildDashbaseInsert(insert *ast.InsertStmt, tableInfo *mod
 		HiColumns:       planColumns,
 		LoColumns:       planDashbaseColumns,
 		Hi2LoConverters: planDashbaseConverters,
-		Values:          planValues,
+		ValueRows:       planValueRows,
 	}.init(b.allocator, b.ctx)
 	plan.SetSchema(expression.NewSchema())
 

@@ -35,14 +35,16 @@ type firehoseSchemaItem struct {
 }
 
 type FirehoseInsertResponse struct {
-	IsError bool
+	IsError         bool
+	EventsProcessed int
 }
 
 const (
 	firehoseTimeout time.Duration = 30 * time.Second
 )
 
-func (client *FirehoseClient) InsertOne(payload map[string]interface{}, columns []*Column) (*FirehoseInsertResponse, error) {
+// Insert inserts multiple rows into Dashbase
+func (client *FirehoseClient) Insert(payload []map[string]interface{}, columns []*Column) (*FirehoseInsertResponse, error) {
 	schema := make([]firehoseSchemaItem, len(columns))
 	for i, column := range columns {
 		schema[i] = firehoseSchemaItem{
@@ -51,11 +53,16 @@ func (client *FirehoseClient) InsertOne(payload map[string]interface{}, columns 
 		}
 	}
 
-	postBody := make(map[string]interface{})
-	postBody["_schema"] = schema
-	for k, v := range payload {
-		postBody[k] = v
+	postBody := make([]map[string]interface{}, len(payload))
+	for i, payloadRow := range payload {
+		postRow := make(map[string]interface{})
+		postRow["_schema"] = schema
+		for k, v := range payloadRow {
+			postRow[k] = v
+		}
+		postBody[i] = postRow
 	}
+
 	postJSONBody, err := json.Marshal(postBody)
 	if err != nil {
 		panic("Unexpected Json serialize error")
@@ -65,7 +72,7 @@ func (client *FirehoseClient) InsertOne(payload map[string]interface{}, columns 
 
 	req, err := http.NewRequest(
 		"POST",
-		fmt.Sprintf("http://%s:%d/v1/firehose/http/insertOne", client.Host, client.Port),
+		fmt.Sprintf("http://%s:%d/v1/firehose/http/insert", client.Host, client.Port),
 		bytes.NewBuffer(postJSONBody))
 	req.Header.Set("Content-Type", "application/json")
 	if err != nil {

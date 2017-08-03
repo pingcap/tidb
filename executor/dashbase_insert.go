@@ -14,8 +14,6 @@
 package executor
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -32,7 +30,7 @@ type DashbaseInsertExec struct {
 	HiColumns       []*model.ColumnInfo
 	LoColumns       []*dashbase.Column
 	Hi2LoConverters []dashbase.Hi2LoConverter
-	Values          []*expression.Constant
+	ValueRows       [][]*expression.Constant
 	ctx             context.Context
 	finished        bool
 }
@@ -43,14 +41,19 @@ func (e *DashbaseInsertExec) Next() (*Row, error) {
 		return nil, nil
 	}
 
-	row := make(map[string]interface{})
-	for i, value := range e.Values {
-		castedValue, err := table.CastValue(e.ctx, value.Value, e.HiColumns[i])
-		if err != nil {
-			return nil, errors.Trace(err)
+	rows := make([]map[string]interface{}, len(e.ValueRows))
+
+	for rIndex, valueRow := range e.ValueRows {
+		row := make(map[string]interface{})
+		for i, value := range valueRow {
+			castedValue, err := table.CastValue(e.ctx, value.Value, e.HiColumns[i])
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			jsonValue := e.Hi2LoConverters[i](castedValue)
+			row[e.LoColumns[i].Name] = jsonValue
 		}
-		jsonValue := e.Hi2LoConverters[i](castedValue)
-		row[e.LoColumns[i].Name] = jsonValue
+		rows[rIndex] = row
 	}
 
 	client := dashbase.FirehoseClient{
@@ -59,14 +62,16 @@ func (e *DashbaseInsertExec) Next() (*Row, error) {
 	}
 
 	// Pass all columns two the second parameter.
-	result, err := client.InsertOne(row, e.TableInfo.DashbaseColumns)
+	result, err := client.Insert(rows, e.TableInfo.DashbaseColumns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	fmt.Printf("======== Dashbase Response ========\n")
-	fmt.Printf("%v\n", result)
+	if result.IsError {
+		return nil, errors.Trace(errors.New("Dashbase failed to process insertion data"))
+	}
 
+	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(result.EventsProcessed))
 	e.finished = true
 	return nil, nil
 }
