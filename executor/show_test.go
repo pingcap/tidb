@@ -177,9 +177,9 @@ func (s *testSuite) TestShowVisibility(c *C) {
 type stats struct {
 }
 
-func (s stats) GetScope(status string) variable.ScopeFlag { return variable.DefaultScopeFlag }
+func (s stats) GetScope(status string) variable.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
 
-func (s stats) Stats() (map[string]interface{}, error) {
+func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	var a, b interface{}
 	b = "123"

@@ -39,6 +39,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -60,7 +61,7 @@ var (
 
 // Server is the MySQL protocol server
 type Server struct {
-	cfg               *Config
+	cfg               *config.Config
 	driver            IDriver
 	listener          net.Listener
 	rwlock            *sync.RWMutex
@@ -115,6 +116,13 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
 	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
+	if s.cfg.TCPKeepAlive {
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			if err := tcpConn.SetKeepAlive(true); err != nil {
+				log.Error("failed to set tcp keep alive option:", err)
+			}
+		}
+	}
 	cc.salt = randomBuf(20)
 	return cc
 }
@@ -126,7 +134,7 @@ func (s *Server) skipAuth() bool {
 const tokenLimit = 1000
 
 // NewServer creates a new Server.
-func NewServer(cfg *Config, driver IDriver) (*Server, error) {
+func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
@@ -233,6 +241,9 @@ func (s *Server) ShowProcessList() []util.ProcessInfo {
 	var rs []util.ProcessInfo
 	s.rwlock.RLock()
 	for _, client := range s.clients {
+		if client.killed {
+			continue
+		}
 		rs = append(rs, client.ctx.ShowProcess())
 	}
 	s.rwlock.RUnlock()

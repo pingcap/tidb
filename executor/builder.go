@@ -38,16 +38,18 @@ import (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx context.Context
-	is  infoschema.InfoSchema
+	ctx      context.Context
+	is       infoschema.InfoSchema
+	priority int
 	// err is set when there is error happened during Executor building process.
 	err error
 }
 
-func newExecutorBuilder(ctx context.Context, is infoschema.InfoSchema) *executorBuilder {
+func newExecutorBuilder(ctx context.Context, is infoschema.InfoSchema, priority int) *executorBuilder {
 	return &executorBuilder{
-		ctx: ctx,
-		is:  is,
+		ctx:      ctx,
+		is:       is,
+		priority: priority,
 	}
 }
 
@@ -335,7 +337,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		return nil
 	}
 	insertVal := &InsertValues{ctx: b.ctx, Table: tbl, Columns: v.Columns}
-	tableCols := tbl.WritableCols()
+	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {
 		b.err = errors.Trace(err)
@@ -667,6 +669,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		aggFuncs:    v.AggFuncsPB,
 		byItems:     v.GbyItemsPB,
 		orderByList: v.SortItemsPB,
+		priority:    b.priority,
 	}
 	return e
 }
@@ -700,6 +703,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggregate:            v.Aggregated,
 		aggFuncs:             v.AggFuncsPB,
 		byItems:              v.GbyItemsPB,
+		priority:             b.priority,
 	}
 	vars := b.ctx.GetSessionVars()
 	if v.OutOfOrder {
@@ -865,7 +869,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk 
 		cols = append([]*model.ColumnInfo{pk}, cols...)
 	}
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
-	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	ranges := []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &TableReaderExecutor{
 			table:     table,
@@ -903,6 +907,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk 
 		Columns:   cols,
 		ranges:    ranges,
 		keepOrder: keepOrder,
+		priority:  b.priority,
 	}
 	return e
 }
@@ -932,9 +937,10 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 				TimeZoneOffset: timeZoneOffset(b.ctx),
 				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			},
-			schema:  schema,
-			columns: cols,
-			ctx:     b.ctx,
+			schema:   schema,
+			columns:  cols,
+			ctx:      b.ctx,
+			priority: b.priority,
 		}
 		for i := range schema.Columns {
 			e.dagPB.OutputOffsets = append(e.dagPB.OutputOffsets, uint32(i))
@@ -963,6 +969,7 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 		index:           idxInfo,
 		outOfOrder:      false,
 		scanConcurrency: scanConcurrency,
+		priority:        b.priority,
 	}
 	return e
 }
@@ -1010,6 +1017,10 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 }
 
 func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
+	batchSize := 1
+	if !v.KeepOrder {
+		batchSize = b.ctx.GetSessionVars().IndexLookupSize
+	}
 	return &IndexLookUpJoin{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 		innerExec:       b.build(v.Children()[1]).(DataReader),
@@ -1020,6 +1031,7 @@ func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
 		rightConditions: v.RightConditions,
 		otherConditions: v.OtherConditions,
 		defaultValues:   v.DefaultValues,
+		batchSize:       batchSize,
 	}
 }
 
@@ -1041,6 +1053,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		desc:      ts.Desc,
 		ranges:    ts.Ranges,
 		columns:   ts.Columns,
+		priority:  b.priority,
 	}
 
 	for i := range v.Schema().Columns {
@@ -1069,6 +1082,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		desc:      is.Desc,
 		ranges:    is.Ranges,
 		columns:   is.Columns,
+		priority:  b.priority,
 	}
 
 	for _, col := range v.OutputColumns {
@@ -1107,6 +1121,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		ranges:       is.Ranges,
 		tableRequest: tableReq,
 		columns:      is.Columns,
+		priority:     b.priority,
 	}
 	return e
 }
