@@ -19,6 +19,7 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/model"
 	goctx "golang.org/x/net/context"
 )
 
