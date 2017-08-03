@@ -24,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/tablecodec"
@@ -44,9 +45,9 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRange(c *C) {
 	startKey := codec.EncodeBytes(nil, tablecodec.EncodeTableIndexPrefix(sTableID, sIndex))
 	endKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(eTableID))
 	region := &tikv.KeyLocation{
-		tikv.RegionVerID{},
-		startKey,
-		endKey,
+		Region:   tikv.RegionVerID{},
+		StartKey: startKey,
+		EndKey:   endKey,
 	}
 	indexRange, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
@@ -69,9 +70,9 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	startKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(sTableID))
 	endKey := codec.EncodeBytes(nil, []byte("z_aaaaafdfd"))
 	region := &tikv.KeyLocation{
-		tikv.RegionVerID{},
-		startKey,
-		endKey,
+		Region:   tikv.RegionVerID{},
+		StartKey: startKey,
+		EndKey:   endKey,
 	}
 	indexRange, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
@@ -94,9 +95,9 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C)
 	startKey := codec.EncodeBytes(nil, []byte("m_aaaaafdfd"))
 	endKey := codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(eTableID))
 	region := &tikv.KeyLocation{
-		tikv.RegionVerID{},
-		startKey,
-		endKey,
+		Region:   tikv.RegionVerID{},
+		StartKey: startKey,
+		EndKey:   endKey,
 	}
 	indexRange, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
@@ -176,13 +177,15 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tidbdrv := NewTiDBDriver(store)
-	cfg := &Config{
+
+	cfg := &config.Config{
 		Addr:         ":4001",
 		LogLevel:     "debug",
 		StatusAddr:   ":10090",
 		ReportStatus: true,
 		Store:        "tikv",
 	}
+
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server

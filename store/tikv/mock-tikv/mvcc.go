@@ -627,6 +627,9 @@ func (s *MvccStore) RawScan(startKey, endKey []byte, limit int) []Pair {
 
 // MvccGetByStartTS gets mvcc info for the primary key with startTS
 func (s *MvccStore) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte) {
+	s.RLock()
+	defer s.RUnlock()
+
 	var info *kvrpcpb.MvccInfo
 	var key []byte
 	iterator := func(item llrb.Item) bool {
@@ -646,7 +649,7 @@ func (s *MvccStore) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*k
 }
 
 // MvccGetByKey gets mvcc info for the key
-func (s MvccStore) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
+func (s *MvccStore) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
 	s.RLock()
 	defer s.RUnlock()
 
