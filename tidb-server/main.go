@@ -74,6 +74,7 @@ var (
 	skipGrantTable  = flag.Bool("skip-grant-table", false, "This option causes the server to start without using the privilege system at all.")
 	slowThreshold   = flag.Int("slow-threshold", 300, "Queries with execution time greater than this value will be logged. (Milliseconds)")
 	queryLogMaxlen  = flag.Int("query-log-max-len", 2048, "Maximum query length recorded in log")
+	tcpKeepAlive    = flag.Bool("tcp-keep-alive", false, "set keep alive option for tcp connection.")
 	sslCAPath       = flag.String("ssl-ca", "", "Path of file that contains list of trusted SSL CAs")
 	sslCertPath     = flag.String("ssl-cert", "", "Path of file that contains X509 certificate in PEM format")
 	sslKeyPath      = flag.String("ssl-key", "", "Path of file that contains X509 key in PEM format")
@@ -121,6 +122,7 @@ func main() {
 	cfg.StorePath = *storePath
 	cfg.SlowThreshold = *slowThreshold
 	cfg.QueryLogMaxlen = *queryLogMaxlen
+	cfg.TCPKeepAlive = *tcpKeepAlive
 	cfg.SSLCAPath = *sslCAPath
 	cfg.SSLCertPath = *sslCertPath
 	cfg.SSLKeyPath = *sslKeyPath
