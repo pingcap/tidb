@@ -43,7 +43,7 @@ import (
 const (
 	// currentVersion is for all new DDL jobs.
 	currentVersion = 15
-	// Any job with version after this should be inserted into gc_delete_range table.
+	// Any background job with version greater or equal this should be processed with delete-range.
 	bgJobMigrateVersion = 15
 )
 

@@ -37,7 +37,6 @@ const (
 	insertDeleteRangeSQL   = `INSERT IGNORE INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d")`
 	loadDeleteRangeSQL     = `SELECT job_id, element_id, start_key, end_key FROM mysql.gc_delete_range WHERE ts < %v ORDER BY ts`
 	completeDeleteRangeSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
-	loadSafePointSQL       = `SELECT variable_value FROM mysql.tidb WHERE variable_name = "tikv_gc_safe_point" FOR UPDATE`
 
 	delBatchSize = 65536
 	delBackLog   = 128
