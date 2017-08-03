@@ -18,12 +18,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
@@ -38,11 +40,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -615,7 +619,6 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t (a DECIMAL(4,2))")
 	tk.MustExec("INSERT INTO t VALUE(12.34)")
 	r = tk.MustQuery("SELECT 1 AS c UNION select a FROM t")
-	r.Check(testkit.Rows("1.00", "12.34"))
 	r.Sort().Check(testkit.Rows("1.00", "12.34"))
 
 	// #issue3771
@@ -1112,6 +1115,15 @@ func (s *testSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("00:00:00"))
 	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:00' as time), '2004-12-30 12:00:00');")
 	result.Check(testkit.Rows("<nil>"))
+
+	// fixed issue #3986
+	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("SET TIME_ZONE='+03:00';")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (ix TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);")
+	tk.MustExec("INSERT INTO t VALUES (0), (20030101010160), (20030101016001), (20030101240101), (20030132010101), (20031301010101), (20031200000000), (20030000000000);")
+	result = tk.MustQuery("SELECT CAST(ix AS SIGNED) FROM t;")
+	result.Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "0"))
 }
 
 func (s *testSuite) TestOpBuiltin(c *C) {
@@ -1603,6 +1615,12 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("-10 -10"))
 	result = tk.MustQuery("select ceil(t.c_decimal), ceiling(t.c_decimal) from (select cast('-10.01' as decimal(10,1)) as c_decimal) as t")
 	result.Check(testkit.Rows("-10 -10"))
+	result = tk.MustQuery("select floor(18446744073709551615), ceil(18446744073709551615)")
+	result.Check(testkit.Rows("18446744073709551615 18446744073709551615"))
+	result = tk.MustQuery("select floor(18446744073709551615.1233), ceil(18446744073709551615.1233)")
+	result.Check(testkit.Rows("18446744073709551615 18446744073709551616"))
+	result = tk.MustQuery("select floor(-18446744073709551617), ceil(-18446744073709551617), floor(-18446744073709551617.11), ceil(-18446744073709551617.11)")
+	result.Check(testkit.Rows("-18446744073709551617 -18446744073709551617 -18446744073709551618 -18446744073709551617"))
 
 	// for cot
 	result = tk.MustQuery("select cot(1), cot(-1), cot(NULL)")
@@ -2454,4 +2472,78 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 			c.Assert(len(list[4]), Equals, 12)
 		}
 	}
+}
+
+type checkRequestClient struct {
+	tikv.Client
+	priority pb.CommandPri
+	mu       struct {
+		sync.RWMutex
+		turnOn bool
+	}
+}
+
+func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendReq(ctx, addr, req)
+	c.mu.RLock()
+	turnOn := c.mu.turnOn
+	c.mu.RUnlock()
+	if !turnOn {
+		switch req.Type {
+		case tikvrpc.CmdCop:
+			if c.priority != req.Priority {
+				return nil, errors.New("fail to set priority")
+			}
+		}
+	}
+	return resp, err
+}
+
+type testPrioritySuite struct{}
+
+var _ = Suite(testPrioritySuite{})
+
+func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
+	cli := &checkRequestClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+
+	tmpStore, err := tikv.NewMockTikvStore(
+		tikv.WithHijackClient(hijackClient),
+	)
+	defer tmpStore.Close()
+	c.Assert(err, IsNil)
+	dom, err := tidb.BootstrapSession(tmpStore)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(c, tmpStore)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("insert into t values (1)")
+
+	cli.mu.Lock()
+	cli.mu.turnOn = true
+	cli.mu.Unlock()
+	cli.priority = pb.CommandPri_High
+	tk.MustQuery("select id from t where id = 1")
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustQuery("select count(*) from t")
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustExec("update t set id = 3")
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustExec("delete from t")
+
+	cli.priority = pb.CommandPri_Normal
+	tk.MustExec("insert into t values (2)")
+
+	// TODO: Those are not point get, but they should be high priority.
+	// cli.priority = pb.CommandPri_High
+	// tk.MustExec("delete from t where id = 2")
+	// tk.MustExec("update t set id = 2 where id = 1")
 }

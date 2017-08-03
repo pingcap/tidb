@@ -328,7 +328,7 @@ func roundTime(t gotime.Time, fsp int) gotime.Time {
 
 // RoundFrac rounds the fraction part of a time-type value according to `fsp`.
 func (t Time) RoundFrac(fsp int) (Time, error) {
-	if t.Type == mysql.TypeDate {
+	if t.Type == mysql.TypeDate || t.IsZero() {
 		// date type has no fsp
 		return t, nil
 	}
