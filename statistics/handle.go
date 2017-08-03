@@ -41,7 +41,9 @@ type Handle struct {
 	statsCache      atomic.Value
 	// ddlEventCh is a channel to notify a ddl operation has happened.
 	// It is sent only by owner or the drop stats executor, and read by stats handle.
-	ddlEventCh      chan *ddl.Event
+	ddlEventCh chan *ddl.Event
+	// analyzeResultCh is a channel to notify an analyze index or column operation has ended.
+	// We need this to avoid updating the stats simultaneously.
 	analyzeResultCh chan *AnalyzeResult
 	// All the stats collector required by session are maintained in this list.
 	listHead *SessionStatsCollector
