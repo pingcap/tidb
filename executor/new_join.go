@@ -92,6 +92,7 @@ func (e *IndexLookUpJoin) Next() (*Row, error) {
 			return nil, nil
 		}
 		e.outerRows = e.outerRows[:0]
+		e.innerRows = e.innerRows[:0]
 		e.resultRows = e.resultRows[:0]
 		e.innerDatums = e.innerDatums[:0]
 		for i := 0; i < e.batchSize; i++ {

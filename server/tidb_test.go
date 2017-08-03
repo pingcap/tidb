@@ -43,6 +43,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 		LogLevel:     "debug",
 		StatusAddr:   ":10090",
 		ReportStatus: true,
+		TCPKeepAlive: true,
 	}
 
 	server, err := NewServer(cfg, ts.tidbdrv)
