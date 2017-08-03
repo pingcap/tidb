@@ -618,7 +618,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a DECIMAL(4,2))")
 	tk.MustExec("INSERT INTO t VALUE(12.34)")
-	r = tk.MustQuery("SELECT 1 AS c UNION select a FROM t")
+	r = tk.MustQuery("SELECT 1 AS c UNION select a as c FROM t order by c")
 	r.Check(testkit.Rows("1.00", "12.34"))
 	r.Sort().Check(testkit.Rows("1.00", "12.34"))
 
