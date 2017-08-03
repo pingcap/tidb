@@ -242,7 +242,8 @@ func (e *IndexLookUpJoin) doMergeJoin() error {
 				}
 			}
 			outerCursor, innerCursor = outerEndCursor, innerEndCursor
-		} else if c < 0 { // outer smaller then inner, move and enlarge outer cursor
+		} else if c < 0 {
+			// If outer smaller than inner, move and enlarge outer cursor
 			nextOuterCursor := getNextCursor(outerCursor, e.outerRows)
 			if !e.outer {
 				outerCursor = nextOuterCursor
