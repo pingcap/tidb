@@ -1,0 +1,126 @@
+
+# Gopkg.toml example
+#
+# Refer to https://github.com/golang/dep/blob/master/docs/Gopkg.toml.md
+# for detailed Gopkg.toml documentation.
+#
+# required = ["github.com/user/thing/cmd/thing"]
+# ignored = ["github.com/user/project/pkgX", "bitbucket.org/user/project/pkgA/pkgY"]
+#
+# [[constraint]]
+#   name = "github.com/user/project"
+#   version = "1.0.0"
+#
+# [[constraint]]
+#   name = "github.com/user/project2"
+#   branch = "dev"
+#   source = "github.com/myfork/project2"
+#
+# [[override]]
+#  name = "github.com/x/y"
+#  version = "2.4.0"
+
+
+[[constraint]]
+  name = "github.com/boltdb/bolt"
+  revision = "d97499360d1ecebc492ea66c7447ea948f417620"
+
+[[constraint]]
+  name = "github.com/coreos/etcd"
+  revision = "ea5f6dab6b1d07e22cf46bf5f5088d567548c124"
+
+[[constraint]]
+  name = "github.com/cznic/mathutil"
+  revision = "78ad7f262603437f0ecfebc835d80094f89c8f54"
+
+[[constraint]]
+  name = "github.com/cznic/parser"
+  revision = "31edd927e5b19d1c4a260c41a397e7f81d6694d9"
+
+[[constraint]]
+  name = "github.com/cznic/sortutil"
+  revision = "4c7342852e65c2088c981288f2c5610d10b9f7f4"
+
+[[constraint]]
+  name = "github.com/cznic/strutil"
+  revision = "1eb03e3cc9d345307a45ec82bd3016cde4bd4464"
+
+[[constraint]]
+  name = "github.com/cznic/y"
+  revision = "9fdf92d4aac058959f814606bb729ed50f5e4240"
+
+[[constraint]]
+  name = "github.com/go-sql-driver/mysql"
+  revision = "3dd7008ac1529aca1bcd8a9db75228a71ba23cac"
+
+[[constraint]]
+  name = "github.com/golang/protobuf"
+  revision = "8ee79997227bf9b34611aee7946ae64735e6fd93"
+
+[[constraint]]
+  name = "github.com/gorilla/mux"
+  revision = "599cba5e7b6137d46ddf58fb1765f5d928e69604"
+
+[[constraint]]
+  name = "github.com/grpc-ecosystem/go-grpc-prometheus"
+  revision = "6b7015e65d366bf3f19b2b2a000a831940f0f7e0"
+
+[[constraint]]
+  name = "github.com/juju/errors"
+  revision = "b2c7a7da5b2995941048f60146e67702a292e468"
+
+[[constraint]]
+  name = "github.com/ngaut/log"
+  revision = "cec23d3e10b016363780d894a0eb732a12c06e02"
+
+[[constraint]]
+  name = "github.com/ngaut/pools"
+  revision = "6352e005618615ffaf1cb1c6622b8e91435751fe"
+
+[[constraint]]
+  name = "github.com/ngaut/systimemon"
+  revision = "c2ca1c75c6af5556eb6ce67994120adf12f2ccef"
+
+[[constraint]]
+  name = "github.com/petar/GoLLRB"
+  revision = "53be0d36a84c2a886ca057d34b6aa4468df9ccb4"
+
+[[constraint]]
+  name = "github.com/pingcap/check"
+  revision = "9b266636177e249ec28b0aeffe8e86bc272bb481"
+
+[[constraint]]
+  name = "github.com/pingcap/goleveldb"
+  revision = "158edde5a354460121af007d02a00b01c8d03443"
+
+[[constraint]]
+  name = "github.com/pingcap/kvproto"
+  revision = "bef5d90e19c200dff99effb226a5bc336ee6b258"
+
+[[constraint]]
+  name = "github.com/pingcap/pd"
+  revision = "ce8db87a8c3f2560750232e85ad5152a0a1c69df"
+
+[[constraint]]
+  name = "github.com/pingcap/tipb"
+  revision = "5e4b9cf7c32d2b09ba71aa9ab6675ec135f9fbda"
+
+[[constraint]]
+  name = "github.com/prometheus/client_golang"
+  version = "0.8.0"
+
+[[constraint]]
+  name = "github.com/twinj/uuid"
+  revision = "70cac2bcd273ef6a371bb96cde363d28b68734c3"
+
+[[constraint]]
+  name = "golang.org/x/net"
+  revision = "d1e1b351919c6738fdeb9893d5c998b161464f0c"
+
+[[constraint]]
+  name = "golang.org/x/text"
+  revision = "4ee4af566555f5fbe026368b75596286a312663a"
+
+[[constraint]]
+  name = "google.golang.org/grpc"
+  revision = "3419b42955675df23457629c75f58eb8dcd56954"

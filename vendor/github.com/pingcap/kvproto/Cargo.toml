@@ -1,0 +1,14 @@
+[package]
+name = "kvproto"
+version = "0.0.1"
+keywords = ["TiKV"]
+
+[lib]
+name = "kvproto"
+
+[dependencies]
+protobuf = "1.*"
+futures = "0.1"
+
+[dependencies.grpc]
+git = "https://github.com/pingcap/grpc-rs.git"

@@ -12,9 +12,9 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(CURDIR)/_vendor:$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build
-GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) test
-OVERALLS  := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 overalls
+GOBUILD   := CGO_ENABLED=0 $(GO) build
+GOTEST    := CGO_ENABLED=1 $(GO) test
+OVERALLS  := CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
 
 ARCH      := "`uname -s`"
@@ -154,19 +154,13 @@ benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
 
 update:
-	which glide >/dev/null || curl https://glide.sh/get | sh
-	which glide-vc || go get -v -u github.com/sgotti/glide-vc
-	rm -r vendor && mv _vendor/src vendor || true
-	rm -rf _vendor
+	go get -u github.com/golang/dep/cmd/dep
 ifdef PKG
-	glide get -s -v --skip-test ${PKG}
+	dep ensure ${PKG}
 else
-	glide update -s -v -u --skip-test
+	dep ensure -update
 endif
-	@echo "removing test files"
-	glide vc --only-code --no-tests
-	mkdir -p _vendor
-	mv vendor _vendor/src
+	dep prune
 
 checklist:
 	cat checklist.md
