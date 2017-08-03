@@ -1600,7 +1600,8 @@ func (s *testSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("select floor(18446744073709551615), ceil(18446744073709551615)")
 	result.Check(testkit.Rows("18446744073709551615 18446744073709551615"))
 	result = tk.MustQuery("select floor(18446744073709551615.1233), ceil(18446744073709551615.1233)")
-	result.Check(testkit.Rows("18446744073709551615 18446744073709551616"))
+	result.Check(testkit.Rows("-18446744073709551617 18446744073709551617.11"))
+	result.Check(testkit.Rows("-18446744073709551617 -18446744073709551618"))
 
 	// for cot
 	result = tk.MustQuery("select cot(1), cot(-1), cot(NULL)")
