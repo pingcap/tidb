@@ -1029,6 +1029,7 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxRowCountForINLJ + quoteCommaQuote +
+	variable.TiDBCBO + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
