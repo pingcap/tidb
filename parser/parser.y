@@ -5960,6 +5960,9 @@ StringType:
 		x.Flen = $3.(int)
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
+		if $4.(bool) {
+            x.Flag |= mysql.BinaryFlag
+        }
 		$$ = x
 	}
 |	NationalOpt "CHAR" OptBinary OptCharset OptCollate
@@ -5967,6 +5970,9 @@ StringType:
 		x := types.NewFieldType(mysql.TypeString)
 		x.Charset = $4.(string)
 		x.Collate = $5.(string)
+		if $3.(bool) {
+		    x.Flag |= mysql.BinaryFlag
+		}
 		$$ = x
 	}
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
@@ -5975,6 +5981,9 @@ StringType:
 		x.Flen = $3.(int)
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
+		if $4.(bool) {
+            x.Flag |= mysql.BinaryFlag
+        }
 		$$ = x
 	}
 |	"BINARY" OptFieldLen
@@ -6008,6 +6017,9 @@ StringType:
 		x := $1.(*types.FieldType)
 		x.Charset = $3.(string)
 		x.Collate = $4.(string)
+		if $2.(bool) {
+            x.Flag |= mysql.BinaryFlag
+        }
 		$$ = x
 	}
 |	"ENUM" '(' StringList ')' OptCharset OptCollate
