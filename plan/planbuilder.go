@@ -121,7 +121,7 @@ type planBuilder struct {
 	is            infoschema.InfoSchema
 	outerSchemas  []*expression.Schema
 	inUpdateStmt  bool
-	needColHandle bool
+	needColHandle int
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// Collect the visit information for privilege check.

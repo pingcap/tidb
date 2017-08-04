@@ -1015,7 +1015,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	}
 
 	if sel.LockTp == ast.SelectLockForUpdate {
-		b.needColHandle = true
+		b.needColHandle++
 	}
 
 	hasAgg := b.detectSelectAgg(sel)
@@ -1101,7 +1101,9 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 	sel.Fields.Fields = originalFields
-	b.needColHandle = false
+	if sel.LockTp == ast.SelectLockForUpdate {
+		b.needColHandle--
+	}
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.allocator, b.ctx)
 		addChild(proj, p)
@@ -1149,7 +1151,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		statisticTable: statisticTable,
 		DBName:         schemaName,
 		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
-		NeedColHandle:  b.needColHandle,
+		NeedColHandle:  b.needColHandle > 0,
 	}.init(b.allocator, b.ctx)
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
@@ -1177,7 +1179,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		}
 	}
 	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
-	if !b.needColHandle && !needUnionScan {
+	if b.needColHandle == 0 && !needUnionScan {
 		p.SetSchema(schema)
 		return p
 	}
@@ -1197,7 +1199,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			for _, col := range schema.Columns {
 				p.unionScanSchema.Append(col)
 			}
-			if b.needColHandle {
+			if b.needColHandle > 0 {
 				p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
 				p.unionScanSchema.TblID2handle[tableInfo.ID] = []*expression.Column{idCol}
 			}
@@ -1321,7 +1323,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	b.inUpdateStmt = true
-	b.needColHandle = true
+	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
@@ -1414,7 +1416,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
-	b.needColHandle = true
+	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
