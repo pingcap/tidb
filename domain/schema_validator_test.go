@@ -72,12 +72,13 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	// Check the latest schema version must changed.
 	c.Assert(item.schemaVer, Less, validator.Latest())
 
-	// Make sure bigVersion is bigger than currVer.
-	bigVersion := currVer + 1
+	// Make sure newItem's version is bigger than currVer.
+	time.Sleep(lease * 2)
+	newItem := <-leaseGrantCh
 	// Update current schema version to 10 and the delta table IDs is 1, 2, 3.
-	validator.Update(ts, currVer, bigVersion, []int64{1, 2, 3})
+	validator.Update(ts, currVer, newItem.schemaVer, []int64{1, 2, 3})
 	// Make sure the updated table IDs don't be covered with the same schema version.
-	validator.Update(ts, bigVersion, bigVersion, nil)
+	validator.Update(ts, newItem.schemaVer, newItem.schemaVer, nil)
 	isTablesChanged, err = validator.IsRelatedTablesChanged(ts, currVer, nil)
 	c.Assert(err, IsNil)
 	c.Assert(isTablesChanged, IsFalse)
