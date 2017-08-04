@@ -50,6 +50,7 @@ var (
 	errRunMultiSchemaChanges = terror.ClassDDL.New(codeRunMultiSchemaChanges, "can't run multi schema change")
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
 	errInvalidStoreVer       = terror.ClassDDL.New(codeInvalidStoreVer, "invalid storage current version")
+	errInvalidColumnDefs     = terror.ClassDDL.New(codeInvalidColumnDefs, "invalid column definitions:%d columns have %d positions")
 
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex    = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
@@ -158,10 +159,10 @@ type DDL interface {
 
 // Event is an event that a ddl operation happened.
 type Event struct {
-	Tp         model.ActionType
-	TableInfo  *model.TableInfo
-	ColumnInfo *model.ColumnInfo
-	IndexInfo  *model.IndexInfo
+	Tp          model.ActionType
+	TableInfo   *model.TableInfo
+	ColumnInfos []*model.ColumnInfo
+	IndexInfo   *model.IndexInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -170,8 +171,10 @@ func (e *Event) String() string {
 	if e.TableInfo != nil {
 		ret += fmt.Sprintf(", Table ID: %d, Table Name %s", e.TableInfo.ID, e.TableInfo.Name)
 	}
-	if e.ColumnInfo != nil {
-		ret += fmt.Sprintf(", Column ID: %d, Column Name %s", e.ColumnInfo.ID, e.ColumnInfo.Name)
+	if e.ColumnInfos != nil {
+		for i := 0; i < len(e.ColumnInfos); i++ {
+			ret += fmt.Sprintf(", Column ID: %d, Column Name %s", e.ColumnInfos[i].ID, e.ColumnInfos[i].Name)
+		}
 	}
 	if e.IndexInfo != nil {
 		ret += fmt.Sprintf(", Index ID: %d, Index Name %s", e.IndexInfo.ID, e.IndexInfo.Name)
@@ -489,6 +492,7 @@ const (
 	codeInvalidStoreVer                      = 8
 	codeUnknownTypeLength                    = 9
 	codeUnknownFractionLength                = 10
+	codeInvalidColumnDefs                    = 11
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101

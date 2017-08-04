@@ -582,6 +582,7 @@ import (
 	CastType		"Cast function target type"
 	CharsetName		"Character set name"
 	ColumnDef		"table column definition"
+	ColumnDefList   	"table column definition list"
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
 	ColumnNameListOpt	"column name list opt"
@@ -965,11 +966,23 @@ AlterTableSpec:
 |	"ADD" ColumnKeywordOpt ColumnDef ColumnPosition
 	{
 		$$ = &ast.AlterTableSpec{
-			Tp: 		ast.AlterTableAddColumn,
-			NewColumn:	$3.(*ast.ColumnDef),
-			Position:	$4.(*ast.ColumnPosition),
+			Tp: 		ast.AlterTableAddColumns,
+			NewColumns:	[]*ast.ColumnDef{$3.(*ast.ColumnDef)},
+			Positions:  	[]*ast.ColumnPosition{$4.(*ast.ColumnPosition)},
 		}
 	}
+|   	"ADD" ColumnKeywordOpt '(' ColumnDefList ')'
+    	{
+        	positions :=  make([]*ast.ColumnPosition, len($4.([]*ast.ColumnDef)))
+        	for i:=0; i < len(positions); i++ {
+            		positions[i] = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+        	}
+        	$$ = &ast.AlterTableSpec{
+            		Tp: 		ast.AlterTableAddColumns,
+            		NewColumns:	$4.([]*ast.ColumnDef),
+            		Positions:  	positions,
+        	}	
+    	}
 |	"ADD" Constraint
 	{
 		constraint := $2.(*ast.Constraint)
@@ -1015,8 +1028,8 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableModifyColumn,
-			NewColumn:	$3.(*ast.ColumnDef),
-			Position:	$4.(*ast.ColumnPosition),
+			NewColumns:	[]*ast.ColumnDef{$3.(*ast.ColumnDef)},
+            		Positions:  	[]*ast.ColumnPosition{$4.(*ast.ColumnPosition)},
 		}
 	}
 |	"CHANGE" ColumnKeywordOpt ColumnName ColumnDef ColumnPosition
@@ -1024,8 +1037,8 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableChangeColumn,
 			OldColumnName:	$3.(*ast.ColumnName),
-			NewColumn: 	$4.(*ast.ColumnDef),
-			Position:	$5.(*ast.ColumnPosition),
+			NewColumns:	[]*ast.ColumnDef{$4.(*ast.ColumnDef)},
+            		Positions:	[]*ast.ColumnPosition{$5.(*ast.ColumnPosition)},
 		}
 	}
 |	"ALTER" ColumnKeywordOpt ColumnName "SET" "DEFAULT" SignedLiteral
@@ -1033,9 +1046,11 @@ AlterTableSpec:
 		option := &ast.ColumnOption{Expr: $6.(ast.ExprNode)}
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableAlterColumn,
-			NewColumn:	&ast.ColumnDef{
-						Name: 	 $3.(*ast.ColumnName),
-						Options: []*ast.ColumnOption{option},
+			NewColumns:	[]*ast.ColumnDef{
+                            &ast.ColumnDef{
+                            Name: 	 $3.(*ast.ColumnName),
+                            Options: []*ast.ColumnOption{option},
+                        },
 			},
 		}
 	}
@@ -1043,8 +1058,10 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableAlterColumn,
-			NewColumn:	&ast.ColumnDef{
-						Name: 	 $3.(*ast.ColumnName),
+			NewColumns:	[]*ast.ColumnDef{
+			                &ast.ColumnDef{
+						    Name: 	 $3.(*ast.ColumnName),
+						},
 			},
 		}
 	}
@@ -1242,6 +1259,16 @@ BinlogStmt:
 	{
 		$$ = &ast.BinlogStmt{Str: $2}
 	}
+
+ColumnDefList:
+    	ColumnDef
+    	{
+        	$$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}
+    	}
+|   	ColumnDefList ',' ColumnDef
+    	{
+        	$$ = append($1.([]*ast.ColumnDef), $3.(*ast.ColumnDef))
+    	}	
 
 ColumnDef:
 	ColumnName Type ColumnOptionListOpt

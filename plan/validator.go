@@ -341,16 +341,8 @@ func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				return
 			}
 		}
-		if spec.NewColumn != nil {
-			cName := spec.NewColumn.Name.Name.String()
-			if isIncorrectName(cName) {
-				v.err = ddl.ErrWrongColumnName.GenByArgs(cName)
-				return
-			}
-			if err := checkFieldLengthLimitation(spec.NewColumn); err != nil {
-				v.err = err
-				return
-			}
+		if v.err = checkNewColumnsDef(spec.NewColumns); nil != v.err {
+			return
 		}
 		switch spec.Tp {
 		case ast.AlterTableAddConstraint:
@@ -386,6 +378,19 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 			if name1.L == name2.L {
 				return infoschema.ErrColumnExists.GenByArgs(name2)
 			}
+		}
+	}
+	return nil
+}
+
+func checkNewColumnsDef(newColumns []*ast.ColumnDef) error {
+	for _, newColumn := range newColumns {
+		cName := newColumn.Name.Name.String()
+		if isIncorrectName(cName) {
+			return ddl.ErrWrongColumnName.GenByArgs(cName)
+		}
+		if err := checkFieldLengthLimitation(newColumn); err != nil {
+			return err
 		}
 	}
 	return nil

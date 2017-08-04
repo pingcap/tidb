@@ -247,7 +247,7 @@ type ColumnOption struct {
 	node
 
 	Tp ColumnOptionType
-	// For ColumnOptionDefaultValue or ColumnOptionOnUpdate, it's the target value.
+	// Expr is used for ColumnOptionDefaultValue or ColumnOptionOnUpdate, it's the target value.
 	// For ColumnOptionGenerated, it's the target expression.
 	Expr ExprNode
 	// Stored is only for ColumnOptionGenerated, default is false.
@@ -679,7 +679,7 @@ type AlterTableType int
 // AlterTable types.
 const (
 	AlterTableOption AlterTableType = iota + 1
-	AlterTableAddColumn
+	AlterTableAddColumns
 	AlterTableAddConstraint
 	AlterTableDropColumn
 	AlterTableDropPrimaryKey
@@ -715,9 +715,9 @@ type AlterTableSpec struct {
 	Constraint    *Constraint
 	Options       []*TableOption
 	NewTable      *TableName
-	NewColumn     *ColumnDef
+	NewColumns    []*ColumnDef
 	OldColumnName *ColumnName
-	Position      *ColumnPosition
+	Positions     []*ColumnPosition
 	LockType      LockType
 }
 
@@ -742,12 +742,14 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		}
 		n.NewTable = node.(*TableName)
 	}
-	if n.NewColumn != nil {
-		node, ok := n.NewColumn.Accept(v)
-		if !ok {
-			return n, false
+	if n.NewColumns != nil {
+		for i := range n.NewColumns {
+			node, ok := n.NewColumns[i].Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.NewColumns[i] = node.(*ColumnDef)
 		}
-		n.NewColumn = node.(*ColumnDef)
 	}
 	if n.OldColumnName != nil {
 		node, ok := n.OldColumnName.Accept(v)
@@ -756,12 +758,14 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		}
 		n.OldColumnName = node.(*ColumnName)
 	}
-	if n.Position != nil {
-		node, ok := n.Position.Accept(v)
-		if !ok {
-			return n, false
+	if n.Positions != nil {
+		for i := range n.Positions {
+			node, ok := n.Positions[i].Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Positions[i] = node.(*ColumnPosition)
 		}
-		n.Position = node.(*ColumnPosition)
 	}
 	return v.Leave(n)
 }

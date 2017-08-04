@@ -797,8 +797,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 
 	for _, spec := range validSpecs {
 		switch spec.Tp {
-		case ast.AlterTableAddColumn:
-			err = d.AddColumn(ctx, ident, spec)
+		case ast.AlterTableAddColumns:
+			err = d.AddColumns(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
@@ -853,14 +853,68 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 	return nil
 }
 
-// AddColumn will add a new column to the table.
-func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+func validColumnDef(column *ast.ColumnDef, t table.Table) error {
 	// Check whether the added column constraints are supported.
-	err := checkColumnConstraint(spec.NewColumn.Options)
+	err := checkColumnConstraint(column.Options)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	colName := column.Name.Name.O
+	col := table.FindCol(t.Cols(), colName)
+	if col != nil {
+		return infoschema.ErrColumnExists.GenByArgs(colName)
+	}
+
+	// If new column is a generated column, do validation.
+	// NOTE: Because now we can only append columns to table,
+	// we dont't need check whether the column refers other
+	// generated columns occurring later in table.
+	for _, option := range column.Options {
+		if option.Tp == ast.ColumnOptionGenerated {
+			referableColNames := make(map[string]struct{}, len(t.Cols()))
+			for _, col := range t.Cols() {
+				referableColNames[col.Name.L] = struct{}{}
+			}
+			_, dependColNames := findDependedColumnNames(column)
+			if err := columnNamesCover(referableColNames, dependColNames); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	if len(colName) > mysql.MaxColumnNameLength {
+		return ErrTooLongIdent.Gen("too long column %s", colName)
+	}
+
+	return nil
+}
+
+func buildColumnWithDefValue(ctx context.Context, t table.Table, column *ast.ColumnDef) (*table.Column, error) {
+	// Ingore table constraints now, maybe return error later.
+	// We use length(t.Cols()) as the default offset firstly, we will change the
+	// column's offset later.
+	col, _, err := buildColumnAndConstraint(ctx, len(t.Cols()), column)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	col.OriginDefaultValue = col.DefaultValue
+	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+		zeroVal := table.GetZeroValue(col.ToInfo())
+		col.OriginDefaultValue, err = zeroVal.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	if col.OriginDefaultValue == expression.CurrentTimestamp &&
+		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
+		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
+	}
+	return col, nil
+}
+
+func (d *ddl) AddColumns(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -871,61 +925,30 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return errors.Trace(infoschema.ErrTableNotExists)
 	}
 
-	// Check whether added column has existed.
-	colName := spec.NewColumn.Name.Name.O
-	col := table.FindCol(t.Cols(), colName)
-	if col != nil {
-		return infoschema.ErrColumnExists.GenByArgs(colName)
-	}
-
-	// If new column is a generated column, do validation.
-	// NOTE: Because now we can only append columns to table,
-	// we dont't need check whether the column refers other
-	// generated columns occurring later in table.
-	for _, option := range spec.NewColumn.Options {
-		if option.Tp == ast.ColumnOptionGenerated {
-			referableColNames := make(map[string]struct{}, len(t.Cols()))
-			for _, col := range t.Cols() {
-				referableColNames[col.Name.L] = struct{}{}
-			}
-			_, dependColNames := findDependedColumnNames(spec.NewColumn)
-			if err = columnNamesCover(referableColNames, dependColNames); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-
-	if len(colName) > mysql.MaxColumnNameLength {
-		return ErrTooLongIdent.Gen("too long column %s", colName)
-	}
-
-	// Ingore table constraints now, maybe return error later.
-	// We use length(t.Cols()) as the default offset firstly, we will change the
-	// column's offset later.
-	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), spec.NewColumn)
-	if err != nil {
+	newColumns := []*table.Column{}
+	if err = checkDuplicateColumn(spec.NewColumns); err != nil {
 		return errors.Trace(err)
 	}
-	col.OriginDefaultValue = col.DefaultValue
-	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
-		zeroVal := table.GetZeroValue(col.ToInfo())
-		col.OriginDefaultValue, err = zeroVal.ToString()
+	var col *table.Column
+	for _, column := range spec.NewColumns {
+		err = validColumnDef(column, t)
 		if err != nil {
 			return errors.Trace(err)
 		}
-	}
 
-	if col.OriginDefaultValue == expression.CurrentTimestamp &&
-		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
-		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
+		col, err = buildColumnWithDefValue(ctx, t, column)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newColumns = append(newColumns, col)
 	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
-		Type:       model.ActionAddColumn,
+		Type:       model.ActionAddColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, spec.Position, 0},
+		Args:       []interface{}{newColumns, spec.Positions, 0},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1136,18 +1159,19 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
 	// which will be done by `setDefaultAndComment` later.
-	if spec.NewColumn.Tp == nil {
+	if spec.NewColumns[0].Tp == nil {
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
+	modifiedNewCol := spec.NewColumns[0]
 
 	newCol := table.ToColumn(&model.ColumnInfo{
 		ID:                 col.ID,
 		Offset:             col.Offset,
 		State:              col.State,
 		OriginDefaultValue: col.OriginDefaultValue,
-		FieldType:          *spec.NewColumn.Tp,
-		Name:               spec.NewColumn.Name.Name,
+		FieldType:          *modifiedNewCol.Tp,
+		Name:               modifiedNewCol.Name.Name,
 	})
 
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
@@ -1158,7 +1182,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
+	if err = setDefaultAndComment(ctx, newCol, modifiedNewCol.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1189,7 +1213,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		TableID:    t.Meta().ID,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, originalColName, spec.Position},
+		Args:       []interface{}{&newCol, originalColName, spec.Positions[0]},
 	}
 	return job, nil
 }
@@ -1198,14 +1222,15 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 // currently we only support limited kind of changes
 // that do not need to change or check data on the table.
 func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	if len(spec.NewColumn.Name.Schema.O) != 0 && ident.Schema.L != spec.NewColumn.Name.Schema.L {
-		return ErrWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
+	changedNewColumn := spec.NewColumns[0]
+	if len(changedNewColumn.Name.Schema.O) != 0 && ident.Schema.L != changedNewColumn.Name.Schema.L {
+		return ErrWrongDBName.GenByArgs(changedNewColumn.Name.Schema.O)
 	}
 	if len(spec.OldColumnName.Schema.O) != 0 && ident.Schema.L != spec.OldColumnName.Schema.L {
 		return ErrWrongDBName.GenByArgs(spec.OldColumnName.Schema.O)
 	}
-	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
-		return ErrWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
+	if len(changedNewColumn.Name.Table.O) != 0 && ident.Name.L != changedNewColumn.Name.Table.L {
+		return ErrWrongTableName.GenByArgs(changedNewColumn.Name.Table.O)
 	}
 	if len(spec.OldColumnName.Table.O) != 0 && ident.Name.L != spec.OldColumnName.Table.L {
 		return ErrWrongTableName.GenByArgs(spec.OldColumnName.Table.O)
@@ -1224,14 +1249,15 @@ func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
 // that do not need to change or check data on the table.
 func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	if len(spec.NewColumn.Name.Schema.O) != 0 && ident.Schema.L != spec.NewColumn.Name.Schema.L {
-		return ErrWrongDBName.GenByArgs(spec.NewColumn.Name.Schema.O)
+	changedNewColumn := spec.NewColumns[0]
+	if len(changedNewColumn.Name.Schema.O) != 0 && ident.Schema.L != changedNewColumn.Name.Schema.L {
+		return ErrWrongDBName.GenByArgs(changedNewColumn.Name.Schema.O)
 	}
-	if len(spec.NewColumn.Name.Table.O) != 0 && ident.Name.L != spec.NewColumn.Name.Table.L {
-		return ErrWrongTableName.GenByArgs(spec.NewColumn.Name.Table.O)
+	if len(changedNewColumn.Name.Table.O) != 0 && ident.Name.L != changedNewColumn.Name.Table.L {
+		return ErrWrongTableName.GenByArgs(changedNewColumn.Name.Table.O)
 	}
 
-	originalColName := spec.NewColumn.Name.Name
+	originalColName := changedNewColumn.Name.Name
 	job, err := d.getModifiableColumnJob(ctx, ident, originalColName, spec)
 	if err != nil {
 		return errors.Trace(err)
@@ -1252,8 +1278,8 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
 	}
-
-	colName := spec.NewColumn.Name.Name
+	changedNewColumn := spec.NewColumns[0]
+	colName := changedNewColumn.Name.Name
 	// Check whether alter column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
@@ -1262,11 +1288,11 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 
 	// Clean the NoDefaultValueFlag value.
 	col.Flag &= ^uint(mysql.NoDefaultValueFlag)
-	if len(spec.NewColumn.Options) == 0 {
+	if len(changedNewColumn.Options) == 0 {
 		col.DefaultValue = nil
 		setNoDefaultValueFlag(col, false)
 	} else {
-		err = setDefaultValue(ctx, col, spec.NewColumn.Options[0])
+		err = setDefaultValue(ctx, col, changedNewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1521,14 +1547,14 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 	return errors.Trace(err)
 }
 
-// findCol finds column in cols by name.
-func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
+// findCol finds column and index in columns in cols by name.
+func findCol(cols []*model.ColumnInfo, name string) (*model.ColumnInfo, int) {
 	name = strings.ToLower(name)
-	for _, col := range cols {
+	for idx, col := range cols {
 		if col.Name.L == name {
-			return col
+			return col, idx
 		}
 	}
 
-	return nil
+	return nil, -1
 }

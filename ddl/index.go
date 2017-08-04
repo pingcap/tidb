@@ -44,7 +44,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 	sumLength := 0
 
 	for _, ic := range idxColNames {
-		col := findCol(columns, ic.Column.Name.O)
+		col, _ := findCol(columns, ic.Column.Name.O)
 		if col == nil {
 			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
 		}

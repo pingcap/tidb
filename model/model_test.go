@@ -229,6 +229,7 @@ func (testModelSuite) TestString(c *C) {
 		{ActionAddIndex, "add index"},
 		{ActionDropIndex, "drop index"},
 		{ActionAddColumn, "add column"},
+		{ActionAddColumns, "add columns"},
 		{ActionDropColumn, "drop column"},
 	}
 

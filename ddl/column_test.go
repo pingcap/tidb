@@ -73,9 +73,58 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
+		Type:       model.ActionAddColumns,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{[]*model.ColumnInfo{col}, []*ast.ColumnPosition{pos}, 0},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func testAddColumnJob(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	col *model.ColumnInfo, pos *ast.ColumnPosition) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col, pos, 0},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func testAddMultipleColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	colNames []string, defaultValues []interface{}, positions []*ast.ColumnPosition) *model.Job {
+	cols := []*model.ColumnInfo{}
+	tbllen := len(tblInfo.Columns)
+	for idx, colName := range colNames {
+		col := &model.ColumnInfo{
+			Name:               model.NewCIStr(colName),
+			Offset:             tbllen + idx,
+			DefaultValue:       defaultValues[idx],
+			OriginDefaultValue: defaultValues[idx],
+		}
+		col.ID = allocateColumnID(tblInfo)
+		col.FieldType = *types.NewFieldType(mysql.TypeLong)
+		cols = append(cols, col)
+	}
+
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAddColumns,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{cols, positions, 0},
 	}
 
 	err := d.doDDLJob(ctx, job)
@@ -928,7 +977,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
-	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumn
+	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
 	col, _, err := buildColumnAndConstraint(nil, 0, colDef)
 	c.Assert(err, IsNil)
 	return &col.FieldType

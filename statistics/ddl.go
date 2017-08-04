@@ -34,9 +34,16 @@ func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
 	case model.ActionDropTable:
 		return h.DeleteTableStatsFromKV(t.TableInfo.ID)
 	case model.ActionAddColumn:
-		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
+		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfos[0])
+	case model.ActionAddColumns:
+		for i := 0; i < len(t.ColumnInfos); i++ {
+			err := h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfos[i])
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	case model.ActionDropColumn:
-		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.ColumnInfo.ID, 0)
+		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.ColumnInfos[0].ID, 0)
 	case model.ActionDropIndex:
 		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.IndexInfo.ID, 1)
 	default:
