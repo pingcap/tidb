@@ -711,6 +711,13 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(1 as signed int)")
 	result.Check(testkit.Rows("1"))
 
+	result = tk.MustQuery(`select bin(-1);`)
+	result.Check(testkit.Rows("1111111111111111111111111111111111111111111111111111111111111111"))
+	result = tk.MustQuery(`select bin(5);`)
+	result.Check(testkit.Rows("101"))
+	result = tk.MustQuery(`select bin("中文");`)
+	result.Check(testkit.Rows("0"))
+
 	// test cast time as decimal overflow
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(s1 time);")
