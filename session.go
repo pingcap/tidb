@@ -1191,6 +1191,11 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	return nil
 }
 
+// GetStore gets the store of session.
+func (s *session) GetStore() kv.Storage {
+	return s.store
+}
+
 func (s *session) ShowProcess() util.ProcessInfo {
 	var pi util.ProcessInfo
 	tmp := s.processInfo.Load()

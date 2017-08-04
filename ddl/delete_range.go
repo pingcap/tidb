@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -198,6 +199,11 @@ func (dr *delRange) doTask(r DelRangeTask) error {
 // and inserts a new record into gc_delete_range table. The primary key is
 // job ID, so we ignore key conflict error.
 func insertBgJobIntoDeleteRangeTable(ctx context.Context, job *model.Job) error {
+	now, err := getNowTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	s := ctx.(sqlexec.SQLExecutor)
 	switch job.Type {
 	case model.ActionDropSchema:
@@ -208,7 +214,7 @@ func insertBgJobIntoDeleteRangeTable(ctx context.Context, job *model.Job) error 
 		for _, tableID := range tableIDs {
 			startKey := tablecodec.EncodeTablePrefix(tableID)
 			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-			if err := doInsert(s, job.ID, tableID, startKey, endKey, time.Now().Unix()); err != nil {
+			if err := doInsert(s, job.ID, tableID, startKey, endKey, now); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -216,7 +222,7 @@ func insertBgJobIntoDeleteRangeTable(ctx context.Context, job *model.Job) error 
 		tableID := job.TableID
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-		return doInsert(s, job.ID, tableID, startKey, endKey, time.Now().Unix())
+		return doInsert(s, job.ID, tableID, startKey, endKey, now)
 	case model.ActionDropIndex:
 		tableID := job.TableID
 		var indexName interface{}
@@ -226,7 +232,7 @@ func insertBgJobIntoDeleteRangeTable(ctx context.Context, job *model.Job) error 
 		}
 		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-		return doInsert(s, job.ID, indexID, startKey, endKey, time.Now().Unix())
+		return doInsert(s, job.ID, indexID, startKey, endKey, now)
 	}
 	return nil
 }
@@ -312,4 +318,14 @@ func LoadPendingBgJobsIntoDeleteTable(ctx context.Context) (err error) {
 		}
 	}
 	return errors.Trace(err)
+}
+
+func getNowTS(ctx context.Context) (int64, error) {
+	currVer, err := ctx.GetStore().CurrentVersion()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	physical := oracle.ExtractPhysical(currVer.Ver)
+	sec, nsec := physical/1e3, (physical%1e3)*1e6
+	return time.Unix(sec, nsec).Unix(), nil
 }
