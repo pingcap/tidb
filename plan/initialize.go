@@ -282,6 +282,7 @@ func (p PhysicalIndexLookUpReader) init(allocator *idAllocator, ctx context.Cont
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+	p.NeedColHandle = p.IndexPlans[0].(*PhysicalIndexScan).NeedColHandle
 	p.schema = p.tablePlan.Schema()
 	return &p
 }
@@ -290,6 +291,7 @@ func (p PhysicalTableReader) init(allocator *idAllocator, ctx context.Context) *
 	p.basePlan = newBasePlan(TypeTableReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.NeedColHandle = p.TablePlans[0].(*PhysicalTableScan).NeedColHandle
 	p.schema = p.tablePlan.Schema()
 	return &p
 }
@@ -298,6 +300,7 @@ func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *
 	p.basePlan = newBasePlan(TypeIndexReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+	p.NeedColHandle = p.IndexPlans[0].(*PhysicalIndexScan).NeedColHandle
 	if _, ok := p.indexPlan.(*PhysicalAggregation); ok {
 		p.schema = p.indexPlan.Schema()
 	} else {
