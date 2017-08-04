@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -66,7 +67,7 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 // Every built-in function needs determined argTps and retType when we create it.
 func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
-		return bf, errors.New("unexpected length of args and argTps")
+		return bf, errors.New(fmt.Sprintf("unexpected length of args[%v] and argTps[%v]", len(args), len(argTps)))
 	}
 	for i := range args {
 		switch argTps[i] {
