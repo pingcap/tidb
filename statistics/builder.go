@@ -193,3 +193,13 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int
 	}
 	return hg, nil
 }
+
+// AnalyzeResult is used to represent analyze result.
+type AnalyzeResult struct {
+	TableID int64
+	Hist    []*Histogram
+	Count   int64
+	IsIndex int
+	Ctx     context.Context
+	Err     error
+}
