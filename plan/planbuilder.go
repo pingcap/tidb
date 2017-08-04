@@ -655,7 +655,7 @@ func (b *planBuilder) calculateGeneratedColumns(columns []*table.Column, onDups 
 					return
 				}
 				assign := &expression.Assignment{Col: col, Expr: expr.Clone()}
-				igc.OnDups = append(igc.OnDups, assign)
+				igc.OnDuplicates = append(igc.OnDuplicates, assign)
 				break
 			}
 		}

@@ -108,7 +108,7 @@ type Simple struct {
 type InsertGeneratedColumns struct {
 	Columns []*ast.ColumnName
 	Exprs   []expression.Expression
-	OnDups  []*expression.Assignment
+	OnDuplicates  []*expression.Assignment
 }
 
 // Insert represents an insert plan.

@@ -241,7 +241,7 @@ func (p *Insert) ResolveIndices() {
 	for _, expr := range p.GenCols.Exprs {
 		expr.ResolveIndices(p.tableSchema)
 	}
-	for _, asgn := range p.GenCols.OnDups {
+	for _, asgn := range p.GenCols.OnDuplicates {
 		asgn.Col.ResolveIndices(p.tableSchema)
 		asgn.Expr.ResolveIndices(p.tableSchema)
 	}
