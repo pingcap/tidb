@@ -262,8 +262,9 @@ func (e *SelectLockExec) Next() (*Row, error) {
 	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return row, nil
 	}
-	e.ctx.GetSessionVars().TxnCtx.ForUpdate = true
 	txn := e.ctx.Txn()
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx.ForUpdate = true
 	for id, cols := range e.Schema().TblID2Handle {
 		for _, col := range cols {
 			handle := row.Data[col.Index].GetInt64()
@@ -272,6 +273,8 @@ func (e *SelectLockExec) Next() (*Row, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			// This operation is only for schema validator check.
+			txnCtx.UpdateDeltaForTable(id, 0, 0)
 		}
 	}
 	return row, nil
