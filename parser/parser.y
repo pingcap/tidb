@@ -610,6 +610,7 @@ import (
 	DeallocateStmt		"Deallocate prepared statement"
 	DefaultValueExpr	"DefaultValueExpr(Now or Signed Literal)"
 	DeleteFromStmt		"DELETE FROM statement"
+	DistinctKwd		"DISTINCT or DISTINCTROW"
 	DistinctOpt		"Explicit distinct option"
 	DefaultFalseDistinctOpt		"Distinct option which defaults to false"
 	DefaultTrueDistinctOpt		"Distinct option which defaults to true"
