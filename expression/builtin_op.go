@@ -563,7 +563,7 @@ func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Con
 		return nil, errors.Trace(err)
 	}
 
-	argExpr := args[0]
+	argExpr, argExprTp := args[0], args[0].GetType()
 	retTp, intOverflow := b.typeInfer(argExpr, ctx)
 
 	var bf baseBuiltinFunc
@@ -576,8 +576,10 @@ func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Con
 			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
 			sig = &builtinUnaryMinusIntSig{baseIntBuiltinFunc{bf}}
 		}
+		bf.tp.Decimal = 0
 	case types.ClassDecimal:
 		bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+		bf.tp.Decimal = argExprTp.Decimal
 		sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 	case types.ClassReal:
 		bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
@@ -592,7 +594,7 @@ func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Con
 			sig = &builtinUnaryMinusRealSig{baseRealBuiltinFunc{bf}}
 		}
 	}
-
+	bf.tp.Flen = argExprTp.Flen + 1
 	return sig.setSelf(sig), errors.Trace(err)
 }
 

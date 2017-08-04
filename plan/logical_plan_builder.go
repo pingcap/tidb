@@ -494,6 +494,9 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
 		u.children[i] = b.buildSelect(sel)
+		if b.err != nil {
+			return nil
+		}
 	}
 	firstSchema := u.children[0].Schema().Clone()
 	for i, sel := range u.children {
