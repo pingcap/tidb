@@ -105,11 +105,15 @@ func randomBuf(size int) []byte {
 	return buf
 }
 
-func (s *Server) remoteAddr(conn net.Conn) net.Addr {
+func (s *Server) readRemoteAddr(conn net.Conn) (net.Addr, error) {
 	if s.proxyProtocolDecoder == nil {
-		return conn.RemoteAddr()
+		return conn.RemoteAddr(), nil
 	}
-	return s.proxyProtocolDecoder.readClientAddrBehindProxy(conn)
+	raddr, err := s.proxyProtocolDecoder.readClientAddrBehindProxy(conn)
+	if err == nil {
+		log.Infof("PROXY Protocol Client Address: %v", raddr)
+	}
+	return raddr, err
 }
 
 // newConn creates a new *clientConn from a net.Conn.

@@ -286,7 +286,10 @@ func parseAttrs(data []byte) (map[string]string, error) {
 }
 
 func (cc *clientConn) readHandshakeResponse() error {
-	remoteAddr := cc.server.remoteAddr(cc.conn)
+	remoteAddr, err := cc.server.readRemoteAddr(cc.conn)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	data, err := cc.readPacket()
 	if err != nil {
 		return errors.Trace(err)

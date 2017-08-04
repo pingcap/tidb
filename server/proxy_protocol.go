@@ -19,16 +19,16 @@ import (
 	"io"
 	"net"
 	"strings"
-
-	"github.com/ngaut/log"
 )
 
+// Ref: https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt .
 const (
 	proxyProtocolV1MaxHeaderLen = 108
 )
 
 var (
-	errProxyProtocolV1HeaderNotValid = errors.New("PROXY Protocol header not valid")
+	errProxyProtocolV1HeaderInvalid           = errors.New("PROXY Protocol header is invalid")
+	errProxyProtocolClientAddressIsNotAllowed = errors.New("PROXY Protocol client address is not allowed")
 )
 
 type proxyProtocolDecoder struct {
@@ -63,8 +63,8 @@ func newProxyProtocolDecoder(allowedIPs string) (*proxyProtocolDecoder, error) {
 	}, nil
 }
 
-func (e *proxyProtocolDecoder) checkAllowed(raddr net.Addr) bool {
-	if e.allowAll {
+func (d *proxyProtocolDecoder) checkAllowed(raddr net.Addr) bool {
+	if d.allowAll {
 		return true
 	}
 	taddr, ok := raddr.(*net.TCPAddr)
@@ -72,7 +72,7 @@ func (e *proxyProtocolDecoder) checkAllowed(raddr net.Addr) bool {
 		return false
 	}
 	cip := taddr.IP
-	for _, ipnet := range e.allowedNets {
+	for _, ipnet := range d.allowedNets {
 		if ipnet.Contains(cip) {
 			return true
 		}
@@ -80,53 +80,54 @@ func (e *proxyProtocolDecoder) checkAllowed(raddr net.Addr) bool {
 	return false
 }
 
-func (e *proxyProtocolDecoder) readClientAddrBehindProxy(conn net.Conn) net.Addr {
+func (d *proxyProtocolDecoder) readClientAddrBehindProxy(conn net.Conn) (net.Addr, error) {
 	connRemoteAddr := conn.RemoteAddr()
-	allowed := e.checkAllowed(connRemoteAddr)
+	allowed := d.checkAllowed(connRemoteAddr)
 	if !allowed {
-		return connRemoteAddr
+		return nil, errProxyProtocolClientAddressIsNotAllowed
 	}
-	raddr, err := e.parseHeaderV1(conn)
-	if err != nil {
-		log.Infof("%v", err)
-		return connRemoteAddr
-	}
-	return raddr
+	return d.parseHeaderV1(conn, connRemoteAddr)
 }
 
-func (e *proxyProtocolDecoder) parseHeaderV1(conn io.Reader) (net.Addr, error) {
-	buffer, err := e.readHeaderV1(conn)
+func (d *proxyProtocolDecoder) parseHeaderV1(conn io.Reader, connRemoteAddr net.Addr) (net.Addr, error) {
+	buffer, err := d.readHeaderV1(conn)
 	if err != nil {
 		return nil, err
 	}
-	raddr, err := e.extractClientIPV1(buffer)
+	raddr, err := d.extractClientIPV1(buffer, connRemoteAddr)
 	if err != nil {
 		return nil, err
 	}
 	return raddr, nil
 }
 
-func (e *proxyProtocolDecoder) extractClientIPV1(buffer []byte) (net.Addr, error) {
+func (d *proxyProtocolDecoder) extractClientIPV1(buffer []byte, connRemoteAddr net.Addr) (net.Addr, error) {
 	header := string(buffer)
 	parts := strings.Split(header, " ")
-	if len(parts) < 5 {
-		return nil, errProxyProtocolV1HeaderNotValid
+	if len(parts) != 6 {
+		if len(parts) > 1 && parts[1] == "UNKNOWN\r\n" {
+			return connRemoteAddr, nil
+		}
+		return nil, errProxyProtocolV1HeaderInvalid
 	}
 	clientIPStr := parts[2]
 	clientPortStr := parts[4]
 	iptype := parts[1]
-	addrStr := fmt.Sprintf("%s:%s", clientIPStr, clientPortStr)
 	switch iptype {
 	case "TCP4":
+		addrStr := fmt.Sprintf("%s:%s", clientIPStr, clientPortStr)
 		return net.ResolveTCPAddr("tcp4", addrStr)
 	case "TCP6":
+		addrStr := fmt.Sprintf("[%s]:%s", clientIPStr, clientPortStr)
 		return net.ResolveTCPAddr("tcp6", addrStr)
+	case "UNKNOWN":
+		return connRemoteAddr, nil
 	default:
-		return net.ResolveTCPAddr("tcp", addrStr)
+		return nil, errProxyProtocolV1HeaderInvalid
 	}
 }
 
-func (e *proxyProtocolDecoder) readHeaderV1(conn io.Reader) ([]byte, error) {
+func (d *proxyProtocolDecoder) readHeaderV1(conn io.Reader) ([]byte, error) {
 	buf := make([]byte, proxyProtocolV1MaxHeaderLen)
 	var pre, cur byte
 	var i int
@@ -141,18 +142,21 @@ func (e *proxyProtocolDecoder) readHeaderV1(conn io.Reader) ([]byte, error) {
 		} else {
 			pre = buf[i]
 			if buf[i] != 0x50 {
-				return nil, errProxyProtocolV1HeaderNotValid
+				return nil, errProxyProtocolV1HeaderInvalid
 			}
 		}
 		if i == 5 {
 			if string(buf[0:5]) != "PROXY" {
-				return nil, errProxyProtocolV1HeaderNotValid
+				return nil, errProxyProtocolV1HeaderInvalid
 			}
 		}
 		// We got \r\n so finished here
 		if pre == 13 && cur == 10 {
 			break
 		}
+	}
+	if pre != 13 && cur != 10 {
+		return nil, errProxyProtocolV1HeaderInvalid
 	}
 	return buf[0 : i+1], nil
 }
