@@ -393,13 +393,13 @@ func (b *builtinRightSig) evalString(row []types.Datum) (d string, isNull bool, 
 	}
 	r := int(right)
 	runes := []rune(d)
-	numRunes := len(runes)
+	length := len(runes)
 	if r < 0 {
 		r = 0
-	} else if r > numRunes {
-		r = numRunes
+	} else if r > length {
+		r = length
 	}
-	return string(runes[numRunes-r:]), false, nil
+	return string(runes[length-r:]), false, nil
 }
 
 type repeatFunctionClass struct {
@@ -792,14 +792,14 @@ func (b *builtinSubstring2ArgsSig) evalString(row []types.Datum) (d string, isNu
 		return d, isNull, errors.Trace(err)
 	}
 	runes := []rune(str)
-	numRunes := int64(len(runes))
+	length := int64(len(runes))
 	if pos < 0 {
-		pos += numRunes
+		pos += length
 	} else {
 		pos--
 	}
-	if pos > numRunes || pos < 0 {
-		pos = numRunes
+	if pos > length || pos < 0 {
+		pos = length
 	}
 	return string(runes[pos:]), false, nil
 }
@@ -825,19 +825,19 @@ func (b *builtinSubstring3ArgsSig) evalString(row []types.Datum) (d string, isNu
 		return d, isNull, errors.Trace(err)
 	}
 	runes := []rune(str)
-	numRunes := int64(len(runes))
+	length := int64(len(runes))
 	if pos < 0 {
-		pos += numRunes
+		pos += length
 	} else {
 		pos--
 	}
-	if pos > numRunes || pos < 0 {
-		pos = numRunes
+	if pos > length || pos < 0 {
+		pos = length
 	}
 	end := pos + length
 	if end < pos {
 		return "", false, nil
-	} else if end < numRunes {
+	} else if end < length {
 		return string(runes[pos:end]), false, nil
 	}
 	return string(runes[pos:]), false, nil
