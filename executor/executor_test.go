@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
-	"strings"
 )
 
 func TestT(t *testing.T) {
