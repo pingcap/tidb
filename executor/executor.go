@@ -263,7 +263,8 @@ func (e *SelectLockExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	if len(row.RowKeys) != 0 && e.Lock == ast.SelectLockForUpdate {
-		e.ctx.GetSessionVars().TxnCtx.ForUpdate = true
+		txnCtx := e.ctx.GetSessionVars().TxnCtx
+		txnCtx.ForUpdate = true
 		txn := e.ctx.Txn()
 		for _, k := range row.RowKeys {
 			lockKey := tablecodec.EncodeRowKeyWithHandle(k.Tbl.Meta().ID, k.Handle)
@@ -271,6 +272,8 @@ func (e *SelectLockExec) Next() (*Row, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			// This operation is only for schema validator check.
+			txnCtx.UpdateDeltaForTable(k.Tbl.Meta().ID, 0, 0)
 		}
 	}
 	return row, nil

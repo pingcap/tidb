@@ -395,7 +395,8 @@ func newStore(c *C, dbPath string) kv.Storage {
 
 func newStoreWithBootstrap(c *C, dbPath string) kv.Storage {
 	store := newStore(c, dbPath)
-	BootstrapSession(store)
+	_, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
 	return store
 }
 
