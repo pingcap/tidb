@@ -69,6 +69,8 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	currVer := reload(validator, leaseGrantCh, 0)
 	valid = validator.Check(ts, item.schemaVer)
 	c.Assert(valid, IsFalse)
+	// Check the latest schema version must changed.
+	c.Assert(item.schemaVer, Less, validator.Latest())
 
 	// Update current schema version to 10 and the delta table IDs is 1, 2, 3.
 	validator.Update(ts, currVer, 10, []int64{1, 2, 3})
@@ -89,9 +91,6 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	isTablesChanged, err = validator.IsRelatedTablesChanged(ts, currVer, nil)
 	c.Assert(terror.ErrorEqual(err, ErrInfoSchemaExpired), IsTrue)
 	c.Assert(isTablesChanged, IsFalse)
-
-	// Check the latest schema version must changed.
-	c.Assert(item.schemaVer, Less, validator.Latest())
 
 	exit <- struct{}{}
 }
