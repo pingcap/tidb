@@ -21,6 +21,8 @@ import (
 var (
 	// ErrDataTooLong is returned when converts a string value that is longer than field type length.
 	ErrDataTooLong = terror.ClassTypes.New(codeDataTooLong, "Data Too Long")
+	// ErrIllegalValueForType is returned when value of type is illegal.
+	ErrIllegalValueForType = terror.ClassTypes.New(codeIllegalValueForType, mysql.MySQLErrName[mysql.ErrIllegalValueForType])
 	// ErrTruncated is returned when data has been truncated during conversion.
 	ErrTruncated = terror.ClassTypes.New(codeTruncated, "Data Truncated")
 	// ErrTruncatedWrongVal is returned when data has been truncated during conversion.
@@ -49,6 +51,7 @@ const (
 	codeBadNumber terror.ErrCode = 1
 
 	codeDataTooLong         terror.ErrCode = terror.ErrCode(mysql.ErrDataTooLong)
+	codeIllegalValueForType terror.ErrCode = terror.ErrCode(mysql.ErrIllegalValueForType)
 	codeTruncated           terror.ErrCode = terror.ErrCode(mysql.WarnDataTruncated)
 	codeOverflow            terror.ErrCode = terror.ErrCode(mysql.ErrDataOutOfRange)
 	codeDivByZero           terror.ErrCode = terror.ErrCode(mysql.ErrDivisionByZero)
@@ -70,6 +73,7 @@ var (
 func init() {
 	typesMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeDataTooLong:         mysql.ErrDataTooLong,
+		codeIllegalValueForType: mysql.ErrIllegalValueForType,
 		codeTruncated:           mysql.WarnDataTruncated,
 		codeOverflow:            mysql.ErrDataOutOfRange,
 		codeDivByZero:           mysql.ErrDivisionByZero,
