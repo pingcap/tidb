@@ -2476,6 +2476,29 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 	}
 }
 
+// This tests https://github.com/pingcap/tidb/issues/4024
+func (s *testSuite) TestIssue4024(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("update t, test2.t set test2.t.a=2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
+	tk.MustExec("update test.t, test2.t set test.t.a=3")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
+	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
+}
+
 type checkRequestClient struct {
 	tikv.Client
 	priority pb.CommandPri
