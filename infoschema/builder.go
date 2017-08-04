@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/juju/errors"
@@ -42,7 +43,9 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
-		return ErrDatabaseNotExists
+		return ErrDatabaseNotExists.GenByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
 	}
 	var oldTableID, newTableID int64
 	switch diff.Type {
@@ -69,7 +72,9 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		if diff.Type == model.ActionRenameTable {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
-				return ErrDatabaseNotExists
+				return ErrDatabaseNotExists.GenByArgs(
+					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
+				)
 			}
 			b.applyDropTable(oldRoDBInfo, oldTableID)
 		} else {
@@ -112,7 +117,9 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 	if di == nil {
 		// When we apply an old schema diff, the database may has been dropped already, so we need to fall back to
 		// full load.
-		return ErrDatabaseNotExists
+		return ErrDatabaseNotExists.GenByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
 	}
 	b.is.schemaMap[di.Name.L] = &schemaTables{dbInfo: di, tables: make(map[string]table.Table)}
 	return nil
@@ -137,7 +144,10 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 	if tblInfo == nil {
 		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
 		// full load.
-		return ErrTableNotExists
+		return ErrTableNotExists.GenByArgs(
+			fmt.Sprintf("(Schema ID %d)", roDBInfo.ID),
+			fmt.Sprintf("(Table ID %d)", tableID),
+		)
 	}
 	if alloc == nil {
 		schemaID := roDBInfo.ID

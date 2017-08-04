@@ -575,7 +575,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			fk.OnDelete = int(constr.Refer.OnDelete.ReferOpt)
 			fk.OnUpdate = int(constr.Refer.OnUpdate.ReferOpt)
 			if len(fk.Cols) != len(fk.RefCols) {
-				return nil, infoschema.ErrForeignKeyNotMatch
+				return nil, infoschema.ErrForeignKeyNotMatch.GenByArgs(tbInfo.Name.O)
 			}
 			if len(fk.Cols) == 0 {
 				// TODO: In MySQL, this case will report a parse error.
@@ -868,7 +868,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
 
 	// Check whether added column has existed.
@@ -942,7 +942,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	}
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
 
 	// Check whether dropped column has existed.
@@ -1126,7 +1126,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	}
 	t, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return nil, errors.Trace(infoschema.ErrTableNotExists)
+		return nil, errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
 	}
 
 	col := table.FindCol(t.Cols(), originalColName.L)
@@ -1295,7 +1295,7 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return infoschema.ErrTableNotExists.GenByArgs(ti)
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
 
 	job := &model.Job{
@@ -1318,7 +1318,7 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 	}
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
 	newTableID, err := d.genGlobalID()
 	if err != nil {
@@ -1390,7 +1390,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	}
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
 
 	// Deal with anonymous index.
@@ -1446,7 +1446,7 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
 
 	fkInfo, err := buildFKInfo(fkName, keys, refer)
@@ -1477,7 +1477,7 @@ func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIS
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
 
 	job := &model.Job{
@@ -1501,7 +1501,7 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 	}
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists)
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
 
 	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
