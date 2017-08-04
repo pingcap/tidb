@@ -649,13 +649,15 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-	for _, idx := range indices {
-		idxTask, err := p.convertToIndexScan(prop, idx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if idxTask.cost() < t.cost() {
-			t = idxTask
+	if !includeTableScan || len(p.pushedDownConds) > 0 || len(prop.cols) > 0 {
+		for _, idx := range indices {
+			idxTask, err := p.convertToIndexScan(prop, idx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if idxTask.cost() < t.cost() {
+				t = idxTask
+			}
 		}
 	}
 	return t, p.storeTask(prop, t)
