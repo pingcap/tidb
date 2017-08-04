@@ -65,10 +65,6 @@ type HashJoinExec struct {
 
 	// Channels for output.
 	resultCh chan *execResult
-
-	// rowKeyCache is used to store the table and table name from a row.
-	// Because every row has the same table name and table, we can use a single row key cache.
-	rowKeyCache []*RowKeyEntry
 }
 
 // hashJoinCtx holds the variables needed to do a hash join in one of many concurrent goroutines.
@@ -113,11 +109,8 @@ func (e *HashJoinExec) Open() error {
 // makeJoinRow simply creates a new row that appends row b to row a.
 func makeJoinRow(a *Row, b *Row) *Row {
 	ret := &Row{
-		RowKeys: make([]*RowKeyEntry, 0, len(a.RowKeys)+len(b.RowKeys)),
-		Data:    make([]types.Datum, 0, len(a.Data)+len(b.Data)),
+		Data: make([]types.Datum, 0, len(a.Data)+len(b.Data)),
 	}
-	ret.RowKeys = append(ret.RowKeys, a.RowKeys...)
-	ret.RowKeys = append(ret.RowKeys, b.RowKeys...)
 	ret.Data = append(ret.Data, a.Data...)
 	ret.Data = append(ret.Data, b.Data...)
 	return ret
@@ -264,20 +257,6 @@ func (e *HashJoinExec) prepare() error {
 }
 
 func (e *HashJoinExec) encodeRow(b []byte, row *Row) ([]byte, error) {
-	numRowKeys := int64(len(row.RowKeys))
-	b = codec.EncodeVarint(b, numRowKeys)
-	for _, rowKey := range row.RowKeys {
-		b = codec.EncodeVarint(b, rowKey.Handle)
-	}
-	if numRowKeys > 0 && e.rowKeyCache == nil {
-		e.rowKeyCache = make([]*RowKeyEntry, len(row.RowKeys))
-		for i := 0; i < len(row.RowKeys); i++ {
-			rk := new(RowKeyEntry)
-			rk.Tbl = row.RowKeys[i].Tbl
-			rk.TableName = row.RowKeys[i].TableName
-			e.rowKeyCache[i] = rk
-		}
-	}
 	loc := e.ctx.GetSessionVars().GetTimeZone()
 	for _, datum := range row.Data {
 		tmp, err := tablecodec.EncodeValue(datum, loc)
@@ -291,22 +270,8 @@ func (e *HashJoinExec) encodeRow(b []byte, row *Row) ([]byte, error) {
 
 func (e *HashJoinExec) decodeRow(data []byte) (*Row, error) {
 	row := new(Row)
-	data, entryLen, err := codec.DecodeVarint(data)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for i := 0; i < int(entryLen); i++ {
-		entry := new(RowKeyEntry)
-		data, entry.Handle, err = codec.DecodeVarint(data)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		entry.Tbl = e.rowKeyCache[i].Tbl
-		entry.TableName = e.rowKeyCache[i].TableName
-		row.RowKeys = append(row.RowKeys, entry)
-	}
 	values := make([]types.Datum, e.smallExec.Schema().Len())
-	err = codec.SetRawValues(data, values)
+	err := codec.SetRawValues(data, values)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
