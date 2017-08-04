@@ -146,7 +146,7 @@ func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
 		lCnt = 1
 	}
 	cst := lCnt * netWorkFactor
-	batchSize := p.ctx.GetSessionVars().IndexLookupSize
+	batchSize := p.ctx.GetSessionVars().IndexJoinBatchSize
 	if p.KeepOrder {
 		batchSize = 1
 	}
