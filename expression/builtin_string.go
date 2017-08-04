@@ -1431,79 +1431,30 @@ type charFunctionClass struct {
 }
 
 func (c *charFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinCharSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := make([]evalTp, 0, len(args))
+	for i := 0; i < len(args)-1; i++ {
+		argTps = append(argTps, tpInt)
+	}
+	argTps = append(argTps, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = mysql.MaxBlobWidth
+	types.SetBinChsClnFlag(bf.tp)
+
+	sig := &builtinCharSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinCharSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinCharSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
-func (b *builtinCharSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// The kinds of args are int or string, and the last one represents charset.
-	var resultStr string
-	var intSlice = make([]int64, 0, len(args)-1)
-
-	for _, datum := range args[:len(args)-1] {
-		switch datum.Kind() {
-		case types.KindNull:
-			continue
-		case types.KindString:
-			i, err := datum.ToInt64(b.ctx.GetSessionVars().StmtCtx)
-			if err != nil {
-				d.SetString(resultStr)
-				return d, nil
-			}
-			intSlice = append(intSlice, i)
-		case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-			x, err := datum.Cast(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			intSlice = append(intSlice, x.GetInt64())
-		default:
-			return d, errors.Errorf("Char invalid args, need int or string but get %T", args[0].GetValue())
-		}
-	}
-
-	resultStr = string(convertInt64ToBytes(intSlice))
-
-	// The last argument represents the charset name after "using".
-	// If it is nil, the default charset utf8 is used.
-	argCharset := args[len(args)-1]
-	if !argCharset.IsNull() {
-		char, err := argCharset.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-		if strings.ToLower(char) == "ascii" || strings.HasPrefix(strings.ToLower(char), "utf8") {
-			d.SetString(resultStr)
-			return d, nil
-		}
-
-		encoding, _ := charset.Lookup(char)
-		if encoding == nil {
-			return d, errors.Errorf("unknown encoding: %s", char)
-		}
-
-		resultStr, _, err = transform.String(encoding.NewDecoder(), resultStr)
-		if err != nil {
-			log.Errorf("Convert %s to %s with error: %v", resultStr, char, err)
-			return d, errors.Trace(err)
-		}
-	}
-	d.SetString(resultStr)
-	return d, nil
-}
-
-func convertInt64ToBytes(ints []int64) []byte {
+func (b *builtinCharSig) convertInt64ToBytes(ints []int64) []byte {
 	var buf bytes.Buffer
 	for i := len(ints) - 1; i >= 0; i-- {
 		var count int
@@ -1520,6 +1471,53 @@ func convertInt64ToBytes(ints []int64) []byte {
 	s := buf.Bytes()
 	reverseByteSlice(s)
 	return s
+}
+
+// evalString evals a builtinCharSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
+func (b *builtinCharSig) evalString(row []types.Datum) (string, bool, error) {
+	intSlice := make([]int64, 0, len(b.args)-1)
+
+	for i, arg := range b.args {
+		if i+1 == len(b.args) {
+			break
+		}
+		val, IsNull, err := arg.EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+		if IsNull {
+			continue
+		}
+		if err != nil {
+			return "", true, errors.Trace(err)
+		}
+		intSlice = append(intSlice, val)
+	}
+
+	resultStr := string(b.convertInt64ToBytes(intSlice))
+
+	// The last argument represents the charset name after "using".
+	// If it is nil, the default charset utf8 is used.
+	argCharset, IsNull, err := b.args[len(b.args)-1].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if IsNull || err != nil {
+		return resultStr, false, errors.Trace(err)
+	}
+
+	if IsNull || err != nil ||
+		strings.ToLower(argCharset) == "ascii" ||
+		strings.HasPrefix(strings.ToLower(argCharset), "utf8") {
+		return resultStr, false, errors.Trace(err)
+	}
+
+	encoding, _ := charset.Lookup(argCharset)
+	if encoding == nil {
+		return "", true, errors.Errorf("unknown encoding: %s", argCharset)
+	}
+
+	resultStr, _, err = transform.String(encoding.NewDecoder(), resultStr)
+	if err != nil {
+		log.Errorf("Convert %s to %s with error: %v", resultStr, argCharset, err)
+		return "", true, errors.Trace(err)
+	}
+	return resultStr, false, nil
 }
 
 func reverseByteSlice(slice []byte) {
