@@ -87,6 +87,14 @@ const (
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
+//
+// The following cases will need store the handle information:
+//
+// If the top plan is update or delete, then every executor will need the handle.
+// If there is an union scan, then the below scan plan must store the handle.
+// If there is sort need in the double read, then the table scan of the double read must store the handle.
+// If there is a select for update. then we need to store the handle until the lock plan. But if there is aggregation, the handle info can be removed.
+// Otherwise the executor's returned rows don't need to store the handle information.
 type Row struct {
 	// Data is the output record data for current Plan.
 	Data []types.Datum
