@@ -667,7 +667,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		DBName:              p.DBName,
 		Columns:             p.Columns,
 		Index:               idx,
-		dataSourceSchema:    p.schema.Clone(),
+		dataSourceSchema:    p.schema,
 		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle || p.unionScanSchema != nil},
 	}.init(p.allocator, p.ctx)
 	statsTbl := p.statisticTable
@@ -834,7 +834,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle || p.unionScanSchema != nil},
 	}.init(p.allocator, p.ctx)
-	ts.SetSchema(p.schema.Clone())
+	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
 	ts.Ranges = ranger.FullIntRange()
 	var pkCol *expression.Column
