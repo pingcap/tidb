@@ -40,7 +40,7 @@ var (
 // numericContextResultType returns TypeClass for numeric function's parameters.
 // the returned TypeClass should be one of: ClassInt, ClassDecimal, ClassReal
 func numericContextResultType(ft *types.FieldType) types.TypeClass {
-	if types.IsTemporalType(ft.Tp) {
+	if types.IsTypeTemporal(ft.Tp) {
 		if ft.Decimal > 0 {
 			return types.ClassDecimal
 		}
@@ -66,8 +66,6 @@ func (c *arithmeticPlusFunctionClass) setFlenDecimal4Int(retTp, a, b *types.Fiel
 // setFlenDecimal4Real is called to set proper `Flen` and `Decimal` of return
 // type according to the two input parameter's types.
 func (c *arithmeticPlusFunctionClass) setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
-	retTp.Decimal = int(math.Max(float64(a.Decimal), float64(b.Decimal)))
-	retTp.Flen = types.UnspecifiedLength
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
 		retTp.Decimal = int(math.Max(float64(a.Decimal), float64(b.Decimal)))
 		if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {

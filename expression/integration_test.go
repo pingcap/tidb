@@ -916,7 +916,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestArithmeticBuiltin(c *C) {
+func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
