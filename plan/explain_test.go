@@ -67,9 +67,9 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select * from t1 order by c2",
 			[]string{
-				"IndexScan_13  cop table:t1, index:c2, range:[<nil>,+inf], out of order:false",
-				"TableScan_14  cop table:t1, keep order:false",
-				"IndexLookUp_15  root index:IndexScan_13, table:TableScan_14",
+				"IndexScan_10  cop table:t1, index:c2, range:[<nil>,+inf], out of order:false",
+				"TableScan_11  cop table:t1, keep order:false",
+				"IndexLookUp_12  root index:IndexScan_10, table:TableScan_11",
 			},
 		},
 		{
@@ -98,11 +98,10 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
 			[]string{
 				"TableScan_22  cop table:t1, range:[2,+inf), keep order:false",
-				"TableReader_23 IndexJoin_7 root data:TableScan_22",
-				"IndexScan_33  cop table:t2, index:c1, range:[<nil>,+inf], out of order:false",
-				"TableScan_34  cop table:t2, keep order:false",
-				"IndexLookUp_35 IndexJoin_7 root index:IndexScan_33, table:TableScan_34",
-				"IndexJoin_7  root outer:TableReader_23, outer key:test.t1.c2, inner key:test.t2.c1",
+				"TableReader_23 HashLeftJoin_8 root data:TableScan_22",
+				"TableScan_37  cop table:t2, range:(-inf,+inf), keep order:false",
+				"TableReader_38 HashLeftJoin_8 root data:TableScan_37",
+				"HashLeftJoin_8  root left outer join, small:TableReader_38, equal:[eq(test.t1.c2, test.t2.c1)]",
 			},
 		},
 		{
@@ -125,13 +124,13 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
 			[]string{
+				"TableScan_25  cop table:a, range:(-inf,+inf), keep order:false",
+				"TableReader_26 HashLeftJoin_10 root data:TableScan_25",
 				"TableScan_17 HashAgg_16 cop table:b, range:(-inf,+inf), keep order:false",
 				"HashAgg_16  cop type:complete, group by:b.c2, funcs:count(b.c2), firstrow(b.c2)",
-				"TableReader_21 HashAgg_20 root data:HashAgg_16",
-				"HashAgg_20 IndexJoin_9 root type:final, group by:, funcs:count(col_0), firstrow(col_1)",
-				"TableScan_12  cop table:a, range:(-inf,+inf), keep order:true",
-				"TableReader_31 IndexJoin_9 root data:TableScan_12",
-				"IndexJoin_9 Projection_8 root outer:TableReader_31, outer key:b.c2, inner key:a.c1",
+				"TableReader_19 HashAgg_18 root data:HashAgg_16",
+				"HashAgg_18 HashLeftJoin_10 root type:final, group by:, funcs:count(col_0), firstrow(col_1)",
+				"HashLeftJoin_10 Projection_8 root inner join, small:HashAgg_18, equal:[eq(a.c1, b.c2)]",
 				"Projection_8  root cast(join_agg_0)",
 			},
 		},
@@ -140,7 +139,7 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			[]string{
 				"TableScan_7 TopN_5 cop table:t2, range:(-inf,+inf), keep order:false",
 				"TopN_5  cop ",
-				"TableReader_10 TopN_5 root data:TopN_5",
+				"TableReader_8 TopN_5 root data:TopN_5",
 				"TopN_5  root ",
 			},
 		},
@@ -165,17 +164,17 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
 			[]string{
-				"TableScan_11 HashAgg_10 cop table:t1, range:(-inf,+inf), keep order:false",
-				"HashAgg_10  cop type:complete, funcs:sum(in(test.t1.c1, 1, 2))",
-				"TableReader_14 HashAgg_13 root data:HashAgg_10",
-				"HashAgg_13  root type:final, funcs:sum(col_0)",
+				"TableScan_9 HashAgg_8 cop table:t1, range:(-inf,+inf), keep order:false",
+				"HashAgg_8  cop type:complete, funcs:sum(in(test.t1.c1, 1, 2))",
+				"TableReader_11 HashAgg_10 root data:HashAgg_8",
+				"HashAgg_10  root type:final, funcs:sum(col_0)",
 			},
 		},
 		{
 			"select c1 from t1 where c1 in (select c2 from t2)",
 			[]string{
-				"TableScan_11  cop table:t1, range:[0,0], [1,1], keep order:false",
-				"TableReader_12  root data:TableScan_11",
+				"TableScan_8  cop table:t1, range:[0,0], [1,1], keep order:false",
+				"TableReader_9  root data:TableScan_8",
 			},
 		},
 		{
@@ -183,10 +182,10 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			[]string{
 				"TableScan_13  cop table:t1, range:(-inf,+inf), keep order:false",
 				"TableReader_14 Apply_12 root data:TableScan_13",
-				"TableScan_18  cop table:s, range:(-inf,+inf), keep order:false",
-				"TableReader_19 Selection_4 root data:TableScan_18",
-				"Selection_4 HashAgg_17 root eq(s.c1, test.t1.c1)",
-				"HashAgg_17 Selection_10 root type:complete, funcs:count(1)",
+				"TableScan_16  cop table:s, range:(-inf,+inf), keep order:false",
+				"TableReader_17 Selection_4 root data:TableScan_16",
+				"Selection_4 HashAgg_15 root eq(s.c1, test.t1.c1)",
+				"HashAgg_15 Selection_10 root type:complete, funcs:count(1)",
 				"Selection_10 Apply_12 root ne(k, 0)",
 				"Apply_12 Projection_2 root left outer join, small:Selection_10, right:Selection_10",
 				"Projection_2  root k",
@@ -203,11 +202,11 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			[]string{
 				"TableScan_14  cop table:t1, range:(-inf,+inf), keep order:false",
 				"TableReader_15 Apply_13 root data:TableScan_14",
-				"IndexScan_28  cop table:t2, index:c1, range:[<nil>,+inf], out of order:false",
-				"TableScan_29  cop table:t2, keep order:false",
-				"IndexLookUp_30 Selection_4 root index:IndexScan_28, table:TableScan_29",
-				"Selection_4 Limit_18 root eq(test.t1.c1, test.t2.c1)",
-				"Limit_18 MaxOneRow_9 root offset:0, count:1",
+				"IndexScan_23  cop table:t2, index:c1, range:[<nil>,+inf], out of order:false",
+				"TableScan_24  cop table:t2, keep order:false",
+				"IndexLookUp_25 Selection_4 root index:IndexScan_23, table:TableScan_24",
+				"Selection_4 Limit_16 root eq(test.t1.c1, test.t2.c1)",
+				"Limit_16 MaxOneRow_9 root offset:0, count:1",
 				"MaxOneRow_9 Apply_13 root ",
 				"Apply_13 Projection_2 root left outer join, small:MaxOneRow_9, right:MaxOneRow_9",
 				"Projection_2  root eq(test.t1.c2, test.t2.c2)",
