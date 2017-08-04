@@ -2376,6 +2376,18 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	tk2.MustExec("commit")
 
 	tk1.MustExec("commit")
+
+	// conflict
+	tk1.MustExec("begin")
+	tk1.MustQuery("select * from (select * from t for update) t join t1 for update")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t1 set c1 = 13")
+	tk2.MustExec("commit")
+
+	_, err = tk1.Exec("commit")
+	c.Assert(err, NotNil)
+
 }
 
 func (s *testSuite) TestFuncREPEAT(c *C) {
