@@ -18,6 +18,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/bmatsuo/lmdb-go/lmdb"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/util/testleak"
@@ -78,6 +79,70 @@ func (s *testSuite) TestGetSet(c *C) {
 	v, err = db.Get([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("2"))
+}
+
+func (s *testSuite) TestPutNilAndDelete(c *C) {
+	defer testleak.AfterTest(c)()
+	d := s.db
+	rawDB := d.(*db)
+	b := s.db.NewBatch()
+	b.Put([]byte("aa"), nil)
+	err := d.Commit(b)
+	c.Assert(err, IsNil)
+
+	v, err := d.Get([]byte("aa"))
+	c.Assert(err, IsNil)
+	c.Assert(len(v), Equals, 0)
+
+	found := false
+	rawDB.env.View(func(txn *lmdb.Txn) error {
+		txn.RawRead = true
+		cur, err := txn.OpenCursor(rawDB.dbi)
+		if err != nil {
+			return nil
+		}
+		for {
+			k, _, err := cur.Get(nil, nil, lmdb.Next)
+			if lmdb.IsNotFound(err) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if string(k) == "aa" {
+				found = true
+			}
+		}
+	})
+	c.Assert(found, Equals, true)
+
+	// real delete
+	b = s.db.NewBatch()
+	b.Delete([]byte("aa"))
+	err = d.Commit(b)
+	c.Assert(err, IsNil)
+
+	found = false
+	rawDB.env.View(func(txn *lmdb.Txn) error {
+		txn.RawRead = true
+		cur, err := txn.OpenCursor(rawDB.dbi)
+		if err != nil {
+			return nil
+		}
+		for {
+			k, _, err := cur.Get(nil, nil, lmdb.Next)
+			if lmdb.IsNotFound(err) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if string(k) == "aa" {
+				found = true
+			}
+		}
+	})
+	c.Assert(found, Equals, false)
 }
 
 func (s *testSuite) TestSeek(c *C) {
