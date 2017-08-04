@@ -31,31 +31,37 @@ type Builder struct {
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
-func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
+// Return the detal updated table IDs that are produced from SchemaDiff and an error.
+func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
 	if diff.Type == model.ActionCreateSchema {
-		return b.applyCreateSchema(m, diff)
+		return nil, b.applyCreateSchema(m, diff)
 	} else if diff.Type == model.ActionDropSchema {
-		b.applyDropSchema(diff.SchemaID)
-		return nil
+		tblIDs := b.applyDropSchema(diff.SchemaID)
+		return tblIDs, nil
 	}
 
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
-		return ErrDatabaseNotExists
+		return nil, ErrDatabaseNotExists
 	}
 	var oldTableID, newTableID int64
+	tblIDs := make([]int64, 0, 2)
 	switch diff.Type {
 	case model.ActionCreateTable:
 		newTableID = diff.TableID
+		tblIDs = append(tblIDs, newTableID)
 	case model.ActionDropTable:
 		oldTableID = diff.TableID
+		tblIDs = append(tblIDs, oldTableID)
 	case model.ActionTruncateTable:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
+		tblIDs = append(tblIDs, oldTableID, newTableID)
 	default:
 		oldTableID = diff.TableID
 		newTableID = diff.TableID
+		tblIDs = append(tblIDs, oldTableID)
 	}
 	b.copySchemaTables(roDBInfo.Name.L)
 	b.copySortedTables(oldTableID, newTableID)
@@ -69,7 +75,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		if diff.Type == model.ActionRenameTable {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
-				return ErrDatabaseNotExists
+				return nil, ErrDatabaseNotExists
 			}
 			b.applyDropTable(oldRoDBInfo, oldTableID)
 		} else {
@@ -80,10 +86,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		// All types except DropTable.
 		err := b.applyCreateTable(m, roDBInfo, newTableID, alloc)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 	}
-	return nil
+	return tblIDs, nil
 }
 
 // copySortedTables copies sortedTables for old table and new table for later modification.
@@ -118,15 +124,19 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 	return nil
 }
 
-func (b *Builder) applyDropSchema(schemaID int64) {
+func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	di, ok := b.is.SchemaByID(schemaID)
 	if !ok {
-		return
+		return nil
 	}
 	delete(b.is.schemaMap, di.Name.L)
+	ids := make([]int64, 0, len(di.Tables))
 	for _, tbl := range di.Tables {
 		b.applyDropTable(di, tbl.ID)
+		// TODO: If the table ID doesn't exist.
+		ids = append(ids, tbl.ID)
 	}
+	return ids
 }
 
 func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID int64, alloc autoid.Allocator) error {

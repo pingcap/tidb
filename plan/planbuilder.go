@@ -906,11 +906,12 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	setParents4FinalPlan(targetPlan.(PhysicalPlan))
 	p := &Explain{StmtPlan: targetPlan}
 	if UseDAGPlanBuilder(b.ctx) {
-		retFields := []string{"id", "parents", "task", "operator info"}
+		retFields := []string{"id", "parents", "children", "task", "operator info"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		for _, fieldName := range retFields {
 			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
 		}
+		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
 		p.SetSchema(schema)
 		p.explainedPlans = map[string]bool{}
 		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))

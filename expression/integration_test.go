@@ -402,6 +402,8 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("  <nil> <nil>"))
 	result = tk.MustQuery(`select left("abc", "a"), left("abc", 1.9), left("abc", 1.2)`)
 	result.Check(testkit.Rows(" ab a"))
+	result = tk.MustQuery(`select left("中文abc", 2), left("中文abc", 3), left("中文abc", 4)`)
+	result.Check(testkit.Rows("中文 中文a 中文ab"))
 	// for right, reuse the table created for left
 	result = tk.MustQuery("select right(a, 3), right(b, 3), right(c, 3), right(d, 3), right(e, 3) from t")
 	result.Check(testkit.Rows("cde 234 .34 :01 :01"))
@@ -409,6 +411,8 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("  abcde <nil> <nil>"))
 	result = tk.MustQuery(`select right("abcde", "a"), right("abcde", 1.9), right("abcde", 1.2)`)
 	result.Check(testkit.Rows(" de e"))
+	result = tk.MustQuery(`select right("中文abc", 2), right("中文abc", 4), right("中文abc", 5)`)
+	result.Check(testkit.Rows("bc 文abc 中文abc"))
 
 	// for ord
 	tk.MustExec("drop table if exists t")
@@ -453,6 +457,8 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("barbar ki"))
 	result = tk.MustQuery(`select substr(null, 2, 3), substr('foo', null, 3), substr('foo', 2, null)`)
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery(`select substr('中文abc', 2), substr('中文abc', 3), substr("中文abc", 1, 2)`)
+	result.Check(testkit.Rows("文abc abc 中文"))
 
 	// for bit_length
 	tk.MustExec("drop table if exists t")
