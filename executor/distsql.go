@@ -55,10 +55,10 @@ func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *mod
 	return &Row{Data: data, RowKeys: []*RowKeyEntry{entry}}
 }
 
-// calculateGeneratedColumns calculates all virtual generated columns, with such arguments:
+// evalGeneratedColumns calculates all virtual generated columns, with such arguments:
 //  cols is the collection of columns of vs;
 //  gvs's keys are index in cols, and the values are generation expressions.
-func calculateGeneratedColumns(cols []*model.ColumnInfo, gvs map[int]expression.Expression, vs []types.Datum) error {
+func evalGeneratedColumns(cols []*model.ColumnInfo, gvs map[int]expression.Expression, vs []types.Datum) error {
 	for i, col := range cols {
 		if !col.GeneratedStored && len(col.GeneratedExprString) != 0 {
 			val, err := gvs[col.Offset].Eval(vs)
@@ -811,7 +811,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 			return nil, errors.Trace(err)
 		}
 		// Calculate generated columns here.
-		if err := calculateGeneratedColumns(e.columns, e.genValues, values); err != nil {
+		if err := evalGeneratedColumns(e.columns, e.genValues, values); err != nil {
 			return nil, errors.Trace(err)
 		}
 		row := resultRowToRow(t, h, values, e.asName)
@@ -1015,7 +1015,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			return &Row{Data: values}, nil
 		}
 		// Calculate generated columns here.
-		if err := calculateGeneratedColumns(e.Columns, e.genValues, values); err != nil {
+		if err := evalGeneratedColumns(e.Columns, e.genValues, values); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return resultRowToRow(e.table, h, values, e.asName), nil

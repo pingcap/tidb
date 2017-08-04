@@ -1167,7 +1167,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	p.SetSchema(schema)
 
-	// for calculate generated column
+	// for calculating generated column
 	sc := b.ctx.GetSessionVars().StmtCtx
 	p.GenValues = make(map[int]expression.Expression)
 	for _, col := range schema.Columns {
@@ -1351,11 +1351,11 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			b.err = errors.Trace(err)
 			return nil, nil
 		}
-		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
+		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName.L)
 		modifyColumns[columnFullName] = struct{}{}
 	}
 
-	// If columnes in set list contains generated columns, raise error.
+	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
 	tableAsName := make(map[*model.TableInfo][]model.CIStr)
@@ -1382,7 +1382,9 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				return nil, nil
 			}
 			if asNames, ok := tableAsName[tableInfo]; ok {
-				// Because "UPDATE t m t n SET m.a = m.a+10, n.a = n.a+10" will set a to a+10.
+				// NOTE: "UPDATE t m, t n SET m.a=m.a+10, n.b=n.b+10" won't set both t.a=t.a+10 and t.b=t.b+10.
+				// But "UPDATE t m, t SET m.a=m.a+10, m.b=m.b+10" can do that.
+				// So here, we change generated columns in all alias in order to ensure we can do it correctly.
 				for _, asName := range asNames {
 					virtualAssignments = append(virtualAssignments, &ast.Assignment{
 						Column: &ast.ColumnName{Table: asName, Name: colInfo.Name},
@@ -1435,7 +1437,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	return newList, p
 }
 
-// extractTableAsNameForUpdate extracts tables' name alias for update.
+// extractTableAsNameForUpdate extracts tables' alias names for update.
 func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]model.CIStr) {
 	switch x := p.(type) {
 	case *Projection: // We can skip memory table.

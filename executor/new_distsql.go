@@ -116,7 +116,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if !e.aggregate {
-			if calculateGeneratedColumns(e.columns, e.genValues, values) != nil {
+			if evalGeneratedColumns(e.columns, e.genValues, values) != nil {
 				return nil, errors.Trace(err)
 			}
 		}

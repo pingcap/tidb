@@ -623,9 +623,9 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 	return nil, ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
 }
 
-// calculateGeneratedColumns calculates generated columns and stores result into an
-// InsertGeneratedColumns struct. onDups indicates which columns are in on-duplicate list.
-func (b *planBuilder) calculateGeneratedColumns(columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns) {
+// resolveGeneratedColumns resolves generated columns with their generation
+// expressions respectively. onDups indicates which columns are in on-duplicate list.
+func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for _, column := range columns {
 		if len(column.GeneratedExprString) == 0 {
@@ -845,7 +845,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 
 	// Calculate generated columns.
-	insertPlan.GenCols = b.calculateGeneratedColumns(insertPlan.Table.Cols(), onDupCols, mockTablePlan)
+	insertPlan.GenCols = b.resolveGeneratedColumns(insertPlan.Table.Cols(), onDupCols, mockTablePlan)
 	if b.err != nil {
 		return nil
 	}
@@ -871,7 +871,7 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 	schema := expression.TableInfo2Schema(tableInfo)
 	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 	mockTablePlan.SetSchema(schema)
-	p.GenCols = b.calculateGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
+	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
 	p.SetSchema(expression.NewSchema())
 	return p
 }
