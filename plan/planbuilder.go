@@ -113,14 +113,15 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
-	err          error
-	hasAgg       bool
-	obj          interface{}
-	allocator    *idAllocator
-	ctx          context.Context
-	is           infoschema.InfoSchema
-	outerSchemas []*expression.Schema
-	inUpdateStmt bool
+	err           error
+	hasAgg        bool
+	obj           interface{}
+	allocator     *idAllocator
+	ctx           context.Context
+	is            infoschema.InfoSchema
+	outerSchemas  []*expression.Schema
+	inUpdateStmt  bool
+	needColHandle int
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// Collect the visit information for privilege check.
