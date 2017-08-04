@@ -146,7 +146,7 @@ func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
 		lCnt = 1
 	}
 	cst := lCnt * netWorkFactor
-	batchSize := p.ctx.GetSessionVars().IndexLookupSize
+	batchSize := p.ctx.GetSessionVars().IndexJoinBatchSize
 	if p.KeepOrder {
 		batchSize = 1
 	}
@@ -166,7 +166,7 @@ func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
 	if smallTableCnt <= 1 {
 		smallTableCnt = 1
 	}
-	return (lCnt + rCnt) * (1 + math.Log2(smallTableCnt))
+	return (lCnt + rCnt) * (1 + math.Log2(smallTableCnt)/float64(p.Concurrency))
 }
 
 func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
