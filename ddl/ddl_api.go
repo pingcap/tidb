@@ -498,7 +498,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, fo
 		colName := constr.Keys[0].Column.Name.L
 		constrName := colName
 		i := 2
-		if strings.ToUpper(constrName) == mysql.PrimaryKeyName {
+		if strings.EqualFold(constrName, mysql.PrimaryKeyName) {
 			constrName = fmt.Sprintf("%s_%d", constrName, 2)
 			i = 3
 		}

@@ -381,7 +381,7 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 
 // checkIndexInfo checks index name and index column names.
 func checkIndexInfo(indexName string, indexColNames []*ast.IndexColName) error {
-	if strings.ToUpper(indexName) == mysql.PrimaryKeyName {
+	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return ddl.ErrWrongNameForIndex.GenByArgs(indexName)
 	}
 	return checkDuplicateColumnName(indexColNames)
