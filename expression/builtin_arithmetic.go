@@ -114,6 +114,9 @@ func (c *arithmeticPlusFunctionClass) getFunction(args []Expression, ctx context
 		}
 		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
+			c.setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
+			sig := &builtinArithmeticPlusIntUnsignedSig{baseIntBuiltinFunc{bf}}
+			return sig.setSelf(sig), nil
 		}
 		c.setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		sig := &builtinArithmeticPlusIntSig{baseIntBuiltinFunc{bf}}
