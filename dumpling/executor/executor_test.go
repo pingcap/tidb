@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/inspectkv"
@@ -1599,6 +1601,91 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("", ""))
 	tk.MustExec("insert into t values (null)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
+}
+
+func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// for uuid
+	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
+	for _, it := range r.Rows() {
+		for _, item := range it {
+			uuid, ok := item.(string)
+			c.Assert(ok, Equals, true)
+			list := strings.Split(uuid, "-")
+			c.Assert(len(list), Equals, 5)
+			c.Assert(len(list[0]), Equals, 8)
+			c.Assert(len(list[1]), Equals, 4)
+			c.Assert(len(list[2]), Equals, 4)
+			c.Assert(len(list[3]), Equals, 4)
+			c.Assert(len(list[4]), Equals, 12)
+		}
+	}
+}
+
+func (s *testSuite) TestSchemaCheckerSQL(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := tikv.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	tidb.SetStatsLease(0)
+	lease := 5 * time.Millisecond
+	tidb.SetSchemaLease(lease)
+	dom, err := tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+	defer store.Close()
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec(`use test`)
+	se1, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+	defer se1.Close()
+	_, err = se1.Execute(`use test`)
+	c.Assert(err, IsNil)
+
+	// create table
+	tk.MustExec(`create table t (id int, c int);`)
+	tk.MustExec(`create table t1 (id int, c int);`)
+	// insert data
+	tk.MustExec(`insert into t values(1, 1);`)
+
+	// The schema version is out of date in the first transaction, but the SQL can be retried.
+	tk.MustExec(`begin;`)
+	_, err = se1.Execute(`alter table t add index idx(c);`)
+	c.Assert(err, IsNil)
+	time.Sleep(lease * 2)
+	tk.MustExec(`insert into t1 values(2, 2);`)
+	tk.MustExec(`commit;`)
+	// The schema version is out of date in the first transaction, and the SQL can't be retried.
+	tidb.SchemaChangedWithoutRetry = true
+	tk.MustExec(`begin;`)
+	_, err = se1.Execute(`alter table t add index idx1(c);`)
+	c.Assert(err, IsNil)
+	time.Sleep(lease * 2)
+	tk.MustExec(`insert into t values(3, 3);`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
+	// The schema version is out of date in the first transaction, and the SQL can't be retried.
+	// But the transaction related table IDs aren't in the updated table IDs.
+	tk.MustExec(`begin;`)
+	_, err = se1.Execute(`alter table t add index idx2(c);`)
+	c.Assert(err, IsNil)
+	time.Sleep(lease * 2)
+	tk.MustExec(`insert into t1 values(4, 4);`)
+	tk.MustExec(`commit;`)
+	// Test for "select for update".
+	tk.MustExec(`begin;`)
+	_, err = se1.Execute(`alter table t add index idx3(c);`)
+	c.Assert(err, IsNil)
+	time.Sleep(lease * 2)
+	tk.MustQuery(`select * from t for update`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
 }
 
 type checkRequestClient struct {
