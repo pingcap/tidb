@@ -73,7 +73,7 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	c.Assert(item.schemaVer, Less, validator.Latest())
 
 	// Make sure bigVersion is bigger than currVer.
-	bigVersion := int64(10000)
+	bigVersion := currVer + 1
 	// Update current schema version to 10 and the delta table IDs is 1, 2, 3.
 	validator.Update(ts, currVer, bigVersion, []int64{1, 2, 3})
 	// Make sure the updated table IDs don't be covered with the same schema version.
