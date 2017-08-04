@@ -2641,14 +2641,6 @@ Literal:
 	}
 |	hexLit
 |	bitLit
-|	"DATE" stringLit
-	{
-		tp := types.NewFieldType(mysql.TypeDate)
-		expr := ast.NewValueExpr($2)
-        	expr.SetType(tp)
-
-		$$ = nil
-	}
 
 Operand:
 	Literal
@@ -2929,6 +2921,14 @@ FunctionCallKeyword:
 |	"DATE" '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"DATE" stringLit
+	{
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.Charset, tp.Collate = parser.charset, parser.collation
+		expr := ast.NewValueExpr($2)
+		expr.SetType(tp)
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Date), Args: []ast.ExprNode{expr}}
 	}
 |	"USER" '(' ExpressionListOpt ')'
 	{
