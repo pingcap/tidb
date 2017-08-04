@@ -51,7 +51,7 @@ type MVCCLevelDB struct {
 	// ...
 	// EOF
 	db *leveldb.DB
-	sync.RWMutex
+	mu sync.RWMutex
 }
 
 var lockVer uint64 = math.MaxUint64
@@ -276,6 +276,9 @@ func (dec *mvccEntryDecoder) Decode(iter *Iterator) (bool, error) {
 // Get implements the MVCCStore interface.
 // key cannot be nil or []byte{}
 func (mvcc *MVCCLevelDB) Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
 	startKey := mvccEncode(key, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
 		Start: startKey,
@@ -323,6 +326,9 @@ func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.Isola
 
 // BatchGet implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
 	var pairs []Pair
 	for _, k := range ks {
 		v, err := mvcc.Get(k, startTS, isoLevel)
@@ -340,6 +346,9 @@ func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.
 
 // Scan implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()
 	if err != nil {
@@ -382,6 +391,9 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 
 // Prewrite implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64) []error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
 	anyError := false
 	errs := make([]error, 0, len(mutations))
 	for _, m := range mutations {
@@ -448,6 +460,9 @@ func prewriteMutation(db *leveldb.DB, mutation *kvrpcpb.Mutation, startTS uint64
 
 // Commit implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) Commit(keys [][]byte, startTS, commitTS uint64) error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
 	for _, k := range keys {
 		err := commitKey(mvcc.db, k, startTS, commitTS)
 		if err != nil {
@@ -518,6 +533,9 @@ func commitLock(db *leveldb.DB, lock mvccLock, key []byte, startTS, commitTS uin
 
 // Rollback implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) Rollback(keys [][]byte, startTS uint64) error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
 	for _, k := range keys {
 		err := rollbackKey(mvcc.db, k, startTS)
 		if err != nil {
@@ -618,12 +636,18 @@ func getTxnCommitInfo(iter *Iterator, expectKey []byte, startTS uint64) (mvccVal
 
 // Cleanup implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
 	err := rollbackKey(mvcc.db, key, startTS)
 	return errors.Trace(err)
 }
 
 // ScanLock implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error) {
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()
 	if err != nil {
@@ -657,6 +681,9 @@ func (mvcc *MVCCLevelDB) ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvr
 
 // ResolveLock implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()
 	if err != nil {
@@ -688,47 +715,4 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 		currKey = skip.currKey
 	}
 	return nil
-}
-
-// RawGet queries value with the key.
-func (mvcc *MVCCLevelDB) RawGet(key []byte) []byte {
-	value, err := mvcc.db.Get(key, nil)
-	if err == leveldb.ErrNotFound {
-		return nil
-	}
-	return value
-}
-
-// RawPut stores a key-value pair.
-func (mvcc *MVCCLevelDB) RawPut(key, value []byte) {
-	err := mvcc.db.Put(key, value, nil)
-	if err != nil {
-		panic(err)
-	}
-}
-
-// RawDelete deletes a key-value pair.
-func (mvcc *MVCCLevelDB) RawDelete(key []byte) {
-	mvcc.db.Delete(key, nil)
-}
-
-// RawScan reads up to a limited number of rawkv Pairs.
-func (mvcc *MVCCLevelDB) RawScan(startKey, endKey []byte, limit int) []Pair {
-	iter := mvcc.db.NewIterator(&util.Range{
-		Start: startKey,
-		Limit: endKey,
-	}, nil)
-	defer iter.Release()
-
-	var pairs []Pair
-	for iter.Next() {
-		pair := Pair{
-			Key:   iter.Key(),
-			Value: iter.Value(),
-			Err:   iter.Error(),
-		}
-		pairs = append(pairs, pair)
-	}
-
-	return pairs
 }
