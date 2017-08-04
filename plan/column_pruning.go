@@ -157,10 +157,29 @@ func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
+	if p.unionScanSchema != nil {
+		var handleIdx int
+		for _, col := range p.schema.TblID2Handle {
+			handleIdx = col[0].Index
+		}
+		used[handleIdx] = true
+	}
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
+		}
+	}
+	p.pruneUnionScanSchema(used)
+}
+
+func (p *DataSource) pruneUnionScanSchema(usedMask []bool) {
+	if p.unionScanSchema == nil {
+		return
+	}
+	for i := p.unionScanSchema.Len() - 1; i >= 0; i-- {
+		if !usedMask[i] {
+			p.unionScanSchema.Columns = append(p.unionScanSchema.Columns[:i], p.unionScanSchema.Columns[i+1:]...)
 		}
 	}
 }
@@ -245,6 +264,25 @@ func (p *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 	lChild.PruneColumns(leftCols)
 	p.mergeSchema()
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
+	if p.Lock != ast.SelectLockForUpdate {
+		p.baseLogicalPlan.PruneColumns(parentUsedCols)
+	} else {
+		used := getUsedList(parentUsedCols, p.schema)
+		for _, cols := range p.children[0].Schema().TblID2Handle {
+			for _, col := range cols {
+				col.ResolveIndices(p.children[0].Schema())
+				if !used[col.Index] {
+					used[col.Index] = true
+					parentUsedCols = append(parentUsedCols, col)
+				}
+			}
+		}
+		p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
+	}
 }
 
 // PruneColumns implements LogicalPlan interface.

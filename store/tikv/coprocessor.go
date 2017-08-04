@@ -45,7 +45,7 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 			return supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
-		return c.store.mock
+		return true
 	}
 	return false
 }
@@ -443,7 +443,8 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 		}
 
 		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdCop,
+			Type:     tikvrpc.CmdCop,
+			Priority: kvPriorityToCommandPri(it.req.Priority),
 			Cop: &coprocessor.Request{
 				Tp:     it.req.Tp,
 				Data:   it.req.Data,
