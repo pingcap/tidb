@@ -111,10 +111,12 @@ type Iterator struct {
 	valid bool
 }
 
+// Next moves the iterator to the next key/value pair.
 func (iter *Iterator) Next() {
 	iter.valid = iter.Iterator.Next()
 }
 
+// Valid returns whether the iterator is exhausted.
 func (iter *Iterator) Valid() bool {
 	return iter.valid
 }

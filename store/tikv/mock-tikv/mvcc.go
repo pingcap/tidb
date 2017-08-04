@@ -115,7 +115,7 @@ func (mh *marshalHelper) WriteSlice(buf io.Writer, slice []byte) {
 	if mh.err != nil {
 		return
 	}
-	var tmp [4]byte
+	var tmp [binary.MaxVarintLen64]byte
 	off := binary.PutUvarint(tmp[:], uint64(len(slice)))
 	if err := writeFull(buf, tmp[:off]); err != nil {
 		mh.err = errors.Trace(err)
