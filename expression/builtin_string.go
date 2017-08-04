@@ -415,10 +415,10 @@ func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = mysql.MaxBlobWidth
-	if mysql.HasBinaryFlag(args[0].GetType().Flag) {
-		bf.tp.Flag |= mysql.BinaryFlag
-	} else if types.IsBinaryStr(args[0].GetType()) {
+	if types.IsBinaryStr(args[0].GetType()) {
 		types.SetBinChsClnFlag(bf.tp)
+	} else if mysql.HasBinaryFlag(args[0].GetType().Flag) {
+		bf.tp.Flag |= mysql.BinaryFlag
 	}
 	sig := &builtinRepeatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
