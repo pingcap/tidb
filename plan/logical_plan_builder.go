@@ -1201,7 +1201,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			}
 			if b.needColHandle > 0 {
 				p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
-				p.unionScanSchema.TblID2handle[tableInfo.ID] = []*expression.Column{idCol}
+				p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
 			}
 		}
 		p.Columns = append(p.Columns, &model.ColumnInfo{
@@ -1209,9 +1209,9 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			Name: model.NewCIStr("_rowid"),
 		})
 		schema.Append(idCol)
-		schema.TblID2handle[tableInfo.ID] = []*expression.Column{idCol}
+		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
 	} else {
-		schema.TblID2handle[tableInfo.ID] = []*expression.Column{pkCol}
+		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
 	}
 	p.SetSchema(schema)
 	return p

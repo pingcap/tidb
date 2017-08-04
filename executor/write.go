@@ -200,7 +200,7 @@ func (e *DeleteExec) deleteMultiTables() error {
 			break
 		}
 
-		for id, cols := range e.SelectExec.Schema().TblID2handle {
+		for id, cols := range e.SelectExec.Schema().TblID2Handle {
 			tbl := e.tblID2Table[id]
 			for _, col := range cols {
 				if names, ok := tblMap[id]; !ok || !isMatchTableName(names, col) {
@@ -246,7 +246,7 @@ func (e *DeleteExec) deleteSingleTable() error {
 	)
 	for i, t := range e.tblID2Table {
 		id, tbl = i, t
-		handleCol = e.SelectExec.Schema().TblID2handle[id][0]
+		handleCol = e.SelectExec.Schema().TblID2Handle[id][0]
 		break
 	}
 	for {
@@ -1190,7 +1190,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 	}
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
-	for id, cols := range e.SelectExec.Schema().TblID2handle {
+	for id, cols := range e.SelectExec.Schema().TblID2Handle {
 		tbl := e.tblID2table[id]
 		if e.updatedRowKeys[id] == nil {
 			e.updatedRowKeys[id] = make(map[int64]struct{})

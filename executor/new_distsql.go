@@ -41,6 +41,7 @@ type DataReader interface {
 	doRequestForDatums(datums [][]types.Datum, goCtx goctx.Context) error
 }
 
+// This method checks whether this column is a extra handle column generated during plan building phase.
 func handleIsExtra(col *expression.Column) bool {
 	if col != nil && col.ID == model.ExtraHandleID {
 		return true

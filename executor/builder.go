@@ -628,7 +628,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	var handleCol *expression.Column
 	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2handle[v.Table.ID][0]
+		handleCol = v.Schema().TblID2Handle[v.Table.ID][0]
 	}
 	e := &XSelectTableExec{
 		tableInfo:   v.Table,
@@ -664,7 +664,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	var handleCol *expression.Column
 	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2handle[v.Table.ID][0]
+		handleCol = v.Schema().TblID2Handle[v.Table.ID][0]
 	}
 	e := &XSelectIndexExec{
 		tableInfo:            v.Table,
@@ -827,7 +827,7 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.Schema().TblID2handle {
+	for id := range v.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	return &UpdateExec{
@@ -840,7 +840,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	tblID2table := make(map[int64]table.Table)
-	for id := range v.Schema().TblID2handle {
+	for id := range v.Schema().TblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	return &DeleteExec{
@@ -1045,7 +1045,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	table, _ := b.is.TableByID(ts.Table.ID)
 	var handleCol *expression.Column
 	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2handle[ts.Table.ID][0]
+		handleCol = v.Schema().TblID2Handle[ts.Table.ID][0]
 	}
 	e := &TableReaderExecutor{
 		ctx:       b.ctx,
@@ -1081,7 +1081,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	table, _ := b.is.TableByID(is.Table.ID)
 	var handleCol *expression.Column
 	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2handle[is.Table.ID][0]
+		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
 	}
 	e := &IndexReaderExecutor{
 		ctx:       b.ctx,
@@ -1123,11 +1123,11 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	table, _ := b.is.TableByID(is.Table.ID)
 	var handleCol *expression.Column
 	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2handle[is.Table.ID][0]
+		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
 	}
 
 	len := v.Schema().Len()
-	if handleCol != nil && handleCol.ID == model.ExtraHandleID {
+	if handleIsExtra(handleCol) {
 		len--
 	}
 

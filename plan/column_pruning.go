@@ -159,7 +159,7 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
 	if p.unionScanSchema != nil {
 		var handleIdx int
-		for _, col := range p.schema.TblID2handle {
+		for _, col := range p.schema.TblID2Handle {
 			handleIdx = col[0].Index
 		}
 		used[handleIdx] = true
@@ -272,7 +272,7 @@ func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
 		p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	} else {
 		used := getUsedList(parentUsedCols, p.schema)
-		for _, cols := range p.children[0].Schema().TblID2handle {
+		for _, cols := range p.children[0].Schema().TblID2Handle {
 			for _, col := range cols {
 				col.ResolveIndices(p.children[0].Schema())
 				if !used[col.Index] {
