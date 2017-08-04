@@ -911,7 +911,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		for _, fieldName := range retFields {
 			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
 		}
-		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
 		p.SetSchema(schema)
 		p.explainedPlans = map[string]bool{}
 		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
