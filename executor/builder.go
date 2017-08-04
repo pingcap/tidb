@@ -1100,7 +1100,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	}
 
 	for _, col := range v.OutputColumns {
-		// If it's id is ExtraHandleID, then it must is the tail of the slice.
+		// If it's ID is ExtraHandleID, then it must is the tail of the slice.
 		if col.ID == model.ExtraHandleID {
 			break
 		}

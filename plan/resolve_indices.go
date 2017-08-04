@@ -146,7 +146,7 @@ func (p *PhysicalIndexReader) ResolveIndices() {
 		if col.ID != model.ExtraHandleID {
 			col.ResolveIndices(p.indexPlan.Schema())
 		} else {
-			// If this is extra handle, then it must be the tail
+			// If this is extra handle, then it must be the tail.
 			col.Index = len(p.OutputColumns) - 1
 		}
 	}
