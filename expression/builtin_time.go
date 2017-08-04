@@ -317,7 +317,9 @@ func (b *builtinTimeDiffSig) getStrFsp(strArg string, fsp int) int {
 
 func (b *builtinTimeDiffSig) convertArgToTime(sc *variable.StatementContext, arg types.Datum, fsp int) (t types.Time, err error) {
 	// Fix issue #3923, see https://github.com/pingcap/tidb/issues/3923,
-	// it explains why we use types.StrToDuration.
+	// TIMEDIFF() returns expr1 − expr2 expressed as a time value. expr1 and expr2 are time or date-and-time expressions, but both must be of the same type.
+	// if expr is a string, MySQL will try to convert it to mysql time first(in TiDB,
+	// it is corresponding to types.Duration).
 	switch arg.Kind() {
 	case types.KindString, types.KindBytes:
 		strArg := arg.GetString()

@@ -68,7 +68,8 @@ func IsTypeTime(tp byte) bool {
 	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeNewDate || tp == mysql.TypeTimestamp
 }
 
-// IsTemporalWithDate is corresponding to mysql function: is_temporal_with_date
+// IsTemporalWithDate returns a boolean indicating
+// whether the tp is time type with date
 func IsTemporalWithDate(tp byte) bool {
 	return IsTypeTime(tp)
 }
