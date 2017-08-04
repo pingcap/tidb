@@ -339,23 +339,22 @@ type builtinLeftSig struct {
 // evalString evals a builtinLeftSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
 func (b *builtinLeftSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	var left int64
-
 	sc := b.ctx.GetSessionVars().StmtCtx
 	d, isNull, err = b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	left, isNull, err = b.args[1].EvalInt(row, sc)
+	left, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 	runes := []rune(d)
+	length := len(runes)
 	l := int(left)
 	if l < 0 {
 		l = 0
-	} else if l > len(runes) {
-		l = len(runes)
+	} else if l > length {
+		l = length
 	}
 
 	return string(runes[:l]), false, nil
@@ -825,19 +824,19 @@ func (b *builtinSubstring3ArgsSig) evalString(row []types.Datum) (d string, isNu
 		return d, isNull, errors.Trace(err)
 	}
 	runes := []rune(str)
-	length := int64(len(runes))
+	numRunes := int64(len(runes))
 	if pos < 0 {
-		pos += length
+		pos += numRunes
 	} else {
 		pos--
 	}
-	if pos > length || pos < 0 {
-		pos = length
+	if pos > numRunes || pos < 0 {
+		pos = numRunes
 	}
 	end := pos + length
 	if end < pos {
 		return "", false, nil
-	} else if end < length {
+	} else if end < numRunes {
 		return string(runes[pos:end]), false, nil
 	}
 	return string(runes[pos:]), false, nil
