@@ -257,7 +257,10 @@ func (e *DeleteExec) deleteSingleTable() error {
 		if row == nil {
 			break
 		}
-		end := len(tbl.WritableCols())
+		end := len(row.Data)
+		if handleIsExtra(handleCol) {
+			end--
+		}
 		handle := row.Data[handleCol.Index].GetInt64()
 		err = e.removeRow(e.ctx, tbl, handle, row.Data[:end])
 		if err != nil {
