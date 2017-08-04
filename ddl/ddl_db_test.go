@@ -327,10 +327,6 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 	s.mustExec(c, "create table t_primary (`primary` int, key (`primary`))")
 	t = s.testGetTable(c, "t_primary")
 	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
-	s.mustExec(c, "alter table drop index ")
-	t = s.testGetTable(c, "t_primary")
-	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
-
 	s.mustExec(c, "create table t_primary_2 (`primary` int, key primary_2 (`primary`), key (`primary`))")
 	t = s.testGetTable(c, "t_primary_2")
 	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
