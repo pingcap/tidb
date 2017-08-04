@@ -98,11 +98,10 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
 			[]string{
 				"TableScan_22  cop table:t1, range:[2,+inf), keep order:false",
-				"TableReader_23 IndexJoin_7 root data:TableScan_22",
-				"IndexScan_33  cop table:t2, index:c1, range:[<nil>,+inf], out of order:false",
-				"TableScan_34  cop table:t2, keep order:false",
-				"IndexLookUp_35 IndexJoin_7 root index:IndexScan_33, table:TableScan_34",
-				"IndexJoin_7  root outer:TableReader_23, outer key:test.t1.c2, inner key:test.t2.c1",
+				"TableReader_23 HashLeftJoin_8 root data:TableScan_22",
+				"TableScan_37  cop table:t2, range:(-inf,+inf), keep order:false",
+				"TableReader_38 HashLeftJoin_8 root data:TableScan_37",
+				"HashLeftJoin_8  root left outer join, small:TableReader_38, equal:[eq(test.t1.c2, test.t2.c1)]",
 			},
 		},
 		{
@@ -125,13 +124,13 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
 			[]string{
+				"TableScan_25  cop table:a, range:(-inf,+inf), keep order:false",
+				"TableReader_26 HashLeftJoin_10 root data:TableScan_25",
 				"TableScan_17 HashAgg_16 cop table:b, range:(-inf,+inf), keep order:false",
 				"HashAgg_16  cop type:complete, group by:b.c2, funcs:count(b.c2), firstrow(b.c2)",
 				"TableReader_19 HashAgg_18 root data:HashAgg_16",
-				"HashAgg_18 IndexJoin_9 root type:final, group by:, funcs:count(col_0), firstrow(col_1)",
-				"TableScan_12  cop table:a, range:(-inf,+inf), keep order:true",
-				"TableReader_22 IndexJoin_9 root data:TableScan_12",
-				"IndexJoin_9 Projection_8 root outer:TableReader_22, outer key:b.c2, inner key:a.c1",
+				"HashAgg_18 HashLeftJoin_10 root type:final, group by:, funcs:count(col_0), firstrow(col_1)",
+				"HashLeftJoin_10 Projection_8 root inner join, small:HashAgg_18, equal:[eq(a.c1, b.c2)]",
 				"Projection_8  root cast(join_agg_0)",
 			},
 		},
