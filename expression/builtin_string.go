@@ -339,24 +339,25 @@ type builtinLeftSig struct {
 // evalString evals a builtinLeftSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
 func (b *builtinLeftSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	var left int64
-
 	sc := b.ctx.GetSessionVars().StmtCtx
 	d, isNull, err = b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	left, isNull, err = b.args[1].EvalInt(row, sc)
+	left, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
+	runes := []rune(d)
+	length := len(runes)
 	l := int(left)
 	if l < 0 {
 		l = 0
-	} else if l > len(d) {
-		l = len(d)
+	} else if l > length {
+		l = length
 	}
-	return d[:l], false, nil
+
+	return string(runes[:l]), false, nil
 }
 
 type rightFunctionClass struct {
@@ -380,25 +381,24 @@ type builtinRightSig struct {
 // evalString evals a builtinRightSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_right
 func (b *builtinRightSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	var right int64
-
 	sc := b.ctx.GetSessionVars().StmtCtx
 	d, isNull, err = b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	right, isNull, err = b.args[1].EvalInt(row, sc)
+	right, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 	r := int(right)
-	length := len(d)
+	runes := []rune(d)
+	length := len(runes)
 	if r < 0 {
 		r = 0
 	} else if r > length {
 		r = length
 	}
-	return d[length-r:], false, nil
+	return string(runes[length-r:]), false, nil
 }
 
 type repeatFunctionClass struct {
@@ -781,30 +781,26 @@ type builtinSubstring2ArgsSig struct {
 // evalString evals a builtinSubstring2ArgsSig, corresponding to substr(str, pos).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstring2ArgsSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	var (
-		str string
-		pos int64
-	)
-
 	sc := b.ctx.GetSessionVars().StmtCtx
-	str, isNull, err = b.args[0].EvalString(row, sc)
+	str, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	pos, isNull, err = b.args[1].EvalInt(row, sc)
+	pos, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	strLen := int64(len(str))
+	runes := []rune(str)
+	length := int64(len(runes))
 	if pos < 0 {
-		pos += strLen
+		pos += length
 	} else {
 		pos--
 	}
-	if pos > strLen || pos < 0 {
-		pos = strLen
+	if pos > length || pos < 0 {
+		pos = length
 	}
-	return str[pos:], false, nil
+	return string(runes[pos:]), false, nil
 }
 
 type builtinSubstring3ArgsSig struct {
@@ -814,40 +810,36 @@ type builtinSubstring3ArgsSig struct {
 // evalString evals a builtinSubstring3ArgsSig, corresponding to substr(str, pos, len).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstring3ArgsSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	var (
-		str         string
-		pos, length int64
-	)
-
 	sc := b.ctx.GetSessionVars().StmtCtx
-	str, isNull, err = b.args[0].EvalString(row, sc)
+	str, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	pos, isNull, err = b.args[1].EvalInt(row, sc)
+	pos, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	length, isNull, err = b.args[2].EvalInt(row, sc)
+	length, isNull, err := b.args[2].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	strLen := int64(len(str))
+	runes := []rune(str)
+	numRunes := int64(len(runes))
 	if pos < 0 {
-		pos += strLen
+		pos += numRunes
 	} else {
 		pos--
 	}
-	if pos > strLen || pos < 0 {
-		pos = strLen
+	if pos > numRunes || pos < 0 {
+		pos = numRunes
 	}
 	end := pos + length
 	if end < pos {
 		return "", false, nil
-	} else if end < strLen {
-		return str[pos:end], false, nil
+	} else if end < numRunes {
+		return string(runes[pos:end]), false, nil
 	}
-	return str[pos:], false, nil
+	return string(runes[pos:]), false, nil
 }
 
 type substringIndexFunctionClass struct {
