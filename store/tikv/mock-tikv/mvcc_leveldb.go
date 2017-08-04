@@ -56,6 +56,41 @@ type MVCCLevelDB struct {
 
 var lockVer uint64 = math.MaxUint64
 
+// ErrInvalidEncodedKey describes parsing an invalid format of EncodedKey.
+var ErrInvalidEncodedKey = errors.New("invalid encoded key")
+
+// mvccEncode returns the encoded key.
+func mvccEncode(key []byte, ver uint64) []byte {
+	b := codec.EncodeBytes(nil, key)
+	ret := codec.EncodeUintDesc(b, ver)
+	return ret
+}
+
+// mvccDecode parses the origin key and version of an encoded key, if the encoded key is a meta key,
+// just returns the origin key.
+func mvccDecode(encodedKey []byte) ([]byte, uint64, error) {
+	// Skip DataPrefix
+	remainBytes, key, err := codec.DecodeBytes([]byte(encodedKey))
+	if err != nil {
+		// should never happen
+		return nil, 0, errors.Trace(err)
+	}
+	// if it's meta key
+	if len(remainBytes) == 0 {
+		return key, 0, nil
+	}
+	var ver uint64
+	remainBytes, ver, err = codec.DecodeUintDesc(remainBytes)
+	if err != nil {
+		// should never happen
+		return nil, 0, errors.Trace(err)
+	}
+	if len(remainBytes) != 0 {
+		return nil, 0, ErrInvalidEncodedKey
+	}
+	return key, ver, nil
+}
+
 func newMVCCLevelDB(path string) (*MVCCLevelDB, error) {
 	var (
 		d   *leveldb.DB
@@ -70,75 +105,24 @@ func newMVCCLevelDB(path string) (*MVCCLevelDB, error) {
 	return &MVCCLevelDB{db: d}, err
 }
 
+// Iterator wraps iterator.Iterator to provide Valid() method.
+type Iterator struct {
+	iterator.Iterator
+	valid bool
+}
+
+func (iter *Iterator) Next() {
+	iter.valid = iter.Iterator.Next()
+}
+
+func (iter *Iterator) Valid() bool {
+	return iter.valid
+}
+
 func newIterator(db *leveldb.DB, slice *util.Range) *Iterator {
 	iter := &Iterator{db.NewIterator(slice, nil), true}
 	iter.Next()
 	return iter
-}
-
-// Get implements the MVCCStore interface.
-// key cannot be nil or []byte{}
-func (mvcc *MVCCLevelDB) Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
-	startKey := mvccEncode(key, lockVer)
-	iter := newIterator(mvcc.db, &util.Range{
-		Start: startKey,
-	})
-	defer iter.Release()
-
-	return getValue(iter, key, startTS, isoLevel)
-}
-
-func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
-	dec1 := lockDecoder{expectKey: key}
-	ok, err := dec1.Decode(iter)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if ok {
-		if isoLevel == kvrpcpb.IsolationLevel_SI && dec1.lock.startTS <= startTS {
-			return nil, dec1.lock.lockErr(key)
-		}
-	}
-
-	dec2 := valueDecoder{expectKey: key}
-	for iter.Valid() {
-		ok, err := dec2.Decode(iter)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !ok {
-			break
-		}
-
-		value := &dec2.value
-		if value.valueType == typeRollback {
-			continue
-		}
-		if value.commitTS <= startTS {
-			if value.valueType == typeDelete {
-				return nil, nil
-			}
-			return value.value, nil
-		}
-	}
-	return nil, nil
-}
-
-// BatchGet implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
-	var pairs []Pair
-	for _, k := range ks {
-		v, err := mvcc.Get(k, startTS, isoLevel)
-		if v == nil && err == nil {
-			continue
-		}
-		pairs = append(pairs, Pair{
-			Key:   k,
-			Value: v,
-			Err:   err,
-		})
-	}
-	return pairs
 }
 
 func newScanIterator(db *leveldb.DB, startKey, endKey []byte) (*Iterator, []byte, error) {
@@ -163,66 +147,9 @@ func newScanIterator(db *leveldb.DB, startKey, endKey []byte) (*Iterator, []byte
 	return iter, startKey, nil
 }
 
-// Scan implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
-	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
-	defer iter.Release()
-	if err != nil {
-		log.Error("scan new iterator fail:", errors.ErrorStack(err))
-		return nil
-	}
-
-	ok := true
-	var pairs []Pair
-	for len(pairs) < limit && ok {
-		value, err := getValue(iter, currKey, startTS, isoLevel)
-		if err != nil {
-			pairs = append(pairs, Pair{
-				Key: currKey,
-				Err: errors.Trace(err),
-			})
-		}
-		if value != nil {
-			pairs = append(pairs, Pair{
-				Key:   currKey,
-				Value: value,
-			})
-		}
-
-		skip := skipDecoder{currKey}
-		ok, err = skip.Decode(iter)
-		if err != nil {
-			log.Error("seek to next key error:", errors.ErrorStack(err))
-			break
-		}
-		currKey = skip.currKey
-	}
-	return pairs
-}
-
-// ReverseScan implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
-	return nil
-}
-
-// Iterator wraps iterator.Iterator to provide Valid() method.
-type Iterator struct {
-	iterator.Iterator
-	valid bool
-}
-
-func (iter *Iterator) Next() {
-	iter.valid = iter.Iterator.Next()
-}
-
-func (iter *Iterator) Valid() bool {
-	return iter.valid
-}
-
 // iterDecoder tries to decode an Iterator value.
 // If current iterator value can be decoded by this decoder, store the value and call iter.Next(),
 // Otherwise current iterator is not touched and return false.
-// It's actually a kind of combinator.
 type iterDecoder interface {
 	Decode(iter *Iterator) (bool, error)
 }
@@ -313,6 +240,144 @@ func (dec *skipDecoder) Decode(iter *Iterator) (bool, error) {
 		iter.Next()
 	}
 	return false, nil
+}
+
+type mvccEntryDecoder struct {
+	expectKey []byte
+	// Just values and lock is valid.
+	mvccEntry
+}
+
+// mvccEntryDecoder decodes a mvcc entry.
+func (dec *mvccEntryDecoder) Decode(iter *Iterator) (bool, error) {
+	ldec := lockDecoder{expectKey: dec.expectKey}
+	ok, err := ldec.Decode(iter)
+	if err != nil {
+		return ok, errors.Trace(err)
+	}
+	if ok {
+		dec.mvccEntry.lock = &ldec.lock
+	}
+	for iter.Valid() {
+		vdec := valueDecoder{expectKey: dec.expectKey}
+		ok, err = vdec.Decode(iter)
+		if err != nil {
+			return ok, errors.Trace(err)
+		}
+		if !ok {
+			break
+		}
+		dec.mvccEntry.values = append(dec.mvccEntry.values, vdec.value)
+	}
+	succ := dec.mvccEntry.lock != nil || len(dec.mvccEntry.values) > 0
+	return succ, nil
+}
+
+// Get implements the MVCCStore interface.
+// key cannot be nil or []byte{}
+func (mvcc *MVCCLevelDB) Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
+	startKey := mvccEncode(key, lockVer)
+	iter := newIterator(mvcc.db, &util.Range{
+		Start: startKey,
+	})
+	defer iter.Release()
+
+	return getValue(iter, key, startTS, isoLevel)
+}
+
+func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
+	dec1 := lockDecoder{expectKey: key}
+	ok, err := dec1.Decode(iter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if ok {
+		if isoLevel == kvrpcpb.IsolationLevel_SI && dec1.lock.startTS <= startTS {
+			return nil, dec1.lock.lockErr(key)
+		}
+	}
+
+	dec2 := valueDecoder{expectKey: key}
+	for iter.Valid() {
+		ok, err := dec2.Decode(iter)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !ok {
+			break
+		}
+
+		value := &dec2.value
+		if value.valueType == typeRollback {
+			continue
+		}
+		if value.commitTS <= startTS {
+			if value.valueType == typeDelete {
+				return nil, nil
+			}
+			return value.value, nil
+		}
+	}
+	return nil, nil
+}
+
+// BatchGet implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
+	var pairs []Pair
+	for _, k := range ks {
+		v, err := mvcc.Get(k, startTS, isoLevel)
+		if v == nil && err == nil {
+			continue
+		}
+		pairs = append(pairs, Pair{
+			Key:   k,
+			Value: v,
+			Err:   err,
+		})
+	}
+	return pairs
+}
+
+// Scan implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
+	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
+	defer iter.Release()
+	if err != nil {
+		log.Error("scan new iterator fail:", errors.ErrorStack(err))
+		return nil
+	}
+
+	ok := true
+	var pairs []Pair
+	for len(pairs) < limit && ok {
+		value, err := getValue(iter, currKey, startTS, isoLevel)
+		if err != nil {
+			pairs = append(pairs, Pair{
+				Key: currKey,
+				Err: errors.Trace(err),
+			})
+		}
+		if value != nil {
+			pairs = append(pairs, Pair{
+				Key:   currKey,
+				Value: value,
+			})
+		}
+
+		skip := skipDecoder{currKey}
+		ok, err = skip.Decode(iter)
+		if err != nil {
+			log.Error("seek to next key error:", errors.ErrorStack(err))
+			break
+		}
+		currKey = skip.currKey
+	}
+	return pairs
+}
+
+// ReverseScan implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
+	return nil
 }
 
 // Prewrite implements the MVCCStore interface.
@@ -462,23 +527,6 @@ func (mvcc *MVCCLevelDB) Rollback(keys [][]byte, startTS uint64) error {
 	return nil
 }
 
-func rollbackLock(db *leveldb.DB, lock mvccLock, key []byte, startTS uint64) error {
-	tomb := mvccValue{
-		valueType: typeRollback,
-		startTS:   startTS,
-		commitTS:  startTS,
-	}
-	writeKey := mvccEncode(key, startTS)
-	writeValue, err := tomb.MarshalBinary()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err := db.Put(writeKey, writeValue, nil); err != nil {
-		return errors.Trace(err)
-	}
-	return db.Delete(mvccEncode(key, lockVer), nil)
-}
-
 func rollbackKey(db *leveldb.DB, key []byte, startTS uint64) error {
 	startKey := mvccEncode(key, lockVer)
 	iter := newIterator(db, &util.Range{
@@ -534,10 +582,21 @@ func rollbackKey(db *leveldb.DB, key []byte, startTS uint64) error {
 	return errors.Trace(err)
 }
 
-// Cleanup implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
-	err := rollbackKey(mvcc.db, key, startTS)
-	return errors.Trace(err)
+func rollbackLock(db *leveldb.DB, lock mvccLock, key []byte, startTS uint64) error {
+	tomb := mvccValue{
+		valueType: typeRollback,
+		startTS:   startTS,
+		commitTS:  startTS,
+	}
+	writeKey := mvccEncode(key, startTS)
+	writeValue, err := tomb.MarshalBinary()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := db.Put(writeKey, writeValue, nil); err != nil {
+		return errors.Trace(err)
+	}
+	return db.Delete(mvccEncode(key, lockVer), nil)
 }
 
 func getTxnCommitInfo(iter *Iterator, expectKey []byte, startTS uint64) (mvccValue, bool, error) {
@@ -555,6 +614,12 @@ func getTxnCommitInfo(iter *Iterator, expectKey []byte, startTS uint64) (mvccVal
 		}
 	}
 	return mvccValue{}, false, nil
+}
+
+// Cleanup implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
+	err := rollbackKey(mvcc.db, key, startTS)
+	return errors.Trace(err)
 }
 
 // ScanLock implements the MVCCStore interface.
@@ -623,41 +688,6 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 		currKey = skip.currKey
 	}
 	return nil
-}
-
-// mvccEncode returns the encoded key.
-func mvccEncode(key []byte, ver uint64) []byte {
-	b := codec.EncodeBytes(nil, key)
-	ret := codec.EncodeUintDesc(b, ver)
-	return ret
-}
-
-// ErrInvalidEncodedKey describes parsing an invalid format of EncodedKey.
-var ErrInvalidEncodedKey = errors.New("invalid encoded key")
-
-// mvccDecode parses the origin key and version of an encoded key, if the encoded key is a meta key,
-// just returns the origin key.
-func mvccDecode(encodedKey []byte) ([]byte, uint64, error) {
-	// Skip DataPrefix
-	remainBytes, key, err := codec.DecodeBytes([]byte(encodedKey))
-	if err != nil {
-		// should never happen
-		return nil, 0, errors.Trace(err)
-	}
-	// if it's meta key
-	if len(remainBytes) == 0 {
-		return key, 0, nil
-	}
-	var ver uint64
-	remainBytes, ver, err = codec.DecodeUintDesc(remainBytes)
-	if err != nil {
-		// should never happen
-		return nil, 0, errors.Trace(err)
-	}
-	if len(remainBytes) != 0 {
-		return nil, 0, ErrInvalidEncodedKey
-	}
-	return key, ver, nil
 }
 
 // RawGet queries value with the key.
