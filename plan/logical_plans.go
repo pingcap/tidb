@@ -284,6 +284,12 @@ type DataSource struct {
 	pushedDownConds []expression.Expression
 
 	statisticTable *statistics.Table
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
+
+	// This is schema the PhysicalUnionScan should be.
+	unionScanSchema *expression.Schema
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {
@@ -301,6 +307,14 @@ func (p *DataSource) getPKIsHandleCol() *expression.Column {
 // TableInfo returns the *TableInfo of data source.
 func (p *DataSource) TableInfo() *model.TableInfo {
 	return p.tableInfo
+}
+
+// Schema implements the plan interface.
+func (p *DataSource) Schema() *expression.Schema {
+	if p.unionScanSchema != nil {
+		return p.unionScanSchema
+	}
+	return p.schema
 }
 
 // Union represents Union plan.

@@ -91,10 +91,11 @@ type UnionScanExec struct {
 
 	dirty *dirtyTable
 	// usedIndex is the column offsets of the index which Src executor has used.
-	usedIndex  []int
-	desc       bool
-	conditions []expression.Expression
-	columns    []*model.ColumnInfo
+	usedIndex     []int
+	desc          bool
+	conditions    []expression.Expression
+	columns       []*model.ColumnInfo
+	needColHandle bool
 
 	addedRows   []*Row
 	cursor      int
@@ -129,6 +130,9 @@ func (us *UnionScanExec) Next() (*Row, error) {
 		} else {
 			us.cursor++
 		}
+		if !us.needColHandle {
+			row.Data = row.Data[:len(row.Data)-1]
+		}
 		return row, nil
 	}
 }
@@ -147,10 +151,7 @@ func (us *UnionScanExec) getSnapshotRow() (*Row, error) {
 			if us.snapshotRow == nil {
 				break
 			}
-			if len(us.snapshotRow.RowKeys) != 1 {
-				return nil, ErrRowKeyCount
-			}
-			snapshotHandle := us.snapshotRow.RowKeys[0].Handle
+			snapshotHandle := us.snapshotRow.Data[len(us.snapshotRow.Data)-1].GetInt64()
 			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
 				continue
 			}
@@ -209,8 +210,9 @@ func (us *UnionScanExec) compare(a, b *Row) (int, error) {
 			return cmp, nil
 		}
 	}
-	aHandle := a.RowKeys[0].Handle
-	bHandle := b.RowKeys[0].Handle
+	dataLen := len(a.Data)
+	aHandle := a.Data[dataLen-1].GetInt64()
+	bHandle := b.Data[dataLen-1].GetInt64()
 	var cmp int
 	if aHandle == bHandle {
 		cmp = 0
@@ -224,15 +226,17 @@ func (us *UnionScanExec) compare(a, b *Row) (int, error) {
 
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CIStr) error {
 	us.addedRows = make([]*Row, 0, len(us.dirty.addedRows))
+	newLen := us.schema.Len()
+	if !us.needColHandle {
+		newLen++
+	}
 	for h, data := range us.dirty.addedRows {
-		var newData []types.Datum
-		if us.schema.Len() == len(data) {
-			newData = data
-		} else {
-			newData = make([]types.Datum, 0, us.schema.Len())
-			for _, col := range us.columns {
-				newData = append(newData, data[col.Offset])
+		newData := make([]types.Datum, 0, newLen)
+		for _, col := range us.columns {
+			if col.ID == model.ExtraHandleID {
+				continue
 			}
+			newData = append(newData, data[col.Offset])
 		}
 		matched, err := expression.EvalBool(us.conditions, newData, us.ctx)
 		if err != nil {
@@ -241,14 +245,9 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 		if !matched {
 			continue
 		}
-		rowKeyEntry := &RowKeyEntry{Handle: h, Tbl: t}
-		if asName != nil && asName.L != "" {
-			rowKeyEntry.TableName = asName.L
-		} else {
-			rowKeyEntry.TableName = t.Meta().Name.L
-		}
+		newData = append(newData, types.NewIntDatum(h))
 
-		row := &Row{Data: newData, RowKeys: []*RowKeyEntry{rowKeyEntry}}
+		row := &Row{Data: newData}
 		us.addedRows = append(us.addedRows, row)
 	}
 	if us.desc {
