@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
 	"golang.org/x/text/transform"
 )
@@ -92,6 +91,7 @@ var (
 	_ builtinFunc = &builtinRepeatSig{}
 	_ builtinFunc = &builtinLowerSig{}
 	_ builtinFunc = &builtinReverseSig{}
+	_ builtinFunc = &builtinReverseBinarySig{}
 	_ builtinFunc = &builtinSpaceSig{}
 	_ builtinFunc = &builtinUpperSig{}
 	_ builtinFunc = &builtinStrcmpSig{}
@@ -499,8 +499,30 @@ func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	*bf.tp = *args[0].GetType()
+	if types.IsBinaryStr(bf.tp) {
+		sig := &builtinReverseBinarySig{baseStringBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	}
 	sig := &builtinReverseSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
+}
+
+type builtinReverseBinarySig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a REVERSE(str).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
+func (b *builtinReverseBinarySig) evalString(row []types.Datum) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	strBytes := []byte(str)
+	for i, length := 0, len(strBytes); i < length/2; i++ {
+		strBytes[i], strBytes[length-1-i] = strBytes[length-1-i], strBytes[i]
+	}
+	return hack.String(strBytes), false, nil
 }
 
 type builtinReverseSig struct {
@@ -510,11 +532,15 @@ type builtinReverseSig struct {
 // evalString evals a REVERSE(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
 func (b *builtinReverseSig) evalString(row []types.Datum) (string, bool, error) {
-	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	return stringutil.Reverse(val), false, nil
+	strRunes := []rune(str)
+	for i, length := 0, len(strRunes); i < length/2; i++ {
+		strRunes[i], strRunes[length-1-i] = strRunes[length-1-i], strRunes[i]
+	}
+	return string(strRunes), false, nil
 }
 
 type spaceFunctionClass struct {
