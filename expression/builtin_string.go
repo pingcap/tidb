@@ -2133,7 +2133,7 @@ type builtinFromBase64Sig struct {
 	baseStringBuiltinFunc
 }
 
-// evalString evals FROM_BASE64(str)).
+// evalString evals FROM_BASE64(str).
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_from-base64
 func (b *builtinFromBase64Sig) evalString(row []types.Datum) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)

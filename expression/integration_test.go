@@ -447,9 +447,9 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 
 	// for from_base64
 	result = tk.MustQuery(`select from_base64("abcd"), from_base64("asc")`)
-	result.Check(testkit.Rows("i <nil>"))
+	result.Check(testkit.Rows("i\xb7\x1d <nil>"))
 	result = tk.MustQuery(`select from_base64("MQ=="), from_base64(1234)`)
-	result.Check(testkit.Rows("1 "))
+	result.Check(testkit.Rows("1 \xd7m\xf8"))
 
 	// for substr
 	tk.MustExec("drop table if exists t")
