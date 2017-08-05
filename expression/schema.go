@@ -34,9 +34,11 @@ func (ki KeyInfo) Clone() KeyInfo {
 
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
-	Columns   []*Column
-	Keys      []KeyInfo
-	MaxOneRow bool
+	Columns []*Column
+	Keys    []KeyInfo
+	// TblID2Handle stores the tables' handle column information if we need handle in execution phase.
+	TblID2Handle map[int64][]*Column
+	MaxOneRow    bool
 }
 
 // String implements fmt.Stringer interface.
@@ -68,6 +70,13 @@ func (s *Schema) Clone() *Schema {
 	}
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
+	schema.TblID2Handle = make(map[int64][]*Column)
+	for id, cols := range s.TblID2Handle {
+		schema.TblID2Handle[id] = make([]*Column, 0, len(cols))
+		for _, col := range cols {
+			schema.TblID2Handle[id] = append(schema.TblID2Handle[id], col.Clone().(*Column))
+		}
+	}
 	return schema
 }
 
@@ -197,10 +206,18 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	tmpR := rSchema.Clone()
 	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)
 	ret.SetUniqueKeys(append(tmpL.Keys, tmpR.Keys...))
+	ret.TblID2Handle = tmpL.TblID2Handle
+	for id, cols := range tmpR.TblID2Handle {
+		if _, ok := ret.TblID2Handle[id]; ok {
+			ret.TblID2Handle[id] = append(ret.TblID2Handle[id], cols...)
+		} else {
+			ret.TblID2Handle[id] = cols
+		}
+	}
 	return ret
 }
 
 // NewSchema returns a schema made by its parameter.
 func NewSchema(cols ...*Column) *Schema {
-	return &Schema{Columns: cols}
+	return &Schema{Columns: cols, TblID2Handle: make(map[int64][]*Column)}
 }
