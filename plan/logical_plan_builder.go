@@ -1435,7 +1435,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			}
 			if asNames, ok := tableAsName[tableInfo]; ok {
 				// NOTE: "UPDATE t m, t n SET m.a=m.a+10, n.b=n.b+10" won't set both t.a=t.a+10 and t.b=t.b+10.
-				// But "UPDATE t m, t SET m.a=m.a+10, m.b=m.b+10" can do that.
+				// But "UPDATE t m, t n SET m.a=m.a+10, m.b=m.b+10" can do that.
 				// So here, we change generated columns in all alias in order to ensure we can do it correctly.
 				for _, asName := range asNames {
 					virtualAssignments = append(virtualAssignments, &ast.Assignment{
