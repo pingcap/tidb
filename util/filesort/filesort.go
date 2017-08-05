@@ -384,12 +384,12 @@ func (fs *FileSorter) externalSort() (*comparableRow, error) {
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
-			im := &item{
+			nextIm := &item{
 				index: im.index,
 				value: row,
 			}
 
-			heap.Push(fs.rowHeap, im)
+			heap.Push(fs.rowHeap, nextIm)
 			if fs.rowHeap.err != nil {
 				return nil, errors.Trace(fs.rowHeap.err)
 			}

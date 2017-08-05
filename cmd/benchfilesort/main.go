@@ -417,9 +417,9 @@ func main() {
 	flag.Parse()
 
 	if len(os.Args) == 1 {
-		fmt.Println("Usage:\n")
-		fmt.Println("\tbenchfilesort command [arguments]\n")
-		fmt.Println("The commands are:\n")
+		fmt.Printf("Usage:\n\n")
+		fmt.Printf("\tbenchfilesort command [arguments]\n\n")
+		fmt.Printf("The commands are:\n\n")
 		fmt.Println("\tgen\t", "generate rows")
 		fmt.Println("\trun\t", "run tests")
 		fmt.Println("")

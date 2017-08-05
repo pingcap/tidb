@@ -58,8 +58,12 @@ var (
 	_ PhysicalPlan = &Insert{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
+	_ PhysicalPlan = &PhysicalTableReader{}
+	_ PhysicalPlan = &PhysicalIndexReader{}
+	_ PhysicalPlan = &PhysicalIndexLookUpReader{}
 	_ PhysicalPlan = &PhysicalAggregation{}
 	_ PhysicalPlan = &PhysicalApply{}
+	_ PhysicalPlan = &PhysicalIndexJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalHashSemiJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
@@ -75,6 +79,9 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -96,6 +103,9 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -117,6 +127,9 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -164,6 +177,9 @@ type PhysicalMemTable struct {
 	Columns     []*model.ColumnInfo
 	Ranges      []types.IntColumnRange
 	TableAsName *model.CIStr
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -242,6 +258,12 @@ type physicalTableSource struct {
 
 	// filterCondition is only used by new planner.
 	filterCondition []expression.Expression
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
+
+	// TODO: This should be removed after old planner was removed.
+	unionScanSchema *expression.Schema
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -314,16 +336,18 @@ func needValue(af expression.AggregationFunction) bool {
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
 }
 
-func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) PhysicalPlan {
+func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan, s *expression.Schema) PhysicalPlan {
 	if p.readOnly {
 		return resultPlan
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := PhysicalUnionScan{
-		Conditions: append(conditions, p.AccessCondition...),
+		Conditions:    append(conditions, p.AccessCondition...),
+		NeedColHandle: p.NeedColHandle,
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
-	us.SetSchema(resultPlan.Schema())
+	us.SetSchema(s)
+	p.NeedColHandle = true
 	return us
 }
 
@@ -561,7 +585,8 @@ type PhysicalUnionScan struct {
 	*basePlan
 	basePhysicalPlan
 
-	Conditions []expression.Expression
+	NeedColHandle bool
+	Conditions    []expression.Expression
 }
 
 // Cache plan is a physical plan which stores the result of its child node.
@@ -1132,4 +1157,46 @@ func (p *Cache) Copy() PhysicalPlan {
 	np.basePlan = p.basePlan.copy()
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
+}
+
+func buildSchema(p PhysicalPlan) {
+	switch x := p.(type) {
+	case *Limit, *TopN, *Sort, *Selection, *MaxOneRow, *SelectLock:
+		p.SetSchema(p.Children()[0].Schema())
+	case *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexJoin:
+		p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
+	case *PhysicalApply:
+		buildSchema(x.PhysicalJoin)
+		x.schema = x.PhysicalJoin.Schema()
+	case *PhysicalHashSemiJoin:
+		if x.WithAux {
+			auxCol := x.schema.Columns[x.Schema().Len()-1]
+			x.SetSchema(x.children[0].Schema().Clone())
+			x.schema.Append(auxCol)
+		} else {
+			x.SetSchema(x.children[0].Schema().Clone())
+		}
+	case *Union:
+		panic("Union shouldn't rebuild schema")
+	}
+}
+
+// rebuildSchema rebuilds the schema for physical plans, because new planner may change indexjoin's schema.
+func rebuildSchema(p PhysicalPlan) bool {
+	need2Rebuild := false
+	for _, ch := range p.Children() {
+		need2Rebuild = need2Rebuild || rebuildSchema(ch.(PhysicalPlan))
+	}
+	if need2Rebuild {
+		buildSchema(p)
+	}
+	switch x := p.(type) {
+	case *PhysicalIndexJoin:
+		if x.outerIndex == 1 {
+			need2Rebuild = true
+		}
+	case *Projection, *PhysicalAggregation:
+		need2Rebuild = false
+	}
+	return need2Rebuild
 }

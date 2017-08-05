@@ -27,6 +27,7 @@ type Config struct {
 	Store          string `json:"store" toml:"store"`
 	SlowThreshold  int    `json:"slow_threshold" toml:"slow_threshold"`
 	QueryLogMaxlen int    `json:"query_log_max_len" toml:"query_log_max_len"`
+	TCPKeepAlive   bool   `json:"tcp_keep_alive" toml:"tcp_keep_alive"`
 }
 
 var cfg *Config
@@ -37,7 +38,10 @@ var once sync.Once
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
 	once.Do(func() {
-		cfg = &Config{}
+		cfg = &Config{
+			SlowThreshold:  300,
+			QueryLogMaxlen: 2048,
+		}
 	})
 	return cfg
 }

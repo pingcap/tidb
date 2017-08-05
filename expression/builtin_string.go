@@ -104,7 +104,9 @@ var (
 	_ builtinFunc = &builtinHexStrArgSig{}
 	_ builtinFunc = &builtinHexIntArgSig{}
 	_ builtinFunc = &builtinUnHexSig{}
-	_ builtinFunc = &builtinTrimSig{}
+	_ builtinFunc = &builtinTrim1ArgSig{}
+	_ builtinFunc = &builtinTrim2ArgsSig{}
+	_ builtinFunc = &builtinTrim3ArgsSig{}
 	_ builtinFunc = &builtinLTrimSig{}
 	_ builtinFunc = &builtinRTrimSig{}
 	_ builtinFunc = &builtinRpadSig{}
@@ -337,24 +339,25 @@ type builtinLeftSig struct {
 // evalString evals a builtinLeftSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
 func (b *builtinLeftSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	var left int64
-
 	sc := b.ctx.GetSessionVars().StmtCtx
 	d, isNull, err = b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	left, isNull, err = b.args[1].EvalInt(row, sc)
+	left, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
+	runes := []rune(d)
+	length := len(runes)
 	l := int(left)
 	if l < 0 {
 		l = 0
-	} else if l > len(d) {
-		l = len(d)
+	} else if l > length {
+		l = length
 	}
-	return d[:l], false, nil
+
+	return string(runes[:l]), false, nil
 }
 
 type rightFunctionClass struct {
@@ -378,25 +381,24 @@ type builtinRightSig struct {
 // evalString evals a builtinRightSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_right
 func (b *builtinRightSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	var right int64
-
 	sc := b.ctx.GetSessionVars().StmtCtx
 	d, isNull, err = b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	right, isNull, err = b.args[1].EvalInt(row, sc)
+	right, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 	r := int(right)
-	length := len(d)
+	runes := []rune(d)
+	length := len(runes)
 	if r < 0 {
 		r = 0
 	} else if r > length {
 		r = length
 	}
-	return d[length-r:], false, nil
+	return string(runes[length-r:]), false, nil
 }
 
 type repeatFunctionClass struct {
@@ -779,30 +781,26 @@ type builtinSubstring2ArgsSig struct {
 // evalString evals a builtinSubstring2ArgsSig, corresponding to substr(str, pos).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstring2ArgsSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	var (
-		str string
-		pos int64
-	)
-
 	sc := b.ctx.GetSessionVars().StmtCtx
-	str, isNull, err = b.args[0].EvalString(row, sc)
+	str, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	pos, isNull, err = b.args[1].EvalInt(row, sc)
+	pos, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	strLen := int64(len(str))
+	runes := []rune(str)
+	length := int64(len(runes))
 	if pos < 0 {
-		pos += strLen
+		pos += length
 	} else {
 		pos--
 	}
-	if pos > strLen || pos < 0 {
-		pos = strLen
+	if pos > length || pos < 0 {
+		pos = length
 	}
-	return str[pos:], false, nil
+	return string(runes[pos:]), false, nil
 }
 
 type builtinSubstring3ArgsSig struct {
@@ -812,40 +810,36 @@ type builtinSubstring3ArgsSig struct {
 // evalString evals a builtinSubstring3ArgsSig, corresponding to substr(str, pos, len).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstring3ArgsSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	var (
-		str         string
-		pos, length int64
-	)
-
 	sc := b.ctx.GetSessionVars().StmtCtx
-	str, isNull, err = b.args[0].EvalString(row, sc)
+	str, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	pos, isNull, err = b.args[1].EvalInt(row, sc)
+	pos, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	length, isNull, err = b.args[2].EvalInt(row, sc)
+	length, isNull, err := b.args[2].EvalInt(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	strLen := int64(len(str))
+	runes := []rune(str)
+	numRunes := int64(len(runes))
 	if pos < 0 {
-		pos += strLen
+		pos += numRunes
 	} else {
 		pos--
 	}
-	if pos > strLen || pos < 0 {
-		pos = strLen
+	if pos > numRunes || pos < 0 {
+		pos = numRunes
 	}
 	end := pos + length
 	if end < pos {
 		return "", false, nil
-	} else if end < strLen {
-		return str[pos:end], false, nil
+	} else if end < numRunes {
+		return string(runes[pos:end]), false, nil
 	}
-	return str[pos:], false, nil
+	return string(runes[pos:]), false, nil
 }
 
 type substringIndexFunctionClass struct {
@@ -996,8 +990,6 @@ func (b *builtinLocateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, nil
 }
 
-const spaceChars = "\n\t\r "
-
 type hexFunctionClass struct {
 	baseFunctionClass
 }
@@ -1118,75 +1110,149 @@ func (b *builtinUnHexSig) evalString(row []types.Datum) (string, bool, error) {
 	return string(bs), false, nil
 }
 
+const spaceChars = "\n\t\r "
+
 type trimFunctionClass struct {
 	baseFunctionClass
 }
 
+// The syntax of trim in mysql is 'TRIM([{BOTH | LEADING | TRAILING} [remstr] FROM] str), TRIM([remstr FROM] str)',
+// but we wil convert it into trim(str), trim(str, remstr) and trim(str, remstr, direction) in AST.
 func (c *trimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinTrimSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 
-type builtinTrimSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinTrimSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
-func (b *builtinTrimSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// args[0] -> Str
-	// args[1] -> RemStr
-	// args[2] -> Direction
-	// eval str
-	if args[0].IsNull() {
-		return d, nil
-	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	remstr := ""
-	// eval remstr
-	if len(args) > 1 {
-		if args[1].Kind() != types.KindNull {
-			remstr, err = args[1].ToString()
-			if err != nil {
-				return d, errors.Trace(err)
-			}
+	switch len(args) {
+	case 1:
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+		argType := args[0].GetType()
+		bf.tp.Flen = argType.Flen
+		if mysql.HasBinaryFlag(argType.Flag) {
+			types.SetBinChsClnFlag(bf.tp)
+		}
+		sig := &builtinTrim1ArgSig{baseStringBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+
+	case 2:
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		argType := args[0].GetType()
+		bf.tp.Flen = argType.Flen
+		if mysql.HasBinaryFlag(argType.Flag) {
+			types.SetBinChsClnFlag(bf.tp)
+		}
+		sig := &builtinTrim2ArgsSig{baseStringBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+
+	case 3:
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString, tpInt)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		argType := args[0].GetType()
+		bf.tp.Flen = argType.Flen
+		if mysql.HasBinaryFlag(argType.Flag) {
+			types.SetBinChsClnFlag(bf.tp)
+		}
+		sig := &builtinTrim3ArgsSig{baseStringBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+
+	default:
+		return nil, errors.Trace(c.verifyArgs(args))
 	}
-	// do trim
-	var result string
-	var direction ast.TrimDirectionType
-	if len(args) > 2 {
-		direction = args[2].GetValue().(ast.TrimDirectionType)
-	} else {
-		direction = ast.TrimBothDefault
+}
+
+type builtinTrim1ArgSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinTrim1ArgSig, corresponding to trim(str)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
+func (b *builtinTrim1ArgSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
+	return strings.Trim(d, spaceChars), false, nil
+}
+
+type builtinTrim2ArgsSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinTrim2ArgsSig, corresponding to trim(str, remstr)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
+func (b *builtinTrim2ArgsSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var str, remstr string
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	remstr, isNull, err = b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	d = trimLeft(str, remstr)
+	d = trimRight(d, remstr)
+	return d, false, nil
+}
+
+type builtinTrim3ArgsSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinTrim3ArgsSig, corresponding to trim(str, remstr, direction)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
+func (b *builtinTrim3ArgsSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var (
+		str, remstr  string
+		x            int64
+		direction    ast.TrimDirectionType
+		isRemStrNull bool
+	)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	remstr, isRemStrNull, err = b.args[1].EvalString(row, sc)
+	if err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	x, isNull, err = b.args[2].EvalInt(row, sc)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	direction = ast.TrimDirectionType(x)
 	if direction == ast.TrimLeading {
-		if len(remstr) > 0 {
-			result = trimLeft(str, remstr)
+		if isRemStrNull {
+			d = strings.TrimLeft(str, spaceChars)
 		} else {
-			result = strings.TrimLeft(str, spaceChars)
+			d = trimLeft(str, remstr)
 		}
 	} else if direction == ast.TrimTrailing {
-		if len(remstr) > 0 {
-			result = trimRight(str, remstr)
+		if isRemStrNull {
+			d = strings.TrimRight(str, spaceChars)
 		} else {
-			result = strings.TrimRight(str, spaceChars)
+			d = trimRight(str, remstr)
 		}
-	} else if len(remstr) > 0 {
-		x := trimLeft(str, remstr)
-		result = trimRight(x, remstr)
 	} else {
-		result = strings.Trim(str, spaceChars)
+		if isRemStrNull {
+			d = strings.Trim(str, spaceChars)
+		} else {
+			d = trimLeft(str, remstr)
+			d = trimRight(d, remstr)
+		}
 	}
-	d.SetString(result)
-	return d, nil
+	return d, false, nil
 }
 
 type lTrimFunctionClass struct {
@@ -1194,20 +1260,34 @@ type lTrimFunctionClass struct {
 }
 
 func (c *lTrimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLTrimSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	if mysql.HasBinaryFlag(argType.Flag) {
+		types.SetBinChsClnFlag(bf.tp)
+	}
+	sig := &builtinLTrimSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinLTrimSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-func (b *builtinLTrimSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+// evalString evals a builtinLTrimSig
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
+func (b *builtinLTrimSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	return trimFn(strings.TrimLeft, spaceChars)(args, b.ctx)
+	return strings.TrimLeft(d, spaceChars), false, nil
 }
 
 type rTrimFunctionClass struct {
@@ -1215,37 +1295,34 @@ type rTrimFunctionClass struct {
 }
 
 func (c *rTrimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRTrimSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	if mysql.HasBinaryFlag(argType.Flag) {
+		types.SetBinChsClnFlag(bf.tp)
+	}
+	sig := &builtinRTrimSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinRTrimSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-func (b *builtinRTrimSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return trimFn(strings.TrimRight, spaceChars)(args, b.ctx)
-}
-
-// trimFn returns a BuildFunc for ltrim and rtrim.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
+// evalString evals a builtinRTrimSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
-func trimFn(fn func(string, string) string, cutset string) BuiltinFunc {
-	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-		if args[0].IsNull() {
-			return d, nil
-		}
-		str, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(fn(str, cutset))
-		return d, nil
+func (b *builtinRTrimSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
+	return strings.TrimRight(d, spaceChars), false, nil
 }
 
 func trimLeft(str, remstr string) string {
@@ -1936,7 +2013,8 @@ func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error)
 	)
 	switch len(args) {
 	case 5:
-		arg, err := args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+		var arg int64
+		arg, err = args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
