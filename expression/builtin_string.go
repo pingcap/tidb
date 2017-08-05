@@ -110,6 +110,7 @@ var (
 	_ builtinFunc = &builtinLTrimSig{}
 	_ builtinFunc = &builtinRTrimSig{}
 	_ builtinFunc = &builtinLpadSig{}
+	_ builtinFunc = &builtinLpadBinarySig{}
 	_ builtinFunc = &builtinRpadSig{}
 	_ builtinFunc = &builtinRpadBinarySig{}
 	_ builtinFunc = &builtinBitLengthSig{}
@@ -1470,7 +1471,7 @@ type builtinRpadBinarySig struct {
 
 // evalString evals RPAD(str,len,padstr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
-func (b *builtinRpadBinarySig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+func (b *builtinRpadBinarySig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	str, isNull, err := b.args[0].EvalString(row, sc)
@@ -1508,7 +1509,7 @@ type builtinRpadSig struct {
 
 // evalString evals RPAD(str,len,padstr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
-func (b *builtinRpadSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+func (b *builtinRpadSig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	str, isNull, err := b.args[0].EvalString(row, sc)
