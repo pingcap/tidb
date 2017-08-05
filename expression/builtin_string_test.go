@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -1164,10 +1163,6 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 			c.Assert(f, NotNil)
 			c.Assert(f.isDeterministic(), Equals, true)
 			r, err := f.eval(nil)
-			if err != nil {
-				fmt.Printf("error: %s\n", err.Error())
-				fmt.Println(errors.ErrorStack(err))
-			}
 			c.Assert(err, IsNil)
 			c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 		}
