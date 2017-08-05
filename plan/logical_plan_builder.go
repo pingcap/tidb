@@ -1182,51 +1182,13 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			pkCol = schema.Columns[schema.Len()-1]
 		}
 	}
-	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
-	if b.needColHandle == 0 && !needUnionScan {
-		p.SetSchema(schema)
-		return p
-	}
-	if pkCol == nil || needUnionScan {
-		idCol := &expression.Column{
-			FromID:   p.id,
-			DBName:   schemaName,
-			TblName:  tableInfo.Name,
-			ColName:  model.NewCIStr("_rowid"),
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			Position: schema.Len(),
-			Index:    schema.Len(),
-			ID:       model.ExtraHandleID,
-		}
-		if needUnionScan {
-			p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
-			for _, col := range schema.Columns {
-				p.unionScanSchema.Append(col)
-			}
-			if b.needColHandle > 0 {
-				p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
-				p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
-			}
-		}
-		p.Columns = append(p.Columns, &model.ColumnInfo{
-			ID:   model.ExtraHandleID,
-			Name: model.NewCIStr("_rowid"),
-		})
-		schema.Append(idCol)
-		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
-	} else {
-		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
-	}
 	p.SetSchema(schema)
 
 	// for calculating generated column
 	sc := b.ctx.GetSessionVars().StmtCtx
 	p.GenValues = make(map[int]expression.Expression)
-	for _, col := range schema.Columns {
-		idx := col.Position
-		colInfo := tableInfo.Columns[idx]
-		if len(colInfo.GeneratedExprString) != 0 && !colInfo.GeneratedStored {
-			column := columns[idx]
+	for idx, column := range columns {
+		if len(column.GeneratedExprString) != 0 && !column.GeneratedStored {
 			// TODO: should we take a clone of GeneratedExpr or not?
 			if err := expression.InferType(sc, column.GeneratedExpr); err != nil {
 				b.err = errors.Trace(err)
@@ -1240,6 +1202,43 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			p.GenValues[idx] = expr
 		}
 	}
+
+	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
+	if b.needColHandle == 0 && !needUnionScan {
+		return p
+	}
+
+	if pkCol == nil || needUnionScan {
+		idCol := &expression.Column{
+			FromID:   p.id,
+			DBName:   schemaName,
+			TblName:  tableInfo.Name,
+			ColName:  model.NewCIStr("_rowid"),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Position: schema.Len(),
+			Index:    schema.Len(),
+			ID:       model.ExtraHandleID,
+		}
+		if needUnionScan {
+			p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+			for _, col := range p.schema.Columns {
+				p.unionScanSchema.Append(col)
+			}
+			if b.needColHandle > 0 {
+				p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
+				p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+			}
+		}
+		p.Columns = append(p.Columns, &model.ColumnInfo{
+			ID:   model.ExtraHandleID,
+			Name: model.NewCIStr("_rowid"),
+		})
+		p.schema.Append(idCol)
+		p.schema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+	} else {
+		p.schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
+	}
+
 	return p
 }
 

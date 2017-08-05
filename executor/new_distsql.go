@@ -384,7 +384,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		table:     e.table,
 		tableID:   e.tableID,
 		dagPB:     e.tableRequest,
-		schema:    e.schema,
+		schema:    schema,
 		ctx:       e.ctx,
 		genValues: e.genValues,
 		handleCol: handleCol,
