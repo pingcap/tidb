@@ -14,8 +14,10 @@
 package expression
 
 import (
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -29,8 +31,11 @@ var (
 var (
 	_ builtinFunc = &builtinCaseWhenSig{}
 	_ builtinFunc = &builtinIfSig{}
-	_ builtinFunc = &builtinIfNullSig{}
 	_ builtinFunc = &builtinNullIfSig{}
+	_ builtinFunc = &builtinIfNullIntSig{}
+	_ builtinFunc = &builtinIfNullRealSig{}
+	_ builtinFunc = &builtinIfNullDecimalSig{}
+	_ builtinFunc = &builtinIfNullStringSig{}
 )
 
 type caseWhenFunctionClass struct {
@@ -125,32 +130,102 @@ type ifNullFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIfNullSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
+func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	tp0, tp1 := args[0].GetType(), args[1].GetType()
+	fieldTp := types.AggFieldType([]*types.FieldType{tp0, tp1})
+	types.SetBinChsClnFlag(fieldTp)
+	classType := types.AggTypeClass([]*types.FieldType{tp0, tp1}, &fieldTp.Flag)
+	fieldTp.Decimal = mathutil.Max(tp0.Decimal, tp1.Decimal)
+	// TODO: make it more accurate when inferring FLEN
+	fieldTp.Flen = tp0.Flen + tp1.Flen
 
-type builtinIfNullSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinIfNullSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_ifnull
-func (b *builtinIfNullSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
+	var evalTp evalTp
+	switch classType {
+	case types.ClassInt:
+		evalTp = tpInt
+		fieldTp.Decimal = 0
+	case types.ClassReal:
+		evalTp = tpReal
+	case types.ClassDecimal:
+		evalTp = tpDecimal
+	case types.ClassString:
+		evalTp = tpString
+		if !types.IsBinaryStr(tp0) && !types.IsBinaryStr(tp1) {
+			fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
+			fieldTp.Flag ^= mysql.BinaryFlag
+		}
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTp, evalTp, evalTp)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	// ifnull(expr1, expr2)
-	// if expr1 is not null, return expr1, otherwise, return expr2
-	v1 := args[0]
-	v2 := args[1]
-
-	if !v1.IsNull() {
-		return v1, nil
+	bf.tp = fieldTp
+	switch classType {
+	case types.ClassInt:
+		sig = &builtinIfNullIntSig{baseIntBuiltinFunc{bf}}
+	case types.ClassReal:
+		sig = &builtinIfNullRealSig{baseRealBuiltinFunc{bf}}
+	case types.ClassDecimal:
+		sig = &builtinIfNullDecimalSig{baseDecimalBuiltinFunc{bf}}
+	case types.ClassString:
+		sig = &builtinIfNullStringSig{baseStringBuiltinFunc{bf}}
 	}
+	return sig.setSelf(sig), nil
+}
 
-	return v2, nil
+type builtinIfNullIntSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinIfNullIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalInt(row, sc)
+	if !isNull {
+		return arg0, false, errors.Trace(err)
+	}
+	return b.args[1].EvalInt(row, sc)
+}
+
+type builtinIfNullRealSig struct {
+	baseRealBuiltinFunc
+}
+
+func (b *builtinIfNullRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalReal(row, sc)
+	if !isNull {
+		return arg0, false, errors.Trace(err)
+	}
+	return b.args[1].EvalReal(row, sc)
+}
+
+type builtinIfNullDecimalSig struct {
+	baseDecimalBuiltinFunc
+}
+
+func (b *builtinIfNullDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalDecimal(row, sc)
+	if !isNull {
+		return arg0, false, errors.Trace(err)
+	}
+	return b.args[1].EvalDecimal(row, sc)
+}
+
+type builtinIfNullStringSig struct {
+	baseStringBuiltinFunc
+}
+
+func (b *builtinIfNullStringSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalString(row, sc)
+	if !isNull {
+		return arg0, false, errors.Trace(err)
+	}
+	return b.args[1].EvalString(row, sc)
 }
 
 type nullIfFunctionClass struct {
