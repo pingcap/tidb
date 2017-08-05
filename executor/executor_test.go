@@ -419,6 +419,11 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows("2"))
 	r = tk.MustQuery("select b from (select a,b from t order by a,c limit 1) t")
 	r.Check(testkit.Rows("2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("insert into t values(1, 1), (2, 2)")
+	tk.MustQuery("select * from t where 1 order by b").Check(testkit.Rows("1 1", "2 2"))
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {
