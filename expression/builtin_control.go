@@ -142,23 +142,23 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 	// TODO: make it more accurate when inferring FLEN
 	fieldTp.Flen = tp0.Flen + tp1.Flen
 
-	var evalTp evalTp
+	var evalTps evalTp
 	switch classType {
 	case types.ClassInt:
-		evalTp = tpInt
+		evalTps = tpInt
 		fieldTp.Decimal = 0
 	case types.ClassReal:
-		evalTp = tpReal
+		evalTps = tpReal
 	case types.ClassDecimal:
-		evalTp = tpDecimal
+		evalTps = tpDecimal
 	case types.ClassString:
-		evalTp = tpString
+		evalTps = tpString
 		if !types.IsBinaryStr(tp0) && !types.IsBinaryStr(tp1) {
 			fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
 			fieldTp.Flag ^= mysql.BinaryFlag
 		}
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTp, evalTp, evalTp)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
