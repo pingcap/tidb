@@ -288,6 +288,12 @@ type DataSource struct {
 	// GenValues is for virtual generated columns without indices.
 	// the key is the offset in row datums, like expression.Column.Index.
 	GenValues map[int]expression.Expression
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
+
+	// This is schema the PhysicalUnionScan should be.
+	unionScanSchema *expression.Schema
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {
@@ -305,6 +311,14 @@ func (p *DataSource) getPKIsHandleCol() *expression.Column {
 // TableInfo returns the *TableInfo of data source.
 func (p *DataSource) TableInfo() *model.TableInfo {
 	return p.tableInfo
+}
+
+// Schema implements the plan interface.
+func (p *DataSource) Schema() *expression.Schema {
+	if p.unionScanSchema != nil {
+		return p.unionScanSchema
+	}
+	return p.schema
 }
 
 // Union represents Union plan.

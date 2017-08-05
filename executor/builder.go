@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -390,7 +391,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	if b.err != nil {
 		return nil
 	}
-	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src)}
+	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src), needColHandle: v.NeedColHandle}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc
@@ -633,6 +634,10 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
+	var handleCol *expression.Column
+	if v.NeedColHandle {
+		handleCol = v.Schema().TblID2Handle[v.Table.ID][0]
+	}
 	e := &XSelectTableExec{
 		tableInfo:   v.Table,
 		ctx:         b.ctx,
@@ -652,6 +657,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		byItems:     v.GbyItemsPB,
 		orderByList: v.SortItemsPB,
 		genValues:   v.GenValues,
+		handleCol:   handleCol,
 		priority:    b.priority,
 	}
 	return e
@@ -665,6 +671,10 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
+	var handleCol *expression.Column
+	if v.NeedColHandle {
+		handleCol = v.Schema().TblID2Handle[v.Table.ID][0]
+	}
 	e := &XSelectIndexExec{
 		tableInfo:            v.Table,
 		ctx:                  b.ctx,
@@ -687,6 +697,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggFuncs:             v.AggFuncsPB,
 		byItems:              v.GbyItemsPB,
 		genValues:            v.GenValues,
+		handleCol:            handleCol,
 		priority:             b.priority,
 	}
 	vars := b.ctx.GetSessionVars()
@@ -707,6 +718,12 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 				ColName: col.Name,
 				RetType: &colInfo.FieldType,
 			}
+		}
+		if e.handleCol != nil {
+			schemaColumns = append(schemaColumns, &expression.Column{
+				FromID: v.ID(),
+				ID:     model.ExtraHandleID,
+			})
 		}
 		e.idxColsSchema = expression.NewSchema(schemaColumns...)
 	}
@@ -819,19 +836,29 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 }
 
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
+	tblID2table := make(map[int64]table.Table)
+	for id := range v.Schema().TblID2Handle {
+		tblID2table[id], _ = b.is.TableByID(id)
+	}
 	return &UpdateExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		SelectExec:   b.build(v.Children()[0]),
 		OrderedList:  v.OrderedList,
+		tblID2table:  tblID2table,
 	}
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
+	tblID2table := make(map[int64]table.Table)
+	for id := range v.Schema().TblID2Handle {
+		tblID2table[id], _ = b.is.TableByID(id)
+	}
 	return &DeleteExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		SelectExec:   b.build(v.Children()[0]),
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
+		tblID2Table:  tblID2table,
 	}
 }
 
@@ -1003,7 +1030,7 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
 	batchSize := 1
 	if !v.KeepOrder {
-		batchSize = b.ctx.GetSessionVars().IndexLookupSize
+		batchSize = b.ctx.GetSessionVars().IndexJoinBatchSize
 	}
 	return &IndexLookUpJoin{
 		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
@@ -1026,6 +1053,10 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
+	var handleCol *expression.Column
+	if v.NeedColHandle {
+		handleCol = v.Schema().TblID2Handle[ts.Table.ID][0]
+	}
 	e := &TableReaderExecutor{
 		ctx:       b.ctx,
 		schema:    v.Schema(),
@@ -1038,9 +1069,13 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		ranges:    ts.Ranges,
 		columns:   ts.Columns,
 		genValues: ts.GenValues,
+		handleCol: handleCol,
 		priority:  b.priority,
 	}
 	for i := range v.Schema().Columns {
+		if v.Schema().Columns[i].ID == model.ExtraHandleID {
+			break
+		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 	if dagReq.Executors[len(dagReq.Executors)-1].Tp == tipb.ExecType_TypeAggregation {
@@ -1056,6 +1091,10 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
+	var handleCol *expression.Column
+	if v.NeedColHandle {
+		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
+	}
 	e := &IndexReaderExecutor{
 		ctx:       b.ctx,
 		schema:    v.Schema(),
@@ -1068,10 +1107,15 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		desc:      is.Desc,
 		ranges:    is.Ranges,
 		columns:   is.Columns,
+		handleCol: handleCol,
 		priority:  b.priority,
 	}
 
 	for _, col := range v.OutputColumns {
+		// If it's ID is ExtraHandleID, then it must is the tail of the slice.
+		if col.ID == model.ExtraHandleID {
+			break
+		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
 	}
 
@@ -1089,8 +1133,17 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
+	var handleCol *expression.Column
+	if v.NeedColHandle {
+		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
+	}
 
-	for i := range v.Schema().Columns {
+	len := v.Schema().Len()
+	if handleIsExtra(handleCol) {
+		len--
+	}
+
+	for i := 0; i < len; i++ {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
@@ -1107,6 +1160,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		ranges:       is.Ranges,
 		tableRequest: tableReq,
 		columns:      is.Columns,
+		handleCol:    handleCol,
 		priority:     b.priority,
 	}
 	for _, p := range v.TablePlans {
