@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -1151,17 +1152,22 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 		fNum   float64
 		result string
 	}{
-		{"65", 66, 67.5, "ABD"},                // float
-		{"65", 16740, 67.5, "AAdD"},            // large num
-		{"65", -1, 67.5, "A\xff\xff\xff\xffD"}, // nagtive int
-		{"a", -1, 67.5, ""},                    // invalid 'a'
+		{"65", 66, 67, "ABC"},                // float
+		{"65", 16740, 67, "AAdC"},            // large num
+		{"65", -1, 67, "A\xff\xff\xff\xffC"}, // nagtive int
 	}
 	for _, v := range tbl {
 		for _, char := range []interface{}{"utf8", nil} {
 			fc := funcs[ast.CharFunc]
 			f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, char)), s.ctx)
 			c.Assert(err, IsNil)
+			c.Assert(f, NotNil)
+			c.Assert(f.isDeterministic(), Equals, true)
 			r, err := f.eval(nil)
+			if err != nil {
+				fmt.Printf("error: %s\n", err.Error())
+				fmt.Println(errors.ErrorStack(err))
+			}
 			c.Assert(err, IsNil)
 			c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 		}

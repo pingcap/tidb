@@ -1443,7 +1443,7 @@ func (c *charFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen = mysql.MaxBlobWidth
+	bf.tp.Flen = 4 * (len(args) - 1)
 	types.SetBinChsClnFlag(bf.tp)
 
 	sig := &builtinCharSig{baseStringBuiltinFunc{bf}}
@@ -1454,80 +1454,68 @@ type builtinCharSig struct {
 	baseStringBuiltinFunc
 }
 
-func (b *builtinCharSig) convertInt64ToBytes(ints []int64) []byte {
-	var buf bytes.Buffer
+func (b *builtinCharSig) convertToBytes(ints []int64) []byte {
+	buffer := bytes.NewBuffer([]byte{})
 	for i := len(ints) - 1; i >= 0; i-- {
-		var count int
-		v := ints[i]
-		for count < 4 {
-			buf.WriteByte(byte(v & 0xff))
-			v = v >> 8
-			if v == 0 {
+		for count, val := 0, ints[i]; count < 4; count++ {
+			buffer.WriteByte(byte(val & 0xff))
+			val = val >> 8
+			if val == 0 {
 				break
 			}
-			count++
 		}
 	}
-	s := buf.Bytes()
-	reverseByteSlice(s)
-	return s
+
+	result := buffer.Bytes()
+	for start, end := 0, len(result)-1; start < end; {
+		result[start], result[end] = result[end], result[start]
+		start++
+		end--
+	}
+	return result
 }
 
-// evalString evals a builtinCharSig.
+// evalString evals CHAR(N,... [USING charset_name]).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
 func (b *builtinCharSig) evalString(row []types.Datum) (string, bool, error) {
-	intSlice := make([]int64, 0, len(b.args)-1)
+	bigints := make([]int64, 0, len(b.args)-1)
 
-	for i, arg := range b.args {
-		if i+1 == len(b.args) {
-			break
-		}
-		val, IsNull, err := arg.EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
-		if IsNull {
-			continue
-		}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < len(b.args)-1; i++ {
+		val, IsNull, err := b.args[i].EvalInt(row, sc)
 		if err != nil {
 			return "", true, errors.Trace(err)
 		}
-		intSlice = append(intSlice, val)
+		if IsNull {
+			continue
+		}
+		bigints = append(bigints, val)
 	}
-
-	resultStr := string(b.convertInt64ToBytes(intSlice))
-
 	// The last argument represents the charset name after "using".
-	// If it is nil, the default charset utf8 is used.
-	argCharset, IsNull, err := b.args[len(b.args)-1].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
-	if IsNull || err != nil {
-		return resultStr, false, errors.Trace(err)
+	// Use default charset utf8 if it is nil.
+	argCharset, IsNull, err := b.args[len(b.args)-1].EvalString(row, sc)
+	if err != nil {
+		return "", true, errors.Trace(err)
 	}
 
-	if IsNull || err != nil ||
-		strings.ToLower(argCharset) == "ascii" ||
-		strings.HasPrefix(strings.ToLower(argCharset), "utf8") {
-		return resultStr, false, errors.Trace(err)
+	result := string(b.convertToBytes(bigints))
+	charsetLabel := strings.ToLower(argCharset)
+	if IsNull || charsetLabel == "ascii" || strings.HasPrefix(charsetLabel, "utf8") {
+		return result, false, nil
 	}
 
-	encoding, _ := charset.Lookup(argCharset)
+	encoding, charsetName := charset.Lookup(charsetLabel)
 	if encoding == nil {
 		return "", true, errors.Errorf("unknown encoding: %s", argCharset)
 	}
 
-	resultStr, _, err = transform.String(encoding.NewDecoder(), resultStr)
+	oldStr := result
+	result, _, err = transform.String(encoding.NewDecoder(), result)
 	if err != nil {
-		log.Errorf("Convert %s to %s with error: %v", resultStr, argCharset, err)
+		log.Errorf("Convert %s to %s with error: %v", oldStr, charsetName, err.Error())
 		return "", true, errors.Trace(err)
 	}
-	return resultStr, false, nil
-}
-
-func reverseByteSlice(slice []byte) {
-	var start int
-	var end = len(slice) - 1
-	for start < end {
-		slice[start], slice[end] = slice[end], slice[start]
-		start++
-		end--
-	}
+	return result, false, nil
 }
 
 type charLengthFunctionClass struct {
