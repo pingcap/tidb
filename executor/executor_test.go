@@ -2247,6 +2247,7 @@ func (s *testSuite) TestDateBuiltin(c *C) {
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("create table t (d date);")
 	tk.MustExec("insert into t values ('1997-01-02')")
+	tk.MustExec("insert into t values ('1998-01-02')")
 	r := tk.MustQuery("select * from t where d < date '1998-01-01';")
 	r.Check(testkit.Rows("1997-01-02"))
 }
