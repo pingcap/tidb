@@ -106,9 +106,9 @@ type Simple struct {
 // InsertGeneratedColumns is for completing generated columns in Insert.
 // We resolve generation expressions in plan, and eval those in executor.
 type InsertGeneratedColumns struct {
-	Columns []*ast.ColumnName
-	Exprs   []expression.Expression
-	OnDuplicates  []*expression.Assignment
+	Columns      []*ast.ColumnName
+	Exprs        []expression.Expression
+	OnDuplicates []*expression.Assignment
 }
 
 // Insert represents an insert plan.
