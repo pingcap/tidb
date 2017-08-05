@@ -734,7 +734,10 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			if col.Name.L == prop.cols[0].ColName.L {
 				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
 				break
-			} else if i >= len(is.AccessCondition) || is.AccessCondition[i].(*expression.ScalarFunction).FuncName.L != ast.EQ {
+			} else if i >= len(is.AccessCondition) {
+				matchProperty = false
+				break
+			} else if sf, ok := is.AccessCondition[i].(*expression.ScalarFunction); !ok || sf.FuncName.L != ast.EQ {
 				matchProperty = false
 				break
 			}
