@@ -248,12 +248,7 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
-		cName := colDef.Name.Name.String()
-		if isIncorrectName(cName) {
-			v.err = ddl.ErrWrongColumnName.GenByArgs(cName)
-			return
-		}
-		if err := checkFieldLengthLimitation(colDef); err != nil {
+		if err := checkColumn(colDef); err != nil {
 			v.err = errors.Trace(err)
 			return
 		}
@@ -342,12 +337,7 @@ func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			}
 		}
 		if spec.NewColumn != nil {
-			cName := spec.NewColumn.Name.Name.String()
-			if isIncorrectName(cName) {
-				v.err = ddl.ErrWrongColumnName.GenByArgs(cName)
-				return
-			}
-			if err := checkFieldLengthLimitation(spec.NewColumn); err != nil {
+			if err := checkColumn(spec.NewColumn); err != nil {
 				v.err = err
 				return
 			}
@@ -391,9 +381,16 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 	return nil
 }
 
-// checkFieldLengthLimitation checks the maximum length of the column.
+// checkColumn checks if the column definition is valid.
 // See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
-func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
+func checkColumn(colDef *ast.ColumnDef) error {
+	// Check column name.
+	cName := colDef.Name.Name.String()
+	if isIncorrectName(cName) {
+		return ddl.ErrWrongColumnName.GenByArgs(cName)
+	}
+
+	// Check column type.
 	tp := colDef.Tp
 	if tp == nil {
 		return nil
@@ -401,6 +398,7 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 	if tp.Flen > math.MaxUint32 {
 		return types.ErrTooBigDisplayWidth.Gen("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
 	}
+
 	switch tp.Tp {
 	case mysql.TypeString:
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.MaxFieldCharLength {
@@ -430,6 +428,12 @@ func checkFieldLengthLimitation(colDef *ast.ColumnDef) error {
 	case mysql.TypeSet:
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
 			return types.ErrTooBigSet.Gen("Too many strings for column %s and SET", colDef.Name.Name.O)
+		}
+		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html .
+		for _, str := range colDef.Tp.Elems {
+			if strings.Contains(str, ",") {
+				return types.ErrIllegalValueForType.GenByArgs(types.TypeStr(tp.Tp), str)
+			}
 		}
 	default:
 		// TODO: Add more types.
