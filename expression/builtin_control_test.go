@@ -90,6 +90,13 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 		{1, 2, int64(1), false, false},
 		{nil, 2, int64(2), false, false},
 		{nil, nil, nil, true, false},
+		{tm, nil, tm, false, false},
+		{nil, duration, duration, false, false},
+		{nil, types.NewDecFromFloatForTest(123.123), types.NewDecFromFloatForTest(123.123), false, false},
+		{nil, types.Bit{Value: 1, Width: 8}, "\x01", false, false},
+		{nil, types.Hex{Value: 1}, "\x01", false, false},
+		{nil, types.Set{Value: 1, Name: "abc"}, "abc", false, false},
+		{"abc", nil, "abc", false, false},
 	}
 
 	for _, t := range tbl {
@@ -103,7 +110,7 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(d.GetInt64(), Equals, t.expected)
+				c.Assert(d.GetValue(), DeepEquals, t.expected)
 			}
 		}
 	}

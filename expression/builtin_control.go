@@ -157,6 +157,11 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 			fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
 			fieldTp.Flag ^= mysql.BinaryFlag
 		}
+		if types.IsTypeTime(fieldTp.Tp) {
+			evalTps = tpTime
+		} else if fieldTp.Tp == mysql.TypeDuration {
+			evalTps = tpDuration
+		}
 	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
 	if err != nil {
@@ -172,6 +177,11 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 		sig = &builtinIfNullDecimalSig{baseDecimalBuiltinFunc{bf}}
 	case types.ClassString:
 		sig = &builtinIfNullStringSig{baseStringBuiltinFunc{bf}}
+		if types.IsTypeTime(fieldTp.Tp) {
+			sig = &builtinIfNullTimeSig{baseTimeBuiltinFunc{bf}}
+		} else if fieldTp.Tp == mysql.TypeDuration {
+			sig = &builtinIfNullDurationSig{baseDurationBuiltinFunc{bf}}
+		}
 	}
 	return sig.setSelf(sig), nil
 }
@@ -186,7 +196,8 @@ func (b *builtinIfNullIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	if !isNull {
 		return arg0, false, errors.Trace(err)
 	}
-	return b.args[1].EvalInt(row, sc)
+	arg1, isNull, err := b.args[1].EvalInt(row, sc)
+	return arg1, isNull, errors.Trace(err)
 }
 
 type builtinIfNullRealSig struct {
@@ -199,7 +210,8 @@ func (b *builtinIfNullRealSig) evalReal(row []types.Datum) (float64, bool, error
 	if !isNull {
 		return arg0, false, errors.Trace(err)
 	}
-	return b.args[1].EvalReal(row, sc)
+	arg1, isNull, err := b.args[1].EvalReal(row, sc)
+	return arg1, isNull, errors.Trace(err)
 }
 
 type builtinIfNullDecimalSig struct {
@@ -212,7 +224,8 @@ func (b *builtinIfNullDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecim
 	if !isNull {
 		return arg0, false, errors.Trace(err)
 	}
-	return b.args[1].EvalDecimal(row, sc)
+	arg1, isNull, err := b.args[1].EvalDecimal(row, sc)
+	return arg1, isNull, errors.Trace(err)
 }
 
 type builtinIfNullStringSig struct {
@@ -225,7 +238,36 @@ func (b *builtinIfNullStringSig) evalString(row []types.Datum) (string, bool, er
 	if !isNull {
 		return arg0, false, errors.Trace(err)
 	}
-	return b.args[1].EvalString(row, sc)
+	arg1, isNull, err := b.args[1].EvalString(row, sc)
+	return arg1, isNull, errors.Trace(err)
+}
+
+type builtinIfNullTimeSig struct {
+	baseTimeBuiltinFunc
+}
+
+func (b *builtinIfNullTimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalTime(row, sc)
+	if !isNull {
+		return arg0, false, errors.Trace(err)
+	}
+	arg1, isNull, err := b.args[1].EvalTime(row, sc)
+	return arg1, isNull, errors.Trace(err)
+}
+
+type builtinIfNullDurationSig struct {
+	baseDurationBuiltinFunc
+}
+
+func (b *builtinIfNullDurationSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalDuration(row, sc)
+	if !isNull {
+		return arg0, false, errors.Trace(err)
+	}
+	arg1, isNull, err := b.args[1].EvalDuration(row, sc)
+	return arg1, isNull, errors.Trace(err)
 }
 
 type nullIfFunctionClass struct {
