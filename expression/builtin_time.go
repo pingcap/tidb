@@ -2505,18 +2505,64 @@ type timeFormatFunctionClass struct {
 }
 
 func (c *timeFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinTimeFormatSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = mysql.MaxBlobWidth
+	sig := &builtinTimeFormatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinTimeFormatSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinTimeFormatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
-func (b *builtinTimeFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("TIME_FORMAT")
+func (b *builtinTimeFormatSig) evalString(row []types.Datum) (string, bool, error) {
+	time, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return "", isNull, errors.Trace(err)
+	}
+	formatMask, isNull, err := b.args[1].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return "", isNull, errors.Trace(err)
+	}
+	var d types.Datum
+	d.SetString(time)
+	var res string
+	res, err = builtinTimeFormat(d, formatMask, b.ctx)
+	return res, isNull, err
+}
+
+// builtinTimeFormat ...
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
+func builtinTimeFormat(time types.Datum, formatMask string, ctx context.Context) (res string, err error) {
+	var d types.Datum
+	d, err = convertToDuration(ctx.GetSessionVars().StmtCtx, time, types.MaxFsp)
+
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	if d.IsNull() {
+		return
+	}
+
+	t := d.GetMysqlDuration()
+
+	t2 := types.Time{
+		Time: types.FromDate(0, 0, 0, t.Hour(), t.Minute(), t.Second(), t.MicroSecond()),
+		Type: mysql.TypeDate, Fsp: 0}
+
+	str, err := t2.DateFormat(formatMask)
+
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	return str, err
 }
 
 type timeToSecFunctionClass struct {

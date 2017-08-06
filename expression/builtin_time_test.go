@@ -1563,6 +1563,45 @@ func (s *testEvaluatorSuite) TestPeriodAdd(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
+	defer testleak.AfterTest(c)()
+
+	// SELECT DATE_FORMAT(null,'%H %k %h %I %l')
+	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum("%H %k %h %I %l")}
+	fc := funcs[ast.TimeFormat]
+	f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), Equals, true)
+
+	tblDate := []struct {
+		Input  []string
+		Expect interface{}
+	}{
+		{[]string{"100:00:00", "%H %k %h %I %l"},
+			"100 100 04 04 4"},
+		{[]string{"23:00:00", "%H %k %h %I %l"},
+			"23 23 11 11 11"},
+		{[]string{"11:00:00", "%H %k %h %I %l"},
+			"11 11 11 11 11"},
+		{[]string{"17:42:03.000001", "%r %T %h:%i%p %h:%i:%s %p %H %i %s"},
+			"05:42:03 PM 17:42:03 05:42PM 05:42:03 PM 17 42 03"},
+		{[]string{"07:42:03.000001", "%f"},
+			"000001"},
+	}
+	dtblDate := tblToDtbl(tblDate)
+	for i, t := range dtblDate {
+		fc := funcs[ast.TimeFormat]
+		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Expect"][0], Commentf("no.%d \nobtain:%v \nexpect:%v\n", i,
+			v.GetValue(), t["Expect"][0].GetValue()))
+	}
+}
+
 func (s *testEvaluatorSuite) TestTimeToSec(c *C) {
 	tests := []struct {
 		t      string
