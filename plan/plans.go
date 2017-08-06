@@ -198,9 +198,15 @@ func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
 	for _, parent := range parents {
 		parentIDs = append(parentIDs, parent.ID())
 	}
+	childrenIDs := make([]string, 0, len(p.Children()))
+	for _, ch := range p.Children() {
+		childrenIDs = append(childrenIDs, ch.ID())
+	}
 	parentInfo := strings.Join(parentIDs, ",")
+	childrenInfo := strings.Join(childrenIDs, ",")
 	operatorInfo := p.ExplainInfo()
-	row := types.MakeDatums(p.ID(), parentInfo, taskType, operatorInfo)
+	count := p.statsProfile().count
+	row := types.MakeDatums(p.ID(), parentInfo, childrenInfo, taskType, operatorInfo, count)
 	e.Rows = append(e.Rows, row)
 }
 
