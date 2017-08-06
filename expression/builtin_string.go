@@ -2293,58 +2293,74 @@ type instrFunctionClass struct {
 }
 
 func (c *instrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinInstrSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(erfr)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 11
+	if types.IsBinaryStr(bf.args[0].GetType()) || types.IsBinaryStr(bf.args[1].GetType()) {
+		sig := &builtinInstrBinarySig{baseIntBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	}
+	sig := &builtinInstrSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinInstrBinarySig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals INSTR(str,substr), case sensitive
+// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
+func (b *builtinInstrBinarySig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	str, IsNull, err := b.args[0].EvalString(row, sc)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	substr, IsNull, err := b.args[1].EvalString(row, sc)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	idx := strings.Index(str, substr)
+	if idx == -1 {
+		return 0, false, nil
+	}
+	return idx + 1, false, nil
 }
 
 type builtinInstrSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinInstrSig.
+// evalInt evals INSTR(str,substr), case insensitive
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
-func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	// INSTR(str, substr)
-	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
-	}
+func (b *builtinInstrSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
 
-	var str, substr string
-	if str, err = args[0].ToString(); err != nil {
-		return d, errors.Trace(err)
+	str, IsNull, err := b.args[0].EvalString(row, sc)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
 	}
-	if substr, err = args[1].ToString(); err != nil {
-		return d, errors.Trace(err)
-	}
+	str = strings.ToLower(str)
 
-	// INSTR performs case **insensitive** search by default, while at least one argument is binary string
-	// we do case sensitive search.
-	var caseSensitive bool
-	if args[0].Kind() == types.KindBytes || args[1].Kind() == types.KindBytes {
-		caseSensitive = true
+	substr, IsNull, err := b.args[1].EvalString(row, sc)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
 	}
+	substr = strings.ToLower(substr)
 
-	var pos, idx int
-	if caseSensitive {
-		idx = strings.Index(str, substr)
-	} else {
-		idx = strings.Index(strings.ToLower(str), strings.ToLower(substr))
-	}
+	idx := strings.Index(str, substr)
 	if idx == -1 {
-		pos = 0
-	} else {
-		if caseSensitive {
-			pos = idx + 1
-		} else {
-			pos = utf8.RuneCountInString(str[:idx]) + 1
-		}
+		return 0, false, nil
 	}
-	d.SetInt64(int64(pos))
-	return d, nil
+	return utf8.RuneCountInString(str[:idx]) + 1, false, nil
 }
 
 type loadFileFunctionClass struct {
