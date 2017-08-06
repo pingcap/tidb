@@ -131,7 +131,7 @@ type ifNullFunctionClass struct {
 }
 
 func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+	if err = errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, errors.Trace(err)
 	}
 	tp0, tp1 := args[0].GetType(), args[1].GetType()

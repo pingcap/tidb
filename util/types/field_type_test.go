@@ -175,7 +175,7 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 		NewFieldType(mysql.TypeGeometry),
 	}
 
-	for i, _ := range fts {
+	for i := range fts {
 		aggTp := AggFieldType(fts[i : i+1])
 		c.Assert(aggTp.Tp, Equals, fts[i].Tp)
 
@@ -254,8 +254,8 @@ func (s *testFieldTypeSuite) TestAggTypeClass(c *C) {
 		NewFieldType(mysql.TypeGeometry),
 	}
 
-	for i, _ := range fts {
-		var flag uint = 0
+	for i := range fts {
+		var flag uint
 		aggTc := AggTypeClass(fts[i:i+1], &flag)
 		switch fts[i].Tp {
 		case mysql.TypeDecimal, mysql.TypeNull, mysql.TypeTimestamp, mysql.TypeDate,
