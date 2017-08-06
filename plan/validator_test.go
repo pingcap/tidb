@@ -139,6 +139,9 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		// issue 3844
 		{`create table t (a set("a, b", "c, d"))`, true, errors.New("[types:1367]Illegal set 'a, b' value found during parsing")},
 		{`alter table t add column a set("a, b", "c, d")`, true, errors.New("[types:1367]Illegal set 'a, b' value found during parsing")},
+		// issue 3843
+		{"create index `primary` on t (i)", true, errors.New("[ddl:1280]Incorrect index name 'primary'")},
+		{"alter table t add index `primary` (i)", true, errors.New("[ddl:1280]Incorrect index name 'primary'")},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)

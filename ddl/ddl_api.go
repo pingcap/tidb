@@ -498,6 +498,10 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, fo
 		colName := constr.Keys[0].Column.Name.L
 		constrName := colName
 		i := 2
+		if strings.EqualFold(constrName, mysql.PrimaryKeyName) {
+			constrName = fmt.Sprintf("%s_%d", constrName, 2)
+			i = 3
+		}
 		for namesMap[constrName] {
 			// We loop forever until we find constrName that haven't been used.
 			if foreign {
@@ -620,7 +624,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		case ast.ConstraintPrimaryKey:
 			idxInfo.Primary = true
 			idxInfo.Unique = true
-			idxInfo.Name = model.NewCIStr(table.PrimaryKeyName)
+			idxInfo.Name = model.NewCIStr(mysql.PrimaryKeyName)
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			idxInfo.Unique = true
 		}
