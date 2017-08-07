@@ -142,7 +142,16 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
-	cst := lCnt * netWorkStartFactor
+	if lCnt < 1 {
+		lCnt = 1
+	}
+	cst := lCnt * netWorkFactor
+	batchSize := p.ctx.GetSessionVars().IndexJoinBatchSize
+	if p.KeepOrder {
+		batchSize = 1
+	}
+	cst += lCnt * math.Log2(math.Min(float64(batchSize), lCnt)) * 2
+	cst += lCnt / float64(batchSize) * netWorkStartFactor
 	if p.KeepOrder {
 		return cst * 2
 	}
@@ -157,7 +166,7 @@ func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
 	if smallTableCnt <= 1 {
 		smallTableCnt = 1
 	}
-	return (lCnt + rCnt) * (1 + math.Log2(smallTableCnt))
+	return (lCnt + rCnt) * (1 + math.Log2(smallTableCnt)/float64(p.Concurrency))
 }
 
 func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
@@ -318,7 +327,6 @@ func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 
 func (p *Sort) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
-	t = finishCopTask(t, p.ctx, p.allocator)
 	t = attachPlan2Task(p.Copy(), t)
 	t.addCost(p.getCost(t.count()))
 	return t
