@@ -327,7 +327,6 @@ func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 
 func (p *Sort) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
-	t = finishCopTask(t, p.ctx, p.allocator)
 	t = attachPlan2Task(p.Copy(), t)
 	t.addCost(p.getCost(t.count()))
 	return t
