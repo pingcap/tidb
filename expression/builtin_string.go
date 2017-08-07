@@ -334,18 +334,22 @@ type leftFunctionClass struct {
 }
 
 func (c *leftFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen = args[0].GetType().Flen
-	if mysql.HasBinaryFlag(args[0].GetType().Flag) {
-		types.SetBinChsClnFlag(bf.tp)
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	setBinFlagOrBinStr(argType, bf.tp)
+	if types.IsBinaryStr(argType) {
 		sig := &builtinLeftBinarySig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+		return sig.setSelf(sig), nil
 	}
 	sig := &builtinLeftSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinLeftBinarySig struct {
@@ -408,18 +412,22 @@ type rightFunctionClass struct {
 }
 
 func (c *rightFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen = args[0].GetType().Flen
-	if mysql.HasBinaryFlag(args[0].GetType().Flag) {
-		types.SetBinChsClnFlag(bf.tp)
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	setBinFlagOrBinStr(argType, bf.tp)
+	if types.IsBinaryStr(argType) {
 		sig := &builtinRightBinarySig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+		return sig.setSelf(sig), nil
 	}
 	sig := &builtinRightSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinRightBinarySig struct {
@@ -812,6 +820,9 @@ type substringFunctionClass struct {
 }
 
 func (c *substringFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	if len(args) == 3 {
 		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpInt)
 		if err != nil {
@@ -819,13 +830,13 @@ func (c *substringFunctionClass) getFunction(args []Expression, ctx context.Cont
 		}
 		argType := args[0].GetType()
 		bf.tp.Flen = argType.Flen
-		if mysql.HasBinaryFlag(argType.Flag) {
-			types.SetBinChsClnFlag(bf.tp)
+		setBinFlagOrBinStr(argType, bf.tp)
+		if types.IsBinaryStr(argType) {
 			sig := &builtinSubstringBinary3ArgsSig{baseStringBuiltinFunc{bf}}
-			return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+			return sig.setSelf(sig), nil
 		}
 		sig := &builtinSubstring3ArgsSig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+		return sig.setSelf(sig), nil
 	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
 	if err != nil {
@@ -833,13 +844,13 @@ func (c *substringFunctionClass) getFunction(args []Expression, ctx context.Cont
 	}
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
-	if mysql.HasBinaryFlag(argType.Flag) {
-		types.SetBinChsClnFlag(bf.tp)
+	setBinFlagOrBinStr(argType, bf.tp)
+	if types.IsBinaryStr(argType) {
 		sig := &builtinSubstringBinary2ArgsSig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+		return sig.setSelf(sig), nil
 	}
 	sig := &builtinSubstring2ArgsSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinSubstringBinary2ArgsSig struct {
