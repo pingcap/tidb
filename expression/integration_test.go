@@ -519,6 +519,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
 	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
 	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
+
+	result = tk.MustQuery(`select bin(-1);`)
+	result.Check(testkit.Rows("1111111111111111111111111111111111111111111111111111111111111111"))
+	result = tk.MustQuery(`select bin(5);`)
+	result.Check(testkit.Rows("101"))
+	result = tk.MustQuery(`select bin("中文");`)
+	result.Check(testkit.Rows("0"))
+
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
