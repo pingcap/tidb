@@ -445,6 +445,12 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery("select to_base64(a), to_base64(b), to_base64(c), to_base64(d), to_base64(e), to_base64(f), to_base64(g), to_base64(h), to_base64(null) from t")
 	result.Check(testkit.Rows("MQ== MS4x MjAxNy0wMS0wMSAxMjowMTowMQ== MTI6MDE6MDE= YWJjZGVm ABU= NTEyAAAAAAAAAAAAAAAAAAAAAAA= YWJj <nil>"))
 
+	// for from_base64
+	result = tk.MustQuery(`select from_base64("abcd"), from_base64("asc")`)
+	result.Check(testkit.Rows("i\xb7\x1d <nil>"))
+	result = tk.MustQuery(`select from_base64("MQ=="), from_base64(1234)`)
+	result.Check(testkit.Rows("1 \xd7m\xf8"))
+
 	// for substr
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time)")
