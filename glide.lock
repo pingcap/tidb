@@ -1,5 +1,5 @@
-hash: 4ff8f14860bbc326efc0549a48c2b37d3058a41bb6f03ad658127f65894ff0e2
-updated: 2017-07-25T12:22:31.695259691+08:00
+hash: 4713b2a04302e523dc028e938db6034ae788f4dd7f9c8bafa3c5406e3ad3e7c3
+updated: 2017-08-07T15:57:45.885911249+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -80,6 +80,8 @@ imports:
   version: c12348ce28de40eed0136aa2b644d0ee0650e56c
   subpackages:
   - pbutil
+- name: github.com/mohae/deepcopy
+  version: 491d3605edfb866af34a48075bd4355ac1bf46ca
 - name: github.com/ngaut/deadline
   version: fae8f9dfd7048de16575b9d4c255278e38c28a4f
 - name: github.com/ngaut/log
