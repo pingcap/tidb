@@ -921,3 +921,37 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
 }
+
+func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for ifnull
+	result := tk.MustQuery("select ifnull(1, 2)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select ifnull(null, 2)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select ifnull(1, null)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select ifnull(null, null)")
+	result.Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a decimal(20,4))")
+	tk.MustExec("create table t2(a decimal(20,4))")
+	tk.MustExec("insert into t1 select 1.2345")
+	tk.MustExec("insert into t2 select 1.2345")
+
+	result = tk.MustQuery(`select sum(ifnull(a, 0)) from (
+	select ifnull(a, 0) as a from t1
+	union all
+	select ifnull(a, 0) as a from t2
+	) t;`)
+	result.Check(testkit.Rows("2.4690"))
+
+}
