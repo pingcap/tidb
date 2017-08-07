@@ -300,6 +300,9 @@ func (p *Limit) attach2Task(tasks ...task) task {
 }
 
 func (p *Sort) getCost(count float64) float64 {
+	if count < 2.0 {
+		count = 2.0
+	}
 	return count*cpuFactor + count*memoryFactor
 }
 
