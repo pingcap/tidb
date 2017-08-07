@@ -157,7 +157,7 @@ func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
-	if p.unionScanSchema != nil {
+	if p.unionScanSchema != nil || len(p.schema.TblID2Handle) > 0 {
 		var handleIdx int
 		for _, col := range p.schema.TblID2Handle {
 			handleIdx = col[0].Index
