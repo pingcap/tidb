@@ -411,71 +411,69 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	return selection
 }
 
-// buildProjectionFieldNameForColumns builds the field name and the table name when field expression is a column reference.
-func (b *planBuilder) buildProjectionFieldNameForColumns(field *ast.SelectField, c *expression.Column) (colName model.CIStr, tblName model.CIStr) {
+// buildProjectionFieldNameFromColumns builds the field name and the table name when field expression is a column reference.
+func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (model.CIStr, model.CIStr) {
 	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
-		colName = astCol.Name.Name
-		tblName = astCol.Name.Table
-	} else {
-		colName = c.ColName
-		tblName = c.TblName
+		return astCol.Name.Name, astCol.Name.Table
 	}
-	return
+	return c.ColName, c.TblName
 }
 
-// buildProjectionFieldNameForExpressions builds the field name when field expression is a normal expression.
-func (b *planBuilder) buildProjectionFieldNameForExpressions(field *ast.SelectField) (colName model.CIStr) {
+// buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
+func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectField) model.CIStr {
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
-		colName = agg.Args[0].(*ast.ColumnNameExpr).Name.Name
-	} else {
-		// Other kind of (normal) expressions.
-		innerExpr := getInnerFromParentheses(field.Expr)
-
-		// Expression is a value literal.
-		if valueExpr, ok := innerExpr.(*ast.ValueExpr); ok {
-			switch valueExpr.Kind() {
-			case types.KindString:
-				// See #3686, #3994:
-				// For string literals, string content is used as column name. Non-graph initial characters are trimmed.
-				colName = model.NewCIStr(strings.TrimLeftFunc(valueExpr.GetString(), func(r rune) bool {
-					return !unicode.IsOneOf(mysql.RangeGraph, r)
-				}))
-			case types.KindNull:
-				// See #4053, #3685
-				colName = model.NewCIStr("NULL")
-			default:
-				if innerExpr.Text() != "" {
-					colName = model.NewCIStr(innerExpr.Text())
-				} else {
-					colName = model.NewCIStr(field.Text())
-				}
-			}
-		} else {
-			// Remove special comment code for field part, see issue #3739 for detail.
-			colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
-		}
+		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name
 	}
-	return
+
+	innerExpr := getInnerFromParentheses(field.Expr)
+	valueExpr, isValueExpr := innerExpr.(*ast.ValueExpr)
+
+	// Non-literal: Output as inputed, except that comments need to be removed.
+	if !isValueExpr {
+		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
+	}
+
+	// Literal: Need special processing
+	switch valueExpr.Kind() {
+	case types.KindString:
+		// See #3686, #3994:
+		// For string literals, string content is used as column name. Non-graph initial characters are trimmed.
+		fieldName := strings.TrimLeftFunc(valueExpr.GetString(), func(r rune) bool {
+			return !unicode.IsOneOf(mysql.RangeGraph, r)
+		})
+		return model.NewCIStr(fieldName)
+	case types.KindNull:
+		// See #4053, #3685
+		return model.NewCIStr("NULL")
+	default:
+		// Keep as it is.
+		if innerExpr.Text() != "" {
+			return model.NewCIStr(innerExpr.Text())
+		}
+		return model.NewCIStr(field.Text())
+	}
 }
 
 // buildProjectionField builds the field object according to SelectField in projection.
-func (b *planBuilder) buildProjectionField(field *ast.SelectField, fieldAsExpr expression.Expression) *expression.Column {
+func (b *planBuilder) buildProjectionField(id string, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
 	var tblName, colName model.CIStr
 	if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
-	} else if c, ok := fieldAsExpr.(*expression.Column); ok && !c.IsAggOrSubq {
+	} else if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
 		// Field is a column reference.
-		colName, tblName = b.buildProjectionFieldNameForColumns(field, c)
+		colName, tblName = b.buildProjectionFieldNameFromColumns(field, c)
 	} else {
 		// Other: field is an expression.
-		colName = b.buildProjectionFieldNameForExpressions(field)
+		colName = b.buildProjectionFieldNameFromExpressions(field)
 	}
 	return &expression.Column{
-		TblName: tblName,
-		ColName: colName,
-		RetType: fieldAsExpr.GetType(),
+		FromID:   id,
+		Position: position,
+		TblName:  tblName,
+		ColName:  colName,
+		RetType:  expr.GetType(),
 	}
 }
 
@@ -494,14 +492,12 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		p = np
 		proj.Exprs = append(proj.Exprs, newExpr)
 
-		col := b.buildProjectionField(field, newExpr)
-		col.FromID = proj.id
+		col := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
+		schema.Append(col)
 
 		if !field.Auxiliary {
 			oldLen++
 		}
-		schema.Append(col)
-		col.Position = schema.Len()
 	}
 	proj.SetSchema(schema)
 	addChild(proj, p)
