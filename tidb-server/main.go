@@ -47,7 +47,7 @@ import (
 
 var (
 	version         = flag.Bool("V", false, "print version information and exit")
-	store           = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]")
+	store           = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv, lmdb]")
 	storePath       = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel        = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
 	host            = flag.String("host", "0.0.0.0", "tidb server host")
