@@ -753,7 +753,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	is.expectedCnt = rowCount
 	cop.cst = rowCount * scanFactor
 	task = cop
-	if matchProperty && !prop.isEmpty() {
+	if matchProperty {
 		if prop.desc {
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
@@ -878,10 +878,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		indexPlanFinished: true,
 	}
 	task = copTask
-	matchProperty := false
-	if len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(pkCol, nil) {
-		matchProperty = true
-	}
+	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(pkCol, nil)
 	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
 		selectivity, err := p.statisticTable.Selectivity(p.ctx, ts.filterCondition)
 		if err != nil {
@@ -892,7 +889,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}
 	ts.expectedCnt = rowCount
 	copTask.cst = rowCount * scanFactor
-	if matchProperty && !prop.isEmpty() {
+	if matchProperty {
 		if prop.desc {
 			ts.Desc = true
 			copTask.cst = rowCount * descScanFactor
