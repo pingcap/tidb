@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/mohae/deepcopy"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -634,11 +635,12 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
 		columnName.SetText(column.Name.O)
-		if err := expression.InferType(sc, column.GeneratedExpr); err != nil {
+		genExpr := deepcopy.Copy(column.GeneratedExpr).(ast.ExprNode)
+		if err := expression.InferType(sc, genExpr); err != nil {
 			b.err = errors.Trace(err)
 			return
 		}
-		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
+		expr, _, err := b.rewrite(genExpr, mockPlan, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return

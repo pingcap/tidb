@@ -18,6 +18,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
+	"github.com/mohae/deepcopy"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -1189,12 +1190,12 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	p.GenValues = make(map[int]expression.Expression)
 	for idx, column := range columns {
 		if len(column.GeneratedExprString) != 0 && !column.GeneratedStored {
-			// TODO: should we take a clone of GeneratedExpr or not?
-			if err := expression.InferType(sc, column.GeneratedExpr); err != nil {
+			genExpr := deepcopy.Copy(column.GeneratedExpr).(ast.ExprNode)
+			if err := expression.InferType(sc, genExpr); err != nil {
 				b.err = errors.Trace(err)
 				return nil
 			}
-			expr, _, err := b.rewrite(column.GeneratedExpr, p, nil, true)
+			expr, _, err := b.rewrite(genExpr, p, nil, true)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
@@ -1428,7 +1429,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
 				return nil, nil
 			}
-			genExpr := table.Cols()[i].GeneratedExpr
+			genExpr := deepcopy.Copy(table.Cols()[i].GeneratedExpr).(ast.ExprNode)
 			if err := expression.InferType(sc, genExpr); err != nil {
 				b.err = errors.Trace(err)
 				return nil, nil
