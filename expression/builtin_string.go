@@ -2126,7 +2126,7 @@ func (b *builtinFromBase64Sig) evalString(row []types.Datum) (string, bool, erro
 	str = strings.Replace(str, " ", "", -1)
 	result, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
-		// when error happens, take `from_base64("asc")` as an example, we should return NULL.
+		// When error happens, take `from_base64("asc")` as an example, we should return NULL.
 		return "", true, nil
 	}
 	return string(result), false, nil
