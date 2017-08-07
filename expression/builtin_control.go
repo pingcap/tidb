@@ -36,6 +36,8 @@ var (
 	_ builtinFunc = &builtinIfNullRealSig{}
 	_ builtinFunc = &builtinIfNullDecimalSig{}
 	_ builtinFunc = &builtinIfNullStringSig{}
+	_ builtinFunc = &builtinIfNullTimeSig{}
+	_ builtinFunc = &builtinIfNullDurationSig{}
 )
 
 type caseWhenFunctionClass struct {
