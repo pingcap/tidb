@@ -138,7 +138,7 @@ func (s *builtinArithmeticPlusIntSig) evalInt(row []types.Datum) (val int64, isN
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	if (a > 0 && b > math.MaxInt64-a) || (a < 0 && b < 0 && a < math.MinInt64-b) {
+	if (a > 0 && b > math.MaxInt64-a) || (a < 0 && b < math.MinInt64-a) {
 		return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 
@@ -203,7 +203,7 @@ func (s *builtinArithmeticPlusRealSig) evalReal(row []types.Datum) (float64, boo
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	if (a > 0 && b > math.MaxFloat64-a) || (a < 0 && b < 0 && a < -math.MaxFloat64-b) {
+	if (a > 0 && b > math.MaxFloat64-a) || (a < 0 && b < -math.MaxFloat64-a) {
 		return 0, true, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return a + b, false, nil
