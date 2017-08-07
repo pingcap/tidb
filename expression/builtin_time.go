@@ -345,12 +345,12 @@ func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) 
 	}
 
 	sc := b.ctx.GetSessionVars().StmtCtx
-	fsp := math.Max(float64(args[0].Frac()), float64(args[1].Frac()))
-	t0, err := b.convertArgToTime(sc, args[0], int(fsp))
+	fsp := int(math.Max(float64(args[0].Frac()), float64(args[1].Frac())))
+	t0, err := b.convertArgToTime(sc, args[0], fsp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	t1, err := b.convertArgToTime(sc, args[1], int(fsp))
+	t1, err := b.convertArgToTime(sc, args[1], fsp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}

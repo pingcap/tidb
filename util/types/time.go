@@ -990,7 +990,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 	return Duration{Duration: d, Fsp: fsp}, errors.Trace(err)
 }
 
-// TruncateOverflowMySQLTime truncate d when it overflow, and return truncated duration.
+// TruncateOverflowMySQLTime truncate d when it overflows, and return truncated duration.
 func TruncateOverflowMySQLTime(d gotime.Duration) (gotime.Duration, bool) {
 	if d > MaxTime {
 		return MaxTime, true
