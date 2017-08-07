@@ -411,11 +411,8 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	return selection
 }
 
-// Ref: https://github.com/mysql/mysql-server/blob/5.7/strings/uctypedump.c
-// MySQL _MY_PNT == Unicode No | Mn | Mc | Me | Pc | Pd | Ps | Pe | Pi | Pf | Po | Sm | Sc | Sk | So
-// MySQL _MY_U == Unicode Lu | Lt | Nl
-// MySQL _MY_L == Unicode Ll | Lm | Lo | Nl | Mn | Mc | Me
-// MySQL _MY_NMR == Unicode Nd | Nl | No
+// graphRange defines valid unicode characters to use in column names. It strictly follows MySQL's definition.
+// See #3994
 var graphRange = []*unicode.RangeTable{
 	// _MY_PNT
 	unicode.No,
@@ -451,8 +448,6 @@ var graphRange = []*unicode.RangeTable{
 	unicode.No,
 }
 
-// isNotGraph checks whether a rune is a mysql graph.
-// See https://github.com/mysql/mysql-server/blob/5.7/include/m_ctype.h#L739 .
 func isNotGraph(r rune) bool {
 	return !unicode.IsOneOf(graphRange, r)
 }
@@ -493,10 +488,8 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				if valueExpr, ok := innerExpr.(*ast.ValueExpr); ok {
 					switch valueExpr.Kind() {
 					case types.KindString:
-						// For string literals, string content is used as column name:
-						//		See #3686.
-						// Non-graph initial characters are trimmed when used as column name:
-						//		See https://github.com/mysql/mysql-server/blob/5.7/sql/item.cc#L1143.
+						// See #3686, #3994:
+						// For string literals, string content is used as column name. Non-graph initial characters are trimmed.
 						colName = model.NewCIStr(strings.TrimLeftFunc(valueExpr.GetString(), isNotGraph))
 					case types.KindNull:
 						// See #4053, #3685
