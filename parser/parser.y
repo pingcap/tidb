@@ -5966,8 +5966,8 @@ StringType:
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
 		if $4.(bool) {
-            x.Flag |= mysql.BinaryFlag
-        }
+			x.Flag |= mysql.BinaryFlag
+		}
 		$$ = x
 	}
 |	NationalOpt "CHAR" OptBinary OptCharset OptCollate
@@ -5976,7 +5976,7 @@ StringType:
 		x.Charset = $4.(string)
 		x.Collate = $5.(string)
 		if $3.(bool) {
-		    x.Flag |= mysql.BinaryFlag
+			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
 	}
@@ -5987,8 +5987,8 @@ StringType:
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
 		if $4.(bool) {
-            x.Flag |= mysql.BinaryFlag
-        }
+			x.Flag |= mysql.BinaryFlag
+		}
 		$$ = x
 	}
 |	"BINARY" OptFieldLen
@@ -6023,8 +6023,8 @@ StringType:
 		x.Charset = $3.(string)
 		x.Collate = $4.(string)
 		if $2.(bool) {
-            x.Flag |= mysql.BinaryFlag
-        }
+			x.Flag |= mysql.BinaryFlag
+		}
 		$$ = x
 	}
 |	"ENUM" '(' StringList ')' OptCharset OptCollate
