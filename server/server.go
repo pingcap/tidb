@@ -29,6 +29,7 @@
 package server
 
 import (
+	"fmt"
 	"math/rand"
 	"net"
 	"sync"
@@ -105,20 +106,9 @@ func randomBuf(size int) []byte {
 	return buf
 }
 
-func (s *Server) readRemoteAddr(conn net.Conn) (net.Addr, error) {
-	if s.proxyProtocolDecoder == nil {
-		return conn.RemoteAddr(), nil
-	}
-	raddr, err := s.proxyProtocolDecoder.readClientAddrBehindProxy(conn)
-	if err == nil {
-		log.Infof("PROXY Protocol Client Address: %v", raddr)
-	}
-	return raddr, err
-}
-
 // newConn creates a new *clientConn from a net.Conn.
 // It allocates a connection ID and random salt data for authentication.
-func (s *Server) newConn(conn net.Conn) *clientConn {
+func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
 	cc := &clientConn{
 		conn:         conn,
 		pkt:          newPacketIO(conn),
@@ -127,7 +117,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
-	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
+
 	if s.cfg.TCPKeepAlive {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			if err := tcpConn.SetKeepAlive(true); err != nil {
@@ -135,8 +125,22 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 			}
 		}
 	}
+
+	if s.proxyProtocolDecoder != nil {
+		// Proxy is configured. Read PROXY header first.
+		addr, err := s.proxyProtocolDecoder.readClientAddrBehindProxy(conn)
+		if err != nil {
+			return cc, errors.Trace(fmt.Errorf("%s (%s)", err.Error(), conn.RemoteAddr().String()))
+		}
+		cc.clientAddr = addr
+		log.Infof("[%d] new connection %s (through proxy %s)", cc.connectionID, addr, conn.RemoteAddr().String())
+	} else {
+		cc.clientAddr = cc.conn.RemoteAddr()
+		log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
+	}
+
 	cc.salt = randomBuf(20)
-	return cc
+	return cc, nil
 }
 
 func (s *Server) skipAuth() bool {
@@ -177,7 +181,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
-	log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Addr)
+
+	if ppd != nil {
+		log.Infof("Server run MySQL Protocol (through PROXY Protocol) Listen at [%s]", s.cfg.Addr)
+	} else {
+		log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Addr)
+	}
+
 	return s, nil
 }
 
@@ -234,15 +244,21 @@ func (s *Server) Close() {
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
-	conn := s.newConn(c)
+	conn, err := s.newConn(c)
 	defer func() {
 		log.Infof("[%d] close connection", conn.connectionID)
 	}()
 
+	if err != nil {
+		log.Infof("Connection error: %s", errors.ErrorStack(err))
+		c.Close()
+		return
+	}
+
 	if err := conn.handshake(); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we use info log level.
-		log.Infof("handshake error %s", errors.ErrorStack(err))
+		log.Infof("Handshake error: %s", errors.ErrorStack(err))
 		c.Close()
 		return
 	}

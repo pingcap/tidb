@@ -27,8 +27,8 @@ const (
 )
 
 var (
-	errProxyProtocolV1HeaderInvalid           = errors.New("PROXY Protocol header is invalid")
-	errProxyProtocolClientAddressIsNotAllowed = errors.New("PROXY Protocol client address is not allowed")
+	errProxyProtocolV1HeaderInvalid = errors.New("PROXY Protocol header is invalid")
+	errProxyAddressNotAllowed       = errors.New("Proxy address is not allowed")
 )
 
 type proxyProtocolDecoder struct {
@@ -84,7 +84,7 @@ func (d *proxyProtocolDecoder) readClientAddrBehindProxy(conn net.Conn) (net.Add
 	connRemoteAddr := conn.RemoteAddr()
 	allowed := d.checkAllowed(connRemoteAddr)
 	if !allowed {
-		return nil, errProxyProtocolClientAddressIsNotAllowed
+		return nil, errProxyAddressNotAllowed
 	}
 	return d.parseHeaderV1(conn, connRemoteAddr)
 }

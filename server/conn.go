@@ -78,13 +78,13 @@ type clientConn struct {
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
 	killed       bool
-	remoteAddr   net.Addr
+	clientAddr   net.Addr // The client's address. It may be an address behind proxy.
 }
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
 	return fmt.Sprintf("id:%d, addr:%s status:%d, collation:%s, user:%s",
-		cc.connectionID, cc.remoteAddr, cc.ctx.Status(), collationStr, cc.user,
+		cc.connectionID, cc.clientAddr, cc.ctx.Status(), collationStr, cc.user,
 	)
 }
 
@@ -286,10 +286,6 @@ func parseAttrs(data []byte) (map[string]string, error) {
 }
 
 func (cc *clientConn) readHandshakeResponse() error {
-	remoteAddr, err := cc.server.readRemoteAddr(cc.conn)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	data, err := cc.readPacket()
 	if err != nil {
 		return errors.Trace(err)
@@ -312,7 +308,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 	}
 	if !cc.server.skipAuth() {
 		// Do Auth
-		addr := remoteAddr.String()
+		addr := cc.clientAddr.String()
 		host, _, err1 := net.SplitHostPort(addr)
 		if err1 != nil {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
