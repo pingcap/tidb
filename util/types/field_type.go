@@ -62,7 +62,9 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
-// AggFieldType aggregates field types.
+// AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
+// whose return type is determined by the arguments' FieldTypes.
+// Aggregation is performed by MergeFieldType function.
 func AggFieldType(tps []*FieldType) *FieldType {
 	var currType FieldType
 	for _, t := range tps {
@@ -76,7 +78,7 @@ func AggFieldType(tps []*FieldType) *FieldType {
 	return &currType
 }
 
-// AggTypeClass aggregates type classes.
+// AggTypeClass aggregates arguments' TypeClass of a multi-argument function.
 func AggTypeClass(tps []*FieldType, flag *uint) TypeClass {
 	var (
 		tpClass      = ClassString
