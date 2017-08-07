@@ -98,6 +98,7 @@ import (
 	desc			"DESC"
 	describe		"DESCRIBE"
 	distinct		"DISTINCT"
+	distinctRow		"DISTINCTROW"
 	tidbSMJ			"TIDB_SMJ"
 	tidbINLJ		"TIDB_INLJ"
 	tidbVersion		"TIDB_VERSION"
@@ -611,7 +612,10 @@ import (
 	DeallocateStmt		"Deallocate prepared statement"
 	DefaultValueExpr	"DefaultValueExpr(Now or Signed Literal)"
 	DeleteFromStmt		"DELETE FROM statement"
-	DistinctOpt		"Distinct option"
+	DistinctOpt		"Explicit distinct option"
+	DefaultFalseDistinctOpt		"Distinct option which defaults to false"
+	DefaultTrueDistinctOpt		"Distinct option which defaults to true"
+	BuggyDefaultFalseDistinctOpt		"Distinct option which accepts DISTINCT ALL and defaults to false"
 	DoStmt			"Do statement"
 	DropDatabaseStmt	"DROP DATABASE statement"
 	DropIndexStmt		"DROP INDEX statement"
@@ -731,7 +735,6 @@ import (
 	SelectStmt		"SELECT statement"
 	SelectStmtCalcFoundRows	"SELECT statement optional SQL_CALC_FOUND_ROWS"
 	SelectStmtSQLCache	"SELECT statement optional SQL_CAHCE/SQL_NO_CACHE"
-	SelectStmtDistinct	"SELECT statement optional DISTINCT clause"
 	SelectStmtFieldList	"SELECT statement field list"
 	SelectStmtLimit		"SELECT statement optional LIMIT clause"
 	SelectStmtOpts		"Select statement options"
@@ -854,6 +857,7 @@ import (
 	TablesTerminalSym 	"{TABLE|TABLES}"
 	IsolationLevel		"Isolation level"
 	ShowIndexKwd		"Show index/indexs/key keyword"
+	DistinctKwd		"DISTINCT/DISTINCTROW keyword"
 	FromOrIn		"From or In"
 	OptTable		"Optional table keyword"
 	OptInteger		"Optional Integer keyword"
@@ -2424,7 +2428,7 @@ ReservedKeyword:
 | "COLUMN" | "CONSTRAINT" | "CONVERT" | "CREATE" | "CROSS" | "CURRENT_DATE" | "CURRENT_TIME"
 | "CURRENT_TIMESTAMP" | "CURRENT_USER" | "DATABASE" | "DATABASES" | "DAY_HOUR" | "DAY_MICROSECOND"
 | "DAY_MINUTE" | "DAY_SECOND" | "DECIMAL" | "DEFAULT" | "DELETE" | "DESC" | "DESCRIBE"
-| "DISTINCT" | "DIV" | "DOUBLE" | "DROP" | "DUAL" | "ELSE" | "ENCLOSED" | "ESCAPED"
+| "DISTINCT" | "DISTINCTROW" | "DIV" | "DOUBLE" | "DROP" | "DUAL" | "ELSE" | "ENCLOSED" | "ESCAPED"
 | "EXISTS" | "EXPLAIN" | "FALSE" | "FLOAT" | "FOR" | "FORCE" | "FOREIGN" | "FROM"
 | "FULLTEXT" | "GENERATED" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE"
 | "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTO" | "INTEGER"
@@ -2853,19 +2857,35 @@ FunctionCallConflict:
 		$$ = &ast.BinaryOperationExpr{Op: opcode.Mod, L: $3.(ast.ExprNode), R: $5.(ast.ExprNode)}
 	}
 
+DistinctKwd:
+	"DISTINCT"
+|	"DISTINCTROW"
+
 DistinctOpt:
+	"ALL"
 	{
 		$$ = false
 	}
-|	"ALL"
-	{
-		$$ = false
-	}
-|	"DISTINCT"
+|	DistinctKwd
 	{
 		$$ = true
 	}
-|	"DISTINCT" "ALL"
+
+DefaultFalseDistinctOpt:
+	{
+		$$ = false
+	}
+|	DistinctOpt
+
+DefaultTrueDistinctOpt:
+	{
+		$$ = true
+	}
+|	DistinctOpt
+
+BuggyDefaultFalseDistinctOpt:
+	DefaultFalseDistinctOpt
+|	DistinctKwd "ALL"
 	{
 		$$ = true
 	}
@@ -3859,7 +3879,7 @@ TrimDirection:
 	}
 
 FunctionCallAgg:
-	"AVG" '(' DistinctOpt Expression ')'
+	"AVG" '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
@@ -3867,7 +3887,7 @@ FunctionCallAgg:
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
-|	"COUNT" '(' "DISTINCT" ExpressionList ')'
+|	"COUNT" '(' DistinctKwd ExpressionList ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: true}
 	}
@@ -3884,19 +3904,19 @@ FunctionCallAgg:
 		args := []ast.ExprNode{ast.NewValueExpr(1)}
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args}
 	}
-|	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
+|	"GROUP_CONCAT" '(' BuggyDefaultFalseDistinctOpt ExpressionList ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
-|	"MAX" '(' DistinctOpt Expression ')'
+|	"MAX" '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
-|	"MIN" '(' DistinctOpt Expression ')'
+|	"MIN" '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
-|	"SUM" '(' DistinctOpt Expression ')'
+|	"SUM" '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
@@ -4728,22 +4748,9 @@ SelectStmtLimit:
 		$$ = &ast.Limit{Offset: $4.(ast.ExprNode), Count: $2.(ast.ExprNode)}
 	}
 
-SelectStmtDistinct:
-	/* EMPTY */
-	{
-		$$ = false
-	}
-|	"ALL"
-	{
-		$$ = false
-	}
-|	"DISTINCT"
-	{
-		$$ = true
-	}
 
 SelectStmtOpts:
-	TableOptimizerHints SelectStmtDistinct Priority SelectStmtSQLCache SelectStmtCalcFoundRows
+	TableOptimizerHints DefaultFalseDistinctOpt Priority SelectStmtSQLCache SelectStmtCalcFoundRows
 	{
 		opt := &ast.SelectStmtOpts{}
 		if $1 != nil {
@@ -4939,17 +4946,7 @@ UnionSelect:
 	}
 
 UnionOpt:
-	{
-		$$ = true
-	}
-|	"ALL"
-	{
-		$$ = false
-	}
-|	"DISTINCT"
-	{
-		$$ = true
-	}
+DefaultTrueDistinctOpt
 
 
 /********************Set Statement*******************************/
@@ -5977,6 +5974,9 @@ StringType:
 		x.Flen = $3.(int)
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
+		if $4.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
 		$$ = x
 	}
 |	NationalOpt "CHAR" OptBinary OptCharset OptCollate
@@ -5984,6 +5984,9 @@ StringType:
 		x := types.NewFieldType(mysql.TypeString)
 		x.Charset = $4.(string)
 		x.Collate = $5.(string)
+		if $3.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
 		$$ = x
 	}
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
@@ -5992,6 +5995,9 @@ StringType:
 		x.Flen = $3.(int)
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
+		if $4.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
 		$$ = x
 	}
 |	"BINARY" OptFieldLen
@@ -6025,6 +6031,9 @@ StringType:
 		x := $1.(*types.FieldType)
 		x.Charset = $3.(string)
 		x.Collate = $4.(string)
+		if $2.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
 		$$ = x
 	}
 |	"ENUM" '(' StringList ')' OptCharset OptCollate

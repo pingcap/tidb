@@ -231,6 +231,7 @@ var tokenMap = map[string]int{
 	"DESCRIBE":                   describe,
 	"DISABLE":                    disable,
 	"DISTINCT":                   distinct,
+	"DISTINCTROW":                distinctRow,
 	"TIDB_SMJ":                   tidbSMJ,
 	"TIDB_INLJ":                  tidbINLJ,
 	"TIDB_VERSION":               tidbVersion,

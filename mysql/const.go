@@ -482,3 +482,8 @@ const (
 	HighPriority
 	DelayedPriority
 )
+
+// PrimaryKeyName defines primary key name.
+const (
+	PrimaryKeyName = "PRIMARY"
+)

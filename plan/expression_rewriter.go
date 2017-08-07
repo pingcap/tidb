@@ -1061,7 +1061,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		if err != nil {
-			er.err = errors.Trace(err)
+			er.err = ErrAmbiguous.GenByArgs(v.Name)
 			return
 		}
 	}
