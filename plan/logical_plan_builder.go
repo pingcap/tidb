@@ -411,8 +411,8 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	return selection
 }
 
-// buildFieldNameForColumns builds the field name and the table name when field expression is a column reference.
-func buildFieldNameForColumns(field *ast.SelectField, c *expression.Column) (colName model.CIStr, tblName model.CIStr) {
+// buildProjectionFieldNameForColumns builds the field name and the table name when field expression is a column reference.
+func (b *planBuilder) buildProjectionFieldNameForColumns(field *ast.SelectField, c *expression.Column) (colName model.CIStr, tblName model.CIStr) {
 	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
 		colName = astCol.Name.Name
 		tblName = astCol.Name.Table
@@ -423,8 +423,8 @@ func buildFieldNameForColumns(field *ast.SelectField, c *expression.Column) (col
 	return
 }
 
-// buildFieldNameForExpressions builds the field name when field expression is a normal expression.
-func buildFieldNameForExpressions(field *ast.SelectField) (colName model.CIStr) {
+// buildProjectionFieldNameForExpressions builds the field name when field expression is a normal expression.
+func (b *planBuilder) buildProjectionFieldNameForExpressions(field *ast.SelectField) (colName model.CIStr) {
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
 		colName = agg.Args[0].(*ast.ColumnNameExpr).Name.Name
@@ -459,6 +459,26 @@ func buildFieldNameForExpressions(field *ast.SelectField) (colName model.CIStr) 
 	return
 }
 
+// buildProjectionField builds the field object according to SelectField in projection.
+func (b *planBuilder) buildProjectionField(field *ast.SelectField, fieldAsExpr expression.Expression) *expression.Column {
+	var tblName, colName model.CIStr
+	if field.AsName.L != "" {
+		// Field has alias.
+		colName = field.AsName
+	} else if c, ok := fieldAsExpr.(*expression.Column); ok && !c.IsAggOrSubq {
+		// Field is a column reference.
+		colName, tblName = b.buildProjectionFieldNameForColumns(field, c)
+	} else {
+		// Other: field is an expression.
+		colName = b.buildProjectionFieldNameForExpressions(field)
+	}
+	return &expression.Column{
+		TblName: tblName,
+		ColName: colName,
+		RetType: fieldAsExpr.GetType(),
+	}
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	b.optFlag |= flagEliminateProjection
@@ -473,23 +493,10 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		}
 		p = np
 		proj.Exprs = append(proj.Exprs, newExpr)
-		var tblName, colName model.CIStr
-		if field.AsName.L != "" {
-			// Field has alias.
-			colName = field.AsName
-		} else if c, ok := newExpr.(*expression.Column); ok && !c.IsAggOrSubq {
-			// Field is a column reference.
-			colName, tblName = buildFieldNameForColumns(field, c)
-		} else {
-			// Other: Field is an expression.
-			colName = buildFieldNameForExpressions(field)
-		}
-		col := &expression.Column{
-			FromID:  proj.id,
-			TblName: tblName,
-			ColName: colName,
-			RetType: newExpr.GetType(),
-		}
+
+		col := b.buildProjectionField(field, newExpr)
+		col.FromID = proj.id
+
 		if !field.Auxiliary {
 			oldLen++
 		}
