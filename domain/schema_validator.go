@@ -92,8 +92,9 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	// Renew the lease.
 	leaseGrantTime := extractPhysicalTime(leaseGrantTS)
 	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
+	_, hasCurrVerItemInfo := s.detalItemInfos[currVer]
 	// Update the schema information.
-	if currVer != oldVer || currVer == 0 {
+	if currVer != oldVer || !hasCurrVerItemInfo {
 		s.detalItemInfos[currVer] = &deltaSchemaInfo{
 			expire:          leaseExpire,
 			relatedTableIDs: changedTableIDs,

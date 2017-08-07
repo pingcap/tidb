@@ -324,11 +324,15 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 			chs = v.defaultCharset
 		}
 	case ast.Coalesce:
-		tp = aggFieldType(x.Args)
+		fieldTps := make([]*types.FieldType, 0, len(x.Args))
+		for _, arg := range x.Args {
+			fieldTps = append(fieldTps, arg.GetType())
+		}
+		tp = types.AggFieldType(fieldTps)
 		if tp.Tp == mysql.TypeVarchar {
 			tp.Tp = mysql.TypeVarString
 		}
-		classType := aggTypeClass(x.Args, &tp.Flag)
+		classType := types.AggTypeClass(fieldTps, &tp.Flag)
 		if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
 			tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 		}
@@ -449,11 +453,15 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	if x.ElseClause != nil {
 		exprs = append(exprs, x.ElseClause)
 	}
-	tp := aggFieldType(exprs)
+	fieldTps := make([]*types.FieldType, 0, len(exprs))
+	for _, expr := range exprs {
+		fieldTps = append(fieldTps, expr.GetType())
+	}
+	tp := types.AggFieldType(fieldTps)
 	if tp.Tp == mysql.TypeVarchar {
 		tp.Tp = mysql.TypeVarString
 	}
-	classType := aggTypeClass(exprs, &tp.Flag)
+	classType := types.AggTypeClass(fieldTps, &tp.Flag)
 	if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
 		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 	} else {
@@ -522,69 +530,6 @@ func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
 			v.err = nil
 		}
 	}
-}
-
-func aggFieldType(args []ast.ExprNode) *types.FieldType {
-	var currType types.FieldType
-	for _, arg := range args {
-		t := arg.GetType()
-		if currType.Tp == mysql.TypeUnspecified {
-			currType = *t
-			continue
-		}
-		mtp := types.MergeFieldType(currType.Tp, t.Tp)
-		currType.Tp = mtp
-	}
-	return &currType
-}
-
-func aggTypeClass(args []ast.ExprNode, flag *uint) types.TypeClass {
-	var (
-		tpClass      = types.ClassString
-		unsigned     bool
-		gotFirst     bool
-		gotBinString bool
-	)
-	for _, arg := range args {
-		argFieldType := arg.GetType()
-		if argFieldType.Tp == mysql.TypeNull {
-			continue
-		}
-		argTypeClass := argFieldType.ToClass()
-		if argTypeClass == types.ClassString && mysql.HasBinaryFlag(argFieldType.Flag) {
-			gotBinString = true
-		}
-		if !gotFirst {
-			gotFirst = true
-			tpClass = argTypeClass
-			unsigned = mysql.HasUnsignedFlag(argFieldType.Flag)
-		} else {
-			tpClass = mergeTypeClass(tpClass, argTypeClass, unsigned, mysql.HasUnsignedFlag(argFieldType.Flag))
-			unsigned = unsigned && mysql.HasUnsignedFlag(argFieldType.Flag)
-		}
-	}
-	setTypeFlag(flag, uint(mysql.UnsignedFlag), unsigned)
-	setTypeFlag(flag, uint(mysql.BinaryFlag), tpClass != types.ClassString || gotBinString)
-	return tpClass
-}
-
-func setTypeFlag(flag *uint, flagItem uint, on bool) {
-	if on {
-		*flag |= flagItem
-	} else {
-		*flag &= ^flagItem
-	}
-}
-
-func mergeTypeClass(a, b types.TypeClass, aUnsigned, bUnsigned bool) types.TypeClass {
-	if a == types.ClassString || b == types.ClassString {
-		return types.ClassString
-	} else if a == types.ClassReal || b == types.ClassReal {
-		return types.ClassReal
-	} else if a == types.ClassDecimal || b == types.ClassDecimal || aUnsigned != bUnsigned {
-		return types.ClassDecimal
-	}
-	return types.ClassInt
 }
 
 // IsHybridType checks whether a ClassString expression is a hybrid type value which will return different types of value in different context.

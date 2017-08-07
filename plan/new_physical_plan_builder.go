@@ -43,6 +43,7 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context, allocator
 	if task.plan() == nil {
 		return task
 	}
+	task = finishCopTask(task, ctx, allocator)
 	sort := Sort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(allocator, ctx)
 	for _, col := range p.cols {
 		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
@@ -727,15 +728,16 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 	// Check if this plan matches the property.
-	matchProperty := true
+	matchProperty := false
 	if !prop.isEmpty() {
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.cols[0].ColName.L {
 				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
 				break
-			} else if i >= len(is.AccessCondition) || is.AccessCondition[i].(*expression.ScalarFunction).FuncName.L != ast.EQ {
-				matchProperty = false
+			} else if i >= len(is.AccessCondition) {
+				break
+			} else if sf, ok := is.AccessCondition[i].(*expression.ScalarFunction); !ok || sf.FuncName.L != ast.EQ {
 				break
 			}
 		}
@@ -751,7 +753,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	is.expectedCnt = rowCount
 	cop.cst = rowCount * scanFactor
 	task = cop
-	if matchProperty && !prop.isEmpty() {
+	if matchProperty {
 		if prop.desc {
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
@@ -876,10 +878,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		indexPlanFinished: true,
 	}
 	task = copTask
-	matchProperty := true
-	if !prop.isEmpty() {
-		matchProperty = pkCol != nil && prop.cols[0].Equal(pkCol, nil)
-	}
+	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(pkCol, nil)
 	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
 		selectivity, err := p.statisticTable.Selectivity(p.ctx, ts.filterCondition)
 		if err != nil {
@@ -890,7 +889,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}
 	ts.expectedCnt = rowCount
 	copTask.cst = rowCount * scanFactor
-	if matchProperty && !prop.isEmpty() {
+	if matchProperty {
 		if prop.desc {
 			ts.Desc = true
 			copTask.cst = rowCount * descScanFactor
