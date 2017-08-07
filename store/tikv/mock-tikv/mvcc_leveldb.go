@@ -281,6 +281,10 @@ func (mvcc *MVCCLevelDB) Get(key []byte, startTS uint64, isoLevel kvrpcpb.Isolat
 	mvcc.mu.RLock()
 	defer mvcc.mu.RUnlock()
 
+	return mvcc.getValue(key, startTS, isoLevel)
+}
+
+func (mvcc *MVCCLevelDB) getValue(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
 	startKey := mvccEncode(key, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
 		Start: startKey,
@@ -333,7 +337,7 @@ func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.
 
 	var pairs []Pair
 	for _, k := range ks {
-		v, err := mvcc.Get(k, startTS, isoLevel)
+		v, err := mvcc.getValue(k, startTS, isoLevel)
 		if v == nil && err == nil {
 			continue
 		}
