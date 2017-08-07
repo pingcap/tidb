@@ -1795,7 +1795,8 @@ func (s *testParserSuite) TestDDLStatements(c *C) {
 	stmts, err := parser.Parse(createTableStr, "", "")
 	c.Assert(err, IsNil)
 	stmt := stmts[0].(*ast.CreateTableStmt)
-	for _, colDef := range stmt.Cols {
+	c.Assert(mysql.HasBinaryFlag(stmt.Cols[0].Tp.Flag), IsTrue)
+	for _, colDef := range stmt.Cols[1:] {
 		c.Assert(mysql.HasBinaryFlag(colDef.Tp.Flag), IsFalse)
 	}
 	for _, tblOpt := range stmt.Options {
