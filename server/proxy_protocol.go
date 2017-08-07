@@ -16,9 +16,9 @@ package server
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strings"
+	"time"
 )
 
 // Ref: https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt .
@@ -32,11 +32,12 @@ var (
 )
 
 type proxyProtocolDecoder struct {
-	allowAll    bool
-	allowedNets []*net.IPNet
+	allowAll          bool
+	allowedNets       []*net.IPNet
+	headerReadTimeout int // Unit is second
 }
 
-func newProxyProtocolDecoder(allowedIPs string) (*proxyProtocolDecoder, error) {
+func newProxyProtocolDecoder(allowedIPs string, headerReadTimeout int) (*proxyProtocolDecoder, error) {
 	allowAll := false
 	allowedNets := []*net.IPNet{}
 	if allowedIPs == "*" {
@@ -58,8 +59,9 @@ func newProxyProtocolDecoder(allowedIPs string) (*proxyProtocolDecoder, error) {
 		}
 	}
 	return &proxyProtocolDecoder{
-		allowAll:    allowAll,
-		allowedNets: allowedNets,
+		allowAll:          allowAll,
+		allowedNets:       allowedNets,
+		headerReadTimeout: headerReadTimeout,
 	}, nil
 }
 
@@ -89,7 +91,7 @@ func (d *proxyProtocolDecoder) readClientAddrBehindProxy(conn net.Conn) (net.Add
 	return d.parseHeaderV1(conn, connRemoteAddr)
 }
 
-func (d *proxyProtocolDecoder) parseHeaderV1(conn io.Reader, connRemoteAddr net.Addr) (net.Addr, error) {
+func (d *proxyProtocolDecoder) parseHeaderV1(conn net.Conn, connRemoteAddr net.Addr) (net.Addr, error) {
 	buffer, err := d.readHeaderV1(conn)
 	if err != nil {
 		return nil, err
@@ -127,10 +129,14 @@ func (d *proxyProtocolDecoder) extractClientIPV1(buffer []byte, connRemoteAddr n
 	}
 }
 
-func (d *proxyProtocolDecoder) readHeaderV1(conn io.Reader) ([]byte, error) {
+func (d *proxyProtocolDecoder) readHeaderV1(conn net.Conn) ([]byte, error) {
 	buf := make([]byte, proxyProtocolV1MaxHeaderLen)
 	var pre, cur byte
 	var i int
+	// This mean all header data should be read in headerReadTimeout seconds.
+	conn.SetReadDeadline(time.Now().Add(time.Duration(d.headerReadTimeout) * time.Second))
+	// When function return clean read deadline.
+	defer conn.SetReadDeadline(time.Time{})
 	for i = 0; i < proxyProtocolV1MaxHeaderLen; i++ {
 		_, err := conn.Read(buf[i : i+1])
 		if err != nil {

@@ -16,6 +16,7 @@ package server
 import (
 	"bytes"
 	"net"
+	"time"
 
 	. "github.com/pingcap/check"
 )
@@ -24,11 +25,47 @@ type ProxyProtocolDecoderTestSuite struct{}
 
 var _ = Suite(ProxyProtocolDecoderTestSuite{})
 
+type mockBufferConn struct {
+	*bytes.Buffer
+}
+
+func newMockBufferConn(buffer *bytes.Buffer) net.Conn {
+	return &mockBufferConn{
+		Buffer: buffer,
+	}
+}
+
+func (c *mockBufferConn) Close() error {
+	return nil
+}
+
+func (c *mockBufferConn) RemoteAddr() net.Addr {
+	addr, _ := net.ResolveTCPAddr("tcp", "127.0.0.1:12345")
+	return addr
+}
+
+func (c *mockBufferConn) LocalAddr() net.Addr {
+	addr, _ := net.ResolveTCPAddr("tcp", "127.0.0.1:4000")
+	return addr
+}
+
+func (c *mockBufferConn) SetDeadline(t time.Time) error {
+	return nil
+}
+
+func (c *mockBufferConn) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+func (c *mockBufferConn) SetWriteDeadline(t time.Time) error {
+	return nil
+}
+
 func (ts ProxyProtocolDecoderTestSuite) TestProxyProtocolCheckAllowed(c *C) {
-	ppd, _ := newProxyProtocolDecoder("*")
+	ppd, _ := newProxyProtocolDecoder("*", 5)
 	raddr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.100:8080")
 	c.Assert(ppd.checkAllowed(raddr), IsTrue)
-	ppd, _ = newProxyProtocolDecoder("192.168.1.0/24,192.168.2.0/24")
+	ppd, _ = newProxyProtocolDecoder("192.168.1.0/24,192.168.2.0/24", 5)
 	for _, ipstr := range []string{"192.168.1.100:8080", "192.168.2.100:8080"} {
 		raddr, _ := net.ResolveTCPAddr("tcp4", ipstr)
 		c.Assert(ppd.checkAllowed(raddr), IsTrue)
@@ -42,13 +79,13 @@ func (ts ProxyProtocolDecoderTestSuite) TestProxyProtocolCheckAllowed(c *C) {
 func (ts ProxyProtocolDecoderTestSuite) TestProxyProtocolV1ReadHeaderMustNotReadAnyDataAfterCLRF(c *C) {
 	buffer := []byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\nOther Data")
 	expectHeader := []byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\n")
-	reader := bytes.NewBuffer(buffer)
-	ppd, _ := newProxyProtocolDecoder("*")
-	header, err := ppd.readHeaderV1(reader)
+	conn := newMockBufferConn(bytes.NewBuffer(buffer))
+	ppd, _ := newProxyProtocolDecoder("*", 5)
+	header, err := ppd.readHeaderV1(conn)
 	c.Assert(err, IsNil)
 	c.Assert(string(header), Equals, string(expectHeader))
 	restBuf := make([]byte, 256)
-	n, err := reader.Read(restBuf)
+	n, err := conn.Read(restBuf)
 	expectedString := "Other Data"
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, len(expectedString))
@@ -114,10 +151,10 @@ func (ts ProxyProtocolDecoderTestSuite) TestProxyProtocolV1ExtractClientIP(c *C)
 		},
 	}
 
-	ppd, _ := newProxyProtocolDecoder("*")
+	ppd, _ := newProxyProtocolDecoder("*", 5)
 	for _, t := range tests {
-		reader := bytes.NewBuffer(t.buffer)
-		clientIP, err := ppd.parseHeaderV1(reader, craddr)
+		conn := newMockBufferConn(bytes.NewBuffer(t.buffer))
+		clientIP, err := ppd.parseHeaderV1(conn, craddr)
 		if err == nil {
 			if t.expectedErr {
 				c.Assert(false, IsTrue, Commentf(

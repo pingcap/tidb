@@ -154,7 +154,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	var err error
 	var ppd *proxyProtocolDecoder
 	if cfg.ProxyProtocolNetworks != "" {
-		ppd, err = newProxyProtocolDecoder(cfg.ProxyProtocolNetworks)
+		ppd, err = newProxyProtocolDecoder(cfg.ProxyProtocolNetworks, cfg.ProxyProtocolHeaderTimeout)
 		if err != nil {
 			log.Warn("ProxyProtocolNetworks parameter is not valid")
 		}
