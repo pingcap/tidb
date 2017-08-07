@@ -49,6 +49,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 		c_time time,
 		c_timestamp timestamp,
 		c_char char(20),
+		c_binary_char char(20) binary,
 		c_varchar varchar(20),
 		c_text text,
 		c_binary binary(20),
@@ -69,6 +70,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 		{"sum(c_int)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"strcmp(c_char, c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 		{"concat(c_binary, c_int)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 31, types.UnspecifiedLength},
+		{"concat(c_binary_char, c_int)", mysql.TypeVarString, charset.CharsetUTF8, mysql.BinaryFlag, 31, types.UnspecifiedLength},
 		{"cos(c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"sin(c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"tan(c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
@@ -188,6 +190,8 @@ func (s *testPlanSuite) TestInferType(c *C) {
 		{"exp(c_time)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"exp(c_timestamp)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"exp(c_binary)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
+		{"ifnull(c_int, c_int)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
+		{"ifnull(c_int, c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 17, 3},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)

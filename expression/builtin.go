@@ -423,11 +423,10 @@ func (b *baseStringBuiltinFunc) getRetTp() *types.FieldType {
 	} else if flen >= 65536 {
 		tp.Tp = mysql.TypeMediumBlob
 	}
-	if mysql.HasBinaryFlag(tp.Flag) {
-		tp.Charset, tp.Collate = charset.CharsetBin, charset.CollationBin
-	} else {
+	if len(tp.Charset) <= 0 {
 		tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
 	}
+
 	return tp
 }
 

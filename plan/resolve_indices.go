@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
 )
 
 // ResolveIndices implements Plan interface.
@@ -142,7 +143,12 @@ func (p *PhysicalTableReader) ResolveIndices() {
 func (p *PhysicalIndexReader) ResolveIndices() {
 	p.indexPlan.ResolveIndices()
 	for _, col := range p.OutputColumns {
-		col.ResolveIndices(p.indexPlan.Schema())
+		if col.ID != model.ExtraHandleID {
+			col.ResolveIndices(p.indexPlan.Schema())
+		} else {
+			// If this is extra handle, then it must be the tail.
+			col.Index = len(p.OutputColumns) - 1
+		}
 	}
 }
 
@@ -243,6 +249,11 @@ func (p *Insert) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *basePlan) ResolveIndices() {
+	for _, cols := range p.schema.TblID2Handle {
+		for _, col := range cols {
+			col.ResolveIndices(p.schema)
+		}
+	}
 	for _, child := range p.children {
 		child.ResolveIndices()
 	}
