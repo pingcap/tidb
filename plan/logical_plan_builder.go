@@ -411,6 +411,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	return selection
 }
 
+// buildFieldNameForColumns builds the field name and the table name when field expression is a column reference.
 func buildFieldNameForColumns(field *ast.SelectField, c *expression.Column) (colName model.CIStr, tblName model.CIStr) {
 	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
 		colName = astCol.Name.Name
@@ -422,6 +423,7 @@ func buildFieldNameForColumns(field *ast.SelectField, c *expression.Column) (col
 	return
 }
 
+// buildFieldNameForExpressions builds the field name when field expression is a normal expression.
 func buildFieldNameForExpressions(field *ast.SelectField) (colName model.CIStr) {
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
