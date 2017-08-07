@@ -878,9 +878,9 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		indexPlanFinished: true,
 	}
 	task = copTask
-	matchProperty := true
-	if len(prop.cols) == 1 {
-		matchProperty = pkCol != nil && prop.cols[0].Equal(pkCol, nil)
+	matchProperty := false
+	if len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(pkCol, nil) {
+		matchProperty = true
 	}
 	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
 		selectivity, err := p.statisticTable.Selectivity(p.ctx, ts.filterCondition)
