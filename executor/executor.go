@@ -87,21 +87,17 @@ const (
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
+//
+// The following cases will need store the handle information:
+//
+// If the top plan is update or delete, then every executor will need the handle.
+// If there is an union scan, then the below scan plan must store the handle.
+// If there is sort need in the double read, then the table scan of the double read must store the handle.
+// If there is a select for update. then we need to store the handle until the lock plan. But if there is aggregation, the handle info can be removed.
+// Otherwise the executor's returned rows don't need to store the handle information.
 type Row struct {
 	// Data is the output record data for current Plan.
 	Data []types.Datum
-	// RowKeys contains all table row keys in the row.
-	RowKeys []*RowKeyEntry
-}
-
-// RowKeyEntry represents a row key read from a table.
-type RowKeyEntry struct {
-	// Tbl is the table which this row come from.
-	Tbl table.Table
-	// Handle is Row key.
-	Handle int64
-	// TableName is table alias name.
-	TableName string
 }
 
 type baseExecutor struct {
@@ -262,18 +258,23 @@ func (e *SelectLockExec) Next() (*Row, error) {
 	if row == nil {
 		return nil, nil
 	}
-	if len(row.RowKeys) != 0 && e.Lock == ast.SelectLockForUpdate {
-		txnCtx := e.ctx.GetSessionVars().TxnCtx
-		txnCtx.ForUpdate = true
-		txn := e.ctx.Txn()
-		for _, k := range row.RowKeys {
-			lockKey := tablecodec.EncodeRowKeyWithHandle(k.Tbl.Meta().ID, k.Handle)
+	// If there's no handle or it isn't a `select for update`.
+	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
+		return row, nil
+	}
+	txn := e.ctx.Txn()
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx.ForUpdate = true
+	for id, cols := range e.Schema().TblID2Handle {
+		for _, col := range cols {
+			handle := row.Data[col.Index].GetInt64()
+			lockKey := tablecodec.EncodeRowKeyWithHandle(id, handle)
 			err = txn.LockKeys(lockKey)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			// This operation is only for schema validator check.
-			txnCtx.UpdateDeltaForTable(k.Tbl.Meta().ID, 0, 0)
+			txnCtx.UpdateDeltaForTable(id, 0, 0)
 		}
 	}
 	return row, nil
@@ -375,8 +376,7 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 		return nil, nil
 	}
 	row := &Row{
-		RowKeys: srcRow.RowKeys,
-		Data:    make([]types.Datum, 0, len(e.exprs)),
+		Data: make([]types.Datum, 0, len(e.exprs)),
 	}
 	for _, expr := range e.exprs {
 		val, err := expr.Eval(srcRow.Data)
@@ -623,17 +623,6 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// Put rowKey to the tail of record row.
-	rke := &RowKeyEntry{
-		Tbl:    e.t,
-		Handle: handle,
-	}
-	if e.asName != nil && e.asName.L != "" {
-		rke.TableName = e.asName.L
-	} else {
-		rke.TableName = e.t.Meta().Name.L
-	}
-	row.RowKeys = append(row.RowKeys, rke)
 	return row, nil
 }
 
