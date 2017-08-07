@@ -284,7 +284,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
 }
 
-// Issue #3686
+// Issue #4053
 func (s *testSuite) TestSelectNull(c *C) {
 	defer func() {
 		s.cleanEnv(c)
