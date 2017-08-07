@@ -14,9 +14,9 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
