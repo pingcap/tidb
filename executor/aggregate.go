@@ -147,7 +147,7 @@ type StreamAggExec struct {
 	baseExecutor
 
 	executed           bool
-	ha                 bool
+	hasData            bool
 	StmtCtx            *variable.StatementContext
 	AggFuncs           []expression.AggregationFunction
 	GroupByItems       []expression.Expression
@@ -159,7 +159,7 @@ type StreamAggExec struct {
 // Open implements the Executor Open interface.
 func (e *StreamAggExec) Open() error {
 	e.executed = false
-	e.ha = false
+	e.hasData = false
 	for _, agg := range e.AggFuncs {
 		agg.Reset()
 	}
@@ -182,7 +182,7 @@ func (e *StreamAggExec) Next() (Row, error) {
 			newGroup = true
 			e.executed = true
 		} else {
-			e.ha = true
+			e.hasData = true
 			newGroup, err = e.meetNewGroup(row)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -206,7 +206,7 @@ func (e *StreamAggExec) Next() (Row, error) {
 			break
 		}
 	}
-	if !e.ha && len(e.GroupByItems) > 0 {
+	if !e.hasData && len(e.GroupByItems) > 0 {
 		return nil, nil
 	}
 	return retRow, nil
