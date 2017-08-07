@@ -222,7 +222,7 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	r.Check(testkit.Rows("string"))
 }
 
-// Issue 3685
+// Issue 3685.
 func (s *testSuite) TestSelectBackslashN(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -325,7 +325,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	c.Check(fields[0].Column.Name.O, Equals, `N`)
 }
 
-// Issue #4053
+// Issue #4053.
 func (s *testSuite) TestSelectNull(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -364,7 +364,7 @@ func (s *testSuite) TestSelectNull(c *C) {
 	c.Check(fields[0].Column.Name.O, Equals, `null+NULL`)
 }
 
-// Issue #3686
+// Issue #3686.
 func (s *testSuite) TestSelectStringLiteral(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -402,7 +402,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `'abc'+'def'`)
 
-	// Below checks whether leading invalid chars are trimmed
+	// Below checks whether leading invalid chars are trimmed.
 	sql = "select '\n';"
 	r = tk.MustQuery(sql)
 	r.Check(testkit.Rows("\n"))
@@ -413,7 +413,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "")
 
-	sql = "select '\t   col';" // Lowercased letter is a valid char
+	sql = "select '\t   col';" // Lowercased letter is a valid char.
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
 	fields, err = rs.Fields()
@@ -421,7 +421,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "col")
 
-	sql = "select '\t   Col';" // Uppercased letter is a valid char
+	sql = "select '\t   Col';" // Uppercased letter is a valid char.
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
 	fields, err = rs.Fields()
@@ -429,7 +429,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "Col")
 
-	sql = "select '\n\t   中文 col';" // Chinese char is a valid char
+	sql = "select '\n\t   中文 col';" // Chinese char is a valid char.
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
 	fields, err = rs.Fields()
@@ -437,7 +437,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "中文 col")
 
-	sql = "select ' \r\n  .col';" // punctuation is a valid char
+	sql = "select ' \r\n  .col';" // Punctuation is a valid char.
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
 	fields, err = rs.Fields()
@@ -445,7 +445,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, ".col")
 
-	sql = "select '   😆col';" // emoji is a valid char
+	sql = "select '   😆col';" // Emoji is a valid char.
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
 	fields, err = rs.Fields()
@@ -453,7 +453,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "😆col")
 
-	// Below checks whether trailing invalid chars are preserved
+	// Below checks whether trailing invalid chars are preserved.
 	sql = `select 'abc   ';`
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)

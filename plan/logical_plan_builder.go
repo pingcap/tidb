@@ -411,45 +411,50 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	return selection
 }
 
-// graphRange defines valid unicode characters to use in column names. It strictly follows MySQL's definition.
-// See #3994
-var graphRange = []*unicode.RangeTable{
-	// _MY_PNT
-	unicode.No,
-	unicode.Mn,
-	unicode.Me,
-	unicode.Pc,
-	unicode.Pd,
-	unicode.Pd,
-	unicode.Ps,
-	unicode.Pe,
-	unicode.Pi,
-	unicode.Pf,
-	unicode.Po,
-	unicode.Sm,
-	unicode.Sc,
-	unicode.Sk,
-	unicode.So,
-	// _MY_U
-	unicode.Lu,
-	unicode.Lt,
-	unicode.Nl,
-	// _MY_L
-	unicode.Ll,
-	unicode.Lm,
-	unicode.Lo,
-	unicode.Nl,
-	unicode.Mn,
-	unicode.Mc,
-	unicode.Me,
-	// _MY_NMR
-	unicode.Nd,
-	unicode.Nl,
-	unicode.No,
+func buildFieldNameForColumns(field *ast.SelectField, c *expression.Column) (colName model.CIStr, tblName model.CIStr) {
+	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
+		colName = astCol.Name.Name
+		tblName = astCol.Name.Table
+	} else {
+		colName = c.ColName
+		tblName = c.TblName
+	}
+	return
 }
 
-func isNotGraph(r rune) bool {
-	return !unicode.IsOneOf(graphRange, r)
+func buildFieldNameForExpressions(field *ast.SelectField) (colName model.CIStr) {
+	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
+		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
+		colName = agg.Args[0].(*ast.ColumnNameExpr).Name.Name
+	} else {
+		// Other kind of (normal) expressions.
+		innerExpr := getInnerFromParentheses(field.Expr)
+
+		// Expression is a value literal.
+		if valueExpr, ok := innerExpr.(*ast.ValueExpr); ok {
+			switch valueExpr.Kind() {
+			case types.KindString:
+				// See #3686, #3994:
+				// For string literals, string content is used as column name. Non-graph initial characters are trimmed.
+				colName = model.NewCIStr(strings.TrimLeftFunc(valueExpr.GetString(), func(r rune) bool {
+					return !unicode.IsOneOf(mysql.RangeGraph, r)
+				}))
+			case types.KindNull:
+				// See #4053, #3685
+				colName = model.NewCIStr("NULL")
+			default:
+				if innerExpr.Text() != "" {
+					colName = model.NewCIStr(innerExpr.Text())
+				} else {
+					colName = model.NewCIStr(field.Text())
+				}
+			}
+		} else {
+			// Remove special comment code for field part, see issue #3739 for detail.
+			colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
+		}
+	}
+	return
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
@@ -468,44 +473,14 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		proj.Exprs = append(proj.Exprs, newExpr)
 		var tblName, colName model.CIStr
 		if field.AsName.L != "" {
+			// Field has alias.
 			colName = field.AsName
 		} else if c, ok := newExpr.(*expression.Column); ok && !c.IsAggOrSubq {
-			if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
-				colName = astCol.Name.Name
-				tblName = astCol.Name.Table
-			} else {
-				colName = c.ColName
-				tblName = c.TblName
-			}
+			// Field is a column reference.
+			colName, tblName = buildFieldNameForColumns(field, c)
 		} else {
-			// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
-			if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
-				if col, ok := agg.Args[0].(*ast.ColumnNameExpr); ok {
-					colName = col.Name.Name
-				}
-			} else {
-				innerExpr := getInnerFromParentheses(field.Expr)
-				if valueExpr, ok := innerExpr.(*ast.ValueExpr); ok {
-					switch valueExpr.Kind() {
-					case types.KindString:
-						// See #3686, #3994:
-						// For string literals, string content is used as column name. Non-graph initial characters are trimmed.
-						colName = model.NewCIStr(strings.TrimLeftFunc(valueExpr.GetString(), isNotGraph))
-					case types.KindNull:
-						// See #4053, #3685
-						colName = model.NewCIStr("NULL")
-					default:
-						if innerExpr.Text() != "" {
-							colName = model.NewCIStr(innerExpr.Text())
-						} else {
-							colName = model.NewCIStr(field.Text())
-						}
-					}
-				} else {
-					// Remove special comment code for field part, see issue #3739 for detail.
-					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
-				}
-			}
+			// Other: Field is an expression.
+			colName = buildFieldNameForExpressions(field)
 		}
 		col := &expression.Column{
 			FromID:  proj.id,
