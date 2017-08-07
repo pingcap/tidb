@@ -62,6 +62,71 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
+// whose return type is determined by the arguments' FieldTypes.
+// Aggregation is performed by MergeFieldType function.
+func AggFieldType(tps []*FieldType) *FieldType {
+	var currType FieldType
+	for _, t := range tps {
+		if currType.Tp == mysql.TypeUnspecified {
+			currType = *t
+			continue
+		}
+		mtp := MergeFieldType(currType.Tp, t.Tp)
+		currType.Tp = mtp
+	}
+	return &currType
+}
+
+// AggTypeClass aggregates arguments' TypeClass of a multi-argument function.
+func AggTypeClass(tps []*FieldType, flag *uint) TypeClass {
+	var (
+		tpClass      = ClassString
+		unsigned     bool
+		gotFirst     bool
+		gotBinString bool
+	)
+	for _, argFieldType := range tps {
+		if argFieldType.Tp == mysql.TypeNull {
+			continue
+		}
+		argTypeClass := argFieldType.ToClass()
+		if argTypeClass == ClassString && mysql.HasBinaryFlag(argFieldType.Flag) {
+			gotBinString = true
+		}
+		if !gotFirst {
+			gotFirst = true
+			tpClass = argTypeClass
+			unsigned = mysql.HasUnsignedFlag(argFieldType.Flag)
+		} else {
+			tpClass = mergeTypeClass(tpClass, argTypeClass, unsigned, mysql.HasUnsignedFlag(argFieldType.Flag))
+			unsigned = unsigned && mysql.HasUnsignedFlag(argFieldType.Flag)
+		}
+	}
+	setTypeFlag(flag, uint(mysql.UnsignedFlag), unsigned)
+	setTypeFlag(flag, uint(mysql.BinaryFlag), tpClass != ClassString || gotBinString)
+	return tpClass
+}
+
+func mergeTypeClass(a, b TypeClass, aUnsigned, bUnsigned bool) TypeClass {
+	if a == ClassString || b == ClassString {
+		return ClassString
+	} else if a == ClassReal || b == ClassReal {
+		return ClassReal
+	} else if a == ClassDecimal || b == ClassDecimal || aUnsigned != bUnsigned {
+		return ClassDecimal
+	}
+	return ClassInt
+}
+
+func setTypeFlag(flag *uint, flagItem uint, on bool) {
+	if on {
+		*flag |= flagItem
+	} else {
+		*flag &= ^flagItem
+	}
+}
+
 // ToClass maps the field type to a type class.
 func (ft *FieldType) ToClass() TypeClass {
 	switch ft.Tp {

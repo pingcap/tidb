@@ -813,7 +813,7 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 				record := types.MakeDatums(
 					catalogVal,           // CONSTRAINT_CATALOG
 					schema.Name.O,        // CONSTRAINT_SCHEMA
-					table.PrimaryKeyName, // CONSTRAINT_NAME
+					mysql.PrimaryKeyName, // CONSTRAINT_NAME
 					schema.Name.O,        // TABLE_SCHEMA
 					tbl.Name.O,           // TABLE_NAME
 					primaryKeyType,       // CONSTRAINT_TYPE
@@ -824,7 +824,7 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 			for _, idx := range tbl.Indices {
 				var cname, ctype string
 				if idx.Primary {
-					cname = table.PrimaryKeyName
+					cname = mysql.PrimaryKeyName
 					ctype = primaryKeyType
 				} else if idx.Unique {
 					cname = idx.Name.O
