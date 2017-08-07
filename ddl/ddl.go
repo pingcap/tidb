@@ -124,6 +124,8 @@ var (
 	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
+	// ErrWrongNameForIndex returns for wrong index name.
+	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -539,6 +541,7 @@ const (
 	codeGeneratedColumnNonPrior      = 3107
 	codeDependentByGeneratedColumn   = 3108
 	codeJSONUsedAsKey                = 3152
+	codeWrongNameForIndex            = terror.ErrCode(mysql.ErrWrongNameForIndex)
 )
 
 func init() {
@@ -567,6 +570,7 @@ func init() {
 		codeBlobCantHaveDefault:          mysql.ErrBlobCantHaveDefault,
 		codeWrongColumnName:              mysql.ErrWrongColumnName,
 		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
+		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
