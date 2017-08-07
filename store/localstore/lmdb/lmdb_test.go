@@ -97,7 +97,7 @@ func (s *testSuite) TestPutNilAndDelete(c *C) {
 	found := false
 	rawDB.env.View(func(txn *lmdb.Txn) error {
 		txn.RawRead = true
-		cur, err := txn.OpenCursor(rawDB.dbi)
+		cur, err = txn.OpenCursor(rawDB.dbi)
 		if err != nil {
 			return nil
 		}
