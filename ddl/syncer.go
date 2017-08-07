@@ -25,7 +25,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
-	"google.golang.org/grpc"
 )
 
 const (
@@ -187,8 +186,7 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 
 func isContextFinished(err error) bool {
 	if terror.ErrorEqual(err, goctx.Canceled) ||
-		terror.ErrorEqual(err, goctx.DeadlineExceeded) ||
-		terror.ErrorEqual(err, grpc.ErrClientConnClosing) {
+		terror.ErrorEqual(err, goctx.DeadlineExceeded) {
 		return true
 	}
 	return false

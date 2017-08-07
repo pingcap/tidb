@@ -313,7 +313,6 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 	log.Infof("[gc worker] %s start delete %v ranges", w.uuid, len(ranges))
 	startTime := time.Now()
 	regions := 0
-
 	for _, r := range ranges {
 		startKey, rangeEndKey := r.Range()
 		for {

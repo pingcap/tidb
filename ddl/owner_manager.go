@@ -29,6 +29,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 // OwnerManager is used to campaign the owner and manage the owner information.
@@ -122,7 +123,7 @@ func newSession(ctx goctx.Context, flag string, etcdCli *clientv3.Client, retryC
 			break
 		}
 		log.Warnf("[ddl] %s failed to new session, err %v", flag, err)
-		if isContextFinished(err) {
+		if isContextFinished(err) || terror.ErrorEqual(err, grpc.ErrClientConnClosing) {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)

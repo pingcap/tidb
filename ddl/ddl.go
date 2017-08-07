@@ -74,6 +74,7 @@ var (
 	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 	errUnknownTypeLength     = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
+	errInvalidJobVersion     = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
 	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
 	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
@@ -499,6 +500,7 @@ const (
 	codeInvalidStoreVer                      = 8
 	codeUnknownTypeLength                    = 9
 	codeUnknownFractionLength                = 10
+	codeInvalidJobVersion                    = 11
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101

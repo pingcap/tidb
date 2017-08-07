@@ -125,7 +125,7 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 				err = d.delRangeManager.addDelRangeJob(job)
 			}
 		} else {
-			err = errors.Errorf("DDL job with version %d greater than current %d", job.Version, currentVersion)
+			err = errInvalidJobVersion.GenByArgs(job.Version, currentVersion)
 		}
 		if err != nil {
 			return errors.Trace(err)
