@@ -499,7 +499,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 						//		See https://github.com/mysql/mysql-server/blob/5.7/sql/item.cc#L1143.
 						colName = model.NewCIStr(strings.TrimLeftFunc(valueExpr.GetString(), isNotGraph))
 					case types.KindNull:
-						// See #3686
+						// See #4053, #3685
 						colName = model.NewCIStr("NULL")
 					default:
 						if innerExpr.Text() != "" {

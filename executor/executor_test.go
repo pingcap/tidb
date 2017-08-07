@@ -222,6 +222,7 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	r.Check(testkit.Rows("string"))
 }
 
+// Issue 3685
 func (s *testSuite) TestSelectBackslashN(c *C) {
 	defer func() {
 		s.cleanEnv(c)
