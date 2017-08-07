@@ -15,6 +15,8 @@ package plan
 
 import (
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
@@ -409,6 +411,52 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	return selection
 }
 
+// Ref: https://github.com/mysql/mysql-server/blob/5.7/strings/uctypedump.c
+// MySQL _MY_PNT == Unicode No | Mn | Mc | Me | Pc | Pd | Ps | Pe | Pi | Pf | Po | Sm | Sc | Sk | So
+// MySQL _MY_U == Unicode Lu | Lt | Nl
+// MySQL _MY_L == Unicode Ll | Lm | Lo | Nl | Mn | Mc | Me
+// MySQL _MY_NMR == Unicode Nd | Nl | No
+var graphRange = []*unicode.RangeTable{
+	// _MY_PNT
+	unicode.No,
+	unicode.Mn,
+	unicode.Me,
+	unicode.Pc,
+	unicode.Pd,
+	unicode.Pd,
+	unicode.Ps,
+	unicode.Pe,
+	unicode.Pi,
+	unicode.Pf,
+	unicode.Po,
+	unicode.Sm,
+	unicode.Sc,
+	unicode.Sk,
+	unicode.So,
+	// _MY_U
+	unicode.Lu,
+	unicode.Lt,
+	unicode.Nl,
+	// _MY_L
+	unicode.Ll,
+	unicode.Lm,
+	unicode.Lo,
+	unicode.Nl,
+	unicode.Mn,
+	unicode.Mc,
+	unicode.Me,
+	// _MY_NMR
+	unicode.Nd,
+	unicode.Nl,
+	unicode.No,
+}
+
+// isNotGraph checks whether a rune is a mysql graph.
+// See https://github.com/mysql/mysql-server/blob/5.7/include/m_ctype.h#L739 .
+func isNotGraph(r rune) bool {
+	return !unicode.IsOneOf(graphRange, r)
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	b.optFlag |= flagEliminateProjection
@@ -445,8 +493,11 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				if valueExpr, ok := innerExpr.(*ast.ValueExpr); ok {
 					switch valueExpr.Kind() {
 					case types.KindString:
-						// See #3686
-						colName = model.NewCIStr(valueExpr.GetString())
+						// For string literals, string content is used as column name:
+						//		See #3686.
+						// Non-graph initial characters are trimmed when used as column name:
+						//		See https://github.com/mysql/mysql-server/blob/5.7/sql/item.cc#L1143.
+						colName = model.NewCIStr(strings.TrimLeftFunc(valueExpr.GetString(), isNotGraph))
 					case types.KindNull:
 						// See #3686
 						colName = model.NewCIStr("NULL")
@@ -458,14 +509,8 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 						}
 					}
 				} else {
-					//Change column name \N to NULL, just when original sql contains \N column
-					fieldText := field.Text()
-					if fieldText == "\\N" {
-						fieldText = "NULL"
-					}
-
 					// Remove special comment code for field part, see issue #3739 for detail.
-					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(fieldText, parser.TrimComment))
+					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
 				}
 			}
 		}
