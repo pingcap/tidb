@@ -1896,34 +1896,30 @@ type binFunctionClass struct {
 }
 
 func (c *binFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinBinSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 64
+	sig := &builtinBinSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinBinSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinBinSig.
+// evalString evals BIN(N).
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_bin
-func (b *builtinBinSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinBinSig) evalString(row []types.Datum) (string, bool, error) {
+	val, IsNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if IsNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	arg := args[0]
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if arg.IsNull() || (arg.Kind() == types.KindString && arg.GetString() == "") {
-		return d, nil
-	}
-
-	num, err := arg.ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	bits := fmt.Sprintf("%b", uint64(num))
-	d.SetString(bits)
-	return d, nil
+	return fmt.Sprintf("%b", uint64(val)), false, nil
 }
 
 type eltFunctionClass struct {
@@ -2098,35 +2094,38 @@ type fromBase64FunctionClass struct {
 }
 
 func (c *fromBase64FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinFromBase64Sig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = mysql.MaxBlobWidth
+	types.SetBinChsClnFlag(bf.tp)
+	sig := &builtinFromBase64Sig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinFromBase64Sig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinFromBase64Sig.
+// evalString evals FROM_BASE64(str).
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_from-base64
-func (b *builtinFromBase64Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinFromBase64Sig) evalString(row []types.Datum) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
 	str = strings.Replace(str, "\t", "", -1)
 	str = strings.Replace(str, " ", "", -1)
 	result, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
-		return d, errors.Trace(err)
+		// When error happens, take `from_base64("asc")` as an example, we should return NULL.
+		return "", true, nil
 	}
-	// Set the result to be of type []byte
-	d.SetBytes(result)
-	return d, nil
-
+	return string(result), false, nil
 }
 
 type toBase64FunctionClass struct {
