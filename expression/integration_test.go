@@ -533,7 +533,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select locate("01 12", d) from t`)
 	result.Check(testkit.Rows("9"))
 
-  result = tk.MustQuery(`select bin(-1);`)
+	result = tk.MustQuery(`select bin(-1);`)
 	result.Check(testkit.Rows("1111111111111111111111111111111111111111111111111111111111111111"))
 	result = tk.MustQuery(`select bin(5);`)
 	result.Check(testkit.Rows("101"))

@@ -768,8 +768,7 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLocate(c *C) {
-
-	// 1. Test non case-sensative 'Locate' with 2 arguments
+	// 1. Test non case-sensative 'Locate' with 2 arguments.
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Args []interface{}
@@ -798,8 +797,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		c.Assert(f.isDeterministic(), Equals, true)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
-
-	// 2. Test case-sensative 'Locate' with 2 arguments
+	// 2. Test case-sensative 'Locate' with 2 arguments.
 	tbl2 := []struct {
 		Args []interface{}
 		Want interface{}
@@ -818,8 +816,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		c.Assert(f.isDeterministic(), Equals, true)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
-
-	// 3. Test case-sensative 'Locate' with 2 arguments
+	// 3. Test case-sensative 'Locate' with 2 arguments.
 	tbl3 := []struct {
 		Args []interface{}
 		Want interface{}
@@ -838,8 +835,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		c.Assert(f.isDeterministic(), Equals, true)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
-
-	// 4. Test non case-sensatviec 'Locate' with 3 arguments
+	// 4. Test non case-sensatviec 'Locate' with 3 arguments.
 	tbl4 := []struct {
 		Args []interface{}
 		Want interface{}
@@ -863,8 +859,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
-
-	// 5. Test case-sensative 'Locate' with 3 arguments
+	// 5. Test case-sensative 'Locate' with 3 arguments.
 	tbl5 := []struct {
 		Args []interface{}
 		Want interface{}
@@ -883,8 +878,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		c.Assert(f.isDeterministic(), Equals, true)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
-
-	// 6. Test case-sensative 'Locate' with 3 arguments
+	// 6. Test case-sensative 'Locate' with 3 arguments.
 	tbl6 := []struct {
 		Args []interface{}
 		Want interface{}

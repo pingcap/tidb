@@ -911,7 +911,7 @@ func (c *locateFunctionClass) getFunction(args []Expression, ctx context.Context
 	)
 
 	hasStartPos := len(args) == 3
-	caseSensative := mysql.HasBinaryFlag(args[0].GetType().Flag) || mysql.HasBinaryFlag(args[1].GetType().Flag)
+	caseSensitive := types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType())
 	if hasStartPos {
 		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString, tpInt)
 	} else {
@@ -922,14 +922,14 @@ func (c *locateFunctionClass) getFunction(args []Expression, ctx context.Context
 	}
 	bf.tp.Flen = 10
 	if hasStartPos {
-		if caseSensative {
+		if caseSensitive {
 			sig := &builtinLocate3ArgsCSSig{baseIntBuiltinFunc{bf}}
 			return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 		}
 		sig := &builtinLocate3ArgsSig{baseIntBuiltinFunc{bf}}
 		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 	}
-	if caseSensative {
+	if caseSensitive {
 		sig := &builtinLocate2ArgsCSSig{baseIntBuiltinFunc{bf}}
 		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 	}
@@ -953,7 +953,7 @@ type builtinLocate3ArgsCSSig struct {
 	baseIntBuiltinFunc
 }
 
-// eval evals a builtinLocateSig with 2 arguments and case-sensative
+// eval evals a builtinLocateSig with 2 arguments and case-sensitive
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsCSSig) evalInt(row []types.Datum) (d int64, isNull bool, err error) {
 	var (
@@ -986,7 +986,7 @@ func (b *builtinLocate2ArgsCSSig) evalInt(row []types.Datum) (d int64, isNull bo
 	return ret, false, nil
 }
 
-// eval evals a builtinLocateSig with 2 arguments and case-insensative.
+// eval evals a builtinLocateSig with 2 arguments and case-insensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsSig) evalInt(row []types.Datum) (d int64, isNull bool, err error) {
 	var (
@@ -1019,7 +1019,7 @@ func (b *builtinLocate2ArgsSig) evalInt(row []types.Datum) (d int64, isNull bool
 	return ret, false, nil
 }
 
-// eval evals a builtinLocateSig with 3 arguments and case-sensative.
+// eval evals a builtinLocateSig with 3 arguments and case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsCSSig) evalInt(row []types.Datum) (d int64, isNull bool, err error) {
 	var (
@@ -1063,7 +1063,7 @@ func (b *builtinLocate3ArgsCSSig) evalInt(row []types.Datum) (d int64, isNull bo
 	return ret, false, nil
 }
 
-// eval evals a builtinLocateSig with 3 arguments and case-insensative.
+// eval evals a builtinLocateSig with 3 arguments and case-insensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsSig) evalInt(row []types.Datum) (d int64, isNull bool, err error) {
 	var (
