@@ -694,6 +694,7 @@ func (w *GCWorker) mockStart(ctx goctx.Context, jobCh <-chan struct{}, jobRspCh 
 					continue
 				}
 				privilege.BindPrivilegeManager(w.session, nil)
+				w.session.GetSessionVars().InRestrictedSQL = true
 			}
 			err = w.deleteRanges(ctx, math.MaxUint64)
 			jobRspCh <- struct{}{}

@@ -18,7 +18,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -38,12 +37,14 @@ const (
 	insertDeleteRangeSQL   = `INSERT IGNORE INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d")`
 	loadDeleteRangeSQL     = `SELECT job_id, element_id, start_key, end_key FROM mysql.gc_delete_range WHERE ts < %v ORDER BY ts`
 	completeDeleteRangeSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
+	updateDeleteRangeSQL   = `UPDATE mysql.gc_delete_range SET start_key = %s WHERE job_id = %d AND element_id = %d AND start_key = %s`
 
 	delBatchSize = 65536
 	delBackLog   = 128
 )
 
 type delRangeManager interface {
+	// addDelRangeJob add a DDL job into gc_delete_range table.
 	addDelRangeJob(job *model.Job) error
 	start()
 	clear()
@@ -80,6 +81,7 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 	defer dr.ctxPool.Put(resource)
 	ctx := resource.(context.Context)
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
+	ctx.GetSessionVars().InRestrictedSQL = true
 
 	err = insertBgJobIntoDeleteRangeTable(ctx, job)
 	if err != nil {
@@ -131,6 +133,7 @@ func (dr *delRange) doDelRangeWork() error {
 	defer dr.ctxPool.Put(resource)
 	ctx := resource.(context.Context)
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
+	ctx.GetSessionVars().InRestrictedSQL = true
 
 	ranges, err := LoadDeleteRanges(ctx, math.MaxInt64)
 	if err != nil {
@@ -139,21 +142,17 @@ func (dr *delRange) doDelRangeWork() error {
 	}
 
 	for _, r := range ranges {
-		if err := dr.doTask(r); err != nil {
+		if err := dr.doTask(ctx, r); err != nil {
 			log.Errorf("[ddl] delRange emulator do task fail: %s", err)
 			return errors.Trace(err)
 		}
-		if err := CompleteDeleteRange(ctx, r); err != nil {
-			log.Errorf("[ddl] delRange emulator complete task fail: %s", err)
-			return errors.Trace(err)
-		}
-		log.Infof("[ddl] delRange emulator complete task: (%d, %d)", r.jobID, r.elementID)
 	}
 	return nil
 }
 
-func (dr *delRange) doTask(r DelRangeTask) error {
+func (dr *delRange) doTask(ctx context.Context, r DelRangeTask) error {
 	for {
+		var newStartKey kv.Key
 		finish := true
 		dr.keys = dr.keys[:0]
 		err := kv.RunInNewTxn(dr.d.store, false, func(txn kv.Transaction) error {
@@ -167,6 +166,7 @@ func (dr *delRange) doTask(r DelRangeTask) error {
 				if !iter.Valid() {
 					break
 				}
+				newStartKey = iter.Key()
 				finish = bytes.Compare(iter.Key(), r.endKey) >= 0
 				if finish {
 					break
@@ -189,7 +189,16 @@ func (dr *delRange) doTask(r DelRangeTask) error {
 			return errors.Trace(err)
 		}
 		if finish {
+			if err := CompleteDeleteRange(ctx, r); err != nil {
+				log.Errorf("[ddl] delRange emulator complete task fail: %s", err)
+				return errors.Trace(err)
+			}
+			log.Infof("[ddl] delRange emulator complete task: (%d, %d)", r.jobID, r.elementID)
 			break
+		} else {
+			if err := updateDeleteRange(ctx, r, newStartKey, r.startKey); err != nil {
+				log.Errorf("[ddl] delRange emulator update task fail: %s", err)
+			}
 		}
 	}
 	return nil
@@ -300,6 +309,15 @@ func CompleteDeleteRange(ctx context.Context, dr DelRangeTask) error {
 	return errors.Trace(err)
 }
 
+// updateDeleteRange is only for emulator.
+func updateDeleteRange(ctx context.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
+	newStartKeyHex := hex.EncodeToString(newStartKey)
+	oldStartKeyHex := hex.EncodeToString(oldStartKey)
+	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.jobID, dr.elementID, oldStartKeyHex)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
+	return errors.Trace(err)
+}
+
 // LoadPendingBgJobsIntoDeleteTable loads all pending DDL backgroud jobs
 // into table `gc_delete_range` so that gc worker can process them.
 // NOTE: This function WILL NOT start and run in a new transaction internally.
@@ -320,12 +338,12 @@ func LoadPendingBgJobsIntoDeleteTable(ctx context.Context) (err error) {
 	return errors.Trace(err)
 }
 
+// getNowTS gets the current timestamp, in second.
 func getNowTS(ctx context.Context) (int64, error) {
 	currVer, err := ctx.GetStore().CurrentVersion()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	physical := oracle.ExtractPhysical(currVer.Ver)
-	sec, nsec := physical/1e3, (physical%1e3)*1e6
-	return time.Unix(sec, nsec).Unix(), nil
+	return physical / 1e3, nil
 }

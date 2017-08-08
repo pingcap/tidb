@@ -511,6 +511,7 @@ LOOP:
 	// check in index, must no index in kv
 	ctx := s.s.(context.Context)
 
+	// Make sure there is no index with name c3_index.
 	t = s.testGetTable(c, "t1")
 	var nidx table.Index
 	for _, tidx := range t.Indices() {
@@ -521,9 +522,7 @@ LOOP:
 	}
 	c.Assert(nidx, IsNil)
 
-	// Make sure there is no index with name c3_index.
 	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
-
 	f := func() map[int64]struct{} {
 		handles := make(map[int64]struct{})
 

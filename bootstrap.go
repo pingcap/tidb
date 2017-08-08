@@ -182,7 +182,8 @@ const (
 		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		ts BIGINT NOT NULL COMMENT "timestamp in int64",
-		UNIQUE KEY (job_id, element_id)
+		UNIQUE KEY (element_id),
+		KEY (job_id, element_id)
 	);`
 )
 
