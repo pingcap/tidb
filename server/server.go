@@ -110,7 +110,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 			}
 		}
 	}
-	cc.salt = randomBuf(20)
+	cc.salt = util.RandomBuf(20)
 	return cc
 }
 

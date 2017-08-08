@@ -52,13 +52,13 @@ var (
 	logLevel            = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
 	host                = flag.String("host", "0.0.0.0", "tidb server host")
 	port                = flag.String("P", "4000", "tidb server port")
-  xhost               = flag.String("xhost", "0.0.0.0", "tidb x protocol server host")
+	xhost               = flag.String("xhost", "0.0.0.0", "tidb x protocol server host")
 	xport               = flag.String("xP", "4001", "tidb x protocol server port")
 	statusPort          = flag.String("status", "10080", "tidb server status port")
 	ddlLease            = flag.String("lease", "10s", "schema lease duration, very dangerous to change only if you know what you do")
 	statsLease          = flag.String("statsLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
 	socket              = flag.String("socket", "", "The socket file to use for connection.")
-  xsocket             = flag.String("xsocket", "", "The socket file to use for x protocol connection.")
+	xsocket             = flag.String("xsocket", "", "The socket file to use for x protocol connection.")
 	enablePS            = flag.Bool("perfschema", false, "If enable performance schema.")
 	enablePrivilege     = flag.Bool("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
 	reportStatus        = flag.Bool("report-status", true, "If enable status report HTTP service.")
@@ -118,8 +118,8 @@ func main() {
 	cfg.SlowThreshold = *slowThreshold
 	cfg.QueryLogMaxlen = *queryLogMaxlen
 	cfg.TCPKeepAlive = *tcpKeepAlive
-  
-  xcfg := &xserver.Config{
+
+	xcfg := &xserver.Config{
 		Addr:     fmt.Sprintf("%s:%s", *xhost, *xport),
 		Socket:   *socket,
 		LogLevel: *logLevel,
@@ -197,9 +197,9 @@ func main() {
 	if err := svr.Run(); err != nil {
 		log.Error(err)
 	}
-  if err := xsvr.Run(); err != nil {
-    log.Error(err)
-  }
+	if err := xsvr.Run(); err != nil {
+		log.Error(err)
+	}
 	domain.Close()
 	os.Exit(0)
 }
