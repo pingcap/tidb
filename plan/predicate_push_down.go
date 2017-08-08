@@ -44,7 +44,7 @@ func (p *DataSource) replaceColumnByGenerationExpression(expr expression.Express
 	case *expression.Column:
 		for i, colInfo := range p.tableInfo.Columns {
 			if colInfo.Name.L == v.ColName.L {
-				if len(colInfo.GeneratedExprString) != 0 && !colInfo.GeneratedStored {
+				if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 					return p.GenValues[i]
 				}
 				break

@@ -77,7 +77,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		}
 
 		col := table.ToColumn(colInfo)
-		if len(colInfo.GeneratedExprString) != 0 {
+		if col.IsGenerated() {
 			expr, err := parseExpression(colInfo.GeneratedExprString)
 			if err != nil {
 				return nil, errors.Trace(err)

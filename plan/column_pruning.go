@@ -167,7 +167,7 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 		if _, ok := name2Offset[colInfo.Name.L]; !ok {
 			continue
 		}
-		if len(colInfo.GeneratedExprString) != 0 && !colInfo.GeneratedStored {
+		if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 			for key := range colInfo.Dependences {
 				used[name2Offset[key]] = true
 			}
