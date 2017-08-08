@@ -254,8 +254,8 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 		in     interface{}
 		expect interface{}
 	}{
-		{"hello world", decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D")},
-		{"", decodeHex("")},
+		{"hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
+		{"", ""},
 		{nil, nil},
 	}
 
