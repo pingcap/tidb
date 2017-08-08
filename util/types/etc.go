@@ -71,7 +71,7 @@ func IsTypeTime(tp byte) bool {
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
-	if mysql.HasBinaryFlag(ft.Flag) && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp)) {
+	if ft.Collate == charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp)) {
 		return true
 	}
 	return false
@@ -148,4 +148,14 @@ func InvOp2(x, y interface{}, o opcode.Op) (interface{}, error) {
 // overflow returns an overflowed error.
 func overflow(v interface{}, tp byte) error {
 	return ErrOverflow.Gen("constant %v overflows %s", v, TypeStr(tp))
+}
+
+// IsTypeTemporal checks if a type is a temporal type.
+func IsTypeTemporal(tp byte) bool {
+	switch tp {
+	case mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp,
+		mysql.TypeDate, mysql.TypeNewDate:
+		return true
+	}
+	return false
 }

@@ -50,6 +50,7 @@ func (e *SortExec) Close() error {
 // Open implements the Executor Open interface.
 func (e *SortExec) Open() error {
 	e.fetched = false
+	e.Idx = 0
 	e.Rows = nil
 	return errors.Trace(e.children[0].Open())
 }

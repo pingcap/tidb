@@ -65,7 +65,6 @@ var (
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
 	errKeyColumnDoesNotExits = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
 	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
-	errWrongDBName           = terror.ClassDDL.New(codeWrongDBName, "Incorrect database name '%s'")
 	errUnknownTypeLength     = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
 	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
@@ -74,6 +73,8 @@ var (
 	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 
+	// errWrongKeyColumn is for table column cannot be indexed.
+	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
 	// errUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
 	errUnsupportedOnGeneratedColumn = terror.ClassDDL.New(codeUnsupportedOnGeneratedColumn, mysql.MySQLErrName[mysql.ErrUnsupportedOnGeneratedColumn])
 	// errGeneratedColumnNonPrior forbiddens to refer generated column non prior to it.
@@ -109,8 +110,14 @@ var (
 	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
 	// ErrTooLongIdent returns for too long name of database/table/column.
 	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
-	// ErrWrongTableName return for wrong table name.
-	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
+	// ErrWrongDBName returns for wrong database name.
+	ErrWrongDBName = terror.ClassDDL.New(codeWrongDBName, mysql.MySQLErrName[mysql.ErrWrongDBName])
+	// ErrWrongTableName returns for wrong table name.
+	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
+	// ErrWrongColumnName returns for wrong column name.
+	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
+	// ErrWrongNameForIndex returns for wrong index name.
+	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -122,7 +129,7 @@ type DDL interface {
 	CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ident) error
 	DropTable(ctx context.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx context.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
-		columnNames []*ast.IndexColName) error
+		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
 	DropIndex(ctx context.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
@@ -134,7 +141,7 @@ type DDL interface {
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
-	Stats() (map[string]interface{}, error)
+	Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 	// GetScope gets the status variables scope.
 	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
@@ -147,6 +154,8 @@ type DDL interface {
 	OwnerManager() OwnerManager
 	// WorkerVars gets the session variables for DDL worker.
 	WorkerVars() *variable.SessionVars
+	// SetHook sets the hook. It's exported for testing.
+	SetHook(h Callback)
 }
 
 // Event is an event that a ddl operation happened.
@@ -451,7 +460,8 @@ func (d *ddl) callHookOnChanged(err error) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) setHook(h Callback) {
+// SetHook implements DDL.SetHook interface.
+func (d *ddl) SetHook(h Callback) {
 	d.hookMu.Lock()
 	defer d.hookMu.Unlock()
 
@@ -507,16 +517,19 @@ const (
 	codeIncorrectPrefixKey           = 1089
 	codeCantRemoveAllFields          = 1090
 	codeCantDropFieldOrKey           = 1091
+	codeBlobCantHaveDefault          = 1101
 	codeWrongDBName                  = 1102
 	codeWrongTableName               = 1103
 	codeInvalidUseOfNull             = 1138
+	codeWrongColumnName              = 1166
+	codeWrongKeyColumn               = 1167
 	codeBlobKeyWithoutLength         = 1170
 	codeInvalidOnUpdate              = 1294
 	codeUnsupportedOnGeneratedColumn = 3106
 	codeGeneratedColumnNonPrior      = 3107
 	codeDependentByGeneratedColumn   = 3108
 	codeJSONUsedAsKey                = 3152
-	codeBlobCantHaveDefault          = 1101
+	codeWrongNameForIndex            = terror.ErrCode(mysql.ErrWrongNameForIndex)
 )
 
 func init() {
@@ -543,6 +556,9 @@ func init() {
 		codeDependentByGeneratedColumn:   mysql.ErrDependentByGeneratedColumn,
 		codeJSONUsedAsKey:                mysql.ErrJSONUsedAsKey,
 		codeBlobCantHaveDefault:          mysql.ErrBlobCantHaveDefault,
+		codeWrongColumnName:              mysql.ErrWrongColumnName,
+		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
+		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

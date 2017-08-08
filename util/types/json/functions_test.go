@@ -35,6 +35,9 @@ func (s *testJSONSuite) TestJSONType(c *C) {
 		j := mustParseFromString(tt.In)
 		c.Assert(j.Type(), Equals, tt.Out)
 	}
+	// we can't parse '9223372036854775808' to JSON::Uint64 now,
+	// because go builtin JSON parser treats that as DOUBLE.
+	c.Assert(CreateJSON(uint64(1<<63)).Type(), Equals, "UNSIGNED INTEGER")
 }
 
 func (s *testJSONSuite) TestJSONExtract(c *C) {
@@ -212,7 +215,8 @@ func (s *testJSONSuite) TestJSONModify(c *C) {
 		obtain, err := base.Modify([]PathExpression{pathExpr}, []JSON{value}, tt.mt)
 		if tt.success {
 			c.Assert(err, IsNil)
-			cmp, err := CompareJSON(obtain, expected)
+			var cmp int
+			cmp, err = CompareJSON(obtain, expected)
 			c.Assert(err, IsNil)
 			c.Assert(cmp, Equals, 0)
 		} else {

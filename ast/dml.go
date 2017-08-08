@@ -71,6 +71,8 @@ type Join struct {
 	On *OnCondition
 	// Using represents join using clause.
 	Using []*ColumnName
+	// NaturalJoin represents join is natural join
+	NaturalJoin bool
 }
 
 // Accept implements Node Accept interface.
@@ -247,6 +249,19 @@ const (
 	SelectLockForUpdate
 	SelectLockInShareMode
 )
+
+// String implements fmt.Stringer.
+func (slt SelectLockType) String() string {
+	switch slt {
+	case SelectLockNone:
+		return "none"
+	case SelectLockForUpdate:
+		return "for update"
+	case SelectLockInShareMode:
+		return "in share mode"
+	}
+	return "unsupported select lock type"
+}
 
 // WildCardField is a special type of select field content.
 type WildCardField struct {
@@ -944,6 +959,9 @@ const (
 	ShowProcessList
 	ShowCreateDatabase
 	ShowEvents
+	ShowStatsMeta
+	ShowStatsHistograms
+	ShowStatsBuckets
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.

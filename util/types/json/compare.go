@@ -39,25 +39,29 @@ func compareFloat64PrecisionLoss(x, y float64) int {
 // jsonTypePrecedences is for comparing two json.
 // See: https://dev.mysql.com/doc/refman/5.7/en/json.html#json-comparison
 var jsonTypePrecedences = map[string]int{
-	"BLOB":     -1,
-	"BIT":      -2,
-	"OPAQUE":   -3,
-	"DATETIME": -4,
-	"TIME":     -5,
-	"DATE":     -6,
-	"BOOLEAN":  -7,
-	"ARRAY":    -8,
-	"OBJECT":   -9,
-	"STRING":   -10,
-	"INTEGER":  -11,
-	"DOUBLE":   -11,
-	"NULL":     -12,
+	"BLOB":             -1,
+	"BIT":              -2,
+	"OPAQUE":           -3,
+	"DATETIME":         -4,
+	"TIME":             -5,
+	"DATE":             -6,
+	"BOOLEAN":          -7,
+	"ARRAY":            -8,
+	"OBJECT":           -9,
+	"STRING":           -10,
+	"INTEGER":          -11,
+	"UNSIGNED INTEGER": -11,
+	"DOUBLE":           -11,
+	"NULL":             -12,
 }
 
 func i64AsFloat64(i64 int64, typeCode TypeCode) float64 {
 	switch typeCode {
 	case typeCodeLiteral, typeCodeInt64:
 		return float64(i64)
+	case typeCodeUint64:
+		u64 := *(*uint64)(unsafe.Pointer(&i64))
+		return float64(u64)
 	case typeCodeFloat64:
 		return *(*float64)(unsafe.Pointer(&i64))
 	default:
@@ -83,7 +87,7 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			right := j2.i64
 			// false is less than true.
 			cmp = int(right - left)
-		case typeCodeInt64, typeCodeFloat64:
+		case typeCodeInt64, typeCodeUint64, typeCodeFloat64:
 			left := i64AsFloat64(j1.i64, j1.typeCode)
 			right := i64AsFloat64(j2.i64, j2.typeCode)
 			cmp = compareFloat64PrecisionLoss(left, right)
@@ -110,7 +114,8 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			s2 := Serialize(j2)
 			cmp = bytes.Compare(s1, s2)
 		default:
-			cmp = 0
+			err = errors.Errorf(unknownTypeCodeErrorMsg, j1.typeCode)
+			return
 		}
 	} else if (precedence1 == jsonTypePrecedences["BOOLEAN"] && precedence2 == jsonTypePrecedences["INTEGER"]) ||
 		(precedence1 == jsonTypePrecedences["INTEGER"] && precedence2 == jsonTypePrecedences["BOOLEAN"]) {

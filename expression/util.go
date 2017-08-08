@@ -77,7 +77,11 @@ func datumsToConstants(datums []types.Datum) []Expression {
 }
 
 func primitiveValsToConstants(args []interface{}) []Expression {
-	return datumsToConstants(types.MakeDatums(args...))
+	cons := datumsToConstants(types.MakeDatums(args...))
+	for i, arg := range args {
+		types.DefaultTypeForValue(arg, cons[i].GetType())
+	}
+	return cons
 }
 
 var kindToMysqlType = map[byte]byte{
@@ -309,26 +313,26 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
 			}
 			return f
-		case ast.AndAnd:
+		case ast.LogicAnd:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.OrOr, f.GetType(), args...)
+				nf, _ := NewFunction(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
 			}
 			return f
-		case ast.OrOr:
+		case ast.LogicOr:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.AndAnd, f.GetType(), args...)
+				nf, _ := NewFunction(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {

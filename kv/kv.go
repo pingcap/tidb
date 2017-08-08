@@ -170,6 +170,8 @@ type Request struct {
 	Concurrency int
 	// IsolationLevel is the isolation level, default is SI.
 	IsolationLevel IsoLevel
+	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
+	Priority int
 }
 
 // Response represents the response returned from KV layer.

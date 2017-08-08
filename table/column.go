@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -37,9 +38,6 @@ type Column struct {
 	// If this column is a generated column, the expression will be stored here.
 	GeneratedExpr ast.ExprNode
 }
-
-// PrimaryKeyName defines primary key name.
-const PrimaryKeyName = "PRIMARY"
 
 // String implements fmt.Stringer interface.
 func (c *Column) String() string {
@@ -104,6 +102,21 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 	return rcols
 }
 
+// truncateTrailingSpaces trancates trailing spaces for CHAR[(M)] column.
+// fix: https://github.com/pingcap/tidb/issues/3660
+func truncateTrailingSpaces(v *types.Datum) {
+	if v.Kind() == types.KindNull {
+		return
+	}
+	b := v.GetBytes()
+	len := len(b)
+	for len > 0 && b[len-1] == ' ' {
+		len--
+	}
+	b = b[:len]
+	v.SetString(hack.String(b))
+}
+
 // CastValues casts values based on columns type.
 func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreErr bool) (err error) {
 	sc := ctx.GetSessionVars().StmtCtx
@@ -119,6 +132,9 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 			}
 		}
 		rec[c.Offset] = converted
+		if c.Tp == mysql.TypeString && !types.IsBinaryStr(&c.FieldType) {
+			truncateTrailingSpaces(&rec[c.Offset])
+		}
 	}
 	return nil
 }
@@ -360,6 +376,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetMysqlBit(types.Bit{Value: 0, Width: types.MinBitWidth})
 	case mysql.TypeSet:
 		d.SetMysqlSet(types.Set{})
+	case mysql.TypeEnum:
+		d.SetMysqlEnum(types.Enum{})
 	}
 	return d
 }

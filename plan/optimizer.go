@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -29,6 +31,7 @@ var AllowCartesianProduct = true
 
 const (
 	flagPrunColumns uint64 = 1 << iota
+	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagPredicatePushDown
@@ -38,6 +41,7 @@ const (
 
 var optRuleList = []logicalOptRule{
 	&columnPruner{},
+	&projectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&ppdSolver{},
@@ -119,10 +123,17 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
+	var physical PhysicalPlan
 	if UseDAGPlanBuilder(ctx) {
-		return dagPhysicalOptimize(logic)
+		physical, err = dagPhysicalOptimize(logic)
+	} else {
+		physical, err = physicalOptimize(flag, logic, allocator)
 	}
-	return physicalOptimize(flag, logic, allocator)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	finalPlan := eliminatePhysicalProjection(physical)
+	return finalPlan, nil
 }
 
 func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
@@ -144,11 +155,13 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc 
 
 func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	logic.preparePossibleProperties()
-	task, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
+	logic.prepareStatsProfile()
+	t, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := EliminateProjection(task.plan())
+	p := t.plan()
+	rebuildSchema(p)
 	p.ResolveIndices()
 	return p, nil
 }
@@ -159,12 +172,11 @@ func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (P
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	pp := info.p
-	pp = EliminateProjection(pp)
+	p := info.p
 	if flag&(flagDecorrelate) > 0 {
-		addCachePlan(pp, allocator)
+		addCachePlan(p, allocator)
 	}
-	return pp, nil
+	return p, nil
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {

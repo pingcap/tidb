@@ -34,9 +34,10 @@ import (
 )
 
 const ( // GET_FORMAT first argument.
-	dateFormat     = "DATE"
-	datetimeFormat = "DATETIME"
-	timeFormat     = "TIME"
+	dateFormat      = "DATE"
+	datetimeFormat  = "DATETIME"
+	timestampFormat = "TIMESTAMP"
+	timeFormat      = "TIME"
 )
 
 const ( // GET_FORMAT location.
@@ -323,7 +324,6 @@ func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
 	t := t1.Sub(&t2)
 	d.SetMysqlDuration(t)
 	return
@@ -638,7 +638,20 @@ func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err err
 		}
 	}
 
-	t, err := convertTimeToMysqlTime(time.Now(), fsp)
+	// This would consider "timestamp" session variable.
+	now, err := getSystemTimestamp(ctx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	t, err := convertTimeToMysqlTime(now, fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// Now() is a strange function, you can view it as timestamp converted datetime, so
+	// it also consider "time_zone" session variable.
+	err = t.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -1117,7 +1130,7 @@ func (b *builtinGetFormatSig) eval(row []types.Datum) (d types.Datum, err error)
 		case internalLocation:
 			d.SetString("%Y%m%d")
 		}
-	case datetimeFormat:
+	case datetimeFormat, timestampFormat:
 		switch l {
 		case usaLocation:
 			d.SetString("%Y-%m-%d %H.%i.%s")
@@ -1205,7 +1218,20 @@ func (b *builtinSysDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
 	// But here we can just think they are the same because we don't support stored function
 	// and trigger now.
-	return builtinNow(args, b.ctx)
+	fsp := 0
+	sc := b.ctx.GetSessionVars().StmtCtx
+	if len(args) == 1 && !args[0].IsNull() {
+		if fsp, err = checkFsp(sc, args[0]); err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+
+	t, err := convertTimeToMysqlTime(time.Now(), fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlTime(t)
+	return
 }
 
 type currentDateFunctionClass struct {
@@ -1528,19 +1554,19 @@ func (b *builtinDateArithSig) eval(row []types.Datum) (d types.Datum, err error)
 			interval = fmt.Sprintf("%v", ii)
 		}
 	}
-	year, month, day, duration, err := types.ExtractTimeValue(nodeIntervalUnit, interval)
+	year, month, day, dur, err := types.ExtractTimeValue(nodeIntervalUnit, interval)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	if b.op == ast.DateArithSub {
-		year, month, day, duration = -year, -month, -day, -duration
+		year, month, day, dur = -year, -month, -day, -dur
 	}
 	// TODO: Consider time_zone variable.
 	t, err := result.Time.GoTime(time.Local)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	t = t.Add(duration)
+	t = t.Add(dur)
 	t = t.AddDate(int(year), int(month), int(day))
 	if t.Nanosecond() == 0 {
 		result.Fsp = 0
@@ -2023,13 +2049,12 @@ type makeDateFunctionClass struct {
 }
 
 func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeDate)
-	tp.Flen = mysql.MaxDateWidth
-	types.SetBinChsClnFlag(tp)
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpInt, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpInt, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tp := bf.tp
+	tp.Tp, tp.Flen, tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, 0
 	sig := &builtinMakeDateSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
@@ -2563,7 +2588,7 @@ func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err err
 	if err != nil {
 		return d, errorOrWarning(err, b.ctx)
 	}
-	tm, err := date.Time.GoTime(time.Local)
+	tm1, err := date.Time.GoTime(time.Local)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -2571,24 +2596,24 @@ func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err err
 	fsp := types.DefaultFsp
 	switch unit {
 	case "MICROSECOND":
-		tb = tm.Add(time.Duration(v) * time.Microsecond)
+		tb = tm1.Add(time.Duration(v) * time.Microsecond)
 		fsp = types.MaxFsp
 	case "SECOND":
-		tb = tm.Add(time.Duration(v) * time.Second)
+		tb = tm1.Add(time.Duration(v) * time.Second)
 	case "MINUTE":
-		tb = tm.Add(time.Duration(v) * time.Minute)
+		tb = tm1.Add(time.Duration(v) * time.Minute)
 	case "HOUR":
-		tb = tm.Add(time.Duration(v) * time.Hour)
+		tb = tm1.Add(time.Duration(v) * time.Hour)
 	case "DAY":
-		tb = tm.AddDate(0, 0, int(v))
+		tb = tm1.AddDate(0, 0, int(v))
 	case "WEEK":
-		tb = tm.AddDate(0, 0, 7*int(v))
+		tb = tm1.AddDate(0, 0, 7*int(v))
 	case "MONTH":
-		tb = tm.AddDate(0, int(v), 0)
+		tb = tm1.AddDate(0, int(v), 0)
 	case "QUARTER":
-		tb = tm.AddDate(0, 3*int(v), 0)
+		tb = tm1.AddDate(0, 3*int(v), 0)
 	case "YEAR":
-		tb = tm.AddDate(int(v), 0, 0)
+		tb = tm1.AddDate(int(v), 0, 0)
 	default:
 		return d, errors.Trace(types.ErrInvalidTimeFormat)
 	}

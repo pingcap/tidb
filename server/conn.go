@@ -303,7 +303,6 @@ func (cc *clientConn) readHandshakeResponse() error {
 	// Open session and do auth
 	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname)
 	if err != nil {
-		cc.Close()
 		return errors.Trace(err)
 	}
 	if !cc.server.skipAuth() {
@@ -311,11 +310,17 @@ func (cc *clientConn) readHandshakeResponse() error {
 		addr := cc.conn.RemoteAddr().String()
 		host, _, err1 := net.SplitHostPort(addr)
 		if err1 != nil {
-			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, addr, "Yes"))
+			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
 		}
 		user := fmt.Sprintf("%s@%s", cc.user, host)
 		if !cc.ctx.Auth(user, p.Auth, cc.salt) {
-			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, host, "Yes"))
+			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
+		}
+	}
+	if cc.dbname != "" {
+		err = cc.useDB(cc.dbname)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 	cc.ctx.SetSessionManager(cc.server)
@@ -341,10 +346,13 @@ func (cc *clientConn) Run() {
 	for !cc.killed {
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
-		if err != nil {
+		if err != nil || cc.killed {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				log.Error("[%d] read packet error, close this connection %s",
+				log.Errorf("[%d] read packet error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
+			}
+			if cc.killed {
+				log.Warnf("[%d] session is killed.", cc.connectionID)
 			}
 			return
 		}
@@ -529,7 +537,7 @@ func (cc *clientConn) writeError(e error) error {
 	if te, ok = originErr.(*terror.Error); ok {
 		m = te.ToSQLError()
 	} else {
-		m = mysql.NewErrf(mysql.ErrUnknown, e.Error())
+		m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
 	}
 
 	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))

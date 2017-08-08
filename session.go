@@ -77,6 +77,8 @@ type Session interface {
 	// Cancel the execution of current transaction.
 	Cancel()
 	ShowProcess() util.ProcessInfo
+	// PrePareTxnCtx is exported for test.
+	PrepareTxnCtx()
 }
 
 var (
@@ -189,7 +191,8 @@ func (s *session) GetSessionManager() util.SessionManager {
 
 type schemaLeaseChecker struct {
 	domain.SchemaValidator
-	schemaVer int64
+	schemaVer       int64
+	relatedTableIDs []int64
 }
 
 const (
@@ -217,10 +220,15 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 func (s *schemaLeaseChecker) checkOnce(txnTS uint64) error {
 	succ := s.SchemaValidator.Check(txnTS, s.schemaVer)
 	if !succ {
-		if s.SchemaValidator.Latest() > s.schemaVer {
+		isChanged, err := s.SchemaValidator.IsRelatedTablesChanged(txnTS, s.schemaVer, s.relatedTableIDs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isChanged {
 			return domain.ErrInfoSchemaChanged
 		}
-		return domain.ErrInfoSchemaExpired
+		log.Infof("schema checker txnTS %d ver %d doesn't change related tables %v",
+			txnTS, s.schemaVer, s.relatedTableIDs)
 	}
 	return nil
 }
@@ -251,10 +259,17 @@ func (s *session) doCommit() error {
 		}
 	}
 
+	// Get the related table IDs.
+	relatedTables := s.GetSessionVars().TxnCtx.TableDeltaMap
+	tableIDs := make([]int64, 0, len(relatedTables))
+	for id := range relatedTables {
+		tableIDs = append(tableIDs, id)
+	}
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
 		SchemaValidator: sessionctx.GetDomain(s).SchemaValidator,
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
+		relatedTableIDs: tableIDs,
 	})
 	if err := s.txn.Commit(); err != nil {
 		return errors.Trace(err)
@@ -319,7 +334,7 @@ func (s *session) String() string {
 		"id":         sessVars.ConnectionID,
 		"user":       sessVars.User,
 		"currDBName": sessVars.CurrentDB,
-		"stauts":     sessVars.Status,
+		"status":     sessVars.Status,
 		"strictMode": sessVars.StrictSQLMode,
 	}
 	if s.txn != nil {
@@ -341,7 +356,13 @@ func (s *session) String() string {
 
 const sqlLogMaxLen = 1024
 
+// SchemaChangedWithoutRetry is used for testing.
+var SchemaChangedWithoutRetry bool
+
 func (s *session) isRetryableError(err error) bool {
+	if SchemaChangedWithoutRetry {
+		return kv.IsRetryableError(err)
+	}
 	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
 }
 
@@ -361,7 +382,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 	nh := getHistory(s)
 	var err error
 	for {
-		s.prepareTxnCtx()
+		s.PrepareTxnCtx()
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
@@ -585,7 +606,7 @@ func (s *session) SetProcessInfo(sql string) {
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
-	s.prepareTxnCtx()
+	s.PrepareTxnCtx()
 	startTS := time.Now()
 
 	charset, collation := s.sessionVars.GetCharsetInfo()
@@ -600,7 +621,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	var rs []ast.RecordSet
 	ph := sessionctx.GetDomain(s).PerfSchema()
 	for i, rst := range rawStmts {
-		s.prepareTxnCtx()
+		s.PrepareTxnCtx()
 		startTS := time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
 		executor.ResetStmtCtx(s, rst)
@@ -706,7 +727,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s.prepareTxnCtx()
+	s.PrepareTxnCtx()
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 
 	r, err := runStmt(s, st)
@@ -1023,10 +1044,12 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.MaxAllowedPacket + quoteCommaQuote +
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check + quoteCommaQuote +
+	variable.TiDBIndexJoinBatchSize + quoteCommaQuote +
 	variable.TiDBIndexLookupSize + quoteCommaQuote +
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxRowCountForINLJ + quoteCommaQuote +
+	variable.TiDBCBO + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
@@ -1079,9 +1102,9 @@ func (s *session) getTxnFuture() *txnFuture {
 	return &txnFuture{tsFuture, s.store}
 }
 
-// prepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
+// PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
 // It is called before we execute a sql query.
-func (s *session) prepareTxnCtx() {
+func (s *session) PrepareTxnCtx() {
 	if s.txn != nil && s.txn.Valid() {
 		return
 	}
@@ -1089,7 +1112,7 @@ func (s *session) prepareTxnCtx() {
 		return
 	}
 
-	s.goCtx, s.cancelFunc = goctx.WithCancel(goctx.Background())
+	s.goCtx, s.cancelFunc = util.WithCancel(goctx.Background())
 	s.txnFuture = s.getTxnFuture()
 	is := sessionctx.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
@@ -1129,6 +1152,9 @@ func (s *session) ActivePendingTxn() error {
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if s.sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
+		txn.SetOption(kv.IsolationLevel, kv.RC)
 	}
 	return nil
 }

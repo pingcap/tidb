@@ -23,9 +23,6 @@ Think of TiDB as a single-machine RDBMS. You can start a transaction that crosse
 - __Compatible with MySQL protocol__
 Use TiDB as MySQL. You can replace MySQL with TiDB to power your application without changing a single line of code in most cases.
 
-- __Written in Go__
-Enjoy TiDB as much as we love Go. We believe Go code is both easy and enjoyable to work with. Go makes us improve TiDB fast and makes it easy to dive into the codebase.
-
 - __NewSQL over TiKV__
   Turn [TiKV](https://github.com/pingcap/tikv) into NewSQL database.
 

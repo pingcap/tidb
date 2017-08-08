@@ -110,6 +110,12 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowProcessList()
 	case ast.ShowEvents:
 		// empty result
+	case ast.ShowStatsMeta:
+		return e.fetchShowStatsMeta()
+	case ast.ShowStatsHistograms:
+		return e.fetchShowStatsHistogram()
+	case ast.ShowStatsBuckets:
+		return e.fetchShowStatsBuckets()
 	}
 	return nil
 }
@@ -361,7 +367,8 @@ func (e *ShowExec) fetchShowVariables() error {
 }
 
 func (e *ShowExec) fetchShowStatus() error {
-	statusVars, err := variable.GetStatusVars()
+	sessionVars := e.ctx.GetSessionVars()
+	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -443,7 +450,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		buf.WriteString(fmt.Sprintf(" PRIMARY KEY (`%s`)", pkCol.Name.O))
+		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (`%s`)", pkCol.Name.O))
 	}
 
 	if len(tb.Indices()) > 0 || len(tb.Meta().ForeignKeys) > 0 {
@@ -600,6 +607,7 @@ func (e *ShowExec) fetchShowWarnings() error {
 	for _, warn := range warns {
 		datums := make([]types.Datum, 3)
 		datums[0] = types.NewStringDatum("Warning")
+		warn = errors.Cause(warn)
 		switch x := warn.(type) {
 		case *terror.Error:
 			sqlErr := x.ToSQLError()

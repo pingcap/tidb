@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"strings"
-
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -52,8 +50,6 @@ func (v *typeInferrer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 
 func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
-	case *ast.AggregateFuncExpr:
-		v.aggregateFunc(x)
 	case *ast.BetweenExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		types.SetBinChsClnFlag(&x.Type)
@@ -95,16 +91,12 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		types.SetBinChsClnFlag(&x.Type)
 		v.convertValueToColumnTypeIfNeeded(x)
-	case *ast.PatternLikeExpr:
-		v.handleLikeExpr(x)
 	case *ast.PatternRegexpExpr:
 		v.handleRegexpExpr(x)
 	case *ast.SelectStmt:
 		v.selectStmt(x)
 	case *ast.UnaryOperationExpr:
 		v.unaryOperation(x)
-	case *ast.ValueExpr:
-		v.handleValueExpr(x)
 	case *ast.ValuesExpr:
 		v.handleValuesExpr(x)
 	case *ast.VariableExpr:
@@ -131,36 +123,9 @@ func (v *typeInferrer) selectStmt(x *ast.SelectStmt) {
 	}
 }
 
-func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
-	name := strings.ToLower(x.F)
-	switch name {
-	case ast.AggFuncCount:
-		ft := types.NewFieldType(mysql.TypeLonglong)
-		ft.Flen = 21
-		types.SetBinChsClnFlag(ft)
-		x.SetType(ft)
-	case ast.AggFuncMax, ast.AggFuncMin:
-		x.SetType(x.Args[0].GetType())
-	case ast.AggFuncSum, ast.AggFuncAvg:
-		ft := types.NewFieldType(mysql.TypeNewDecimal)
-		types.SetBinChsClnFlag(ft)
-		ft.Decimal = x.Args[0].GetType().Decimal
-		x.SetType(ft)
-	case ast.AggFuncGroupConcat:
-		ft := types.NewFieldType(mysql.TypeVarString)
-		ft.Charset = v.defaultCharset
-		cln, err := charset.GetDefaultCollation(v.defaultCharset)
-		if err != nil {
-			v.err = err
-		}
-		ft.Collate = cln
-		x.SetType(ft)
-	}
-}
-
 func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 	switch x.Op {
-	case opcode.AndAnd, opcode.OrOr, opcode.LogicXor:
+	case opcode.LogicAnd, opcode.LogicOr, opcode.LogicXor:
 		x.Type.Init(mysql.TypeLonglong)
 	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
 		x.Type.Init(mysql.TypeLonglong)
@@ -277,18 +242,6 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 	types.SetBinChsClnFlag(&x.Type)
 }
 
-func fixDecimals(value interface{}, tp *types.FieldType) {
-	switch x := value.(type) {
-	case *types.MyDecimal:
-		tp.Decimal = int(x.GetDigitsFrac())
-	}
-}
-
-func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
-	types.DefaultTypeForValue(x.GetValue(), x.GetType())
-	fixDecimals(x.GetValue(), x.GetType())
-}
-
 func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {
 	x.SetType(x.Column.GetType())
 }
@@ -371,11 +324,15 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 			chs = v.defaultCharset
 		}
 	case ast.Coalesce:
-		tp = aggFieldType(x.Args)
+		fieldTps := make([]*types.FieldType, 0, len(x.Args))
+		for _, arg := range x.Args {
+			fieldTps = append(fieldTps, arg.GetType())
+		}
+		tp = types.AggFieldType(fieldTps)
 		if tp.Tp == mysql.TypeVarchar {
 			tp.Tp = mysql.TypeVarString
 		}
-		classType := aggTypeClass(x.Args, &tp.Flag)
+		classType := types.AggTypeClass(fieldTps, &tp.Flag)
 		if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
 			tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 		}
@@ -439,7 +396,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		ast.DateFormat, ast.Rpad, ast.Lpad, ast.CharFunc, ast.Conv, ast.MakeSet, ast.Oct, ast.UUID,
 		ast.InsertFunc, ast.Bin, ast.Quote, ast.Format, ast.FromBase64, ast.ToBase64,
 		ast.ExportSet, ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa, ast.Inet6Aton,
-		ast.Inet6Ntoa, ast.PasswordFunc:
+		ast.Inet6Ntoa, ast.PasswordFunc, ast.TiDBVersion:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case ast.RandomBytes:
@@ -496,25 +453,21 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	if x.ElseClause != nil {
 		exprs = append(exprs, x.ElseClause)
 	}
-	tp := aggFieldType(exprs)
+	fieldTps := make([]*types.FieldType, 0, len(exprs))
+	for _, expr := range exprs {
+		fieldTps = append(fieldTps, expr.GetType())
+	}
+	tp := types.AggFieldType(fieldTps)
 	if tp.Tp == mysql.TypeVarchar {
 		tp.Tp = mysql.TypeVarString
 	}
-	classType := aggTypeClass(exprs, &tp.Flag)
+	classType := types.AggTypeClass(fieldTps, &tp.Flag)
 	if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
 		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 	} else {
 		types.SetBinChsClnFlag(tp)
 	}
 	x.SetType(tp)
-}
-
-// handleLikeExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.
-func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
-	x.SetType(types.NewFieldType(mysql.TypeLonglong))
-	types.SetBinChsClnFlag(&x.Type)
-	x.Expr = v.addCastToString(x.Expr)
-	x.Pattern = v.addCastToString(x.Pattern)
 }
 
 // handleRegexpExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.
@@ -579,69 +532,6 @@ func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
 	}
 }
 
-func aggFieldType(args []ast.ExprNode) *types.FieldType {
-	var currType types.FieldType
-	for _, arg := range args {
-		t := arg.GetType()
-		if currType.Tp == mysql.TypeUnspecified {
-			currType = *t
-			continue
-		}
-		mtp := types.MergeFieldType(currType.Tp, t.Tp)
-		currType.Tp = mtp
-	}
-	return &currType
-}
-
-func aggTypeClass(args []ast.ExprNode, flag *uint) types.TypeClass {
-	var (
-		tpClass      = types.ClassString
-		unsigned     bool
-		gotFirst     bool
-		gotBinString bool
-	)
-	for _, arg := range args {
-		argFieldType := arg.GetType()
-		if argFieldType.Tp == mysql.TypeNull {
-			continue
-		}
-		argTypeClass := argFieldType.ToClass()
-		if argTypeClass == types.ClassString && mysql.HasBinaryFlag(argFieldType.Flag) {
-			gotBinString = true
-		}
-		if !gotFirst {
-			gotFirst = true
-			tpClass = argTypeClass
-			unsigned = mysql.HasUnsignedFlag(argFieldType.Flag)
-		} else {
-			tpClass = mergeTypeClass(tpClass, argTypeClass, unsigned, mysql.HasUnsignedFlag(argFieldType.Flag))
-			unsigned = unsigned && mysql.HasUnsignedFlag(argFieldType.Flag)
-		}
-	}
-	setTypeFlag(flag, uint(mysql.UnsignedFlag), unsigned)
-	setTypeFlag(flag, uint(mysql.BinaryFlag), tpClass != types.ClassString || gotBinString)
-	return tpClass
-}
-
-func setTypeFlag(flag *uint, flagItem uint, on bool) {
-	if on {
-		*flag |= flagItem
-	} else {
-		*flag &= ^flagItem
-	}
-}
-
-func mergeTypeClass(a, b types.TypeClass, aUnsigned, bUnsigned bool) types.TypeClass {
-	if a == types.ClassString || b == types.ClassString {
-		return types.ClassString
-	} else if a == types.ClassReal || b == types.ClassReal {
-		return types.ClassReal
-	} else if a == types.ClassDecimal || b == types.ClassDecimal || aUnsigned != bUnsigned {
-		return types.ClassDecimal
-	}
-	return types.ClassInt
-}
-
 // IsHybridType checks whether a ClassString expression is a hybrid type value which will return different types of value in different context.
 //
 // For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
@@ -654,6 +544,7 @@ func IsHybridType(expr Expression) bool {
 	case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
 		return true
 	}
+
 	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is `HEX` or `BIT`.
 	if con, ok := expr.(*Constant); ok {
 		switch con.Value.Kind() {

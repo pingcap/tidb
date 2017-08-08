@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,11 +45,11 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
-	TurnOnNewExprEval = true
+	atomic.StoreInt32(&TurnOnNewExprEval, 1)
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
-	TurnOnNewExprEval = false
+	atomic.StoreInt32(&TurnOnNewExprEval, 0)
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {
@@ -183,17 +184,17 @@ func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 		rhs interface{}
 		ret interface{}
 	}{
-		{nil, ast.AndAnd, 1, nil},
-		{nil, ast.AndAnd, 0, 0},
-		{nil, ast.OrOr, 1, 1},
-		{nil, ast.OrOr, 0, nil},
+		{nil, ast.LogicAnd, 1, nil},
+		{nil, ast.LogicAnd, 0, 0},
+		{nil, ast.LogicOr, 1, 1},
+		{nil, ast.LogicOr, 0, nil},
 		{nil, ast.LogicXor, 1, nil},
 		{nil, ast.LogicXor, 0, nil},
-		{1, ast.AndAnd, 0, 0},
-		{1, ast.AndAnd, 1, 1},
-		{1, ast.OrOr, 0, 1},
-		{1, ast.OrOr, 1, 1},
-		{0, ast.OrOr, 0, 0},
+		{1, ast.LogicAnd, 0, 0},
+		{1, ast.LogicAnd, 1, 1},
+		{1, ast.LogicOr, 0, 1},
+		{1, ast.LogicOr, 1, 1},
+		{0, ast.LogicOr, 0, 0},
 		{1, ast.LogicXor, 0, 1},
 		{1, ast.LogicXor, 1, 0},
 		{0, ast.LogicXor, 0, 0},

@@ -23,14 +23,15 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
-// argTp indicates the specified types that arguments of a built-in function should be.
-type argTp byte
+// evalTp indicates the specified types that arguments and result of a built-in function should be.
+type evalTp byte
 
 const (
-	tpInt argTp = iota
+	tpInt evalTp = iota
 	tpReal
 	tpDecimal
 	tpString
@@ -63,7 +64,7 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(args []Expression, retType *types.FieldType, ctx context.Context, argTps ...argTp) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		return bf, errors.New("unexpected length of args and argTps")
 	}
@@ -86,12 +87,61 @@ func newBaseBuiltinFuncWithTp(args []Expression, retType *types.FieldType, ctx c
 			return bf, errors.Trace(err)
 		}
 	}
+	var fieldType *types.FieldType
+	switch retType {
+	case tpInt:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeLonglong,
+			Flen:    mysql.MaxIntWidth,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpReal:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeDouble,
+			Flen:    mysql.MaxRealWidth,
+			Decimal: types.UnspecifiedLength,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpDecimal:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeNewDecimal,
+			Flen:    11,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpString:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeVarString,
+			Flen:    0,
+			Decimal: types.UnspecifiedLength,
+		}
+	case tpTime:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeDatetime,
+			Flen:    mysql.MaxDatetimeWidthWithFsp,
+			Decimal: types.MaxFsp,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpDuration:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeDuration,
+			Flen:    mysql.MaxDurationWidthWithFsp,
+			Decimal: types.MaxFsp,
+			Flag:    mysql.BinaryFlag,
+		}
+	}
+	if mysql.HasBinaryFlag(fieldType.Flag) {
+		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
+	} else {
+		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
+	}
 	return baseBuiltinFunc{
 		args:          args,
 		argValues:     make([]types.Datum, len(args)),
 		ctx:           ctx,
 		deterministic: true,
-		tp:            retType}, nil
+		tp:            fieldType}, nil
 }
 
 func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
@@ -213,7 +263,11 @@ func (b *baseIntBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil || isNull {
 		return d, errors.Trace(err)
 	}
-	d.SetInt64(res)
+	if mysql.HasUnsignedFlag(b.tp.Flag) {
+		d.SetUint64(uint64(res))
+	} else {
+		d.SetInt64(res)
+	}
 	return
 }
 
@@ -360,6 +414,20 @@ func (b *baseStringBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, e
 
 func (b *baseStringBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
 	panic("cannot get DURATION result from ClassString expression")
+}
+
+func (b *baseStringBuiltinFunc) getRetTp() *types.FieldType {
+	tp, flen := b.tp, b.tp.Flen
+	if flen >= mysql.MaxBlobWidth {
+		tp.Tp = mysql.TypeLongBlob
+	} else if flen >= 65536 {
+		tp.Tp = mysql.TypeMediumBlob
+	}
+	if len(tp.Charset) <= 0 {
+		tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	}
+
+	return tp
 }
 
 type baseTimeBuiltinFunc struct {
@@ -660,6 +728,8 @@ var funcs = map[string]functionClass{
 	ast.RowCount:     &rowCountFunctionClass{baseFunctionClass{ast.RowCount, 0, 0}},
 	ast.SessionUser:  &userFunctionClass{baseFunctionClass{ast.SessionUser, 0, 0}},
 	ast.SystemUser:   &userFunctionClass{baseFunctionClass{ast.SystemUser, 0, 0}},
+	// This function is used to show tidb-server version info.
+	ast.TiDBVersion: &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
 
 	// control functions
 	ast.If:     &ifFunctionClass{baseFunctionClass{ast.If, 3, 3}},
@@ -691,8 +761,9 @@ var funcs = map[string]functionClass{
 	ast.GetLock:     &lockFunctionClass{baseFunctionClass{ast.GetLock, 2, 2}},
 	ast.ReleaseLock: &releaseLockFunctionClass{baseFunctionClass{ast.ReleaseLock, 1, 1}},
 
-	ast.AndAnd:     &andandFunctionClass{baseFunctionClass{ast.AndAnd, 2, 2}},
-	ast.OrOr:       &ororFunctionClass{baseFunctionClass{ast.OrOr, 2, 2}},
+	ast.LogicAnd:   &logicAndFunctionClass{baseFunctionClass{ast.LogicAnd, 2, 2}},
+	ast.LogicOr:    &logicOrFunctionClass{baseFunctionClass{ast.LogicOr, 2, 2}},
+	ast.LogicXor:   &logicXorFunctionClass{baseFunctionClass{ast.LogicXor, 2, 2}},
 	ast.GE:         &compareFunctionClass{baseFunctionClass{ast.GE, 2, 2}, opcode.GE},
 	ast.LE:         &compareFunctionClass{baseFunctionClass{ast.LE, 2, 2}, opcode.LE},
 	ast.EQ:         &compareFunctionClass{baseFunctionClass{ast.EQ, 2, 2}, opcode.EQ},
@@ -700,22 +771,21 @@ var funcs = map[string]functionClass{
 	ast.LT:         &compareFunctionClass{baseFunctionClass{ast.LT, 2, 2}, opcode.LT},
 	ast.GT:         &compareFunctionClass{baseFunctionClass{ast.GT, 2, 2}, opcode.GT},
 	ast.NullEQ:     &compareFunctionClass{baseFunctionClass{ast.NullEQ, 2, 2}, opcode.NullEQ},
-	ast.Plus:       &arithmeticFunctionClass{baseFunctionClass{ast.Plus, 2, 2}, opcode.Plus},
-	ast.Minus:      &arithmeticFunctionClass{baseFunctionClass{ast.Minus, 2, 2}, opcode.Minus},
+	ast.Plus:       &arithmeticPlusFunctionClass{baseFunctionClass{ast.Plus, 2, 2}},
+	ast.Minus:      &arithmeticMinusFunctionClass{baseFunctionClass{ast.Minus, 2, 2}},
 	ast.Mod:        &arithmeticFunctionClass{baseFunctionClass{ast.Mod, 2, 2}, opcode.Mod},
 	ast.Div:        &arithmeticFunctionClass{baseFunctionClass{ast.Div, 2, 2}, opcode.Div},
 	ast.Mul:        &arithmeticFunctionClass{baseFunctionClass{ast.Mul, 2, 2}, opcode.Mul},
 	ast.IntDiv:     &arithmeticFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}, opcode.IntDiv},
-	ast.LeftShift:  &bitOpFunctionClass{baseFunctionClass{ast.LeftShift, 2, 2}, opcode.LeftShift},
-	ast.RightShift: &bitOpFunctionClass{baseFunctionClass{ast.RightShift, 2, 2}, opcode.RightShift},
-	ast.And:        &bitOpFunctionClass{baseFunctionClass{ast.And, 2, 2}, opcode.And},
-	ast.Or:         &bitOpFunctionClass{baseFunctionClass{ast.Or, 2, 2}, opcode.Or},
-	ast.Xor:        &bitOpFunctionClass{baseFunctionClass{ast.Xor, 2, 2}, opcode.Xor},
-	ast.LogicXor:   &logicXorFunctionClass{baseFunctionClass{ast.LogicXor, 2, 2}},
-	ast.UnaryNot:   &unaryOpFunctionClass{baseFunctionClass{ast.UnaryNot, 1, 1}, opcode.Not},
-	ast.BitNeg:     &unaryOpFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}, opcode.BitNeg},
+	ast.BitNeg:     &bitNegFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}},
+	ast.And:        &bitAndFunctionClass{baseFunctionClass{ast.And, 2, 2}},
+	ast.LeftShift:  &leftShiftFunctionClass{baseFunctionClass{ast.LeftShift, 2, 2}},
+	ast.RightShift: &rightShiftFunctionClass{baseFunctionClass{ast.RightShift, 2, 2}},
+	ast.UnaryNot:   &unaryNotFunctionClass{baseFunctionClass{ast.UnaryNot, 1, 1}},
+	ast.Or:         &bitOrFunctionClass{baseFunctionClass{ast.Or, 2, 2}},
+	ast.Xor:        &bitXorFunctionClass{baseFunctionClass{ast.Xor, 2, 2}},
 	ast.UnaryPlus:  &unaryOpFunctionClass{baseFunctionClass{ast.UnaryPlus, 1, 1}, opcode.Plus},
-	ast.UnaryMinus: &unaryOpFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}, opcode.Minus},
+	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
 	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 1, -1}},
 	ast.IsTruth:    &isTrueOpFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
 	ast.IsFalsity:  &isTrueOpFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},

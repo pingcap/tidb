@@ -23,9 +23,11 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
+	"github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes"
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 )
 
@@ -184,13 +186,23 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		case <-ctx.Done():
 			// Revoke the session lease.
 			// If revoke takes longer than the ttl, lease is expired anyway.
-			ctx, cancel := goctx.WithTimeout(goctx.Background(),
+			cancelCtx, cancel := goctx.WithTimeout(goctx.Background(),
 				time.Duration(ManagerSessionTTL)*time.Second)
-			_, err = m.etcdCli.Revoke(ctx, etcdSession.Lease())
+			_, err = m.etcdCli.Revoke(cancelCtx, etcdSession.Lease())
 			cancel()
 			log.Infof("[ddl] %s break campaign loop err %v", idInfo, err)
 			return
 		default:
+		}
+		// If the etcd server turns clocks forward，the following case may occur.
+		// The etcd server deletes this session's lease ID, but etcd session doesn't find it.
+		// In this time if we do the campaign operation, the etcd server will return ErrLeaseNotFound.
+		if terror.ErrorEqual(err, rpctypes.ErrLeaseNotFound) {
+			if etcdSession != nil {
+				err = etcdSession.Close()
+				log.Infof("[ddl] %s etcd session encounters the error of lease not found, closes it err %s", idInfo, err)
+			}
+			continue
 		}
 
 		elec := concurrency.NewElection(etcdSession, key)

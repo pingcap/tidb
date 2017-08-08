@@ -18,11 +18,13 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types/json"
@@ -544,7 +546,7 @@ func (d *Datum) compareString(sc *variable.StatementContext, s string) (int, err
 		return CompareString(d.GetString(), s), nil
 	case KindMysqlDecimal:
 		dec := new(MyDecimal)
-		err := dec.FromString([]byte(s))
+		err := sc.HandleTruncate(dec.FromString(hack.Slice(s)))
 		return d.GetMysqlDecimal().Compare(dec), err
 	case KindMysqlTime:
 		dt, err := ParseDatetime(s)
@@ -588,7 +590,7 @@ func (d *Datum) compareMysqlDecimal(sc *variable.StatementContext, dec *MyDecima
 		return d.GetMysqlDecimal().Compare(dec), nil
 	case KindString, KindBytes:
 		dDec := new(MyDecimal)
-		err := dDec.FromString(d.GetBytes())
+		err := sc.HandleTruncate(dDec.FromString(d.GetBytes()))
 		return dDec.Compare(dec), err
 	default:
 		fVal, _ := dec.ToFloat64()
@@ -759,13 +761,26 @@ func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType)
 	default:
 		return invalidConv(d, target.Tp)
 	}
+	var err1 error
+	f, err1 = ProduceFloatWithSpecifiedTp(f, target, sc)
+	if err == nil && err1 != nil {
+		err = err1
+	}
+	if target.Tp == mysql.TypeFloat {
+		ret.SetFloat32(float32(f))
+	} else {
+		ret.SetFloat64(f)
+	}
+	return ret, errors.Trace(err)
+}
+
+// ProduceFloatWithSpecifiedTp produces a new float64 according to `flen` and `decimal`.
+func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *variable.StatementContext) (_ float64, err error) {
 	// For float and following double type, we will only truncate it for float(M, D) format.
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
-		var err1 error
-		f, err1 = TruncateFloat(f, target.Flen, target.Decimal)
-		if err == nil && err1 != nil {
-			err = err1
+		f, err = TruncateFloat(f, target.Flen, target.Decimal)
+		if err != nil {
 			if sc.IgnoreTruncate {
 				err = nil
 			} else if sc.TruncateAsWarning {
@@ -774,12 +789,7 @@ func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType)
 			}
 		}
 	}
-	if target.Tp == mysql.TypeFloat {
-		ret.SetFloat32(float32(f))
-	} else {
-		ret.SetFloat64(f)
-	}
-	return ret, errors.Trace(err)
+	return f, errors.Trace(err)
 }
 
 func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType) (Datum, error) {
@@ -830,16 +840,22 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementCo
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
-			var runeCount int
-			var truncateLen int
-			for i := range s {
-				runeCount++
-				if runeCount == flen+1 {
-					// We don't break here because we need to iterate to the end to get runeCount.
-					truncateLen = i
+			if len([]rune(s)) > flen {
+				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
+				//    CREATE TABLE t (a char(0));
+				//    INSERT INTO t VALUES (``);
+				// 2. If len(s) is 10 and flen is 0, truncateLen will be 0 too, but we still need to truncate s.
+				//    SELECT 1, CAST(1234 AS CHAR(0));
+				// So truncateLen is not a suitable variable to determine to do truncate or not.
+				var runeCount int
+				var truncateLen int
+				for i := range s {
+					if runeCount == flen {
+						// We don't break here because we need to iterate to the end to get runeCount.
+						truncateLen = i
+					}
+					runeCount++
 				}
-			}
-			if truncateLen > 0 || flen == 0 {
 				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, runeCount)
 				s = truncateStr(s, truncateLen)
 			}
@@ -1099,15 +1115,26 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.State
 		prec, frac := dec.PrecisionAndFrac()
 		if !dec.IsZero() && prec-frac > flen-decimal {
 			dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
-			// TODO: we may need a OverlowAsWarning.
 			// select (cast 111 as decimal(1)) causes a warning in MySQL.
 			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
 		} else if frac != decimal {
+			old := *dec
 			dec.Round(dec, decimal, ModeHalfEven)
-			if !dec.IsZero() && frac > decimal {
-				err = sc.HandleTruncate(ErrTruncated)
+			if !dec.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
+				if sc.InInsertStmt {
+					// fix https://github.com/pingcap/tidb/issues/3895
+					sc.AppendWarning(ErrTruncated)
+					err = nil
+				} else {
+					err = sc.HandleTruncate(ErrTruncated)
+				}
 			}
 		}
+	}
+
+	if terror.ErrorEqual(err, ErrOverflow) {
+		// TODO: warnErr need to be ErrWarnDataOutOfRange
+		err = sc.HandleOverflow(err, err)
 	}
 	return dec, errors.Trace(err)
 }
@@ -1193,10 +1220,10 @@ func (d *Datum) convertToMysqlEnum(sc *variable.StatementContext, target *FieldT
 		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
-		return invalidConv(d, target.Tp)
+		err = errors.Wrap(err, ErrTruncated)
 	}
 	ret.SetValue(e)
-	return ret, nil
+	return ret, err
 }
 
 func (d *Datum) convertToMysqlSet(sc *variable.StatementContext, target *FieldType) (Datum, error) {
@@ -1231,9 +1258,12 @@ func (d *Datum) convertToMysqlJSON(sc *variable.StatementContext, target *FieldT
 		if j, err = json.ParseFromString(d.GetString()); err == nil {
 			ret.SetMysqlJSON(j)
 		}
-	case KindInt64, KindUint64:
+	case KindInt64:
 		i64 := d.GetInt64()
 		ret.SetMysqlJSON(json.CreateJSON(i64))
+	case KindUint64:
+		u64 := d.GetUint64()
+		ret.SetMysqlJSON(json.CreateJSON(u64))
 	case KindFloat32, KindFloat64:
 		f64 := d.GetFloat64()
 		ret.SetMysqlJSON(json.CreateJSON(f64))
@@ -1313,7 +1343,7 @@ func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, 
 	case KindFloat64:
 		err = dec.FromFloat64(d.GetFloat64())
 	case KindString:
-		err = dec.FromString(d.GetBytes())
+		err = sc.HandleTruncate(dec.FromString(d.GetBytes()))
 	case KindMysqlDecimal:
 		*dec = *d.GetMysqlDecimal()
 	case KindMysqlHex:
@@ -1402,8 +1432,7 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		}
 		return ival, err
 	case KindMysqlHex:
-		fval := d.GetMysqlHex().ToNumber()
-		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
+		return d.GetMysqlHex().Value, nil
 	case KindMysqlBit:
 		fval := d.GetMysqlBit().ToNumber()
 		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
@@ -1513,8 +1542,10 @@ func (d *Datum) ToMysqlJSON() (j json.JSON, err error) {
 	case KindMysqlJSON:
 		j = d.x.(json.JSON)
 		return
-	case KindInt64, KindUint64:
+	case KindInt64:
 		in = d.GetInt64()
+	case KindUint64:
+		in = d.GetUint64()
 	case KindFloat32, KindFloat64:
 		in = d.GetFloat64()
 	case KindMysqlDecimal:
@@ -1564,11 +1595,7 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 	if a.IsNull() || b.IsNull() {
 		return x, y, nil
 	}
-	var (
-		hasUint    bool
-		hasDecimal bool
-		hasFloat   bool
-	)
+	var hasUint, hasDecimal, hasFloat bool
 	x = a.convergeType(&hasUint, &hasDecimal, &hasFloat)
 	y = b.convergeType(&hasUint, &hasDecimal, &hasFloat)
 	if hasFloat {
@@ -1586,7 +1613,8 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			x.SetFloat64(x.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := x.ToFloat64(sc)
+			var fval float64
+			fval, err = x.ToFloat64(sc)
 			if err != nil {
 				return x, y, errors.Trace(err)
 			}
@@ -1606,7 +1634,8 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 		case KindMysqlSet:
 			y.SetFloat64(y.GetMysqlSet().ToNumber())
 		case KindMysqlDecimal:
-			fval, err := y.ToFloat64(sc)
+			var fval float64
+			fval, err = y.ToFloat64(sc)
 			if err != nil {
 				return x, y, errors.Trace(err)
 			}
@@ -1678,6 +1707,12 @@ func NewFloat32Datum(f float32) (d Datum) {
 // NewDurationDatum creates a new Datum from a Duration value.
 func NewDurationDatum(dur Duration) (d Datum) {
 	d.SetMysqlDuration(dur)
+	return d
+}
+
+// NewTimeDatum creates a new Time from a Time value.
+func NewTimeDatum(t Time) (d Datum) {
+	d.SetMysqlTime(t)
 	return d
 }
 
@@ -1784,4 +1819,22 @@ func handleTruncateError(sc *variable.StatementContext) error {
 	}
 	sc.AppendWarning(ErrTruncated)
 	return nil
+}
+
+// DatumsToString converts several datums to formatted string.
+func DatumsToString(datums []Datum) (string, error) {
+	var strs []string
+	for _, datum := range datums {
+		str, err := datum.ToString()
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		strs = append(strs, str)
+	}
+	size := len(datums)
+	if size > 1 {
+		strs[0] = "(" + strs[0]
+		strs[size-1] = strs[size-1] + ")"
+	}
+	return strings.Join(strs, ", "), nil
 }

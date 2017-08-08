@@ -15,10 +15,8 @@ package privileges_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
@@ -53,9 +51,7 @@ type testPrivilegeSuite struct {
 	createColumnPrivTableSQL string
 }
 
-func (s *testPrivilegeSuite) SetUpSuit(c *C) {
-	logLevel := os.Getenv("log_level")
-	log.SetLevelByString(logLevel)
+func (s *testPrivilegeSuite) SetUpSuite(c *C) {
 }
 
 func (s *testPrivilegeSuite) SetUpTest(c *C) {
@@ -260,6 +256,22 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	salt := []byte{85, 92, 45, 22, 58, 79, 107, 6, 122, 125, 58, 80, 12, 90, 103, 32, 90, 10, 74, 82}
 	auth := []byte{24, 180, 183, 225, 166, 6, 81, 102, 70, 248, 199, 143, 91, 204, 169, 9, 161, 171, 203, 33}
 	c.Assert(se.Auth("u2@localhost", auth, salt), IsTrue)
+
+	se1 := newSession(c, s.store, s.dbName)
+	mustExec(c, se1, "drop user 'u1'@'localhost'")
+	mustExec(c, se1, "drop user 'u2'@'localhost'")
+}
+
+func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
+	defer testleak.AfterTest(c)()
+
+	// This test tests no privilege check for INFORMATION_SCHEMA database.
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'u1'@'localhost';`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	c.Assert(se.Auth("u1@localhost", nil, nil), IsTrue)
+	mustExec(c, se, `select * from information_schema.tables`)
+	mustExec(c, se, `select * from information_schema.key_column_usage`)
 }
 
 func mustExec(c *C, se tidb.Session, sql string) {

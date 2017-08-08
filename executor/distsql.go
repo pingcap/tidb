@@ -21,6 +21,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/distsql/xeval"
@@ -40,19 +41,6 @@ import (
 const (
 	minLogDuration = 50 * time.Millisecond
 )
-
-func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *model.CIStr) *Row {
-	entry := &RowKeyEntry{
-		Handle: h,
-		Tbl:    t,
-	}
-	if tableAsName != nil && tableAsName.L != "" {
-		entry.TableName = tableAsName.L
-	} else {
-		entry.TableName = t.Meta().Name.L
-	}
-	return &Row{Data: data, RowKeys: []*RowKeyEntry{entry}}
-}
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
 var LookupTableTaskChannelSize = 50
@@ -93,13 +81,14 @@ func (task *lookupTableTask) getRow() (*Row, error) {
 
 // rowsSorter sorts the rows by its index order.
 type rowsSorter struct {
-	order map[int64]int
-	rows  []*Row
+	order     map[int64]int
+	rows      []*Row
+	handleIdx int
 }
 
 func (s *rowsSorter) Less(i, j int) bool {
-	x := s.order[s.rows[i].RowKeys[0].Handle]
-	y := s.order[s.rows[j].RowKeys[0].Handle]
+	x := s.order[s.rows[i].Data[s.handleIdx].GetInt64()]
+	y := s.order[s.rows[j].Data[s.handleIdx].GetInt64()]
 	return x < y
 }
 
@@ -165,8 +154,10 @@ func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRa
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rangeKey := tablecodec.EncodeIndexSeekKey(tid, idxID, valKey)
-		krs = append(krs, kv.KeyRange{StartKey: rangeKey, EndKey: rangeKey})
+		valKeyNext := []byte(kv.Key(valKey).PrefixNext())
+		rangeBeginKey := tablecodec.EncodeIndexSeekKey(tid, idxID, valKey)
+		rangeEndKey := tablecodec.EncodeIndexSeekKey(tid, idxID, valKeyNext)
+		krs = append(krs, kv.KeyRange{StartKey: rangeBeginKey, EndKey: rangeEndKey})
 	}
 	return krs, nil
 }
@@ -379,6 +370,8 @@ type XSelectIndexExec struct {
 	desc                 bool
 	outOfOrder           bool
 	indexConditionPBExpr *tipb.Expr
+	// This is the column that represent the handle, we can use handleCol.Index to know its position.
+	handleCol *expression.Column
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -394,6 +387,8 @@ type XSelectIndexExec struct {
 	scanConcurrency int
 	execStart       time.Time
 	partialCount    int
+
+	priority int
 }
 
 // Open implements the Executor Open interface.
@@ -485,7 +480,11 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			schema = e.idxColsSchema
 		}
 		values := make([]types.Datum, schema.Len())
-		err = codec.SetRawValues(rowData, values)
+		if handleIsExtra(e.handleCol) {
+			err = codec.SetRawValues(rowData, values[:len(values)-1])
+		} else {
+			err = codec.SetRawValues(rowData, values)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -497,7 +496,10 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			return &Row{Data: values}, nil
 		}
 		values = e.indexRowToTableRow(h, values)
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		if handleIsExtra(e.handleCol) {
+			values[len(values)-1].SetInt64(h)
+		}
+		return &Row{Data: values}, nil
 	}
 }
 
@@ -659,12 +661,20 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	sc := e.ctx.GetSessionVars().StmtCtx
+	sv := e.ctx.GetSessionVars()
+	sc := sv.StmtCtx
 	keyRanges, err := indexRangesToKVRanges(sc, e.table.Meta().ID, e.index.ID, e.ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return distsql.Select(e.ctx.GetClient(), e.ctx.GoCtx(), selIdxReq, keyRanges, e.scanConcurrency, !e.outOfOrder)
+	return distsql.Select(e.ctx.GetClient(), e.ctx.GoCtx(), selIdxReq, keyRanges, e.scanConcurrency, !e.outOfOrder, getIsolationLevel(sv), e.priority)
+}
+
+func getIsolationLevel(sv *variable.SessionVars) kv.IsoLevel {
+	if sv.Systems[variable.TxnIsolation] == ast.ReadCommitted {
+		return kv.RC
+	}
+	return kv.SI
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -728,11 +738,23 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 	}
 	if !e.outOfOrder {
 		// Restore the index order.
-		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows}
+		var handleIdx int
+		if e.handleCol == nil {
+			handleIdx = e.schema.Len()
+		} else {
+			handleIdx = e.handleCol.Index
+		}
+		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: handleIdx}
 		if e.desc && !e.supportDesc {
 			sort.Sort(sort.Reverse(sorter))
 		} else {
 			sort.Sort(sorter)
+		}
+		// If this executor don't need handle, we should cut it off.
+		if e.handleCol == nil {
+			for _, row := range task.rows {
+				row.Data = row.Data[:len(row.Data)-1]
+			}
 		}
 	}
 	return nil
@@ -769,8 +791,19 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if rowData == nil {
 			break
 		}
-		values := make([]types.Datum, e.Schema().Len())
-		err = codec.SetRawValues(rowData, values)
+		length := e.Schema().Len()
+		if e.handleCol == nil && !e.outOfOrder {
+			length++
+		}
+		values := make([]types.Datum, length)
+		// If the handle col is not pk or we need it to sort the rows, it should be generated
+		// and cannot set value by SetRawValues.
+		if handleIsExtra(e.handleCol) || length > e.schema.Len() {
+			err = codec.SetRawValues(rowData, values[:length-1])
+			values[length-1].SetInt64(h)
+		} else {
+			err = codec.SetRawValues(rowData, values)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -778,7 +811,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row := resultRowToRow(t, h, values, e.asName)
+		row := &Row{Data: values}
 		rows = append(rows, row)
 	}
 	return rows, nil
@@ -809,7 +842,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
 	// Use the table scan concurrency variable to do table request.
 	concurrency := e.ctx.GetSessionVars().DistSQLScanConcurrency
-	resp, err := distsql.Select(e.ctx.GetClient(), goctx.Background(), selTableReq, keyRanges, concurrency, false)
+	resp, err := distsql.Select(e.ctx.GetClient(), goctx.Background(), selTableReq, keyRanges, concurrency, false, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -841,6 +874,8 @@ type XSelectTableExec struct {
 	keepOrder    bool
 	startTS      uint64
 	orderByList  []*tipb.ByItem
+	// This is the column that represent the handle, we can use handleCol.Index to know its position.
+	handleCol *expression.Column
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -856,6 +891,8 @@ type XSelectTableExec struct {
 
 	execStart    time.Time
 	partialCount int
+
+	priority int
 }
 
 // Schema implements the Executor Schema interface.
@@ -889,7 +926,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.GroupBy = e.byItems
 
 	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
-	e.result, err = distsql.Select(e.ctx.GetClient(), goctx.Background(), selReq, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder)
+	e.result, err = distsql.Select(e.ctx.GetClient(), goctx.Background(), selReq, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -961,7 +998,12 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		e.returnedRows++
 		values := make([]types.Datum, e.schema.Len())
-		err = codec.SetRawValues(rowData, values)
+		if handleIsExtra(e.handleCol) {
+			err = codec.SetRawValues(rowData, values[:len(values)-1])
+			values[len(values)-1].SetInt64(h)
+		} else {
+			err = codec.SetRawValues(rowData, values)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -973,7 +1015,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			// compose aggregate row
 			return &Row{Data: values}, nil
 		}
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return &Row{Data: values}, nil
 	}
 }
 

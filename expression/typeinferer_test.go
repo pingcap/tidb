@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testkit"
@@ -37,6 +38,7 @@ type testTypeInferrerSuite struct {
 }
 
 func (ts *testTypeInferrerSuite) TestInferType(c *C) {
+	c.Skip("we re-implement this test in plan/typeinfer_test.go")
 	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -104,7 +106,6 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"now() + curtime()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"now() + now()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"now() + now(2)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
-		{"c_double + now()", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + 1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + 1.1", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + '1.1'", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
@@ -118,13 +119,11 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"1 > any (select 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"exists (select 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"1 in (2, 3)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
-		{"'abc' like 'abc'", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"'abc' rlike 'abc'", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"(1+1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 
 		// Functions
 		{"version()", mysql.TypeVarString, charset.CharsetUTF8, 0},
-		{"count(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs(1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs(1.1)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
@@ -345,6 +344,10 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`json_insert('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
 		{`json_replace('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
 		{`json_merge('{"a": 1}', '3')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{"-9223372036854775809", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
+		{"-9223372036854775808", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"--9223372036854775809", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
+		{"--9223372036854775808", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -434,10 +437,11 @@ func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := tikv.NewMockTikvStore()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tidb.SetSchemaLease(0)
 	_, err = tidb.BootstrapSession(store)
 	return store, errors.Trace(err)
 }

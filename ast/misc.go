@@ -45,6 +45,14 @@ var (
 	_ Node = &VariableAssignment{}
 )
 
+// Isolation level constants.
+const (
+	ReadCommitted   = "READ-COMMITTED"
+	ReadUncommitted = "READ-UNCOMMITTED"
+	Serializable    = "SERIALIZABLE"
+	RepeatableRead  = "REPEATABLE-READ"
+)
+
 // TypeOpt is used for parsing data type option from SQL.
 type TypeOpt struct {
 	IsUnsigned bool
@@ -673,7 +681,7 @@ func (i Ident) Full(ctx context.Context) (full Ident) {
 	return
 }
 
-// String implements fmt.Stringer interface
+// String implements fmt.Stringer interface.
 func (i Ident) String() string {
 	if i.Schema.O == "" {
 		return i.Name.O

@@ -580,7 +580,7 @@ func (c *twoPhaseCommitter) execute() error {
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS
-	if err := c.checkSchemaValid(); err != nil {
+	if err = c.checkSchemaValid(); err != nil {
 		return errors.Trace(err)
 	}
 

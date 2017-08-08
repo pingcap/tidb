@@ -37,11 +37,14 @@ func normalize(in interface{}) (j JSON, err error) {
 	case int64:
 		j.typeCode = typeCodeInt64
 		j.i64 = t
+	case uint64:
+		j.typeCode = typeCodeUint64
+		j.i64 = *(*int64)(unsafe.Pointer(&t))
 	case float64:
 		j.typeCode = typeCodeFloat64
 		*(*float64)(unsafe.Pointer(&j.i64)) = t
 	case json.Number:
-		if i64, err := t.Int64(); err == nil {
+		if i64, errTp := t.Int64(); errTp == nil {
 			j.typeCode = typeCodeInt64
 			j.i64 = i64
 		} else {
@@ -72,7 +75,8 @@ func normalize(in interface{}) (j JSON, err error) {
 		j.typeCode = typeCodeArray
 		j.array = make([]JSON, 0, len(t))
 		for _, elem := range t {
-			elem1, err := normalize(elem)
+			var elem1 JSON
+			elem1, err = normalize(elem)
 			if err != nil {
 				return j, err
 			}

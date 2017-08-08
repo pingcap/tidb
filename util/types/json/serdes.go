@@ -127,7 +127,7 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 			n = int(size) + int(reader.Size()) - int(reader.Len()) + typeCodeLen
 			return
 		}
-	case typeCodeInt64, typeCodeFloat64, typeCodeLiteral:
+	case typeCodeInt64, typeCodeUint64, typeCodeFloat64, typeCodeLiteral:
 		n = jsonTypeCodeLength[TypeCode(c)] + typeCodeLen
 		return
 	}
@@ -151,7 +151,7 @@ func encode(j JSON, buffer *bytes.Buffer) {
 		encodeJSONArray(j.array, buffer)
 	case typeCodeLiteral:
 		encodeJSONLiteral(byte(j.i64), buffer)
-	case typeCodeInt64:
+	case typeCodeInt64, typeCodeUint64:
 		encodeJSONInt64(j.i64, buffer)
 	case typeCodeFloat64:
 		f64 := *(*float64)(unsafe.Pointer(&j.i64))
@@ -179,7 +179,7 @@ func decode(typeCode byte, data []byte) (j JSON, err error) {
 	case typeCodeLiteral:
 		pbyte := (*byte)(unsafe.Pointer(&j.i64))
 		err = decodeJSONLiteral(pbyte, data)
-	case typeCodeInt64:
+	case typeCodeInt64, typeCodeUint64:
 		err = decodeJSONInt64(&j.i64, data)
 	case typeCodeFloat64:
 		pfloat := (*float64)(unsafe.Pointer(&j.i64))
@@ -229,8 +229,10 @@ func encodeJSONString(s string, buffer *bytes.Buffer) {
 }
 
 func decodeJSONString(s *string, data []byte) (err error) {
+	var length uint64
 	var reader = bytes.NewReader(data)
-	if length, err := binary.ReadUvarint(reader); err == nil {
+	length, err = binary.ReadUvarint(reader)
+	if err == nil && length > 0 {
 		var buf = make([]byte, length)
 		_, err = reader.Read(buf)
 		if err == nil {
@@ -388,6 +390,7 @@ var jsonTypeCodeLength = map[TypeCode]int{
 	typeCodeArray:   -1,
 	typeCodeLiteral: 1,
 	typeCodeInt64:   8,
+	typeCodeUint64:  8,
 	typeCodeFloat64: 8,
 	typeCodeString:  -1,
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -56,6 +57,11 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if v.err != nil {
 			return in, true
 		}
+	case *ast.DropTableStmt:
+		v.checkDropTableGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
 	case *ast.CreateIndexStmt:
 		v.checkCreateIndexGrammar(node)
 		if v.err != nil {
@@ -63,6 +69,16 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.AlterTableStmt:
 		v.checkAlterTableGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
+	case *ast.CreateDatabaseStmt:
+		v.checkCreateDatabaseGrammar(node)
+		if v.err != nil {
+			return in, true
+		}
+	case *ast.DropDatabaseStmt:
+		v.checkDropDatabaseGrammar(node)
 		if v.err != nil {
 			return in, true
 		}
@@ -170,8 +186,7 @@ func (v *validator) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 				hasAutoIncrement = true
 			}
 			switch op.Tp {
-			case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey, ast.ColumnOptionUniqIndex,
-				ast.ColumnOptionUniq, ast.ColumnOptionKey, ast.ColumnOptionIndex:
+			case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
 				isKey = true
 			}
 		}
@@ -205,18 +220,36 @@ func (v *validator) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	}
 }
 
+func (v *validator) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
+	if isIncorrectName(stmt.Name) {
+		v.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
+	}
+	return
+}
+
+func (v *validator) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
+	if isIncorrectName(stmt.Name) {
+		v.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
+	}
+	return
+}
+
 func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
-	if stmt.Table == nil || stmt.Table.Name.String() == "" {
+	if stmt.Table == nil {
 		v.err = ddl.ErrWrongTableName.GenByArgs("")
+		return
+	}
+
+	tName := stmt.Table.Name.String()
+	if isIncorrectName(tName) {
+		v.err = ddl.ErrWrongTableName.GenByArgs(tName)
 		return
 	}
 
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
-		tp := colDef.Tp
-		if tp.Tp == mysql.TypeString &&
-			tp.Flen != types.UnspecifiedLength && tp.Flen > 255 {
-			v.err = errors.Errorf("Column length too big for column '%s' (max = 255); use BLOB or TEXT instead", colDef.Name.Name.O)
+		if err := checkColumn(colDef); err != nil {
+			v.err = errors.Trace(err)
 			return
 		}
 		countPrimaryKey += isPrimary(colDef.Options)
@@ -228,7 +261,7 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	for _, constraint := range stmt.Constraints {
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			err := checkDuplicateColumnName(constraint.Keys)
+			err := checkIndexInfo(constraint.Name, constraint.Keys)
 			if err != nil {
 				v.err = err
 				return
@@ -239,13 +272,27 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				return
 			}
 			countPrimaryKey++
-			err := checkDuplicateColumnName(constraint.Keys)
+			err := checkIndexInfo(constraint.Name, constraint.Keys)
 			if err != nil {
 				v.err = err
 				return
 			}
 		}
 	}
+}
+
+func (v *validator) checkDropTableGrammar(stmt *ast.DropTableStmt) {
+	if stmt.Tables == nil {
+		v.err = ddl.ErrWrongTableName.GenByArgs("")
+		return
+	}
+	for _, t := range stmt.Tables {
+		if isIncorrectName(t.Name.String()) {
+			v.err = ddl.ErrWrongTableName.GenByArgs(t.Name.String())
+			return
+		}
+	}
+	return
 }
 
 func isPrimary(ops []*ast.ColumnOption) int {
@@ -258,19 +305,47 @@ func isPrimary(ops []*ast.ColumnOption) int {
 }
 
 func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
-	v.err = checkDuplicateColumnName(stmt.IndexColNames)
+	tName := stmt.Table.Name.String()
+	if isIncorrectName(tName) {
+		v.err = ddl.ErrWrongTableName.GenByArgs(tName)
+		return
+	}
+	v.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
 	return
 }
 
 func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
+	if stmt.Table == nil {
+		v.err = ddl.ErrWrongTableName.GenByArgs("")
+		return
+	}
+
+	tName := stmt.Table.Name.String()
+	if isIncorrectName(tName) {
+		v.err = ddl.ErrWrongTableName.GenByArgs(tName)
+		return
+	}
 	specs := stmt.Specs
 	for _, spec := range specs {
+		if spec.NewTable != nil {
+			ntName := spec.NewTable.Name.String()
+			if isIncorrectName(ntName) {
+				v.err = ddl.ErrWrongTableName.GenByArgs(ntName)
+				return
+			}
+		}
+		if spec.NewColumn != nil {
+			if err := checkColumn(spec.NewColumn); err != nil {
+				v.err = err
+				return
+			}
+		}
 		switch spec.Tp {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
 				ast.ConstraintUniqKey:
-				v.err = checkDuplicateColumnName(spec.Constraint.Keys)
+				v.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys)
 				if v.err != nil {
 					return
 				}
@@ -302,4 +377,83 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 		}
 	}
 	return nil
+}
+
+// checkIndexInfo checks index name and index column names.
+func checkIndexInfo(indexName string, indexColNames []*ast.IndexColName) error {
+	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
+		return ddl.ErrWrongNameForIndex.GenByArgs(indexName)
+	}
+	return checkDuplicateColumnName(indexColNames)
+}
+
+// checkColumn checks if the column definition is valid.
+// See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
+func checkColumn(colDef *ast.ColumnDef) error {
+	// Check column name.
+	cName := colDef.Name.Name.String()
+	if isIncorrectName(cName) {
+		return ddl.ErrWrongColumnName.GenByArgs(cName)
+	}
+
+	// Check column type.
+	tp := colDef.Tp
+	if tp == nil {
+		return nil
+	}
+	if tp.Flen > math.MaxUint32 {
+		return types.ErrTooBigDisplayWidth.Gen("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
+	}
+
+	switch tp.Tp {
+	case mysql.TypeString:
+		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.MaxFieldCharLength {
+			return types.ErrTooBigFieldLength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
+		}
+	case mysql.TypeVarchar:
+		maxFlen := mysql.MaxFieldVarCharLength
+		cs := tp.Charset
+		// TODO: TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
+		// TODO: Change TableOption parser to parse collate.
+		// Reference https://github.com/pingcap/tidb/blob/b091e828cfa1d506b014345fb8337e424a4ab905/ddl/ddl_api.go#L185-L204
+		if len(tp.Charset) == 0 {
+			cs = mysql.DefaultCharset
+		}
+		desc, err := charset.GetCharsetDesc(cs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		maxFlen /= desc.Maxlen
+		if tp.Flen != types.UnspecifiedLength && tp.Flen > maxFlen {
+			return types.ErrTooBigFieldLength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
+		}
+	case mysql.TypeDouble:
+		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.PrecisionForDouble {
+			return types.ErrWrongFieldSpec.Gen("Incorrect column specifier for column '%s'", colDef.Name.Name.O)
+		}
+	case mysql.TypeSet:
+		if len(tp.Elems) > mysql.MaxTypeSetMembers {
+			return types.ErrTooBigSet.Gen("Too many strings for column %s and SET", colDef.Name.Name.O)
+		}
+		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html .
+		for _, str := range colDef.Tp.Elems {
+			if strings.Contains(str, ",") {
+				return types.ErrIllegalValueForType.GenByArgs(types.TypeStr(tp.Tp), str)
+			}
+		}
+	default:
+		// TODO: Add more types.
+	}
+	return nil
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func isIncorrectName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
+	return false
 }

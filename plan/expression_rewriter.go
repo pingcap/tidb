@@ -93,8 +93,8 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-	result := expression.FoldConstant(er.ctxStack[0])
-	return result, er.p, nil
+
+	return er.ctxStack[0], er.p, nil
 }
 
 type expressionRewriter struct {
@@ -143,7 +143,11 @@ func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Exp
 		return ret, errors.Trace(err)
 	}
 	c, _ := e.(*expression.Constant)
-	ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
+	if getRowLen(c) == 2 {
+		ret = &expression.Constant{Value: c.Value.GetRow()[1], RetType: c.GetType()}
+	} else {
+		ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
+	}
 	return
 }
 
@@ -186,11 +190,12 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 			expr1, _ = expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 			expr2, _ = expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		}
-		l, err := popRowArg(er.ctx, l)
+		var err error
+		l, err = popRowArg(er.ctx, l)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		r, err := popRowArg(er.ctx, r)
+		r, err = popRowArg(er.ctx, r)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -675,7 +680,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
 	case *ast.ValueExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
+		tp := &types.FieldType{}
+		types.DefaultTypeForValue(v.GetValue(), tp)
+		value := &expression.Constant{Value: v.Datum, RetType: tp}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
@@ -745,21 +752,16 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				er.ctxStack[stkLen-1])
 			return
 		}
-		if _, ok := sessionVars.Users[name]; ok {
-			f, err := expression.NewFunction(er.ctx,
-				ast.GetVar,
-				// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
-				types.NewFieldType(mysql.TypeString),
-				datumToConstant(types.NewStringDatum(name), mysql.TypeString))
-			if err != nil {
-				er.err = errors.Trace(err)
-				return
-			}
-			er.ctxStack = append(er.ctxStack, f)
-		} else {
-			// select null user vars is permitted.
-			er.ctxStack = append(er.ctxStack, &expression.Constant{RetType: types.NewFieldType(mysql.TypeNull)})
+		f, err := expression.NewFunction(er.ctx,
+			ast.GetVar,
+			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
+			types.NewFieldType(mysql.TypeString),
+			datumToConstant(types.NewStringDatum(name), mysql.TypeString))
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
 		}
+		er.ctxStack = append(er.ctxStack, f)
 		return
 	}
 	var val string
@@ -951,8 +953,10 @@ func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	if er.err != nil {
 		return
 	}
+	escapeTp := &types.FieldType{}
+	types.DefaultTypeForValue(int(v.Escape), escapeTp)
 	function := er.notToExpression(v.Not, ast.Like, &v.Type,
-		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape))})
+		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: escapeTp})
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -996,7 +1000,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	if er.err == nil {
 		r, er.err = expression.NewFunction(er.ctx, ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
 	}
-	op = ast.AndAnd
+	op = ast.LogicAnd
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
 		return
@@ -1057,7 +1061,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		if err != nil {
-			er.err = errors.Trace(err)
+			er.err = ErrAmbiguous.GenByArgs(v.Name)
 			return
 		}
 	}

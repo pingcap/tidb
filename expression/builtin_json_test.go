@@ -60,6 +60,7 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 		{`{"a": "b"}`, `{"a":"b"}`},
 		{`"hello,\"quoted string\",world"`, `hello,"quoted string",world`},
 		{`"hello,\"宽字符\",world"`, `hello,"宽字符",world`},
+		{`Invalid Json string\tis OK`, `Invalid Json string	is OK`},
 	}
 	dtbl := tblToDtbl(tbl)
 	for _, t := range dtbl {
@@ -93,10 +94,12 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 			c.Assert(err, IsNil)
 			switch x := t.Expected.(type) {
 			case string:
-				j1, err := json.ParseFromString(x)
+				var j1 json.JSON
+				j1, err = json.ParseFromString(x)
 				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
-				cmp, err := json.CompareJSON(j1, j2)
+				var cmp int
+				cmp, err = json.CompareJSON(j1, j2)
 				c.Assert(err, IsNil)
 				c.Assert(cmp, Equals, 0)
 			}
@@ -133,10 +136,12 @@ func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 			c.Assert(err, IsNil)
 			switch x := t.Expected.(type) {
 			case string:
-				j1, err := json.ParseFromString(x)
+				var j1 json.JSON
+				j1, err = json.ParseFromString(x)
 				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
-				cmp, err := json.CompareJSON(j1, j2)
+				var cmp int
+				cmp, err = json.CompareJSON(j1, j2)
 				c.Assert(err, IsNil)
 				c.Assert(cmp, Equals, 0)
 			}
@@ -227,10 +232,12 @@ func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 			c.Assert(err, IsNil)
 			switch x := t.Expected.(type) {
 			case string:
-				j1, err := json.ParseFromString(x)
+				var j1 json.JSON
+				j1, err = json.ParseFromString(x)
 				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
-				cmp, err := json.CompareJSON(j1, j2)
+				var cmp int
+				cmp, err = json.CompareJSON(j1, j2)
 				c.Assert(err, IsNil)
 				c.Assert(cmp, Equals, 0)
 			}
@@ -276,10 +283,12 @@ func (s *testEvaluatorSuite) TestJSONORemove(c *C) {
 			c.Assert(err, IsNil)
 			switch x := t.Expected.(type) {
 			case string:
-				j1, err := json.ParseFromString(x)
+				var j1 json.JSON
+				j1, err = json.ParseFromString(x)
 				c.Assert(err, IsNil)
 				j2 := d.GetMysqlJSON()
-				cmp, err := json.CompareJSON(j1, j2)
+				var cmp int
+				cmp, err = json.CompareJSON(j1, j2)
 				c.Assert(err, IsNil)
 				c.Assert(cmp, Equals, 0)
 			}

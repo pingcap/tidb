@@ -16,6 +16,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -67,6 +68,9 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 
 // NewFunction creates a new scalar function or constant.
 func NewFunction(ctx context.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	if funcName == ast.Cast {
+		return NewCastFunc(retType, args[0], ctx), nil
+	}
 	fc, ok := funcs[funcName]
 	if !ok {
 		return nil, errFunctionNotExists.GenByArgs(funcName)
@@ -83,11 +87,12 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
-	return &ScalarFunction{
+	sf := &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
-	}, nil
+	}
+	return FoldConstant(sf), nil
 }
 
 // ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
@@ -159,7 +164,7 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
-	if !TurnOnNewExprEval {
+	if atomic.LoadInt32(&TurnOnNewExprEval) == 0 {
 		return sf.Function.eval(row)
 	}
 	sc := sf.GetCtx().GetSessionVars().StmtCtx
@@ -191,6 +196,7 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 			res, isNull, err = sf.EvalString(row, sc)
 		}
 	}
+
 	if isNull || err != nil {
 		d.SetValue(nil)
 		return d, errors.Trace(err)
