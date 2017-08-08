@@ -37,10 +37,10 @@ const (
 	insertDeleteRangeSQL   = `INSERT IGNORE INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d")`
 	loadDeleteRangeSQL     = `SELECT job_id, element_id, start_key, end_key FROM mysql.gc_delete_range WHERE ts < %v ORDER BY ts`
 	completeDeleteRangeSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
-	updateDeleteRangeSQL   = `UPDATE mysql.gc_delete_range SET start_key = %s WHERE job_id = %d AND element_id = %d AND start_key = %s`
+	updateDeleteRangeSQL   = `UPDATE mysql.gc_delete_range SET start_key = "%s" WHERE job_id = %d AND element_id = %d AND start_key = "%s"`
 
-	delBatchSize = 65536
-	delBackLog   = 128
+	delBatchSize int = 65536
+	delBackLog       = 128
 )
 
 type delRangeManager interface {
@@ -151,12 +151,13 @@ func (dr *delRange) doDelRangeWork() error {
 }
 
 func (dr *delRange) doTask(ctx context.Context, r DelRangeTask) error {
+	var oldStartKey, newStartKey kv.Key
+	oldStartKey = r.startKey
 	for {
-		var newStartKey kv.Key
 		finish := true
 		dr.keys = dr.keys[:0]
 		err := kv.RunInNewTxn(dr.d.store, false, func(txn kv.Transaction) error {
-			iter, err := txn.Seek(r.startKey)
+			iter, err := txn.Seek(oldStartKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -166,12 +167,13 @@ func (dr *delRange) doTask(ctx context.Context, r DelRangeTask) error {
 				if !iter.Valid() {
 					break
 				}
-				newStartKey = iter.Key()
 				finish = bytes.Compare(iter.Key(), r.endKey) >= 0
 				if finish {
 					break
 				}
 				dr.keys = append(dr.keys, iter.Key().Clone())
+				newStartKey = iter.Key().Next()
+
 				if err := iter.Next(); err != nil {
 					return errors.Trace(err)
 				}
@@ -196,9 +198,10 @@ func (dr *delRange) doTask(ctx context.Context, r DelRangeTask) error {
 			log.Infof("[ddl] delRange emulator complete task: (%d, %d)", r.jobID, r.elementID)
 			break
 		} else {
-			if err := updateDeleteRange(ctx, r, newStartKey, r.startKey); err != nil {
+			if err := updateDeleteRange(ctx, r, newStartKey, oldStartKey); err != nil {
 				log.Errorf("[ddl] delRange emulator update task fail: %s", err)
 			}
+			oldStartKey = newStartKey
 		}
 	}
 	return nil
