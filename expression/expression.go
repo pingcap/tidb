@@ -75,6 +75,9 @@ type Expression interface {
 	// EvalDuration returns the duration representation of expression.
 	EvalDuration(row []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
 
+	// EvalJson returns the JSON representation of expression.
+	EvalJson(row []types.Datum, sc *variable.StatementContext) (val json.JSON, isNull bool, err error)
+
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
 

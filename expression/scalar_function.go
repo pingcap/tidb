@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // ScalarFunction is the function that returns a value.
@@ -232,6 +233,11 @@ func (sf *ScalarFunction) EvalTime(row []types.Datum, sc *variable.StatementCont
 // EvalDuration implements Expression interface.
 func (sf *ScalarFunction) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
 	return sf.Function.evalDuration(row)
+}
+
+// EvalJson implements Expression interface.
+func (sf *ScalarFunction) EvalJson(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	return sf.Function.evalJson(row)
 }
 
 // HashCode implements Expression interface.
