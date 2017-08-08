@@ -367,10 +367,15 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 			sql:  "select * from t where a in (select s.a from t s) order by t.a",
 			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)",
 		},
+		// Test Nested sub query.
 		{
-			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
 			best: "SemiJoin{TableReader(Table(t))->Projection->SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(s.d,k.d)(s.c,k.c)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection",
+		},
+		// Test Semi Join + Order by.
+		{
+			sql:  "select * from t where a in (select a from t) order by b",
+			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Sort",
 		},
 		// Test Apply.
 		{

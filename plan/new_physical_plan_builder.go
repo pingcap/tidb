@@ -980,7 +980,7 @@ func (p *PhysicalHashSemiJoin) getChildrenPossibleProps(prop *requiredProp) [][]
 			return nil
 		}
 	}
-	return [][]*requiredProp{{&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}, &requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}}}
+	return [][]*requiredProp{{lProp, &requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}}}
 }
 
 func (p *PhysicalApply) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
