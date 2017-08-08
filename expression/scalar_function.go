@@ -235,9 +235,9 @@ func (sf *ScalarFunction) EvalDuration(row []types.Datum, sc *variable.Statement
 	return sf.Function.evalDuration(row)
 }
 
-// EvalJson implements Expression interface.
-func (sf *ScalarFunction) EvalJson(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
-	return sf.Function.evalJson(row)
+// EvalJSON implements Expression interface.
+func (sf *ScalarFunction) EvalJSON(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	return sf.Function.evalJSON(row)
 }
 
 // HashCode implements Expression interface.

@@ -26,18 +26,18 @@ import (
 
 // jsonFunctionNameToPB is for pushdown json functions to storage engine.
 var jsonFunctionNameToPB = map[string]tipb.ExprType{
-	ast.JSONType:     tipb.ExprType_JsonType,
-	ast.JSONExtract:  tipb.ExprType_JsonExtract,
-	ast.JSONUnquote:  tipb.ExprType_JsonUnquote,
-	ast.JSONValid:    tipb.ExprType_JsonValid,
-	ast.JSONObject:   tipb.ExprType_JsonObject,
-	ast.JSONArray:    tipb.ExprType_JsonArray,
-	ast.JSONMerge:    tipb.ExprType_JsonMerge,
-	ast.JSONSet:      tipb.ExprType_JsonSet,
-	ast.JSONInsert:   tipb.ExprType_JsonInsert,
-	ast.JSONReplace:  tipb.ExprType_JsonReplace,
-	ast.JSONRemove:   tipb.ExprType_JsonRemove,
-	ast.JSONContains: tipb.ExprType_JsonContains,
+	ast.JSONType:     tipb.ExprType_JSONType,
+	ast.JSONExtract:  tipb.ExprType_JSONExtract,
+	ast.JSONUnquote:  tipb.ExprType_JSONUnquote,
+	ast.JSONValid:    tipb.ExprType_JSONValid,
+	ast.JSONObject:   tipb.ExprType_JSONObject,
+	ast.JSONArray:    tipb.ExprType_JSONArray,
+	ast.JSONMerge:    tipb.ExprType_JSONMerge,
+	ast.JSONSet:      tipb.ExprType_JSONSet,
+	ast.JSONInsert:   tipb.ExprType_JSONInsert,
+	ast.JSONReplace:  tipb.ExprType_JSONReplace,
+	ast.JSONRemove:   tipb.ExprType_JSONRemove,
+	ast.JSONContains: tipb.ExprType_JSONContains,
 }
 
 var (

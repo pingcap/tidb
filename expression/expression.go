@@ -15,7 +15,7 @@ package expression
 
 import (
 	"bytes"
-	goJson "encoding/json"
+	goJSON "encoding/json"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -53,7 +53,7 @@ var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
-	goJson.Marshaler
+	goJSON.Marshaler
 
 	// Eval evaluates an expression through a row.
 	Eval(row []types.Datum) (types.Datum, error)
@@ -76,8 +76,8 @@ type Expression interface {
 	// EvalDuration returns the duration representation of expression.
 	EvalDuration(row []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
 
-	// EvalJson returns the JSON representation of expression.
-	EvalJson(row []types.Datum, sc *variable.StatementContext) (val json.JSON, isNull bool, err error)
+	// EvalJSON returns the JSON representation of expression.
+	EvalJSON(row []types.Datum, sc *variable.StatementContext) (val json.JSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -241,8 +241,8 @@ func evalExprToDuration(expr Expression, row []types.Datum, _ *variable.Statemen
 	panic(fmt.Sprintf("cannot get DURATION result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
-// evalExprToJson evaluates `expr` to JSON type.
-func evalExprToJson(expr Expression, row []types.Datum, _ *variable.StatementContext) (res json.JSON, isNull bool, err error) {
+// evalExprToJSON evaluates `expr` to JSON type.
+func evalExprToJSON(expr Expression, row []types.Datum, _ *variable.StatementContext) (res json.JSON, isNull bool, err error) {
 	if IsHybridType(expr) {
 		return res, true, nil
 	}
@@ -348,9 +348,9 @@ func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) 
 	return val, isNull, errors.Trace(err)
 }
 
-// EvalJson returns Json representation of Constant.
-func (c *Constant) EvalJson(_ []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
-	val, isNull, err := evalExprToJson(c, nil, sc)
+// EvalJSON returns JSON representation of Constant.
+func (c *Constant) EvalJSON(_ []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	val, isNull, err := evalExprToJSON(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 

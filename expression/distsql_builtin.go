@@ -72,13 +72,13 @@ var distFuncs = map[tipb.ExprType]string{
 	tipb.ExprType_Coalesce: ast.Coalesce,
 
 	// for json functions.
-	tipb.ExprType_JsonType:    ast.JSONType,
-	tipb.ExprType_JsonExtract: ast.JSONExtract,
-	tipb.ExprType_JsonUnquote: ast.JSONUnquote,
-	tipb.ExprType_JsonMerge:   ast.JSONMerge,
-	tipb.ExprType_JsonSet:     ast.JSONSet,
-	tipb.ExprType_JsonInsert:  ast.JSONInsert,
-	tipb.ExprType_JsonReplace: ast.JSONReplace,
+	tipb.ExprType_JSONType:    ast.JSONType,
+	tipb.ExprType_JSONExtract: ast.JSONExtract,
+	tipb.ExprType_JSONUnquote: ast.JSONUnquote,
+	tipb.ExprType_JSONMerge:   ast.JSONMerge,
+	tipb.ExprType_JSONSet:     ast.JSONSet,
+	tipb.ExprType_JSONInsert:  ast.JSONInsert,
+	tipb.ExprType_JSONReplace: ast.JSONReplace,
 }
 
 // newDistSQLFunction only creates function for mock-tikv.

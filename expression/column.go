@@ -80,9 +80,9 @@ func (col *CorrelatedColumn) EvalDuration(row []types.Datum, sc *variable.Statem
 	return val, isNull, errors.Trace(err)
 }
 
-// EvalJson returns JSON representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalJson(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
-	val, isNull, err := evalExprToJson(col, row, sc)
+// EvalJSON returns JSON representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalJSON(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	val, isNull, err := evalExprToJSON(col, row, sc)
 	return val, isNull, errors.Trace(err)
 }
 
@@ -210,9 +210,9 @@ func (col *Column) EvalDuration(row []types.Datum, sc *variable.StatementContext
 	return val, isNull, errors.Trace(err)
 }
 
-// EvalJson returns JSON representation of Column.
-func (col *Column) EvalJson(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
-	val, isNull, err := evalExprToJson(col, row, sc)
+// EvalJSON returns JSON representation of Column.
+func (col *Column) EvalJSON(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	val, isNull, err := evalExprToJSON(col, row, sc)
 	return val, isNull, errors.Trace(err)
 }
 

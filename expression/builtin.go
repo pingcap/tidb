@@ -38,7 +38,7 @@ const (
 	tpString
 	tpTime
 	tpDuration
-	tpJson
+	tpJSON
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -84,8 +84,8 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
 		case tpDuration:
 			args[i], err = WrapWithCastAsDuration(args[i], ctx)
-		case tpJson:
-			args[i], err = WrapWithCastAsJson(args[i], ctx)
+		case tpJSON:
+			args[i], err = WrapWithCastAsJSON(args[i], ctx)
 		}
 		if err != nil {
 			return bf, errors.Trace(err)
@@ -134,7 +134,7 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpJson:
+	case tpJSON:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeJSON,
 			Flen:    12582912,
@@ -239,7 +239,7 @@ func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool,
 	return val.GetMysqlDuration(), false, errors.Trace(err)
 }
 
-func (b *baseBuiltinFunc) evalJson(row []types.Datum) (json.JSON, bool, error) {
+func (b *baseBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
 	val, err := b.self.eval(row)
 	if err != nil || val.IsNull() {
 		return json.JSON{}, val.IsNull(), errors.Trace(err)
@@ -320,7 +320,7 @@ func (b *baseIntBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bo
 	panic("cannot get DURATION result from ClassInt expression")
 }
 
-func (b *baseIntBuiltinFunc) evalJson(row []types.Datum) (json.JSON, bool, error) {
+func (b *baseIntBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
 	panic("cannot get JSON result from ClassInt expression")
 }
 
@@ -364,7 +364,7 @@ func (b *baseRealBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, b
 	panic("cannot get DURATION result from ClassReal expression")
 }
 
-func (b *baseRealBuiltinFunc) evalJson(row []types.Datum) (json.JSON, bool, error) {
+func (b *baseRealBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
 	panic("cannot get JSON result from ClassReal expression")
 }
 
@@ -408,8 +408,8 @@ func (b *baseDecimalBuiltinFunc) evalDuration(row []types.Datum) (types.Duration
 	panic("cannot get DURATION result from ClassDecimal expression")
 }
 
-func (b *baseDecimalBuiltinFunc) evalJson(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get Json result from ClassDecimal expression")
+func (b *baseDecimalBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
+	panic("cannot get JSON result from ClassDecimal expression")
 }
 
 // baseStringBuiltinFunc represents the functions which return string values.
@@ -452,8 +452,8 @@ func (b *baseStringBuiltinFunc) evalDuration(row []types.Datum) (types.Duration,
 	panic("cannot get DURATION result from ClassString expression")
 }
 
-func (b *baseStringBuiltinFunc) evalJson(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get Json result from ClassString expression")
+func (b *baseStringBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
+	panic("cannot get JSON result from ClassString expression")
 }
 
 func (b *baseStringBuiltinFunc) getRetTp() *types.FieldType {
@@ -507,7 +507,7 @@ func (b *baseTimeBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, b
 	panic("cannot get DURATION result from TIME expression")
 }
 
-func (b *baseTimeBuiltinFunc) evalJson(row []types.Datum) (json.JSON, bool, error) {
+func (b *baseTimeBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
 	panic("cannot get JSON result from TIME expression")
 }
 
@@ -548,16 +548,16 @@ func (b *baseDurationBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecim
 	panic("cannot get DECIMAL result from DURATION expression")
 }
 
-func (b *baseDurationBuiltinFunc) evalJson(row []types.Datum) (json.JSON, bool, error) {
+func (b *baseDurationBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
 	panic("cannot get JSON result from DURATION expression")
 }
 
-type baseJsonBuiltinFunc struct {
+type baseJSONBuiltinFunc struct {
 	baseBuiltinFunc
 }
 
-func (b *baseJsonBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	val, isNull, err := b.self.evalJson(row)
+func (b *baseJSONBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
+	val, isNull, err := b.self.evalJSON(row)
 	if err != nil || isNull {
 		return d, errors.Trace(err)
 	}
@@ -565,32 +565,32 @@ func (b *baseJsonBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error)
 	return
 }
 
-func (b *baseJsonBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+func (b *baseJSONBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
 	panic("cannot get DURATION result from JSON expression")
 }
 
-func (b *baseJsonBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *baseJSONBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
 	panic("cannot get DATE result from JSON expression")
 }
 
-func (b *baseJsonBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
+func (b *baseJSONBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
 	panic("cannot get STRING result from JSON expression")
 }
 
-func (b *baseJsonBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *baseJSONBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
 	panic("cannot get INT result from JSON expression")
 }
 
-func (b *baseJsonBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
+func (b *baseJSONBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
 	panic("cannot get REAL result from JSON expression")
 }
 
-func (b *baseJsonBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *baseJSONBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
 	panic("cannot get DECIMAL result from JSON expression")
 }
 
-func (b *baseJsonBuiltinFunc) evalJson(row []types.Datum) (json.JSON, bool, error) {
-	return b.self.evalJson(row)
+func (b *baseJSONBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
+	return b.self.evalJSON(row)
 }
 
 // builtinFunc stands for a particular function signature.
@@ -610,7 +610,7 @@ type builtinFunc interface {
 	// evalDuration evaluates duration representation of builtinFunc by given row.
 	evalDuration(row []types.Datum) (val types.Duration, isNull bool, err error)
 	// evalJSON evaluates JSON representation of builtinFunc by given row.
-	evalJson(row []types.Datum) (val json.JSON, isNull bool, err error)
+	evalJSON(row []types.Datum) (val json.JSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// isDeterministic checks if a function is deterministic.
