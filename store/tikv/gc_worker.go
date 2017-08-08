@@ -105,39 +105,16 @@ var gcVariableComments = map[string]string{
 
 func (w *GCWorker) start(ctx goctx.Context) {
 	log.Infof("[gc worker] %s start.", w.uuid)
+
+	w.createSession()
+	w.tick(ctx) // Immediately tick once to initialize configs.
+
 	ticker := time.NewTicker(gcWorkerTickInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			if w.session == nil {
-				if !w.storeIsBootstrapped() {
-					break
-				}
-				var err error
-				w.session, err = tidb.CreateSession(w.store)
-				if err != nil {
-					log.Warnf("[gc worker] create session err: %v", err)
-					break
-				}
-				// Disable privilege check for gc worker session.
-				privilege.BindPrivilegeManager(w.session, nil)
-			}
-
-			isLeader, err := w.checkLeader()
-			if err != nil {
-				log.Warnf("[gc worker] check leader err: %v", err)
-				break
-			}
-			if isLeader {
-				err = w.leaderTick(ctx)
-				if err != nil {
-					log.Warnf("[gc worker] leader tick err: %v", err)
-				}
-			} else {
-				// Config metrics should always be updated by leader.
-				gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
-				gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
-			}
+			w.tick(ctx)
 		case err := <-w.done:
 			w.gcIsRunning = false
 			w.lastFinish = time.Now()
@@ -149,6 +126,44 @@ func (w *GCWorker) start(ctx goctx.Context) {
 			log.Infof("[gc worker] (%s) quit.", w.uuid)
 			return
 		}
+	}
+}
+
+func (w *GCWorker) createSession() {
+	for {
+		time.Sleep(time.Second)
+
+		if !w.storeIsBootstrapped() {
+			log.Warnf("[gc worker] wait for store bootstrapping")
+			continue
+		}
+		var err error
+		w.session, err = tidb.CreateSession(w.store)
+		if err != nil {
+			log.Warnf("[gc worker] create session err: %v", err)
+			continue
+		}
+		// Disable privilege check for gc worker session.
+		privilege.BindPrivilegeManager(w.session, nil)
+		return
+	}
+}
+
+func (w *GCWorker) tick(ctx goctx.Context) {
+	isLeader, err := w.checkLeader()
+	if err != nil {
+		log.Warnf("[gc worker] check leader err: %v", err)
+		return
+	}
+	if isLeader {
+		err = w.leaderTick(ctx)
+		if err != nil {
+			log.Warnf("[gc worker] leader tick err: %v", err)
+		}
+	} else {
+		// Config metrics should always be updated by leader, set them to 0 when current instance is not leader.
+		gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
+		gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
 	}
 }
 
@@ -174,15 +189,16 @@ func (w *GCWorker) leaderTick(ctx goctx.Context) error {
 	if w.gcIsRunning {
 		return nil
 	}
-	// When the worker is just started, or an old GC job has just finished,
-	// wait a while before starting a new job.
-	if time.Since(w.lastFinish) < gcWaitTime {
-		return nil
-	}
 
 	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
 		return errors.Trace(err)
+	}
+
+	// When the worker is just started, or an old GC job has just finished,
+	// wait a while before starting a new job.
+	if time.Since(w.lastFinish) < gcWaitTime {
+		return nil
 	}
 
 	w.gcIsRunning = true
