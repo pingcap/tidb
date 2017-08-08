@@ -905,6 +905,7 @@ type locateFunctionClass struct {
 }
 
 func (c *locateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	argsErr := c.verifyArgs(args)
 	var (
 		bf  baseBuiltinFunc
 		err error
@@ -924,17 +925,17 @@ func (c *locateFunctionClass) getFunction(args []Expression, ctx context.Context
 	if hasStartPos {
 		if caseSensitive {
 			sig := &builtinLocate3ArgsCSSig{baseIntBuiltinFunc{bf}}
-			return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+			return sig.setSelf(sig), errors.Trace(argsErr)
 		}
 		sig := &builtinLocate3ArgsSig{baseIntBuiltinFunc{bf}}
-		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+		return sig.setSelf(sig), errors.Trace(argsErr)
 	}
 	if caseSensitive {
 		sig := &builtinLocate2ArgsCSSig{baseIntBuiltinFunc{bf}}
-		return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+		return sig.setSelf(sig), errors.Trace(argsErr)
 	}
 	sig := &builtinLocate2ArgsSig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), errors.Trace(argsErr)
 }
 
 type builtinLocate2ArgsSig struct {
