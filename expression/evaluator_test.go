@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,11 +45,11 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 1)
+	atomic.StoreInt32(&TurnOnNewExprEval, 1)
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
+	atomic.StoreInt32(&TurnOnNewExprEval, 0)
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {

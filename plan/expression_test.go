@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
