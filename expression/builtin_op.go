@@ -28,7 +28,7 @@ var (
 	_ functionClass = &logicAndFunctionClass{}
 	_ functionClass = &logicOrFunctionClass{}
 	_ functionClass = &logicXorFunctionClass{}
-	_ functionClass = &isTrueOpFunctionClass{}
+	_ functionClass = &isTrueOrFalseFunctionClass{}
 	_ functionClass = &unaryOpFunctionClass{}
 	_ functionClass = &unaryMinusFunctionClass{}
 	_ functionClass = &isNullFunctionClass{}
@@ -39,7 +39,8 @@ var (
 	_ builtinFunc = &builtinLogicAndSig{}
 	_ builtinFunc = &builtinLogicOrSig{}
 	_ builtinFunc = &builtinLogicXorSig{}
-	_ builtinFunc = &builtinIsTrueOpSig{}
+	_ builtinFunc = &builtinIsTrueSig{}
+	_ builtinFunc = &builtinIsFalseSig{}
 	_ builtinFunc = &builtinUnaryOpSig{}
 	_ builtinFunc = &builtinUnaryMinusIntSig{}
 	_ builtinFunc = &builtinIsNullSig{}
@@ -341,40 +342,51 @@ func (b *builtinRightShiftSig) evalInt(row []types.Datum) (int64, bool, error) {
 	return int64(uint64(arg0) >> uint64(arg1)), false, nil
 }
 
-type isTrueOpFunctionClass struct {
+type isTrueOrFalseFunctionClass struct {
 	baseFunctionClass
-
 	op opcode.Op
 }
 
-func (c *isTrueOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsTrueOpSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinIsTrueOpSig struct {
-	baseBuiltinFunc
-
-	op opcode.Op
-}
-
-func (b *builtinIsTrueOpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (c *isTrueOrFalseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	var boolVal bool
-	if !args[0].IsNull() {
-		iVal, err := args[0].ToBool(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		if (b.op == opcode.IsTruth && iVal == 1) || (b.op == opcode.IsFalsity && iVal == 0) {
-			boolVal = true
-		}
+	bf.tp.Flen = 1
+	if c.op == opcode.IsTruth {
+		sig := &builtinIsTrueSig{baseIntBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
 	}
-	d.SetInt64(boolToInt64(boolVal))
-	return
+	sig := &builtinIsFalseSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinIsTrueSig struct{ baseIntBuiltinFunc }
+type builtinIsFalseSig struct{ baseIntBuiltinFunc }
+
+func (b *builtinIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
+	boolResult, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull || boolResult == 0 {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+func (b *builtinIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
+	boolResult, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull || boolResult != 0 {
+		return 0, false, nil
+	}
+	return 1, false, nil
 }
 
 type bitNegFunctionClass struct {

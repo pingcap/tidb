@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -475,4 +476,78 @@ func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
 	f, err := funcs[ast.UnaryNot].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
+	defer testleak.AfterTest(c)()
+	sc := s.ctx.GetSessionVars().StmtCtx
+	origin := sc.IgnoreTruncate
+	defer func() {
+		sc.IgnoreTruncate = origin
+	}()
+	sc.IgnoreTruncate = true
+
+	testCases := []struct {
+		args    []interface{}
+		isTrue  interface{}
+		isFalse interface{}
+	}{
+		{
+			args:    []interface{}{int64(-12)},
+			isTrue:  int64(1),
+			isFalse: int64(0),
+		},
+		{
+			args:    []interface{}{int64(12)},
+			isTrue:  int64(1),
+			isFalse: int64(0),
+		},
+		{
+			args:    []interface{}{int64(0)},
+			isTrue:  int64(0),
+			isFalse: int64(1),
+		},
+		{
+			args:    []interface{}{float64(0)},
+			isTrue:  int64(0),
+			isFalse: int64(1),
+		},
+		{
+			args:    []interface{}{"aaa"},
+			isTrue:  int64(0),
+			isFalse: int64(1),
+		},
+		{
+			args:    []interface{}{""},
+			isTrue:  int64(0),
+			isFalse: int64(1),
+		},
+		{
+			args:    []interface{}{nil},
+			isTrue:  int64(0),
+			isFalse: int64(0),
+		},
+	}
+
+	for _, tc := range testCases {
+		isTrueSig, err := funcs[ast.IsTruth].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(isTrueSig, NotNil)
+		c.Assert(isTrueSig.isDeterministic(), IsTrue)
+
+		isTrue, err := isTrueSig.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(isTrue, testutil.DatumEquals, types.NewDatum(tc.isTrue))
+	}
+
+	for _, tc := range testCases {
+		isFalseSig, err := funcs[ast.IsFalsity].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(isFalseSig, NotNil)
+		c.Assert(isFalseSig.isDeterministic(), IsTrue)
+
+		isFalse, err := isFalseSig.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(isFalse, testutil.DatumEquals, types.NewDatum(tc.isFalse))
+	}
 }
