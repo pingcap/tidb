@@ -401,9 +401,10 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 	defer mvcc.mu.Unlock()
 
 	anyError := false
+	batch := &leveldb.Batch{}
 	errs := make([]error, 0, len(mutations))
 	for _, m := range mutations {
-		err := prewriteMutation(mvcc.db, m, startTS, primary, ttl)
+		err := prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl)
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
@@ -412,11 +413,14 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 	if anyError {
 		return errs
 	}
+	if err := mvcc.db.Write(batch, nil); err != nil {
+		return nil
+	}
 
 	return errs
 }
 
-func prewriteMutation(db *leveldb.DB, mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
+func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
 	startKey := mvccEncode(mutation.Key, lockVer)
 	iter := newIterator(db, &util.Range{
 		Start: startKey,
@@ -460,8 +464,8 @@ func prewriteMutation(db *leveldb.DB, mutation *kvrpcpb.Mutation, startTS uint64
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = db.Put(writeKey, writeValue, nil)
-	return errors.Trace(err)
+	batch.Put(writeKey, writeValue)
+	return nil
 }
 
 // Commit implements the MVCCStore interface.
@@ -469,16 +473,17 @@ func (mvcc *MVCCLevelDB) Commit(keys [][]byte, startTS, commitTS uint64) error {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
+	batch := &leveldb.Batch{}
 	for _, k := range keys {
-		err := commitKey(mvcc.db, k, startTS, commitTS)
+		err := commitKey(mvcc.db, batch, k, startTS, commitTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	return nil
+	return mvcc.db.Write(batch, nil)
 }
 
-func commitKey(db *leveldb.DB, key []byte, startTS, commitTS uint64) error {
+func commitKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, commitTS uint64) error {
 	startKey := mvccEncode(key, lockVer)
 	iter := newIterator(db, &util.Range{
 		Start: startKey,
@@ -503,14 +508,14 @@ func commitKey(db *leveldb.DB, key []byte, startTS, commitTS uint64) error {
 		return ErrRetryable("txn not found")
 	}
 
-	if err = commitLock(db, dec.lock, key, startTS, commitTS); err != nil {
+	if err = commitLock(batch, dec.lock, key, startTS, commitTS); err != nil {
 		return errors.Trace(err)
 	}
-	err = db.Delete(startKey, nil)
-	return errors.Trace(err)
+	batch.Delete(startKey)
+	return nil
 }
 
-func commitLock(db *leveldb.DB, lock mvccLock, key []byte, startTS, commitTS uint64) error {
+func commitLock(batch *leveldb.Batch, lock mvccLock, key []byte, startTS, commitTS uint64) error {
 	if lock.op != kvrpcpb.Op_Lock {
 		var valueType mvccValueType
 		if lock.op == kvrpcpb.Op_Put {
@@ -529,12 +534,10 @@ func commitLock(db *leveldb.DB, lock mvccLock, key []byte, startTS, commitTS uin
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = db.Put(writeKey, writeValue, nil)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		batch.Put(writeKey, writeValue)
 	}
-	return db.Delete(mvccEncode(key, lockVer), nil)
+	batch.Delete(mvccEncode(key, lockVer))
+	return nil
 }
 
 // Rollback implements the MVCCStore interface.
@@ -542,16 +545,17 @@ func (mvcc *MVCCLevelDB) Rollback(keys [][]byte, startTS uint64) error {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
+	batch := &leveldb.Batch{}
 	for _, k := range keys {
-		err := rollbackKey(mvcc.db, k, startTS)
+		err := rollbackKey(mvcc.db, batch, k, startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	return nil
+	return mvcc.db.Write(batch, nil)
 }
 
-func rollbackKey(db *leveldb.DB, key []byte, startTS uint64) error {
+func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint64) error {
 	startKey := mvccEncode(key, lockVer)
 	iter := newIterator(db, &util.Range{
 		Start: startKey,
@@ -568,11 +572,11 @@ func rollbackKey(db *leveldb.DB, key []byte, startTS uint64) error {
 		}
 		// If current transaction's lock exist.
 		if ok && dec.lock.startTS == startTS {
-			if err = rollbackLock(db, dec.lock, key, startTS); err != nil {
+			if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
 				return errors.Trace(err)
 			}
-			err = db.Delete(startKey, nil)
-			return errors.Trace(err)
+			batch.Delete(startKey)
+			return nil
 		}
 
 		// If current transaction's lock not exist.
@@ -602,11 +606,11 @@ func rollbackKey(db *leveldb.DB, key []byte, startTS uint64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = db.Put(writeKey, writeValue, nil)
-	return errors.Trace(err)
+	batch.Put(writeKey, writeValue)
+	return nil
 }
 
-func rollbackLock(db *leveldb.DB, lock mvccLock, key []byte, startTS uint64) error {
+func rollbackLock(batch *leveldb.Batch, lock mvccLock, key []byte, startTS uint64) error {
 	tomb := mvccValue{
 		valueType: typeRollback,
 		startTS:   startTS,
@@ -617,10 +621,9 @@ func rollbackLock(db *leveldb.DB, lock mvccLock, key []byte, startTS uint64) err
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := db.Put(writeKey, writeValue, nil); err != nil {
-		return errors.Trace(err)
-	}
-	return db.Delete(mvccEncode(key, lockVer), nil)
+	batch.Put(writeKey, writeValue)
+	batch.Delete(mvccEncode(key, lockVer))
+	return nil
 }
 
 func getTxnCommitInfo(iter *Iterator, expectKey []byte, startTS uint64) (mvccValue, bool, error) {
@@ -645,8 +648,12 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
-	err := rollbackKey(mvcc.db, key, startTS)
-	return errors.Trace(err)
+	batch := &leveldb.Batch{}
+	err := rollbackKey(mvcc.db, batch, key, startTS)
+	if err != nil {
+		errors.Trace(err)
+	}
+	return mvcc.db.Write(batch, nil)
 }
 
 // ScanLock implements the MVCCStore interface.
@@ -696,6 +703,7 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 		return errors.Trace(err)
 	}
 
+	batch := &leveldb.Batch{}
 	for iter.Valid() {
 		dec := lockDecoder{expectKey: currKey}
 		ok, err := dec.Decode(iter)
@@ -704,9 +712,9 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 		}
 		if ok && dec.lock.startTS == startTS {
 			if commitTS > 0 {
-				err = commitLock(mvcc.db, dec.lock, currKey, startTS, commitTS)
+				err = commitLock(batch, dec.lock, currKey, startTS, commitTS)
 			} else {
-				err = rollbackLock(mvcc.db, dec.lock, currKey, startTS)
+				err = rollbackLock(batch, dec.lock, currKey, startTS)
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -720,5 +728,5 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 		}
 		currKey = skip.currKey
 	}
-	return nil
+	return mvcc.db.Write(batch, nil)
 }
