@@ -195,7 +195,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 			f   Expression
 			err error
 		)
-		if t.insertId > 0 {
+		if t.insertID > 0 {
 			s.ctx.GetSessionVars().PrevLastInsertID = t.insertID
 		}
 
