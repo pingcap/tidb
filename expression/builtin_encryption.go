@@ -654,8 +654,11 @@ type builtinUncompressedLengthSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
 func (b *builtinUncompressedLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
 	payload, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
-	if isNull || err != nil {
+	if err != nil {
 		return 0, true, errors.Trace(err)
+	}
+	if isNull {
+		return 0, true, nil
 	}
 	if len(payload) == 0 {
 		return 0, false, nil
@@ -664,7 +667,7 @@ func (b *builtinUncompressedLengthSig) evalInt(row []types.Datum) (int64, bool, 
 		// TODO: Generate warning.
 		return 0, false, nil
 	}
-	len := binary.LittleEndian.Uint32([]byte(payload[0:4]))
+	len := binary.LittleEndian.Uint32([]byte(payload)[0:4])
 	return int64(len), false, nil
 }
 
