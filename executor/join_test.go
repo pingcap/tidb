@@ -649,6 +649,16 @@ func (s *testSuite) TestInSubquery(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
 	result.Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, key b (a))")
+	tk.MustExec("create table t2 (a int, key b (a))")
+	tk.MustExec("insert into t1 values (1),(2),(2)")
+	tk.MustExec("insert into t2 values (1),(2),(2)")
+	result = tk.MustQuery("select * from t1 where a in (select * from t2) order by a desc")
+	result.Check(testkit.Rows("2", "2", "1"))
+	result = tk.MustQuery("select * from t1 where a in (select count(*) from t2 where t1.a = t2.a) order by a desc")
+	result.Check(testkit.Rows("2", "2", "1"))
 }
 
 func (s *testSuite) TestJoinLeak(c *C) {

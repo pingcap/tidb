@@ -387,11 +387,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	if e.keepOrder {
 		// Restore the index order.
 		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: handleCol.Index}
-		if e.desc {
-			sort.Sort(sort.Reverse(sorter))
-		} else {
-			sort.Sort(sorter)
-		}
+		sort.Sort(sorter)
 		if e.handleCol == nil {
 			for i, row := range task.rows {
 				task.rows[i] = row[:len(row)-1]
