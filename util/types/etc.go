@@ -149,3 +149,13 @@ func InvOp2(x, y interface{}, o opcode.Op) (interface{}, error) {
 func overflow(v interface{}, tp byte) error {
 	return ErrOverflow.Gen("constant %v overflows %s", v, TypeStr(tp))
 }
+
+// IsTypeTemporal checks if a type is a temporal type.
+func IsTypeTemporal(tp byte) bool {
+	switch tp {
+	case mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp,
+		mysql.TypeDate, mysql.TypeNewDate:
+		return true
+	}
+	return false
+}

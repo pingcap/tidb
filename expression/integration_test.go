@@ -519,6 +519,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
 	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
 	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
+
+	result = tk.MustQuery(`select bin(-1);`)
+	result.Check(testkit.Rows("1111111111111111111111111111111111111111111111111111111111111111"))
+	result = tk.MustQuery(`select bin(5);`)
+	result.Check(testkit.Rows("101"))
+	result = tk.MustQuery(`select bin("中文");`)
+	result.Check(testkit.Rows("0"))
+
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
@@ -846,6 +854,21 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select CAST( - 8 AS DECIMAL ) * + 52 + 87 < - 86")
 	result.Check(testkit.Rows("1"))
 
+	// for char
+	result = tk.MustQuery("select char(97, 100, 256, 89)")
+	result.Check(testkit.Rows("ad\x01\x00Y"))
+	result = tk.MustQuery("select char(97, null, 100, 256, 89)")
+	result.Check(testkit.Rows("ad\x01\x00Y"))
+	result = tk.MustQuery("select char(97, null, 100, 256, 89 using utf8)")
+	result.Check(testkit.Rows("ad\x01\x00Y"))
+	result = tk.MustQuery("select char(97, null, 100, 256, 89 using ascii)")
+	result.Check(testkit.Rows("ad\x01\x00Y"))
+	charRecordSet, err := tk.Exec("select char(97, null, 100, 256, 89 using tidb)")
+	c.Assert(err, IsNil)
+	c.Assert(charRecordSet, NotNil)
+	_, err = tidb.GetRows(charRecordSet)
+	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
+
 	// issue 3884
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (c1 date, c2 datetime, c3 timestamp, c4 time, c5 year);")
@@ -964,5 +987,55 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	select ifnull(a, 0) as a from t2
 	) t;`)
 	result.Check(testkit.Rows("2.4690"))
+}
 
+func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for plus
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));")
+	tk.MustExec("INSERT INTO t(a, b) VALUES(1.09, 1.999), (-1.1, -0.1);")
+	result := tk.MustQuery("SELECT a+b FROM t;")
+	result.Check(testkit.Rows("3.089", "-1.200"))
+	result = tk.MustQuery("SELECT b+12, b+0.01, b+0.00001, b+12.00001 FROM t;")
+	result.Check(testkit.Rows("13.999 2.009 1.99901 13.99901", "11.900 -0.090 -0.09999 11.90001"))
+	result = tk.MustQuery("SELECT 1+12, 21+0.01, 89+\"11\", 12+\"a\", 12+NULL, NULL+1, NULL+NULL;")
+	result.Check(testkit.Rows("13 21.01 100 12 <nil> <nil> <nil>"))
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);")
+	tk.MustExec("INSERT INTO t SELECT 1<<63, 1<<63;")
+	rs, err := tk.Exec("SELECT a+b FROM t;")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err := tidb.GetRows(rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a + test.t.b)'")
+
+	// for minus
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));")
+	tk.MustExec("INSERT INTO t(a, b) VALUES(1.09, 1.999), (-1.1, -0.1);")
+	result = tk.MustQuery("SELECT a-b FROM t;")
+	result.Check(testkit.Rows("-0.909", "-1.000"))
+	result = tk.MustQuery("SELECT b-12, b-0.01, b-0.00001, b-12.00001 FROM t;")
+	result.Check(testkit.Rows("-10.001 1.989 1.99899 -10.00101", "-12.100 -0.110 -0.10001 -12.10001"))
+	result = tk.MustQuery("SELECT 1-12, 21-0.01, 89-\"11\", 12-\"a\", 12-NULL, NULL-1, NULL-NULL;")
+	result.Check(testkit.Rows("-11 20.99 78 12 <nil> <nil> <nil>"))
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);")
+	tk.MustExec("INSERT INTO t SELECT 1, 4;")
+	rs, err = tk.Exec("SELECT a-b FROM t;")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = tidb.GetRows(rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
 }
