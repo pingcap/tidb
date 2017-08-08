@@ -14,11 +14,12 @@
 package server
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"strings"
 	"time"
+
+	"github.com/juju/errors"
 )
 
 // Ref: https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt .
@@ -53,7 +54,7 @@ func newProxyProtocolDecoder(allowedIPs string, headerReadTimeout int) (*proxyPr
 			psaip := fmt.Sprintf("%s/32", saip)
 			_, ipnet, err = net.ParseCIDR(psaip)
 			if err != nil {
-				return nil, err
+				return nil, errors.Trace(err)
 			}
 			allowedNets = append(allowedNets, ipnet)
 		}
@@ -94,11 +95,11 @@ func (d *proxyProtocolDecoder) readClientAddrBehindProxy(conn net.Conn) (net.Add
 func (d *proxyProtocolDecoder) parseHeaderV1(conn net.Conn, connRemoteAddr net.Addr) (net.Addr, error) {
 	buffer, err := d.readHeaderV1(conn)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	raddr, err := d.extractClientIPV1(buffer, connRemoteAddr)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return raddr, nil
 }
