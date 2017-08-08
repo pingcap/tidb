@@ -849,6 +849,21 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select CAST( - 8 AS DECIMAL ) * + 52 + 87 < - 86")
 	result.Check(testkit.Rows("1"))
 
+	// for char
+	result = tk.MustQuery("select char(97, 100, 256, 89)")
+	result.Check(testkit.Rows("ad\x01\x00Y"))
+	result = tk.MustQuery("select char(97, null, 100, 256, 89)")
+	result.Check(testkit.Rows("ad\x01\x00Y"))
+	result = tk.MustQuery("select char(97, null, 100, 256, 89 using utf8)")
+	result.Check(testkit.Rows("ad\x01\x00Y"))
+	result = tk.MustQuery("select char(97, null, 100, 256, 89 using ascii)")
+	result.Check(testkit.Rows("ad\x01\x00Y"))
+	charRecordSet, err := tk.Exec("select char(97, null, 100, 256, 89 using tidb)")
+	c.Assert(err, IsNil)
+	c.Assert(charRecordSet, NotNil)
+	_, err = tidb.GetRows(charRecordSet)
+	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
+
 	// issue 3884
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (c1 date, c2 datetime, c3 timestamp, c4 time, c5 year);")
