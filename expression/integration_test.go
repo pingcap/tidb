@@ -658,6 +658,11 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("3 2"))
 	result = tk.MustQuery("select cast(-1 as unsigned)")
 	result.Check(testkit.Rows("18446744073709551615"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a decimal(3, 1), b double, c datetime, d time, e int)")
+	tk.MustExec("insert into t value(12.3, 1.23, '2017-01-01 12:12:12', '12:12:12', 123)")
+	result = tk.MustQuery("select cast(a as json), cast(b as json), cast(c as json), cast(d as json), cast(e as json) from t")
+	result.Check(testkit.Rows(`"12.3" 1.23 "2017-01-01 12:12:12.000000" "12:12:12.000000" 123`))
 
 	// fix issue #3942
 	result = tk.MustQuery("select cast('-24 100:00:00' as time);")
