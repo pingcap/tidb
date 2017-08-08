@@ -445,6 +445,12 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery("select to_base64(a), to_base64(b), to_base64(c), to_base64(d), to_base64(e), to_base64(f), to_base64(g), to_base64(h), to_base64(null) from t")
 	result.Check(testkit.Rows("MQ== MS4x MjAxNy0wMS0wMSAxMjowMTowMQ== MTI6MDE6MDE= YWJjZGVm ABU= NTEyAAAAAAAAAAAAAAAAAAAAAAA= YWJj <nil>"))
 
+	// for from_base64
+	result = tk.MustQuery(`select from_base64("abcd"), from_base64("asc")`)
+	result.Check(testkit.Rows("i\xb7\x1d <nil>"))
+	result = tk.MustQuery(`select from_base64("MQ=="), from_base64(1234)`)
+	result.Check(testkit.Rows("1 \xd7m\xf8"))
+
 	// for substr
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time)")
@@ -513,6 +519,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
 	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
 	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
+
+	result = tk.MustQuery(`select bin(-1);`)
+	result.Check(testkit.Rows("1111111111111111111111111111111111111111111111111111111111111111"))
+	result = tk.MustQuery(`select bin(5);`)
+	result.Check(testkit.Rows("101"))
+	result = tk.MustQuery(`select bin("中文");`)
+	result.Check(testkit.Rows("0"))
+
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
@@ -935,4 +949,67 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustQuery("select count(*) from t") // Test ProjectionExec
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for ifnull
+	result := tk.MustQuery("select ifnull(1, 2)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select ifnull(null, 2)")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select ifnull(1, null)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select ifnull(null, null)")
+	result.Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a decimal(20,4))")
+	tk.MustExec("create table t2(a decimal(20,4))")
+	tk.MustExec("insert into t1 select 1.2345")
+	tk.MustExec("insert into t2 select 1.2345")
+
+	result = tk.MustQuery(`select sum(ifnull(a, 0)) from (
+	select ifnull(a, 0) as a from t1
+	union all
+	select ifnull(a, 0) as a from t2
+	) t;`)
+	result.Check(testkit.Rows("2.4690"))
+}
+
+func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for plus
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));")
+	tk.MustExec("INSERT INTO t(a, b) VALUES(1.09, 1.999), (-1.1, -0.1);")
+	result := tk.MustQuery("SELECT a+b FROM t;")
+	result.Check(testkit.Rows("3.089", "-1.200"))
+	result = tk.MustQuery("SELECT b+12, b+0.01, b+0.00001, b+12.00001 FROM t;")
+	result.Check(testkit.Rows("13.999 2.009 1.99901 13.99901", "11.900 -0.090 -0.09999 11.90001"))
+	result = tk.MustQuery("SELECT 1+12, 21+0.01, 89+\"11\", 12+\"a\", 12+NULL, NULL+1, NULL+NULL;")
+	result.Check(testkit.Rows("13 21.01 100 12 <nil> <nil> <nil>"))
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);")
+	tk.MustExec("INSERT INTO t SELECT 1<<63, 1<<63;")
+	rs, err := tk.Exec("SELECT a+b FROM t;")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err := tidb.GetRows(rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.t.a + test.t.b)'")
 }

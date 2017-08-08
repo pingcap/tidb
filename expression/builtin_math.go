@@ -29,7 +29,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -47,7 +46,6 @@ var (
 	_ functionClass = &crc32FunctionClass{}
 	_ functionClass = &signFunctionClass{}
 	_ functionClass = &sqrtFunctionClass{}
-	_ functionClass = &arithmeticFunctionClass{}
 	_ functionClass = &acosFunctionClass{}
 	_ functionClass = &asinFunctionClass{}
 	_ functionClass = &atanFunctionClass{}
@@ -86,7 +84,6 @@ var (
 	_ builtinFunc = &builtinCRC32Sig{}
 	_ builtinFunc = &builtinSignSig{}
 	_ builtinFunc = &builtinSqrtSig{}
-	_ builtinFunc = &builtinArithmeticSig{}
 	_ builtinFunc = &builtinAcosSig{}
 	_ builtinFunc = &builtinAsinSig{}
 	_ builtinFunc = &builtinAtan1ArgSig{}
@@ -873,64 +870,6 @@ func (b *builtinSqrtSig) eval(row []types.Datum) (d types.Datum, err error) {
 
 	d.SetFloat64(math.Sqrt(f))
 	return
-}
-
-type arithmeticFunctionClass struct {
-	baseFunctionClass
-
-	op opcode.Op
-}
-
-func (c *arithmeticFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinArithmeticSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinArithmeticSig struct {
-	baseBuiltinFunc
-
-	op opcode.Op
-}
-
-func (s *builtinArithmeticSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := s.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	sc := s.ctx.GetSessionVars().StmtCtx
-	a, err := types.CoerceArithmetic(sc, args[0])
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	b, err := types.CoerceArithmetic(sc, args[1])
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	a, b, err = types.CoerceDatum(sc, a, b)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if a.IsNull() || b.IsNull() {
-		return
-	}
-
-	switch s.op {
-	case opcode.Plus:
-		return types.ComputePlus(a, b)
-	case opcode.Minus:
-		return types.ComputeMinus(a, b)
-	case opcode.Mul:
-		return types.ComputeMul(a, b)
-	case opcode.Div:
-		return types.ComputeDiv(sc, a, b)
-	case opcode.Mod:
-		return types.ComputeMod(sc, a, b)
-	case opcode.IntDiv:
-		return types.ComputeIntDiv(sc, a, b)
-	default:
-		return d, errInvalidOperation.Gen("invalid op %v in arithmetic operation", s.op)
-	}
 }
 
 type acosFunctionClass struct {

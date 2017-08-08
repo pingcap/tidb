@@ -261,7 +261,7 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	for _, constraint := range stmt.Constraints {
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			err := checkDuplicateColumnName(constraint.Keys)
+			err := checkIndexInfo(constraint.Name, constraint.Keys)
 			if err != nil {
 				v.err = err
 				return
@@ -272,7 +272,7 @@ func (v *validator) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				return
 			}
 			countPrimaryKey++
-			err := checkDuplicateColumnName(constraint.Keys)
+			err := checkIndexInfo(constraint.Name, constraint.Keys)
 			if err != nil {
 				v.err = err
 				return
@@ -310,9 +310,7 @@ func (v *validator) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		v.err = ddl.ErrWrongTableName.GenByArgs(tName)
 		return
 	}
-	// We do not check column name here, due to MySQL returns "ERROR 1072 (42000): Key column 'a ' doesn't exist in table",
-	// if column name is `` or contains space at the end.
-	v.err = checkDuplicateColumnName(stmt.IndexColNames)
+	v.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
 	return
 }
 
@@ -347,7 +345,7 @@ func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
 				ast.ConstraintUniqKey:
-				v.err = checkDuplicateColumnName(spec.Constraint.Keys)
+				v.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys)
 				if v.err != nil {
 					return
 				}
@@ -379,6 +377,14 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 		}
 	}
 	return nil
+}
+
+// checkIndexInfo checks index name and index column names.
+func checkIndexInfo(indexName string, indexColNames []*ast.IndexColName) error {
+	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
+		return ddl.ErrWrongNameForIndex.GenByArgs(indexName)
+	}
+	return checkDuplicateColumnName(indexColNames)
 }
 
 // checkColumn checks if the column definition is valid.
