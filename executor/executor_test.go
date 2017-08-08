@@ -612,6 +612,7 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("insert into t values(1, 1), (2, 2)")
 	tk.MustQuery("select * from t where 1 order by b").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery("select * from t where a between 1 and 2 order by a desc").Check(testkit.Rows("2 2", "1 1"))
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {
