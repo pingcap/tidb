@@ -190,7 +190,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 		{math.MaxUint64, nil, math.MaxUint64, false, false},
 	}
 
-	for i, t := range cases {
+	for _, t := range cases {
 		var (
 			f   Expression
 			err error
