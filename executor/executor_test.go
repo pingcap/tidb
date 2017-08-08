@@ -1858,7 +1858,10 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 	tk.MustQuery("select sleep(0);").Check(testkit.Rows("0"))
 	tk.MustQuery("select sleep('a');").Check(testkit.Rows("0"))
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1265 Data Truncated"))
-	_, err := tk.Exec("select sleep(-1);")
+	rs, err := tk.Exec("select sleep(-1);")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
 }
 

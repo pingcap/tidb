@@ -47,7 +47,7 @@ const (
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeIncorrectArgs:   mysql.ErrWrongArguments,
+		codeIncorrectArgs: mysql.ErrWrongArguments,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = tableMySQLErrCodes
 }

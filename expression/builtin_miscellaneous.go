@@ -21,7 +21,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ngaut/log"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
@@ -79,6 +78,9 @@ type sleepFunctionClass struct {
 
 func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -108,8 +110,10 @@ func (b *builtinSleepSig) evalInt(row []types.Datum) (int64, bool, error) {
 	}
 	// processing argument is negative
 	if val < 0 {
-		log.Infof("[yusp] here!")
-		return 0, isNull, errIncorrectArgs.GenByArgs("sleep")
+		if sessVars.StrictSQLMode {
+			return 0, isNull, errIncorrectArgs.GenByArgs("sleep")
+		}
+		return 0, isNull, err
 	}
 
 	// TODO: consider it's interrupted using KILL QUERY from other session, or
