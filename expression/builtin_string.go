@@ -441,8 +441,8 @@ func (b *builtinRightBinarySig) evalString(row []types.Datum) (string, bool, err
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	rightLength := int(right)
-	if strLength := len(str); rightLength > strLength {
+	strLength, rightLength := len(str), int(right)
+	if rightLength > strLength {
 		rightLength = strLength
 	} else if rightLength < 0 {
 		rightLength = 0
@@ -466,8 +466,9 @@ func (b *builtinRightSig) evalString(row []types.Datum) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	runes, rightLength := []rune(str), int(right)
-	if strLength := len(runes); rightLength > strLength {
+	runes := []rune(str)
+	strLength, rightLength := len(runes), int(right)
+	if rightLength > strLength {
 		rightLength = strLength
 	} else if rightLength < 0 {
 		rightLength = 0
@@ -815,7 +816,7 @@ func (c *substringFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	argTps := []argType{tpString, tpInt}
+	argTps := []evalTp{tpString, tpInt}
 	if len(args) == 3 {
 		argTps = append(argTps, tpInt)
 	}
