@@ -350,6 +350,7 @@ func patternMatch(str string, patChars, patTypes []byte) bool {
 func (p *MySQLPrivilege) connectionVerification(user, host string) *userRecord {
 	for i := 0; i < len(p.User); i++ {
 		record := &p.User[i]
+		fmt.Printf("record #%d: %v    (user = %s, host = %s)\n", i, record, user, host)
 		if record.match(user, host) {
 			return record
 		}

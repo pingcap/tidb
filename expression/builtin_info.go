@@ -135,7 +135,7 @@ func (b *builtinCurrentUserSig) eval(_ []types.Datum) (d types.Datum, err error)
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
-	d.SetString(data.User)
+	d.SetString(data.User.String())
 	return d, nil
 }
 
@@ -162,7 +162,7 @@ func (b *builtinUserSig) eval(_ []types.Datum) (d types.Datum, err error) {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
-	d.SetString(data.User)
+	d.SetString(data.User.String())
 	return d, nil
 }
 
