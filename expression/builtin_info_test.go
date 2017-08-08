@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"math"
 
 	. "github.com/pingcap/check"
@@ -200,7 +199,6 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 			s.ctx.GetSessionVars().PrevLastInsertID = t.insertID
 		}
 
-		fmt.Printf("t.args:%v, i:%v\n", t.args, i)
 		if t.args != nil {
 			f, err = newFunctionForTest(s.ctx, ast.LastInsertId, primitiveValsToConstants([]interface{}{t.args})...)
 		} else {
