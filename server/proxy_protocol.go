@@ -213,7 +213,6 @@ func (c *proxyProtocolConn) readHeaderV1() ([]byte, error) {
 			c.exceedBufferLen = n - endPos
 		}
 		return buf[0 : endPos+1], nil
-	} else {
-		return nil, errProxyProtocolV1HeaderInvalid
 	}
+	return nil, errProxyProtocolV1HeaderInvalid
 }
