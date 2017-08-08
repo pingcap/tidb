@@ -29,7 +29,7 @@ import (
 
 const (
 	unknownClause    = ""
-	fieldClause      = "field list"
+	fieldList        = "field list"
 	havingClause     = "having clause"
 	onClause         = "on clause"
 	orderByClause    = "order clause"
@@ -514,10 +514,10 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 	}
 
 	// Try to resolve the column name from top to bottom in the context stack.
-	var clause string
+	var where string
 	var ok bool
 	for i := len(nr.contextStack) - 1; i >= 0; i-- {
-		clause, ok = nr.resolveColumnNameInContext(nr.contextStack[i], cn)
+		where, ok = nr.resolveColumnNameInContext(nr.contextStack[i], cn)
 		if ok {
 			// Column is already resolved or encountered an error.
 			if i < len(nr.contextStack)-1 {
@@ -532,7 +532,7 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 		fieldName = fmt.Sprintf("%s.%s", cn.Name.Table.String(), fieldName)
 
 	}
-	nr.Err = ErrUnknownColumn.GenByArgs(fieldName, clause)
+	nr.Err = ErrUnknownColumn.GenByArgs(fieldName, where)
 }
 
 // resolveColumnNameInContext looks up and sets ResultField for a column with the ctx.
@@ -543,7 +543,7 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 	}
 	if ctx.inFieldList {
 		// only resolve column using tables.
-		return fieldClause, nr.resolveColumnInTableSources(cn, ctx.tables)
+		return fieldList, nr.resolveColumnInTableSources(cn, ctx.tables)
 	}
 	if ctx.inGroupBy {
 		// From tables first, then field list.
