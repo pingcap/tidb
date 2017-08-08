@@ -21,6 +21,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -74,6 +75,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil, nil
+	case *ast.DropStatsStmt:
+		err = e.executeDropStats(x)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -318,5 +321,18 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		err = dom.PrivilegeHandle().Update(ctx.(context.Context))
 		return errors.Trace(err)
 	}
+	return nil
+}
+
+func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
+	h := sessionctx.GetDomain(e.ctx).StatsHandle()
+	if h.Lease <= 0 {
+		err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return errors.Trace(h.Update(GetInfoSchema(e.ctx)))
+	}
+	h.DDLEventCh() <- &ddl.Event{Tp: model.ActionDropTable, TableInfo: s.Table.TableInfo}
 	return nil
 }

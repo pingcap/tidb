@@ -40,6 +40,7 @@ type invalidMockType struct {
 func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	d := NewDatum(val)
 	sc := new(variable.StatementContext)
+	sc.TimeZone = time.UTC
 	ret, err := d.ConvertTo(sc, target)
 	if err != nil {
 		return ret.GetValue(), errors.Trace(err)
@@ -189,6 +190,17 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, uint64(100))
+	// issue 3470
+	ft = NewFieldType(mysql.TypeLonglong)
+	v, err = Convert(Duration{Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond), Fsp: 3}, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(130000))
+	v, err = Convert(Time{
+		Time: FromDate(2017, 1, 1, 12, 59, 59, 555000),
+		Type: mysql.TypeDatetime,
+		Fsp:  MaxFsp}, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(20170101130000))
 
 	// For TypeBit
 	ft = NewFieldType(mysql.TypeBit)
@@ -235,6 +247,17 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
 	c.Assert(v.(*MyDecimal).String(), Equals, "-9999.9999")
 
+	// Test Datum.ToDecimal with bad number.
+	d := NewDatum("hello")
+	sc := new(variable.StatementContext)
+	v, err = d.ToDecimal(sc)
+	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue)
+
+	sc.IgnoreTruncate = true
+	v, err = d.ToDecimal(sc)
+	c.Assert(err, IsNil)
+	c.Assert(v.(*MyDecimal).String(), Equals, "0")
+
 	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
 	v, err = Convert("2015", ft)
@@ -264,8 +287,9 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v, DeepEquals, Enum{Name: "b", Value: 2})
 	_, err = Convert("d", ft)
 	c.Assert(err, NotNil)
-	_, err = Convert(4, ft)
-	c.Assert(err, NotNil)
+	v, err = Convert(4, ft)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(v, DeepEquals, Enum{})
 
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"a", "b", "c"}
@@ -504,7 +528,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeTiny, -128, "-128")
 	signedAccept(c, mysql.TypeTiny, 127, "127")
 	signedDeny(c, mysql.TypeTiny, 128, "127")
-	unsignedDeny(c, mysql.TypeTiny, -1, "0")
+	unsignedDeny(c, mysql.TypeTiny, -1, "255")
 	unsignedAccept(c, mysql.TypeTiny, 0, "0")
 	unsignedAccept(c, mysql.TypeTiny, 255, "255")
 	unsignedDeny(c, mysql.TypeTiny, 256, "255")
@@ -513,7 +537,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeShort, int64(math.MinInt16), strvalue(int64(math.MinInt16)))
 	signedAccept(c, mysql.TypeShort, int64(math.MaxInt16), strvalue(int64(math.MaxInt16)))
 	signedDeny(c, mysql.TypeShort, int64(math.MaxInt16)+1, strvalue(int64(math.MaxInt16)))
-	unsignedDeny(c, mysql.TypeShort, -1, "0")
+	unsignedDeny(c, mysql.TypeShort, -1, "65535")
 	unsignedAccept(c, mysql.TypeShort, 0, "0")
 	unsignedAccept(c, mysql.TypeShort, uint64(math.MaxUint16), strvalue(uint64(math.MaxUint16)))
 	unsignedDeny(c, mysql.TypeShort, uint64(math.MaxUint16)+1, strvalue(uint64(math.MaxUint16)))
@@ -522,7 +546,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeInt24, -1<<23, strvalue(-1<<23))
 	signedAccept(c, mysql.TypeInt24, 1<<23-1, strvalue(1<<23-1))
 	signedDeny(c, mysql.TypeInt24, 1<<23, strvalue(1<<23-1))
-	unsignedDeny(c, mysql.TypeInt24, -1, "0")
+	unsignedDeny(c, mysql.TypeInt24, -1, "16777215")
 	unsignedAccept(c, mysql.TypeInt24, 0, "0")
 	unsignedAccept(c, mysql.TypeInt24, 1<<24-1, strvalue(1<<24-1))
 	unsignedDeny(c, mysql.TypeInt24, 1<<24, strvalue(1<<24-1))
@@ -532,7 +556,8 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeLong, int64(math.MaxInt32), strvalue(int64(math.MaxInt32)))
 	signedDeny(c, mysql.TypeLong, uint64(math.MaxUint64), strvalue(uint64(math.MaxInt32)))
 	signedDeny(c, mysql.TypeLong, int64(math.MaxInt32)+1, strvalue(int64(math.MaxInt32)))
-	unsignedDeny(c, mysql.TypeLong, -1, "0")
+	signedDeny(c, mysql.TypeLong, "1343545435346432587475", strvalue(int64(math.MaxInt32)))
+	unsignedDeny(c, mysql.TypeLong, -1, "4294967295")
 	unsignedAccept(c, mysql.TypeLong, 0, "0")
 	unsignedAccept(c, mysql.TypeLong, uint64(math.MaxUint32), strvalue(uint64(math.MaxUint32)))
 	unsignedDeny(c, mysql.TypeLong, uint64(math.MaxUint32)+1, strvalue(uint64(math.MaxUint32)))
@@ -541,7 +566,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeLonglong, int64(math.MinInt64), strvalue(int64(math.MinInt64)))
 	signedAccept(c, mysql.TypeLonglong, int64(math.MaxInt64), strvalue(int64(math.MaxInt64)))
 	signedDeny(c, mysql.TypeLonglong, math.MaxInt64*1.1, strvalue(int64(math.MaxInt64)))
-	unsignedDeny(c, mysql.TypeLonglong, -1, "0")
+	unsignedAccept(c, mysql.TypeLonglong, -1, "18446744073709551615")
 	unsignedAccept(c, mysql.TypeLonglong, 0, "0")
 	unsignedAccept(c, mysql.TypeLonglong, uint64(math.MaxUint64), strvalue(uint64(math.MaxUint64)))
 	unsignedDeny(c, mysql.TypeLonglong, math.MaxUint64*1.1, strvalue(uint64(math.MaxUint64)))
@@ -655,4 +680,65 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
 	_, err = floatStrToIntStr("1e21")
 	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+}
+
+// TestConvertTime tests time related conversion.
+// time conversion is complicated including Date/Datetime/Time/Timestamp etc,
+// Timestamp may involving timezone.
+func (s *testTypeConvertSuite) TestConvertTime(c *C) {
+	timezones := []*time.Location{
+		time.UTC,
+		time.FixedZone("UTC", 3*3600),
+		time.Local,
+	}
+
+	for _, timezone := range timezones {
+		sc := &variable.StatementContext{
+			TimeZone: timezone,
+		}
+		testConvertTimeTimeZone(c, sc)
+	}
+}
+
+func testConvertTimeTimeZone(c *C, sc *variable.StatementContext) {
+	raw := FromDate(2002, 3, 4, 4, 6, 7, 8)
+	tests := []struct {
+		input  Time
+		target *FieldType
+		expect Time
+	}{
+		{
+			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: sc.TimeZone},
+			target: NewFieldType(mysql.TypeTimestamp),
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+		},
+		{
+			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: nil},
+			target: NewFieldType(mysql.TypeTimestamp),
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+		},
+		{
+			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: time.UTC},
+			target: NewFieldType(mysql.TypeTimestamp),
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+		},
+		{
+			input:  Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			target: NewFieldType(mysql.TypeDatetime),
+			expect: Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: nil},
+		},
+	}
+
+	for _, test := range tests {
+		var d Datum
+		d.SetMysqlTime(test.input)
+		nd, err := d.ConvertTo(sc, test.target)
+		c.Assert(err, IsNil)
+		t := nd.GetMysqlTime()
+		c.Assert(t.Type, Equals, test.expect.Type)
+		c.Assert(t.Time, Equals, test.expect.Time)
+		if test.expect.Type == mysql.TypeTimestamp {
+			c.Assert(t.TimeZone, Equals, test.expect.TimeZone)
+		}
+	}
 }

@@ -70,7 +70,11 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	}
 	var chunks []tipb.Chunk
 	for {
-		handle, row, err := e.Next()
+		var (
+			handle int64
+			row    [][]byte
+		)
+		handle, row, err = e.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -129,11 +133,12 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *t
 	ranges := h.extractKVRanges(ctx.keyRanges, executor.TblScan.Desc)
 
 	return &tableScanExec{
-		TableScan: executor.TblScan,
-		kvRanges:  ranges,
-		colIDs:    ctx.evalCtx.colIDs,
-		startTS:   ctx.dagReq.GetStartTs(),
-		mvccStore: h.mvccStore,
+		TableScan:      executor.TblScan,
+		kvRanges:       ranges,
+		colIDs:         ctx.evalCtx.colIDs,
+		startTS:        ctx.dagReq.GetStartTs(),
+		isolationLevel: h.isolationLevel,
+		mvccStore:      h.mvccStore,
 	}
 }
 
@@ -150,12 +155,13 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 	ranges := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
 
 	return &indexScanExec{
-		IndexScan: executor.IdxScan,
-		kvRanges:  ranges,
-		colsLen:   len(columns),
-		startTS:   ctx.dagReq.GetStartTs(),
-		mvccStore: h.mvccStore,
-		pkCol:     pkCol,
+		IndexScan:      executor.IdxScan,
+		kvRanges:       ranges,
+		colsLen:        len(columns),
+		startTS:        ctx.dagReq.GetStartTs(),
+		isolationLevel: h.isolationLevel,
+		mvccStore:      h.mvccStore,
+		pkCol:          pkCol,
 	}
 }
 
@@ -188,7 +194,8 @@ func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) 
 	var err error
 	var relatedColOffsets []int
 	for _, expr := range executor.Aggregation.AggFunc {
-		aggExpr, err := expression.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
+		var aggExpr expression.AggregationFunction
+		aggExpr, err = expression.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -232,9 +239,9 @@ func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 		}
 		pbConds[i] = item.Expr
 	}
-	heap := &topnHeap{
+	heap := &topNHeap{
 		totalCount: int(topN.Limit),
-		topnSorter: topnSorter{
+		topNSorter: topNSorter{
 			orderByItems: topN.OrderBy,
 			sc:           ctx.evalCtx.sc,
 		},

@@ -60,6 +60,12 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
+	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
+	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
+	// This value controls how much of data in a batch to do the index join.
+	// Large value may reduce the latency but consumes more system resource.
+	TiDBIndexJoinBatchSize = "tidb_index_join_batch_size"
+
 	// tidb_index_lookup_size is used for index lookup executor.
 	// The index lookup executor first scan a batch of handles from a index, then use those handles to lookup the table
 	// rows, this value controls how much of handles in a batch to do a lookup task.
@@ -78,12 +84,6 @@ const (
 	// when we need to keep the data output order the same as the order of index data.
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
 
-	// tidb_skip_ddl_wait skips the wait time of two lease after executing CREATE TABLE statement.
-	// When we have multiple TiDB servers in a cluster, the newly created table may not be available on all TiDB server
-	// until two lease time later, set this value to true will reduce the time to create a table, with the risk that
-	// other TiDB servers may fail to use the newly created table in a small time window.
-	TiDBSkipDDLWait = "tidb_skip_ddl_wait"
-
 	// tidb_skip_utf8_check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
@@ -96,12 +96,16 @@ const (
 	// It controls the max row count of outer table when do index nested loop join without hint.
 	// After the row count of the inner table is accurate, this variable will be removed.
 	TiDBMaxRowCountForINLJ = "tidb_max_row_count_for_inlj"
+
+	// tidb_cbo uses new planner with cost based optimizer.
+	TiDBCBO = "tidb_cbo"
 )
 
 // Default TiDB system variable values.
 const (
 	DefIndexLookupConcurrency     = 4
 	DefIndexSerialScanConcurrency = 1
+	DefIndexJoinBatchSize         = 25000
 	DefIndexLookupSize            = 20000
 	DefDistSQLScanConcurrency     = 10
 	DefBuildStatsConcurrency      = 4

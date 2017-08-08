@@ -15,11 +15,13 @@
 package server
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 )
 
 type TidbTestSuite struct {
@@ -36,12 +38,14 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
-	cfg := &Config{
+	cfg := &config.Config{
 		Addr:         ":4001",
 		LogLevel:     "debug",
 		StatusAddr:   ":10090",
 		ReportStatus: true,
+		TCPKeepAlive: true,
 	}
+
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
@@ -116,11 +120,12 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 
 func (ts *TidbTestSuite) TestSocket(c *C) {
 	c.Parallel()
-	cfg := &Config{
+	cfg := &config.Config{
 		LogLevel:   "debug",
 		StatusAddr: ":10091",
 		Socket:     "/tmp/tidbtest.sock",
 	}
+
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	go server.Run()
@@ -130,4 +135,50 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 	runTestRegression(c, "SocketRegression")
 	dsn = tcpDsn
 	server.Close()
+}
+
+func (ts *TidbTestSuite) TestIssue3662(c *C) {
+	c.Parallel()
+	db, err := sql.Open("mysql", "root@tcp(localhost:4001)/a_database_not_exist")
+	c.Assert(err, IsNil)
+	defer db.Close()
+
+	// According to documentation, "Open may just validate its arguments without
+	// creating a connection to the database. To verify that the data source name
+	// is valid, call Ping."
+	err = db.Ping()
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Error 1049: Unknown database 'a_database_not_exist'")
+}
+
+func (ts *TidbTestSuite) TestIssue3680(c *C) {
+	c.Parallel()
+	db, err := sql.Open("mysql", "non_existing_user@tcp(127.0.0.1:4001)/")
+	c.Assert(err, IsNil)
+	defer db.Close()
+
+	// According to documentation, "Open may just validate its arguments without
+	// creating a connection to the database. To verify that the data source name
+	// is valid, call Ping."
+	err = db.Ping()
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: YES)")
+}
+
+func (ts *TidbTestSuite) TestDBNameEscape(c *C) {
+	c.Parallel()
+	runTests(c, dsn, func(dbt *DBTest) {
+		dbt.mustExec("create database `aa-a`;")
+	})
+	// The database name is aa-a, '-' is not permitted as identifier, it should be `aa-a` to be a legal sql.
+	db, err := sql.Open("mysql", "root@tcp(127.0.0.1:4001)/aa-a")
+	c.Assert(err, IsNil)
+	defer db.Close()
+	c.Assert(db.Ping(), IsNil)
+	_, err = db.Exec("drop database `aa-a`")
+	c.Assert(err, IsNil)
+}
+
+func (ts *TidbTestSuite) TestIssue3682(c *C) {
+	runTestIssue3682(c)
 }

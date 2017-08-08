@@ -19,7 +19,10 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -41,16 +44,18 @@ import (
 // errors, since region range have changed, the request may need to split, so we
 // simply return the error to caller.
 type RegionRequestSender struct {
-	regionCache *RegionCache
-	client      Client
-	storeAddr   string
+	regionCache    *RegionCache
+	client         Client
+	isolationLevel kvrpcpb.IsolationLevel
+	storeAddr      string
 }
 
 // NewRegionRequestSender creates a new sender.
-func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequestSender {
+func NewRegionRequestSender(regionCache *RegionCache, client Client, isolationLevel kvrpcpb.IsolationLevel) *RegionRequestSender {
 	return &RegionRequestSender{
-		regionCache: regionCache,
-		client:      client,
+		regionCache:    regionCache,
+		client:         client,
+		isolationLevel: isolationLevel,
 	}
 }
 
@@ -72,6 +77,7 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 		}
 
 		s.storeAddr = ctx.Addr
+		ctx.KVCtx.IsolationLevel = s.isolationLevel
 		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -101,7 +107,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.KVCtx); e != nil {
 		return nil, false, errors.Trace(e)
 	}
-	context, cancel := goctx.WithTimeout(bo.ctx, timeout)
+	context, cancel := util.WithTimeout(bo.ctx, timeout)
 	defer cancel()
 	resp, err = s.client.SendReq(context, ctx.Addr, req)
 	if err != nil {
@@ -115,11 +121,11 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
 	// If it failed because the context is canceled, don't retry on this error.
-	if errors.Cause(err) == goctx.Canceled || grpc.Code(err) == codes.Canceled {
+	if errors.Cause(err) == goctx.Canceled || grpc.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
 	}
 
-	s.regionCache.OnRequestFail(ctx)
+	s.regionCache.OnRequestFail(ctx, err)
 
 	// Retry on request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
@@ -177,4 +183,15 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	log.Debugf("tikv reports region error: %s, ctx: %s", regionErr, ctx.KVCtx)
 	s.regionCache.DropRegion(ctx.Region)
 	return false, nil
+}
+
+func pbIsolationLevel(level kv.IsoLevel) kvrpcpb.IsolationLevel {
+	switch level {
+	case kv.RC:
+		return kvrpcpb.IsolationLevel_RC
+	case kv.SI:
+		return kvrpcpb.IsolationLevel_SI
+	default:
+		return kvrpcpb.IsolationLevel_SI
+	}
 }

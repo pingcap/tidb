@@ -28,23 +28,23 @@ type sortRow struct {
 	data [][]byte
 }
 
-// topnSorter implements sort.Interface. When all rows have been processed, the topnSorter will sort the whole data in heap.
-type topnSorter struct {
+// topNSorter implements sort.Interface. When all rows have been processed, the topNSorter will sort the whole data in heap.
+type topNSorter struct {
 	orderByItems []*tipb.ByItem
 	rows         []*sortRow
 	err          error
 	sc           *variable.StatementContext
 }
 
-func (t *topnSorter) Len() int {
+func (t *topNSorter) Len() int {
 	return len(t.rows)
 }
 
-func (t *topnSorter) Swap(i, j int) {
+func (t *topNSorter) Swap(i, j int) {
 	t.rows[i], t.rows[j] = t.rows[j], t.rows[i]
 }
 
-func (t *topnSorter) Less(i, j int) bool {
+func (t *topNSorter) Less(i, j int) bool {
 	for index, by := range t.orderByItems {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
@@ -69,10 +69,10 @@ func (t *topnSorter) Less(i, j int) bool {
 	return false
 }
 
-// topnHeap holds the top n elements using heap structure. It implements heap.Interface.
-// When we insert a row, topnHeap will check if the row can become one of the top n element or not.
-type topnHeap struct {
-	topnSorter
+// topNHeap holds the top n elements using heap structure. It implements heap.Interface.
+// When we insert a row, topNHeap will check if the row can become one of the top n element or not.
+type topNHeap struct {
+	topNSorter
 
 	// totalCount is equal to the limit count, which means the max size of heap.
 	totalCount int
@@ -80,20 +80,20 @@ type topnHeap struct {
 	heapSize int
 }
 
-func (t *topnHeap) Len() int {
+func (t *topNHeap) Len() int {
 	return t.heapSize
 }
 
-func (t *topnHeap) Push(x interface{}) {
+func (t *topNHeap) Push(x interface{}) {
 	t.rows = append(t.rows, x.(*sortRow))
 	t.heapSize++
 }
 
-func (t *topnHeap) Pop() interface{} {
+func (t *topNHeap) Pop() interface{} {
 	return nil
 }
 
-func (t *topnHeap) Less(i, j int) bool {
+func (t *topNHeap) Less(i, j int) bool {
 	for index, by := range t.orderByItems {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
@@ -121,7 +121,7 @@ func (t *topnHeap) Less(i, j int) bool {
 // tryToAddRow tries to add a row to heap.
 // When this row is not less than any rows in heap, it will never become the top n element.
 // Then this function returns false.
-func (t *topnHeap) tryToAddRow(row *sortRow) bool {
+func (t *topNHeap) tryToAddRow(row *sortRow) bool {
 	success := false
 	if t.heapSize == t.totalCount {
 		t.rows = append(t.rows, row)

@@ -57,11 +57,11 @@ var (
 // GetScope gets the status variables scope.
 func (d *ddl) GetScope(status string) variable.ScopeFlag {
 	// Now ddl status variables scope are all default scope.
-	return variable.DefaultScopeFlag
+	return variable.DefaultStatusVarScopeFlag
 }
 
 // Stats returns the DDL statistics.
-func (d *ddl) Stats() (map[string]interface{}, error) {
+func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
 	var ddlInfo, bgInfo *inspectkv.DDLInfo
@@ -81,11 +81,7 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 	}
 
 	m[ddlSchemaVersion] = ddlInfo.SchemaVer
-	if ddlInfo.Owner != nil {
-		m[ddlOwnerID] = ddlInfo.Owner.OwnerID
-		// LastUpdateTS uses nanosecond.
-		m[ddlOwnerLastUpdateTS] = ddlInfo.Owner.LastUpdateTS / 1e9
-	}
+	// TODO: Get the owner information.
 	if ddlInfo.Job != nil {
 		m[ddlJobID] = ddlInfo.Job.ID
 		m[ddlJobAction] = ddlInfo.Job.Type.String()
@@ -107,11 +103,7 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 
 	// background DDL info
 	m[bgSchemaVersion] = bgInfo.SchemaVer
-	if bgInfo.Owner != nil {
-		m[bgOwnerID] = bgInfo.Owner.OwnerID
-		// LastUpdateTS uses nanosecond.
-		m[bgOwnerLastUpdateTS] = bgInfo.Owner.LastUpdateTS / 1e9
-	}
+	// TODO: Get the owner information.
 	if bgInfo.Job != nil {
 		m[bgJobID] = bgInfo.Job.ID
 		m[bgJobAction] = bgInfo.Job.Type.String()

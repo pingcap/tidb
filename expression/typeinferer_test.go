@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testkit"
@@ -37,6 +38,7 @@ type testTypeInferrerSuite struct {
 }
 
 func (ts *testTypeInferrerSuite) TestInferType(c *C) {
+	c.Skip("we re-implement this test in plan/typeinfer_test.go")
 	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -104,10 +106,11 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"now() + curtime()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"now() + now()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"now() + now(2)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
-		{"c_double + now()", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + 1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + 1.1", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + '1.1'", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
+		{"c_set + 1", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
+		{"c_enum + 1", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
 		{"1.1 + now()", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"1 + now()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"1 div 2", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -116,13 +119,11 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"1 > any (select 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"exists (select 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"1 in (2, 3)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
-		{"'abc' like 'abc'", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"'abc' rlike 'abc'", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"(1+1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 
 		// Functions
 		{"version()", mysql.TypeVarString, charset.CharsetUTF8, 0},
-		{"count(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs(1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"abs(1.1)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
@@ -179,6 +180,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"yearweek('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"addtime(c_datetime, c_time)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"addtime(c_time, c_time)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
+		{"subtime(c_datetime, c_time)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
+		{"subtime(c_time, c_time)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"length('tidb')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"is_ipv4('192.168.1.1')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -187,6 +190,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"now()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"from_unixtime(1447430881)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"from_unixtime(1447430881, '%Y %D %M %h:%i:%s %x')", mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`from_unixtime(12.1) + 1`, mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"sysdate()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"dayname('2007-02-03')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"version()", mysql.TypeVarString, charset.CharsetUTF8, 0},
@@ -331,6 +335,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`inet6_ntoa(inet6_aton('FE80::AAAA:0000:00C2:0002'))`, mysql.TypeVarString,
 			charset.CharsetUTF8, 0},
 		{`is_ipv4_mapped(c_varbinary)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{`is_ipv4_compat(c_varbinary)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`password("abc")`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`json_type('3')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`json_extract('{"a": 1}', '$.a')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
@@ -339,6 +344,10 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`json_insert('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
 		{`json_replace('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
 		{`json_merge('{"a": 1}', '3')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{"-9223372036854775809", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
+		{"-9223372036854775808", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"--9223372036854775809", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
+		{"--9223372036854775808", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -428,10 +437,11 @@ func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := tikv.NewMockTikvStore()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tidb.SetSchemaLease(0)
 	_, err = tidb.BootstrapSession(store)
 	return store, errors.Trace(err)
 }

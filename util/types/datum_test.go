@@ -14,6 +14,8 @@
 package types
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -184,6 +186,55 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	c.Assert(converted.GetFloat64(), Equals, datum.GetFloat64())
 }
 
+// mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
+func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
+	t, err := ParseTime(s, tp, fsp)
+	if err != nil {
+		panic("ParseTime fail")
+	}
+	d.SetMysqlTime(t)
+	return
+}
+
+func (ts *testDatumSuite) TestToJSON(c *C) {
+	ft := NewFieldType(mysql.TypeJSON)
+	sc := new(variable.StatementContext)
+	tests := []struct {
+		datum    Datum
+		expected string
+		success  bool
+	}{
+		{NewIntDatum(1), `1.0`, true},
+		{NewFloat64Datum(2), `2`, true},
+		{NewStringDatum("\"hello, 世界\""), `"hello, 世界"`, true},
+		{NewStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
+		{NewStringDatum("{}"), `{}`, true},
+		{NewIntDatum(1), `true`, true},
+		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
+
+		// can not parse JSON from this string, so error occurs.
+		{NewStringDatum("hello, 世界"), "", false},
+	}
+	for _, tt := range tests {
+		obtain, err := tt.datum.ConvertTo(sc, ft)
+		if tt.success {
+			c.Assert(err, IsNil)
+
+			sd := NewStringDatum(tt.expected)
+			var expected Datum
+			expected, err = sd.ConvertTo(sc, ft)
+			c.Assert(err, IsNil)
+
+			var cmp int
+			cmp, err = obtain.CompareDatum(sc, expected)
+			c.Assert(err, IsNil)
+			c.Assert(cmp, Equals, 0)
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
 func (ts *testDatumSuite) TestIsNull(c *C) {
 	tests := []struct {
 		data   interface{}
@@ -317,5 +368,207 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 		bin, err := tt.a.ToBytes()
 		c.Assert(err, IsNil)
 		c.Assert(bin, BytesEquals, tt.out)
+	}
+}
+
+func mustParseDurationDatum(str string, fsp int) Datum {
+	dur, err := ParseDuration(str, fsp)
+	if err != nil {
+		panic(err)
+	}
+	return NewDurationDatum(dur)
+}
+
+func mustParseHexDatum(str string) Datum {
+	hex, err := ParseHex(str)
+	if err != nil {
+		panic(err)
+	}
+	var d Datum
+	d.SetMysqlHex(hex)
+	return d
+}
+
+func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
+	sc := &variable.StatementContext{TimeZone: time.UTC}
+	tests := []struct {
+		input  Datum
+		expect Datum
+		hasErr bool
+	}{
+		{NewStringDatum("12.5"), NewFloat64Datum(12.5), false},
+		{NewStringDatum("asdf"), Datum{}, true},
+		{NewBytesDatum([]byte("12.527")), NewFloat64Datum(12.527), false},
+		{mustParseTimeIntoDatum("2017-07-18 17:21:42.321", mysql.TypeTimestamp, 3), NewDatum(NewDecFromStringForTest("20170718172142.321")), false},
+		{mustParseTimeIntoDatum("2017-07-18 17:21:42.32172", mysql.TypeDatetime, 0), NewIntDatum(20170718172142), false},
+		{mustParseDurationDatum("10:10:10", 0), NewIntDatum(101010), false},
+		{mustParseDurationDatum("10:10:10.100", 3), NewDatum(NewDecFromStringForTest("101010.100")), false},
+		{mustParseHexDatum("x'4D7953514C'"), NewFloat64Datum(332747985228), false},
+		{NewDatum(Bit{Value: 1, Width: 8}), NewFloat64Datum(1), false},
+		{NewDatum(Enum{"xxx", 1}), NewFloat64Datum(1), false},
+		{NewDatum(Set{"xxx", 1}), NewFloat64Datum(1), false},
+		{NewIntDatum(5), NewIntDatum(5), false},
+		{NewFloat64Datum(5.5), NewFloat64Datum(5.5), false},
+	}
+
+	for _, tt := range tests {
+		got, err := CoerceArithmetic(sc, tt.input)
+		c.Assert(err != nil, Equals, tt.hasErr)
+		v, err := got.CompareDatum(sc, tt.expect)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, 0, Commentf("got:%#v, expect:%#v", got, tt.expect))
+	}
+}
+
+func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
+	sc := &variable.StatementContext{TimeZone: time.UTC}
+	tests := []struct {
+		a      Datum
+		b      Datum
+		plus   Datum
+		minus  Datum
+		hasErr bool
+	}{
+		{NewIntDatum(72), NewIntDatum(28), NewIntDatum(100), NewIntDatum(44), false},
+		{NewIntDatum(72), NewUintDatum(28), NewIntDatum(100), NewIntDatum(44), false},
+		{NewUintDatum(72), NewUintDatum(28), NewUintDatum(100), NewUintDatum(44), false},
+		{NewUintDatum(72), NewIntDatum(28), NewUintDatum(100), NewUintDatum(44), false},
+		{NewFloat64Datum(72.0), NewFloat64Datum(28.0), NewFloat64Datum(100.0), NewFloat64Datum(44.0), false},
+		{NewDecimalDatum(NewDecFromStringForTest("72.5")), NewDecimalDatum(NewDecFromInt(3)), NewDecimalDatum(NewDecFromStringForTest("75.5")), NewDecimalDatum(NewDecFromStringForTest("69.5")), false},
+		{NewIntDatum(72), NewFloat64Datum(42), Datum{}, Datum{}, true},
+		{NewStringDatum("abcd"), NewIntDatum(42), Datum{}, Datum{}, true},
+	}
+
+	for ith, tt := range tests {
+		got, err := ComputePlus(tt.a, tt.b)
+		c.Assert(err != nil, Equals, tt.hasErr)
+		v, err := got.CompareDatum(sc, tt.plus)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.plus))
+
+		got, err = ComputeMinus(tt.a, tt.b)
+		c.Assert(err != nil, Equals, tt.hasErr)
+		v, err = got.CompareDatum(sc, tt.minus)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.minus))
+	}
+}
+
+func (ts *testDatumSuite) TestComputeMul(c *C) {
+	sc := &variable.StatementContext{TimeZone: time.UTC}
+	tests := []struct {
+		a      Datum
+		b      Datum
+		expect Datum
+		hasErr bool
+	}{
+		{NewIntDatum(72), NewIntDatum(28), NewIntDatum(2016), false},
+		{NewIntDatum(72), NewUintDatum(28), NewIntDatum(2016), false},
+		{NewUintDatum(72), NewUintDatum(28), NewUintDatum(2016), false},
+		{NewUintDatum(72), NewIntDatum(28), NewUintDatum(2016), false},
+		{NewFloat64Datum(72.0), NewFloat64Datum(28.0), NewFloat64Datum(2016.0), false},
+		{NewDecimalDatum(NewDecFromStringForTest("72.5")), NewDecimalDatum(NewDecFromInt(3)), NewDecimalDatum(NewDecFromStringForTest("217.5")), false},
+		{NewIntDatum(72), NewFloat64Datum(42), Datum{}, true},
+		{NewStringDatum("abcd"), NewIntDatum(42), Datum{}, true},
+	}
+
+	for ith, tt := range tests {
+		got, err := ComputeMul(tt.a, tt.b)
+		c.Assert(err != nil, Equals, tt.hasErr)
+		v, err := got.CompareDatum(sc, tt.expect)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
+	}
+}
+
+func (ts *testDatumSuite) TestComputeDiv(c *C) {
+	sc := &variable.StatementContext{TimeZone: time.UTC}
+	tests := []struct {
+		a      Datum
+		b      Datum
+		expect Datum
+		hasErr bool
+	}{
+		{NewFloat64Datum(2016.0), NewFloat64Datum(72.0), NewFloat64Datum(28.0), false},
+		{NewFloat64Datum(2016.0), NewIntDatum(0), Datum{}, false},
+		{NewFloat64Datum(2016.0), NewStringDatum("a4"), Datum{}, true},
+		{NewIntDatum(2016.0), NewIntDatum(28.0), NewDecimalDatum(NewDecFromInt(72)), false},
+		{NewUintDatum(2016), NewUintDatum(28), NewDecimalDatum(NewDecFromInt(72)), false},
+		{NewDecimalDatum(NewDecFromStringForTest("217.5")), NewDecimalDatum(NewDecFromInt(3)), NewDecimalDatum(NewDecFromStringForTest("72.5")), false},
+		{NewIntDatum(72), NewFloat64Datum(42), NewDecimalDatum(NewDecFromStringForTest("1.714285714")), false},
+		{NewIntDatum(72), NewFloat64Datum(0), Datum{}, false}, // Div 0 has no error, but no result.
+		{NewStringDatum("abcd"), NewIntDatum(42), NewDecimalDatum(NewDecFromStringForTest("0")), false},
+		{NewStringDatum("abcd"), NewStringDatum("a4"), Datum{}, true},
+	}
+
+	for ith, tt := range tests {
+		got, err := ComputeDiv(sc, tt.a, tt.b)
+		c.Assert(err != nil, Equals, tt.hasErr)
+		v, err := got.CompareDatum(sc, tt.expect)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
+	}
+}
+
+func (ts *testDatumSuite) TestComputeMod(c *C) {
+	sc := &variable.StatementContext{TimeZone: time.UTC}
+	tests := []struct {
+		a      Datum
+		b      Datum
+		expect Datum
+		hasErr bool
+	}{
+		{NewIntDatum(2018), NewIntDatum(28), NewIntDatum(2), false},
+		{NewIntDatum(2018), NewUintDatum(0), Datum{}, false},
+		{NewIntDatum(2018), NewIntDatum(0), Datum{}, false},
+		{NewIntDatum(2018), NewUintDatum(28), NewIntDatum(2), false},
+		{NewIntDatum(-2018), NewUintDatum(28), NewIntDatum(-2), false},
+		{NewUintDatum(2018), NewUintDatum(28), NewUintDatum(2), false},
+		{NewUintDatum(2018), NewUintDatum(0), Datum{}, false},
+		{NewUintDatum(2018), NewIntDatum(-28), NewIntDatum(2), false},
+		{NewUintDatum(2018), NewIntDatum(28), NewIntDatum(2), false},
+		{NewUintDatum(2018), NewIntDatum(0), Datum{}, false},
+		{NewFloat64Datum(2018.0), NewFloat64Datum(72.0), NewFloat64Datum(2.0), false},
+		{NewDecimalDatum(NewDecFromStringForTest("217.5")), NewDecimalDatum(NewDecFromInt(3)), NewDecimalDatum(NewDecFromStringForTest("1.5")), false},
+		{NewDecimalDatum(NewDecFromStringForTest("217.5")), NewDecimalDatum(NewDecFromInt(0)), Datum{}, false},
+		{NewIntDatum(72), NewFloat64Datum(42), Datum{}, true},
+		{NewStringDatum("abcd"), NewIntDatum(42), Datum{}, true},
+	}
+
+	for ith, tt := range tests {
+		got, err := ComputeMod(sc, tt.a, tt.b)
+		c.Assert(err != nil, Equals, tt.hasErr)
+		v, err := got.CompareDatum(sc, tt.expect)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
+	}
+}
+
+func (ts *testDatumSuite) TestComputeIntDiv(c *C) {
+	sc := &variable.StatementContext{TimeZone: time.UTC}
+	tests := []struct {
+		a      Datum
+		b      Datum
+		expect Datum
+		hasErr bool
+	}{
+		{NewIntDatum(2018), NewIntDatum(28), NewIntDatum(72), false},
+		{NewUintDatum(2018), NewUintDatum(28), NewUintDatum(72), false},
+		{NewUintDatum(2018), NewIntDatum(28), NewUintDatum(72), false},
+		{NewIntDatum(2018), NewUintDatum(28), NewIntDatum(72), false},
+		{NewFloat64Datum(2018.5), NewFloat64Datum(72.0), NewIntDatum(28), false},
+		{NewDecimalDatum(NewDecFromStringForTest("217.5")), NewDecimalDatum(NewDecFromInt(3)), NewIntDatum(72), false},
+		{NewIntDatum(72), NewFloat64Datum(42), NewIntDatum(1), false},
+		{NewStringDatum("abcd"), NewIntDatum(42), Datum{}, true},
+		{NewFloat64Datum(2018.5), NewStringDatum("abcd"), Datum{}, true},
+		{NewFloat64Datum(2018.5), NewIntDatum(0), Datum{}, false},
+	}
+
+	for ith, tt := range tests {
+		got, err := ComputeIntDiv(sc, tt.a, tt.b)
+		c.Assert(err != nil, Equals, tt.hasErr)
+		v, err := got.CompareDatum(sc, tt.expect)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
 	}
 }

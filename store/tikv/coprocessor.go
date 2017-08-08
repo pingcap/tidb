@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -44,7 +45,7 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 			return supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
-		return c.store.mock
+		return true
 	}
 	return false
 }
@@ -65,6 +66,10 @@ func supportExpr(exprType tipb.ExprType) bool {
 	case tipb.ExprType_Case, tipb.ExprType_If:
 		return true
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
+		return true
+	case tipb.ExprType_JsonType, tipb.ExprType_JsonExtract, tipb.ExprType_JsonUnquote,
+		tipb.ExprType_JsonObject, tipb.ExprType_JsonArray, tipb.ExprType_JsonMerge,
+		tipb.ExprType_JsonSet, tipb.ExprType_JsonInsert, tipb.ExprType_JsonReplace, tipb.ExprType_JsonRemove:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -348,7 +353,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		go func() {
-			childCtx, cancel := goctx.WithCancel(ctx)
+			childCtx, cancel := util.WithCancel(ctx)
 			defer cancel()
 			it.work(childCtx, it.taskCh)
 		}()
@@ -356,7 +361,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 
 	go func() {
 		// Send tasks to feed the worker goroutines.
-		childCtx, cancel := goctx.WithCancel(ctx)
+		childCtx, cancel := util.WithCancel(ctx)
 		defer cancel()
 		for _, t := range it.tasks {
 			finished, canceled := it.sendToTaskCh(childCtx, t)
@@ -420,13 +425,16 @@ func (it *copIterator) Next() ([]byte, error) {
 	if resp.err != nil {
 		return nil, errors.Trace(resp.err)
 	}
+	if resp.Data == nil {
+		return []byte{}, nil
+	}
 	return resp.Data, nil
 }
 
 // handleTask handles single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
-	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
+	sender := NewRegionRequestSender(it.store.regionCache, it.store.client, pbIsolationLevel(it.req.IsolationLevel))
 	for {
 		select {
 		case <-it.finished:
@@ -435,7 +443,8 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 		}
 
 		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdCop,
+			Type:     tikvrpc.CmdCop,
+			Priority: kvPriorityToCommandPri(it.req.Priority),
 			Cop: &coprocessor.Request{
 				Tp:     it.req.Tp,
 				Data:   it.req.Data,

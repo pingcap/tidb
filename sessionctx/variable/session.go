@@ -25,12 +25,14 @@ import (
 const (
 	codeCantGetValidID terror.ErrCode = 1
 	codeCantSetToNull  terror.ErrCode = 2
+	codeSnapshotTooOld terror.ErrCode = 3
 )
 
 // Error instances.
 var (
 	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
 	ErrCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
+	ErrSnapshotTooOld = terror.ClassVariable.New(codeSnapshotTooOld, "snapshot is older than GC safe point %s")
 )
 
 // RetryInfo saves retry information.
@@ -98,6 +100,8 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
+	// UsersLock is a lock for user defined variables.
+	UsersLock sync.RWMutex
 	// Users are user defined variables.
 	Users map[string]string
 	// Systems are system variables.
@@ -148,6 +152,9 @@ type SessionVars struct {
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
 
+	// BinlogClient is used to write binlog.
+	BinlogClient interface{}
+
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
@@ -184,6 +191,9 @@ type SessionVars struct {
 	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
 	BuildStatsConcurrencyVar int
 
+	// IndexJoinBatchSize is the batch size of a index lookup join.
+	IndexJoinBatchSize int
+
 	// IndexLookupSize is the number of handles for an index lookup task in index double read executor.
 	IndexLookupSize int
 
@@ -201,6 +211,9 @@ type SessionVars struct {
 
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
+
+	// CBO indicates if we use new planner with cbo.
+	CBO bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -217,11 +230,13 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                    new(StatementContext),
 		AllowAggPushDown:           true,
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
+		IndexJoinBatchSize:         DefIndexJoinBatchSize,
 		IndexLookupSize:            DefIndexLookupSize,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
+		CBO:                        true,
 	}
 }
 
@@ -299,6 +314,7 @@ const (
 	CharacterSetResults = "character_set_results"
 	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
+	TxnIsolation        = "tx_isolation"
 )
 
 // TableDelta stands for the changed count for one table.
@@ -312,9 +328,12 @@ type TableDelta struct {
 type StatementContext struct {
 	// Set the following variables before execution
 
+	InInsertStmt         bool
 	InUpdateOrDeleteStmt bool
+	InSelectStmt         bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
+	OverflowAsWarning    bool
 	InShowWarning        bool
 
 	// mu struct holds variables that change during execution.
@@ -324,6 +343,9 @@ type StatementContext struct {
 		foundRows    uint64
 		warnings     []error
 	}
+
+	// Copied from SessionVars.TimeZone.
+	TimeZone *time.Location
 }
 
 // AddAffectedRows adds affected rows.
@@ -394,6 +416,8 @@ func (sc *StatementContext) AppendWarning(warn error) {
 
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
+	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
+	// We will do that later, and then append WarnDataTruncated instead of the error itself.
 	if err == nil {
 		return nil
 	}
@@ -402,6 +426,19 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	}
 	if sc.TruncateAsWarning {
 		sc.AppendWarning(err)
+		return nil
+	}
+	return err
+}
+
+// HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
+func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
+	if err == nil {
+		return nil
+	}
+
+	if sc.OverflowAsWarning {
+		sc.AppendWarning(warnErr)
 		return nil
 	}
 	return err

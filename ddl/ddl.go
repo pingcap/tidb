@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/twinj/uuid"
@@ -64,8 +65,6 @@ var (
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
 	errKeyColumnDoesNotExits = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
 	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
-	errWrongDBName           = terror.ClassDDL.New(codeWrongDBName, "Incorrect database name '%s'")
-	errWrongTableName        = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
 	errUnknownTypeLength     = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
 	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
@@ -73,6 +72,19 @@ var (
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+
+	// errWrongKeyColumn is for table column cannot be indexed.
+	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
+	// errUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
+	errUnsupportedOnGeneratedColumn = terror.ClassDDL.New(codeUnsupportedOnGeneratedColumn, mysql.MySQLErrName[mysql.ErrUnsupportedOnGeneratedColumn])
+	// errGeneratedColumnNonPrior forbiddens to refer generated column non prior to it.
+	errGeneratedColumnNonPrior = terror.ClassDDL.New(codeGeneratedColumnNonPrior, mysql.MySQLErrName[mysql.ErrGeneratedColumnNonPrior])
+	// errDependentByGeneratedColumn forbiddens to delete columns which are dependent by generated columns.
+	errDependentByGeneratedColumn = terror.ClassDDL.New(codeDependentByGeneratedColumn, mysql.MySQLErrName[mysql.ErrDependentByGeneratedColumn])
+	// errJSONUsedAsKey forbiddens to use JSON as key or index.
+	errJSONUsedAsKey = terror.ClassDDL.New(codeJSONUsedAsKey, mysql.MySQLErrName[mysql.ErrJSONUsedAsKey])
+	// errBlobCantHaveDefault forbiddens to give not null default value to TEXT/BLOB/JSON.
+	errBlobCantHaveDefault = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -98,6 +110,14 @@ var (
 	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
 	// ErrTooLongIdent returns for too long name of database/table/column.
 	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, "Identifier name too long")
+	// ErrWrongDBName returns for wrong database name.
+	ErrWrongDBName = terror.ClassDDL.New(codeWrongDBName, mysql.MySQLErrName[mysql.ErrWrongDBName])
+	// ErrWrongTableName returns for wrong table name.
+	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
+	// ErrWrongColumnName returns for wrong column name.
+	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
+	// ErrWrongNameForIndex returns for wrong index name.
+	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -109,7 +129,7 @@ type DDL interface {
 	CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ident) error
 	DropTable(ctx context.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx context.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
-		columnNames []*ast.IndexColName) error
+		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
 	DropIndex(ctx context.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
@@ -121,7 +141,7 @@ type DDL interface {
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
-	Stats() (map[string]interface{}, error)
+	Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 	// GetScope gets the status variables scope.
 	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
@@ -132,6 +152,10 @@ type DDL interface {
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager, and it's used for testing.
 	OwnerManager() OwnerManager
+	// WorkerVars gets the session variables for DDL worker.
+	WorkerVars() *variable.SessionVars
+	// SetHook sets the hook. It's exported for testing.
+	SetHook(h Callback)
 }
 
 // Event is an event that a ddl operation happened.
@@ -185,6 +209,8 @@ type ddl struct {
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
+
+	workerVars *variable.SessionVars
 }
 
 // RegisterEventCh registers passed channel for ddl Event.
@@ -252,7 +278,9 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		bgJobCh:      make(chan struct{}, 1),
 		ownerManager: manager,
 		schemaSyncer: syncer,
+		workerVars:   variable.NewSessionVars(),
 	}
+	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 
 	d.start(ctx)
 
@@ -267,45 +295,14 @@ func (d *ddl) Stop() error {
 	defer d.m.Unlock()
 
 	d.close()
-
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		owner, err1 := t.GetDDLJobOwner()
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		if owner == nil || owner.OwnerID != d.uuid {
-			return nil
-		}
-
-		// DDL job's owner is me, clean it so other servers can complete it quickly.
-		return t.SetDDLJobOwner(&model.Owner{})
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		owner, err1 := t.GetBgJobOwner()
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		if owner == nil || owner.OwnerID != d.uuid {
-			return nil
-		}
-
-		// Background job's owner is me, clean it so other servers can complete it quickly.
-		return t.SetBgJobOwner(&model.Owner{})
-	})
 	log.Infof("stop DDL:%s", d.uuid)
 
-	return errors.Trace(err)
+	return nil
 }
 
 func (d *ddl) start(ctx goctx.Context) {
 	d.quitCh = make(chan struct{})
-	d.ownerManager.CampaignOwners(ctx, &d.wait)
+	d.ownerManager.CampaignOwners(ctx)
 
 	d.wait.Add(2)
 	go d.onBackgroundWorker()
@@ -323,11 +320,11 @@ func (d *ddl) close() {
 	}
 
 	close(d.quitCh)
+	d.ownerManager.Cancel()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
 		log.Errorf("[ddl] remove self version path failed %v", err)
 	}
-	d.ownerManager.Cancel()
 
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)
@@ -441,12 +438,12 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 			log.Errorf("[ddl] get history DDL job err %v, check again", err)
 			continue
 		} else if historyJob == nil {
-			log.Warnf("[ddl] DDL job %d is not in history, maybe not run", jobID)
+			log.Infof("[ddl] DDL job %d is not in history, maybe not run", jobID)
 			continue
 		}
 
-		// If a job is a history job, the state must be JobDone or JobCancel.
-		if historyJob.State == model.JobDone {
+		// If a job is a history job, the state must be JobSynced or JobCancel.
+		if historyJob.IsSynced() {
 			log.Infof("[ddl] DDL job %d is finished", jobID)
 			return nil
 		}
@@ -463,11 +460,16 @@ func (d *ddl) callHookOnChanged(err error) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) setHook(h Callback) {
+// SetHook implements DDL.SetHook interface.
+func (d *ddl) SetHook(h Callback) {
 	d.hookMu.Lock()
 	defer d.hookMu.Unlock()
 
 	d.hook = h
+}
+
+func (d *ddl) WorkerVars() *variable.SessionVars {
+	return d.workerVars
 }
 
 func filterError(err, exceptErr error) error {
@@ -503,44 +505,60 @@ const (
 	codeUnsupportedCharset          = 205
 	codeUnsupportedModifyPrimaryKey = 206
 
-	codeFileNotFound          = 1017
-	codeErrorOnRename         = 1025
-	codeBadNull               = 1048
-	codeBadField              = 1054
-	codeTooLongIdent          = 1059
-	codeDupKeyName            = 1061
-	codeInvalidDefault        = 1067
-	codeTooLongKey            = 1071
-	codeKeyColumnDoesNotExits = 1072
-	codeIncorrectPrefixKey    = 1089
-	codeCantRemoveAllFields   = 1090
-	codeCantDropFieldOrKey    = 1091
-	codeWrongDBName           = 1102
-	codeWrongTableName        = 1103
-	codeInvalidUseOfNull      = 1138
-	codeBlobKeyWithoutLength  = 1170
-	codeInvalidOnUpdate       = 1294
+	codeFileNotFound                 = 1017
+	codeErrorOnRename                = 1025
+	codeBadNull                      = 1048
+	codeBadField                     = 1054
+	codeTooLongIdent                 = 1059
+	codeDupKeyName                   = 1061
+	codeInvalidDefault               = 1067
+	codeTooLongKey                   = 1071
+	codeKeyColumnDoesNotExits        = 1072
+	codeIncorrectPrefixKey           = 1089
+	codeCantRemoveAllFields          = 1090
+	codeCantDropFieldOrKey           = 1091
+	codeBlobCantHaveDefault          = 1101
+	codeWrongDBName                  = 1102
+	codeWrongTableName               = 1103
+	codeInvalidUseOfNull             = 1138
+	codeWrongColumnName              = 1166
+	codeWrongKeyColumn               = 1167
+	codeBlobKeyWithoutLength         = 1170
+	codeInvalidOnUpdate              = 1294
+	codeUnsupportedOnGeneratedColumn = 3106
+	codeGeneratedColumnNonPrior      = 3107
+	codeDependentByGeneratedColumn   = 3108
+	codeJSONUsedAsKey                = 3152
+	codeWrongNameForIndex            = terror.ErrCode(mysql.ErrWrongNameForIndex)
 )
 
 func init() {
 	ddlMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeBadNull:               mysql.ErrBadNull,
-		codeCantRemoveAllFields:   mysql.ErrCantRemoveAllFields,
-		codeCantDropFieldOrKey:    mysql.ErrCantDropFieldOrKey,
-		codeInvalidOnUpdate:       mysql.ErrInvalidOnUpdate,
-		codeBlobKeyWithoutLength:  mysql.ErrBlobKeyWithoutLength,
-		codeIncorrectPrefixKey:    mysql.ErrWrongSubKey,
-		codeTooLongIdent:          mysql.ErrTooLongIdent,
-		codeTooLongKey:            mysql.ErrTooLongKey,
-		codeKeyColumnDoesNotExits: mysql.ErrKeyColumnDoesNotExits,
-		codeDupKeyName:            mysql.ErrDupKeyName,
-		codeWrongDBName:           mysql.ErrWrongDBName,
-		codeWrongTableName:        mysql.ErrWrongTableName,
-		codeFileNotFound:          mysql.ErrFileNotFound,
-		codeErrorOnRename:         mysql.ErrErrorOnRename,
-		codeBadField:              mysql.ErrBadField,
-		codeInvalidDefault:        mysql.ErrInvalidDefault,
-		codeInvalidUseOfNull:      mysql.ErrInvalidUseOfNull,
+		codeBadNull:                      mysql.ErrBadNull,
+		codeCantRemoveAllFields:          mysql.ErrCantRemoveAllFields,
+		codeCantDropFieldOrKey:           mysql.ErrCantDropFieldOrKey,
+		codeInvalidOnUpdate:              mysql.ErrInvalidOnUpdate,
+		codeBlobKeyWithoutLength:         mysql.ErrBlobKeyWithoutLength,
+		codeIncorrectPrefixKey:           mysql.ErrWrongSubKey,
+		codeTooLongIdent:                 mysql.ErrTooLongIdent,
+		codeTooLongKey:                   mysql.ErrTooLongKey,
+		codeKeyColumnDoesNotExits:        mysql.ErrKeyColumnDoesNotExits,
+		codeDupKeyName:                   mysql.ErrDupKeyName,
+		codeWrongDBName:                  mysql.ErrWrongDBName,
+		codeWrongTableName:               mysql.ErrWrongTableName,
+		codeFileNotFound:                 mysql.ErrFileNotFound,
+		codeErrorOnRename:                mysql.ErrErrorOnRename,
+		codeBadField:                     mysql.ErrBadField,
+		codeInvalidDefault:               mysql.ErrInvalidDefault,
+		codeInvalidUseOfNull:             mysql.ErrInvalidUseOfNull,
+		codeUnsupportedOnGeneratedColumn: mysql.ErrUnsupportedOnGeneratedColumn,
+		codeGeneratedColumnNonPrior:      mysql.ErrGeneratedColumnNonPrior,
+		codeDependentByGeneratedColumn:   mysql.ErrDependentByGeneratedColumn,
+		codeJSONUsedAsKey:                mysql.ErrJSONUsedAsKey,
+		codeBlobCantHaveDefault:          mysql.ErrBlobCantHaveDefault,
+		codeWrongColumnName:              mysql.ErrWrongColumnName,
+		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
+		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

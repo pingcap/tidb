@@ -19,6 +19,7 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -36,12 +37,13 @@ type executor interface {
 
 type tableScanExec struct {
 	*tipb.TableScan
-	colIDs    map[int64]int
-	kvRanges  []kv.KeyRange
-	startTS   uint64
-	mvccStore *MvccStore
-	cursor    int
-	seekKey   []byte
+	colIDs         map[int64]int
+	kvRanges       []kv.KeyRange
+	startTS        uint64
+	isolationLevel kvrpcpb.IsolationLevel
+	mvccStore      MVCCStore
+	cursor         int
+	seekKey        []byte
 
 	src executor
 }
@@ -79,7 +81,7 @@ func (e *tableScanExec) Next() (handle int64, value [][]byte, err error) {
 }
 
 func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error) {
-	val, err := e.mvccStore.Get(ran.StartKey, e.startTS)
+	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel)
 	if len(val) == 0 {
 		return 0, nil, nil
 	} else if err != nil {
@@ -107,9 +109,9 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	var pairs []Pair
 	var pair Pair
 	if e.Desc {
-		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS)
+		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS, e.isolationLevel)
 	} else {
-		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS)
+		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS, e.isolationLevel)
 	}
 	if len(pairs) > 0 {
 		pair = pairs[0]
@@ -146,13 +148,14 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 
 type indexScanExec struct {
 	*tipb.IndexScan
-	colsLen   int
-	kvRanges  []kv.KeyRange
-	startTS   uint64
-	mvccStore *MvccStore
-	cursor    int
-	seekKey   []byte
-	pkCol     *tipb.ColumnInfo
+	colsLen        int
+	kvRanges       []kv.KeyRange
+	startTS        uint64
+	isolationLevel kvrpcpb.IsolationLevel
+	mvccStore      MVCCStore
+	cursor         int
+	seekKey        []byte
+	pkCol          *tipb.ColumnInfo
 
 	src executor
 }
@@ -190,9 +193,9 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	var pairs []Pair
 	var pair Pair
 	if e.Desc {
-		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS)
+		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS, e.isolationLevel)
 	} else {
-		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS)
+		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS, e.isolationLevel)
 	}
 	if len(pairs) > 0 {
 		pair = pairs[0]
@@ -318,6 +321,7 @@ type aggregateExec struct {
 	row               []types.Datum
 	groups            map[string]struct{}
 	groupKeys         [][]byte
+	groupKeyRows      [][][]byte
 	executed          bool
 	currGroupIdx      int
 
@@ -361,13 +365,7 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 		return 0, nil, nil
 	}
 	gk := e.groupKeys[e.currGroupIdx]
-	gkData, err := codec.EncodeValue(nil, types.NewBytesDatum(gk))
-	if err != nil {
-		return 0, nil, errors.Trace(err)
-	}
-	value = make([][]byte, 0, 1+2*len(e.aggExprs))
-	// The first column is group key.
-	value = append(value, gkData)
+	value = make([][]byte, 0, len(e.groupByExprs)+2*len(e.aggExprs))
 	for _, agg := range e.aggExprs {
 		partialResults := agg.GetPartialResult(gk)
 		for _, result := range partialResults {
@@ -378,26 +376,38 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 			value = append(value, data)
 		}
 	}
+	value = append(value, e.groupKeyRows[e.currGroupIdx]...)
 	e.currGroupIdx++
 
 	return 0, value, nil
 }
 
-func (e *aggregateExec) getGroupKey() ([]byte, error) {
+func (e *aggregateExec) getGroupKey() ([]byte, [][]byte, error) {
 	length := len(e.groupByExprs)
 	if length == 0 {
-		return []byte{}, nil
+		return nil, nil, nil
 	}
-	vals := make([]types.Datum, 0, len(e.groupByExprs))
+	bufLen := 0
+	vals := make([]types.Datum, 0, length)
+	row := make([][]byte, 0, length)
 	for _, item := range e.groupByExprs {
 		v, err := item.Eval(e.row)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		vals = append(vals, v)
+		b, err := codec.EncodeValue(nil, v)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		bufLen += len(b)
+		row = append(row, b)
 	}
-	buf, err := codec.EncodeValue(nil, vals...)
-	return buf, errors.Trace(err)
+	buf := make([]byte, 0, bufLen)
+	for _, col := range row {
+		buf = append(buf, col...)
+	}
+	return buf, row, nil
 }
 
 // aggregate updates aggregate functions with row.
@@ -407,13 +417,14 @@ func (e *aggregateExec) aggregate(value [][]byte) error {
 		return errors.Trace(err)
 	}
 	// Get group key.
-	gk, err := e.getGroupKey()
+	gk, gbyKeyRow, err := e.getGroupKey()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if _, ok := e.groups[string(gk)]; !ok {
 		e.groups[string(gk)] = struct{}{}
 		e.groupKeys = append(e.groupKeys, gk)
+		e.groupKeyRows = append(e.groupKeyRows, gbyKeyRow)
 	}
 	// Update aggregate expressions.
 	for _, agg := range e.aggExprs {
@@ -423,7 +434,7 @@ func (e *aggregateExec) aggregate(value [][]byte) error {
 }
 
 type topNExec struct {
-	heap              *topnHeap
+	heap              *topNHeap
 	evalCtx           *evalContext
 	relatedColOffsets []int
 	orderByExprs      []expression.Expression
@@ -469,7 +480,7 @@ func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
 	if e.cursor >= len(e.heap.rows) {
 		return 0, nil, nil
 	}
-	sort.Sort(&e.heap.topnSorter)
+	sort.Sort(&e.heap.topNSorter)
 	row := e.heap.rows[e.cursor]
 	e.cursor++
 

@@ -160,6 +160,33 @@ func (s *testSuite) TestInsert(c *C) {
 	r = tk.MustQuery("select length(c) from t;")
 	r.Check(testkit.Rows("1"))
 
+	// issue 3509
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c int)")
+	tk.MustExec("set @origin_time_zone = @@time_zone")
+	tk.MustExec("set @@time_zone = '+08:00'")
+	_, err = tk.Exec("insert into t value(Unix_timestamp('2002-10-27 01:00'))")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows("1035651600"))
+	tk.MustExec("set @@time_zone = @origin_time_zone")
+
+	// issue 3832
+	tk.MustExec("create table t1 (b char(0));")
+	_, err = tk.Exec(`insert into t1 values ("");`)
+	c.Assert(err, IsNil)
+
+	// issue 3895
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
+	tk.MustExec("INSERT INTO t VALUES (1.000001);")
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	tk.MustExec("INSERT INTO t VALUES (1.000000);")
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
@@ -247,6 +274,56 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	r = tk.MustQuery("select * from insert_autoinc_test;")
 	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
+
+	// SQL_MODE=NO_AUTO_VALUE_ON_ZERO
+	createSQL = `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
+	tk.MustExec(createSQL)
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (5, 1)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr1 = fmt.Sprintf("%v %v", "5", "1")
+	r.Check(testkit.Rows(rowStr1))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0, 2)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr2 = fmt.Sprintf("%v %v", "6", "2")
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0, 3)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr3 = fmt.Sprintf("%v %v", "7", "3")
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	tk.MustExec("set SQL_MODE=NO_AUTO_VALUE_ON_ZERO")
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0, 4)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr4 = fmt.Sprintf("%v %v", "0", "4")
+	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0, 5)`
+	_, err := tk.Exec(insertSQL)
+	// ERROR 1062 (23000): Duplicate entry '0' for key 'PRIMARY'
+	c.Assert(err, NotNil)
+	insertSQL = `insert into insert_autoinc_test(c1) values (6)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr5 = fmt.Sprintf("%v %v", "8", "6")
+	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3, rowStr5))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (null, 7)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr6 = fmt.Sprintf("%v %v", "9", "7")
+	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3, rowStr5, rowStr6))
+	tk.MustExec("set SQL_MODE='';")
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0, 8)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr7 := fmt.Sprintf("%v %v", "10", "8")
+	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3, rowStr5, rowStr6, rowStr7))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (null, 9)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr8 := fmt.Sprintf("%v %v", "11", "9")
+	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3, rowStr5, rowStr6, rowStr7, rowStr8))
 }
 
 func (s *testSuite) TestInsertIgnore(c *C) {
@@ -532,6 +609,15 @@ func (s *testSuite) TestMultipleTableUpdate(c *C) {
 
 	r = tk.MustQuery("select * from t1")
 	r.Check(testkit.Rows("10", "10"))
+
+	// test https://github.com/pingcap/tidb/issues/3604
+	tk.MustExec("drop table if exists t, t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
+	tk.MustExec("update t m, t n set m.a = m.a + 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1", "3 2", "4 3"))
+	tk.MustExec("update t m, t n set n.a = n.a - 1, n.b = n.b + 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "2 3", "3 4"))
 }
 
 func (s *testSuite) TestDelete(c *C) {
@@ -935,4 +1021,69 @@ func (s *testSuite) TestBatchInsert(c *C) {
 	tk.MustExec("rollback;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+}
+
+func (s *testSuite) TestNullDefault(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists test_null_default;")
+	tk.MustExec("set timestamp = 1234")
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustExec("create table test_null_default (ts timestamp null default current_timestamp)")
+	tk.MustExec("insert into test_null_default values (null)")
+	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into test_null_default values ()")
+	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
+}
+
+func (s *testSuite) TestGetFieldsFromLine(c *C) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{
+			`"1","a string","100.20"`,
+			[]string{"1", "a string", "100.20"},
+		},
+		{
+			`"2","a string containing a , comma","102.20"`,
+			[]string{"2", "a string containing a , comma", "102.20"},
+		},
+		{
+			`"3","a string containing a \" quote","102.20"`,
+			[]string{"3", "a string containing a \" quote", "102.20"},
+		},
+		{
+			`"4","a string containing a \", quote and comma","102.20"`,
+			[]string{"4", "a string containing a \", quote and comma", "102.20"},
+		},
+		// Test some escape char.
+		{
+			`"\0\b\n\r\t\Z\\\  \c\'\""`,
+			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
+		},
+	}
+	fieldsInfo := &ast.FieldsClause{
+		Enclosed:   '"',
+		Terminated: ",",
+	}
+
+	for _, test := range tests {
+		got, err := executor.GetFieldsFromLine([]byte(test.input), fieldsInfo)
+		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
+		assertEqualStrings(c, got, test.expected)
+	}
+
+	_, err := executor.GetFieldsFromLine([]byte(`1,a string,100.20`), fieldsInfo)
+	c.Assert(err, NotNil)
+}
+
+func assertEqualStrings(c *C, got []string, expect []string) {
+	c.Assert(len(got), Equals, len(expect))
+	for i := 0; i < len(got); i++ {
+		c.Assert(got[i], Equals, expect[i])
+	}
 }

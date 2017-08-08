@@ -119,6 +119,7 @@ func init() {
 	initTokenString("<>", neqSynonym)
 	initTokenString("<<", lsh)
 	initTokenString(">>", rsh)
+	initTokenString("\\N", null)
 
 	initTokenFunc("@", startWithAt)
 	initTokenFunc("/", startWithSlash)
@@ -146,6 +147,7 @@ var tokenMap = map[string]int{
 	"AFTER":                      after,
 	"ALL":                        all,
 	"ALTER":                      alter,
+	"ALWAYS":                     always,
 	"ANALYZE":                    analyze,
 	"AND":                        and,
 	"ANY":                        any,
@@ -229,8 +231,10 @@ var tokenMap = map[string]int{
 	"DESCRIBE":                   describe,
 	"DISABLE":                    disable,
 	"DISTINCT":                   distinct,
+	"DISTINCTROW":                distinctRow,
 	"TIDB_SMJ":                   tidbSMJ,
 	"TIDB_INLJ":                  tidbINLJ,
+	"TIDB_VERSION":               tidbVersion,
 	"DIV":                        div,
 	"DO":                         do,
 	"DROP":                       drop,
@@ -275,6 +279,7 @@ var tokenMap = map[string]int{
 	"FUNCTION":                   function,
 	"FLOOR":                      floor,
 	"FLUSH":                      flush,
+	"GENERATED":                  generated,
 	"GET_FORMAT":                 getFormat,
 	"GET_LOCK":                   getLock,
 	"GLOBAL":                     global,
@@ -426,8 +431,13 @@ var tokenMap = map[string]int{
 	"SQRT":                       sqrt,
 	"START":                      start,
 	"STARTING":                   starting,
+	"STATS":                      stats,
+	"STATS_BUCKETS":              statsBuckets,
+	"STATS_HISTOGRAMS":           statsHistograms,
+	"STATS_META":                 statsMeta,
 	"STATS_PERSISTENT":           statsPersistent,
 	"STATUS":                     status,
+	"STORED":                     stored,
 	"SUBDATE":                    subDate,
 	"SUBTIME":                    subTime,
 	"STRCMP":                     strcmp,
@@ -480,6 +490,7 @@ var tokenMap = map[string]int{
 	"VARIABLES":                  variables,
 	"VERSION":                    version,
 	"VIEW":                       view,
+	"VIRTUAL":                    virtual,
 	"WARNINGS":                   warnings,
 	"WEEK":                       week,
 	"WEEKDAY":                    weekday,
@@ -538,7 +549,10 @@ var tokenMap = map[string]int{
 	"JSON_SET":                   jsonSet,
 	"JSON_INSERT":                jsonInsert,
 	"JSON_REPLACE":               jsonReplace,
+	"JSON_REMOVE":                jsonRemove,
 	"JSON_MERGE":                 jsonMerge,
+	"JSON_OBJECT":                jsonObject,
+	"JSON_ARRAY":                 jsonArray,
 	"SECOND_MICROSECOND":         secondMicrosecond,
 	"MINUTE_MICROSECOND":         minuteMicrosecond,
 	"MINUTE_SECOND":              minuteSecond,
@@ -602,6 +616,7 @@ var tokenMap = map[string]int{
 	"UUID":                       uuid,
 	"UUID_SHORT":                 uuidShort,
 	"KILL":                       kill,
+	"NATURAL":                    natural,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {

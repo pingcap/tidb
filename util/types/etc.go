@@ -62,6 +62,21 @@ func IsTypeFractionable(tp byte) bool {
 	return tp == mysql.TypeDatetime || tp == mysql.TypeDuration || tp == mysql.TypeTimestamp
 }
 
+// IsTypeTime returns a boolean indicating
+// whether the tp is time type like datetime, date or timestamp.
+func IsTypeTime(tp byte) bool {
+	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeNewDate || tp == mysql.TypeTimestamp
+}
+
+// IsBinaryStr returns a boolean indicating
+// whether the field type is a binary string type.
+func IsBinaryStr(ft *FieldType) bool {
+	if ft.Collate == charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp)) {
+		return true
+	}
+	return false
+}
+
 var type2Str = map[byte]string{
 	mysql.TypeBit:        "bit",
 	mysql.TypeBlob:       "text",
@@ -133,4 +148,14 @@ func InvOp2(x, y interface{}, o opcode.Op) (interface{}, error) {
 // overflow returns an overflowed error.
 func overflow(v interface{}, tp byte) error {
 	return ErrOverflow.Gen("constant %v overflows %s", v, TypeStr(tp))
+}
+
+// IsTypeTemporal checks if a type is a temporal type.
+func IsTypeTemporal(tp byte) bool {
+	switch tp {
+	case mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp,
+		mysql.TypeDate, mysql.TypeNewDate:
+		return true
+	}
+	return false
 }

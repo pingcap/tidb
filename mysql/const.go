@@ -17,7 +17,7 @@ import (
 	"strings"
 )
 
-// Version informations.
+// Version information.
 const (
 	MinProtocolVersion byte = 10
 	MaxPayloadLen      int  = 1<<24 - 1
@@ -26,7 +26,7 @@ const (
 	ServerVersion string = "5.7.1-TiDB-1.0"
 )
 
-// Header informations.
+// Header information.
 const (
 	OKHeader          byte = 0x00
 	ErrHeader         byte = 0xff
@@ -34,7 +34,7 @@ const (
 	LocalInFileHeader byte = 0xfb
 )
 
-// Server informations.
+// Server information.
 const (
 	ServerStatusInTrans            uint16 = 0x0001
 	ServerStatusAutocommit         uint16 = 0x0002
@@ -57,7 +57,7 @@ const (
 	MaxColumnNameLength   int = 64
 )
 
-// Command informations.
+// Command information.
 const (
 	ComSleep byte = iota
 	ComQuit
@@ -93,7 +93,7 @@ const (
 	ComResetConnection
 )
 
-// Client informations.
+// Client information.
 const (
 	ClientLongPassword uint32 = 1 << iota
 	ClientFoundRows
@@ -119,12 +119,12 @@ const (
 	ClientPluginAuthLenencClientData
 )
 
-// Cache type informations.
+// Cache type information.
 const (
 	TypeNoCache byte = 0xff
 )
 
-// Auth name informations.
+// Auth name information.
 const (
 	AuthName = "mysql_native_password"
 )
@@ -192,6 +192,41 @@ const (
 
 // AllPrivMask is the mask for PrivilegeType with all bits set to 1.
 const AllPrivMask = AllPriv - 1
+
+// MySQL type maximum length.
+const (
+	// For arguments that have no fixed number of decimals, the decimals value is set to 31,
+	// which is 1 more than the maximum number of decimals permitted for the DECIMAL, FLOAT, and DOUBLE data types.
+	NotFixedDec = 31
+
+	MaxIntWidth             = 20
+	MaxRealWidth            = 23
+	MaxDecimalWidth         = 65
+	MaxDateWidth            = 10 // YYYY-MM-DD.
+	MaxDatetimeWidthNoFsp   = 19 // YYYY-MM-DD HH:MM:SS
+	MaxDatetimeWidthWithFsp = 26 // YYYY-MM-DD HH:MM:SS[.fraction]
+	MaxDurationWidthNoFsp   = 9  // HH:MM:SS
+	MaxDurationWidthWithFsp = 15 // HH:MM:SS[.fraction]
+	MaxBlobWidth            = 16777216
+)
+
+// MySQL max type field length.
+const (
+	MaxFieldCharLength    = 255
+	MaxFieldVarCharLength = 65535
+)
+
+// MySQL precision.
+const (
+	PrecisionForDouble = 53
+	PrecisionForFloat  = 24
+)
+
+// MaxTypeSetMembers is the number of set members.
+const MaxTypeSetMembers = 64
+
+// PWDHashLen is the length of password's hash.
+const PWDHashLen = 40
 
 // Priv2UserCol is the privilege to mysql.user table column name.
 var Priv2UserCol = map[PrivilegeType]string{
@@ -436,3 +471,20 @@ var locale2FormatFunction = map[string]FormatFunc{
 	"en_US": formatENUS,
 	"zh_CN": formatZHCN,
 }
+
+// PriorityEnum is defined for Priority const values.
+type PriorityEnum int
+
+// Priority const values.
+// See https://dev.mysql.com/doc/refman/5.7/en/insert.html
+const (
+	NoPriority PriorityEnum = iota
+	LowPriority
+	HighPriority
+	DelayedPriority
+)
+
+// PrimaryKeyName defines primary key name.
+const (
+	PrimaryKeyName = "PRIMARY"
+)

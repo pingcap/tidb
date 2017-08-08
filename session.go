@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
@@ -57,10 +58,10 @@ import (
 type Session interface {
 	context.Context
 	Status() uint16                              // Flag of current status, such as autocommit.
-	LastInsertID() uint64                        // Last inserted auto_increment id.
+	LastInsertID() uint64                        // LastInsertID is the last inserted auto_increment ID.
 	AffectedRows() uint64                        // Affected rows by latest executed stmt.
 	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement.
-	String() string                              // For debug
+	String() string                              // String is used to debug.
 	CommitTxn() error
 	RollbackTxn() error
 	// PrepareStmt executes prepare statement in binary protocol.
@@ -76,6 +77,8 @@ type Session interface {
 	// Cancel the execution of current transaction.
 	Cancel()
 	ShowProcess() util.ProcessInfo
+	// PrePareTxnCtx is exported for test.
+	PrepareTxnCtx()
 }
 
 var (
@@ -109,7 +112,6 @@ type session struct {
 	processInfo atomic.Value
 	txn         kv.Transaction // current transaction
 	txnFuture   *txnFuture
-	txnFutureCh chan *txnFuture
 	// goCtx is used for cancelling the execution of current transaction.
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
@@ -189,7 +191,8 @@ func (s *session) GetSessionManager() util.SessionManager {
 
 type schemaLeaseChecker struct {
 	domain.SchemaValidator
-	schemaVer int64
+	schemaVer       int64
+	relatedTableIDs []int64
 }
 
 const (
@@ -217,10 +220,15 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 func (s *schemaLeaseChecker) checkOnce(txnTS uint64) error {
 	succ := s.SchemaValidator.Check(txnTS, s.schemaVer)
 	if !succ {
-		if s.SchemaValidator.Latest() > s.schemaVer {
+		isChanged, err := s.SchemaValidator.IsRelatedTablesChanged(txnTS, s.schemaVer, s.relatedTableIDs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isChanged {
 			return domain.ErrInfoSchemaChanged
 		}
-		return domain.ErrInfoSchemaExpired
+		log.Infof("schema checker txnTS %d ver %d doesn't change related tables %v",
+			txnTS, s.schemaVer, s.relatedTableIDs)
 	}
 	return nil
 }
@@ -233,25 +241,35 @@ func (s *session) doCommit() error {
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
-	if binloginfo.PumpClient != nil {
+	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
 			prewriteData, err := prewriteValue.Marshal()
 			if err != nil {
 				return errors.Trace(err)
 			}
-			bin := &binlog.Binlog{
-				Tp:            binlog.BinlogType_Prewrite,
-				PrewriteValue: prewriteData,
+			info := &binloginfo.BinlogInfo{
+				Data: &binlog.Binlog{
+					Tp:            binlog.BinlogType_Prewrite,
+					PrewriteValue: prewriteData,
+				},
+				Client: s.sessionVars.BinlogClient.(binlog.PumpClient),
 			}
-			s.txn.SetOption(kv.BinlogData, bin)
+			s.txn.SetOption(kv.BinlogInfo, info)
 		}
 	}
 
+	// Get the related table IDs.
+	relatedTables := s.GetSessionVars().TxnCtx.TableDeltaMap
+	tableIDs := make([]int64, 0, len(relatedTables))
+	for id := range relatedTables {
+		tableIDs = append(tableIDs, id)
+	}
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
 		SchemaValidator: sessionctx.GetDomain(s).SchemaValidator,
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
+		relatedTableIDs: tableIDs,
 	})
 	if err := s.txn.Commit(); err != nil {
 		return errors.Trace(err)
@@ -316,7 +334,7 @@ func (s *session) String() string {
 		"id":         sessVars.ConnectionID,
 		"user":       sessVars.User,
 		"currDBName": sessVars.CurrentDB,
-		"stauts":     sessVars.Status,
+		"status":     sessVars.Status,
 		"strictMode": sessVars.StrictSQLMode,
 	}
 	if s.txn != nil {
@@ -338,7 +356,13 @@ func (s *session) String() string {
 
 const sqlLogMaxLen = 1024
 
+// SchemaChangedWithoutRetry is used for testing.
+var SchemaChangedWithoutRetry bool
+
 func (s *session) isRetryableError(err error) bool {
+	if SchemaChangedWithoutRetry {
+		return kv.IsRetryableError(err)
+	}
 	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
 }
 
@@ -358,7 +382,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 	nh := getHistory(s)
 	var err error
 	for {
-		s.prepareTxnCtx()
+		s.PrepareTxnCtx()
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
@@ -402,6 +426,8 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		}
 		log.Warnf("[%d] retryable error: %v, txn: %v", connID, err, s.txn)
 		kv.BackOff(retryCnt)
+		s.txn = nil
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}
 	return err
 }
@@ -580,7 +606,7 @@ func (s *session) SetProcessInfo(sql string) {
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
-	s.prepareTxnCtx()
+	s.PrepareTxnCtx()
 	startTS := time.Now()
 
 	charset, collation := s.sessionVars.GetCharsetInfo()
@@ -595,9 +621,9 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	var rs []ast.RecordSet
 	ph := sessionctx.GetDomain(s).PerfSchema()
 	for i, rst := range rawStmts {
-		s.prepareTxnCtx()
+		s.PrepareTxnCtx()
 		startTS := time.Now()
-		// Some execution is done in compile stage, so we reset it before compile.
+		// Some executions are done in compile stage, so we reset them before compile.
 		executor.ResetStmtCtx(s, rst)
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
@@ -623,6 +649,8 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		if r != nil {
 			rs = append(rs, r)
 		}
+
+		logCrucialStmt(rst)
 	}
 
 	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(rs) > 1 {
@@ -699,7 +727,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s.prepareTxnCtx()
+	s.PrepareTxnCtx()
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 
 	r, err := runStmt(s, st)
@@ -790,9 +818,6 @@ func (s *session) ClearValue(key fmt.Stringer) {
 
 // Close function does some clean work when session end.
 func (s *session) Close() {
-	if s.txnFutureCh != nil {
-		close(s.txnFutureCh)
-	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
@@ -962,13 +987,13 @@ func createSession(store kv.Storage) (*session, error) {
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
-
+	s.sessionVars.BinlogClient = binloginfo.GetPumpClient()
 	return s, nil
 }
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 12
+	currentBootstrapVersion = 14
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1019,11 +1044,12 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.MaxAllowedPacket + quoteCommaQuote +
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check + quoteCommaQuote +
-	variable.TiDBSkipDDLWait + quoteCommaQuote +
+	variable.TiDBIndexJoinBatchSize + quoteCommaQuote +
 	variable.TiDBIndexLookupSize + quoteCommaQuote +
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxRowCountForINLJ + quoteCommaQuote +
+	variable.TiDBCBO + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
@@ -1056,35 +1082,29 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	sync.WaitGroup
-	txn kv.Transaction
-	err error
+	future oracle.Future
+	store  kv.Storage
+}
+
+func (tf *txnFuture) wait() (kv.Transaction, error) {
+	startTS, err := tf.future.Wait()
+	if err == nil {
+		return tf.store.BeginWithStartTS(startTS)
+	}
+
+	// It would retry get timestamp.
+	return tf.store.Begin()
 }
 
 func (s *session) getTxnFuture() *txnFuture {
-	if s.txnFutureCh == nil {
-		s.txnFutureCh = make(chan *txnFuture, 1)
-		go asyncGetTSWorker(s.store, s.txnFutureCh)
-	}
-
-	future := &txnFuture{}
-	future.Add(1)
-	s.txnFutureCh <- future
-	return future
+	oracle := s.store.GetOracle()
+	tsFuture := oracle.GetTimestampAsync(s.goCtx)
+	return &txnFuture{tsFuture, s.store}
 }
 
-func asyncGetTSWorker(store kv.Storage, ch chan *txnFuture) {
-	for future := range ch {
-		txn, err := store.Begin()
-		future.txn = txn
-		future.err = err
-		future.Done()
-	}
-}
-
-// prepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
+// PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
 // It is called before we execute a sql query.
-func (s *session) prepareTxnCtx() {
+func (s *session) PrepareTxnCtx() {
 	if s.txn != nil && s.txn.Valid() {
 		return
 	}
@@ -1092,9 +1112,8 @@ func (s *session) prepareTxnCtx() {
 		return
 	}
 
-	txnFuture := s.getTxnFuture()
-	goCtx, cancelFunc := goctx.WithCancel(goctx.Background())
-	s.txnFuture, s.goCtx, s.cancelFunc = txnFuture, goCtx, cancelFunc
+	s.goCtx, s.cancelFunc = util.WithCancel(goctx.Background())
+	s.txnFuture = s.getTxnFuture()
 	is := sessionctx.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -1124,15 +1143,18 @@ func (s *session) ActivePendingTxn() error {
 	}
 	future := s.txnFuture
 	s.txnFuture = nil
-	future.Wait()
-	if future.err != nil {
-		return errors.Trace(future.err)
-	}
-	s.txn = future.txn
-	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	err := s.loadCommonGlobalVariablesIfNeeded()
+	txn, err := future.wait()
 	if err != nil {
 		return errors.Trace(err)
+	}
+	s.txn = txn
+	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
+	err = s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if s.sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
+		txn.SetOption(kv.IsolationLevel, kv.RC)
 	}
 	return nil
 }
@@ -1166,4 +1188,32 @@ func (s *session) ShowProcess() util.ProcessInfo {
 		pi = tmp.(util.ProcessInfo)
 	}
 	return pi
+}
+
+// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD etc.
+func logCrucialStmt(node ast.StmtNode) {
+	switch stmt := node.(type) {
+	case *ast.CreateUserStmt:
+		for _, user := range stmt.Specs {
+			log.Infof("[CRUCIAL OPERATION] create user %s.", user.SecurityString())
+		}
+	case *ast.DropUserStmt:
+		log.Infof("[CRUCIAL OPERATION] drop user %v.", stmt.UserList)
+	case *ast.AlterUserStmt:
+		for _, user := range stmt.Specs {
+			log.Infof("[CRUCIAL OPERATION] alter user %s.", user.SecurityString())
+		}
+	case *ast.SetPwdStmt:
+		log.Infof("[CRUCIAL OPERATION] set password for user %s.", stmt.User)
+	case *ast.GrantStmt:
+		text := stmt.Text()
+		// Filter "identified by xxx" because it would expose password information.
+		idx := strings.Index(strings.ToLower(text), "identified")
+		if idx > 0 {
+			text = text[:idx]
+		}
+		log.Infof("[CRUCIAL OPERATION] %s.", text)
+	case *ast.RevokeStmt:
+		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
+	}
 }

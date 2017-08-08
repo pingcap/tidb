@@ -14,6 +14,7 @@
 package kv
 
 import (
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	goctx "golang.org/x/net/context"
 )
 
@@ -27,12 +28,33 @@ const (
 	// PresumeKeyNotExistsError is the option key for error.
 	// When PresumeKeyNotExists is set and condition is not match, should throw the error.
 	PresumeKeyNotExistsError
-	// BinlogData is the binlog data to write.
-	BinlogData
+	// BinlogInfo contains the binlog data and client.
+	BinlogInfo
 	// Skip existing check when "prewrite".
 	SkipCheckForWrite
 	// SchemaLeaseChecker is used for schema lease check.
 	SchemaLeaseChecker
+	// IsolationLevel sets isolation level for current transaction. The default level is SI.
+	IsolationLevel
+	// Priority marks the priority of this transaction.
+	Priority
+)
+
+// Priority value for transaction priority.
+const (
+	PriorityNormal int = iota
+	PriorityLow
+	PriorityHigh
+)
+
+// IsoLevel is the transaction's isolation level.
+type IsoLevel int
+
+const (
+	// SI stands for 'snapshot isolation'.
+	SI IsoLevel = iota
+	// RC stands for 'read committed'.
+	RC
 )
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
@@ -146,6 +168,10 @@ type Request struct {
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
+	// IsolationLevel is the isolation level, default is SI.
+	IsolationLevel IsoLevel
+	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
+	Priority int
 }
 
 // Response represents the response returned from KV layer.
@@ -190,6 +216,8 @@ type Storage interface {
 	UUID() string
 	// CurrentVersion returns current max committed version.
 	CurrentVersion() (Version, error)
+	// GetOracle gets a timestamp oracle client.
+	GetOracle() oracle.Oracle
 }
 
 // FnKeyCmp is the function for iterator the keys

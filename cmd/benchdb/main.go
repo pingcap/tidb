@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -81,9 +82,8 @@ func main() {
 }
 
 type benchDB struct {
-	store    kv.Storage
-	session  tidb.Session
-	gcWorker *tikv.GCWorker
+	store   kv.Storage
+	session tidb.Session
 }
 
 func newBenchDB() *benchDB {
@@ -101,14 +101,10 @@ func newBenchDB() *benchDB {
 	if err != nil {
 		log.Fatal(err)
 	}
-	gcWoker, err := tikv.NewGCWorker(store)
-	if err != nil {
-		log.Fatal(err)
-	}
+
 	return &benchDB{
-		store:    store,
-		session:  session,
-		gcWorker: gcWoker,
+		store:   store,
+		session: session,
 	}
 }
 
@@ -283,7 +279,7 @@ func (ut *benchDB) manualGC(done chan bool) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = ut.gcWorker.DoGC(ver.Ver)
+	err = tikv.RunGCJob(context.Background(), ut.store, ver.Ver, "benchDB")
 	if err != nil {
 		log.Fatal(err)
 	}

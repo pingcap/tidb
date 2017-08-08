@@ -52,7 +52,9 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	corCol1 := &CorrelatedColumn{Data: &One.Value}
+	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
 	corCol2 := &CorrelatedColumn{Data: &One.Value}
+	corCol2.RetType = types.NewFieldType(mysql.TypeLonglong)
 	cast := NewCastFunc(types.NewFieldType(mysql.TypeLonglong), corCol1, ctx)
 	plus := newFunction(ast.Plus, cast, corCol2)
 	plus2 := newFunction(ast.Plus, plus, One)
@@ -60,7 +62,7 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	ret, err := SubstituteCorCol2Constant(plus2)
 	c.Assert(err, check.IsNil)
 	c.Assert(ret.Equal(ans1, ctx), check.IsTrue)
-	col1 := &Column{Index: 1}
+	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err = SubstituteCorCol2Constant(col1)
 	c.Assert(err, check.IsNil)
 	ans2 := col1
@@ -75,16 +77,16 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-	col := &Column{Index: 1}
+	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
 	eqFunc := newFunction(ast.EQ, col, One)
-	orFunc := newFunction(ast.OrOr, eqFunc, eqFunc)
-	andFunc := newFunction(ast.AndAnd, orFunc, eqFunc)
+	orFunc := newFunction(ast.LogicOr, eqFunc, eqFunc)
+	andFunc := newFunction(ast.LogicAnd, orFunc, eqFunc)
 	notFunc := newFunction(ast.UnaryNot, andFunc)
 	// (a!=1&&a!=1)||a=1
 	neFunc := newFunction(ast.NE, col, One)
-	andFunc2 := newFunction(ast.AndAnd, neFunc, neFunc)
-	orFunc2 := newFunction(ast.OrOr, andFunc2, neFunc)
+	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
+	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
 	ret := PushDownNot(notFunc, false, ctx)
 	c.Assert(ret.Equal(orFunc2, ctx), check.IsTrue)
 }

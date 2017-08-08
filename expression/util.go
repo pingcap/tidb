@@ -76,6 +76,14 @@ func datumsToConstants(datums []types.Datum) []Expression {
 	return constants
 }
 
+func primitiveValsToConstants(args []interface{}) []Expression {
+	cons := datumsToConstants(types.MakeDatums(args...))
+	for i, arg := range args {
+		types.DefaultTypeForValue(arg, cons[i].GetType())
+	}
+	return cons
+}
+
 var kindToMysqlType = map[byte]byte{
 	types.KindNull:          mysql.TypeNull,
 	types.KindInt64:         mysql.TypeLonglong,
@@ -87,9 +95,9 @@ var kindToMysqlType = map[byte]byte{
 	types.KindFloat64:       mysql.TypeDouble,
 	types.KindString:        mysql.TypeVarString,
 	types.KindBytes:         mysql.TypeVarString,
-	types.KindMysqlBit:      mysql.TypeVarString,
-	types.KindMysqlEnum:     mysql.TypeVarString,
-	types.KindMysqlSet:      mysql.TypeVarString,
+	types.KindMysqlBit:      mysql.TypeBit,
+	types.KindMysqlEnum:     mysql.TypeEnum,
+	types.KindMysqlSet:      mysql.TypeSet,
 	types.KindRow:           mysql.TypeVarString,
 	types.KindInterface:     mysql.TypeVarString,
 	types.KindMysqlDecimal:  mysql.TypeNewDecimal,
@@ -305,26 +313,26 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
 			}
 			return f
-		case ast.AndAnd:
+		case ast.LogicAnd:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.OrOr, f.GetType(), args...)
+				nf, _ := NewFunction(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
 			}
 			return f
-		case ast.OrOr:
+		case ast.LogicOr:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.AndAnd, f.GetType(), args...)
+				nf, _ := NewFunction(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {

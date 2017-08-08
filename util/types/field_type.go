@@ -15,10 +15,12 @@ package types
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -57,6 +59,71 @@ func NewFieldType(tp byte) *FieldType {
 		Tp:      tp,
 		Flen:    UnspecifiedLength,
 		Decimal: UnspecifiedLength,
+	}
+}
+
+// AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
+// whose return type is determined by the arguments' FieldTypes.
+// Aggregation is performed by MergeFieldType function.
+func AggFieldType(tps []*FieldType) *FieldType {
+	var currType FieldType
+	for _, t := range tps {
+		if currType.Tp == mysql.TypeUnspecified {
+			currType = *t
+			continue
+		}
+		mtp := MergeFieldType(currType.Tp, t.Tp)
+		currType.Tp = mtp
+	}
+	return &currType
+}
+
+// AggTypeClass aggregates arguments' TypeClass of a multi-argument function.
+func AggTypeClass(tps []*FieldType, flag *uint) TypeClass {
+	var (
+		tpClass      = ClassString
+		unsigned     bool
+		gotFirst     bool
+		gotBinString bool
+	)
+	for _, argFieldType := range tps {
+		if argFieldType.Tp == mysql.TypeNull {
+			continue
+		}
+		argTypeClass := argFieldType.ToClass()
+		if argTypeClass == ClassString && mysql.HasBinaryFlag(argFieldType.Flag) {
+			gotBinString = true
+		}
+		if !gotFirst {
+			gotFirst = true
+			tpClass = argTypeClass
+			unsigned = mysql.HasUnsignedFlag(argFieldType.Flag)
+		} else {
+			tpClass = mergeTypeClass(tpClass, argTypeClass, unsigned, mysql.HasUnsignedFlag(argFieldType.Flag))
+			unsigned = unsigned && mysql.HasUnsignedFlag(argFieldType.Flag)
+		}
+	}
+	setTypeFlag(flag, uint(mysql.UnsignedFlag), unsigned)
+	setTypeFlag(flag, uint(mysql.BinaryFlag), tpClass != ClassString || gotBinString)
+	return tpClass
+}
+
+func mergeTypeClass(a, b TypeClass, aUnsigned, bUnsigned bool) TypeClass {
+	if a == ClassString || b == ClassString {
+		return ClassString
+	} else if a == ClassReal || b == ClassReal {
+		return ClassReal
+	} else if a == ClassDecimal || b == ClassDecimal || aUnsigned != bUnsigned {
+		return ClassDecimal
+	}
+	return ClassInt
+}
+
+func setTypeFlag(flag *uint, flagItem uint, on bool) {
+	if on {
+		*flag |= flagItem
+	} else {
+		*flag &= ^flagItem
 	}
 }
 
@@ -127,7 +194,7 @@ func (ft *FieldType) CompactStr() string {
 			es = append(es, e)
 		}
 		suffix = fmt.Sprintf("('%s')", strings.Join(es, "','"))
-	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate:
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeDuration:
 		if ft.Decimal != UnspecifiedLength && ft.Decimal != 0 {
 			suffix = fmt.Sprintf("(%d)", ft.Decimal)
 		}
@@ -145,6 +212,16 @@ func (ft *FieldType) CompactStr() string {
 		}
 	}
 	return ts + suffix
+}
+
+// InfoSchemaStr joins the CompactStr with unsigned flag and
+// returns a string.
+func (ft *FieldType) InfoSchemaStr() string {
+	suffix := ""
+	if mysql.HasUnsignedFlag(ft.Flag) {
+		suffix = " unsigned"
+	}
+	return ft.CompactStr() + suffix
 }
 
 // String joins the information of FieldType and
@@ -178,46 +255,102 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull
-	case bool, int64, int:
+		tp.Flen = 0
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+	case bool:
 		tp.Tp = mysql.TypeLonglong
+		tp.Flen = 1
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+	case int:
+		tp.Tp = mysql.TypeLonglong
+		tp.Flen = len(strconv.FormatInt(int64(x), 10))
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+	case int64:
+		tp.Tp = mysql.TypeLonglong
+		tp.Flen = len(strconv.FormatInt(int64(x), 10))
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
+		tp.Flen = len(strconv.FormatUint(uint64(x), 10))
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case string:
 		tp.Tp = mysql.TypeVarString
+		// TODO: tp.Flen should be len(x) * 3 (max bytes length of CharsetUTF8)
+		tp.Flen = len(x)
+		tp.Decimal = UnspecifiedLength
 		tp.Charset = mysql.DefaultCharset
 		tp.Collate = mysql.DefaultCollationName
 	case float64:
 		tp.Tp = mysql.TypeDouble
+		s := strconv.FormatFloat(x, 'f', -1, 64)
+		tp.Flen = len(s)
+		tp.Decimal = len(s) - 1 - strings.Index(s, ".")
 		SetBinChsClnFlag(tp)
 	case []byte:
 		tp.Tp = mysql.TypeBlob
+		tp.Flen = len(x)
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
-	case Bit, Hex:
+	case Bit:
 		tp.Tp = mysql.TypeVarchar
+		tp.Flen = len(x.String())
+		tp.Decimal = UnspecifiedLength
+		SetBinChsClnFlag(tp)
+	case Hex:
+		tp.Tp = mysql.TypeVarchar
+		tp.Flen = len(x.String())
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case Time:
 		tp.Tp = x.Type
+		switch x.Type {
+		case mysql.TypeDate:
+			tp.Flen = mysql.MaxDateWidth
+			tp.Decimal = UnspecifiedLength
+		case mysql.TypeDatetime, mysql.TypeTimestamp:
+			tp.Flen = mysql.MaxDatetimeWidthNoFsp
+			if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
+				tp.Flen = x.Fsp + 1
+			}
+			tp.Decimal = x.Fsp
+		}
 		SetBinChsClnFlag(tp)
 	case Duration:
 		tp.Tp = mysql.TypeDuration
+		tp.Flen = len(x.String())
+		if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
+			tp.Flen = x.Fsp + 1
+		}
+		tp.Decimal = x.Fsp
 		SetBinChsClnFlag(tp)
 	case *MyDecimal:
 		tp.Tp = mysql.TypeNewDecimal
+		tp.Flen = len(x.ToString())
+		tp.Decimal = int(x.digitsFrac)
 		SetBinChsClnFlag(tp)
 	case Enum:
 		tp.Tp = mysql.TypeEnum
+		tp.Flen = len(x.Name)
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case Set:
 		tp.Tp = mysql.TypeSet
+		tp.Flen = len(x.Name)
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
+	case json.JSON:
+		tp.Tp = mysql.TypeJSON
 	default:
 		tp.Tp = mysql.TypeUnspecified
+		tp.Flen = UnspecifiedLength
+		tp.Decimal = UnspecifiedLength
 	}
-	tp.Flen = UnspecifiedLength
-	tp.Decimal = UnspecifiedLength
 }
 
 // DefaultCharsetForType returns the default charset/collation for mysql type.

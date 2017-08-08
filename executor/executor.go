@@ -49,7 +49,7 @@ var (
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
 	_ Executor = &TableScanExec{}
-	_ Executor = &TopnExec{}
+	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
 )
 
@@ -87,21 +87,17 @@ const (
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
+//
+// The following cases will need store the handle information:
+//
+// If the top plan is update or delete, then every executor will need the handle.
+// If there is an union scan, then the below scan plan must store the handle.
+// If there is sort need in the double read, then the table scan of the double read must store the handle.
+// If there is a select for update. then we need to store the handle until the lock plan. But if there is aggregation, the handle info can be removed.
+// Otherwise the executor's returned rows don't need to store the handle information.
 type Row struct {
 	// Data is the output record data for current Plan.
 	Data []types.Datum
-	// RowKeys contains all table row keys in the row.
-	RowKeys []*RowKeyEntry
-}
-
-// RowKeyEntry represents a row key read from a table.
-type RowKeyEntry struct {
-	// Tbl is the table which this row come from.
-	Tbl table.Table
-	// Handle is Row key.
-	Handle int64
-	// TableName is table alias name.
-	TableName string
 }
 
 type baseExecutor struct {
@@ -160,10 +156,12 @@ type Executor interface {
 type ShowDDLExec struct {
 	baseExecutor
 
-	schema  *expression.Schema
-	ddlInfo *inspectkv.DDLInfo
-	bgInfo  *inspectkv.DDLInfo
-	done    bool
+	ddlOwnerID string
+	bgOwnerID  string
+	selfID     string
+	ddlInfo    *inspectkv.DDLInfo
+	bgInfo     *inspectkv.DDLInfo
+	done       bool
 }
 
 // Next implements the Executor Next interface.
@@ -171,18 +169,12 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
 	}
-	var ddlOwner, ddlJob string
-	if e.ddlInfo.Owner != nil {
-		ddlOwner = e.ddlInfo.Owner.String()
-	}
+
+	var ddlJob string
 	if e.ddlInfo.Job != nil {
 		ddlJob = e.ddlInfo.Job.String()
 	}
-
-	var bgOwner, bgJob string
-	if e.bgInfo.Owner != nil {
-		bgOwner = e.bgInfo.Owner.String()
-	}
+	var bgJob string
 	if e.bgInfo.Job != nil {
 		bgJob = e.bgInfo.Job.String()
 	}
@@ -190,11 +182,12 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	row := &Row{}
 	row.Data = types.MakeDatums(
 		e.ddlInfo.SchemaVer,
-		ddlOwner,
+		e.ddlOwnerID,
 		ddlJob,
 		e.bgInfo.SchemaVer,
-		bgOwner,
+		e.bgOwnerID,
 		bgJob,
+		e.selfID,
 	)
 	e.done = true
 
@@ -265,15 +258,23 @@ func (e *SelectLockExec) Next() (*Row, error) {
 	if row == nil {
 		return nil, nil
 	}
-	if len(row.RowKeys) != 0 && e.Lock == ast.SelectLockForUpdate {
-		e.ctx.GetSessionVars().TxnCtx.ForUpdate = true
-		txn := e.ctx.Txn()
-		for _, k := range row.RowKeys {
-			lockKey := tablecodec.EncodeRowKeyWithHandle(k.Tbl.Meta().ID, k.Handle)
+	// If there's no handle or it isn't a `select for update`.
+	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
+		return row, nil
+	}
+	txn := e.ctx.Txn()
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx.ForUpdate = true
+	for id, cols := range e.Schema().TblID2Handle {
+		for _, col := range cols {
+			handle := row.Data[col.Index].GetInt64()
+			lockKey := tablecodec.EncodeRowKeyWithHandle(id, handle)
 			err = txn.LockKeys(lockKey)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			// This operation is only for schema validator check.
+			txnCtx.UpdateDeltaForTable(id, 0, 0)
 		}
 	}
 	return row, nil
@@ -375,8 +376,7 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 		return nil, nil
 	}
 	row := &Row{
-		RowKeys: srcRow.RowKeys,
-		Data:    make([]types.Datum, 0, len(e.exprs)),
+		Data: make([]types.Datum, 0, len(e.exprs)),
 	}
 	for _, expr := range e.exprs {
 		val, err := expr.Eval(srcRow.Data)
@@ -438,7 +438,7 @@ func (e *SelectionExec) initController() error {
 
 	switch x := e.children[0].(type) {
 	case *XSelectTableExec:
-		accessCondition, restCondtion := ranger.DetachTableScanConditions(newConds, x.tableInfo.GetPkName())
+		accessCondition, restCondtion := ranger.DetachColumnConditions(newConds, x.tableInfo.GetPkName())
 		x.where, _, _ = expression.ExpressionsToPB(sc, restCondtion, client)
 		ranges, err := ranger.BuildTableRange(accessCondition, sc)
 		if err != nil {
@@ -446,7 +446,11 @@ func (e *SelectionExec) initController() error {
 		}
 		x.ranges = ranges
 	case *XSelectIndexExec:
-		accessCondition, newConds, _, accessInAndEqCount := ranger.DetachIndexScanConditions(newConds, x.index)
+		var (
+			accessCondition    []expression.Expression
+			accessInAndEqCount int
+		)
+		accessCondition, newConds, _, accessInAndEqCount = ranger.DetachIndexScanConditions(newConds, x.index)
 		idxConds, tblConds := ranger.DetachIndexFilterConditions(newConds, x.index.Columns, x.tableInfo)
 		x.indexConditionPBExpr, _, _ = expression.ExpressionsToPB(sc, idxConds, client)
 		tableConditionPBExpr, _, _ := expression.ExpressionsToPB(sc, tblConds, client)
@@ -619,17 +623,6 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// Put rowKey to the tail of record row.
-	rke := &RowKeyEntry{
-		Tbl:    e.t,
-		Handle: handle,
-	}
-	if e.asName != nil && e.asName.L != "" {
-		rke.TableName = e.asName.L
-	} else {
-		rke.TableName = e.t.Meta().Name.L
-	}
-	row.RowKeys = append(row.RowKeys, rke)
 	return row, nil
 }
 

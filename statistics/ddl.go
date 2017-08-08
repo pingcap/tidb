@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -31,7 +32,7 @@ func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
 	case model.ActionCreateTable:
 		return h.insertTableStats2KV(t.TableInfo)
 	case model.ActionDropTable:
-		return h.deleteTableStatsFromKV(t.TableInfo.ID)
+		return h.DeleteTableStatsFromKV(t.TableInfo.ID)
 	case model.ActionAddColumn:
 		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
 	case model.ActionDropColumn:
@@ -77,7 +78,8 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
-func (h *Handle) deleteTableStatsFromKV(id int64) error {
+// DeleteTableStatsFromKV deletes table statistics from kv.
+func (h *Handle) DeleteTableStatsFromKV(id int64) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute("begin")
 	if err != nil {
@@ -117,11 +119,13 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 	if h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		exec := h.ctx.(sqlexec.SQLExecutor)
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
-		rs, err := exec.Execute(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
+		var rs []ast.RecordSet
+		rs, err = exec.Execute(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		row, err := rs[0].Next()
+		var row *ast.Row
+		row, err = rs[0].Next()
 		if err != nil {
 			return errors.Trace(err)
 		}

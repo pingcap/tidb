@@ -87,7 +87,7 @@ func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
 
 type rpcHandler struct {
 	cluster   *Cluster
-	mvccStore *MvccStore
+	mvccStore MVCCStore
 
 	// store id for current request
 	storeID uint64
@@ -97,6 +97,8 @@ type rpcHandler struct {
 	// Used for handling coprocessor request.
 	rawStartKey []byte
 	rawEndKey   []byte
+	// Used for current request.
+	isolationLevel kvrpcpb.IsolationLevel
 }
 
 func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
@@ -169,8 +171,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 		}
 	}
 	h.startKey, h.endKey = region.StartKey, region.EndKey
-	h.rawStartKey = MvccKey(h.startKey).Raw()
-	h.rawEndKey = MvccKey(h.endKey).Raw()
+	h.isolationLevel = ctx.IsolationLevel
 	return nil
 }
 
@@ -205,7 +206,7 @@ func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 		panic("KvGet: key not in region")
 	}
 
-	val, err := h.mvccStore.Get(req.Key, req.GetVersion())
+	val, err := h.mvccStore.Get(req.Key, req.GetVersion(), h.isolationLevel)
 	if err != nil {
 		return &kvrpcpb.GetResponse{
 			Error: convertToKeyError(err),
@@ -220,7 +221,7 @@ func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanRespons
 	if !h.checkKeyInRegion(req.GetStartKey()) {
 		panic("KvScan: startKey not in region")
 	}
-	pairs := h.mvccStore.Scan(req.GetStartKey(), h.endKey, int(req.GetLimit()), req.GetVersion())
+	pairs := h.mvccStore.Scan(req.GetStartKey(), h.endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
 	return &kvrpcpb.ScanResponse{
 		Pairs: convertToPbPairs(pairs),
 	}
@@ -274,10 +275,25 @@ func (h *rpcHandler) handleKvBatchGet(req *kvrpcpb.BatchGetRequest) *kvrpcpb.Bat
 			panic("KvBatchGet: key not in region")
 		}
 	}
-	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion())
+	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion(), h.isolationLevel)
 	return &kvrpcpb.BatchGetResponse{
 		Pairs: convertToPbPairs(pairs),
 	}
+}
+
+func (h *rpcHandler) handleMvccGetByKey(req *kvrpcpb.MvccGetByKeyRequest) *kvrpcpb.MvccGetByKeyResponse {
+	if !h.checkKeyInRegion(req.Key) {
+		panic("MvccGetByKey: key not in region")
+	}
+	var resp kvrpcpb.MvccGetByKeyResponse
+	resp.Info = h.mvccStore.MvccGetByKey(req.Key)
+	return &resp
+}
+
+func (h *rpcHandler) handleMvccGetByStartTS(req *kvrpcpb.MvccGetByStartTsRequest) *kvrpcpb.MvccGetByStartTsResponse {
+	var resp kvrpcpb.MvccGetByStartTsResponse
+	resp.Info, resp.Key = h.mvccStore.MvccGetByStartTS(h.startKey, h.endKey, req.StartTs)
+	return &resp
 }
 
 func (h *rpcHandler) handleKvBatchRollback(req *kvrpcpb.BatchRollbackRequest) *kvrpcpb.BatchRollbackResponse {
@@ -328,14 +344,21 @@ func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.R
 	return &kvrpcpb.RawDeleteResponse{}
 }
 
+func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawScanResponse {
+	pairs := h.mvccStore.RawScan(req.GetStartKey(), h.endKey, int(req.GetLimit()))
+	return &kvrpcpb.RawScanResponse{
+		Kvs: convertToPbPairs(pairs),
+	}
+}
+
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
 	Cluster   *Cluster
-	MvccStore *MvccStore
+	MvccStore MVCCStore
 }
 
 // NewRPCClient creates an RPCClient.
-func NewRPCClient(cluster *Cluster, mvccStore *MvccStore) *RPCClient {
+func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
 	return &RPCClient{
 		Cluster:   cluster,
 		MvccStore: mvccStore,
@@ -480,17 +503,40 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 			return resp, nil
 		}
 		resp.RawDelete = handler.handleKvRawDelete(r)
+	case tikvrpc.CmdRawScan:
+		r := req.RawScan
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.RawScan = &kvrpcpb.RawScanResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.RawScan = handler.handleKvRawScan(r)
 	case tikvrpc.CmdCop:
 		r := req.Cop
 		if err := handler.checkRequestContext(reqCtx); err != nil {
 			resp.Cop = &coprocessor.Response{RegionError: err}
 			return resp, nil
 		}
+		handler.rawStartKey = MvccKey(handler.startKey).Raw()
+		handler.rawEndKey = MvccKey(handler.endKey).Raw()
 		res, err := handler.handleCopDAGRequest(r)
 		if err != nil {
 			return nil, err
 		}
 		resp.Cop = res
+	case tikvrpc.CmdMvccGetByKey:
+		r := req.MvccGetByKey
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.MvccGetByKey = &kvrpcpb.MvccGetByKeyResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.MvccGetByKey = handler.handleMvccGetByKey(r)
+	case tikvrpc.CmdMvccGetByStartTs:
+		r := req.MvccGetByStartTs
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.MvccGetByStartTS = &kvrpcpb.MvccGetByStartTsResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.MvccGetByStartTS = handler.handleMvccGetByStartTS(r)
 	default:
 		return nil, errors.Errorf("unsupport this request type %v", req.Type)
 	}

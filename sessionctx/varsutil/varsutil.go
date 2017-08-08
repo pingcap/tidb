@@ -14,11 +14,11 @@
 package varsutil
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -34,7 +34,7 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	if sysVar == nil {
 		return "", variable.UnknownSystemVar.GenByArgs(key)
 	}
-	// For virtual system varaibles:
+	// For virtual system variables:
 	switch sysVar.Name {
 	case variable.TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), nil
@@ -134,6 +134,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.AllowInSubqueryUnFolding = tidbOptOn(sVal)
 	case variable.TiDBIndexLookupConcurrency:
 		vars.IndexLookupConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexLookupConcurrency)
+	case variable.TiDBIndexJoinBatchSize:
+		vars.IndexJoinBatchSize = tidbOptPositiveInt(sVal, variable.DefIndexJoinBatchSize)
 	case variable.TiDBIndexLookupSize:
 		vars.IndexLookupSize = tidbOptPositiveInt(sVal, variable.DefIndexLookupSize)
 	case variable.TiDBDistSQLScanConcurrency:
@@ -144,6 +146,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.BatchInsert = tidbOptOn(sVal)
 	case variable.TiDBMaxRowCountForINLJ:
 		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
+	case variable.TiDBCBO:
+		vars.CBO = tidbOptOn(sVal)
 	case variable.TiDBCurrentTS:
 		return variable.ErrReadOnly
 	}
@@ -201,7 +205,12 @@ func setSnapshotTS(s *variable.SessionVars, sVal string) error {
 	}
 	// TODO: Consider time_zone variable.
 	t1, err := t.Time.GoTime(time.Local)
-	ts := (t1.UnixNano() / int64(time.Millisecond)) << epochShiftBits
-	s.SnapshotTS = uint64(ts)
+	s.SnapshotTS = GoTimeToTS(t1)
 	return errors.Trace(err)
+}
+
+// GoTimeToTS converts a Go time to uint64 timestamp.
+func GoTimeToTS(t time.Time) uint64 {
+	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
+	return uint64(ts)
 }

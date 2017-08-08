@@ -37,15 +37,19 @@ const (
 
 // tikvSnapshot implements MvccSnapshot interface.
 type tikvSnapshot struct {
-	store   *tikvStore
-	version kv.Version
+	store          *tikvStore
+	version        kv.Version
+	isolationLevel kv.IsoLevel
+	priority       pb.CommandPri
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
 func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 	return &tikvSnapshot{
-		store:   store,
-		version: ver,
+		store:          store,
+		version:        ver,
+		isolationLevel: kv.SI,
+		priority:       pb.CommandPri_Normal,
 	}
 }
 
@@ -114,16 +118,19 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 }
 
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, pbIsolationLevel(s.isolationLevel))
+
 	pending := batch.keys
 	for {
 		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdBatchGet,
+			Type:     tikvrpc.CmdBatchGet,
+			Priority: s.priority,
 			BatchGet: &pb.BatchGetRequest{
 				Keys:    pending,
 				Version: s.version.Ver,
 			},
 		}
-		resp, err := s.store.SendReq(bo, req, batch.region, readTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -191,8 +198,11 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 }
 
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
+	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, pbIsolationLevel(s.isolationLevel))
+
 	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGet,
+		Type:     tikvrpc.CmdGet,
+		Priority: s.priority,
 		Get: &pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
@@ -203,7 +213,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

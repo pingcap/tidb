@@ -59,14 +59,17 @@ func (s SchemaState) String() string {
 
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
-	ID                 int64       `json:"id"`
-	Name               CIStr       `json:"name"`
-	Offset             int         `json:"offset"`
-	OriginDefaultValue interface{} `json:"origin_default"`
-	DefaultValue       interface{} `json:"default"`
-	types.FieldType    `json:"type"`
-	State              SchemaState `json:"state"`
-	Comment            string      `json:"comment"`
+	ID                  int64               `json:"id"`
+	Name                CIStr               `json:"name"`
+	Offset              int                 `json:"offset"`
+	OriginDefaultValue  interface{}         `json:"origin_default"`
+	DefaultValue        interface{}         `json:"default"`
+	GeneratedExprString string              `json:"generated_expr_string"`
+	GeneratedStored     bool                `json:"generated_stored"`
+	Dependences         map[string]struct{} `json:"dependences"`
+	types.FieldType     `json:"type"`
+	State               SchemaState `json:"state"`
+	Comment             string      `json:"comment"`
 }
 
 // Clone clones ColumnInfo.
@@ -74,6 +77,10 @@ func (c *ColumnInfo) Clone() *ColumnInfo {
 	nc := *c
 	return &nc
 }
+
+// ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
+// for use of execution phase.
+const ExtraHandleID = -1
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
@@ -132,6 +139,29 @@ func (t *TableInfo) GetPkName() CIStr {
 	return CIStr{}
 }
 
+// GetPkColInfo gets the ColumnInfo of pk if exists.
+// Make sure PkIsHandle checked before call this method.
+func (t *TableInfo) GetPkColInfo() *ColumnInfo {
+	for _, colInfo := range t.Columns {
+		if mysql.HasPriKeyFlag(colInfo.Flag) {
+			return colInfo
+		}
+	}
+	return nil
+}
+
+// ColumnIsInIndex checks whether c is included in any indices of t.
+func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
+	for _, index := range t.Indices {
+		for _, column := range index.Columns {
+			if column.Name.L == c.Name.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IndexColumn provides index column info.
 type IndexColumn struct {
 	Name   CIStr `json:"name"`   // Index name
@@ -158,13 +188,15 @@ func (t IndexType) String() string {
 		return "BTREE"
 	case IndexTypeHash:
 		return "HASH"
+	default:
+		return ""
 	}
-	return ""
 }
 
 // IndexTypes
 const (
-	IndexTypeBtree IndexType = iota + 1
+	IndexTypeInvalid IndexType = iota
+	IndexTypeBtree
 	IndexTypeHash
 )
 

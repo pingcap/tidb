@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"sync/atomic"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
@@ -58,6 +60,12 @@ func (m *MockExec) Open() error {
 }
 
 func (s *testSuite) TestAggregation(c *C) {
+	// New expression evaluation architecture does not support aggregation functions now.
+	origin := atomic.LoadInt32(&expression.TurnOnNewExprEval)
+	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
+	defer func() {
+		atomic.StoreInt32(&expression.TurnOnNewExprEval, origin)
+	}()
 	plan.JoinConcurrency = 1
 	defer func() {
 		plan.JoinConcurrency = 5
@@ -278,7 +286,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory table in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "717"
+	columnCountOfAllInformationSchemaTables := "733"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")

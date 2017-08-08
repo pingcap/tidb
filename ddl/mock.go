@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -82,8 +81,26 @@ func (m *mockOwnerManager) SetBgOwner(isOwner bool) {
 	}
 }
 
+// GetOwnerID implements OwnerManager.GetOwnerID interface.
+func (m *mockOwnerManager) GetOwnerID(ctx goctx.Context, key string) (string, error) {
+	if key != DDLOwnerKey && key != BgOwnerKey {
+		return "", errors.New("invalid owner key")
+	}
+
+	if key == DDLOwnerKey {
+		if m.IsOwner() {
+			return m.ID(), nil
+		}
+		return "", errors.New("no owner")
+	}
+	if m.IsBgOwner() {
+		return m.ID(), nil
+	}
+	return "", errors.New("no owner")
+}
+
 // CampaignOwners implements mockOwnerManager.CampaignOwners interface.
-func (m *mockOwnerManager) CampaignOwners(_ goctx.Context, _ *sync.WaitGroup) error {
+func (m *mockOwnerManager) CampaignOwners(_ goctx.Context) error {
 	m.SetOwner(true)
 	m.SetBgOwner(true)
 	return nil
@@ -117,6 +134,14 @@ func (s *mockSchemaSyncer) UpdateSelfVersion(ctx goctx.Context, version int64) e
 	atomic.StoreInt64(&s.selfSchemaVersion, version)
 	return nil
 }
+
+// Done implements SchemaSyncer.Done interface.
+func (s *mockSchemaSyncer) Done() <-chan struct{} {
+	return make(chan struct{}, 1)
+}
+
+// Restart implements SchemaSyncer.Restart interface.
+func (s *mockSchemaSyncer) Restart(_ goctx.Context) error { return nil }
 
 // RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
 func (s *mockSchemaSyncer) RemoveSelfVersionPath() error { return nil }

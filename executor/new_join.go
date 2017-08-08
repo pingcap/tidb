@@ -65,6 +65,7 @@ type IndexLookUpJoin struct {
 	otherConditions expression.CNFExprs
 	defaultValues   []types.Datum
 	outer           bool
+	batchSize       int
 }
 
 // Open implements the Executor Open interface.
@@ -90,11 +91,11 @@ func (e *IndexLookUpJoin) Next() (*Row, error) {
 		if e.exhausted {
 			return nil, nil
 		}
-		batchSize := e.ctx.GetSessionVars().IndexLookupSize
 		e.outerRows = e.outerRows[:0]
+		e.innerRows = e.innerRows[:0]
 		e.resultRows = e.resultRows[:0]
 		e.innerDatums = e.innerDatums[:0]
-		for i := 0; i < batchSize; i++ {
+		for i := 0; i < e.batchSize; i++ {
 			outerRow, err := e.children[0].Next()
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -109,9 +110,16 @@ func (e *IndexLookUpJoin) Next() (*Row, error) {
 			}
 			if match {
 				joinDatums := make([]types.Datum, 0, len(e.outerJoinKeys))
-				for _, col := range e.outerJoinKeys {
-					datum, _ := col.Eval(outerRow.Data)
-					joinDatums = append(joinDatums, datum)
+				for i, col := range e.outerJoinKeys {
+					datum, err := col.Eval(outerRow.Data)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					innerDatum, err := datum.ConvertTo(e.ctx.GetSessionVars().StmtCtx, e.innerJoinKeys[i].GetType())
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					joinDatums = append(joinDatums, innerDatum)
 				}
 				joinOuterEncodeKey, err := codec.EncodeValue(nil, joinDatums...)
 				if err != nil {
@@ -234,11 +242,17 @@ func (e *IndexLookUpJoin) doMergeJoin() error {
 				}
 			}
 			outerCursor, innerCursor = outerEndCursor, innerEndCursor
-		} else if c < 0 { // outer smaller then inner, move and enlarge outer cursor
-			outerCursor = getNextCursor(outerCursor, e.outerRows)
-			outerRow := e.outerRows[outerCursor].row
-			if e.outer {
-				e.resultRows = append(e.resultRows, e.fillDefaultValues(outerRow))
+		} else if c < 0 {
+			// If outer smaller than inner, move and enlarge outer cursor
+			nextOuterCursor := getNextCursor(outerCursor, e.outerRows)
+			if !e.outer {
+				outerCursor = nextOuterCursor
+			} else {
+				for outerCursor < nextOuterCursor {
+					outerRow := e.outerRows[outerCursor].row
+					e.resultRows = append(e.resultRows, e.fillDefaultValues(outerRow))
+					outerCursor++
+				}
 			}
 		} else {
 			innerCursor = getNextCursor(innerCursor, e.outerRows)

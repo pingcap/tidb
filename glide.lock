@@ -1,5 +1,5 @@
-hash: 7526be88b2e92170cce8de92c259648e1e58a3f729c3a5974c9dca872ee44ffb
-updated: 2017-06-05T18:31:52.433575481+08:00
+hash: 4ff8f14860bbc326efc0549a48c2b37d3058a41bb6f03ad658127f65894ff0e2
+updated: 2017-07-25T12:22:31.695259691+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -114,7 +114,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: bedba879c8bcef3487c10347b29b7313cd89efa6
+  version: bef5d90e19c200dff99effb226a5bc336ee6b258
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -125,11 +125,11 @@ imports:
   - pkg/raft_serverpb
   - pkg/tikvpb
 - name: github.com/pingcap/pd
-  version: fea29e342c4a7c5888cdf0b569625fbbf6d3b50f
+  version: ce8db87a8c3f2560750232e85ad5152a0a1c69df
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: 11c2044a6a91f947faaa5e4f1a06c9026f333f69
+  version: 5e4b9cf7c32d2b09ba71aa9ab6675ec135f9fbda
   subpackages:
   - go-binlog
   - go-tipb
@@ -151,6 +151,8 @@ imports:
   - model
 - name: github.com/prometheus/procfs
   version: abf152e5f3e97f2fafac028d2cc06c1feb87ffa5
+- name: github.com/Sirupsen/logrus
+  version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - name: golang.org/x/net
@@ -168,7 +170,7 @@ imports:
   subpackages:
   - unix
 - name: golang.org/x/text
-  version: ccbd3f7822129ff389f8ca4858a9b9d4d910531c
+  version: 4ee4af566555f5fbe026368b75596286a312663a
   subpackages:
   - encoding
   - encoding/charmap
@@ -181,6 +183,7 @@ imports:
   - encoding/unicode
   - internal/utf8internal
   - runes
+  - secure
   - secure/bidirule
   - transform
   - unicode/bidi

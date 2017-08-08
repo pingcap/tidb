@@ -34,9 +34,10 @@ import (
 )
 
 const ( // GET_FORMAT first argument.
-	dateFormat     = "DATE"
-	datetimeFormat = "DATETIME"
-	timeFormat     = "TIME"
+	dateFormat      = "DATE"
+	datetimeFormat  = "DATETIME"
+	timestampFormat = "TIMESTAMP"
+	timeFormat      = "TIME"
 )
 
 const ( // GET_FORMAT location.
@@ -323,7 +324,6 @@ func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
 	t := t1.Sub(&t2)
 	d.SetMysqlDuration(t)
 	return
@@ -638,7 +638,20 @@ func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err err
 		}
 	}
 
-	t, err := convertTimeToMysqlTime(time.Now(), fsp)
+	// This would consider "timestamp" session variable.
+	now, err := getSystemTimestamp(ctx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	t, err := convertTimeToMysqlTime(now, fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// Now() is a strange function, you can view it as timestamp converted datetime, so
+	// it also consider "time_zone" session variable.
+	err = t.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -1117,7 +1130,7 @@ func (b *builtinGetFormatSig) eval(row []types.Datum) (d types.Datum, err error)
 		case internalLocation:
 			d.SetString("%Y%m%d")
 		}
-	case datetimeFormat:
+	case datetimeFormat, timestampFormat:
 		switch l {
 		case usaLocation:
 			d.SetString("%Y-%m-%d %H.%i.%s")
@@ -1205,7 +1218,20 @@ func (b *builtinSysDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
 	// But here we can just think they are the same because we don't support stored function
 	// and trigger now.
-	return builtinNow(args, b.ctx)
+	fsp := 0
+	sc := b.ctx.GetSessionVars().StmtCtx
+	if len(args) == 1 && !args[0].IsNull() {
+		if fsp, err = checkFsp(sc, args[0]); err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+
+	t, err := convertTimeToMysqlTime(time.Now(), fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlTime(t)
+	return
 }
 
 type currentDateFunctionClass struct {
@@ -1528,19 +1554,19 @@ func (b *builtinDateArithSig) eval(row []types.Datum) (d types.Datum, err error)
 			interval = fmt.Sprintf("%v", ii)
 		}
 	}
-	year, month, day, duration, err := types.ExtractTimeValue(nodeIntervalUnit, interval)
+	year, month, day, dur, err := types.ExtractTimeValue(nodeIntervalUnit, interval)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	if b.op == ast.DateArithSub {
-		year, month, day, duration = -year, -month, -day, -duration
+		year, month, day, dur = -year, -month, -day, -dur
 	}
 	// TODO: Consider time_zone variable.
 	t, err := result.Time.GoTime(time.Local)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	t = t.Add(duration)
+	t = t.Add(dur)
 	t = t.AddDate(int(year), int(month), int(day))
 	if t.Nanosecond() == 0 {
 		result.Fsp = 0
@@ -1788,7 +1814,7 @@ func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, 
 	if getFsp(d) != 0 {
 		tmpDuration.Fsp = types.MaxFsp
 	} else {
-		tmpDuration.Fsp = 0
+		tmpDuration.Fsp = types.MinFsp
 	}
 	result.SetString(resultDuration.String())
 	return
@@ -1807,7 +1833,50 @@ func strDurationAddDuration(d string, arg1 types.Duration) (result types.Datum, 
 	if getFsp(d) != 0 {
 		tmpDuration.Fsp = types.MaxFsp
 	} else {
-		tmpDuration.Fsp = 0
+		tmpDuration.Fsp = types.MinFsp
+	}
+	result.SetString(tmpDuration.String())
+	return
+}
+
+// strDatetimeSubDuration subtracts duration from datetime string, returns a datum value.
+func strDatetimeSubDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
+	arg0, err := types.ParseTime(d, mysql.TypeDatetime, getFsp(d))
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	arg1time, err := arg1.ConvertToTime(uint8(getFsp(arg1.String())))
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	tmpDuration := arg0.Sub(&arg1time)
+	resultDuration, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	if getFsp(d) != 0 {
+		tmpDuration.Fsp = types.MaxFsp
+	} else {
+		tmpDuration.Fsp = types.MinFsp
+	}
+	result.SetString(resultDuration.String())
+	return
+}
+
+// strDurationSubDuration subtracts duration from duration string, returns a datum value.
+func strDurationSubDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
+	arg0, err := types.ParseDuration(d, getFsp(d))
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	tmpDuration, err := arg0.Sub(arg1)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	if getFsp(d) != 0 {
+		tmpDuration.Fsp = types.MaxFsp
+	} else {
+		tmpDuration.Fsp = types.MinFsp
 	}
 	result.SetString(tmpDuration.String())
 	return
@@ -1980,35 +2049,36 @@ type makeDateFunctionClass struct {
 }
 
 func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinMakeDateSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tp := bf.tp
+	tp.Tp, tp.Flen, tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, 0
+	sig := &builtinMakeDateSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMakeDateSig struct {
-	baseBuiltinFunc
+	baseTimeBuiltinFunc
 }
 
-// eval evals a builtinMakeDateSig.
+// evalTime evaluates a builtinMakeDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
-func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if args[0].IsNull() || args[1].IsNull() {
-		return
-	}
+func (b *builtinMakeDateSig) evalTime(row []types.Datum) (d types.Time, isNull bool, err error) {
+	args := b.getArgs()
 	sc := b.ctx.GetSessionVars().StmtCtx
-	year, err := args[0].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	var year, dayOfYear int64
+	year, isNull, err = args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return d, true, errors.Trace(err)
 	}
-	dayOfYear, err := args[1].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	dayOfYear, isNull, err = args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return d, true, errors.Trace(err)
 	}
 	if dayOfYear <= 0 || year < 0 || year > 9999 {
-		return
+		return d, true, nil
 	}
 	if year < 70 {
 		year += 2000
@@ -2022,14 +2092,13 @@ func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) 
 	}
 	retTimestamp := types.TimestampDiff("DAY", types.ZeroDate, startTime)
 	if retTimestamp == 0 {
-		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
+		return d, true, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
 	}
 	ret := types.TimeFromDays(retTimestamp + dayOfYear - 1)
 	if ret.IsZero() || ret.Time.Year() > 9999 {
-		return
+		return d, true, nil
 	}
-	d.SetMysqlTime(ret)
-	return
+	return ret, false, nil
 }
 
 type makeTimeFunctionClass struct {
@@ -2372,7 +2441,63 @@ type builtinSubTimeSig struct {
 // eval evals a builtinSubTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("SUB_TIME")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() || args[1].IsNull() {
+		return
+	}
+	var arg1 types.Duration
+	switch args[1].Kind() {
+	case types.KindMysqlDuration:
+		arg1 = args[1].GetMysqlDuration()
+	default:
+		s, err := args[1].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if getFsp(s) == 0 {
+			arg1, err = types.ParseDuration(s, 0)
+		} else {
+			arg1, err = types.ParseDuration(s, types.MaxFsp)
+		}
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+	}
+	switch args[0].Kind() {
+	case types.KindMysqlTime:
+		arg0 := args[0].GetMysqlTime()
+		arg1time, err := arg1.ConvertToTime(uint8(getFsp(arg1.String())))
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		tmpDuration := arg0.Sub(&arg1time)
+		result, err := tmpDuration.ConvertToTime(arg0.Type)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlTime(result)
+	case types.KindMysqlDuration:
+		arg0 := args[0].GetMysqlDuration()
+		result, err := arg0.Sub(arg1)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlDuration(result)
+	default:
+		ss, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if isDuration(ss) {
+			return strDurationSubDuration(ss, arg1)
+		}
+		return strDatetimeSubDuration(ss, arg1)
+	}
+	return
 }
 
 type timeFormatFunctionClass struct {
@@ -2463,7 +2588,7 @@ func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err err
 	if err != nil {
 		return d, errorOrWarning(err, b.ctx)
 	}
-	tm, err := date.Time.GoTime(time.Local)
+	tm1, err := date.Time.GoTime(time.Local)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -2471,24 +2596,24 @@ func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err err
 	fsp := types.DefaultFsp
 	switch unit {
 	case "MICROSECOND":
-		tb = tm.Add(time.Duration(v) * time.Microsecond)
+		tb = tm1.Add(time.Duration(v) * time.Microsecond)
 		fsp = types.MaxFsp
 	case "SECOND":
-		tb = tm.Add(time.Duration(v) * time.Second)
+		tb = tm1.Add(time.Duration(v) * time.Second)
 	case "MINUTE":
-		tb = tm.Add(time.Duration(v) * time.Minute)
+		tb = tm1.Add(time.Duration(v) * time.Minute)
 	case "HOUR":
-		tb = tm.Add(time.Duration(v) * time.Hour)
+		tb = tm1.Add(time.Duration(v) * time.Hour)
 	case "DAY":
-		tb = tm.AddDate(0, 0, int(v))
+		tb = tm1.AddDate(0, 0, int(v))
 	case "WEEK":
-		tb = tm.AddDate(0, 0, 7*int(v))
+		tb = tm1.AddDate(0, 0, 7*int(v))
 	case "MONTH":
-		tb = tm.AddDate(0, int(v), 0)
+		tb = tm1.AddDate(0, int(v), 0)
 	case "QUARTER":
-		tb = tm.AddDate(0, 3*int(v), 0)
+		tb = tm1.AddDate(0, 3*int(v), 0)
 	case "YEAR":
-		tb = tm.AddDate(int(v), 0, 0)
+		tb = tm1.AddDate(int(v), 0, 0)
 	default:
 		return d, errors.Trace(types.ErrInvalidTimeFormat)
 	}

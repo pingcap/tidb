@@ -23,18 +23,21 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // Column provides meta data describing a table column.
-type Column model.ColumnInfo
-
-// PrimaryKeyName defines primary key name.
-const PrimaryKeyName = "PRIMARY"
+type Column struct {
+	*model.ColumnInfo
+	// If this column is a generated column, the expression will be stored here.
+	GeneratedExpr ast.ExprNode
+}
 
 // String implements fmt.Stringer interface.
 func (c *Column) String() string {
@@ -49,8 +52,9 @@ func (c *Column) String() string {
 }
 
 // ToInfo casts Column to model.ColumnInfo
+// NOTE: DONT modify return value.
 func (c *Column) ToInfo() *model.ColumnInfo {
-	return (*model.ColumnInfo)(c)
+	return c.ColumnInfo
 }
 
 // FindCol finds column in cols by name.
@@ -65,7 +69,10 @@ func FindCol(cols []*Column, name string) *Column {
 
 // ToColumn converts a *model.ColumnInfo to *Column.
 func ToColumn(col *model.ColumnInfo) *Column {
-	return (*Column)(col)
+	return &Column{
+		col,
+		nil,
+	}
 }
 
 // FindCols finds columns in cols by names.
@@ -95,6 +102,21 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 	return rcols
 }
 
+// truncateTrailingSpaces trancates trailing spaces for CHAR[(M)] column.
+// fix: https://github.com/pingcap/tidb/issues/3660
+func truncateTrailingSpaces(v *types.Datum) {
+	if v.Kind() == types.KindNull {
+		return
+	}
+	b := v.GetBytes()
+	len := len(b)
+	for len > 0 && b[len-1] == ' ' {
+		len--
+	}
+	b = b[:len]
+	v.SetString(hack.String(b))
+}
+
 // CastValues casts values based on columns type.
 func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreErr bool) (err error) {
 	sc := ctx.GetSessionVars().StmtCtx
@@ -110,6 +132,9 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 			}
 		}
 		rec[c.Offset] = converted
+		if c.Tp == mysql.TypeString && !types.IsBinaryStr(&c.FieldType) {
+			truncateTrailingSpaces(&rec[c.Offset])
+		}
 	}
 	return nil
 }
@@ -199,6 +224,12 @@ func NewColDesc(col *Column) *ColDesc {
 		extra = "auto_increment"
 	} else if mysql.HasOnUpdateNowFlag(col.Flag) {
 		extra = "on update CURRENT_TIMESTAMP"
+	} else if col.GeneratedExprString != "" {
+		if col.GeneratedStored {
+			extra = "STORED GENERATED"
+		} else {
+			extra = "VIRTUAL GENERATED"
+		}
 	}
 
 	return &ColDesc{
@@ -345,6 +376,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetMysqlBit(types.Bit{Value: 0, Width: types.MinBitWidth})
 	case mysql.TypeSet:
 		d.SetMysqlSet(types.Set{})
+	case mysql.TypeEnum:
+		d.SetMysqlEnum(types.Enum{})
 	}
 	return d
 }

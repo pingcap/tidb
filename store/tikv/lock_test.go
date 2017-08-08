@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"math"
+	"runtime"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -178,6 +179,22 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 }
 
+func (s *testLockSuite) TestRC(c *C) {
+	s.putKV(c, []byte("key"), []byte("v1"))
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set([]byte("key"), []byte("v2"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+
+	txn2, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn2.SetOption(kv.IsolationLevel, kv.RC)
+	val, err := txn2.Get([]byte("key"))
+	c.Assert(err, IsNil)
+	c.Assert(string(val), Equals, "v1")
+}
+
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
 	committer, err := newTwoPhaseCommitter(txn)
 	c.Assert(err, IsNil)
@@ -210,7 +227,14 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 }
 
 func (s *testLockSuite) ttlEquals(c *C, x, y uint64) {
-	c.Assert(int(math.Abs(float64(x-y))), LessEqual, 2)
+	// NOTE: On ppc64le, all integers are by default unsigned integers,
+	// hence we have to separately cast the value returned by "math.Abs()" function for ppc64le.
+	if runtime.GOARCH == "ppc64le" {
+		c.Assert(int(-math.Abs(float64(x-y))), LessEqual, 2)
+	} else {
+		c.Assert(int(math.Abs(float64(x-y))), LessEqual, 2)
+	}
+
 }
 
 func (s *testLockSuite) TestLockTTL(c *C) {

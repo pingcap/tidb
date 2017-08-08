@@ -181,7 +181,7 @@ type selectContext struct {
 	// TODO: Only one of these three flags can be true at the same time. We should set this as an enum var.
 	aggregate bool
 	descScan  bool
-	topn      bool
+	topN      bool
 
 	// Use for DecodeRow.
 	colTps map[int64]*types.FieldType
@@ -221,7 +221,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 				if sel.Limit == nil {
 					return nil, errors.New("we don't support pushing down Sort without Limit")
 				}
-				ctx.topn = true
+				ctx.topN = true
 				ctx.topnHeap = &topnHeap{
 					totalCount: int(*sel.Limit),
 					topnSorter: topnSorter{
@@ -269,7 +269,7 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			}
 			err = rs.getRowsFromIndexReq(ctx)
 		}
-		if ctx.topn {
+		if ctx.topN {
 			rs.setTopNDataForCtx(ctx)
 		}
 		selResp := new(tipb.SelectResponse)
@@ -593,7 +593,7 @@ func (rs *localRegion) valuesToRow(ctx *selectContext, handle int64, values map[
 	if !match {
 		return false, nil
 	}
-	if ctx.topn {
+	if ctx.topN {
 		return false, errors.Trace(rs.evalTopN(ctx, handle, values, columns))
 	}
 	if ctx.aggregate {

@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -73,7 +75,9 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 			job.State = model.JobCancelled
-			return ver, errors.Trace(infoschema.ErrDatabaseNotExists)
+			return ver, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
+				fmt.Sprintf("(Schema ID %d)", schemaID),
+			))
 		}
 		return ver, errors.Trace(err)
 	}
@@ -81,7 +85,10 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Check the table.
 	if tblInfo == nil {
 		job.State = model.JobCancelled
-		return ver, errors.Trace(infoschema.ErrTableNotExists)
+		return ver, errors.Trace(infoschema.ErrTableNotExists.GenByArgs(
+			fmt.Sprintf("(Schema ID %d)", schemaID),
+			fmt.Sprintf("(Table ID %d)", tableID),
+		))
 	}
 
 	originalState := job.SchemaState
@@ -99,11 +106,11 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateDeleteOnly:
 		tblInfo.State = model.StateNone
 		job.SchemaState = model.StateNone
-		ver, err := updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropTable(job.SchemaID, job.TableID); err != nil {
+		if err = t.DropTable(job.SchemaID, job.TableID, true); err != nil {
 			break
 		}
 		// Finish this job.
@@ -157,12 +164,17 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 	if err != nil {
 		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 			job.State = model.JobCancelled
-			return nil, errors.Trace(infoschema.ErrDatabaseNotExists)
+			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
+				fmt.Sprintf("(Schema ID %d)", schemaID),
+			))
 		}
 		return nil, errors.Trace(err)
 	} else if tblInfo == nil {
 		job.State = model.JobCancelled
-		return nil, errors.Trace(infoschema.ErrTableNotExists)
+		return nil, errors.Trace(infoschema.ErrTableNotExists.GenByArgs(
+			fmt.Sprintf("(Schema ID %d)", schemaID),
+			fmt.Sprintf("(Table ID %d)", tableID),
+		))
 	}
 
 	if tblInfo.State != model.StatePublic {
@@ -198,7 +210,7 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	err = t.DropTable(schemaID, tableID)
+	err = t.DropTable(schemaID, tableID, true)
 	if err != nil {
 		job.State = model.JobCancelled
 		return ver, errors.Trace(err)
@@ -245,7 +257,7 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 	}
 
-	err = t.DropTable(oldSchemaID, tblInfo.ID)
+	err = t.DropTable(oldSchemaID, tblInfo.ID, false)
 	if err != nil {
 		job.State = model.JobCancelled
 		return ver, errors.Trace(err)

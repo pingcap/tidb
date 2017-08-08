@@ -48,6 +48,8 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"20121231113045", "2012-12-31 11:30:45"},
 		{"121231113045", "2012-12-31 11:30:45"},
 		{"2012-02-29", "2012-02-29 00:00:00"},
+		{"00-00-00", "0000-00-00 00:00:00"},
+		{"00-00-00 00:00:00.123", "2000-00-00 00:00:00"},
 	}
 
 	for _, test := range table {
@@ -161,6 +163,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}{
 		{"10:11:12", "10:11:12"},
 		{"101112", "10:11:12"},
+		{"112", "00:01:12"},
 		{"10:11", "10:11:00"},
 		{"101112.123456", "10:11:12"},
 		{"1112", "00:11:12"},
@@ -267,6 +270,29 @@ func (s *testTimeSuite) TestDurationAdd(c *C) {
 	c.Assert(err, IsNil)
 	_, err = t.Add(tatmp)
 	c.Assert(err, NotNil)
+}
+
+func (s *testTimeSuite) TestDurationSub(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		Input    string
+		Fsp      int
+		InputAdd string
+		FspAdd   int
+		Expect   string
+	}{
+		{"00:00:00.1", 1, "00:00:00.1", 1, "00:00:00.0"},
+		{"00:00:00", 0, "00:00:00.1", 1, "-00:00:00.1"},
+	}
+	for _, test := range table {
+		t, err := ParseDuration(test.Input, test.Fsp)
+		c.Assert(err, IsNil)
+		ta, err := ParseDuration(test.InputAdd, test.FspAdd)
+		c.Assert(err, IsNil)
+		result, err := t.Sub(ta)
+		c.Assert(err, IsNil)
+		c.Assert(result.String(), Equals, test.Expect)
+	}
 }
 
 func (s *testTimeSuite) TestTimeFsp(c *C) {
@@ -627,7 +653,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	for _, t := range tbl {
 		v, err := ParseTime(t.Input, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
-		nv, err := v.roundFrac(t.Fsp)
+		nv, err := v.RoundFrac(t.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(nv.String(), Equals, t.Except)
 	}
@@ -810,8 +836,8 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 	}
 
 	for _, test := range tests {
-		t1 := Time{test.t1, mysql.TypeDatetime, 6}
-		t2 := Time{test.t2, mysql.TypeDatetime, 6}
+		t1 := Time{test.t1, mysql.TypeDatetime, 6, nil}
+		t2 := Time{test.t2, mysql.TypeDatetime, 6, nil}
 		c.Assert(TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}
 }
@@ -829,5 +855,26 @@ func (s *testTimeSuite) TestDateFSP(c *C) {
 
 	for _, test := range tests {
 		c.Assert(DateFSP(test.date), Equals, test.expect)
+	}
+}
+
+func (s *testTimeSuite) TestConvertTimeZone(c *C) {
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	tests := []struct {
+		input  TimeInternal
+		from   *time.Location
+		to     *time.Location
+		expect TimeInternal
+	}{
+		{FromDate(2017, 1, 1, 0, 0, 0, 0), time.UTC, loc, FromDate(2017, 1, 1, 8, 0, 0, 0)},
+		{FromDate(2017, 1, 1, 8, 0, 0, 0), loc, time.UTC, FromDate(2017, 1, 1, 0, 0, 0, 0)},
+		{FromDate(0, 0, 0, 0, 0, 0, 0), loc, time.UTC, FromDate(0, 0, 0, 0, 0, 0, 0)},
+	}
+
+	for _, test := range tests {
+		var t Time
+		t.Time = test.input
+		t.ConvertTimeZone(test.from, test.to)
+		c.Assert(compareTime(t.Time, test.expect), Equals, 0)
 	}
 }

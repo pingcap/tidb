@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -27,9 +28,9 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// useDAGPlanBuilder checks if we use new DAG planner.
-func useDAGPlanBuilder(ctx context.Context) bool {
-	return ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic)
+// UseDAGPlanBuilder checks if we use new DAG planner.
+func UseDAGPlanBuilder(ctx context.Context) bool {
+	return ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) && ctx.GetSessionVars().CBO
 }
 
 // Plan is the description of an execution flow.
@@ -60,6 +61,8 @@ type Plan interface {
 	SetParents(...Plan)
 	// SetChildren sets the children for the plan.
 	SetChildren(...Plan)
+	// replaceExprColumns replace all the column reference in the plan's expression node.
+	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() context.Context
 
@@ -67,6 +70,10 @@ type Plan interface {
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 	ResolveIndices()
+
+	// findColumn finds the column in basePlan's schema.
+	// If the column is not in the schema, returns error.
+	findColumn(*ast.ColumnName) (*expression.Column, int, error)
 }
 
 type columnProp struct {
@@ -111,6 +118,8 @@ type requiredProp struct {
 	// must be finished and increase its cost in sometime, but we can't make sure the finishing time. So the best way
 	// to let the comparison fair is to add taskType to required property.
 	taskTp taskType
+	// expectedCnt means this operator may be closed after fetching expectedCnt records.
+	expectedCnt float64
 }
 
 func (p *requiredProp) equal(prop *requiredProp) bool {
@@ -134,19 +143,20 @@ func (p *requiredProp) isEmpty() bool {
 
 // getHashKey encodes prop to a unique key. The key will be stored in the memory table.
 func (p *requiredProp) getHashKey() ([]byte, error) {
-	datums := make([]types.Datum, 0, len(p.cols)*2+2)
+	datums := make([]types.Datum, 0, len(p.cols)*2+3)
 	datums = append(datums, types.NewDatum(p.desc))
 	for _, c := range p.cols {
 		datums = append(datums, types.NewDatum(c.FromID), types.NewDatum(c.Position))
 	}
 	datums = append(datums, types.NewDatum(int(p.taskTp)))
+	datums = append(datums, types.NewDatum(p.expectedCnt))
 	bytes, err := codec.EncodeValue(nil, datums...)
 	return bytes, errors.Trace(err)
 }
 
 // String implements fmt.Stringer interface. Just for test.
 func (p *requiredProp) String() string {
-	return fmt.Sprintf("Prop{cols: %s, desc: %v, taskTp: %s}", p.cols, p.desc, p.taskTp)
+	return fmt.Sprintf("Prop{cols: %s, desc: %v, taskTp: %s, expectedCount: %v}", p.cols, p.desc, p.taskTp, p.expectedCnt)
 }
 
 type requiredProperty struct {
@@ -220,8 +230,15 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *TopN) LogicalPlan
 
-	// statsProfile will return the stats for this plan.
-	statsProfile() *statsProfile
+	// prepareStatsProfile will prepare the stats for this plan.
+	prepareStatsProfile() *statsProfile
+
+	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
+	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
+	preparePossibleProperties() [][]*expression.Column
+
+	// generatePhysicalPlans generates all possible plans.
+	generatePhysicalPlans() []PhysicalPlan
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -249,17 +266,32 @@ type PhysicalPlan interface {
 
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx context.Context) (*tipb.Executor, error)
+
+	// ExplainInfo returns operator information to be explained.
+	ExplainInfo() string
+
+	// getChildrenPossibleProps tries to push the required properties to its children and return all the possible properties.
+	getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp
+
+	// statsProfile will return the stats for this plan.
+	statsProfile() *statsProfile
 }
 
 type baseLogicalPlan struct {
 	basePlan *basePlan
 	planMap  map[string]*physicalPlanInfo
 	taskMap  map[string]task
-	profile  *statsProfile
 }
 
 type basePhysicalPlan struct {
 	basePlan *basePlan
+	// expectedCnt means this operator may be closed after fetching expectedCnt records.
+	expectedCnt float64
+}
+
+// ExplainInfo implements PhysicalPlan interface.
+func (bp *basePhysicalPlan) ExplainInfo() string {
+	return ""
 }
 
 func (p *baseLogicalPlan) getTask(prop *requiredProp) (task, error) {
@@ -359,7 +391,7 @@ func newBasePhysicalPlan(basePlan *basePlan) basePhysicalPlan {
 	}
 }
 
-func (p *basePhysicalPlan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+func (bp *basePhysicalPlan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
 
@@ -416,11 +448,16 @@ type basePlan struct {
 	allocator *idAllocator
 	ctx       context.Context
 	self      Plan
+	profile   *statsProfile
 }
 
 func (p *basePlan) copy() *basePlan {
 	np := *p
 	return &np
+}
+
+func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
+	return
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -508,4 +545,12 @@ func (p *basePlan) SetChildren(children ...Plan) {
 
 func (p *basePlan) context() context.Context {
 	return p.ctx
+}
+
+func (p *basePlan) findColumn(column *ast.ColumnName) (*expression.Column, int, error) {
+	col, idx, err := p.Schema().FindColumnAndIndex(column)
+	if err == nil && col == nil {
+		err = errors.Errorf("column %s not found", column.Name.O)
+	}
+	return col, idx, errors.Trace(err)
 }

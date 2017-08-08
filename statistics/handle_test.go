@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -196,7 +197,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h := statistics.NewHandle(testKit.Se)
+	h := statistics.NewHandle(testKit.Se, 0)
 	testKit.MustExec("update mysql.stats_meta set version = 2 where table_id = ?", tableInfo1.ID)
 
 	h.Update(is)
@@ -316,10 +317,12 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := tikv.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	tidb.SetSchemaLease(0)
+	tidb.SetStatsLease(0)
 	do, err := tidb.BootstrapSession(store)
 	return store, do, errors.Trace(err)
 }

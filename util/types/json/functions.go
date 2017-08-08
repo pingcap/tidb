@@ -15,10 +15,13 @@ package json
 
 import (
 	"bytes"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"unicode/utf8"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // Type returns type of JSON as string.
@@ -37,6 +40,8 @@ func (j JSON) Type() string {
 		}
 	case typeCodeInt64:
 		return "INTEGER"
+	case typeCodeUint64:
+		return "UNSIGNED INTEGER"
 	case typeCodeFloat64:
 		return "DOUBLE"
 	case typeCodeString:
@@ -106,15 +111,17 @@ func unquoteString(s string) (string, error) {
 			case '\\':
 				ret.WriteByte('\\')
 			case 'u':
-				if i+4 >= len(s) {
-					return "", errors.New("Invalid unicode")
+				if i+5 > len(s) {
+					return "", errors.Errorf("Invalid unicode: %s", s[i+1:])
 				}
-				unicode, size := utf8.DecodeRuneInString(s[i-1 : i+5])
-				utf8Buf := make([]byte, size)
-				utf8.EncodeRune(utf8Buf, unicode)
-				ret.Write(utf8Buf)
-				i += 4
+				char, size, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
+				if err != nil {
+					return "", errors.Trace(err)
+				}
+				ret.Write(char[0:size])
+				i += 5
 			default:
+				// For all other escape sequences, backslash is ignored.
 				ret.WriteByte(s[i])
 			}
 		} else {
@@ -122,6 +129,22 @@ func unquoteString(s string) (string, error) {
 		}
 	}
 	return ret.String(), nil
+}
+
+// decodeEscapedUnicode decodes unicode into utf8 bytes specified in RFC 3629.
+// According RFC 3629, the max length of utf8 characters is 4 bytes.
+// And MySQL use 4 bytes to represent the unicode which must be in [0, 65536).
+func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
+	size, err = hex.Decode(char[0:2], s)
+	if err != nil || size != 2 {
+		// The unicode must can be represented in 2 bytes.
+		return char, 0, errors.Trace(err)
+	}
+	var unicode uint16
+	binary.Read(bytes.NewReader(char[0:2]), binary.BigEndian, &unicode)
+	size = utf8.RuneLen(rune(unicode))
+	utf8.EncodeRune(char[0:size], rune(unicode))
+	return
 }
 
 // extract is used by Extract.
@@ -241,12 +264,12 @@ const (
 // If any error occurs, the input won't be changed.
 func (j JSON) Modify(pathExprList []PathExpression, values []JSON, mt ModifyType) (retj JSON, err error) {
 	if len(pathExprList) != len(values) {
-		// TODO should return 1582(42000)
+		// TODO: should return 1582(42000)
 		return retj, errors.New("Incorrect parameter count")
 	}
 	for _, pathExpr := range pathExprList {
 		if pathExpr.flags.containsAnyAsterisk() {
-			// TODO should return 3149(42000)
+			// TODO: should return 3149(42000)
 			return retj, errors.New("Invalid path expression")
 		}
 	}
@@ -299,5 +322,46 @@ func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
 	// 1) we want to insert a new element, but the full path has already exists;
 	// 2) we want to replace an old element, but the full path doesn't exist;
 	// 3) we want to insert or replace something, but the path without last leg doesn't exist.
+	return j
+}
+
+// Remove removes the elements indicated by pathExprList from JSON.
+func (j JSON) Remove(pathExprList []PathExpression) (JSON, error) {
+	for _, pathExpr := range pathExprList {
+		if len(pathExpr.legs) == 0 {
+			// TODO: should return 3153(42000)
+			return j, errors.New("Invalid path expression")
+		}
+		if pathExpr.flags.containsAnyAsterisk() {
+			// TODO: should return 3149(42000)
+			return j, errors.New("Invalid path expression")
+		}
+		j = remove(j, pathExpr)
+	}
+	return j, nil
+}
+
+// remove is used in Remove.
+func remove(j JSON, pathExpr PathExpression) JSON {
+	currentLeg, subPathExpr := pathExpr.popOneLeg()
+	if currentLeg.typ == pathLegIndex && j.typeCode == typeCodeArray {
+		var index = currentLeg.arrayIndex
+		if len(j.array) > index {
+			if len(subPathExpr.legs) == 0 {
+				j.array = append(j.array[0:index], j.array[index+1:]...)
+			} else {
+				j.array[index] = remove(j.array[index], subPathExpr)
+			}
+		}
+	} else if currentLeg.typ == pathLegKey && j.typeCode == typeCodeObject {
+		var key = currentLeg.dotKey
+		if child, ok := j.object[key]; ok {
+			if len(subPathExpr.legs) == 0 {
+				delete(j.object, key)
+			} else {
+				j.object[key] = remove(child, subPathExpr)
+			}
+		}
+	}
 	return j
 }

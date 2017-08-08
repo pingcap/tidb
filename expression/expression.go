@@ -43,6 +43,9 @@ const (
 	codeFunctionNotExists                      = 1305
 )
 
+// TurnOnNewExprEval indicates whether turn on the new expression evaluation architecture.
+var TurnOnNewExprEval int32
+
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
 
@@ -95,6 +98,9 @@ type Expression interface {
 
 	// ResolveIndices resolves indices by the given schema.
 	ResolveIndices(schema *Schema)
+
+	// ExplainInfo returns operator information to be explained.
+	ExplainInfo() string
 }
 
 // CNFExprs stands for a CNF expression.
@@ -168,7 +174,15 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 		return res, val.IsNull(), errors.Trace(err)
 	}
 	if expr.GetTypeClass() == types.ClassDecimal {
-		return val.GetMysqlDecimal(), false, nil
+		res, err = val.ToDecimal(sc)
+		return res, false, errors.Trace(err)
+		// TODO: We maintain two sets of type systems, one for Expression, one for Datum.
+		// So there exists some situations that the two types are not corresponded.
+		// For example, `select 1.1+1.1`
+		// we infer the result type of the sql as `mysql.TypeNewDecimal` which is consistent with MySQL,
+		// but what we actually get is store as float64 in Datum.
+		// So if we wrap `CastDecimalAsInt` upon the result, we'll get <nil> when call `arg.EvalDecimal()`.
+		// This will be fixed after all built-in functions be rewrite correctlly.
 	} else if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
@@ -182,7 +196,7 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if expr.GetTypeClass() == types.ClassString {
+	if expr.GetTypeClass() == types.ClassString || IsHybridType(expr) {
 		// We cannot use val.GetString() directly.
 		// For example, `Bit` is regarded as ClassString,
 		// while we can not use val.GetString() to get the value of a Bit variable,
@@ -202,12 +216,10 @@ func evalExprToTime(expr Expression, row []types.Datum, _ *variable.StatementCon
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	switch expr.GetType().Tp {
-	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
+	if types.IsTypeTime(expr.GetType().Tp) {
 		return val.GetMysqlTime(), false, nil
-	default:
-		panic(fmt.Sprintf("cannot get DATE result from %s expression", types.TypeStr(expr.GetType().Tp)))
 	}
+	panic(fmt.Sprintf("cannot get DATE result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
 // evalExprToDuration evaluates `expr` to DURATION type.
@@ -369,12 +381,12 @@ func composeConditionWithBinaryOp(ctx context.Context, conditions []Expression, 
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
 func ComposeCNFCondition(ctx context.Context, conditions ...Expression) Expression {
-	return composeConditionWithBinaryOp(ctx, conditions, ast.AndAnd)
+	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
 func ComposeDNFCondition(ctx context.Context, conditions ...Expression) Expression {
-	return composeConditionWithBinaryOp(ctx, conditions, ast.OrOr)
+	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicOr)
 }
 
 // Assignment represents a set assignment in Update, such as
@@ -412,13 +424,13 @@ func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
 // SplitCNFItems splits CNF items.
 // CNF means conjunctive normal form, e.g. "a and b and c".
 func SplitCNFItems(onExpr Expression) []Expression {
-	return splitNormalFormItems(onExpr, ast.AndAnd)
+	return splitNormalFormItems(onExpr, ast.LogicAnd)
 }
 
 // SplitDNFItems splits DNF items.
 // DNF means disjunctive normal form, e.g. "a or b or c".
 func SplitDNFItems(onExpr Expression) []Expression {
-	return splitNormalFormItems(onExpr, ast.OrOr)
+	return splitNormalFormItems(onExpr, ast.LogicOr)
 }
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
@@ -510,13 +522,21 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 }
 
 // NewCastFunc creates a new cast function.
-func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *ScalarFunction {
-	bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
-	return &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Cast),
-		RetType:  tp,
-		Function: bt.setSelf(bt),
+func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) (sf Expression) {
+	// TODO: we do not support CastAsJson in new expression evaluation architecture now.
+	if tp.Tp == mysql.TypeJSON {
+		bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
+		sf = &ScalarFunction{
+			FuncName: model.NewCIStr(ast.Cast),
+			RetType:  tp,
+			Function: bt.setSelf(bt),
+		}
+	} else {
+		// We ignore error here because buildCastFunction will only get errIncorrectParameterCount
+		// which can be guaranteed to not happen.
+		sf, _ = buildCastFunction(arg, tp, ctx)
 	}
+	return FoldConstant(sf)
 }
 
 // NewValuesFunc creates a new values function.

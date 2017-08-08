@@ -24,6 +24,8 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/util/segmentmap"
 	"github.com/twinj/uuid"
 )
@@ -231,7 +233,8 @@ type dbStore struct {
 	closed       bool
 	committingTS uint64
 
-	pd localPD
+	pd     localPD
+	oracle oracle.Oracle
 }
 
 type storeCache struct {
@@ -302,6 +305,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		db:         db,
 		compactor:  newLocalCompactor(localCompactDefaultPolicy, db),
 		closed:     false,
+		oracle:     oracles.NewLocalOracle(),
 	}
 	s.recentUpdates, err = segmentmap.NewSegmentMap(100)
 	if err != nil {
@@ -348,6 +352,10 @@ func (s *dbStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 
 func (s *dbStore) GetClient() kv.Client {
 	return &dbClient{store: s, regionInfo: s.pd.GetRegionInfo()}
+}
+
+func (s *dbStore) GetOracle() oracle.Oracle {
+	return s.oracle
 }
 
 func (s *dbStore) CurrentVersion() (kv.Version, error) {

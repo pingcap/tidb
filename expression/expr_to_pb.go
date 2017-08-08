@@ -145,12 +145,16 @@ func (pc pbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		return pc.compareOpsToPBExpr(expr)
 	case ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv:
 		return pc.arithmeticalOpsToPBExpr(expr)
-	case ast.AndAnd, ast.OrOr, ast.UnaryNot, ast.LogicXor:
+	case ast.LogicAnd, ast.LogicOr, ast.UnaryNot, ast.LogicXor:
 		return pc.logicalOpsToPBExpr(expr)
 	case ast.And, ast.Or, ast.BitNeg, ast.Xor, ast.LeftShift, ast.RightShift:
 		return pc.bitwiseFuncToPBExpr(expr)
 	case ast.Case, ast.Coalesce, ast.If, ast.Ifnull, ast.IsNull, ast.Nullif:
 		return pc.builtinFuncToPBExpr(expr)
+	case ast.JSONType, ast.JSONExtract, ast.JSONUnquote, ast.JSONValid,
+		ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
+		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONContains:
+		return pc.jsonFuncToPBExpr(expr)
 	default:
 		return nil
 	}
@@ -186,8 +190,8 @@ func (pc pbConverter) likeToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		return nil
 	}
 	// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
-	escape := expr.GetArgs()[2].(*Constant).Value
-	if escape.IsNull() || byte(escape.GetInt64()) != '\\' {
+	escape, ok := expr.GetArgs()[2].(*Constant)
+	if !ok || escape.Value.IsNull() || byte(escape.Value.GetInt64()) != '\\' {
 		return nil
 	}
 	pattern, ok := expr.GetArgs()[1].(*Constant)
@@ -239,9 +243,9 @@ func (pc pbConverter) arithmeticalOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
 func (pc pbConverter) logicalOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	var tp tipb.ExprType
 	switch expr.FuncName.L {
-	case ast.AndAnd:
+	case ast.LogicAnd:
 		tp = tipb.ExprType_And
-	case ast.OrOr:
+	case ast.LogicOr:
 		tp = tipb.ExprType_Or
 	case ast.LogicXor:
 		tp = tipb.ExprType_Xor
@@ -267,6 +271,11 @@ func (pc pbConverter) bitwiseFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	case ast.BitNeg:
 		tp = tipb.ExprType_BitNeg
 	}
+	return pc.convertToPBExpr(expr, tp)
+}
+
+func (pc pbConverter) jsonFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
+	var tp = jsonFunctionNameToPB[expr.FuncName.L]
 	return pc.convertToPBExpr(expr, tp)
 }
 

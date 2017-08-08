@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,6 +45,11 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
+	atomic.StoreInt32(&TurnOnNewExprEval, 1)
+}
+
+func (s *testEvaluatorSuite) TearDownSuite(c *C) {
+	atomic.StoreInt32(&TurnOnNewExprEval, 0)
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {
@@ -178,17 +184,17 @@ func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 		rhs interface{}
 		ret interface{}
 	}{
-		{nil, ast.AndAnd, 1, nil},
-		{nil, ast.AndAnd, 0, 0},
-		{nil, ast.OrOr, 1, 1},
-		{nil, ast.OrOr, 0, nil},
+		{nil, ast.LogicAnd, 1, nil},
+		{nil, ast.LogicAnd, 0, 0},
+		{nil, ast.LogicOr, 1, 1},
+		{nil, ast.LogicOr, 0, nil},
 		{nil, ast.LogicXor, 1, nil},
 		{nil, ast.LogicXor, 0, nil},
-		{1, ast.AndAnd, 0, 0},
-		{1, ast.AndAnd, 1, 1},
-		{1, ast.OrOr, 0, 1},
-		{1, ast.OrOr, 1, 1},
-		{0, ast.OrOr, 0, 0},
+		{1, ast.LogicAnd, 0, 0},
+		{1, ast.LogicAnd, 1, 1},
+		{1, ast.LogicOr, 0, 1},
+		{1, ast.LogicOr, 1, 1},
+		{0, ast.LogicOr, 0, 0},
 		{1, ast.LogicXor, 0, 1},
 		{1, ast.LogicXor, 1, 0},
 		{0, ast.LogicXor, 0, 0},
@@ -577,36 +583,4 @@ func (s *testEvaluatorSuite) TestMod(c *C) {
 	r, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(1.5))
-}
-
-func (s *testEvaluatorSuite) TestDynamic(c *C) {
-	var dynamicFuncs = map[string]int{
-		ast.Rand:         0,
-		ast.ConnectionID: 0,
-		ast.CurrentUser:  0,
-		ast.User:         0,
-		ast.Database:     0,
-		ast.Schema:       0,
-		ast.FoundRows:    0,
-		ast.LastInsertId: 0,
-		ast.Version:      0,
-		ast.Sleep:        0,
-		ast.GetVar:       0,
-		ast.SetVar:       0,
-		ast.Values:       0,
-		ast.SessionUser:  0,
-		ast.SystemUser:   0,
-		ast.RowCount:     0,
-		ast.UUID:         0,
-	}
-	for name, fc := range funcs {
-		f, _ := fc.getFunction(nil, s.ctx)
-		if _, ok := dynamicFuncs[name]; ok {
-			c.Assert(f.isDeterministic(), IsFalse)
-		} else {
-			c.Assert(f.isDeterministic(), IsTrue)
-		}
-	}
-	values := NewValuesFunc(0, nil, nil)
-	c.Assert(values.Function.isDeterministic(), IsFalse)
 }

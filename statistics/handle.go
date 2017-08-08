@@ -16,6 +16,7 @@ package statistics
 import (
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -38,13 +39,18 @@ type Handle struct {
 	// PrevLastVersion will be assigned by LastVersion every time Update is called.
 	PrevLastVersion uint64
 	statsCache      atomic.Value
-	// ddlEventCh is a channel to notify a ddl operation has happened. It is sent only by owner and read by stats handle.
+	// ddlEventCh is a channel to notify a ddl operation has happened.
+	// It is sent only by owner or the drop stats executor, and read by stats handle.
 	ddlEventCh chan *ddl.Event
-
+	// analyzeResultCh is a channel to notify an analyze index or column operation has ended.
+	// We need this to avoid updating the stats simultaneously.
+	analyzeResultCh chan *AnalyzeResult
 	// All the stats collector required by session are maintained in this list.
 	listHead *SessionStatsCollector
 	// We collect the delta map and merge them with globalMap.
 	globalMap tableDeltaMap
+
+	Lease time.Duration
 }
 
 // Clear the statsCache, only for test.
@@ -55,20 +61,27 @@ func (h *Handle) Clear() {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx context.Context) *Handle {
+func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 	handle := &Handle{
-		ctx:        ctx,
-		ddlEventCh: make(chan *ddl.Event, 100),
-		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap)},
-		globalMap:  make(tableDeltaMap),
+		ctx:             ctx,
+		ddlEventCh:      make(chan *ddl.Event, 100),
+		analyzeResultCh: make(chan *AnalyzeResult, 100),
+		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
+		globalMap:       make(tableDeltaMap),
+		Lease:           lease,
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
 }
 
+// AnalyzeResultCh returns analyze result channel in handle.
+func (h *Handle) AnalyzeResultCh() chan *AnalyzeResult {
+	return h.analyzeResultCh
+}
+
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema) error {
-	sql := fmt.Sprintf("SELECT version, table_id, count from mysql.stats_meta where version > %d order by version", h.PrevLastVersion)
+	sql := fmt.Sprintf("SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %d order by version", h.PrevLastVersion)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -77,7 +90,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	tables := make([]*Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
-		version, tableID, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64()
+		version, tableID, modifyCount, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64(), row.Data[3].GetInt64()
 		table, ok := is.TableByID(tableID)
 		if !ok {
 			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
@@ -85,7 +98,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		tbl, err := h.tableStatsFromStorage(tableInfo, count)
+		tbl, err := h.tableStatsFromStorage(tableInfo)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
@@ -95,6 +108,9 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			deletedTableIDs = append(deletedTableIDs, tableID)
 			continue
 		}
+		tbl.Version = version
+		tbl.Count = count
+		tbl.ModifyCount = modifyCount
 		tables = append(tables, tbl)
 		h.LastVersion = version
 	}

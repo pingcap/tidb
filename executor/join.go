@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
@@ -51,8 +50,6 @@ type HashJoinExec struct {
 	leftSmall     bool
 	cursor        int
 	defaultValues []types.Datum
-	// targetTypes means the target the type that both smallHashKey and bigHashKey should convert to.
-	targetTypes []*types.FieldType
 
 	finished atomic.Value
 	// wg is for sync multiple join workers.
@@ -68,10 +65,6 @@ type HashJoinExec struct {
 
 	// Channels for output.
 	resultCh chan *execResult
-
-	// rowKeyCache is used to store the table and table name from a row.
-	// Because every row has the same table name and table, we can use a single row key cache.
-	rowKeyCache []*RowKeyEntry
 }
 
 // hashJoinCtx holds the variables needed to do a hash join in one of many concurrent goroutines.
@@ -116,11 +109,8 @@ func (e *HashJoinExec) Open() error {
 // makeJoinRow simply creates a new row that appends row b to row a.
 func makeJoinRow(a *Row, b *Row) *Row {
 	ret := &Row{
-		RowKeys: make([]*RowKeyEntry, 0, len(a.RowKeys)+len(b.RowKeys)),
-		Data:    make([]types.Datum, 0, len(a.Data)+len(b.Data)),
+		Data: make([]types.Datum, 0, len(a.Data)+len(b.Data)),
 	}
-	ret.RowKeys = append(ret.RowKeys, a.RowKeys...)
-	ret.RowKeys = append(ret.RowKeys, b.RowKeys...)
 	ret.Data = append(ret.Data, a.Data...)
 	ret.Data = append(ret.Data, b.Data...)
 	return ret
@@ -128,8 +118,7 @@ func makeJoinRow(a *Row, b *Row) *Row {
 
 // getJoinKey gets the hash key when given a row and hash columns.
 // It will return a boolean value representing if the hash key has null, a byte slice representing the result hash code.
-func getJoinKey(sc *variable.StatementContext, cols []*expression.Column, row *Row, targetTypes []*types.FieldType,
-	vals []types.Datum, bytes []byte) (bool, []byte, error) {
+func getJoinKey(cols []*expression.Column, row *Row, vals []types.Datum, bytes []byte) (bool, []byte, error) {
 	var err error
 	for i, col := range cols {
 		vals[i], err = col.Eval(row.Data)
@@ -139,15 +128,11 @@ func getJoinKey(sc *variable.StatementContext, cols []*expression.Column, row *R
 		if vals[i].IsNull() {
 			return true, nil, nil
 		}
-		vals[i], err = vals[i].ConvertTo(sc, targetTypes[i])
-		if err != nil {
-			return false, nil, errors.Trace(err)
-		}
 	}
 	if len(vals) == 0 {
 		return false, nil, nil
 	}
-	bytes, err = codec.EncodeValue(bytes, vals...)
+	bytes, err = codec.HashValues(bytes, vals...)
 	return false, bytes, errors.Trace(err)
 }
 
@@ -226,7 +211,6 @@ func (e *HashJoinExec) prepare() error {
 
 	e.hashTable = mvmap.NewMVMap()
 	e.cursor = 0
-	sc := e.ctx.GetSessionVars().StmtCtx
 	var buffer []byte
 	for {
 		row, err := e.smallExec.Next()
@@ -245,7 +229,7 @@ func (e *HashJoinExec) prepare() error {
 		if !matched {
 			continue
 		}
-		hasNull, joinKey, err := getJoinKey(sc, e.smallHashKey, row, e.targetTypes, e.hashJoinContexts[0].datumBuffer, nil)
+		hasNull, joinKey, err := getJoinKey(e.smallHashKey, row, e.hashJoinContexts[0].datumBuffer, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -273,20 +257,6 @@ func (e *HashJoinExec) prepare() error {
 }
 
 func (e *HashJoinExec) encodeRow(b []byte, row *Row) ([]byte, error) {
-	numRowKeys := int64(len(row.RowKeys))
-	b = codec.EncodeVarint(b, numRowKeys)
-	for _, rowKey := range row.RowKeys {
-		b = codec.EncodeVarint(b, rowKey.Handle)
-	}
-	if numRowKeys > 0 && e.rowKeyCache == nil {
-		e.rowKeyCache = make([]*RowKeyEntry, len(row.RowKeys))
-		for i := 0; i < len(row.RowKeys); i++ {
-			rk := new(RowKeyEntry)
-			rk.Tbl = row.RowKeys[i].Tbl
-			rk.TableName = row.RowKeys[i].TableName
-			e.rowKeyCache[i] = rk
-		}
-	}
 	loc := e.ctx.GetSessionVars().GetTimeZone()
 	for _, datum := range row.Data {
 		tmp, err := tablecodec.EncodeValue(datum, loc)
@@ -300,22 +270,8 @@ func (e *HashJoinExec) encodeRow(b []byte, row *Row) ([]byte, error) {
 
 func (e *HashJoinExec) decodeRow(data []byte) (*Row, error) {
 	row := new(Row)
-	data, entryLen, err := codec.DecodeVarint(data)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for i := 0; i < int(entryLen); i++ {
-		entry := new(RowKeyEntry)
-		data, entry.Handle, err = codec.DecodeVarint(data)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		entry.Tbl = e.rowKeyCache[i].Tbl
-		entry.TableName = e.rowKeyCache[i].TableName
-		row.RowKeys = append(row.RowKeys, entry)
-	}
 	values := make([]types.Datum, e.smallExec.Schema().Len())
-	err = codec.SetRawValues(data, values)
+	err := codec.SetRawValues(data, values)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -409,8 +365,7 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row, result *exec
 
 // constructMatchedRows creates matching result rows from a row in the big table.
 func (e *HashJoinExec) constructMatchedRows(ctx *hashJoinCtx, bigRow *Row) (matchedRows []*Row, err error) {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	hasNull, joinKey, err := getJoinKey(sc, e.bigHashKey, bigRow, e.targetTypes, ctx.datumBuffer, ctx.hashKeyBuffer[0:0:cap(ctx.hashKeyBuffer)])
+	hasNull, joinKey, err := getJoinKey(e.bigHashKey, bigRow, ctx.datumBuffer, ctx.hashKeyBuffer[0:0:cap(ctx.hashKeyBuffer)])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -683,7 +638,6 @@ type HashSemiJoinExec struct {
 	// auxMode is a mode that the result row always returns with an extra column which stores a boolean
 	// or NULL value to indicate if this row is matched.
 	auxMode           bool
-	targetTypes       []*types.FieldType
 	smallTableHasNull bool
 	// anti is true, semi join only output the unmatched row.
 	anti bool
@@ -719,7 +673,6 @@ func (e *HashSemiJoinExec) prepare() error {
 	}
 	defer e.smallExec.Close()
 	e.hashTable = make(map[string][]*Row)
-	sc := e.ctx.GetSessionVars().StmtCtx
 	e.resultRows = make([]*Row, 1)
 	e.prepared = true
 	for {
@@ -738,7 +691,7 @@ func (e *HashSemiJoinExec) prepare() error {
 		if !matched {
 			continue
 		}
-		hasNull, hashcode, err := getJoinKey(sc, e.smallHashKey, row, e.targetTypes, make([]types.Datum, len(e.smallHashKey)), nil)
+		hasNull, hashcode, err := getJoinKey(e.smallHashKey, row, make([]types.Datum, len(e.smallHashKey)), nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -755,8 +708,7 @@ func (e *HashSemiJoinExec) prepare() error {
 }
 
 func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool, err error) {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	hasNull, hashcode, err := getJoinKey(sc, e.bigHashKey, bigRow, e.targetTypes, make([]types.Datum, len(e.smallHashKey)), nil)
+	hasNull, hashcode, err := getJoinKey(e.bigHashKey, bigRow, make([]types.Datum, len(e.smallHashKey)), nil)
 	if err != nil {
 		return false, false, errors.Trace(err)
 	}

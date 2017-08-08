@@ -69,9 +69,11 @@ type twoPhaseCommitter struct {
 	commitTS  uint64
 	mu        struct {
 		sync.RWMutex
-		writtenKeys [][]byte
-		committed   bool
+		writtenKeys  [][]byte
+		committed    bool
+		undetermined bool
 	}
+	priority pb.CommandPri
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -138,7 +140,6 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 
 	txnWriteKVCountHistogram.Observe(float64(len(keys)))
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
-
 	return &twoPhaseCommitter{
 		store:     txn.store,
 		txn:       txn,
@@ -146,6 +147,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 		keys:      keys,
 		mutations: mutations,
 		lockTTL:   txnLockTTL(txn.startTime, size),
+		priority:  getTxnPriority(txn),
 	}, nil
 }
 
@@ -206,8 +208,8 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
-	if firstIsPrimary && action == actionCommit {
-		// primary should be committed first.
+	if firstIsPrimary && (action == actionCommit || action == actionCleanup) {
+		// primary should be committed/cleanup first
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
 			return errors.Trace(err)
@@ -326,22 +328,16 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		mutations[i] = c.mutations[string(k)]
 	}
 
-	skipCheck := false
-	optSkipCheck := c.txn.us.GetOption(kv.SkipCheckForWrite)
-	if skip, ok := optSkipCheck.(bool); ok && skip {
-		skipCheck = true
-	}
 	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdPrewrite,
+		Type:     tikvrpc.CmdPrewrite,
+		Priority: c.priority,
 		Prewrite: &pb.PrewriteRequest{
-			Mutations:           mutations,
-			PrimaryLock:         c.primary(),
-			StartVersion:        c.startTS,
-			LockTtl:             c.lockTTL,
-			SkipConstraintCheck: skipCheck,
+			Mutations:    mutations,
+			PrimaryLock:  c.primary(),
+			StartVersion: c.startTS,
+			LockTtl:      c.lockTTL,
 		},
 	}
-
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
@@ -368,7 +364,15 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			// We need to cleanup all written keys if transaction aborts.
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			c.mu.writtenKeys = append(c.mu.writtenKeys, batch.keys...)
+			// Primary key should always been in the front since in `cleanup` we
+			// would check whether the `writtenKeys`'s first key is primary key.
+			if bytes.Equal(batch.keys[0], c.primary()) {
+				tmpKeys := make([][]byte, 0, len(batch.keys)+len(c.mu.writtenKeys))
+				tmpKeys = append(tmpKeys, batch.keys...)
+				c.mu.writtenKeys = append(tmpKeys, c.mu.writtenKeys...)
+			} else {
+				c.mu.writtenKeys = append(c.mu.writtenKeys, batch.keys...)
+			}
 			return nil
 		}
 		var locks []*Lock
@@ -393,9 +397,27 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	}
 }
 
-func (c *twoPhaseCommitter) doCommitSingleBatch(bo *Backoffer, batch batchKeys) error {
+func getTxnPriority(txn *tikvTxn) pb.CommandPri {
+	if pri := txn.us.GetOption(kv.Priority); pri != nil {
+		return kvPriorityToCommandPri(pri.(int))
+	}
+	return pb.CommandPri_Normal
+}
+
+func kvPriorityToCommandPri(pri int) pb.CommandPri {
+	switch pri {
+	case kv.PriorityLow:
+		return pb.CommandPri_Low
+	case kv.PriorityHigh:
+		return pb.CommandPri_High
+	}
+	return pb.CommandPri_Normal
+}
+
+func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
 	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdCommit,
+		Type:     tikvrpc.CmdCommit,
+		Priority: c.priority,
 		Commit: &pb.CommitRequest{
 			StartVersion:  c.startTS,
 			Keys:          batch.keys,
@@ -403,8 +425,19 @@ func (c *twoPhaseCommitter) doCommitSingleBatch(bo *Backoffer, batch batchKeys) 
 		},
 	}
 
+	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
+	// transaction has been successfully committed.
+	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
+	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
+	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
+	isPrimary := bytes.Compare(batch.keys[0], c.primary()) == 0
+
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
+		if isPrimary {
+			// change the Cause of the error to be returned
+			return errors.Trace(errors.Wrap(err, terror.ErrResultUndetermined))
+		}
 		return errors.Trace(err)
 	}
 	regionErr, err := resp.GetRegionError()
@@ -445,21 +478,6 @@ func (c *twoPhaseCommitter) doCommitSingleBatch(bo *Backoffer, batch batchKeys) 
 	// We mark transaction's status committed when we receive the first success response.
 	c.mu.committed = true
 	return nil
-}
-
-func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
-	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
-	// transaction has been successfully committed.
-	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
-	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
-	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
-	isPrimary := bytes.Compare(batch.keys[0], c.primary()) == 0
-	err := c.doCommitSingleBatch(bo, batch)
-	if err != nil && isPrimary {
-		// change the Cause of the error to be returned
-		return errors.Wrap(err, terror.ErrResultUndetermined)
-	}
-	return err
 }
 
 func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) error {
@@ -518,8 +536,9 @@ func (c *twoPhaseCommitter) execute() error {
 		c.mu.RLock()
 		writtenKeys := c.mu.writtenKeys
 		committed := c.mu.committed
+		undetermined := c.mu.undetermined
 		c.mu.RUnlock()
-		if !committed {
+		if !committed && !undetermined {
 			go func() {
 				reserveStack(false)
 				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, goctx.Background()), writtenKeys)
@@ -561,7 +580,7 @@ func (c *twoPhaseCommitter) execute() error {
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS
-	if err := c.checkSchemaValid(); err != nil {
+	if err = c.checkSchemaValid(); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -572,6 +591,9 @@ func (c *twoPhaseCommitter) execute() error {
 
 	err = c.commitKeys(NewBackoffer(commitMaxBackoff, ctx), c.keys)
 	if err != nil {
+		if errors.Cause(err) == terror.ErrResultUndetermined {
+			c.mu.undetermined = true
+		}
 		if !c.mu.committed {
 			log.Debugf("2PC failed on commit: %v, tid: %d", err, c.startTS)
 			return errors.Trace(err)
@@ -602,12 +624,13 @@ func (c *twoPhaseCommitter) prewriteBinlog() chan error {
 	}
 	ch := make(chan error, 1)
 	go func() {
-		bin := c.txn.us.GetOption(kv.BinlogData).(*binlog.Binlog)
+		binInfo := c.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
+		bin := binInfo.Data
 		bin.StartTs = int64(c.startTS)
 		if bin.Tp == binlog.BinlogType_Prewrite {
 			bin.PrewriteKey = c.keys[0]
 		}
-		err := binloginfo.WriteBinlog(bin, c.store.clusterID)
+		err := binInfo.WriteBinlog(c.store.clusterID)
 		ch <- errors.Trace(err)
 	}()
 	return ch
@@ -617,11 +640,11 @@ func (c *twoPhaseCommitter) writeFinishBinlog(tp binlog.BinlogType, commitTS int
 	if !c.shouldWriteBinlog() {
 		return
 	}
-	bin := c.txn.us.GetOption(kv.BinlogData).(*binlog.Binlog)
-	bin.Tp = tp
-	bin.CommitTs = commitTS
+	binInfo := c.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
+	binInfo.Data.Tp = tp
+	binInfo.Data.CommitTs = commitTS
 	go func() {
-		err := binloginfo.WriteBinlog(bin, c.store.clusterID)
+		err := binInfo.WriteBinlog(c.store.clusterID)
 		if err != nil {
 			log.Errorf("failed to write binlog: %v", err)
 		}
@@ -629,11 +652,7 @@ func (c *twoPhaseCommitter) writeFinishBinlog(tp binlog.BinlogType, commitTS int
 }
 
 func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
-	if binloginfo.PumpClient == nil {
-		return false
-	}
-	_, ok := c.txn.us.GetOption(kv.BinlogData).(*binlog.Binlog)
-	return ok
+	return c.txn.us.GetOption(kv.BinlogInfo) != nil
 }
 
 // TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's
