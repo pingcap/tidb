@@ -507,6 +507,19 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
 	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
 	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
+
+	// for locate
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time)")
+	tk.MustExec(`insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01")`)
+	result = tk.MustQuery(`select locate(".ping", a), locate(".ping", a, 5) from t`)
+	result.Check(testkit.Rows("4 0"))
+	result = tk.MustQuery(`select locate("234", b), locate("235", b, 10) from t`)
+	result.Check(testkit.Rows("2 0"))
+	result = tk.MustQuery(`select locate(".45", c), locate(".35", b) from t`)
+	result.Check(testkit.Rows("4 0"))
+	result = tk.MustQuery(`select locate("01 12", d) from t`)
+	result.Check(testkit.Rows("9"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {

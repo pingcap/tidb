@@ -768,6 +768,8 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLocate(c *C) {
+
+	// 1. Test non case-sensative 'Locate' with 2 arguments
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Args []interface{}
@@ -782,12 +784,9 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{[]interface{}{"界面", "你好世界"}, 0},
 		{[]interface{}{"b", "中a英b文"}, 4},
 		{[]interface{}{"BaR", "foobArbar"}, 4},
-		{[]interface{}{[]byte("BaR"), "foobArbar"}, 0},
-		{[]interface{}{"BaR", []byte("foobArbar")}, 0},
 		{[]interface{}{nil, "foobar"}, nil},
 		{[]interface{}{"bar", nil}, nil},
 	}
-
 	Dtbl := tblToDtbl(tbl)
 	instr := funcs[ast.Locate]
 	for i, t := range Dtbl {
@@ -795,10 +794,53 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		c.Assert(err, IsNil)
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
 
+	// 2. Test case-sensative 'Locate' with 2 arguments
 	tbl2 := []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{[]byte("BaR"), "foobArbar"}, 0},
+	}
+	Dtbl2 := tblToDtbl(tbl2)
+	for i, t := range Dtbl2 {
+		exprs := datumsToConstants(t["Args"])
+		types.SetBinChsClnFlag(exprs[0].GetType())
+		f, err := instr.getFunction(exprs, s.ctx)
+		c.Assert(err, IsNil)
+		got, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
+	}
+
+	// 3. Test case-sensative 'Locate' with 2 arguments
+	tbl3 := []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{"BaR", []byte("foobArbar")}, 0},
+	}
+	Dtbl3 := tblToDtbl(tbl3)
+	for i, t := range Dtbl3 {
+		exprs := datumsToConstants(t["Args"])
+		types.SetBinChsClnFlag(exprs[1].GetType())
+		f, err := instr.getFunction(exprs, s.ctx)
+		c.Assert(err, IsNil)
+		got, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
+	}
+
+	// 4. Test non case-sensatviec 'Locate' with 3 arguments
+	tbl4 := []struct {
 		Args []interface{}
 		Want interface{}
 	}{
@@ -812,16 +854,54 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{[]interface{}{"A", "大A写的A", 2}, 2},
 		{[]interface{}{"A", "大A写的A", 3}, 5},
 		{[]interface{}{"bAr", "foobarBaR", 5}, 7},
-		{[]interface{}{[]byte("bAr"), "foobarBaR", 5}, 0},
-		{[]interface{}{"bAr", []byte("foobarBaR"), 5}, 0},
-		{[]interface{}{"bAr", []byte("foobarbAr"), 5}, 7},
 	}
-	Dtbl2 := tblToDtbl(tbl2)
-	for i, t := range Dtbl2 {
+	Dtbl4 := tblToDtbl(tbl4)
+	for i, t := range Dtbl4 {
 		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
 		c.Assert(err, IsNil)
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
+	}
+
+	// 5. Test case-sensative 'Locate' with 3 arguments
+	tbl5 := []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{[]byte("bAr"), "foobarBaR", 5}, 0},
+	}
+	Dtbl5 := tblToDtbl(tbl5)
+	for i, t := range Dtbl5 {
+		exprs := datumsToConstants(t["Args"])
+		types.SetBinChsClnFlag(exprs[0].GetType())
+		f, err := instr.getFunction(exprs, s.ctx)
+		c.Assert(err, IsNil)
+		got, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
+	}
+
+	// 6. Test case-sensative 'Locate' with 3 arguments
+	tbl6 := []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{"bAr", []byte("foobarBaR"), 5}, 0},
+		{[]interface{}{"bAr", []byte("foobarbAr"), 5}, 7},
+	}
+	Dtbl6 := tblToDtbl(tbl6)
+	for i, t := range Dtbl6 {
+		exprs := datumsToConstants(t["Args"])
+		types.SetBinChsClnFlag(exprs[1].GetType())
+		f, err := instr.getFunction(exprs, s.ctx)
+		c.Assert(err, IsNil)
+		got, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
 
