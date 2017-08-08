@@ -222,6 +222,7 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	r.Check(testkit.Rows("string"))
 }
 
+// Issue 3685.
 func (s *testSuite) TestSelectBackslashN(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -247,7 +248,7 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	fields, err = rs.Fields()
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
-	c.Check(fields[0].Column.Name.O, Equals, `"\N"`)
+	c.Check(fields[0].Column.Name.O, Equals, `N`)
 
 	tk.MustExec("use test;")
 	tk.MustExec("create table test (`\\N` int);")
@@ -263,7 +264,17 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
 
-	sql = "select \\N from test;"
+	sql = `select \N from test;`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("<nil>"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+
+	sql = `select (\N) from test;`
 	r = tk.MustQuery(sql)
 	r.Check(testkit.Rows("<nil>"))
 	rs, err = tk.Exec(sql)
@@ -282,6 +293,182 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+
+	sql = "select (`\\N`) from test;"
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("1"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `\N`)
+
+	sql = `select '\N' from test;`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("N"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `N`)
+
+	sql = `select ('\N') from test;`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("N"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `N`)
+}
+
+// Issue #4053.
+func (s *testSuite) TestSelectNull(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	sql := `select nUll;`
+	r := tk.MustQuery(sql)
+	r.Check(testkit.Rows("<nil>"))
+	rs, err := tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err := rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+
+	sql = `select (null);`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("<nil>"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `NULL`)
+
+	sql = `select null+NULL;`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("<nil>"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `null+NULL`)
+}
+
+// Issue #3686.
+func (s *testSuite) TestSelectStringLiteral(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	sql := `select 'abc';`
+	r := tk.MustQuery(sql)
+	r.Check(testkit.Rows("abc"))
+	rs, err := tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err := rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `abc`)
+
+	sql = `select (('abc'));`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("abc"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `abc`)
+
+	sql = `select 'abc'+'def';`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("0"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, `'abc'+'def'`)
+
+	// Below checks whether leading invalid chars are trimmed.
+	sql = "select '\n';"
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("\n"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "")
+
+	sql = "select '\t   col';" // Lowercased letter is a valid char.
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "col")
+
+	sql = "select '\t   Col';" // Uppercased letter is a valid char.
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "Col")
+
+	sql = "select '\n\t   中文 col';" // Chinese char is a valid char.
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "中文 col")
+
+	sql = "select ' \r\n  .col';" // Punctuation is a valid char.
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, ".col")
+
+	sql = "select '   😆col';" // Emoji is a valid char.
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "😆col")
+
+	// Below checks whether trailing invalid chars are preserved.
+	sql = `select 'abc   ';`
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "abc   ")
+
+	sql = `select '  abc   123   ';`
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "abc   123   ")
 }
 
 func (s *testSuite) TestSelectLimit(c *C) {
