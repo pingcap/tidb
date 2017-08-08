@@ -368,15 +368,13 @@ func (b *builtinLeftBinarySig) evalString(row []types.Datum) (string, bool, erro
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	length := len(str)
-	l := int(left)
-	if l < 0 {
-		l = 0
-	} else if l > length {
-		l = length
+	leftLength := int(left)
+	if strLength := len(str); leftLength > strLength {
+		leftLength = strLength
+	} else if leftLength < 0 {
+		leftLength = 0
 	}
-
-	return str[:l], false, nil
+	return str[:leftLength], false, nil
 }
 
 type builtinLeftSig struct {
@@ -395,16 +393,13 @@ func (b *builtinLeftSig) evalString(row []types.Datum) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	runes := []rune(str)
-	length := len(runes)
-	l := int(left)
-	if l < 0 {
-		l = 0
-	} else if l > length {
-		l = length
+	runes, leftLength := []rune(str), int(left)
+	if runeLength := len(runes); leftLength > runeLength {
+		leftLength = runeLength
+	} else if leftLength < 0 {
+		leftLength = 0
 	}
-
-	return string(runes[:l]), false, nil
+	return string(runes[:leftLength]), false, nil
 }
 
 type rightFunctionClass struct {
@@ -446,14 +441,13 @@ func (b *builtinRightBinarySig) evalString(row []types.Datum) (string, bool, err
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	r := int(right)
-	length := len(str)
-	if r < 0 {
-		r = 0
-	} else if r > length {
-		r = length
+	rightLength := int(right)
+	if strLength := len(str); rightLength > strLength {
+		rightLength = strLength
+	} else if rightLength < 0 {
+		rightLength = 0
 	}
-	return str[length-r:], false, nil
+	return str[strLength-rightLength:], false, nil
 }
 
 type builtinRightSig struct {
@@ -472,15 +466,13 @@ func (b *builtinRightSig) evalString(row []types.Datum) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	r := int(right)
-	runes := []rune(str)
-	length := len(runes)
-	if r < 0 {
-		r = 0
-	} else if r > length {
-		r = length
+	runes, rightLength := []rune(str), int(right)
+	if strLength := len(runes); rightLength > strLength {
+		rightLength = strLength
+	} else if rightLength < 0 {
+		rightLength = 0
 	}
-	return string(runes[length-r:]), false, nil
+	return string(runes[strLength-rightLength:]), false, nil
 }
 
 type repeatFunctionClass struct {
@@ -823,33 +815,33 @@ func (c *substringFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
+	argTps := []argType{tpString, tpInt}
 	if len(args) == 3 {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpInt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		argType := args[0].GetType()
-		bf.tp.Flen = argType.Flen
-		setBinFlagOrBinStr(argType, bf.tp)
-		if types.IsBinaryStr(argType) {
-			sig := &builtinSubstringBinary3ArgsSig{baseStringBuiltinFunc{bf}}
-			return sig.setSelf(sig), nil
-		}
-		sig := &builtinSubstring3ArgsSig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), nil
+		argTps = append(argTps, tpInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
 	setBinFlagOrBinStr(argType, bf.tp)
-	if types.IsBinaryStr(argType) {
-		sig := &builtinSubstringBinary2ArgsSig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), nil
+
+	var sig builtinFunc
+	switch {
+	case len(args) == 3 && types.IsBinaryStr(argType):
+		sig = &builtinSubstringBinary3ArgsSig{baseStringBuiltinFunc{bf}}
+	case len(args) == 3:
+		sig = &builtinSubstring3ArgsSig{baseStringBuiltinFunc{bf}}
+	case len(args) == 2 && types.IsBinaryStr(argType):
+		sig = &builtinSubstringBinary2ArgsSig{baseStringBuiltinFunc{bf}}
+	case len(args) == 2:
+		sig = &builtinSubstring2ArgsSig{baseStringBuiltinFunc{bf}}
+	default:
+		// Should never happens.
+		return nil, errors.Errorf("SUBSTR invalid arg length, expect 2 or 3 but got: %v", len(args))
 	}
-	sig := &builtinSubstring2ArgsSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
