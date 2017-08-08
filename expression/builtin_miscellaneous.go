@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ngaut/log"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
@@ -107,8 +108,8 @@ func (b *builtinSleepSig) evalInt(row []types.Datum) (int64, bool, error) {
 	}
 	// processing argument is negative
 	if val < 0 {
+		log.Infof("[yusp] here!")
 		return 0, isNull, errIncorrectArgs.GenByArgs("sleep")
-
 	}
 
 	// TODO: consider it's interrupted using KILL QUERY from other session, or
