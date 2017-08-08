@@ -20,7 +20,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
-	"github.com/mohae/deepcopy"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -1217,16 +1216,10 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	p.SetSchema(schema)
 
 	// for calculating generated column
-	sc := b.ctx.GetSessionVars().StmtCtx
 	p.GenValues = make(map[int]expression.Expression)
 	for idx, column := range columns {
 		if len(column.GeneratedExprString) != 0 && !column.GeneratedStored {
-			genExpr := deepcopy.Copy(column.GeneratedExpr).(ast.ExprNode)
-			if err := expression.InferType(sc, genExpr); err != nil {
-				b.err = errors.Trace(err)
-				return nil
-			}
-			expr, _, err := b.rewrite(genExpr, p, nil, true)
+			expr, _, err := b.rewrite(column.GeneratedExpr, p, nil, true)
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
@@ -1427,7 +1420,6 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
-	sc := b.ctx.GetSessionVars().StmtCtx
 	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
 	for _, assign := range list {
 		col, _, err := p.findColumn(assign.Column)
@@ -1460,11 +1452,6 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
 				return nil, nil
 			}
-			genExpr := deepcopy.Copy(table.Cols()[i].GeneratedExpr).(ast.ExprNode)
-			if err := expression.InferType(sc, genExpr); err != nil {
-				b.err = errors.Trace(err)
-				return nil, nil
-			}
 			if asNames, ok := tableAsName[tableInfo]; ok {
 				// NOTE: "UPDATE t m, t n SET m.a=m.a+10, n.b=n.b+10" won't set both t.a=t.a+10 and t.b=t.b+10.
 				// But "UPDATE t m, t n SET m.a=m.a+10, m.b=m.b+10" can do that.
@@ -1472,13 +1459,13 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				for _, asName := range asNames {
 					virtualAssignments = append(virtualAssignments, &ast.Assignment{
 						Column: &ast.ColumnName{Table: asName, Name: colInfo.Name},
-						Expr:   genExpr,
+						Expr:   table.Cols()[i].GeneratedExpr,
 					})
 				}
 			} else {
 				virtualAssignments = append(virtualAssignments, &ast.Assignment{
 					Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
-					Expr:   genExpr,
+					Expr:   table.Cols()[i].GeneratedExpr,
 				})
 			}
 		}

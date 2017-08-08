@@ -17,7 +17,6 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/mohae/deepcopy"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -628,19 +627,13 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 // resolveGeneratedColumns resolves generated columns with their generation
 // expressions respectively. onDups indicates which columns are in on-duplicate list.
 func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns) {
-	sc := b.ctx.GetSessionVars().StmtCtx
 	for _, column := range columns {
 		if len(column.GeneratedExprString) == 0 {
 			continue
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
 		columnName.SetText(column.Name.O)
-		genExpr := deepcopy.Copy(column.GeneratedExpr).(ast.ExprNode)
-		if err := expression.InferType(sc, genExpr); err != nil {
-			b.err = errors.Trace(err)
-			return
-		}
-		expr, _, err := b.rewrite(genExpr, mockPlan, nil, true)
+		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return
