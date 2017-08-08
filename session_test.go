@@ -74,6 +74,49 @@ func (s *testSessionSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
+	defer testleak.AfterTest(c)()
+	lease := 5 * time.Millisecond
+	validator := domain.NewSchemaValidator(lease)
+	checker := &schemaLeaseChecker{SchemaValidator: validator}
+
+	// Add some schema versions and delta table IDs.
+	ts := uint64(time.Now().UnixNano())
+	validator.Update(ts, 0, 2, []int64{1})
+	validator.Update(ts, 2, 4, []int64{2})
+
+	// checker's schema version is the same as the current schema version.
+	checker.schemaVer = 4
+	err := checker.checkOnce(ts)
+	c.Assert(err, IsNil)
+
+	// checker's schema version is less than the current schema version, and it doesn't exist in validator's items.
+	// checker's related table ID isn't in validator's changed table IDs.
+	checker.schemaVer = 2
+	checker.relatedTableIDs = []int64{3}
+	err = checker.checkOnce(ts)
+	c.Assert(err, IsNil)
+	// The checker's schema version isn't in validator's items.
+	checker.schemaVer = 1
+	checker.relatedTableIDs = []int64{3}
+	err = checker.checkOnce(ts)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
+	// checker's related table ID is in validator's changed table IDs.
+	checker.relatedTableIDs = []int64{2}
+	err = checker.checkOnce(ts)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
+
+	// validator's latest schema version is expired.
+	time.Sleep(lease + time.Microsecond)
+	checker.schemaVer = 2
+	checker.relatedTableIDs = []int64{3}
+	err = checker.checkOnce(ts)
+	c.Assert(err, IsNil)
+	nowTS := uint64(time.Now().UnixNano())
+	err = checker.checkOnce(nowTS)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaExpired), IsTrue)
+}
+
 func (s *testSessionSuite) TestPrepare(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_prepare"

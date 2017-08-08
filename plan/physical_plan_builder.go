@@ -48,13 +48,17 @@ var JoinConcurrency = 5
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	client := p.ctx.GetClient()
 	ts := PhysicalTableScan{
-		Table:               p.tableInfo,
-		Columns:             p.Columns,
-		TableAsName:         p.TableAsName,
-		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{client: client},
+		Table:       p.tableInfo,
+		Columns:     p.Columns,
+		TableAsName: p.TableAsName,
+		DBName:      p.DBName,
+		physicalTableSource: physicalTableSource{
+			client:          client,
+			NeedColHandle:   p.NeedColHandle,
+			unionScanSchema: p.unionScanSchema,
+		},
 	}.init(p.allocator, p.ctx)
-	ts.SetSchema(p.Schema())
+	ts.SetSchema(p.schema)
 	if p.ctx.Txn() != nil {
 		ts.readOnly = p.ctx.Txn().IsReadOnly()
 	} else {
@@ -112,13 +116,17 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
 	client := p.ctx.GetClient()
 	is := PhysicalIndexScan{
-		Index:               index,
-		Table:               p.tableInfo,
-		Columns:             p.Columns,
-		TableAsName:         p.TableAsName,
-		OutOfOrder:          true,
-		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{client: client},
+		Index:       index,
+		Table:       p.tableInfo,
+		Columns:     p.Columns,
+		TableAsName: p.TableAsName,
+		OutOfOrder:  true,
+		DBName:      p.DBName,
+		physicalTableSource: physicalTableSource{
+			client:          client,
+			NeedColHandle:   p.NeedColHandle,
+			unionScanSchema: p.unionScanSchema,
+		},
 	}.init(p.allocator, p.ctx)
 	is.SetSchema(p.schema)
 	if p.ctx.Txn() != nil {
@@ -175,6 +183,9 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
 	for _, colInfo := range columns {
 		if pkIsHandle && mysql.HasPriKeyFlag(colInfo.Flag) {
+			continue
+		}
+		if colInfo.ID == model.ExtraHandleID {
 			continue
 		}
 		isIndexColumn := false
