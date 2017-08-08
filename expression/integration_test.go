@@ -477,6 +477,8 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	tk.MustExec(`insert into t select "中文abc"`)
 	result = tk.MustQuery(`select substr(a, 4), substr(a, 1, 3), substr(a, 1, 6) from t`)
 	result.Check(testkit.Rows("文abc\x00 中 中文"))
+	result = tk.MustQuery(`select substr("string", -1), substr("string", -2), substr("中文", -1), substr("中文", -2) from t`)
+	result.Check(testkit.Rows("g ng 文 中文"))
 
 	// for bit_length
 	tk.MustExec("drop table if exists t")
