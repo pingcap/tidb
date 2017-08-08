@@ -668,6 +668,21 @@ func (s *testSuite) TestIssue2612(c *C) {
 	c.Assert(str, Equals, "-46:09:02")
 }
 
+// TestIssue2612 is related with https://github.com/pingcap/tidb/issues/4054
+func (s *testSuite) TestIssue4054(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1(str varchar(10) default 'def',strnull varchar(10),intg int default '10',rel double default '3.14');`)
+	tk.MustExec(`insert into t1 () values ();`)
+	rs := tk.MustQuery(`select default(str), default(strnull), default(intg), default(rel) from t1;`)
+	rs.Check(testkit.Rows("def <nil> 10 3.14"))
+}
+
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
 func (s *testSuite) TestIssue345(c *C) {
 	defer func() {
