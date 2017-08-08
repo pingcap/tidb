@@ -1441,24 +1441,21 @@ func (b *builtinCharSig) convertToBytes(ints []int64) []byte {
 	for i := len(ints) - 1; i >= 0; i-- {
 		for count, val := 0, ints[i]; count < 4; count++ {
 			buffer.WriteByte(byte(val & 0xff))
-			val = val >> 8
-			if val == 0 {
+			if val >>= 8; val == 0 {
 				break
 			}
 		}
 	}
 
 	result := buffer.Bytes()
-	for start, end := 0, len(result)-1; start < end; {
-		result[start], result[end] = result[end], result[start]
-		start++
-		end--
+	for i, length := 0, len(result); i < length/2; i++ {
+		result[i], result[length-1-i] = result[length-1-i], result[i]
 	}
 	return result
 }
 
 // evalString evals CHAR(N,... [USING charset_name]).
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char.
 func (b *builtinCharSig) evalString(row []types.Datum) (string, bool, error) {
 	bigints := make([]int64, 0, len(b.args)-1)
 
