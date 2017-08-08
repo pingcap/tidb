@@ -107,14 +107,14 @@ func (b *builtinSleepSig) evalInt(row []types.Datum) (int64, bool, error) {
 	}
 	// processing argument is negative
 	if val < 0 {
-		return 0, isNull, errors.New("incorrect arguments to sleep")
+		return 0, isNull, errIncorrectArgs.GenByArgs("sleep")
 
 	}
 
 	// TODO: consider it's interrupted using KILL QUERY from other session, or
 	// interrupted by time out.
 	if val > math.MaxInt64/time.Second.Nanoseconds() {
-		return 0, isNull, errors.New("incorrect arguments to sleep")
+		return 0, isNull, errIncorrectArgs.GenByArgs("sleep")
 	}
 	dur := time.Duration(float64(val * time.Second.Nanoseconds()))
 	time.Sleep(dur)
