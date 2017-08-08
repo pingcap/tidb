@@ -196,34 +196,44 @@ type lastInsertIDFunctionClass struct {
 }
 
 func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinLastInsertIDSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+	err := c.verifyArgs(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var bf baseBuiltinFunc
+	if len(args) == 1 {
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt)
+	}
+
+	sig := &builtinLastInsertIDSig{baseIntBuiltinFunc{bf}}
+	sig.deterministic = false
+	bf.tp.Flag |= mysql.UniqueFlag
+	return sig.setSelf(sig), errors.Trace(err)
 }
 
 type builtinLastInsertIDSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinLastInsertIDSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
-func (b *builtinLastInsertIDSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if len(args) == 1 {
-		id, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
+// evalInt evals a builtinLastInsertIDSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
+func (b *builtinLastInsertIDSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	if len(b.args) == 1 {
+		res, isNull, err = b.args[0].EvalInt(row, sc)
+		if isNull || err != nil {
+			return res, isNull, errors.Trace(err)
 		}
-		b.ctx.GetSessionVars().SetLastInsertID(uint64(id))
-		d.SetUint64(uint64(id))
-	} else {
-		d.SetUint64(b.ctx.GetSessionVars().PrevLastInsertID)
+
+		b.ctx.GetSessionVars().SetLastInsertID(uint64(res))
+		return
 	}
-	return
+
+	res = int64(b.ctx.GetSessionVars().PrevLastInsertID)
+	return res, false, nil
 }
 
 type versionFunctionClass struct {
