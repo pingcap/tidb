@@ -191,6 +191,9 @@ type SessionVars struct {
 	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
 	BuildStatsConcurrencyVar int
 
+	// IndexJoinBatchSize is the batch size of a index lookup join.
+	IndexJoinBatchSize int
+
 	// IndexLookupSize is the number of handles for an index lookup task in index double read executor.
 	IndexLookupSize int
 
@@ -208,6 +211,9 @@ type SessionVars struct {
 
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
+
+	// CBO indicates if we use new planner with cbo.
+	CBO bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -224,11 +230,13 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                    new(StatementContext),
 		AllowAggPushDown:           true,
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
+		IndexJoinBatchSize:         DefIndexJoinBatchSize,
 		IndexLookupSize:            DefIndexLookupSize,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
+		CBO:                        true,
 	}
 }
 
@@ -322,9 +330,10 @@ type StatementContext struct {
 
 	InInsertStmt         bool
 	InUpdateOrDeleteStmt bool
-	IgnoreOverflow       bool
+	InSelectStmt         bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
+	OverflowAsWarning    bool
 	InShowWarning        bool
 
 	// mu struct holds variables that change during execution.
@@ -417,6 +426,19 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	}
 	if sc.TruncateAsWarning {
 		sc.AppendWarning(err)
+		return nil
+	}
+	return err
+}
+
+// HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
+func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
+	if err == nil {
+		return nil
+	}
+
+	if sc.OverflowAsWarning {
+		sc.AppendWarning(warnErr)
 		return nil
 	}
 	return err

@@ -84,12 +84,12 @@ func ParseHex(s string) (Hex, error) {
 	if err != nil {
 		return Hex{}, errors.Trace(err)
 	}
-	n, err := strconv.ParseInt(s, 0, 64)
+	n, err := strconv.ParseUint(s, 0, 64)
 	if err != nil {
 		return Hex{}, errors.Trace(err)
 	}
 
-	return Hex{Value: n}, nil
+	return Hex{Value: int64(n)}, nil
 }
 
 // ParseHexStr parses hexadecimal literal as string.

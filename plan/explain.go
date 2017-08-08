@@ -191,7 +191,7 @@ func (p *PhysicalAggregation) ExplainInfo() string {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalApply) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.PhysicalJoin.ExplainInfo())
-	buffer.WriteString(fmt.Sprintf(", right:%s", p.Children()[p.rightChOffset].ID()))
+	buffer.WriteString(fmt.Sprintf(", right:%s", p.Children()[1].ID()))
 	return buffer.String()
 }
 

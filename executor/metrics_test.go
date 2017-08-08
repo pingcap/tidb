@@ -48,6 +48,7 @@ func (s *testSuite) TestStmtLabel(c *C) {
 		{"update label set c3 = 3 where c2 = 1", "UpdateIndexRange"},
 		{"update label set c3 = 3 where c2 = 1 order by c3 limit 1", "UpdateIndexRangeOrderLimit"},
 	}
+	var ignore bool
 	for _, tt := range tests {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
@@ -55,6 +56,6 @@ func (s *testSuite) TestStmtLabel(c *C) {
 		c.Assert(plan.Preprocess(stmtNode, is, tk.Se), IsNil)
 		p, err := plan.Optimize(tk.Se, stmtNode, is)
 		c.Assert(err, IsNil)
-		c.Assert(executor.StatementLabel(stmtNode, p), Equals, tt.label)
+		c.Assert(executor.StatementLabel(stmtNode, p, &ignore), Equals, tt.label)
 	}
 }

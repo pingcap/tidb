@@ -346,10 +346,13 @@ func (cc *clientConn) Run() {
 	for !cc.killed {
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
-		if err != nil {
+		if err != nil || cc.killed {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				log.Errorf("[%d] read packet error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
+			}
+			if cc.killed {
+				log.Warnf("[%d] session is killed.", cc.connectionID)
 			}
 			return
 		}
@@ -534,7 +537,7 @@ func (cc *clientConn) writeError(e error) error {
 	if te, ok = originErr.(*terror.Error); ok {
 		m = te.ToSQLError()
 	} else {
-		m = mysql.NewErrf(mysql.ErrUnknown, e.Error())
+		m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
 	}
 
 	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))

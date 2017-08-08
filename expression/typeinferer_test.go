@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testkit"
@@ -436,10 +437,11 @@ func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := tikv.NewMockTikvStore()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tidb.SetSchemaLease(0)
 	_, err = tidb.BootstrapSession(store)
 	return store, errors.Trace(err)
 }
