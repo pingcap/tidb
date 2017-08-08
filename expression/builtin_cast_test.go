@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
@@ -212,6 +213,9 @@ var (
 		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
 		Type: mysql.TypeDate,
 		Fsp:  types.DefaultFsp}
+
+	// jsonInt indicates json(3)
+	jsonInt = types.NewDatum(json.CreateJSON(int64(3)))
 )
 
 func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
@@ -403,6 +407,12 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			125959,
 			[]types.Datum{durationDatum},
+		},
+		// cast JSON as int.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
+			3,
+			[]types.Datum{jsonInt},
 		},
 	}
 	for i, t := range castToIntCases {

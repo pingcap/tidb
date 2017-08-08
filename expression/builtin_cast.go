@@ -1105,12 +1105,12 @@ type builtinCastJSONAsIntSig struct {
 }
 
 func (b *builtinCastJSONAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
-	//sc := b.ctx.GetSessionVars().StmtCtx
-	//val, isNull, err := b.args[0].EvalJSON(row, sc)
-	//if isNull || err != nil {
-	//	return res, isNull, errors.Trace(err)
-	//}
-	// cast json as int here
+	sc := b.ctx.GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalJSON(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	res, err = val.CastToInt()
 	return
 }
 
@@ -1119,12 +1119,12 @@ type builtinCastJSONAsRealSig struct {
 }
 
 func (b *builtinCastJSONAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
-	//sc := b.ctx.GetSessionVars().StmtCtx
-	//val, isNull, err := b.args[0].EvalJSON(row, sc)
-	//if isNull || err != nil {
-	//	return res, isNull, errors.Trace(err)
-	//}
-	// cast json as real here
+	sc := b.ctx.GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalJSON(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	res, err = val.CastToReal()
 	return
 }
 
@@ -1133,26 +1133,30 @@ type builtinCastJSONAsDecimalSig struct {
 }
 
 func (b *builtinCastJSONAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
-	//sc := b.ctx.GetSessionVars().StmtCtx
-	//val, isNull, err := b.args[0].EvalJSON(row, sc)
-	//if isNull || err != nil {
-	//	return res, isNull, errors.Trace(err)
-	//}
-	// cast json as real here
-	return
+	sc := b.ctx.GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalJSON(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	var f64 float64
+	f64, err = val.CastToReal()
+	if err != nil {
+		err = res.FromFloat64(f64)
+	}
+	return res, false, err
 }
 
 type builtinCastJSONAsStringSig struct {
 	baseStringBuiltinFunc
 }
 
-func (b *builtinCastJSONAsStringSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
-	//sc := b.ctx.GetSessionVars().StmtCtx
-	//val, isNull, err := b.args[0].EvalJSON(row, sc)
-	//if isNull || err != nil {
-	//	return res, isNull, errors.Trace(err)
-	//}
-	// cast json as string here
+func (b *builtinCastJSONAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalJSON(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	res = val.String()
 	return
 }
 
@@ -1161,12 +1165,20 @@ type builtinCastJSONAsTimeSig struct {
 }
 
 func (b *builtinCastJSONAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
-	//sc := b.ctx.GetSessionVars().StmtCtx
-	//val, isNull, err := b.args[0].EvalJSON(row, sc)
-	//if isNull || err != nil {
-	//	return res, isNull, errors.Trace(err)
-	//}
-	// cast json as time here, StringAsTime can be refered.
+	sc := b.ctx.GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalJSON(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	s, err := val.Unquote()
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
+	res, err = types.ParseTime(s, b.tp.Tp, b.tp.Decimal)
+	if b.tp.Tp == mysql.TypeDate {
+		// Truncate hh:mm:ss part if the type is Date.
+		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
+	}
 	return
 }
 
@@ -1175,12 +1187,19 @@ type builtinCastJSONAsDurationSig struct {
 }
 
 func (b *builtinCastJSONAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
-	//sc := b.ctx.GetSessionVars().StmtCtx
-	//val, isNull, err := b.args[0].EvalJSON(row, sc)
-	//if isNull || err != nil {
-	//	return res, isNull, errors.Trace(err)
-	//}
-	// cast json as duration here
+	sc := b.ctx.GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalJSON(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	s, err := val.Unquote()
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
+	res, err = types.ParseDuration(s, b.tp.Decimal)
+	if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+		err = sc.HandleTruncate(err)
+	}
 	return
 }
 

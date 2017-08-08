@@ -1442,6 +1442,8 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 	case KindMysqlSet:
 		fval := d.GetMysqlSet().ToNumber()
 		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
+	case KindMysqlJSON:
+		return d.GetMysqlJSON().CastToInt()
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", d.GetValue(), d.GetValue())
 	}
