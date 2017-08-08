@@ -1668,19 +1668,6 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 	}
 }
 
-func (s *testSuite) TestTimeBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	result := tk.MustQuery("SELECT TIME_FORMAT('07:42:03.100001', '%r %T %h:%i%p %h:%i:%s %p %H %i %s');")
-	result.Check(testkit.Rows("07:42:03 AM 07:42:03 07:42AM 07:42:03 AM 07 42 03"))
-}
-
 func (s *testSuite) TestSchemaCheckerSQL(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := tikv.NewMockTikvStore()

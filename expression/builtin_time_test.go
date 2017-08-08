@@ -1566,7 +1566,7 @@ func (s *testEvaluatorSuite) TestPeriodAdd(c *C) {
 func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 	defer testleak.AfterTest(c)()
 
-	// SELECT DATE_FORMAT(null,'%H %k %h %I %l')
+	// SELECT TIME_FORMAT(null,'%H %k %h %I %l')
 	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum("%H %k %h %I %l")}
 	fc := funcs[ast.TimeFormat]
 	f, err := fc.getFunction(datumsToConstants(args), s.ctx)

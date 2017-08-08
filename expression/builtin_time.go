@@ -2532,16 +2532,14 @@ func (b *builtinTimeFormatSig) evalString(row []types.Datum) (string, bool, erro
 	var d types.Datum
 	d.SetString(time)
 	var res string
-	res, err = builtinTimeFormat(d, formatMask, b.ctx)
+	res, err = b.builtinTimeFormat(d, formatMask, b.ctx)
 	return res, isNull, err
 }
 
-// builtinTimeFormat ...
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
-func builtinTimeFormat(time types.Datum, formatMask string, ctx context.Context) (res string, err error) {
+func (b *builtinTimeFormatSig) builtinTimeFormat(time types.Datum, formatMask string, ctx context.Context) (res string, err error) {
 	var d types.Datum
 	d, err = convertToDuration(ctx.GetSessionVars().StmtCtx, time, types.MaxFsp)
-
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -2557,7 +2555,6 @@ func builtinTimeFormat(time types.Datum, formatMask string, ctx context.Context)
 		Type: mysql.TypeDate, Fsp: 0}
 
 	str, err := t2.DateFormat(formatMask)
-
 	if err != nil {
 		return "", errors.Trace(err)
 	}
