@@ -86,7 +86,7 @@ func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
 	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
 }
 
-func (s *testIntegrationSuite) TestFuncPad(c *C) {
+func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)

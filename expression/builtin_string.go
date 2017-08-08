@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -1329,6 +1330,17 @@ func trimRight(str, remstr string) string {
 	}
 }
 
+func getFlen4LpadAndRpad(sc *variable.StatementContext, arg Expression) (int, error) {
+	if constant, ok := arg.(*Constant); ok {
+		length, isNull, err := constant.EvalInt(nil, sc)
+		if isNull || err != nil || length > mysql.MaxBlobWidth {
+			return mysql.MaxBlobWidth, errors.Trace(err)
+		}
+		return int(length), nil
+	}
+	return mysql.MaxBlobWidth, nil
+}
+
 type lpadFunctionClass struct {
 	baseFunctionClass
 }
@@ -1341,10 +1353,18 @@ func (c *lpadFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen, err = getFlen4LpadAndRpad(bf.ctx.GetSessionVars().StmtCtx, args[1])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	setBinFlagOrBinStr(args[0].GetType(), bf.tp)
+	setBinFlagOrBinStr(args[2].GetType(), bf.tp)
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
-		types.SetBinChsClnFlag(bf.tp)
 		sig := &builtinLpadBinarySig{baseStringBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
+	}
+	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 	sig := &builtinLpadSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -1354,7 +1374,7 @@ type builtinLpadBinarySig struct {
 	baseStringBuiltinFunc
 }
 
-// evalString evals LPAD(str,len,padstr)).
+// evalString evals LPAD(str,len,padstr).
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_lpad
 func (b *builtinLpadBinarySig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -1377,7 +1397,7 @@ func (b *builtinLpadBinarySig) evalString(row []types.Datum) (string, bool, erro
 	}
 	padLength := len(padStr)
 
-	if targetLength < 0 || (byteLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength > b.tp.Flen || (byteLength < targetLength && padLength == 0) {
 		return "", true, nil
 	}
 
@@ -1392,7 +1412,7 @@ type builtinLpadSig struct {
 	baseStringBuiltinFunc
 }
 
-// evalString evals LPAD(str,len,padstr)).
+// evalString evals LPAD(str,len,padstr).
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_lpad
 func (b *builtinLpadSig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -1415,7 +1435,7 @@ func (b *builtinLpadSig) evalString(row []types.Datum) (string, bool, error) {
 	}
 	padLength := len([]rune(padStr))
 
-	if targetLength < 0 || (runeLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength*4 > b.tp.Flen || (runeLength < targetLength && padLength == 0) {
 		return "", true, nil
 	}
 
@@ -1438,10 +1458,18 @@ func (c *rpadFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen, err = getFlen4LpadAndRpad(bf.ctx.GetSessionVars().StmtCtx, args[1])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	setBinFlagOrBinStr(args[0].GetType(), bf.tp)
+	setBinFlagOrBinStr(args[2].GetType(), bf.tp)
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
-		types.SetBinChsClnFlag(bf.tp)
 		sig := &builtinRpadBinarySig{baseStringBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
+	}
+	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 	sig := &builtinRpadSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -1474,7 +1502,7 @@ func (b *builtinRpadBinarySig) evalString(row []types.Datum) (string, bool, erro
 	}
 	padLength := len(padStr)
 
-	if targetLength < 0 || (byteLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength > b.tp.Flen || (byteLength < targetLength && padLength == 0) {
 		return "", true, nil
 	}
 
@@ -1512,7 +1540,7 @@ func (b *builtinRpadSig) evalString(row []types.Datum) (string, bool, error) {
 	}
 	padLength := len([]rune(padStr))
 
-	if targetLength < 0 || (runeLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength*4 > b.tp.Flen || (runeLength < targetLength && padLength == 0) {
 		return "", true, nil
 	}
 
