@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"sync/atomic"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
@@ -59,10 +61,10 @@ func (m *MockExec) Open() error {
 
 func (s *testSuite) TestAggregation(c *C) {
 	// New expression evaluation architecture does not support aggregation functions now.
-	origin := expression.TurnOnNewExprEval
-	expression.TurnOnNewExprEval = false
+	origin := atomic.LoadInt32(&expression.TurnOnNewExprEval)
+	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 	defer func() {
-		expression.TurnOnNewExprEval = origin
+		atomic.StoreInt32(&expression.TurnOnNewExprEval, origin)
 	}()
 	plan.JoinConcurrency = 1
 	defer func() {
