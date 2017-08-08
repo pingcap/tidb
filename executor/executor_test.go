@@ -1854,6 +1854,12 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 			c.Assert(len(list[4]), Equals, 12)
 		}
 	}
+	tk.MustQuery("select sleep(1);").Check(testkit.Rows("0"))
+	tk.MustQuery("select sleep(0);").Check(testkit.Rows("0"))
+	tk.MustQuery("select sleep('a');").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1265 Data Truncated"))
+	_, err := tk.Exec("select sleep(-1);")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestSchemaCheckerSQL(c *C) {

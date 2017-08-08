@@ -23,7 +23,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/twinj/uuid"
 )
@@ -79,55 +78,47 @@ type sleepFunctionClass struct {
 
 func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinSleepSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinSleepSig{baseIntBuiltinFunc{bf}}
+	sig.deterministic = false
+	return sig.setSelf(sig), errors.Trace(err)
 }
 
 type builtinSleepSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinSleepSig.
+// evalInt evals a builtinSleepSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
-func (b *builtinSleepSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinSleepSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return 0, isNull, errors.Trace(err)
 	}
 	sessVars := b.ctx.GetSessionVars()
-	if args[0].IsNull() {
+	if isNull {
 		if sessVars.StrictSQLMode {
-			return d, errors.New("incorrect arguments to sleep")
+			return 0, isNull, errIncorrectArgs.GenByArgs("sleep")
 		}
-		d.SetInt64(0)
-		return
+		return 0, isNull, err
 	}
 	// processing argument is negative
-	zero := types.NewIntDatum(0)
-	sc := sessVars.StmtCtx
-	ret, err := args[0].CompareDatum(sc, zero)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if ret == -1 {
-		if sessVars.StrictSQLMode {
-			return d, errors.New("incorrect arguments to sleep")
-		}
-		d.SetInt64(0)
-		return
+	if val < 0 {
+		return 0, isNull, errors.New("incorrect arguments to sleep")
+
 	}
 
 	// TODO: consider it's interrupted using KILL QUERY from other session, or
 	// interrupted by time out.
-	sleepTime, err := args[0].ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
-	if err != nil {
-		return d, errors.Trace(err)
+	if val > math.MaxInt64/time.Second.Nanoseconds() {
+		return 0, isNull, errors.New("incorrect arguments to sleep")
 	}
-	dur := time.Duration(sleepTime.GetFloat64() * float64(time.Second.Nanoseconds()))
+	dur := time.Duration(float64(val * time.Second.Nanoseconds()))
 	time.Sleep(dur)
-	d.SetInt64(0)
-	return
+	return 0, isNull, err
 }
 
 type lockFunctionClass struct {
