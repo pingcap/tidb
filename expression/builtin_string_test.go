@@ -1532,6 +1532,8 @@ func (s *testEvaluatorSuite) TestFromBase64(c *C) {
 	for _, test := range tests {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args)), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
@@ -1705,6 +1707,8 @@ func (s *testEvaluatorSuite) TestBin(c *C) {
 	for _, t := range dtbl {
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
