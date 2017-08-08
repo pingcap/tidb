@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
-	"strings"
 )
 
 const (
@@ -528,7 +528,7 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 		}
 	}
 	fieldName := cn.Name.Name.String()
-	if !strings.EqualFold(cn.Name.Table.String(), "") {
+	if len(cn.Name.Table.String()) != 0 {
 		fieldName = fmt.Sprintf("%s.%s", cn.Name.Table.String(), fieldName)
 
 	}
@@ -632,7 +632,7 @@ func (nr *nameResolver) resolveColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 	tableSources := appendTableSources(nil, join)
 	if !nr.resolveColumnInTableSources(cn, tableSources) {
 		fieldName := cn.Name.Name.String()
-		if !strings.EqualFold(cn.Name.Table.String(), "") {
+		if len(cn.Name.Table.String()) != 0 {
 			fieldName = fmt.Sprintf("%s.%s", cn.Name.Table.String(), fieldName)
 
 		}
