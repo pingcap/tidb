@@ -92,10 +92,6 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	succ = dom.SchemaValidator.Check(ts, schemaVer)
 	c.Assert(succ, IsTrue)
-	ver, err = store.CurrentVersion()
-	c.Assert(err, IsNil)
-	succ = dom.SchemaValidator.Check(ver.Ver, schemaVer)
-	c.Assert(succ, IsTrue)
 
 	err = store.Close()
 	c.Assert(err, IsNil)
