@@ -967,5 +967,34 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	select ifnull(a, 0) as a from t2
 	) t;`)
 	result.Check(testkit.Rows("2.4690"))
+}
 
+func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for plus
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));")
+	tk.MustExec("INSERT INTO t(a, b) VALUES(1.09, 1.999), (-1.1, -0.1);")
+	result := tk.MustQuery("SELECT a+b FROM t;")
+	result.Check(testkit.Rows("3.089", "-1.200"))
+	result = tk.MustQuery("SELECT b+12, b+0.01, b+0.00001, b+12.00001 FROM t;")
+	result.Check(testkit.Rows("13.999 2.009 1.99901 13.99901", "11.900 -0.090 -0.09999 11.90001"))
+	result = tk.MustQuery("SELECT 1+12, 21+0.01, 89+\"11\", 12+\"a\", 12+NULL, NULL+1, NULL+NULL;")
+	result.Check(testkit.Rows("13 21.01 100 12 <nil> <nil> <nil>"))
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);")
+	tk.MustExec("INSERT INTO t SELECT 1<<63, 1<<63;")
+	rs, err := tk.Exec("SELECT a+b FROM t;")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err := tidb.GetRows(rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.t.a + test.t.b)'")
 }
