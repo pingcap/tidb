@@ -69,7 +69,7 @@ func IsTypeTime(tp byte) bool {
 }
 
 // IsTemporalWithDate returns a boolean indicating
-// whether the tp is time type with date
+// whether the tp is time type with date.
 func IsTemporalWithDate(tp byte) bool {
 	return IsTypeTime(tp)
 }
