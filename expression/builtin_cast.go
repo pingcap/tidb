@@ -173,7 +173,7 @@ func (b *castAsIntFunctionClass) getFunction(args []Expression, ctx context.Cont
 		} else if tp == mysql.TypeDuration {
 			sig = &builtinCastDurationAsIntSig{bf}
 		} else if tp == mysql.TypeJSON {
-			sig = &builtinCastJsonAsIntSig(bf)
+			sig = &builtinCastJsonAsIntSig{bf}
 		} else {
 			sig = &builtinCastStringAsIntSig{bf}
 		}
@@ -517,7 +517,7 @@ type builtinCastStringAsJsonSig struct {
 }
 
 func (b *builtinCastStringAsJsonSig) evalJson(row []types.Datum) (res json.JSON, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
 	return json.CreateJSON(val), isNull, errors.Trace(err)
 }
 
@@ -1087,11 +1087,11 @@ type builtinCastJsonAsIntSig struct {
 }
 
 func (b *builtinCastJsonAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	val, isNull, err := b.args[0].EvalJson(row, sc)
-	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
-	}
+	//sc := b.ctx.GetSessionVars().StmtCtx
+	//val, isNull, err := b.args[0].EvalJson(row, sc)
+	//if isNull || err != nil {
+	//	return res, isNull, errors.Trace(err)
+	//}
 	// cast json as int here
 	return
 }
@@ -1101,11 +1101,11 @@ type builtinCastJsonAsRealSig struct {
 }
 
 func (b *builtinCastJsonAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	val, isNull, err := b.args[0].EvalJson(row, sc)
-	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
-	}
+	//sc := b.ctx.GetSessionVars().StmtCtx
+	//val, isNull, err := b.args[0].EvalJson(row, sc)
+	//if isNull || err != nil {
+	//	return res, isNull, errors.Trace(err)
+	//}
 	// cast json as real here
 	return
 }
@@ -1115,11 +1115,11 @@ type builtinCastJsonAsDecimalSig struct {
 }
 
 func (b *builtinCastJsonAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	val, isNull, err := b.args[0].EvalJson(row, sc)
-	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
-	}
+	//sc := b.ctx.GetSessionVars().StmtCtx
+	//val, isNull, err := b.args[0].EvalJson(row, sc)
+	//if isNull || err != nil {
+	//	return res, isNull, errors.Trace(err)
+	//}
 	// cast json as real here
 	return
 }
@@ -1128,12 +1128,12 @@ type builtinCastJsonAsStringSig struct {
 	baseStringBuiltinFunc
 }
 
-func (b *builtinCastJsonAsStringSig) evalDecimal(row []types.Datum) (res string, isNull bool, err error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	val, isNull, err := b.args[0].EvalJson(row, sc)
-	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
-	}
+func (b *builtinCastJsonAsStringSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
+	//sc := b.ctx.GetSessionVars().StmtCtx
+	//val, isNull, err := b.args[0].EvalJson(row, sc)
+	//if isNull || err != nil {
+	//	return res, isNull, errors.Trace(err)
+	//}
 	// cast json as string here
 	return
 }
@@ -1143,11 +1143,11 @@ type builtinCastJsonAsTimeSig struct {
 }
 
 func (b *builtinCastJsonAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	val, isNull, err := b.args[0].EvalJson(row, sc)
-	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
-	}
+	//sc := b.ctx.GetSessionVars().StmtCtx
+	//val, isNull, err := b.args[0].EvalJson(row, sc)
+	//if isNull || err != nil {
+	//	return res, isNull, errors.Trace(err)
+	//}
 	// cast json as time here, StringAsTime can be refered.
 	return
 }
@@ -1157,11 +1157,11 @@ type builtinCastJsonAsDurationSig struct {
 }
 
 func (b *builtinCastJsonAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	val, isNull, err := b.args[0].EvalJson(row, sc)
-	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
-	}
+	//sc := b.ctx.GetSessionVars().StmtCtx
+	//val, isNull, err := b.args[0].EvalJson(row, sc)
+	//if isNull || err != nil {
+	//	return res, isNull, errors.Trace(err)
+	//}
 	// cast json as duration here
 	return
 }

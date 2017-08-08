@@ -15,7 +15,7 @@ package expression
 
 import (
 	"bytes"
-	"encoding/json"
+	goJson "encoding/json"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // Error instances.
@@ -52,7 +53,7 @@ var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
-	json.Marshaler
+	goJson.Marshaler
 
 	// Eval evaluates an expression through a row.
 	Eval(row []types.Datum) (types.Datum, error)
@@ -240,6 +241,21 @@ func evalExprToDuration(expr Expression, row []types.Datum, _ *variable.Statemen
 	panic(fmt.Sprintf("cannot get DURATION result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
+// evalExprToJson evaluates `expr` to JSON type.
+func evalExprToJson(expr Expression, row []types.Datum, _ *variable.StatementContext) (res json.JSON, isNull bool, err error) {
+	if IsHybridType(expr) {
+		return res, true, nil
+	}
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return res, val.IsNull(), errors.Trace(err)
+	}
+	if expr.GetType().Tp == mysql.TypeJSON {
+		return val.GetMysqlJSON(), false, nil
+	}
+	panic(fmt.Sprintf("cannot get JSON result from %s expression", types.TypeStr(expr.GetType().Tp)))
+}
+
 // One stands for a number 1.
 var One = &Constant{
 	Value:   types.NewDatum(1),
@@ -329,6 +345,12 @@ func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (typ
 // EvalDuration returns Duration representation of Constant.
 func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
 	val, isNull, err := evalExprToDuration(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalJson returns Json representation of Constant.
+func (c *Constant) EvalJson(_ []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	val, isNull, err := evalExprToJson(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
@@ -526,19 +548,7 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 
 // NewCastFunc creates a new cast function.
 func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) (sf Expression) {
-	// TODO: we do not support CastAsJson in new expression evaluation architecture now.
-	if tp.Tp == mysql.TypeJSON {
-		bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
-		sf = &ScalarFunction{
-			FuncName: model.NewCIStr(ast.Cast),
-			RetType:  tp,
-			Function: bt.setSelf(bt),
-		}
-	} else {
-		// We ignore error here because buildCastFunction will only get errIncorrectParameterCount
-		// which can be guaranteed to not happen.
-		sf, _ = buildCastFunction(arg, tp, ctx)
-	}
+	sf, _ = buildCastFunction(arg, tp, ctx)
 	return FoldConstant(sf)
 }
 
