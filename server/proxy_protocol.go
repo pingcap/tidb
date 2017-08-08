@@ -14,6 +14,7 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"net"
 	"strings"
@@ -30,15 +31,17 @@ const (
 var (
 	errProxyProtocolV1HeaderInvalid = errors.New("PROXY Protocol header is invalid")
 	errProxyAddressNotAllowed       = errors.New("Proxy address is not allowed")
+
+	_ net.Conn = &proxyProtocolConn{}
 )
 
-type proxyProtocolDecoder struct {
+type proxyProtocolConnBuilder struct {
 	allowAll          bool
 	allowedNets       []*net.IPNet
 	headerReadTimeout int // Unit is second
 }
 
-func newProxyProtocolDecoder(allowedIPs string, headerReadTimeout int) (*proxyProtocolDecoder, error) {
+func newProxyProtocolConnBuilder(allowedIPs string, headerReadTimeout int) (*proxyProtocolConnBuilder, error) {
 	allowAll := false
 	allowedNets := []*net.IPNet{}
 	if allowedIPs == "*" {
@@ -59,15 +62,24 @@ func newProxyProtocolDecoder(allowedIPs string, headerReadTimeout int) (*proxyPr
 			allowedNets = append(allowedNets, ipnet)
 		}
 	}
-	return &proxyProtocolDecoder{
+	return &proxyProtocolConnBuilder{
 		allowAll:          allowAll,
 		allowedNets:       allowedNets,
 		headerReadTimeout: headerReadTimeout,
 	}, nil
 }
 
-func (d *proxyProtocolDecoder) checkAllowed(raddr net.Addr) bool {
-	if d.allowAll {
+func (b *proxyProtocolConnBuilder) wrapConn(conn net.Conn) (*proxyProtocolConn, error) {
+	ppconn := &proxyProtocolConn{
+		Conn:    conn,
+		builder: b,
+	}
+	err := ppconn.readClientAddrBehindProxy()
+	return ppconn, errors.Trace(err)
+}
+
+func (b *proxyProtocolConnBuilder) checkAllowed(raddr net.Addr) bool {
+	if b.allowAll {
 		return true
 	}
 	taddr, ok := raddr.(*net.TCPAddr)
@@ -75,7 +87,7 @@ func (d *proxyProtocolDecoder) checkAllowed(raddr net.Addr) bool {
 		return false
 	}
 	cip := taddr.IP
-	for _, ipnet := range d.allowedNets {
+	for _, ipnet := range b.allowedNets {
 		if ipnet.Contains(cip) {
 			return true
 		}
@@ -83,28 +95,39 @@ func (d *proxyProtocolDecoder) checkAllowed(raddr net.Addr) bool {
 	return false
 }
 
-func (d *proxyProtocolDecoder) readClientAddrBehindProxy(conn net.Conn) (net.Addr, error) {
-	connRemoteAddr := conn.RemoteAddr()
-	allowed := d.checkAllowed(connRemoteAddr)
+type proxyProtocolConn struct {
+	net.Conn
+	builder            *proxyProtocolConnBuilder
+	clientIP           net.Addr
+	exceedBuffer       []byte
+	exceedBufferStart  int
+	exceedBufferLen    int
+	exceedBufferReaded bool
+}
+
+func (c *proxyProtocolConn) readClientAddrBehindProxy() error {
+	connRemoteAddr := c.Conn.RemoteAddr()
+	allowed := c.builder.checkAllowed(connRemoteAddr)
 	if !allowed {
-		return nil, errProxyAddressNotAllowed
+		return errProxyAddressNotAllowed
 	}
-	return d.parseHeaderV1(conn, connRemoteAddr)
+	return c.parseHeaderV1(connRemoteAddr)
 }
 
-func (d *proxyProtocolDecoder) parseHeaderV1(conn net.Conn, connRemoteAddr net.Addr) (net.Addr, error) {
-	buffer, err := d.readHeaderV1(conn)
+func (c *proxyProtocolConn) parseHeaderV1(connRemoteAddr net.Addr) error {
+	buffer, err := c.readHeaderV1()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	raddr, err := d.extractClientIPV1(buffer, connRemoteAddr)
+	raddr, err := c.extractClientIPV1(buffer, connRemoteAddr)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return raddr, nil
+	c.clientIP = raddr
+	return nil
 }
 
-func (d *proxyProtocolDecoder) extractClientIPV1(buffer []byte, connRemoteAddr net.Addr) (net.Addr, error) {
+func (c *proxyProtocolConn) extractClientIPV1(buffer []byte, connRemoteAddr net.Addr) (net.Addr, error) {
 	header := string(buffer)
 	parts := strings.Split(header, " ")
 	if len(parts) != 6 {
@@ -130,40 +153,67 @@ func (d *proxyProtocolDecoder) extractClientIPV1(buffer []byte, connRemoteAddr n
 	}
 }
 
-func (d *proxyProtocolDecoder) readHeaderV1(conn net.Conn) ([]byte, error) {
-	buf := make([]byte, proxyProtocolV1MaxHeaderLen)
-	var pre, cur byte
-	var i int
-	// This mean all header data should be read in headerReadTimeout seconds.
-	conn.SetReadDeadline(time.Now().Add(time.Duration(d.headerReadTimeout) * time.Second))
-	// When function return clean read deadline.
-	defer conn.SetReadDeadline(time.Time{})
-	for i = 0; i < proxyProtocolV1MaxHeaderLen; i++ {
-		_, err := conn.Read(buf[i : i+1])
-		if err != nil {
-			return nil, err
-		}
-		cur = buf[i]
-		if i > 0 {
-			pre = buf[i-1]
-		} else {
-			pre = buf[i]
-			if buf[i] != 0x50 {
-				return nil, errProxyProtocolV1HeaderInvalid
-			}
-		}
-		if i == 5 {
-			if string(buf[0:5]) != "PROXY" {
-				return nil, errProxyProtocolV1HeaderInvalid
-			}
-		}
-		// We got \r\n so finished here
-		if pre == 13 && cur == 10 {
-			break
-		}
+func (c *proxyProtocolConn) RemoteAddr() net.Addr {
+	return c.clientIP
+}
+
+func (c *proxyProtocolConn) Read(buffer []byte) (int, error) {
+	if c.exceedBufferReaded {
+		return c.Conn.Read(buffer)
 	}
-	if pre != 13 && cur != 10 {
+	if c.exceedBufferLen == 0 || c.exceedBufferStart >= c.exceedBufferLen {
+		c.exceedBufferReaded = true
+		return c.Conn.Read(buffer)
+	}
+
+	buflen := len(buffer)
+	nExceedRead := c.exceedBufferLen - c.exceedBufferStart
+	// buffer length is less or equals than exceedBuffer length
+	if nExceedRead >= buflen {
+		copy(buffer[0:], c.exceedBuffer[c.exceedBufferStart:c.exceedBufferStart+buflen])
+		c.exceedBufferStart += buflen
+		return buflen, nil
+	}
+	// buffer length is great than exceedBuffer length
+	copy(buffer[0:nExceedRead], c.exceedBuffer[c.exceedBufferStart:])
+	n, err := c.Conn.Read(buffer[nExceedRead-1:])
+	if err == nil {
+		// If read is success set buffer start to buffer length
+		// If fail make rest buffer can be read in next time
+		c.exceedBufferStart = c.exceedBufferLen
+		return n + nExceedRead - 1, nil
+	}
+	return 0, errors.Trace(err)
+}
+
+func (c *proxyProtocolConn) readHeaderV1() ([]byte, error) {
+	buf := make([]byte, proxyProtocolV1MaxHeaderLen)
+	// This mean all header data should be read in headerReadTimeout seconds.
+	c.Conn.SetReadDeadline(time.Now().Add(time.Duration(c.builder.headerReadTimeout) * time.Second))
+	// When function return clean read deadline.
+	defer c.Conn.SetReadDeadline(time.Time{})
+	n, err := c.Conn.Read(buf)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if n >= 5 {
+		if string(buf[0:5]) != "PROXY" {
+			return nil, errProxyProtocolV1HeaderInvalid
+		}
+		pos := bytes.IndexByte(buf, byte(13))
+		if pos == -1 {
+			return nil, errProxyProtocolV1HeaderInvalid
+		}
+		if buf[pos+1] != byte(10) {
+			return nil, errProxyProtocolV1HeaderInvalid
+		}
+		endPos := pos + 1
+		if n > endPos {
+			c.exceedBuffer = buf[endPos+1:]
+			c.exceedBufferLen = n - endPos
+		}
+		return buf[0 : endPos+1], nil
+	} else {
 		return nil, errProxyProtocolV1HeaderInvalid
 	}
-	return buf[0 : i+1], nil
 }

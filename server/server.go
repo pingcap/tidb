@@ -72,8 +72,8 @@ type Server struct {
 	// When a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
-	stopListenerCh       chan struct{}
-	proxyProtocolDecoder *proxyProtocolDecoder
+	stopListenerCh           chan struct{}
+	proxyProtocolConnBuilder *proxyProtocolConnBuilder
 }
 
 // ConnectionCount gets current connection count.
@@ -110,7 +110,6 @@ func randomBuf(size int) []byte {
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
 	cc := &clientConn{
-		conn:         conn,
 		pkt:          newPacketIO(conn),
 		server:       s,
 		connectionID: atomic.AddUint32(&baseConnID, 1),
@@ -126,16 +125,18 @@ func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
 		}
 	}
 
-	if s.proxyProtocolDecoder != nil {
-		// Proxy is configured. Read PROXY header first.
-		addr, err := s.proxyProtocolDecoder.readClientAddrBehindProxy(conn)
+	if s.proxyProtocolConnBuilder != nil {
+		// Proxy is configured. wrap net.Conn to proxyProtocolConn
+		wconn, err := s.proxyProtocolConnBuilder.wrapConn(conn)
 		if err != nil {
 			return cc, errors.Trace(fmt.Errorf("%s (%s)", err.Error(), conn.RemoteAddr().String()))
 		}
-		cc.clientAddr = addr
-		log.Infof("[%d] new connection %s (through proxy %s)", cc.connectionID, addr, conn.RemoteAddr().String())
+		cc.conn = wconn
+		cc.clientAddr = wconn.RemoteAddr()
+		log.Infof("[%d] new connection %s (through proxy %s)", cc.connectionID, cc.clientAddr, conn.RemoteAddr().String())
 	} else {
-		cc.clientAddr = cc.conn.RemoteAddr()
+		cc.conn = conn
+		cc.clientAddr = conn.RemoteAddr()
 		log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	}
 
@@ -152,21 +153,21 @@ const tokenLimit = 1000
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	var err error
-	var ppd *proxyProtocolDecoder
+	var ppcb *proxyProtocolConnBuilder
 	if cfg.ProxyProtocolNetworks != "" {
-		ppd, err = newProxyProtocolDecoder(cfg.ProxyProtocolNetworks, cfg.ProxyProtocolHeaderTimeout)
+		ppcb, err = newProxyProtocolConnBuilder(cfg.ProxyProtocolNetworks, cfg.ProxyProtocolHeaderTimeout)
 		if err != nil {
 			log.Error("ProxyProtocolNetworks parameter is not valid")
 		}
 	}
 	s := &Server{
-		cfg:                  cfg,
-		driver:               driver,
-		concurrentLimiter:    NewTokenLimiter(tokenLimit),
-		rwlock:               &sync.RWMutex{},
-		clients:              make(map[uint32]*clientConn),
-		stopListenerCh:       make(chan struct{}, 1),
-		proxyProtocolDecoder: ppd,
+		cfg:                      cfg,
+		driver:                   driver,
+		concurrentLimiter:        NewTokenLimiter(tokenLimit),
+		rwlock:                   &sync.RWMutex{},
+		clients:                  make(map[uint32]*clientConn),
+		stopListenerCh:           make(chan struct{}, 1),
+		proxyProtocolConnBuilder: ppcb,
 	}
 
 	if cfg.Socket != "" {
@@ -182,7 +183,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	if ppd != nil {
+	if ppcb != nil {
 		log.Infof("Server run MySQL Protocol (through PROXY Protocol) Listen at [%s]", s.cfg.Addr)
 	} else {
 		log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Addr)
