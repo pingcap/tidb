@@ -165,12 +165,12 @@ func StrToUint(sc *variable.StatementContext, str string) (uint64, error) {
 	return uVal, errors.Trace(err)
 }
 
-// StrToDateTime convert str to MySQL DateTime.
+// StrToDateTime converts str to MySQL DateTime.
 func StrToDateTime(str string, fsp int) (Time, error) {
 	return ParseTime(str, mysql.TypeDatetime, fsp)
 }
 
-// StrToDuration convert str to MySQL Time.
+// StrToDuration converts str to Duration.
 // See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-literals.html.
 func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, err error) {
 	str = strings.TrimSpace(str)
