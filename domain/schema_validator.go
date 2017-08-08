@@ -82,9 +82,9 @@ func (s *schemaValidator) Restart() {
 
 func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, changedTableIDs []int64) {
 	s.mux.Lock()
+	defer s.mux.Unlock()
 
 	if s.detalItemInfos == nil {
-		s.mux.Unlock()
 		log.Infof("the schema validator stopped before updating")
 		return
 	}
@@ -116,8 +116,6 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 			delete(s.detalItemInfos, k)
 		}
 	}
-
-	s.mux.Unlock()
 }
 
 func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
