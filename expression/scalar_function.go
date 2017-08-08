@@ -16,6 +16,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -163,7 +164,7 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
-	if !TurnOnNewExprEval {
+	if atomic.LoadInt32(&TurnOnNewExprEval) == 0 {
 		return sf.Function.eval(row)
 	}
 	sc := sf.GetCtx().GetSessionVars().StmtCtx
