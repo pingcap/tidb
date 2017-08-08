@@ -28,14 +28,14 @@ import (
 )
 
 const (
-	unknownClause = ""
-	fieldClause   = "field list"
-	whereClause   = "where clause"
-	havingClause  = "having clause"
-	orderByClause = "order clause"
-	groupByClause = "group statement"
-	showClause    = "show statement"
-	onClause      = "on clause"
+	unknownClause    = ""
+	fieldClause      = "field list"
+	havingClause     = "having clause"
+	onClause         = "on clause"
+	orderByClause    = "order clause"
+	whereClause      = "where clause"
+	groupByStatement = "group statement"
+	showStatement    = "show statement"
 )
 
 // ResolveName resolves table name and column name.
@@ -552,7 +552,7 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 		if ctx.inByItemExpression {
 			// From table first, then field list.
 			if nr.resolveColumnInTableSources(cn, ctx.tables) {
-				return groupByClause, true
+				return groupByStatement, true
 			}
 			found := nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 			if nr.Err == nil && found {
@@ -561,12 +561,12 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 					nr.Err = ErrIllegalReference.Gen("Reference '%s' not supported (reference to group function)", cn.Name.Name.O)
 				}
 			}
-			return groupByClause, found
+			return groupByStatement, found
 		}
 		// Resolve from table first, then from select list.
 		found := nr.resolveColumnInTableSources(cn, ctx.tables)
 		if nr.Err != nil {
-			return groupByClause, found
+			return groupByStatement, found
 		}
 		// We should copy the refer here.
 		// Because if the ByItem is an identifier, we should check if it
@@ -575,7 +575,7 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 		r := cn.Refer
 		if nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList) {
 			if nr.Err != nil {
-				return groupByClause, true
+				return groupByStatement, true
 			}
 			if r != nil {
 				// It is not ambiguous and already resolved from table source.
@@ -584,9 +584,9 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 			} else if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
 				nr.Err = ErrIllegalReference.Gen("Reference '%s' not supported (reference to group function)", cn.Name.Name.O)
 			}
-			return groupByClause, true
+			return groupByStatement, true
 		}
-		return groupByClause, found
+		return groupByStatement, found
 	}
 	if ctx.inHaving {
 		// First group by, then field list.
@@ -619,7 +619,7 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 		return orderByClause, nr.resolveColumnInTableSources(cn, ctx.tables)
 	}
 	if ctx.inShow {
-		return showClause, nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
+		return showStatement, nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 	}
 	// In where clause.
 	return whereClause, nr.resolveColumnInTableSources(cn, ctx.tables)
