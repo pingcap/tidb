@@ -532,7 +532,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("4 0"))
 	result = tk.MustQuery(`select locate("01 12", d) from t`)
 	result.Check(testkit.Rows("9"))
+	result = tk.MustQuery(`select locate("文", "中文字符串", 2)`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`select locate("文", "中文字符串", 3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select locate("文", "中文字符串")`)
+	result.Check(testkit.Rows("2"))
 
+	// for bin
 	result = tk.MustQuery(`select bin(-1);`)
 	result.Check(testkit.Rows("1111111111111111111111111111111111111111111111111111111111111111"))
 	result = tk.MustQuery(`select bin(5);`)
