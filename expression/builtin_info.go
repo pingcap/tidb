@@ -195,20 +195,24 @@ type lastInsertIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	argTps := []evalTp{}
+	var bf baseBuiltinFunc
 	if len(args) == 1 {
-		argTps = append(argTps, tpInt)
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+		bf.tp.Flag |= mysql.UniqueFlag
+		bf.deterministic = false
+		sig = &builtinLastInsertIDWithIDSig{baseIntBuiltinFunc{bf}}
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt)
+		bf.tp.Flag |= mysql.UniqueFlag
+		bf.deterministic = false
+		sig = &builtinLastInsertIDSig{baseIntBuiltinFunc{bf}}
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTps...)
 
-	sig := &builtinLastInsertIDSig{baseIntBuiltinFunc{bf}}
-	sig.deterministic = false
-	bf.tp.Flag |= mysql.UniqueFlag
 	return sig.setSelf(sig), errors.Trace(err)
 }
 
@@ -216,21 +220,27 @@ type builtinLastInsertIDSig struct {
 	baseIntBuiltinFunc
 }
 
-// evalInt evals a builtinLastInsertIDSig.
+// evalInt evals LAST_INSERT_ID().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
 func (b *builtinLastInsertIDSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
-	sc := b.getCtx().GetSessionVars().StmtCtx
-	if len(b.args) == 1 {
-		res, isNull, err = b.args[0].EvalInt(row, sc)
-		if isNull || err != nil {
-			return res, isNull, errors.Trace(err)
-		}
+	res = int64(b.ctx.GetSessionVars().PrevLastInsertID)
+	return res, false, nil
+}
 
-		b.ctx.GetSessionVars().SetLastInsertID(uint64(res))
-		return
+type builtinLastInsertIDWithIDSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals LAST_INSERT_ID(expr).
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
+func (b *builtinLastInsertIDWithIDSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	res, isNull, err = b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
 	}
 
-	res = int64(b.ctx.GetSessionVars().PrevLastInsertID)
+	b.ctx.GetSessionVars().SetLastInsertID(uint64(res))
 	return res, false, nil
 }
 
