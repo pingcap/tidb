@@ -71,7 +71,6 @@ parser/parser.go: parser/parser.y
 	make parser
 
 check:
-	bash gitcookie.sh
 	go get github.com/golang/lint/golint
 
 	@echo "vet"
