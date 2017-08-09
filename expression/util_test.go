@@ -62,7 +62,7 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	ret, err := SubstituteCorCol2Constant(plus2)
 	c.Assert(err, check.IsNil)
 	c.Assert(ret.Equal(ans1, ctx), check.IsTrue)
-	col1 := &Column{Index: 1}
+	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err = SubstituteCorCol2Constant(col1)
 	c.Assert(err, check.IsNil)
 	ans2 := col1
