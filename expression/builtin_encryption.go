@@ -481,8 +481,7 @@ func (b *builtinSHA1Sig) evalString(row []types.Datum) (string, bool, error) {
 	}
 	hasher := sha1.New()
 	hasher.Write([]byte(str))
-	digest := fmt.Sprintf("%x", hasher.Sum(nil))
-	return digest, false, nil
+	return fmt.Sprintf("%x", hasher.Sum(nil)), false, nil
 }
 
 type sha2FunctionClass struct {
@@ -542,8 +541,7 @@ func (b *builtinSHA2Sig) evalString(row []types.Datum) (string, bool, error) {
 	}
 
 	hasher.Write([]byte(str))
-	digest := fmt.Sprintf("%x", hasher.Sum(nil))
-	return digest, false, nil
+	return fmt.Sprintf("%x", hasher.Sum(nil)), false, nil
 }
 
 type uncompressFunctionClass struct {
