@@ -466,6 +466,7 @@ func (do *Domain) SysSessionPool() *pools.ResourcePool {
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
+	ctx.GetSessionVars().InRestrictedSQL = true
 	do.privHandle = privileges.NewHandle()
 	err := do.privHandle.Update(ctx)
 	if err != nil {
@@ -529,6 +530,7 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It
 // should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
+	ctx.GetSessionVars().InRestrictedSQL = true
 	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
 	do.ddl.RegisterEventCh(do.statsHandle.DDLEventCh())
 	err := do.statsHandle.Update(do.InfoSchema())
