@@ -113,10 +113,11 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	// If the schema version is much older than the latest schema version, we will delete it from itemSchemaVers.
 	offset := -1
 	for i, info := range s.detalItemInfos {
-		if isTooOldSchema(info.schemaVersion, currVer) {
-			delete(s.itemSchemaVers, info.schemaVersion)
-			offset = i
+		if !isTooOldSchema(info.schemaVersion, currVer) {
+			break
 		}
+		delete(s.itemSchemaVers, info.schemaVersion)
+		offset = i
 	}
 	// If the schema version is much older than the latest schema version, we will delete it from detalItemInfos.
 	s.detalItemInfos = s.detalItemInfos[offset+1:]
