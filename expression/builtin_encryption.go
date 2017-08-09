@@ -656,6 +656,7 @@ func (c *uncompressedLengthFunctionClass) getFunction(args []Expression, ctx con
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 10
 	sig := &builtinUncompressedLengthSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
