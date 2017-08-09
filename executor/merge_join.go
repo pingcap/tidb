@@ -46,12 +46,12 @@ type MergeJoinExec struct {
 
 	// Default for both side in case full join
 
-	defaultRightRow *Row
-	outputBuf       []*Row
+	defaultRightRow Row
+	outputBuf       []Row
 	leftRowBlock    *rowBlockIterator
 	rightRowBlock   *rowBlockIterator
-	leftRows        []*Row
-	rightRows       []*Row
+	leftRows        []Row
+	rightRows       []Row
 	desc            bool
 	flipSide        bool
 }
@@ -168,14 +168,14 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		exec.leftRowBlock.filter = nil
 		exec.leftFilter = b.leftFilter
 		exec.preserveLeft = true
-		exec.defaultRightRow = &Row{Data: b.defaultValues}
+		exec.defaultRightRow = b.defaultValues
 	case plan.RightOuterJoin:
 		exec.leftRowBlock = rightRowBlock
 		exec.rightRowBlock = leftRowBlock
 		exec.leftRowBlock.filter = nil
 		exec.leftFilter = b.leftFilter
 		exec.preserveLeft = true
-		exec.defaultRightRow = &Row{Data: b.defaultValues}
+		exec.defaultRightRow = b.defaultValues
 		exec.flipSide = true
 		exec.leftJoinKeys = rightJoinKeys
 		exec.rightJoinKeys = leftJoinKeys
@@ -193,8 +193,8 @@ type rowBlockIterator struct {
 	reader    Executor
 	filter    []expression.Expression
 	joinKeys  []*expression.Column
-	peekedRow *Row
-	rowCache  []*Row
+	peekedRow Row
+	rowCache  []Row
 }
 
 func (rb *rowBlockIterator) init() error {
@@ -207,12 +207,12 @@ func (rb *rowBlockIterator) init() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rb.rowCache = make([]*Row, 0, rowBufferSize)
+	rb.rowCache = make([]Row, 0, rowBufferSize)
 
 	return nil
 }
 
-func (rb *rowBlockIterator) nextRow() (*Row, error) {
+func (rb *rowBlockIterator) nextRow() (Row, error) {
 	for {
 		row, err := rb.reader.Next()
 		if err != nil {
@@ -222,7 +222,7 @@ func (rb *rowBlockIterator) nextRow() (*Row, error) {
 			return nil, nil
 		}
 		if rb.filter != nil {
-			matched, err := expression.EvalBool(rb.filter, row.Data, rb.ctx)
+			matched, err := expression.EvalBool(rb.filter, row, rb.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -234,10 +234,10 @@ func (rb *rowBlockIterator) nextRow() (*Row, error) {
 	}
 }
 
-func (rb *rowBlockIterator) nextBlock() ([]*Row, error) {
+func (rb *rowBlockIterator) nextBlock() ([]Row, error) {
 	var err error
 	peekedRow := rb.peekedRow
-	var curRow *Row
+	var curRow Row
 	if peekedRow == nil {
 		return nil, nil
 	}
@@ -301,15 +301,15 @@ func (e *MergeJoinExec) Schema() *expression.Schema {
 }
 
 func compareKeys(stmtCtx *variable.StatementContext,
-	leftRow *Row, leftKeys []*expression.Column,
-	rightRow *Row, rightKeys []*expression.Column) (int, error) {
+	leftRow Row, leftKeys []*expression.Column,
+	rightRow Row, rightKeys []*expression.Column) (int, error) {
 	for i, leftKey := range leftKeys {
-		lVal, err := leftKey.Eval(leftRow.Data)
+		lVal, err := leftKey.Eval(leftRow)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 
-		rVal, err := rightKeys[i].Eval(rightRow.Data)
+		rVal, err := rightKeys[i].Eval(rightRow)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -326,8 +326,8 @@ func compareKeys(stmtCtx *variable.StatementContext,
 	return 0, nil
 }
 
-func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row) {
-	var joinedRow *Row
+func (e *MergeJoinExec) outputJoinRow(leftRow Row, rightRow Row) {
+	var joinedRow Row
 	if e.flipSide {
 		joinedRow = makeJoinRow(rightRow, leftRow)
 	} else {
@@ -336,8 +336,8 @@ func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row) {
 	e.outputBuf = append(e.outputBuf, joinedRow)
 }
 
-func (e *MergeJoinExec) outputFilteredJoinRow(leftRow *Row, rightRow *Row) error {
-	var joinedRow *Row
+func (e *MergeJoinExec) outputFilteredJoinRow(leftRow Row, rightRow Row) error {
+	var joinedRow Row
 	if e.flipSide {
 		joinedRow = makeJoinRow(rightRow, leftRow)
 	} else {
@@ -345,7 +345,7 @@ func (e *MergeJoinExec) outputFilteredJoinRow(leftRow *Row, rightRow *Row) error
 	}
 
 	if e.otherFilter != nil {
-		matched, err := expression.EvalBool(e.otherFilter, joinedRow.Data, e.ctx)
+		matched, err := expression.EvalBool(e.otherFilter, joinedRow, e.ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -372,7 +372,7 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 		// make up for outer join since we ignored single table conditions previously
 		if e.leftFilter != nil {
 			var matched bool
-			matched, err = expression.EvalBool(e.leftFilter, lRow.Data, e.ctx)
+			matched, err = expression.EvalBool(e.leftFilter, lRow, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -482,7 +482,7 @@ func (e *MergeJoinExec) prepare() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.outputBuf = make([]*Row, 0, rowBufferSize)
+	e.outputBuf = make([]Row, 0, rowBufferSize)
 
 	e.leftRows, err = e.leftRowBlock.nextBlock()
 	if err != nil {
@@ -498,7 +498,7 @@ func (e *MergeJoinExec) prepare() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next() (*Row, error) {
+func (e *MergeJoinExec) Next() (Row, error) {
 	var err error
 	var hasMore bool
 	if !e.prepared {

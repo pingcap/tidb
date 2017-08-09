@@ -25,7 +25,7 @@ import (
 
 type orderedRow struct {
 	key []byte
-	row *Row
+	row Row
 }
 
 type orderedRows []orderedRow
@@ -52,7 +52,7 @@ type IndexLookUpJoin struct {
 	innerExec DataReader
 
 	cursor      int
-	resultRows  []*Row
+	resultRows  []Row
 	outerRows   orderedRows
 	innerRows   orderedRows
 	innerDatums orderedRows // innerDatums are extracted by innerRows and innerJoinKeys
@@ -86,7 +86,7 @@ func (e *IndexLookUpJoin) Close() error {
 // Next implements the Executor Next interface.
 // We will fetch batches of row from outer executor, construct the inner datums and sort them.
 // At the same time we will fetch the inner row by the inner datums and apply merge join.
-func (e *IndexLookUpJoin) Next() (*Row, error) {
+func (e *IndexLookUpJoin) Next() (Row, error) {
 	for e.cursor == len(e.resultRows) {
 		if e.exhausted {
 			return nil, nil
@@ -104,14 +104,14 @@ func (e *IndexLookUpJoin) Next() (*Row, error) {
 				e.exhausted = true
 				break
 			}
-			match, err := expression.EvalBool(e.leftConditions, outerRow.Data, e.ctx)
+			match, err := expression.EvalBool(e.leftConditions, outerRow, e.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			if match {
 				joinDatums := make([]types.Datum, 0, len(e.outerJoinKeys))
 				for i, col := range e.outerJoinKeys {
-					datum, err := col.Eval(outerRow.Data)
+					datum, err := col.Eval(outerRow)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
@@ -126,7 +126,7 @@ func (e *IndexLookUpJoin) Next() (*Row, error) {
 					return nil, errors.Trace(err)
 				}
 				e.outerRows = append(e.outerRows, orderedRow{key: joinOuterEncodeKey, row: outerRow})
-				e.innerDatums = append(e.innerDatums, orderedRow{key: joinOuterEncodeKey, row: &Row{Data: joinDatums}})
+				e.innerDatums = append(e.innerDatums, orderedRow{key: joinOuterEncodeKey, row: joinDatums})
 			} else if e.outer {
 				e.resultRows = append(e.resultRows, e.fillDefaultValues(outerRow))
 			}
@@ -143,8 +143,8 @@ func (e *IndexLookUpJoin) Next() (*Row, error) {
 	return row, nil
 }
 
-func (e *IndexLookUpJoin) fillDefaultValues(row *Row) *Row {
-	row.Data = append(row.Data, e.defaultValues...)
+func (e *IndexLookUpJoin) fillDefaultValues(row Row) Row {
+	row = append(row, e.defaultValues...)
 	return row
 }
 
@@ -155,7 +155,7 @@ func getUniqueDatums(rows orderedRows) [][]types.Datum {
 		if i > 0 && bytes.Compare(rows[i-1].key, rows[i].key) == 0 {
 			continue
 		}
-		datums = append(datums, rows[i].row.Data)
+		datums = append(datums, rows[i].row)
 	}
 	return datums
 }
@@ -175,7 +175,7 @@ func (e *IndexLookUpJoin) doJoin() error {
 		if innerRow == nil {
 			break
 		}
-		match, err := expression.EvalBool(e.rightConditions, innerRow.Data, e.ctx)
+		match, err := expression.EvalBool(e.rightConditions, innerRow, e.ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -184,7 +184,7 @@ func (e *IndexLookUpJoin) doJoin() error {
 		}
 		joinDatums := make([]types.Datum, 0, len(e.innerJoinKeys))
 		for _, col := range e.innerJoinKeys {
-			datum, _ := col.Eval(innerRow.Data)
+			datum, _ := col.Eval(innerRow)
 			joinDatums = append(joinDatums, datum)
 		}
 		joinKey, err := codec.EncodeValue(nil, joinDatums...)
@@ -228,7 +228,7 @@ func (e *IndexLookUpJoin) doMergeJoin() error {
 				for j := innerBeginCursor; j < innerEndCursor; j++ {
 					innerRow := e.innerRows[j].row
 					joinedRow := makeJoinRow(outerRow, innerRow)
-					match, err := expression.EvalBool(e.otherConditions, joinedRow.Data, e.ctx)
+					match, err := expression.EvalBool(e.otherConditions, joinedRow, e.ctx)
 					if err != nil {
 						return errors.Trace(err)
 					}
