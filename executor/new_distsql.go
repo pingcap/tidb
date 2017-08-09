@@ -15,6 +15,7 @@ package executor
 
 import (
 	"sort"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -322,7 +323,7 @@ func (e *IndexLookUpExecutor) Open() error {
 	// Use a background goroutine to fetch index and put the result in e.taskChan.
 	// e.taskChan serves as a pipeline, so fetching index and getting table data can
 	// run concurrently.
-	e.taskChan = make(chan *lookupTableTask, LookupTableTaskChannelSize)
+	e.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 	go e.fetchHandlesAndStartWorkers()
 	return nil
 }
@@ -338,7 +339,7 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 		return errors.Trace(err)
 	}
 	e.result.Fetch(goCtx)
-	e.taskChan = make(chan *lookupTableTask, LookupTableTaskChannelSize)
+	e.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 	go e.fetchHandlesAndStartWorkers()
 	return nil
 }

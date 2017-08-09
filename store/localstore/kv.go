@@ -411,6 +411,10 @@ func (s *dbStore) writeBatch(b engine.Batch) error {
 	return nil
 }
 
+func (s *dbStore) SupportDeleteRange() (supported bool) {
+	return false
+}
+
 func (s *dbStore) newBatch() engine.Batch {
 	return s.db.NewBatch()
 }
