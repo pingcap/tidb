@@ -86,22 +86,6 @@ func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
 	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
 }
 
-func (s *testIntegrationSuite) TestFuncReverse(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-	tk.MustExec(`USE test;`)
-	tk.MustExec(`DROP TABLE IF EXISTS t;`)
-	tk.MustExec(`CREATE TABLE t(a BINARY(10));`)
-	tk.MustExec(`INSERT INTO t SELECT "中文";`)
-	result := tk.MustQuery(`SELECT a, REVERSE(a), REVERSE("中文"), REVERSE("123 ") FROM t;`)
-	result.Check(testkit.Rows("中文\x00\x00\x00\x00 \x00\x00\x00\x00\x87\x96歸\xe4 文中  321"))
-	result = tk.MustQuery(`SELECT REVERSE(123), REVERSE(12.09) FROM t;`)
-	result.Check(testkit.Rows("321 90.21"))
-}
-
 func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -543,6 +527,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select bin("中文");`)
 	result.Check(testkit.Rows("0"))
 
+	// for reverse
+	tk.MustExec(`DROP TABLE IF EXISTS t;`)
+	tk.MustExec(`CREATE TABLE t(a BINARY(10));`)
+	tk.MustExec(`INSERT INTO t SELECT "中文";`)
+	result = tk.MustQuery(`SELECT a, REVERSE(a), REVERSE("中文"), REVERSE("123 ") FROM t;`)
+	result.Check(testkit.Rows("中文\x00\x00\x00\x00 \x00\x00\x00\x00\x87\x96歸\xe4 文中  321"))
+	result = tk.MustQuery(`SELECT REVERSE(123), REVERSE(12.09) FROM t;`)
+	result.Check(testkit.Rows("321 90.21"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {

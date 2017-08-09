@@ -130,6 +130,20 @@ var (
 	_ builtinFunc = &builtinLpadSig{}
 )
 
+func reverseBytes(origin []byte) []byte {
+	for i, length := 0, len(origin); i < length/2; i++ {
+		origin[i], origin[length-i-1] = origin[length-i-1], origin[i]
+	}
+	return origin
+}
+
+func reverseRunes(origin []rune) []rune {
+	for i, length := 0, len(origin); i < length/2; i++ {
+		origin[i], origin[length-i-1] = origin[length-i-1], origin[i]
+	}
+	return origin
+}
+
 // setBinFlagOrBinStr sets resTp to binary string if argTp is a binary string,
 // if not, sets the binary flag of resTp to true if argTp has binary flag.
 func setBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldType) {
@@ -495,17 +509,17 @@ func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	*bf.tp = *args[0].GetType()
+	var sig builtinFunc
 	if types.IsBinaryStr(bf.tp) {
-		sig := &builtinReverseBinarySig{baseStringBuiltinFunc{bf}}
-		return sig.setSelf(sig), nil
+		sig = &builtinReverseBinarySig{baseStringBuiltinFunc{bf}}
+	} else {
+		sig = &builtinReverseSig{baseStringBuiltinFunc{bf}}
 	}
-	sig := &builtinReverseSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
@@ -520,11 +534,8 @@ func (b *builtinReverseBinarySig) evalString(row []types.Datum) (string, bool, e
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	strBytes := []byte(str)
-	for i, length := 0, len(strBytes); i < length/2; i++ {
-		strBytes[i], strBytes[length-1-i] = strBytes[length-1-i], strBytes[i]
-	}
-	return hack.String(strBytes), false, nil
+	reversed := reverseBytes([]byte(str))
+	return hack.String(reversed), false, nil
 }
 
 type builtinReverseSig struct {
@@ -538,11 +549,8 @@ func (b *builtinReverseSig) evalString(row []types.Datum) (string, bool, error) 
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	strRunes := []rune(str)
-	for i, length := 0, len(strRunes); i < length/2; i++ {
-		strRunes[i], strRunes[length-1-i] = strRunes[length-1-i], strRunes[i]
-	}
-	return string(strRunes), false, nil
+	reversed := reverseRunes([]rune(str))
+	return string(reversed), false, nil
 }
 
 type spaceFunctionClass struct {
@@ -1470,12 +1478,7 @@ func (b *builtinCharSig) convertToBytes(ints []int64) []byte {
 			}
 		}
 	}
-
-	result := buffer.Bytes()
-	for i, length := 0, len(result); i < length/2; i++ {
-		result[i], result[length-1-i] = result[length-1-i], result[i]
-	}
-	return result
+	return reverseBytes(buffer.Bytes())
 }
 
 // evalString evals CHAR(N,... [USING charset_name]).
