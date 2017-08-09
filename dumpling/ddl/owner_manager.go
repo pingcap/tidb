@@ -29,6 +29,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 // OwnerManager is used to campaign the owner and manage the owner information.
@@ -39,10 +40,6 @@ type OwnerManager interface {
 	IsOwner() bool
 	// SetOwner sets whether the ownerManager is the DDL owner.
 	SetOwner(isOwner bool)
-	// IsOwner returns whether the ownerManager is the background owner.
-	IsBgOwner() bool
-	// SetOwner sets whether the ownerManager is the background owner.
-	SetBgOwner(isOwner bool)
 	// GetOwnerID gets the owner ID.
 	GetOwnerID(ctx goctx.Context, ownerKey string) (string, error)
 	// CampaignOwners campaigns the DDL owner and the background owner.
@@ -53,9 +50,7 @@ type OwnerManager interface {
 
 const (
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
-	DDLOwnerKey = "/tidb/ddl/fg/owner"
-	// BgOwnerKey is the background owner path that is saved to etcd, and it's exported for testing.
-	BgOwnerKey                = "/tidb/ddl/bg/owner"
+	DDLOwnerKey               = "/tidb/ddl/fg/owner"
 	newSessionDefaultRetryCnt = 3
 	newSessionRetryUnlimited  = math.MaxInt64
 )
@@ -63,7 +58,6 @@ const (
 // ownerManager represents the structure which is used for electing owner.
 type ownerManager struct {
 	ddlOwner int32
-	bgOwner  int32
 	ddlID    string // id is the ID of DDL.
 	etcdCli  *clientv3.Client
 	cancel   goctx.CancelFunc
@@ -102,20 +96,6 @@ func (m *ownerManager) Cancel() {
 	m.cancel()
 }
 
-// IsBgOwner implements OwnerManager.IsBgOwner interface.
-func (m *ownerManager) IsBgOwner() bool {
-	return atomic.LoadInt32(&m.bgOwner) == 1
-}
-
-// SetBgOwner implements OwnerManager.SetBgOwner interface.
-func (m *ownerManager) SetBgOwner(isOwner bool) {
-	if isOwner {
-		atomic.StoreInt32(&m.bgOwner, 1)
-	} else {
-		atomic.StoreInt32(&m.bgOwner, 0)
-	}
-}
-
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
 var ManagerSessionTTL = 60
 
@@ -143,7 +123,7 @@ func newSession(ctx goctx.Context, flag string, etcdCli *clientv3.Client, retryC
 			break
 		}
 		log.Warnf("[ddl] %s failed to new session, err %v", flag, err)
-		if isContextFinished(err) {
+		if isContextFinished(err) || terror.ErrorEqual(err, grpc.ErrClientConnClosing) {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -158,16 +138,8 @@ func (m *ownerManager) CampaignOwners(ctx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bgSession, err := newSession(ctx, BgOwnerKey, m.etcdCli, newSessionDefaultRetryCnt, ManagerSessionTTL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	ddlCtx, _ := goctx.WithCancel(ctx)
 	go m.campaignLoop(ddlCtx, ddlSession, DDLOwnerKey)
-
-	bgCtx, _ := goctx.WithCancel(ctx)
-	go m.campaignLoop(bgCtx, bgSession, BgOwnerKey)
 	return nil
 }
 
@@ -260,8 +232,6 @@ func GetOwnerInfo(ctx goctx.Context, elec *concurrency.Election, key, id string)
 func (m *ownerManager) setOwnerVal(key string, val bool) {
 	if key == DDLOwnerKey {
 		m.SetOwner(val)
-	} else {
-		m.SetBgOwner(val)
 	}
 }
 

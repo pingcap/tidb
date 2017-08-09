@@ -144,6 +144,11 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	return nil
 }
 
+// GetStore gets the store of session.
+func (c *Context) GetStore() kv.Storage {
+	return c.Store
+}
+
 // GetSessionManager implements the context.Context interface.
 func (c *Context) GetSessionManager() util.SessionManager {
 	return nil
