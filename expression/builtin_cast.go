@@ -521,7 +521,7 @@ type builtinCastDecimalAsJSONSig struct {
 
 func (b *builtinCastDecimalAsJSONSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
-	// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.
+	// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `STRING` now.
 	return json.CreateJSON(string(val.ToString())), isNull, errors.Trace(err)
 }
 
@@ -534,7 +534,12 @@ func (b *builtinCastStringAsJSONSig) evalJSON(row []types.Datum) (res json.JSON,
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = json.ParseFromString(val)
+	if b.tp.Decimal == 0 {
+		res, err = json.ParseFromString(val)
+	} else {
+		// This is a post-wrapped cast.
+		res = json.CreateJSON(val)
+	}
 	return res, false, errors.Trace(err)
 }
 
@@ -1334,7 +1339,7 @@ func WrapWithCastAsDuration(expr Expression, ctx context.Context) (Expression, e
 }
 
 // WrapWithCastAsJSON wraps `expr` with `cast` if the return type
-// of expr is not type duration,
+// of expr is not type json,
 // otherwise, returns `expr` directly.
 func WrapWithCastAsJSON(expr Expression, ctx context.Context) (Expression, error) {
 	if expr.GetType().Tp == mysql.TypeJSON {
@@ -1343,7 +1348,8 @@ func WrapWithCastAsJSON(expr Expression, ctx context.Context) (Expression, error
 	tp := &types.FieldType{
 		Tp:      mysql.TypeJSON,
 		Flen:    12582912,
-		Decimal: 0,
+		// Here we set decimal to -1 to indicate this is a post-wrapped cast.
+		Decimal: -1,
 		Charset: charset.CharsetUTF8,
 		Collate: charset.CollationUTF8,
 		Flag:    mysql.BinaryFlag,

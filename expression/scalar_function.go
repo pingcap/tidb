@@ -192,6 +192,8 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 			res, isNull, err = sf.EvalTime(row, sc)
 		case mysql.TypeDuration:
 			res, isNull, err = sf.EvalDuration(row, sc)
+		case mysql.TypeJSON:
+			res, isNull, err = sf.EvalJSON(row, sc)
 		default:
 			res, isNull, err = sf.EvalString(row, sc)
 		}
