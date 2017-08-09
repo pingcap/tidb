@@ -77,6 +77,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4LogicalFuncs()...)
 	tests = append(tests, s.createTestCase4ControlFuncs()...)
 	tests = append(tests, s.createTestCase4Aggregations()...)
+	tests = append(tests, s.createTestCase4InfoFunc()...)
 
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -358,7 +359,7 @@ func (s *testPlanSuite) createTestCase4Aggregations() []typeInferTestCase {
 
 func (s *testPlanSuite) createTestCase4InfoFunc() []typeInferTestCase {
 	return []typeInferTestCase{
-		{"last_insert_id()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, types.UnspecifiedLength},
-		{"last_insert_id(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, types.UnspecifiedLength},
+		{"last_insert_id()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
+		{"last_insert_id(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
 	}
 }
