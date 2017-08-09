@@ -305,6 +305,34 @@ type builtinTimeDiffSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinTimeDiffSig) getStrFsp(strArg string, fsp int) int {
+	if n := strings.IndexByte(strArg, '.'); n >= 0 {
+		lenStrFsp := len(strArg[n+1:])
+		if lenStrFsp <= types.MaxFsp {
+			fsp = int(math.Max(float64(lenStrFsp), float64(fsp)))
+		}
+	}
+	return fsp
+}
+
+func (b *builtinTimeDiffSig) convertArgToTime(sc *variable.StatementContext, arg types.Datum, fsp int) (t types.Time, err error) {
+	// Fix issue #3923, see https://github.com/pingcap/tidb/issues/3923,
+	// TIMEDIFF() returns expr1 − expr2 expressed as a Duration value. expr1 and expr2 are Duration or date-and-time expressions,
+	// but both must be of the same type. if expr is a string, we first try to convert it to Duration, if it failed,
+	// we then try to convert it to Datetime
+	switch arg.Kind() {
+	case types.KindString, types.KindBytes:
+		strArg := arg.GetString()
+		fsp = b.getStrFsp(strArg, fsp)
+		t, err = types.StrToDuration(sc, strArg, fsp)
+	case types.KindMysqlDuration:
+		t, err = arg.GetMysqlDuration().ConvertToTime(mysql.TypeDuration)
+	default:
+		t, err = convertDatumToTime(sc, arg)
+	}
+	return t, errors.Trace(err)
+}
+
 // eval evals a builtinTimeDiffSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
@@ -315,16 +343,31 @@ func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) 
 	if args[0].IsNull() || args[1].IsNull() {
 		return
 	}
+
 	sc := b.ctx.GetSessionVars().StmtCtx
-	t1, err := convertDatumToTime(sc, args[0])
+	fsp := int(math.Max(float64(args[0].Frac()), float64(args[1].Frac())))
+	t0, err := b.convertArgToTime(sc, args[0], fsp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	t2, err := convertDatumToTime(sc, args[1])
+	t1, err := b.convertArgToTime(sc, args[1], fsp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	t := t1.Sub(&t2)
+	if (types.IsTemporalWithDate(t0.Type) &&
+		t1.Type == mysql.TypeDuration) ||
+		(types.IsTemporalWithDate(t1.Type) &&
+			t0.Type == mysql.TypeDuration) {
+		return d, nil // Incompatible types, return NULL
+	}
+
+	t := t0.Sub(&t1)
+	ret, truncated := types.TruncateOverflowMySQLTime(t.Duration)
+	if truncated {
+		err = types.ErrTruncatedWrongVal.GenByArgs("time", t.String())
+		err = sc.HandleTruncate(err)
+	}
+	t.Duration = ret
 	d.SetMysqlDuration(t)
 	return
 }
