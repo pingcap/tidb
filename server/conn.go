@@ -537,7 +537,7 @@ func (cc *clientConn) writeError(e error) error {
 	if te, ok = originErr.(*terror.Error); ok {
 		m = te.ToSQLError()
 	} else {
-		m = mysql.NewErrf(mysql.ErrUnknown, e.Error())
+		m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
 	}
 
 	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))

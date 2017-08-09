@@ -39,9 +39,6 @@ type Column struct {
 	GeneratedExpr ast.ExprNode
 }
 
-// PrimaryKeyName defines primary key name.
-const PrimaryKeyName = "PRIMARY"
-
 // String implements fmt.Stringer interface.
 func (c *Column) String() string {
 	ans := []string{c.Name.O, types.TypeToStr(c.Tp, c.Charset)}

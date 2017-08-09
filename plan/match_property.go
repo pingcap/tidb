@@ -30,7 +30,7 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 	if len(prop.props) == 0 {
 		newTS := ts.Copy().(*PhysicalTableScan)
 		newTS.addLimit(prop.limit)
-		p := newTS.tryToAddUnionScan(newTS)
+		p := newTS.tryToAddUnionScan(newTS, newTS.unionScanSchema)
 		return enforceProperty(prop, &physicalPlanInfo{
 			p:        p,
 			cost:     cost,
@@ -46,7 +46,7 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		if len(sortedTS.tableFilterConditions) > 0 {
 			cost += rowCount * cpuFactor
 		}
-		p := sortedTS.tryToAddUnionScan(sortedTS)
+		p := sortedTS.tryToAddUnionScan(sortedTS, sortedTS.unionScanSchema)
 		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
 			p:        p,
 			cost:     cost,
@@ -62,7 +62,7 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 			cost = rowCount * netWorkFactor
 		}
 		sortedTS.KeepOrder = true
-		p := sortedTS.tryToAddUnionScan(sortedTS)
+		p := sortedTS.tryToAddUnionScan(sortedTS, sortedTS.unionScanSchema)
 		return enforceProperty(prop, &physicalPlanInfo{
 			p:        p,
 			cost:     cost,
@@ -114,7 +114,7 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 		cost *= 2
 	}
 	if len(prop.props) == 0 {
-		p := is.tryToAddUnionScan(is)
+		p := is.tryToAddUnionScan(is, is.unionScanSchema)
 		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
 			p:        p,
 			cost:     cost,
@@ -149,7 +149,7 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 			sortedIS.OutOfOrder = false
 			sortedIS.Desc = allDesc && !allAsc
 			sortedIS.addLimit(prop.limit)
-			p := sortedIS.tryToAddUnionScan(sortedIS)
+			p := sortedIS.tryToAddUnionScan(sortedIS, sortedIS.unionScanSchema)
 			return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
 				p:        p,
 				cost:     sortedCost,
@@ -166,7 +166,7 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 			cost = infos[0].count * netWorkFactor
 		}
 		sortedIS.OutOfOrder = true
-		p := sortedIS.tryToAddUnionScan(sortedIS)
+		p := sortedIS.tryToAddUnionScan(sortedIS, sortedIS.unionScanSchema)
 		return enforceProperty(prop, &physicalPlanInfo{
 			p:        p,
 			cost:     cost,
