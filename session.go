@@ -520,6 +520,19 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 	}
 }
 
+func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
+	return func(dom *domain.Domain) (pools.Resource, error) {
+		se, err := createSessionWithDomain(store, dom)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		se.sessionVars.CommonGlobalLoaded = true
+		se.sessionVars.InRestrictedSQL = true
+		return se, nil
+	}
+}
+
 func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
 	var rows []*ast.Row
 	for {
@@ -991,9 +1004,26 @@ func createSession(store kv.Storage) (*session, error) {
 	return s, nil
 }
 
+// createSessionWithDomain creates a new Session and binds it with a Domain.
+// We need this because when we start DDL in Domain, the DDL need a session
+// to change some system tables. But at that time, we have been already in
+// a lock context, which cause we can't call createSesion directly.
+func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
+	s := &session{
+		store:       store,
+		parser:      parser.New(),
+		sessionVars: variable.NewSessionVars(),
+	}
+	s.mu.values = make(map[fmt.Stringer]interface{})
+	sessionctx.BindDomain(s, dom)
+	// session implements variable.GlobalVarAccessor. Bind it to ctx.
+	s.sessionVars.GlobalVarsAccessor = s
+	return s, nil
+}
+
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 14
+	currentBootstrapVersion = 15
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1179,6 +1209,11 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// GetStore gets the store of session.
+func (s *session) GetStore() kv.Storage {
+	return s.store
 }
 
 func (s *session) ShowProcess() util.ProcessInfo {

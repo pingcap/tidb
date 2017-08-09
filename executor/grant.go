@@ -58,7 +58,7 @@ func (e *GrantExec) Schema() *expression.Schema {
 }
 
 // Next implements Execution Next interface.
-func (e *GrantExec) Next() (*Row, error) {
+func (e *GrantExec) Next() (Row, error) {
 	if e.done {
 		return nil, nil
 	}

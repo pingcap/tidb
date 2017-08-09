@@ -40,7 +40,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 
-	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 
 	time.Sleep(testLease)
@@ -83,7 +83,6 @@ LOOP:
 			// TODO: Get this information from etcd.
 			// m, err := d.Stats(nil)
 			// c.Assert(err, IsNil)
-			// c.Assert(m[bgOwnerID], Equals, d.uuid)
 			break LOOP
 		}
 	}
