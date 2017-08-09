@@ -1081,7 +1081,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
 }
 
-func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
+func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
@@ -1092,35 +1092,35 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	// compare as JSON
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (pk int  NOT NULL PRIMARY KEY AUTO_INCREMENT, i INT, j JSON);")
-	tk.MustExec(` INTO t(i, j) VALUES (0, NULL)`)
-	tk.MustExec(` INTO t(i, j) VALUES (1, '{"a": 2}')`)
-	tk.MustExec(` INTO t(i, j) VALUES (2, '[1,2]')`)
-	tk.MustExec(` INTO t(i, j) VALUES (3, '{"a":"b", "c":"d","ab":"abc", "bc": ["x", "y"]}')`)
-	tk.MustExec(` INTO t(i, j) VALUES (4, '["here", ["I", "am"], "!!!"]')`)
-	tk.MustExec(` INTO t(i, j) VALUES (5, '"scalar string"')`)
-	tk.MustExec(` INTO t(i, j) VALUES (6, 'true')`)
-	tk.MustExec(` INTO t(i, j) VALUES (7, 'false')`)
-	tk.MustExec(` INTO t(i, j) VALUES (8, 'null')`)
-	tk.MustExec(` INTO t(i, j) VALUES (9, '-1')`)
-	tk.MustExec(` INTO t(i, j) VALUES (10, CAST(CAST(1 AS UNSIGNED) AS JSON))`)
-	tk.MustExec(` INTO t(i, j) VALUES (11, '32767')`)
-	tk.MustExec(` INTO t(i, j) VALUES (12, '32768')`)
-	tk.MustExec(` INTO t(i, j) VALUES (13, '-32768')`)
-	tk.MustExec(` INTO t(i, j) VALUES (14, '-32769')`)
-	tk.MustExec(` INTO t(i, j) VALUES (15, '2147483647')`)
-	tk.MustExec(` INTO t(i, j) VALUES (16, '2147483648')`)
-	tk.MustExec(` INTO t(i, j) VALUES (17, '-2147483648')`)
-	tk.MustExec(` INTO t(i, j) VALUES (18, '-2147483649')`)
-	tk.MustExec(` INTO t(i, j) VALUES (19, '18446744073709551615')`)
-	tk.MustExec(` INTO t(i, j) VALUES (20, '18446744073709551616')`)
-	tk.MustExec(` INTO t(i, j) VALUES (21, '3.14')`)
-	tk.MustExec(` INTO t(i, j) VALUES (22, '{}')`)
-	tk.MustExec(` INTO t(i, j) VALUES (23, '[]')`)
-	tk.MustExec(` INTO t(i, j) VALUES (24, CAST(CAST('2015-01-15 23:24:25' AS DATETIME) AS JSON))`)
-	tk.MustExec(` INTO t(i, j) VALUES (25, CAST(CAST('23:24:25' AS TIME) AS JSON))`)
-	tk.MustExec(` INTO t(i, j) VALUES (26, CAST(CAST('2015-01-15' AS DATE) AS JSON))`)
-	tk.MustExec(` INTO t(i, j) VALUES (27, CAST(TIMESTAMP('2015-01-15 23:24:25') AS JSON))`)
-	tk.MustExec(` INTO t(i, j) VALUES (28, CAST('[]' AS CHAR CHARACTER SET 'ascii'))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (0, NULL)`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (1, '{"a": 2}')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (2, '[1,2]')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (3, '{"a":"b", "c":"d","ab":"abc", "bc": ["x", "y"]}')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (4, '["here", ["I", "am"], "!!!"]')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (5, '"scalar string"')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (6, 'true')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (7, 'false')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (8, 'null')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (9, '-1')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (10, CAST(CAST(1 AS UNSIGNED) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (11, '32767')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (12, '32768')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (13, '-32768')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (14, '-32769')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (15, '2147483647')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (16, '2147483648')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (17, '-2147483648')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (18, '-2147483649')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (19, '18446744073709551615')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (20, '18446744073709551616')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (21, '3.14')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (22, '{}')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (23, '[]')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (24, CAST(CAST('2015-01-15 23:24:25' AS DATETIME) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (25, CAST(CAST('23:24:25' AS TIME) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (26, CAST(CAST('2015-01-15' AS DATE) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (27, CAST(TIMESTAMP('2015-01-15 23:24:25') AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (28, CAST('[]' AS CHAR CHARACTER SET 'ascii'))`)
 
 	result := tk.MustQuery(`SELECT i,
 		(j = '"scalar string"') AS c1,
@@ -1143,5 +1143,33 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 		(JSON_EXTRACT(j, '$.a') = 2) AS c18
 		FROM t
 		ORDER BY i;`)
-	result.Check(testkit.Rows())
+	result.Check(testkit.Rows("0 <nil> <nil> <nil> <nil> <nil> <nil> 1 1 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil>",
+		"1 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 1",
+		"2 0 0 0 1 <nil> <nil> 0 0 0 1 0 <nil> <nil> 0 0 0 0 <nil>",
+		"3 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 0",
+		"4 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"5 0 1 1 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"6 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"7 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"8 0 0 0 1 <nil> <nil> 0 0 0 0 1 <nil> <nil> 0 0 0 0 <nil>",
+		"9 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"10 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"11 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"12 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"13 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"14 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"15 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"16 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"17 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"18 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"19 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"20 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"21 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"22 0 0 0 1 <nil> <nil> 0 0 0 1 0 <nil> <nil> 0 0 0 0 <nil>",
+		"23 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"24 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
+		"25 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 1 0 0 <nil>",
+		"26 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
+		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
+		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
 }

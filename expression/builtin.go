@@ -137,14 +137,14 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 	case tpJSON:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeJSON,
-			Flen:    12582912,
+			Flen:    mysql.MaxBlobWidth,
 			Decimal: 0,
 			Charset: charset.CharsetUTF8,
 			Collate: charset.CollationUTF8,
 			Flag:    mysql.BinaryFlag,
 		}
 	}
-	if mysql.HasBinaryFlag(fieldType.Flag) && len(fieldType.Charset) == 0 {
+	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
 	} else {
 		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8

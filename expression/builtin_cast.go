@@ -79,6 +79,7 @@ var (
 	_ builtinFunc = &builtinCastStringAsStringSig{}
 	_ builtinFunc = &builtinCastStringAsDecimalSig{}
 	_ builtinFunc = &builtinCastStringAsTimeSig{}
+	_ builtinFunc = &builtinCastStringAsDurationSig{}
 	_ builtinFunc = &builtinCastStringAsJSONSig{}
 
 	_ builtinFunc = &builtinCastTimeAsIntSig{}
@@ -355,11 +356,14 @@ type castAsJSONFunctionClass struct {
 }
 
 func (b *castAsJSONFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err := b.verifyArgs(args); err != nil {
+		return sig, errors.Trace(err)
+	}
 	bf := baseJSONBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
 	bf.tp = b.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastJSONAsJSONSig{bf}
-		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+		return sig.setSelf(sig), nil
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -369,8 +373,7 @@ func (b *castAsJSONFunctionClass) getFunction(args []Expression, ctx context.Con
 	case types.ClassDecimal:
 		sig = &builtinCastDecimalAsJSONSig{bf}
 	case types.ClassString:
-		tp := args[0].GetType().Tp
-		if types.IsTypeTime(tp) {
+		if tp := args[0].GetType().Tp; types.IsTypeTime(tp) {
 			sig = &builtinCastTimeAsJSONSig{bf}
 		} else if tp == mysql.TypeJSON {
 			sig = &builtinCastJSONAsJSONSig{bf}
@@ -380,7 +383,7 @@ func (b *castAsJSONFunctionClass) getFunction(args []Expression, ctx context.Con
 			sig = &builtinCastStringAsJSONSig{bf}
 		}
 	}
-	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCastIntAsIntSig struct {
@@ -497,7 +500,7 @@ func (b *builtinCastIntAsJSONSig) evalJSON(row []types.Datum) (res json.JSON, is
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if mysql.HasBinaryFlag(b.tp.Flag) {
+	if mysql.HasUnsignedFlag(b.tp.Flag) {
 		res = json.CreateJSON(uint64(val))
 	} else {
 		res = json.CreateJSON(val)
@@ -1143,8 +1146,7 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(row []types.Datum) (res *types
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	var f64 float64
-	f64, err = val.CastToReal()
+	f64, err := val.CastToReal()
 	if err != nil {
 		err = res.FromFloat64(f64)
 	}
@@ -1161,8 +1163,7 @@ func (b *builtinCastJSONAsStringSig) evalString(row []types.Datum) (res string, 
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res = val.String()
-	return
+	return val.String(), false, nil
 }
 
 type builtinCastJSONAsTimeSig struct {
@@ -1346,8 +1347,8 @@ func WrapWithCastAsJSON(expr Expression, ctx context.Context) (Expression, error
 		return expr, nil
 	}
 	tp := &types.FieldType{
-		Tp:      mysql.TypeJSON,
-		Flen:    12582912,
+		Tp:   mysql.TypeJSON,
+		Flen: 12582912,
 		// Here we set decimal to -1 to indicate this is a post-wrapped cast.
 		Decimal: -1,
 		Charset: charset.CharsetUTF8,
