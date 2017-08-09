@@ -196,17 +196,15 @@ type lastInsertIDFunctionClass struct {
 }
 
 func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := c.verifyArgs(args)
-	if err != nil {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	var bf baseBuiltinFunc
+	argTps := []evalTp{}
 	if len(args) == 1 {
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
-	} else {
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt)
+		argTps = append(argTps, tpInt)
 	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTps...)
 
 	sig := &builtinLastInsertIDSig{baseIntBuiltinFunc{bf}}
 	sig.deterministic = false
