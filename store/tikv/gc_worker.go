@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"fmt"
-	"math"
 	"os"
 	"strconv"
 	"time"
@@ -656,8 +655,13 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 	return errors.Trace(err)
 }
 
-// NewMockGCWorker creates a GCWorker instance ONLY for test.
-func NewMockGCWorker(store kv.Storage, jobCh <-chan struct{}, jobRspCh chan<- struct{}) (*GCWorker, error) {
+// MockGCWorker is for test.
+type MockGCWorker struct {
+	worker GCWorker
+}
+
+// NewMockGCWorker creates a MockGCWorker instance ONLY for test.
+func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 	ver, err := store.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -666,7 +670,7 @@ func NewMockGCWorker(store kv.Storage, jobCh <-chan struct{}, jobRspCh chan<- st
 	if err != nil {
 		hostName = "unknown"
 	}
-	worker := &GCWorker{
+	worker := GCWorker{
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:       store.(*tikvStore),
@@ -674,44 +678,17 @@ func NewMockGCWorker(store kv.Storage, jobCh <-chan struct{}, jobRspCh chan<- st
 		lastFinish:  time.Now(),
 		done:        make(chan error),
 	}
-	var ctx goctx.Context
-	ctx, worker.cancel = util.WithCancel(goctx.Background())
-	go worker.mockStart(ctx, jobCh, jobRspCh)
-	return worker, nil
+	worker.session, err = tidb.CreateSession(worker.store)
+	if err != nil {
+		log.Errorf("initialize MockGCWorker session fail: %s", err)
+		return nil, errors.Trace(err)
+	}
+	privilege.BindPrivilegeManager(worker.session, nil)
+	worker.session.GetSessionVars().InRestrictedSQL = true
+	return &MockGCWorker{worker: worker}, nil
 }
 
-// mockStart is ONLY for test.
-func (w *GCWorker) mockStart(ctx goctx.Context, jobCh <-chan struct{}, jobRspCh chan<- struct{}) {
-	log.Infof("[gc worker] %s start.", w.uuid)
-	for {
-		select {
-		case <-jobCh:
-			var err error
-			if w.session == nil {
-				w.session, err = tidb.CreateSession(w.store)
-				if err != nil {
-					w.done <- errors.Trace(err)
-					continue
-				}
-				privilege.BindPrivilegeManager(w.session, nil)
-				w.session.GetSessionVars().InRestrictedSQL = true
-			}
-			err = w.deleteRanges(ctx, math.MaxUint64)
-			jobRspCh <- struct{}{}
-			if err != nil {
-				w.done <- errors.Trace(err)
-				continue
-			}
-		case err := <-w.done:
-			w.gcIsRunning = false
-			w.lastFinish = time.Now()
-			if err != nil {
-				log.Errorf("[gc worker] runGCJob error: %v", err)
-				break
-			}
-		case <-ctx.Done():
-			log.Infof("[gc worker] (%s) quit.", w.uuid)
-			return
-		}
-	}
+func (w *MockGCWorker) DeleteRanges(ctx goctx.Context, safePoint uint64) error {
+	log.Errorf("deleteRanges is called")
+	return w.worker.deleteRanges(ctx, safePoint)
 }
