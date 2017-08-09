@@ -208,6 +208,8 @@ func (b *castAsRealFunctionClass) getFunction(args []Expression, ctx context.Con
 			sig = &builtinCastTimeAsRealSig{bf}
 		} else if tp == mysql.TypeDuration {
 			sig = &builtinCastDurationAsRealSig{bf}
+		} else if tp == mysql.TypeJSON {
+			sig = &builtinCastJSONAsRealSig{bf}
 		} else {
 			sig = &builtinCastStringAsRealSig{bf}
 		}
@@ -241,6 +243,8 @@ func (b *castAsDecimalFunctionClass) getFunction(args []Expression, ctx context.
 			sig = &builtinCastTimeAsDecimalSig{bf}
 		} else if tp == mysql.TypeDuration {
 			sig = &builtinCastDurationAsDecimalSig{bf}
+		} else if tp == mysql.TypeJSON {
+			sig = &builtinCastJSONAsDecimalSig{bf}
 		} else {
 			sig = &builtinCastStringAsDecimalSig{bf}
 		}
@@ -307,6 +311,8 @@ func (b *castAsTimeFunctionClass) getFunction(args []Expression, ctx context.Con
 			sig = &builtinCastTimeAsTimeSig{bf}
 		} else if tp == mysql.TypeDuration {
 			sig = &builtinCastDurationAsTimeSig{bf}
+		} else if tp == mysql.TypeJSON {
+			sig = &builtinCastJSONAsTimeSig{bf}
 		} else {
 			sig = &builtinCastStringAsTimeSig{bf}
 		}
@@ -1147,7 +1153,8 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(row []types.Datum) (res *types
 		return res, isNull, errors.Trace(err)
 	}
 	f64, err := val.CastToReal()
-	if err != nil {
+	if err == nil {
+		res = new(types.MyDecimal)
 		err = res.FromFloat64(f64)
 	}
 	return res, false, err
