@@ -211,31 +211,6 @@ func (s *testEvaluatorSuite) TestMD5(c *C) {
 
 }
 
-type compressTest struct {
-	in  interface{}
-	out interface{}
-}
-
-var compressTests = []compressTest{
-	{[]byte("hello world"), []byte{120, 156, 202, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 4, 0, 0, 255, 255, 26, 11, 4, 93}},
-	{[]byte("i love you)"), []byte{120, 156, 202, 84, 200, 201, 47, 75, 85, 168, 204, 47, 213, 4, 4, 0, 0, 255, 255, 23, 142, 3, 230}},
-	{nil, nil},
-	{string(""), string("")},
-}
-
-func (s *testEvaluatorSuite) TestCompress(c *C) {
-	defer testleak.AfterTest(c)()
-	fc := funcs[ast.Compress]
-	for _, tt := range compressTests {
-		arg := types.NewDatum(tt.in)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
-		c.Assert(err, IsNil)
-		out, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(out, DeepEquals, types.NewDatum(tt.out))
-	}
-}
-
 func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.RandomBytes]
@@ -265,50 +240,96 @@ func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
 	c.Assert(len(out.GetBytes()), Equals, 0)
 }
 
+func decodeHex(str string) []byte {
+	ret, err := hex.DecodeString(str)
+	if err != nil {
+		panic(err)
+	}
+	return ret
+}
+
+func (s *testEvaluatorSuite) TestCompress(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		in     interface{}
+		expect interface{}
+	}{
+		{"hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
+		{"", ""},
+		{nil, nil},
+	}
+
+	fc := funcs[ast.Compress]
+	for _, test := range tests {
+		arg := types.NewDatum(test.in)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil, Commentf("%v", test))
+		out, err := f.eval(nil)
+		c.Assert(err, IsNil, Commentf("%v", test))
+		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
+	}
+}
+
 func (s *testEvaluatorSuite) TestUncompress(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		in     interface{}
 		expect interface{}
 	}{
-		{[]byte{120, 156, 202, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 4, 0, 0, 255, 255, 26, 11, 4, 93}, []byte("hello world")},
-		{[]byte{120, 156, 202, 84, 200, 201, 47, 75, 85, 168, 204, 47, 213, 4, 4, 0, 0, 255, 255, 23, 142, 3, 230}, []byte("i love you)")},
+		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), "hello world"},         // zlib result from MySQL
+		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), "hello world"}, // zlib result from TiDB
+		{decodeHex(""), ""},
+		{"1", nil},
+		{"1234", nil},
+		{"12345", nil},
+		{decodeHex("0B"), nil},
+		{decodeHex("0B000000"), nil},
+		{decodeHex("0B0000001234"), nil},
+		{12345, nil},
 		{nil, nil},
-		{string(""), string("")},
 	}
 
 	fc := funcs[ast.Uncompress]
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, Commentf("%v", test))
 		out, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(out, DeepEquals, types.NewDatum(test.expect))
+		c.Assert(err, IsNil, Commentf("%v", test))
+		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
 	}
 }
+
 func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		in     interface{}
 		expect interface{}
 	}{
-		{[]byte{120, 156, 202, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 4, 0, 0, 255, 255, 26, 11, 4, 93}, int64(11)},
-		{[]byte{120, 156, 202, 84, 200, 201, 47, 75, 85, 168, 204, 47, 213, 4, 4, 0, 0, 255, 255, 23, 142, 3, 230}, int64(11)},
-		{nil, int64(0)},
-		{string(""), int64(0)},
+		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), int64(11)},         // zlib result from MySQL
+		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), int64(11)}, // zlib result from TiDB
+		{decodeHex(""), int64(0)},
+		{"1", int64(0)},
+		{"123", int64(0)},
+		{decodeHex("0B"), int64(0)},
+		{decodeHex("0B00"), int64(0)},
+		{decodeHex("0B000000"), int64(0x0)},
+		{decodeHex("0B0000001234"), int64(0x0B)},
+		{12345, int64(875770417)},
+		{nil, nil},
 	}
 
 	fc := funcs[ast.UncompressedLength]
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, Commentf("%v", test))
 		out, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(out.GetInt64(), Equals, test.expect)
+		c.Assert(err, IsNil, Commentf("%v", test))
+		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
 	}
 }
+
 func (s *testEvaluatorSuite) TestPassword(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
