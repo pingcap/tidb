@@ -83,6 +83,9 @@ type aesDecryptFunctionClass struct {
 }
 
 func (c *aesDecryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(c.verifyArgs(args))
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -90,7 +93,7 @@ func (c *aesDecryptFunctionClass) getFunction(args []Expression, ctx context.Con
 	bf.tp.Flen = args[0].GetType().Flen // At most.
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinAesDecryptSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinAesDecryptSig struct {
@@ -124,6 +127,9 @@ type aesEncryptFunctionClass struct {
 }
 
 func (c *aesEncryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(c.verifyArgs(args))
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -131,7 +137,7 @@ func (c *aesEncryptFunctionClass) getFunction(args []Expression, ctx context.Con
 	bf.tp.Flen = 16 * (args[0].GetType().Flen/16 + 1) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinAesEncryptSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinAesEncryptSig struct {
