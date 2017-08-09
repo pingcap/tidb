@@ -186,17 +186,9 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobCancelled
 		return ver, ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
-
-	if len(tblInfo.Columns) == 1 {
+	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobCancelled
-		return ver, ErrCantRemoveAllFields.Gen("can't drop only column %s in table %s",
-			colName, tblInfo.Name)
-	}
-
-	// We don't support dropping column with index covered now.
-	if isColumnWithIndex(colName.L, tblInfo.Indices) {
-		job.State = model.JobCancelled
-		return ver, errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
+		return ver, errors.Trace(err)
 	}
 
 	originalState := colInfo.State
