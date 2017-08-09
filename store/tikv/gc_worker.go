@@ -704,6 +704,7 @@ func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 	return &MockGCWorker{worker: worker}, nil
 }
 
+// DeleteRanges call deleteRanges internally, just for test.
 func (w *MockGCWorker) DeleteRanges(ctx goctx.Context, safePoint uint64) error {
 	log.Errorf("deleteRanges is called")
 	return w.worker.deleteRanges(ctx, safePoint)
