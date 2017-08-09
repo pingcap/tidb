@@ -372,7 +372,7 @@ func (d *ddl) backfillColumn(ctx context.Context, t table.Table, colMeta *column
 		}
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
+			if err := d.isReorgRunnable(txn); err != nil {
 				return errors.Trace(err)
 			}
 
