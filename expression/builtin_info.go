@@ -48,6 +48,7 @@ var (
 	_ builtinFunc = &builtinUserSig{}
 	_ builtinFunc = &builtinConnectionIDSig{}
 	_ builtinFunc = &builtinLastInsertIDSig{}
+	_ builtinFunc = &builtinLastInsertIDWithIDSig{}
 	_ builtinFunc = &builtinVersionSig{}
 	_ builtinFunc = &builtinBenchmarkSig{}
 	_ builtinFunc = &builtinCharsetSig{}
