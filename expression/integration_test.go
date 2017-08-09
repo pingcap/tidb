@@ -573,6 +573,34 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result := tk.MustQuery("select makedate(a,a), makedate(b,b), makedate(c,c), makedate(d,d), makedate(e,e), makedate(f,f), makedate(null,null), makedate(a,b) from t")
 	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
 
+	// Fix issue #3923
+	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:00' as time), '12:00:00');")
+	result.Check(testkit.Rows("00:00:00"))
+	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:00' as time), '2004-12-30 12:00:00');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:01' as datetime), '2004-12-30 12:00:00');")
+	result.Check(testkit.Rows("00:00:01"))
+	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:01' as time), '-34 00:00:00');")
+	result.Check(testkit.Rows("828:00:01"))
+	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:01' as datetime), '2004-12-30 12:00:00.1');")
+	result.Check(testkit.Rows("00:00:00.9"))
+	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:01' as datetime), '-34 124:00:00');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:01' as time), '-34 124:00:00');")
+	result.Check(testkit.Rows("838:59:59"))
+	result = tk.MustQuery("select timediff(cast('2004-12-30' as datetime), '12:00:00');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select timediff('12:00:00', '-34 12:00:00');")
+	result.Check(testkit.Rows("838:59:59"))
+	result = tk.MustQuery("select timediff('12:00:00', '34 12:00:00');")
+	result.Check(testkit.Rows("-816:00:00"))
+	result = tk.MustQuery("select timediff('2014-1-2 12:00:00', '-34 12:00:00');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select timediff('2014-1-2 12:00:00', '12:00:00');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select timediff('2014-1-2 12:00:00', '2014-1-1 12:00:00');")
+	result.Check(testkit.Rows("24:00:00"))
+
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
 	tk.MustExec("SET TIME_ZONE='+03:00';")
@@ -581,7 +609,6 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t VALUES (0), (20030101010160), (20030101016001), (20030101240101), (20030132010101), (20031301010101), (20031200000000), (20030000000000);")
 	result = tk.MustQuery("SELECT CAST(ix AS SIGNED) FROM t;")
 	result.Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "0"))
-
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
