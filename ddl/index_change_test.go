@@ -49,7 +49,7 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	// create table t (c1 int primary key, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
@@ -151,9 +151,6 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 				checkErr = errors.Trace(err)
 			}
 		case model.StateNone:
-			if job.GetRowCount() != 4 {
-				checkErr = errors.Errorf("job's row count %d != 4", job.GetRowCount())
-			}
 			noneTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
 				checkErr = errors.Trace(err)
