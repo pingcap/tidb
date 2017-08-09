@@ -2258,7 +2258,7 @@ type instrFunctionClass struct {
 
 func (c *instrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(erfr)
+		return nil, errors.Trace(err)
 	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
 	if err != nil {
@@ -2296,7 +2296,7 @@ func (b *builtinInstrBinarySig) evalInt(row []types.Datum) (int64, bool, error) 
 	if idx == -1 {
 		return 0, false, nil
 	}
-	return idx + 1, false, nil
+	return int64(idx + 1), false, nil
 }
 
 type builtinInstrSig struct {
@@ -2324,7 +2324,7 @@ func (b *builtinInstrSig) evalInt(row []types.Datum) (int64, bool, error) {
 	if idx == -1 {
 		return 0, false, nil
 	}
-	return utf8.RuneCountInString(str[:idx]) + 1, false, nil
+	return int64(utf8.RuneCountInString(str[:idx]) + 1), false, nil
 }
 
 type loadFileFunctionClass struct {

@@ -520,6 +520,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
 	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
 
+	// for bin
 	result = tk.MustQuery(`select bin(-1);`)
 	result.Check(testkit.Rows("1111111111111111111111111111111111111111111111111111111111111111"))
 	result = tk.MustQuery(`select bin(5);`)
@@ -527,6 +528,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select bin("中文");`)
 	result.Check(testkit.Rows("0"))
 
+	// for instr
+	result = tk.MustQuery(`select instr("中国", "国"), instr("中国", ""), instr("abc", ""), instr("", ""), instr("", "abc");`)
+	result.Check(testkit.Rows("2 1 1 1 0"))
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a binary(20), b char(20));`)
+	tk.MustExec(`insert into t values("中国", cast("国" as binary)), ("中国", ""), ("abc", ""), ("", ""), ("", "abc");`)
+	result = tk.MustQuery(`select instr(a, b) from t;`)
+	result.Check(testkit.Rows("4", "1", "1", "1", "0"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
