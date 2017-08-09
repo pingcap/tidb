@@ -27,7 +27,7 @@ import (
 
 type MockExec struct {
 	fields    []*ast.ResultField
-	Rows      []*executor.Row
+	Rows      []executor.Row
 	curRowIdx int
 }
 
@@ -35,14 +35,14 @@ func (m *MockExec) Schema() *expression.Schema {
 	return expression.NewSchema()
 }
 
-func (m *MockExec) Next() (*executor.Row, error) {
+func (m *MockExec) Next() (executor.Row, error) {
 	if m.curRowIdx >= len(m.Rows) {
 		return nil, nil
 	}
 	r := m.Rows[m.curRowIdx]
 	m.curRowIdx++
 	if len(m.fields) > 0 {
-		for i, d := range r.Data {
+		for i, d := range r {
 			m.fields[i].Expr.SetValue(d.GetValue())
 		}
 	}

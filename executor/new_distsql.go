@@ -93,7 +93,7 @@ func (e *TableReaderExecutor) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *TableReaderExecutor) Next() (*Row, error) {
+func (e *TableReaderExecutor) Next() (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -137,7 +137,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 				return nil, errors.Trace(err)
 			}
 		}
-		return &Row{Data: values}, nil
+		return values, nil
 	}
 }
 
@@ -213,7 +213,7 @@ func (e *IndexReaderExecutor) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *IndexReaderExecutor) Next() (*Row, error) {
+func (e *IndexReaderExecutor) Next() (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -252,7 +252,7 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return &Row{Data: values}, nil
+		return values, nil
 	}
 }
 
@@ -396,7 +396,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		return
 	}
 	for {
-		var row *Row
+		var row Row
 		row, err = tableReader.Next()
 		if err != nil || row == nil {
 			break
@@ -408,8 +408,8 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: handleCol.Index}
 		sort.Sort(sorter)
 		if e.handleCol == nil {
-			for _, row := range task.rows {
-				row.Data = row.Data[:len(row.Data)-1]
+			for i, row := range task.rows {
+				task.rows[i] = row[:len(row)-1]
 			}
 		}
 	}
@@ -523,7 +523,7 @@ func (e *IndexLookUpExecutor) Close() error {
 }
 
 // Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next() (*Row, error) {
+func (e *IndexLookUpExecutor) Next() (Row, error) {
 	for {
 		if e.taskCurr == nil {
 			taskCurr, ok := <-e.taskChan
