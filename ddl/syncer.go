@@ -123,12 +123,11 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	session, err := newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
+	s.session, err = newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
 		newSessionDefaultRetryCnt, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.session = session
 	s.globalVerCh = s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
 	return s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
