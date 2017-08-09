@@ -527,6 +527,17 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select bin("中文");`)
 	result.Check(testkit.Rows("0"))
 
+	// for character_length
+	result = tk.MustQuery(`select character_length(null);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select character_length("Hello");`)
+	result.Check(testkit.Rows("5"))
+	result = tk.MustQuery(`select character_length("a中b文c");`)
+	result.Check(testkit.Rows("5"))
+	result = tk.MustQuery(`select character_length(123);`)
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery(`select character_length(12.3456);`)
+	result.Check(testkit.Rows("7"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
