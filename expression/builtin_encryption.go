@@ -633,12 +633,12 @@ func (b *builtinUncompressSig) evalString(row []types.Datum) (string, bool, erro
 	}
 	if len(payload) <= 4 {
 		// corrupted
-		sc.AppendWarning(ErrZlibZData)
+		sc.AppendWarning(errZlibZData)
 		return "", true, nil
 	}
 	bytes, err := inflate([]byte(payload[4:]))
 	if err != nil {
-		sc.AppendWarning(ErrZlibZData)
+		sc.AppendWarning(errZlibZData)
 		return "", true, nil
 	}
 	return string(bytes), false, nil
@@ -678,7 +678,7 @@ func (b *builtinUncompressedLengthSig) evalInt(row []types.Datum) (int64, bool, 
 	}
 	if len(payload) <= 4 {
 		// corrupted
-		sc.AppendWarning(ErrZlibZData)
+		sc.AppendWarning(errZlibZData)
 		return 0, false, nil
 	}
 	len := binary.LittleEndian.Uint32([]byte(payload)[0:4])
