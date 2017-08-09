@@ -765,6 +765,8 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 
+	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+	mockTablePlan.SetSchema(expression.NewSchema())
 	for _, assign := range insert.Setlist {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -782,7 +784,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		// Here we keep different behaviours with MySQL. MySQL allow set a = b, b = a and the result is NULL, NULL.
 		// It's unreasonable.
-		expr, _, err := b.rewrite(assign.Expr, nil, nil, true)
+		expr, _, err := b.rewrite(assign.Expr, mockTablePlan, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
@@ -793,7 +795,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		})
 	}
 
-	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 	mockTablePlan.SetSchema(schema)
 
 	onDupCols := make(map[string]struct{}, len(insert.OnDuplicate))

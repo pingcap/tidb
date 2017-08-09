@@ -121,7 +121,12 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) err
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), delta.Delta, delta.Count, id))
+	op := "+"
+	if delta.Delta < 0 {
+		op = "-"
+		delta.Delta = -delta.Delta
+	}
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d, count = count %s %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), op, delta.Delta, delta.Count, id))
 	if err != nil {
 		return errors.Trace(err)
 	}
