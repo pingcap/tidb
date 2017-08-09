@@ -123,11 +123,12 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.session, err = newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
+	session, err := newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
 		newSessionDefaultRetryCnt, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	s.session = session
 	s.globalVerCh = s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
 	return s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
@@ -140,12 +141,12 @@ func (s *schemaVersionSyncer) Done() <-chan struct{} {
 
 // Restart implements SchemaSyncer.Restart interface.
 func (s *schemaVersionSyncer) Restart(ctx goctx.Context) error {
-	var err error
-	s.session, err = newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
+	session, err := newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
 		newSessionRetryUnlimited, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	s.session = session
 	return s.putKV(ctx, putKeyRetryUnlimited, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
 }
