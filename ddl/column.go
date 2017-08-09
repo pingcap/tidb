@@ -144,20 +144,9 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// write only -> reorganization
 		job.SchemaState = model.StateWriteReorganization
 		columnInfo.State = model.StateWriteReorganization
-		// Initialize SnapshotVer to 0 for later reorganization check.
-		job.SnapshotVer = 0
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteReorganization:
 		// reorganization -> public
-		// Get the current version for reorganization if we don't have it.
-		var reorgInfo *reorgInfo
-		reorgInfo, err = d.getReorgInfo(t, job)
-		if err != nil || reorgInfo.first {
-			// If we run reorg firstly, we should update the job snapshot version
-			// and then run the reorg next time.
-			return ver, errors.Trace(err)
-		}
-
 		// Adjust column offset.
 		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
 		columnInfo.State = model.StatePublic
@@ -170,7 +159,6 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-
 		d.asyncNotifyEvent(&Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
 	default:
 		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
@@ -229,19 +217,9 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		colInfo.State = model.StateDeleteReorganization
-		// Initialize SnapshotVer to 0 for later reorganization check.
-		job.SnapshotVer = 0
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		var reorgInfo *reorgInfo
-		reorgInfo, err = d.getReorgInfo(t, job)
-		if err != nil || reorgInfo.first {
-			// If we run reorg firstly, we should update the job snapshot version
-			// and then run the reorg next time.
-			return ver, errors.Trace(err)
-		}
-
 		// All reorganization jobs are done, drop this column.
 		newColumns := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
 		for _, col := range tblInfo.Columns {
@@ -259,7 +237,6 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-
 		d.asyncNotifyEvent(&Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
