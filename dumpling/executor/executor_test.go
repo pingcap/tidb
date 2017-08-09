@@ -1849,13 +1849,12 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 		}
 	}
 }
-
 func (s *testSuite) TestSchemaCheckerSQL(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	tidb.SetStatsLease(0)
-	lease := 5 * time.Millisecond
+	lease := 20 * time.Millisecond
 	tidb.SetSchemaLease(lease)
 	dom, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -1880,31 +1879,31 @@ func (s *testSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`begin;`)
 	_, err = se1.Execute(`alter table t add index idx(c);`)
 	c.Assert(err, IsNil)
-	time.Sleep(lease * 2)
+	time.Sleep(lease + 2*time.Millisecond)
 	tk.MustExec(`insert into t1 values(2, 2);`)
 	tk.MustExec(`commit;`)
+
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
 	tidb.SchemaChangedWithoutRetry = true
 	tk.MustExec(`begin;`)
-	_, err = se1.Execute(`alter table t add index idx1(c);`)
+	_, err = se1.Execute(`alter table t modify column c bigint;`)
 	c.Assert(err, IsNil)
-	time.Sleep(lease * 2)
 	tk.MustExec(`insert into t values(3, 3);`)
 	_, err = tk.Exec(`commit;`)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
-	// The schema version is out of date in the first transaction, and the SQL can't be retried.
 	// But the transaction related table IDs aren't in the updated table IDs.
 	tk.MustExec(`begin;`)
 	_, err = se1.Execute(`alter table t add index idx2(c);`)
 	c.Assert(err, IsNil)
-	time.Sleep(lease * 2)
+	time.Sleep(lease + 2*time.Millisecond)
 	tk.MustExec(`insert into t1 values(4, 4);`)
 	tk.MustExec(`commit;`)
+
 	// Test for "select for update".
 	tk.MustExec(`begin;`)
 	_, err = se1.Execute(`alter table t add index idx3(c);`)
 	c.Assert(err, IsNil)
-	time.Sleep(lease * 2)
+	time.Sleep(lease + 2*time.Millisecond)
 	tk.MustQuery(`select * from t for update`)
 	_, err = tk.Exec(`commit;`)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
