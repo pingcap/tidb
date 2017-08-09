@@ -953,7 +953,7 @@ type builtinLocateBinary3ArgsSig struct {
 	baseIntBuiltinFunc
 }
 
-// evalInt evals LOCATE(substr,str), case sensitive.
+// evalInt evals LOCATE(substr,str), case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocateBinary2ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -981,7 +981,7 @@ func (b *builtinLocateBinary2ArgsSig) evalInt(row []types.Datum) (int64, bool, e
 	return ret, false, nil
 }
 
-// eval evals a builtinLocateSig with 2 arguments and case-insensitive.
+// evalInt evals LOCATE(substr,str), non case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -1008,7 +1008,7 @@ func (b *builtinLocate2ArgsSig) evalInt(row []types.Datum) (int64, bool, error) 
 	return ret, false, nil
 }
 
-// evalInt evals LOCATE(substr,str,pos), case sensitive.
+// evalInt evals LOCATE(substr,str,pos), case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocateBinary3ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -1046,7 +1046,7 @@ func (b *builtinLocateBinary3ArgsSig) evalInt(row []types.Datum) (int64, bool, e
 	return ret, false, nil
 }
 
-// eval evals a builtinLocateSig with 3 arguments and case-insensitive.
+// evalInt evals LOCATE(substr,str,pos), non case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
