@@ -1211,6 +1211,7 @@ func (s *testEvaluatorSuite) TestCharLength(c *C) {
 		fc := funcs[ast.CharLength]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.input)), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
