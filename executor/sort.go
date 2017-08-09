@@ -16,29 +16,79 @@ package executor
 import (
 	"container/heap"
 	"sort"
+	"time"
 
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // orderByRow binds a row to its order values, so it can be sorted.
 type orderByRow struct {
-	key []types.Datum
+	key []*types.Datum
 	row *Row
 }
+
+func compareIntAsc(lhs *types.Datum, rhs *types.Datum) int8 {
+	if a, b := lhs.GetInt64(), rhs.GetInt64(); a < b {
+		return -1
+	} else if a > b {
+		return 1
+	}
+	return 0
+}
+
+func compareIntDec(lhs *types.Datum, rhs *types.Datum) int8 {
+	if a, b := lhs.GetInt64(), rhs.GetInt64(); a > b {
+		return -1
+	} else if a < b {
+		return 1
+	}
+	return 0
+}
+
+func compareRealAsc(lhs *types.Datum, rhs *types.Datum) int8 {
+	if a, b := lhs.GetFloat64(), rhs.GetFloat64(); a < b {
+		return -1
+	} else if a > b {
+		return 1
+	}
+	return 0
+}
+
+func compareRealDec(lhs *types.Datum, rhs *types.Datum) int8 {
+	if a, b := lhs.GetFloat64(), rhs.GetFloat64(); a > b {
+		return -1
+	} else if a < b {
+		return 1
+	}
+	return 0
+}
+
+func compareDecimalAsc(lhs *types.Datum, rhs *types.Datum) int8 {
+	return int8(lhs.GetMysqlDecimal().Compare(rhs.GetMysqlDecimal()))
+}
+
+func compareDecimalDec(lhs *types.Datum, rhs *types.Datum) int8 {
+	return -int8(lhs.GetMysqlDecimal().Compare(rhs.GetMysqlDecimal()))
+}
+
+type itemComparer func(*types.Datum, *types.Datum) int8
 
 // SortExec represents sorting executor.
 type SortExec struct {
 	baseExecutor
 
-	ByItems []*plan.ByItems
-	Rows    []*orderByRow
-	Idx     int
-	fetched bool
-	err     error
-	schema  *expression.Schema
+	ByItems       []*plan.ByItems
+	itemComparers []itemComparer
+	Rows          []*orderByRow
+	Idx           int
+	fetched       bool
+	err           error
+	schema        *expression.Schema
 }
 
 // Close implements the Executor Close interface.
@@ -52,7 +102,37 @@ func (e *SortExec) Open() error {
 	e.fetched = false
 	e.Idx = 0
 	e.Rows = nil
-	return errors.Trace(e.children[0].Open())
+	err := errors.Trace(e.children[0].Open())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.itemComparers = make([]itemComparer, 0, len(e.ByItems))
+	for _, item := range e.ByItems {
+		switch item.Expr.GetType().Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
+			mysql.TypeLonglong, mysql.TypeBit, mysql.TypeYear:
+			if item.Desc {
+				e.itemComparers = append(e.itemComparers, compareIntDec)
+			} else {
+				e.itemComparers = append(e.itemComparers, compareIntAsc)
+			}
+		case mysql.TypeNewDecimal:
+			if item.Desc {
+				e.itemComparers = append(e.itemComparers, compareDecimalDec)
+			} else {
+				e.itemComparers = append(e.itemComparers, compareDecimalAsc)
+			}
+		case mysql.TypeFloat, mysql.TypeDouble:
+			if item.Desc {
+				e.itemComparers = append(e.itemComparers, compareRealDec)
+			} else {
+				e.itemComparers = append(e.itemComparers, compareRealAsc)
+			}
+		default:
+			return errors.Errorf("compare type(%s) not supported by SortExec.", item.Expr.GetType().Tp)
+		}
+	}
+	return nil
 }
 
 // Len returns the number of rows.
@@ -67,28 +147,14 @@ func (e *SortExec) Swap(i, j int) {
 
 // Less implements sort.Interface Less interface.
 func (e *SortExec) Less(i, j int) bool {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	for index, by := range e.ByItems {
-		v1 := e.Rows[i].key[index]
-		v2 := e.Rows[j].key[index]
-
-		ret, err := v1.CompareDatum(sc, v2)
-		if err != nil {
-			e.err = errors.Trace(err)
-			return true
-		}
-
-		if by.Desc {
-			ret = -ret
-		}
-
+	for index := range e.ByItems {
+		ret := e.itemComparers[index](e.Rows[i].key[index], e.Rows[j].key[index])
 		if ret < 0 {
 			return true
 		} else if ret > 0 {
 			return false
 		}
 	}
-
 	return false
 }
 
@@ -105,17 +171,21 @@ func (e *SortExec) Next() (*Row, error) {
 			}
 			orderRow := &orderByRow{
 				row: srcRow,
-				key: make([]types.Datum, len(e.ByItems)),
+				key: make([]*types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data)
+				item, err := byItem.Expr.Eval(srcRow.Data)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
+				orderRow.key[i] = &item
 			}
 			e.Rows = append(e.Rows, orderRow)
 		}
+		startTS := time.Now()
 		sort.Sort(e)
+		endTS := time.Now()
+		fmt.Printf("sort running time: %v ns\n", endTS.Sub(startTS).Nanoseconds())
 		e.fetched = true
 	}
 	if e.err != nil {
@@ -145,7 +215,7 @@ func (e *TopNExec) Less(i, j int) bool {
 		v1 := e.Rows[i].key[index]
 		v2 := e.Rows[j].key[index]
 
-		ret, err := v1.CompareDatum(sc, v2)
+		ret, err := v1.CompareDatum(sc, *v2)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return true
@@ -204,10 +274,14 @@ func (e *TopNExec) Next() (*Row, error) {
 			// build orderRow from srcRow.
 			orderRow := &orderByRow{
 				row: srcRow,
-				key: make([]types.Datum, len(e.ByItems)),
+				key: make([]*types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data)
+				item, err := byItem.Expr.Eval(srcRow.Data)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				orderRow.key[i] = &item
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
