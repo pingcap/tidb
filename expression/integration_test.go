@@ -522,14 +522,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 
 	// for locate
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time)")
-	tk.MustExec(`insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01")`)
+	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time, f bianry(5))")
+	tk.MustExec(`insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01", "HelLo")`)
 	result = tk.MustQuery(`select locate(".ping", a), locate(".ping", a, 5) from t`)
 	result.Check(testkit.Rows("4 0"))
 	result = tk.MustQuery(`select locate("234", b), locate("235", b, 10) from t`)
 	result.Check(testkit.Rows("2 0"))
 	result = tk.MustQuery(`select locate(".45", c), locate(".35", b) from t`)
 	result.Check(testkit.Rows("4 0"))
+	result = tk.MustQuery(`select locate("El", e), locate("ll", e), locate("lL", e), locate("Lo", e), locate("lo", e) from t`)
+	result.Check(testkit.Rows("0 0 3 4 0"))
 	result = tk.MustQuery(`select locate("01 12", d) from t`)
 	result.Check(testkit.Rows("9"))
 	result = tk.MustQuery(`select locate("文", "中文字符串", 2)`)
