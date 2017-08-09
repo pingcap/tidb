@@ -68,6 +68,12 @@ func IsTypeTime(tp byte) bool {
 	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeNewDate || tp == mysql.TypeTimestamp
 }
 
+// IsTemporalWithDate returns a boolean indicating
+// whether the tp is time type with date.
+func IsTemporalWithDate(tp byte) bool {
+	return IsTypeTime(tp)
+}
+
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
