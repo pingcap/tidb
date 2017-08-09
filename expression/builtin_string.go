@@ -910,7 +910,6 @@ func (c *locateFunctionClass) getFunction(args []Expression, ctx context.Context
 	if argsErr := c.verifyArgs(args); argsErr != nil {
 		return nil, errors.Trace(argsErr)
 	}
-	hasBianryInput := types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType())
 	hasStartPos, argTps := len(args) == 3, []evalTp{tpString, tpString}
 	if hasStartPos {
 		argTps = append(argTps, tpInt)
@@ -919,8 +918,9 @@ func (c *locateFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen = 10
 	var sig builtinFunc
+	// Loacte is multibyte safe, and is case-sensitive only if at least one argument is a binary string.
+	hasBianryInput := types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType())
 	switch {
 	case hasStartPos && hasBianryInput:
 		sig = &builtinLocateBinary3ArgsSig{baseIntBuiltinFunc{bf}}
@@ -957,9 +957,6 @@ type builtinLocateBinary3ArgsSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocateBinary2ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	// The meaning of the elements of args.
-	// args[0] -> SubStr
-	// args[1] -> Str
 	subStr, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -968,26 +965,21 @@ func (b *builtinLocateBinary2ArgsSig) evalInt(row []types.Datum) (int64, bool, e
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	var ret, subStrLen int64
-	subStrLen = int64(len(subStr))
-
+	subStrLen := len(subStr)
 	if subStrLen == 0 {
 		return 1, false, nil
 	}
-	idx := strings.Index(str, subStr)
+	ret, idx := 0, strings.Index(str, subStr)
 	if idx != -1 {
-		ret = int64(idx) + 1
+		ret = idx + 1
 	}
-	return ret, false, nil
+	return int64(ret), false, nil
 }
 
 // evalInt evals LOCATE(substr,str), non case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	// The meaning of the elements of args.
-	// args[0] -> SubStr
-	// args[1] -> Str
 	subStr, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -996,26 +988,21 @@ func (b *builtinLocate2ArgsSig) evalInt(row []types.Datum) (int64, bool, error) 
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	var ret int64
 	if int64(len([]rune(subStr))) == 0 {
 		return 1, false, nil
 	}
 	slice := string([]rune(strings.ToLower(str)))
-	idx := strings.Index(slice, strings.ToLower(subStr))
+	ret, idx := 0, strings.Index(slice, strings.ToLower(subStr))
 	if idx != -1 {
-		ret = int64(utf8.RuneCountInString(slice[:idx])) + 1
+		ret = utf8.RuneCountInString(slice[:idx]) + 1
 	}
-	return ret, false, nil
+	return int64(ret), false, nil
 }
 
 // evalInt evals LOCATE(substr,str,pos), case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocateBinary3ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	// The meaning of the elements of args.
-	// args[0] -> SubStr
-	// args[1] -> Str
-	// args[2] -> StartPos
 	subStr, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -1029,11 +1016,8 @@ func (b *builtinLocateBinary3ArgsSig) evalInt(row []types.Datum) (int64, bool, e
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	var ret, subStrLen, sentinel int64
-	subStrLen = int64(len(subStr))
-	sentinel = int64(len(str)) - subStrLen
-
-	if pos < 0 || pos > sentinel {
+	subStrLen := len(subStr)
+	if pos < 0 || pos > int64(len(str)-subStrLen) {
 		return 0, false, nil
 	} else if subStrLen == 0 {
 		return pos + 1, false, nil
@@ -1041,19 +1025,15 @@ func (b *builtinLocateBinary3ArgsSig) evalInt(row []types.Datum) (int64, bool, e
 	slice := str[pos:]
 	idx := strings.Index(slice, subStr)
 	if idx != -1 {
-		ret = pos + int64(idx) + 1
+		return pos + int64(idx) + 1, false, nil
 	}
-	return ret, false, nil
+	return 0, false, nil
 }
 
 // evalInt evals LOCATE(substr,str,pos), non case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	// The meaning of the elements of args.
-	// args[0] -> SubStr
-	// args[1] -> Str
-	// args[2] -> StartPos
 	subStr, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -1067,11 +1047,8 @@ func (b *builtinLocate3ArgsSig) evalInt(row []types.Datum) (int64, bool, error) 
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	var ret, subStrLen, sentinel int64
-	subStrLen = int64(len([]rune(subStr)))
-	sentinel = int64(len([]rune(strings.ToLower(str)))) - subStrLen
-
-	if pos < 0 || pos > sentinel {
+	subStrLen := len([]rune(subStr))
+	if pos < 0 || pos > int64(len([]rune(strings.ToLower(str)))-subStrLen) {
 		return 0, false, nil
 	} else if subStrLen == 0 {
 		return pos + 1, false, nil
@@ -1079,9 +1056,9 @@ func (b *builtinLocate3ArgsSig) evalInt(row []types.Datum) (int64, bool, error) 
 	slice := string([]rune(strings.ToLower(str))[pos:])
 	idx := strings.Index(slice, strings.ToLower(subStr))
 	if idx != -1 {
-		ret = pos + int64(utf8.RuneCountInString(slice[:idx])) + 1
+		return pos + int64(utf8.RuneCountInString(slice[:idx])) + 1, false, nil
 	}
-	return ret, false, nil
+	return 0, false, nil
 }
 
 type hexFunctionClass struct {
