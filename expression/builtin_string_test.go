@@ -769,7 +769,7 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLocate(c *C) {
-	// 1. Test LOCATE(substr, str)
+	// 1. Test LOCATE without binary input.
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Args []interface{}
@@ -786,6 +786,24 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{[]interface{}{"BaR", "foobArbar"}, 4},
 		{[]interface{}{nil, "foobar"}, nil},
 		{[]interface{}{"bar", nil}, nil},
+		{[]interface{}{"bar", "foobarbar", 5}, 7},
+		{[]interface{}{"xbar", "foobar", 1}, 0},
+		{[]interface{}{"", "foobar", 2}, 2},
+		{[]interface{}{"foobar", "", 1}, 0},
+		{[]interface{}{"", "", 2}, 0},
+		{[]interface{}{"A", "大A写的A", 0}, 0},
+		{[]interface{}{"A", "大A写的A", 1}, 2},
+		{[]interface{}{"A", "大A写的A", 2}, 2},
+		{[]interface{}{"A", "大A写的A", 3}, 5},
+		{[]interface{}{"bAr", "foobarBaR", 5}, 7},
+		{[]interface{}{nil, nil}, nil},
+		{[]interface{}{"", nil}, nil},
+		{[]interface{}{nil, ""}, nil},
+		{[]interface{}{nil, nil, 1}, nil},
+		{[]interface{}{"", nil, 1}, nil},
+		{[]interface{}{nil, "", 1}, nil},
+		{[]interface{}{"foo", nil, -1}, nil},
+		{[]interface{}{nil, "bar", 0}, nil},
 	}
 	Dtbl := tblToDtbl(tbl)
 	instr := funcs[ast.Locate]
@@ -798,35 +816,21 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		c.Assert(f.isDeterministic(), Equals, true)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
-	// 2. Test LOCATE(substr, str) with binary input
+	// 2. Test LOCATE with binary input
 	tbl2 := []struct {
 		Args []interface{}
 		Want interface{}
 	}{
 		{[]interface{}{[]byte("BaR"), "foobArbar"}, 0},
+		{[]interface{}{"BaR", []byte("foobArbar")}, 0},
+		{[]interface{}{[]byte("bAr"), "foobarBaR", 5}, 0},
+		{[]interface{}{"bAr", []byte("foobarBaR"), 5}, 0},
+		{[]interface{}{"bAr", []byte("foobarbAr"), 5}, 7},
 	}
 	Dtbl2 := tblToDtbl(tbl2)
 	for i, t := range Dtbl2 {
 		exprs := datumsToConstants(t["Args"])
 		types.SetBinChsClnFlag(exprs[0].GetType())
-		f, err := instr.getFunction(exprs, s.ctx)
-		c.Assert(err, IsNil)
-		got, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), Equals, true)
-		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
-	}
-	// 3. Test LOCATE(substr, str) with binary input
-	tbl3 := []struct {
-		Args []interface{}
-		Want interface{}
-	}{
-		{[]interface{}{"BaR", []byte("foobArbar")}, 0},
-	}
-	Dtbl3 := tblToDtbl(tbl3)
-	for i, t := range Dtbl3 {
-		exprs := datumsToConstants(t["Args"])
 		types.SetBinChsClnFlag(exprs[1].GetType())
 		f, err := instr.getFunction(exprs, s.ctx)
 		c.Assert(err, IsNil)
@@ -835,108 +839,6 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		c.Assert(f, NotNil)
 		c.Assert(f.isDeterministic(), Equals, true)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
-	}
-	// 4. Test LOCATE(substr, str, pos)
-	tbl4 := []struct {
-		Args []interface{}
-		Want interface{}
-	}{
-		{[]interface{}{"bar", "foobarbar", 5}, 7},
-		{[]interface{}{"xbar", "foobar", 1}, 0},
-		{[]interface{}{"", "foobar", 2}, 2},
-		{[]interface{}{"foobar", "", 1}, 0},
-		{[]interface{}{"", "", 2}, 0},
-		{[]interface{}{"A", "大A写的A", 0}, 0},
-		{[]interface{}{"A", "大A写的A", 1}, 2},
-		{[]interface{}{"A", "大A写的A", 2}, 2},
-		{[]interface{}{"A", "大A写的A", 3}, 5},
-		{[]interface{}{"bAr", "foobarBaR", 5}, 7},
-	}
-	Dtbl4 := tblToDtbl(tbl4)
-	for i, t := range Dtbl4 {
-		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
-		c.Assert(err, IsNil)
-		got, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
-	}
-	// 5. Test LOCATE(substr, str, pos) with binary input
-	tbl5 := []struct {
-		Args []interface{}
-		Want interface{}
-	}{
-		{[]interface{}{[]byte("bAr"), "foobarBaR", 5}, 0},
-	}
-	Dtbl5 := tblToDtbl(tbl5)
-	for i, t := range Dtbl5 {
-		exprs := datumsToConstants(t["Args"])
-		types.SetBinChsClnFlag(exprs[0].GetType())
-		f, err := instr.getFunction(exprs, s.ctx)
-		c.Assert(err, IsNil)
-		got, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), Equals, true)
-		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
-	}
-	// 6. Test LOCATE(substr, str, pos) with binary input
-	tbl6 := []struct {
-		Args []interface{}
-		Want interface{}
-	}{
-		{[]interface{}{"bAr", []byte("foobarBaR"), 5}, 0},
-		{[]interface{}{"bAr", []byte("foobarbAr"), 5}, 7},
-	}
-	Dtbl6 := tblToDtbl(tbl6)
-	for i, t := range Dtbl6 {
-		exprs := datumsToConstants(t["Args"])
-		types.SetBinChsClnFlag(exprs[1].GetType())
-		f, err := instr.getFunction(exprs, s.ctx)
-		c.Assert(err, IsNil)
-		got, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), Equals, true)
-		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
-	}
-
-	errTbl := []struct {
-		subStr interface{}
-		Str    interface{}
-	}{
-		{nil, nil},
-		{"", nil},
-		{nil, ""},
-		{"foo", nil},
-		{nil, "bar"},
-	}
-	for _, v := range errTbl {
-		fc := funcs[ast.Locate]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
-		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(r.Kind(), Equals, types.KindNull)
-	}
-
-	errTbl2 := []struct {
-		subStr interface{}
-		Str    interface{}
-		pos    interface{}
-	}{
-		{nil, nil, 1},
-		{"", nil, 1},
-		{nil, "", 1},
-		{"foo", nil, -1},
-		{nil, "bar", 0},
-	}
-	for _, v := range errTbl2 {
-		fc := funcs[ast.Locate]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
-		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(r.Kind(), Equals, types.KindNull)
 	}
 }
 

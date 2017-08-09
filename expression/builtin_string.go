@@ -937,19 +937,7 @@ func (c *locateFunctionClass) getFunction(args []Expression, ctx context.Context
 	return sig.setSelf(sig), nil
 }
 
-type builtinLocate2ArgsSig struct {
-	baseIntBuiltinFunc
-}
-
-type builtinLocate3ArgsSig struct {
-	baseIntBuiltinFunc
-}
-
 type builtinLocateBinary2ArgsSig struct {
-	baseIntBuiltinFunc
-}
-
-type builtinLocateBinary3ArgsSig struct {
 	baseIntBuiltinFunc
 }
 
@@ -976,6 +964,10 @@ func (b *builtinLocateBinary2ArgsSig) evalInt(row []types.Datum) (int64, bool, e
 	return int64(ret), false, nil
 }
 
+type builtinLocate2ArgsSig struct {
+	baseIntBuiltinFunc
+}
+
 // evalInt evals LOCATE(substr,str), non case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
@@ -997,6 +989,10 @@ func (b *builtinLocate2ArgsSig) evalInt(row []types.Datum) (int64, bool, error) 
 		ret = utf8.RuneCountInString(slice[:idx]) + 1
 	}
 	return int64(ret), false, nil
+}
+
+type builtinLocateBinary3ArgsSig struct {
+	baseIntBuiltinFunc
 }
 
 // evalInt evals LOCATE(substr,str,pos), case-sensitive.
@@ -1028,6 +1024,10 @@ func (b *builtinLocateBinary3ArgsSig) evalInt(row []types.Datum) (int64, bool, e
 		return pos + int64(idx) + 1, false, nil
 	}
 	return 0, false, nil
+}
+
+type builtinLocate3ArgsSig struct {
+	baseIntBuiltinFunc
 }
 
 // evalInt evals LOCATE(substr,str,pos), non case-sensitive.
