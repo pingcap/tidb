@@ -631,7 +631,7 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 // expressions respectively. onDups indicates which columns are in on-duplicate list.
 func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns) {
 	for _, column := range columns {
-		if column.IsGenerated() {
+		if !column.IsGenerated() {
 			continue
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
