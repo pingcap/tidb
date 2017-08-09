@@ -26,6 +26,17 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+const (
+	unknownClause    = ""
+	fieldList        = "field list"
+	havingClause     = "having clause"
+	onClause         = "on clause"
+	orderByClause    = "order clause"
+	whereClause      = "where clause"
+	groupByStatement = "group statement"
+	showStatement    = "show statement"
+)
+
 // ResolveName resolves table name and column name.
 // It generates ResultFields for ResultSetNode and resolves ColumnNameExpr to a ResultField.
 func ResolveName(node ast.Node, info infoschema.InfoSchema, ctx context.Context) error {
@@ -502,8 +513,11 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 	}
 
 	// Try to resolve the column name from top to bottom in the context stack.
+	var where string
+	var ok bool
 	for i := len(nr.contextStack) - 1; i >= 0; i-- {
-		if nr.resolveColumnNameInContext(nr.contextStack[i], cn) {
+		where, ok = nr.resolveColumnNameInContext(nr.contextStack[i], cn)
+		if ok {
 			// Column is already resolved or encountered an error.
 			if i < len(nr.contextStack)-1 {
 				// If in subselect, the query use outer query.
@@ -512,18 +526,23 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 			return
 		}
 	}
-	nr.Err = errors.Errorf("unknown column %s", cn.Name.Name.L)
+	fieldName := cn.Name.Name.String()
+	if len(cn.Name.Table.String()) != 0 {
+		fieldName = fmt.Sprintf("%s.%s", cn.Name.Table.String(), fieldName)
+
+	}
+	nr.Err = ErrUnknownColumn.GenByArgs(fieldName, where)
 }
 
 // resolveColumnNameInContext looks up and sets ResultField for a column with the ctx.
-func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast.ColumnNameExpr) bool {
+func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast.ColumnNameExpr) (string, bool) {
 	if ctx.inTableRefs {
 		// In TableRefsClause, column reference only in join on condition which is handled before.
-		return false
+		return unknownClause, false
 	}
 	if ctx.inFieldList {
 		// only resolve column using tables.
-		return nr.resolveColumnInTableSources(cn, ctx.tables)
+		return fieldList, nr.resolveColumnInTableSources(cn, ctx.tables)
 	}
 	if ctx.inGroupBy {
 		// From tables first, then field list.
@@ -532,7 +551,7 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 		if ctx.inByItemExpression {
 			// From table first, then field list.
 			if nr.resolveColumnInTableSources(cn, ctx.tables) {
-				return true
+				return groupByStatement, true
 			}
 			found := nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 			if nr.Err == nil && found {
@@ -541,12 +560,12 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 					nr.Err = ErrIllegalReference.Gen("Reference '%s' not supported (reference to group function)", cn.Name.Name.O)
 				}
 			}
-			return found
+			return groupByStatement, found
 		}
 		// Resolve from table first, then from select list.
 		found := nr.resolveColumnInTableSources(cn, ctx.tables)
 		if nr.Err != nil {
-			return found
+			return groupByStatement, found
 		}
 		// We should copy the refer here.
 		// Because if the ByItem is an identifier, we should check if it
@@ -555,7 +574,7 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 		r := cn.Refer
 		if nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList) {
 			if nr.Err != nil {
-				return true
+				return groupByStatement, true
 			}
 			if r != nil {
 				// It is not ambiguous and already resolved from table source.
@@ -564,45 +583,45 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 			} else if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
 				nr.Err = ErrIllegalReference.Gen("Reference '%s' not supported (reference to group function)", cn.Name.Name.O)
 			}
-			return true
+			return groupByStatement, true
 		}
-		return found
+		return groupByStatement, found
 	}
 	if ctx.inHaving {
 		// First group by, then field list.
 		if nr.resolveColumnInResultFields(ctx, cn, ctx.groupBy) {
-			return true
+			return havingClause, true
 		}
 		if ctx.inHavingAgg {
 			// If cn is in an aggregate function in having clause, check tablesource first.
 			if nr.resolveColumnInTableSources(cn, ctx.tables) {
-				return true
+				return havingClause, true
 			}
 		}
-		return nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
+		return havingClause, nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 	}
 	if ctx.inOrderBy {
 		if nr.resolveColumnInResultFields(ctx, cn, ctx.groupBy) {
-			return true
+			return orderByClause, true
 		}
 		if ctx.inByItemExpression {
 			// From table first, then field list.
 			if nr.resolveColumnInTableSources(cn, ctx.tables) {
-				return true
+				return orderByClause, true
 			}
-			return nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
+			return orderByClause, nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 		}
 		// Field list first, then from table.
 		if nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList) {
-			return true
+			return orderByClause, true
 		}
-		return nr.resolveColumnInTableSources(cn, ctx.tables)
+		return orderByClause, nr.resolveColumnInTableSources(cn, ctx.tables)
 	}
 	if ctx.inShow {
-		return nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
+		return showStatement, nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 	}
 	// In where clause.
-	return nr.resolveColumnInTableSources(cn, ctx.tables)
+	return whereClause, nr.resolveColumnInTableSources(cn, ctx.tables)
 }
 
 // resolveColumnNameInOnCondition resolves the column name in current join.
@@ -611,7 +630,12 @@ func (nr *nameResolver) resolveColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 	join := ctx.joinNodeStack[len(ctx.joinNodeStack)-1]
 	tableSources := appendTableSources(nil, join)
 	if !nr.resolveColumnInTableSources(cn, tableSources) {
-		nr.Err = errors.Errorf("unknown column name %s", cn.Name.Name.O)
+		fieldName := cn.Name.Name.String()
+		if len(cn.Name.Table.String()) != 0 {
+			fieldName = fmt.Sprintf("%s.%s", cn.Name.Table.String(), fieldName)
+
+		}
+		nr.Err = ErrUnknownColumn.GenByArgs(fieldName, onClause)
 	}
 }
 
@@ -755,7 +779,7 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 			tableIdx, ok1 := ctx.tableMap[name]
 			derivedTableIdx, ok2 := ctx.derivedTableMap[name]
 			if !ok1 && !ok2 {
-				nr.Err = errors.Errorf("unknown table %s.", field.WildCard.Table.O)
+				nr.Err = ErrUnknownTable.GenByArgs(field.WildCard.Table.String())
 			}
 			if ok1 {
 				tableRfs = ctx.tables[tableIdx].GetResultFields()
