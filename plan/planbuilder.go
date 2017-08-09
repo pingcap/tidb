@@ -455,9 +455,6 @@ func buildShowDDLFields() *expression.Schema {
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "JOB", mysql.TypeVarchar, 128))
-	schema.Append(buildColumn("", "BG_SCHEMA_VER", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn("", "BG_OWNER", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "BG_JOB", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn("", "SELF_ID", mysql.TypeVarchar, 64))
 
 	return schema
