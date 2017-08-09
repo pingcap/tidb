@@ -131,6 +131,7 @@ var (
 	_ builtinFunc = &builtinToBase64Sig{}
 	_ builtinFunc = &builtinInsertFuncSig{}
 	_ builtinFunc = &builtinInstrSig{}
+	_ builtinFunc = &builtinInstrBinarySig{}
 	_ builtinFunc = &builtinLoadFileSig{}
 	_ builtinFunc = &builtinLpadSig{}
 )
@@ -2412,35 +2413,8 @@ func (c *instrFunctionClass) getFunction(args []Expression, ctx context.Context)
 	return sig.setSelf(sig), nil
 }
 
-type builtinInstrBinarySig struct {
-	baseIntBuiltinFunc
-}
-
-// evalInt evals INSTR(str,substr), case sensitive
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
-func (b *builtinInstrBinarySig) evalInt(row []types.Datum) (int64, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-
-	str, IsNull, err := b.args[0].EvalString(row, sc)
-	if IsNull || err != nil {
-		return 0, true, errors.Trace(err)
-	}
-
-	substr, IsNull, err := b.args[1].EvalString(row, sc)
-	if IsNull || err != nil {
-		return 0, true, errors.Trace(err)
-	}
-
-	idx := strings.Index(str, substr)
-	if idx == -1 {
-		return 0, false, nil
-	}
-	return int64(idx + 1), false, nil
-}
-
-type builtinInstrSig struct {
-	baseIntBuiltinFunc
-}
+type builtinInstrSig struct{ baseIntBuiltinFunc }
+type builtinInstrBinarySig struct{ baseIntBuiltinFunc }
 
 // evalInt evals INSTR(str,substr), case insensitive
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
@@ -2464,6 +2438,28 @@ func (b *builtinInstrSig) evalInt(row []types.Datum) (int64, bool, error) {
 		return 0, false, nil
 	}
 	return int64(utf8.RuneCountInString(str[:idx]) + 1), false, nil
+}
+
+// evalInt evals INSTR(str,substr), case sensitive
+// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
+func (b *builtinInstrBinarySig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	str, IsNull, err := b.args[0].EvalString(row, sc)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	substr, IsNull, err := b.args[1].EvalString(row, sc)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	idx := strings.Index(str, substr)
+	if idx == -1 {
+		return 0, false, nil
+	}
+	return int64(idx + 1), false, nil
 }
 
 type loadFileFunctionClass struct {
