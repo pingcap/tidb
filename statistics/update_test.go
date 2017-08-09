@@ -105,8 +105,16 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	stats2 = h.GetTableStats(tableInfo2.ID)
 	c.Assert(stats2.Count, Equals, int64(rowCount2))
 
+	testKit.MustExec("begin")
+	testKit.MustExec("delete from t1")
+	testKit.MustExec("commit")
+	h.DumpStatsDeltaToKV()
+	h.Update(is)
+	stats1 = h.GetTableStats(tableInfo1.ID)
+	c.Assert(stats1.Count, Equals, int64(0))
+
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
-	rs.Check(testkit.Rows("40", "40"))
+	rs.Check(testkit.Rows("40", "70"))
 }
 
 func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
