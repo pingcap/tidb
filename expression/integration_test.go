@@ -1041,7 +1041,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testIntegrationSuite) TestLastInsertID(c *C) {
+func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()

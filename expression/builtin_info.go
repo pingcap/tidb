@@ -202,18 +202,19 @@ func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.C
 	}
 
 	var bf baseBuiltinFunc
+	argsTp := []evalTp{}
 	if len(args) == 1 {
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
-		bf.tp.Flag |= mysql.UnsignedFlag
-		bf.deterministic = false
+		argsTp = append(argsTp, tpInt)
+	}
+	bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, argsTp...)
+	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.deterministic = false
+
+	if len(args) == 1 {
 		sig = &builtinLastInsertIDWithIDSig{baseIntBuiltinFunc{bf}}
 	} else {
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt)
-		bf.tp.Flag |= mysql.UnsignedFlag
-		bf.deterministic = false
 		sig = &builtinLastInsertIDSig{baseIntBuiltinFunc{bf}}
 	}
-
 	return sig.setSelf(sig), errors.Trace(err)
 }
 
