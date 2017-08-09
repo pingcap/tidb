@@ -309,7 +309,7 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 
 	// for conv
-	result := tk.MustQuery("SELECT CONV('a', 16, 2);")
+	result = tk.MustQuery("SELECT CONV('a', 16, 2);")
 	result.Check(testkit.Rows("1010"))
 	result = tk.MustQuery("SELECT CONV('6E', 18, 8);")
 	result.Check(testkit.Rows("172"))
