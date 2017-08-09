@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 )
 
@@ -195,11 +196,15 @@ func (a *statement) buildExecutor(ctx context.Context) (Executor, error) {
 			return nil, errors.Trace(err)
 		}
 
-		switch {
-		case isPointGet:
-			priority = kv.PriorityHigh
-		case a.expensive:
-			priority = kv.PriorityLow
+		if stmtPri := ctx.GetSessionVars().StmtCtx.Priority; stmtPri != mysql.NoPriority {
+			priority = int(stmtPri)
+		} else {
+			switch {
+			case isPointGet:
+				priority = kv.PriorityHigh
+			case a.expensive:
+				priority = kv.PriorityLow
+			}
 		}
 	}
 
