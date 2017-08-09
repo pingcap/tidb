@@ -33,7 +33,8 @@ import (
 var (
 	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
 	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
-	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
+	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
+	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadTable])
 	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
 	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
 	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
@@ -44,18 +45,20 @@ var (
 // Error codes.
 const (
 	CodeUnsupportedType    terror.ErrCode = 1
-	SystemInternalError    terror.ErrCode = 2
-	CodeAlterAutoID        terror.ErrCode = 3
-	CodeAnalyzeMissIndex   terror.ErrCode = 4
-	CodeAmbiguous          terror.ErrCode = 1052
-	CodeUnknownColumn      terror.ErrCode = 1054
-	CodeWrongArguments     terror.ErrCode = 1210
-	CodeBadGeneratedColumn terror.ErrCode = mysql.ErrBadGeneratedColumn
+	SystemInternalError                   = 2
+	CodeAlterAutoID                       = 3
+	CodeAnalyzeMissIndex                  = 4
+	CodeAmbiguous                         = 1052
+	CodeUnknownColumn                     = mysql.ErrBadField
+	CodeUnknownTable                      = mysql.ErrBadTable
+	CodeWrongArguments                    = 1210
+	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
 )
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeUnknownColumn:      mysql.ErrBadField,
+		CodeUnknownTable:       mysql.ErrBadTable,
 		CodeAmbiguous:          mysql.ErrNonUniq,
 		CodeWrongArguments:     mysql.ErrWrongArguments,
 		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
