@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -43,7 +44,7 @@ const (
 )
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
-var LookupTableTaskChannelSize = 50
+var LookupTableTaskChannelSize int32 = 50
 
 // lookupTableTask is created from a partial result of an index request which
 // contains the handles in those index keys.
@@ -549,7 +550,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		// Use a background goroutine to fetch index and put the result in e.taskChan.
 		// e.taskChan serves as a pipeline, so fetching index and getting table data can
 		// run concurrently.
-		e.taskChan = make(chan *lookupTableTask, LookupTableTaskChannelSize)
+		e.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 		go e.fetchHandles(idxResult, e.taskChan)
 	}
 
