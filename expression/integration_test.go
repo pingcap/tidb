@@ -413,6 +413,13 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows(" de e"))
 	result = tk.MustQuery(`select right("中文abc", 2), right("中文abc", 4), right("中文abc", 5)`)
 	result.Check(testkit.Rows("bc 文abc 中文abc"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a binary(10))")
+	tk.MustExec(`insert into t select "中文abc"`)
+	result = tk.MustQuery(`select left(a, 3), left(a, 6), left(a, 7) from t`)
+	result.Check(testkit.Rows("中 中文 中文a"))
+	result = tk.MustQuery(`select right(a, 2), right(a, 7) from t`)
+	result.Check(testkit.Rows("c\x00 文abc\x00"))
 
 	// for ord
 	tk.MustExec("drop table if exists t")
@@ -465,6 +472,13 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 	result = tk.MustQuery(`select substr('中文abc', 2), substr('中文abc', 3), substr("中文abc", 1, 2)`)
 	result.Check(testkit.Rows("文abc abc 中文"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a binary(10))")
+	tk.MustExec(`insert into t select "中文abc"`)
+	result = tk.MustQuery(`select substr(a, 4), substr(a, 1, 3), substr(a, 1, 6) from t`)
+	result.Check(testkit.Rows("文abc\x00 中 中文"))
+	result = tk.MustQuery(`select substr("string", -1), substr("string", -2), substr("中文", -1), substr("中文", -2) from t`)
+	result.Check(testkit.Rows("g ng 文 中文"))
 
 	// for bit_length
 	tk.MustExec("drop table if exists t")
