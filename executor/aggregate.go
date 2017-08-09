@@ -58,7 +58,7 @@ func (e *HashAggExec) Open() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *HashAggExec) Next() (*Row, error) {
+func (e *HashAggExec) Next() (Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		for {
@@ -83,16 +83,16 @@ func (e *HashAggExec) Next() (*Row, error) {
 	if groupKey == nil {
 		return nil, nil
 	}
-	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
+	retRow := make([]types.Datum, 0, len(e.AggFuncs))
 	for _, af := range e.AggFuncs {
-		retRow.Data = append(retRow.Data, af.GetGroupResult(groupKey))
+		retRow = append(retRow, af.GetGroupResult(groupKey))
 	}
 	return retRow, nil
 }
 
-func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
+func (e *HashAggExec) getGroupKey(row Row) ([]byte, error) {
 	if e.aggType == plan.FinalAgg && !plan.UseDAGPlanBuilder(e.ctx) {
-		val, err := e.GroupByItems[0].Eval(row.Data)
+		val, err := e.GroupByItems[0].Eval(row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -103,7 +103,7 @@ func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
 	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
-		v, err := item.Eval(row.Data)
+		v, err := item.Eval(row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -135,7 +135,7 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 		e.groupMap.Put(groupKey, []byte{})
 	}
 	for _, af := range e.AggFuncs {
-		af.Update(srcRow.Data, groupKey, e.sc)
+		af.Update(srcRow, groupKey, e.sc)
 	}
 	return true, nil
 }
@@ -167,11 +167,11 @@ func (e *StreamAggExec) Open() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *StreamAggExec) Next() (*Row, error) {
+func (e *StreamAggExec) Next() (Row, error) {
 	if e.executed {
 		return nil, nil
 	}
-	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
+	retRow := make([]types.Datum, 0, len(e.AggFuncs))
 	for {
 		row, err := e.children[0].Next()
 		if err != nil {
@@ -190,14 +190,14 @@ func (e *StreamAggExec) Next() (*Row, error) {
 		}
 		if newGroup {
 			for _, af := range e.AggFuncs {
-				retRow.Data = append(retRow.Data, af.GetStreamResult())
+				retRow = append(retRow, af.GetStreamResult())
 			}
 		}
 		if e.executed {
 			break
 		}
 		for _, af := range e.AggFuncs {
-			err = af.StreamUpdate(row.Data, e.StmtCtx)
+			err = af.StreamUpdate(row, e.StmtCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -213,7 +213,7 @@ func (e *StreamAggExec) Next() (*Row, error) {
 }
 
 // meetNewGroup returns a value that represents if the new group is different from last group.
-func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
+func (e *StreamAggExec) meetNewGroup(row Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
 		return false, nil
 	}
@@ -223,7 +223,7 @@ func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
 		matched, firstGroup = false, true
 	}
 	for i, item := range e.GroupByItems {
-		v, err := item.Eval(row.Data)
+		v, err := item.Eval(row)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
