@@ -68,6 +68,12 @@ func IsTypeTime(tp byte) bool {
 	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeNewDate || tp == mysql.TypeTimestamp
 }
 
+// IsTemporalWithDate returns a boolean indicating
+// whether the tp is time type with date.
+func IsTemporalWithDate(tp byte) bool {
+	return IsTypeTime(tp)
+}
+
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
@@ -148,4 +154,14 @@ func InvOp2(x, y interface{}, o opcode.Op) (interface{}, error) {
 // overflow returns an overflowed error.
 func overflow(v interface{}, tp byte) error {
 	return ErrOverflow.Gen("constant %v overflows %s", v, TypeStr(tp))
+}
+
+// IsTypeTemporal checks if a type is a temporal type.
+func IsTypeTemporal(tp byte) bool {
+	switch tp {
+	case mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp,
+		mysql.TypeDate, mysql.TypeNewDate:
+		return true
+	}
+	return false
 }
