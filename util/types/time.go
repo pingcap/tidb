@@ -982,14 +982,23 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		d = -d
 	}
 
-	if d > MaxTime {
-		d = MaxTime
-		err = ErrTruncatedWrongVal.GenByArgs("time", origStr)
-	} else if d < MinTime {
-		d = MinTime
+	d, truncated := TruncateOverflowMySQLTime(d)
+	if truncated {
 		err = ErrTruncatedWrongVal.GenByArgs("time", origStr)
 	}
+
 	return Duration{Duration: d, Fsp: fsp}, errors.Trace(err)
+}
+
+// TruncateOverflowMySQLTime truncates d when it overflows, and return truncated duration.
+func TruncateOverflowMySQLTime(d gotime.Duration) (gotime.Duration, bool) {
+	if d > MaxTime {
+		return MaxTime, true
+	} else if d < MinTime {
+		return MinTime, true
+	}
+
+	return d, false
 }
 
 func splitDuration(t gotime.Duration) (int, int, int, int, int) {
