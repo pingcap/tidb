@@ -46,10 +46,12 @@ const (
 )
 
 func init() {
-	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeIncorrectArgs: mysql.ErrWrongArguments,
+	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
+		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
+		codeIncorrectArgs:           mysql.ErrWrongArguments,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassExpression] = tableMySQLErrCodes
+	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
 
 // TurnOnNewExprEval indicates whether turn on the new expression evaluation architecture.
@@ -557,12 +559,4 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 		RetType:  retTp,
 		Function: bt.setSelf(bt),
 	}
-}
-
-func init() {
-	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
-		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }

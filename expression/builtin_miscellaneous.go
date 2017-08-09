@@ -77,17 +77,16 @@ type sleepFunctionClass struct {
 }
 
 func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	if err != nil {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpReal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinSleepSig{baseIntBuiltinFunc{bf}}
 	sig.deterministic = false
-	return sig.setSelf(sig), errors.Trace(err)
+	return sig.setSelf(sig), nil
 }
 
 type builtinSleepSig struct {
@@ -97,33 +96,33 @@ type builtinSleepSig struct {
 // evalInt evals a builtinSleepSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func (b *builtinSleepSig) evalInt(row []types.Datum) (int64, bool, error) {
-	val, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
 	sessVars := b.ctx.GetSessionVars()
 	if isNull {
 		if sessVars.StrictSQLMode {
-			return 0, isNull, errIncorrectArgs.GenByArgs("sleep")
+			return 0, true, errIncorrectArgs.GenByArgs("sleep")
 		}
-		return 0, isNull, err
+		return 0, true, nil
 	}
 	// processing argument is negative
 	if val < 0 {
 		if sessVars.StrictSQLMode {
-			return 0, isNull, errIncorrectArgs.GenByArgs("sleep")
+			return 0, false, errIncorrectArgs.GenByArgs("sleep")
 		}
-		return 0, isNull, err
+		return 0, false, nil
 	}
 
 	// TODO: consider it's interrupted using KILL QUERY from other session, or
 	// interrupted by time out.
-	if val > math.MaxInt64/time.Second.Nanoseconds() {
-		return 0, isNull, errIncorrectArgs.GenByArgs("sleep")
+	if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
+		return 0, false, errIncorrectArgs.GenByArgs("sleep")
 	}
-	dur := time.Duration(float64(val * time.Second.Nanoseconds()))
+	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
 	time.Sleep(dur)
-	return 0, isNull, err
+	return 0, false, nil
 }
 
 type lockFunctionClass struct {
