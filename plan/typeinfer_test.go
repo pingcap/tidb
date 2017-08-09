@@ -77,6 +77,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4LogicalFuncs()...)
 	tests = append(tests, s.createTestCase4ControlFuncs()...)
 	tests = append(tests, s.createTestCase4Aggregations()...)
+	tests = append(tests, s.createTestCase4EncryptionFuncs()...)
 
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -122,7 +123,6 @@ func (s *testPlanSuite) createTestCase4Columns() []typeInferTestCase {
 func (s *testPlanSuite) createTestCase4StrFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"strcmp(c_char, c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
-		{"md5(c_int)", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
 		{"space(c_int)", mysql.TypeLongBlob, charset.CharsetUTF8, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"CONCAT(c_binary, c_int)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 31, types.UnspecifiedLength},
 		{"CONCAT(c_binary_char, c_int)", mysql.TypeVarString, charset.CharsetUTF8, mysql.BinaryFlag, 31, types.UnspecifiedLength},
@@ -353,5 +353,104 @@ func (s *testPlanSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 func (s *testPlanSuite) createTestCase4Aggregations() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"sum(c_int)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
+	}
+}
+
+func (s *testPlanSuite) createTestCase4EncryptionFuncs() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"md5(c_int      )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_bigint   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_float    )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_double   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_decimal  )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_datetime )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_time     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_timestamp)", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_char     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_varchar  )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_text     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_binary   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_varbinary)", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_blob     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_set      )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(c_enum     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5('1234'     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+		{"md5(1234       )", mysql.TypeVarString, charset.CharsetUTF8, 0, 32, types.UnspecifiedLength},
+
+		{"sha(c_int      )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_bigint   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_float    )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_double   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_decimal  )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_datetime )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_time     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_timestamp)", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_char     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_varchar  )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_text     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_binary   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_varbinary)", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_blob     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_set      )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(c_enum     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha('1234'     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha(1234       )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+
+		{"sha1(c_int      )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_bigint   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_float    )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_double   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_decimal  )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_datetime )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_time     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_timestamp)", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_char     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_varchar  )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_text     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_binary   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_varbinary)", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_blob     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_set      )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(c_enum     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1('1234'     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+		{"sha1(1234       )", mysql.TypeVarString, charset.CharsetUTF8, 0, 40, types.UnspecifiedLength},
+
+		{"sha2(c_int      , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_bigint   , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_float    , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_double   , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_decimal  , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_datetime , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_time     , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_timestamp, 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_char     , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_varchar  , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_text     , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_binary   , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_varbinary, 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_blob     , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_set      , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_enum     , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2('1234'     , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(1234       , 0)", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+
+		{"sha2(c_int      , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_bigint   , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_float    , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_double   , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_decimal  , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_datetime , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_time     , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_timestamp, '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_char     , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_varchar  , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_text     , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_binary   , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_varbinary, '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_blob     , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_set      , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(c_enum     , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2('1234'     , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
+		{"sha2(1234       , '256')", mysql.TypeVarString, charset.CharsetUTF8, 0, 128, types.UnspecifiedLength},
 	}
 }
