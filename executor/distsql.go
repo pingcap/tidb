@@ -752,8 +752,8 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 		}
 		// If this executor don't need handle, we should cut it off.
 		if e.handleCol == nil {
-			for _, row := range task.rows {
-				row = row[:len(row)-1]
+			for i, row := range task.rows {
+				task.rows[i] = row[:len(row)-1]
 			}
 		}
 	}
