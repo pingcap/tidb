@@ -523,6 +523,15 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
 	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
 
+	// for reverse
+	tk.MustExec(`DROP TABLE IF EXISTS t;`)
+	tk.MustExec(`CREATE TABLE t(a BINARY(6));`)
+	tk.MustExec(`INSERT INTO t VALUES("abcdef");`)
+	result = tk.MustQuery(`SELECT a, REVERSE(a), REVERSE("中文"), REVERSE("123 ") FROM t;`)
+	result.Check(testkit.Rows("abcdef fedcba 文中  321"))
+	result = tk.MustQuery(`SELECT REVERSE(123), REVERSE(12.09) FROM t;`)
+	result.Check(testkit.Rows("321 90.21"))
+
 	// for trim
 	result = tk.MustQuery(`select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx')`)
 	result.Check(testkit.Rows("bar barxxx barx bar"))
@@ -541,14 +550,17 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select bin("中文");`)
 	result.Check(testkit.Rows("0"))
 
-	// for reverse
-	tk.MustExec(`DROP TABLE IF EXISTS t;`)
-	tk.MustExec(`CREATE TABLE t(a BINARY(6));`)
-	tk.MustExec(`INSERT INTO t VALUES("abcdef");`)
-	result = tk.MustQuery(`SELECT a, REVERSE(a), REVERSE("中文"), REVERSE("123 ") FROM t;`)
-	result.Check(testkit.Rows("abcdef fedcba 文中  321"))
-	result = tk.MustQuery(`SELECT REVERSE(123), REVERSE(12.09) FROM t;`)
-	result.Check(testkit.Rows("321 90.21"))
+	// for char_length
+	result = tk.MustQuery(`select char_length(null);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select char_length("Hello");`)
+	result.Check(testkit.Rows("5"))
+	result = tk.MustQuery(`select char_length("a中b文c");`)
+	result.Check(testkit.Rows("5"))
+	result = tk.MustQuery(`select char_length(123);`)
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery(`select char_length(12.3456);`)
+	result.Check(testkit.Rows("7"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
