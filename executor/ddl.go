@@ -45,7 +45,7 @@ func (e *DDLExec) Schema() *expression.Schema {
 }
 
 // Next implements Execution Next interface.
-func (e *DDLExec) Next() (*Row, error) {
+func (e *DDLExec) Next() (Row, error) {
 	if e.done {
 		return nil, nil
 	}
