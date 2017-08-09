@@ -455,9 +455,6 @@ func buildShowDDLFields() *expression.Schema {
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "JOB", mysql.TypeVarchar, 128))
-	schema.Append(buildColumn("", "BG_SCHEMA_VER", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn("", "BG_OWNER", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "BG_JOB", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn("", "SELF_ID", mysql.TypeVarchar, 64))
 
 	return schema
@@ -730,6 +727,8 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 
+	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+	mockTablePlan.SetSchema(expression.NewSchema())
 	for _, assign := range insert.Setlist {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -747,7 +746,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		// Here we keep different behaviours with MySQL. MySQL allow set a = b, b = a and the result is NULL, NULL.
 		// It's unreasonable.
-		expr, _, err := b.rewrite(assign.Expr, nil, nil, true)
+		expr, _, err := b.rewrite(assign.Expr, mockTablePlan, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
@@ -758,7 +757,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		})
 	}
 
-	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 	mockTablePlan.SetSchema(schema)
 	for _, assign := range insert.OnDuplicate {
 		col, err := schema.FindColumn(assign.Column)
