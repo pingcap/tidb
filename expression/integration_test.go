@@ -1081,7 +1081,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
 }
 
-func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
+func (s *testIntegrationSuite) TestControlBuiltin1(c *C) {
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
