@@ -78,6 +78,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4ControlFuncs()...)
 	tests = append(tests, s.createTestCase4Aggregations()...)
 	tests = append(tests, s.createTestCase4InfoFunc()...)
+	tests = append(tests, s.createTestCase4Miscellaneous()...)
 
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -377,5 +378,18 @@ func (s *testPlanSuite) createTestCase4InfoFunc() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"last_insert_id()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
 		{"last_insert_id(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
+	}
+}
+
+func (s *testPlanSuite) createTestCase4Miscellaneous() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"sleep(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"sleep(c_float)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"sleep(c_double)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"sleep(c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"sleep(c_datetime)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"sleep(c_time)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"sleep(c_timestamp)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"sleep(c_binary)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
 	}
 }
