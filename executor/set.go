@@ -41,7 +41,7 @@ type SetExecutor struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SetExecutor) Next() (*Row, error) {
+func (e *SetExecutor) Next() (Row, error) {
 	if e.done {
 		return nil, nil
 	}
