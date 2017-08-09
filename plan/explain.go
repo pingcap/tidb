@@ -88,6 +88,9 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 		}
 	}
 	buffer.WriteString(fmt.Sprintf(", out of order:%v", p.OutOfOrder))
+	if p.Desc {
+		buffer.WriteString(fmt.Sprint(", desc"))
+	}
 	return buffer.String()
 }
 
@@ -112,6 +115,9 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 		}
 	}
 	buffer.WriteString(fmt.Sprintf(", keep order:%v", p.KeepOrder))
+	if p.Desc {
+		buffer.WriteString(fmt.Sprint(", desc"))
+	}
 	return buffer.String()
 }
 
