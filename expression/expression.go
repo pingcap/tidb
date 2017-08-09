@@ -34,6 +34,7 @@ var (
 	errInvalidOperation        = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
 	errIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count in the call to native function '%s'")
 	errFunctionNotExists       = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
+	errIncorrectArgs           = terror.ClassExpression.New(codeIncorrectArgs, mysql.MySQLErrName[mysql.ErrWrongArguments])
 )
 
 // Error codes.
@@ -41,7 +42,17 @@ const (
 	codeInvalidOperation        terror.ErrCode = 1
 	codeIncorrectParameterCount                = 1582
 	codeFunctionNotExists                      = 1305
+	codeIncorrectArgs                          = mysql.ErrWrongArguments
 )
+
+func init() {
+	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
+		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
+		codeIncorrectArgs:           mysql.ErrWrongArguments,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
+}
 
 // TurnOnNewExprEval indicates whether turn on the new expression evaluation architecture.
 var TurnOnNewExprEval int32
@@ -548,12 +559,4 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 		RetType:  retTp,
 		Function: bt.setSelf(bt),
 	}
-}
-
-func init() {
-	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
-		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
