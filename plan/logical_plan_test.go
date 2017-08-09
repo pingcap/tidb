@@ -377,6 +377,10 @@ func (m *mockStore) CurrentVersion() (kv.Version, error) {
 	return kv.Version{}, nil
 }
 
+func (m *mockStore) SupportDeleteRange() bool {
+	return false
+}
+
 func mockContext() context.Context {
 	ctx := mock.NewContext()
 	ctx.Store = &mockStore{
@@ -1326,6 +1330,14 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		{
 			sql: "select 1 from t t1, t t2 where t1.a > all((select a) union (select a))",
 			err: ErrAmbiguous,
+		},
+		{
+			sql: "insert into t set a = 1, b = a + 1",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "insert into t set a = 1, b = values(a) + 1",
+			err: nil,
 		},
 	}
 	for _, tt := range tests {

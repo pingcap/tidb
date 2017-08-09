@@ -17,11 +17,14 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -29,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -47,6 +51,11 @@ func testNewContext(d *ddl) context.Context {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
 	return ctx
+}
+
+func testNewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
+	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease, nil)
 }
 
 func getSchemaVer(c *C, ctx context.Context) int64 {
