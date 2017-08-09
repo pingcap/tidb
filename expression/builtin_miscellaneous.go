@@ -354,7 +354,7 @@ func (c *inet6AtonFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinInet6AtonSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinInet6AtonSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
@@ -405,7 +405,7 @@ func (b *builtinInet6AtonSig) evalString(row []types.Datum) (string, bool, error
 		copy(result, ip.To4())
 	}
 
-	return result, false, nil
+	return string(result[:]), false, nil
 }
 
 type inet6NtoaFunctionClass struct {
@@ -416,43 +416,38 @@ func (c *inet6NtoaFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinInet6NtoaSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinInet6NtoaSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinInet6NtoaSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinInet6NtoaSig.
+// evalString evals a builtinInet6NtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
-func (b *builtinInet6NtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinInet6NtoaSig) evalString(row []types.Datum) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
-		return d, errors.Trace(err)
+		return "", isNull, errors.Trace(err)
 	}
-
-	if args[0].IsNull() {
-		return d, nil
+	if isNull {
+		return "", true, nil
 	}
-
-	ipArg, err := args[0].ToBytes()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	ip := net.IP(ipArg).String()
-	if len(ipArg) == net.IPv6len && !strings.Contains(ip, ":") {
+	ip := net.IP([]byte(val)).String()
+	if len(val) == net.IPv6len && !strings.Contains(ip, ":") {
 		ip = fmt.Sprintf("::ffff:%s", ip)
 	}
 
 	if net.ParseIP(ip) == nil {
-		return d, nil
+		return "", false, nil
 	}
 
-	d.SetString(ip)
-
-	return d, nil
+	return ip, false, nil
 }
 
 type isFreeLockFunctionClass struct {
