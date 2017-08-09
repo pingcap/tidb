@@ -77,6 +77,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4LogicalFuncs()...)
 	tests = append(tests, s.createTestCase4ControlFuncs()...)
 	tests = append(tests, s.createTestCase4Aggregations()...)
+	tests = append(tests, s.createTestCase4EncryptionFuncs()...)
 
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -353,5 +354,23 @@ func (s *testPlanSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 func (s *testPlanSuite) createTestCase4Aggregations() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"sum(c_int)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
+	}
+}
+
+func (s *testPlanSuite) createTestCase4EncryptionFuncs() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"AES_ENCRYPT(c_int, 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, types.UnspecifiedLength},
+		{"AES_ENCRYPT(c_char, 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 32, types.UnspecifiedLength},
+		{"AES_ENCRYPT(c_varchar, 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 32, types.UnspecifiedLength},
+		{"AES_ENCRYPT(c_binary, 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 32, types.UnspecifiedLength},
+		{"AES_ENCRYPT(c_varbinary, 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 32, types.UnspecifiedLength},
+		{"AES_ENCRYPT('', 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, types.UnspecifiedLength},
+		{"AES_ENCRYPT('111111', 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, types.UnspecifiedLength},
+		{"AES_ENCRYPT('111111111111111', 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, types.UnspecifiedLength},
+		{"AES_ENCRYPT('1111111111111111', 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 32, types.UnspecifiedLength},
+		{"AES_ENCRYPT('11111111111111111', 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 32, types.UnspecifiedLength},
+
+		{"AES_DECRYPT('1111111111111111', 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, types.UnspecifiedLength},
+		{"AES_DECRYPT('11111111111111112222222222222222', 'key')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 32, types.UnspecifiedLength},
 	}
 }

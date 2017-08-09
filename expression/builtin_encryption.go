@@ -75,7 +75,8 @@ var (
 
 // TODO: support other mode
 const (
-	aes128ecb string = "aes-128-ecb"
+	aes128ecb          string = "aes-128-ecb"
+	aes128ecbBlobkSize int    = 16
 )
 
 type aesDecryptFunctionClass struct {
@@ -113,8 +114,9 @@ func (b *builtinAesDecryptSig) evalString(row []types.Datum) (string, bool, erro
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	key := handleAESKey([]byte(keyStr), aes128ecb)
 
+	// TODO: Support other modes.
+	key := encrypt.DeriveKeyMySQL([]byte(keyStr), aes128ecbBlobkSize)
 	plainText, err := encrypt.AESDecryptWithECB([]byte(cryptStr), key)
 	if err != nil {
 		return "", true, nil
@@ -134,7 +136,7 @@ func (c *aesEncryptFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen = 16 * (args[0].GetType().Flen/16 + 1) // At most.
+	bf.tp.Flen = aes128ecbBlobkSize * (args[0].GetType().Flen/aes128ecbBlobkSize + 1) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinAesEncryptSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -158,29 +160,13 @@ func (b *builtinAesEncryptSig) evalString(row []types.Datum) (string, bool, erro
 		return "", true, errors.Trace(err)
 	}
 
-	key := handleAESKey([]byte(keyStr), aes128ecb)
-
+	// TODO: Support other modes.
+	key := encrypt.DeriveKeyMySQL([]byte(keyStr), aes128ecbBlobkSize)
 	cipherText, err := encrypt.AESEncryptWithECB([]byte(str), key)
 	if err != nil {
 		return "", true, nil
 	}
 	return string(cipherText), false, nil
-}
-
-// handleAESKey transforms an arbitrary long key into a fixed length AES key.
-func handleAESKey(key []byte, mode string) []byte {
-	// TODO: get key size according to mode
-	keySize := 16
-	rKey := make([]byte, keySize)
-	rIdx := 0
-	for _, k := range key {
-		if rIdx == keySize {
-			rIdx = 0
-		}
-		rKey[rIdx] ^= k
-		rIdx++
-	}
-	return rKey
 }
 
 type compressFunctionClass struct {
