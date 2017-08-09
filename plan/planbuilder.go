@@ -628,7 +628,7 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 // expressions respectively. onDups indicates which columns are in on-duplicate list.
 func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns) {
 	for _, column := range columns {
-		if len(column.GeneratedExprString) == 0 {
+		if column.IsGenerated() {
 			continue
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
@@ -703,7 +703,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	if len(insert.Columns) > 0 {
 		for _, col := range insert.Columns {
 			if column, ok := columnByName[col.Name.L]; ok {
-				if len(column.GeneratedExprString) != 0 {
+				if column.IsGenerated() {
 					b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
 					return nil
 				}
@@ -755,7 +755,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		for i := 0; i < effectiveValuesLen; i++ {
 			col := tableInfo.Columns[i]
-			if len(col.GeneratedExprString) != 0 {
+			if col.IsGenerated() {
 				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
 				return nil
 			}
@@ -773,7 +773,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			return nil
 		}
 		// Check set list contains generated column or not.
-		if len(columnByName[assign.Column.Name.L].GeneratedExprString) != 0 {
+		if columnByName[assign.Column.Name.L].IsGenerated() {
 			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
@@ -802,7 +802,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		column := columnByName[assign.Column.Name.L]
 		// Check "on duplicate set list" contains generated column or not.
-		if len(column.GeneratedExprString) != 0 {
+		if column.IsGenerated() {
 			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
@@ -832,7 +832,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		for i := 0; i < effectiveSelectLen; i++ {
 			col := tableInfo.Columns[i]
-			if len(col.GeneratedExprString) != 0 {
+			if col.IsGenerated() {
 				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
 				return nil
 			}

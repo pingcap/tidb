@@ -1218,7 +1218,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	// for calculating generated column
 	p.GenValues = make(map[int]expression.Expression)
 	for idx, column := range columns {
-		if len(column.GeneratedExprString) != 0 && !column.GeneratedStored {
+		if column.IsGenerated() && !column.GeneratedStored {
 			expr, _, err := b.rewrite(column.GeneratedExpr, p, nil, true)
 			if err != nil {
 				b.err = errors.Trace(err)
@@ -1444,7 +1444,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			return nil, nil
 		}
 		for i, colInfo := range tableInfo.Columns {
-			if len(colInfo.GeneratedExprString) == 0 {
+			if colInfo.IsGenerated() {
 				continue
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)

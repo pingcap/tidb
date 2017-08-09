@@ -47,7 +47,7 @@ const (
 //  gvs's keys are index in cols, and the values are generation expressions.
 func evalGeneratedColumns(cols []*model.ColumnInfo, gvs map[int]expression.Expression, vs []types.Datum) error {
 	for i, col := range cols {
-		if !col.GeneratedStored && len(col.GeneratedExprString) != 0 {
+		if !col.GeneratedStored && col.IsGenerated() {
 			val, err := gvs[col.Offset].Eval(vs)
 			if err != nil {
 				return errors.Trace(err)

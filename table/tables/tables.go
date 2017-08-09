@@ -766,7 +766,7 @@ func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
 	if col.DefaultValue == nil && value.IsNull() {
 		return true
 	}
-	if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+	if col.IsGenerated() && !col.GeneratedStored {
 		return true
 	}
 	return false
@@ -774,7 +774,7 @@ func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
 
 // canSkipUpdateBinlog checks whether the column can be skiped or not.
 func (t *Table) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
-	if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+	if col.IsGenerated() && !col.GeneratedStored {
 		return true
 	}
 	return false
