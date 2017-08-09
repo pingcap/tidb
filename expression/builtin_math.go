@@ -675,8 +675,7 @@ type convFunctionClass struct {
 }
 
 func (c *convFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := c.verifyArgs(args)
-	if err != nil {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -690,6 +689,8 @@ type builtinConvSig struct {
 	baseStringBuiltinFunc
 }
 
+// evalString evals a builtinConvSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv.
 func (b *builtinConvSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	n, isNull, err := b.args[0].EvalString(row, sc)

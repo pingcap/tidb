@@ -584,6 +584,28 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 
 }
 
+func (s *testIntegrationSuite) TestConvBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	result := tk.MustQuery("SELECT CONV('a', 16, 2);")
+	result.Check(testkit.Rows("1010"))
+	result = tk.MustQuery("SELECT CONV('6E', 18, 8);")
+	result.Check(testkit.Rows("172"))
+	result = tk.MustQuery("SELECT CONV(-17, 10, -18);")
+	result.Check(testkit.Rows("-H"))
+	result = tk.MustQuery("SELECT CONV(10+'10'+'10'+X'0a', 10, 10);")
+	result.Check(testkit.Rows("40"))
+	result = tk.MustQuery("SELECT CONV('a', 1, 10);")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("SELECT CONV('a', 37, 10);")
+	result.Check(testkit.Rows("<nil>"))
+}
+
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
