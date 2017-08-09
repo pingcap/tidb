@@ -527,8 +527,7 @@ func inflate(compressStr []byte) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	_, err = io.Copy(&out, r)
-	if err != nil {
+	if _, err := io.Copy(&out, r); err != nil {
 		return nil, errors.Trace(err)
 	}
 	r.Close()
@@ -540,16 +539,22 @@ type compressFunctionClass struct {
 }
 
 func (c *compressFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	srcLen := args[0].GetType().Flen
 	compressBound := srcLen + (srcLen >> 12) + (srcLen >> 14) + (srcLen >> 25) + 13
+	if compressBound > mysql.MaxBlobWidth {
+		compressBound = mysql.MaxBlobWidth
+	}
 	bf.tp.Flen = compressBound
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinCompressSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCompressSig struct {
@@ -598,6 +603,9 @@ type uncompressFunctionClass struct {
 }
 
 func (c *uncompressFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -605,7 +613,7 @@ func (c *uncompressFunctionClass) getFunction(args []Expression, ctx context.Con
 	bf.tp.Flen = mysql.MaxBlobWidth
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinUncompressSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinUncompressSig struct {
@@ -615,7 +623,8 @@ type builtinUncompressSig struct {
 // evalString evals UNCOMPRESS(compressed_string).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) evalString(row []types.Datum) (string, bool, error) {
-	payload, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	payload, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
@@ -624,10 +633,12 @@ func (b *builtinUncompressSig) evalString(row []types.Datum) (string, bool, erro
 	}
 	if len(payload) <= 4 {
 		// corrupted
+		sc.AppendWarning(ErrZlibZData)
 		return "", true, nil
 	}
 	bytes, err := inflate([]byte(payload[4:]))
 	if err != nil {
+		sc.AppendWarning(ErrZlibZData)
 		return "", true, nil
 	}
 	return string(bytes), false, nil
@@ -638,12 +649,15 @@ type uncompressedLengthFunctionClass struct {
 }
 
 func (c *uncompressedLengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinUncompressedLengthSig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinUncompressedLengthSig struct {
@@ -653,18 +667,17 @@ type builtinUncompressedLengthSig struct {
 // evalInt evals UNCOMPRESSED_LENGTH(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
 func (b *builtinUncompressedLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
-	payload, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	payload, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
 		return 0, true, errors.Trace(err)
-	}
-	if isNull {
-		return 0, true, nil
 	}
 	if len(payload) == 0 {
 		return 0, false, nil
 	}
 	if len(payload) <= 4 {
-		// TODO: Generate warning.
+		// corrupted
+		sc.AppendWarning(ErrZlibZData)
 		return 0, false, nil
 	}
 	len := binary.LittleEndian.Uint32([]byte(payload)[0:4])

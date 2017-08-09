@@ -34,6 +34,7 @@ var (
 	errInvalidOperation        = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
 	errIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count in the call to native function '%s'")
 	errFunctionNotExists       = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
+	ErrZlibZData               = terror.ClassTypes.New(codeZlibZData, "ZLIB: Input data corrupted")
 )
 
 // Error codes.
@@ -41,6 +42,7 @@ const (
 	codeInvalidOperation        terror.ErrCode = 1
 	codeIncorrectParameterCount                = 1582
 	codeFunctionNotExists                      = 1305
+	codeZlibZData                              = mysql.ErrZlibZData
 )
 
 // TurnOnNewExprEval indicates whether turn on the new expression evaluation architecture.
