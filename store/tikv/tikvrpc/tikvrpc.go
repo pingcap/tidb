@@ -36,6 +36,7 @@ const (
 	CmdScanLock
 	CmdResolveLock
 	CmdGC
+	CmdDeleteRange
 
 	CmdRawGet CmdType = 256 + iota
 	CmdRawPut
@@ -62,6 +63,7 @@ type Request struct {
 	ScanLock         *kvrpcpb.ScanLockRequest
 	ResolveLock      *kvrpcpb.ResolveLockRequest
 	GC               *kvrpcpb.GCRequest
+	DeleteRange      *kvrpcpb.DeleteRangeRequest
 	RawGet           *kvrpcpb.RawGetRequest
 	RawPut           *kvrpcpb.RawPutRequest
 	RawDelete        *kvrpcpb.RawDeleteRequest
@@ -95,6 +97,8 @@ func (req *Request) GetContext() (*kvrpcpb.Context, error) {
 		c = req.ResolveLock.GetContext()
 	case CmdGC:
 		c = req.GC.GetContext()
+	case CmdDeleteRange:
+		c = req.DeleteRange.GetContext()
 	case CmdRawGet:
 		c = req.RawGet.GetContext()
 	case CmdRawPut:
@@ -128,6 +132,7 @@ type Response struct {
 	ScanLock         *kvrpcpb.ScanLockResponse
 	ResolveLock      *kvrpcpb.ResolveLockResponse
 	GC               *kvrpcpb.GCResponse
+	DeleteRange      *kvrpcpb.DeleteRangeResponse
 	RawGet           *kvrpcpb.RawGetResponse
 	RawPut           *kvrpcpb.RawPutResponse
 	RawDelete        *kvrpcpb.RawDeleteResponse
@@ -161,6 +166,8 @@ func SetContext(req *Request, ctx *kvrpcpb.Context) error {
 		req.ResolveLock.Context = ctx
 	case CmdGC:
 		req.GC.Context = ctx
+	case CmdDeleteRange:
+		req.DeleteRange.Context = ctx
 	case CmdRawGet:
 		req.RawGet.Context = ctx
 	case CmdRawPut:
@@ -227,6 +234,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.GC = &kvrpcpb.GCResponse{
 			RegionError: e,
 		}
+	case CmdDeleteRange:
+		resp.DeleteRange = &kvrpcpb.DeleteRangeResponse{
+			RegionError: e,
+		}
 	case CmdRawGet:
 		resp.RawGet = &kvrpcpb.RawGetResponse{
 			RegionError: e,
@@ -285,6 +296,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.ResolveLock.GetRegionError()
 	case CmdGC:
 		e = resp.GC.GetRegionError()
+	case CmdDeleteRange:
+		e = resp.DeleteRange.GetRegionError()
 	case CmdRawGet:
 		e = resp.RawGet.GetRegionError()
 	case CmdRawPut:
