@@ -1444,7 +1444,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			return nil, nil
 		}
 		for i, colInfo := range tableInfo.Columns {
-			if colInfo.IsGenerated() {
+			if !colInfo.IsGenerated() {
 				continue
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
