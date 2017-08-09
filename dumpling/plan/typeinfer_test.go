@@ -77,6 +77,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4LogicalFuncs()...)
 	tests = append(tests, s.createTestCase4ControlFuncs()...)
 	tests = append(tests, s.createTestCase4Aggregations()...)
+	tests = append(tests, s.createTestCase4EncryptionFuncs()...)
 	tests = append(tests, s.createTestCase4Miscellaneous()...)
 
 	for _, tt := range tests {
@@ -370,6 +371,25 @@ func (s *testPlanSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 func (s *testPlanSuite) createTestCase4Aggregations() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"sum(c_int)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
+	}
+}
+
+func (s *testPlanSuite) createTestCase4EncryptionFuncs() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"COMPRESS(c_int)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 24, types.UnspecifiedLength},
+		{"COMPRESS(c_char)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 33, types.UnspecifiedLength},
+		{"COMPRESS(c_binary_char)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 33, types.UnspecifiedLength},
+		{"COMPRESS(c_varchar)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 33, types.UnspecifiedLength},
+		{"COMPRESS(c_binary)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 33, types.UnspecifiedLength},
+		{"COMPRESS(c_varbinary)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 33, types.UnspecifiedLength},
+		{"COMPRESS('')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 13, types.UnspecifiedLength},
+		{"COMPRESS('abcde')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 18, types.UnspecifiedLength},
+		{"UNCOMPRESS(c_int)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
+		{"UNCOMPRESS(c_char)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
+		{"UNCOMPRESS(c_binary_char)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
+		{"UNCOMPRESS(c_varchar)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
+		{"UNCOMPRESSED_LENGTH(c_varchar)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"UNCOMPRESSED_LENGTH(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 	}
 }
 
