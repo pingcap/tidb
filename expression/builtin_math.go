@@ -689,7 +689,7 @@ type builtinConvSig struct {
 	baseStringBuiltinFunc
 }
 
-// evalString evals a builtinConvSig.
+// evalString evals CONV(N,from_base,to_base).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv.
 func (b *builtinConvSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
@@ -741,7 +741,6 @@ func (b *builtinConvSig) evalString(row []types.Datum) (res string, isNull bool,
 	if err != nil {
 		return res, false, types.ErrOverflow.GenByArgs("BIGINT UNSINGED", n)
 	}
-	// See https://github.com/mysql/mysql-server/blob/5.7/strings/ctype-simple.c#L598.
 	if signed {
 		if negative && val > -math.MinInt64 {
 			val = -math.MinInt64
@@ -754,7 +753,6 @@ func (b *builtinConvSig) evalString(row []types.Datum) (res string, isNull bool,
 		val = -val
 	}
 
-	// See https://github.com/mysql/mysql-server/blob/5.7/strings/longlong2str.c#L58.
 	if int64(val) < 0 {
 		negative = true
 	} else {
