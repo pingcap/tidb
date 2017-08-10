@@ -14,9 +14,12 @@
 package expression
 
 import (
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testleak"
@@ -166,4 +169,62 @@ func (s *testEvaluatorSuite) TestTiDBVersion(c *C) {
 	v, err := f.Eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, printer.GetTiDBInfo())
+}
+
+func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
+	defer testleak.AfterTest(c)()
+
+	maxUint64 := uint64(math.MaxUint64)
+	cases := []struct {
+		insertID uint64
+		args     interface{}
+		expected uint64
+		isNil    bool
+		getErr   bool
+	}{
+		{0, 1, 1, false, false},
+		{0, 1.1, 1, false, false},
+		{0, maxUint64, maxUint64, false, false},
+		{0, -1, math.MaxUint64, false, false},
+		{1, nil, 1, false, false},
+		{math.MaxUint64, nil, math.MaxUint64, false, false},
+	}
+
+	for _, t := range cases {
+		var (
+			f   Expression
+			err error
+		)
+		if t.insertID > 0 {
+			s.ctx.GetSessionVars().PrevLastInsertID = t.insertID
+		}
+
+		if t.args != nil {
+			f, err = newFunctionForTest(s.ctx, ast.LastInsertId, primitiveValsToConstants([]interface{}{t.args})...)
+		} else {
+			f, err = newFunctionForTest(s.ctx, ast.LastInsertId)
+		}
+		tp := f.GetType()
+		c.Assert(err, IsNil)
+		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag&mysql.BinaryFlag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, mysql.MaxIntWidth)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetUint64(), Equals, t.expected)
+			}
+		}
+	}
+
+	f, err := funcs[ast.LastInsertId].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsFalse)
 }
