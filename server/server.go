@@ -231,7 +231,9 @@ func (s *Server) onConn(c net.Conn) {
 	s.clients[conn.connectionID] = conn
 	connections := len(s.clients)
 	s.rwlock.Unlock()
-	connGauge.Set(float64(connections))
+
+	// dbname is setup after handshake is done
+	connGauge.WithLabelValues(conn.dbname).Set(float64(connections))
 
 	conn.Run()
 }

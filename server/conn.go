@@ -121,7 +121,7 @@ func (cc *clientConn) Close() error {
 	delete(cc.server.clients, cc.connectionID)
 	connections := len(cc.server.clients)
 	cc.server.rwlock.Unlock()
-	connGauge.Set(float64(connections))
+	connGauge.WithLabelValues(cc.dbname).Set(float64(connections))
 	cc.conn.Close()
 	if cc.ctx != nil {
 		return cc.ctx.Close()
@@ -372,7 +372,7 @@ func (cc *clientConn) Run() {
 			} else if terror.ErrCritical.Equal(err) {
 				log.Errorf("[%d] critical error, stop the server listener %s",
 					cc.connectionID, errors.ErrorStack(err))
-				criticalErrorCounter.Add(1)
+				criticalErrorCounter.WithLabelValues("db").Add(1)
 				select {
 				case cc.server.stopListenerCh <- struct{}{}:
 				default:
@@ -435,11 +435,11 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		label = strconv.Itoa(int(cmd))
 	}
 	if err != nil {
-		queryCounter.WithLabelValues(label, "Error").Inc()
+		queryCounter.WithLabelValues(label, "Error", cc.dbname).Inc()
 	} else {
-		queryCounter.WithLabelValues(label, "OK").Inc()
+		queryCounter.WithLabelValues(label, "OK", cc.dbname).Inc()
 	}
-	queryHistogram.Observe(time.Since(startTime).Seconds())
+	queryHistogram.WithLabelValues(cc.dbname).Observe(time.Since(startTime).Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
@@ -683,7 +683,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 func (cc *clientConn) handleQuery(sql string) (err error) {
 	rs, err := cc.ctx.Execute(sql)
 	if err != nil {
-		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
+		executeErrorCounter.WithLabelValues(executeErrorToLabel(err), cc.dbname).Inc()
 		return errors.Trace(err)
 	}
 	if rs != nil {

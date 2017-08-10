@@ -22,14 +22,14 @@ import (
 )
 
 var (
-	queryHistogram = prometheus.NewHistogram(
+	queryHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
-		})
+		}, []string{"db"})
 
 	queryCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -37,15 +37,15 @@ var (
 			Subsystem: "server",
 			Name:      "query_total",
 			Help:      "Counter of queries.",
-		}, []string{"type", "status"})
+		}, []string{"type", "status", "db"})
 
-	connGauge = prometheus.NewGauge(
+	connGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "connections",
 			Help:      "Number of connections.",
-		})
+		}, []string{"db"})
 
 	executeErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -53,15 +53,15 @@ var (
 			Subsystem: "server",
 			Name:      "execute_error",
 			Help:      "Counter of execute errors.",
-		}, []string{"type"})
+		}, []string{"type", "db"})
 
-	criticalErrorCounter = prometheus.NewCounter(
+	criticalErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "critical_error",
 			Help:      "Counter of critical errors.",
-		})
+		}, []string{"db"})
 )
 
 func init() {
