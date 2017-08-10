@@ -77,6 +77,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4LogicalFuncs()...)
 	tests = append(tests, s.createTestCase4ControlFuncs()...)
 	tests = append(tests, s.createTestCase4Aggregations()...)
+	tests = append(tests, s.createTestCase4InfoFunc()...)
 	tests = append(tests, s.createTestCase4EncryptionFuncs()...)
 	tests = append(tests, s.createTestCase4Miscellaneous()...)
 
@@ -377,6 +378,13 @@ func (s *testPlanSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 func (s *testPlanSuite) createTestCase4Aggregations() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"sum(c_int)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
+	}
+}
+
+func (s *testPlanSuite) createTestCase4InfoFunc() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"last_insert_id()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
+		{"last_insert_id(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
 	}
 }
 
