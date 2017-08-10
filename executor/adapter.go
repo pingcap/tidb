@@ -75,7 +75,7 @@ func (a *recordSet) Next() (*ast.Row, error) {
 	if a.stmt != nil {
 		a.stmt.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	}
-	return &ast.Row{Data: row.Data}, nil
+	return &ast.Row{Data: row}, nil
 }
 
 func (a *recordSet) Close() error {

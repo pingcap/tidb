@@ -53,12 +53,12 @@ type ShowExec struct {
 	is infoschema.InfoSchema
 
 	fetched bool
-	rows    []*Row
+	rows    []Row
 	cursor  int
 }
 
 // Next implements Execution Next interface.
-func (e *ShowExec) Next() (*Row, error) {
+func (e *ShowExec) Next() (Row, error) {
 	if e.rows == nil {
 		err := e.fetchAll()
 		if err != nil {
@@ -122,16 +122,14 @@ func (e *ShowExec) fetchAll() error {
 }
 
 func (e *ShowExec) fetchShowEngines() error {
-	row := &Row{
-		Data: types.MakeDatums(
-			"InnoDB",
-			"DEFAULT",
-			"Supports transactions, row-level locking, and foreign keys",
-			"YES",
-			"YES",
-			"YES",
-		),
-	}
+	row := types.MakeDatums(
+		"InnoDB",
+		"DEFAULT",
+		"Supports transactions, row-level locking, and foreign keys",
+		"YES",
+		"YES",
+		"YES",
+	)
 	e.rows = append(e.rows, row)
 	return nil
 }
@@ -145,7 +143,7 @@ func (e *ShowExec) fetchShowDatabases() error {
 		if checker != nil && !checker.DBIsVisible(d) {
 			continue
 		}
-		e.rows = append(e.rows, &Row{Data: types.MakeDatums(d)})
+		e.rows = append(e.rows, types.MakeDatums(d))
 	}
 	return nil
 }
@@ -162,17 +160,15 @@ func (e *ShowExec) fetchShowProcessList() error {
 		if len(pi.Info) != 0 {
 			t = uint64(time.Since(pi.Time) / time.Second)
 		}
-		row := &Row{
-			Data: []types.Datum{
-				types.NewUintDatum(pi.ID),
-				types.NewStringDatum(pi.User),
-				types.NewStringDatum(pi.Host),
-				types.NewStringDatum(pi.DB),
-				types.NewStringDatum(pi.Command),
-				types.NewUintDatum(t),
-				types.NewStringDatum(fmt.Sprintf("%d", pi.State)),
-				types.NewStringDatum(pi.Info),
-			},
+		row := []types.Datum{
+			types.NewUintDatum(pi.ID),
+			types.NewStringDatum(pi.User),
+			types.NewStringDatum(pi.Host),
+			types.NewStringDatum(pi.DB),
+			types.NewStringDatum(pi.Command),
+			types.NewUintDatum(t),
+			types.NewStringDatum(fmt.Sprintf("%d", pi.State)),
+			types.NewStringDatum(pi.Info),
 		}
 		e.rows = append(e.rows, row)
 	}
@@ -202,7 +198,7 @@ func (e *ShowExec) fetchShowTables() error {
 			// now, just use "BASE TABLE".
 			data = append(data, types.NewDatum("BASE TABLE"))
 		}
-		e.rows = append(e.rows, &Row{Data: data})
+		e.rows = append(e.rows, data)
 	}
 	return nil
 }
@@ -220,7 +216,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 		now := types.CurrentTime(mysql.TypeDatetime)
 		data := types.MakeDatums(t.Meta().Name.O, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
 			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment)
-		e.rows = append(e.rows, &Row{Data: data})
+		e.rows = append(e.rows, data)
 	}
 	return nil
 }
@@ -240,9 +236,9 @@ func (e *ShowExec) fetchShowColumns() error {
 
 		// The FULL keyword causes the output to include the column collation and comments,
 		// as well as the privileges you have for each column.
-		row := &Row{}
+		var row Row
 		if e.Full {
-			row.Data = types.MakeDatums(
+			row = types.MakeDatums(
 				desc.Field,
 				desc.Type,
 				desc.Collation,
@@ -254,7 +250,7 @@ func (e *ShowExec) fetchShowColumns() error {
 				desc.Comment,
 			)
 		} else {
-			row.Data = types.MakeDatums(
+			row = types.MakeDatums(
 				desc.Field,
 				desc.Type,
 				desc.Null,
@@ -296,7 +292,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"",               // Comment
 			"",               // Index_comment
 		)
-		e.rows = append(e.rows, &Row{Data: data})
+		e.rows = append(e.rows, data)
 	}
 	for _, idx := range tb.Indices() {
 		for i, col := range idx.Meta().Columns {
@@ -323,7 +319,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				"",                 // Comment
 				idx.Meta().Comment, // Index_comment
 			)
-			e.rows = append(e.rows, &Row{Data: data})
+			e.rows = append(e.rows, data)
 		}
 	}
 	return nil
@@ -334,14 +330,12 @@ func (e *ShowExec) fetchShowIndex() error {
 func (e *ShowExec) fetchShowCharset() error {
 	descs := charset.GetAllCharsets()
 	for _, desc := range descs {
-		row := &Row{
-			Data: types.MakeDatums(
-				desc.Name,
-				desc.Desc,
-				desc.DefaultCollation,
-				desc.Maxlen,
-			),
-		}
+		row := types.MakeDatums(
+			desc.Name,
+			desc.Desc,
+			desc.DefaultCollation,
+			desc.Maxlen,
+		)
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -361,7 +355,7 @@ func (e *ShowExec) fetchShowVariables() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		row := &Row{Data: types.MakeDatums(v.Name, value)}
+		row := types.MakeDatums(v.Name, value)
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -385,7 +379,7 @@ func (e *ShowExec) fetchShowStatus() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		row := &Row{Data: types.MakeDatums(status, value)}
+		row := types.MakeDatums(status, value)
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -536,7 +530,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
-	e.rows = append(e.rows, &Row{Data: data})
+	e.rows = append(e.rows, data)
 	return nil
 }
 
@@ -554,7 +548,7 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 	}
 
 	data := types.MakeDatums(db.Name.O, buf.String())
-	e.rows = append(e.rows, &Row{Data: data})
+	e.rows = append(e.rows, data)
 	return nil
 }
 
@@ -565,14 +559,14 @@ func (e *ShowExec) fetchShowCollation() error {
 		if v.IsDefault {
 			isDefault = "Yes"
 		}
-		row := &Row{Data: types.MakeDatums(
+		row := types.MakeDatums(
 			v.Name,
 			v.CharsetName,
 			v.ID,
 			isDefault,
 			"Yes",
 			1,
-		)}
+		)
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -590,7 +584,7 @@ func (e *ShowExec) fetchShowGrants() error {
 	}
 	for _, g := range gs {
 		data := types.MakeDatums(g)
-		e.rows = append(e.rows, &Row{Data: data})
+		e.rows = append(e.rows, data)
 	}
 	return nil
 }
@@ -618,7 +612,7 @@ func (e *ShowExec) fetchShowWarnings() error {
 			datums[1] = types.NewIntDatum(int64(mysql.ErrUnknown))
 			datums[2] = types.NewStringDatum(warn.Error())
 		}
-		e.rows = append(e.rows, &Row{Data: datums})
+		e.rows = append(e.rows, datums)
 	}
 	return nil
 }

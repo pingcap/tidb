@@ -49,7 +49,7 @@ type RevokeExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *RevokeExec) Next() (*Row, error) {
+func (e *RevokeExec) Next() (Row, error) {
 	if e.done {
 		return nil, nil
 	}
