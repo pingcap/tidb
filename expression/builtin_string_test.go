@@ -1276,6 +1276,7 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 		}
 	}
 }
+
 func (s *testEvaluatorSuite) TestRpad(c *C) {
 	tests := []struct {
 		str    string
