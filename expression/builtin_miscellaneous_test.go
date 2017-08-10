@@ -29,8 +29,8 @@ func (s *testEvaluatorSuite) TestInetAton(c *C) {
 		Input    interface{}
 		Expected interface{}
 	}{
-		{nil, nil},
 		{"", nil},
+		{nil, nil},
 		{"255.255.255.255", 4294967295},
 		{"0.0.0.0", 0},
 		{"127.0.0.1", 2130706433},
@@ -49,9 +49,9 @@ func (s *testEvaluatorSuite) TestInetAton(c *C) {
 	for _, t := range dtbl {
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
+		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
 }
 
