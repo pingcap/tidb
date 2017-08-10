@@ -370,19 +370,25 @@ func (c *isTrueOrFalseFunctionClass) getFunction(args []Expression, ctx context.
 	bf.tp.Flen = 1
 
 	var sig builtinFunc
-	switch {
-	case c.op == opcode.IsTruth && argTp == tpReal:
-		sig = &builtinRealIsTrueSig{baseIntBuiltinFunc{bf}}
-	case c.op == opcode.IsTruth && argTp == tpDecimal:
-		sig = &builtinDecimalIsTrueSig{baseIntBuiltinFunc{bf}}
-	case c.op == opcode.IsTruth && argTp == tpInt:
-		sig = &builtinIntIsTrueSig{baseIntBuiltinFunc{bf}}
-	case argTp == tpReal:
-		sig = &builtinRealIsFalseSig{baseIntBuiltinFunc{bf}}
-	case argTp == tpDecimal:
-		sig = &builtinDecimalIsFalseSig{baseIntBuiltinFunc{bf}}
-	default:
-		sig = &builtinIntIsFalseSig{baseIntBuiltinFunc{bf}}
+	switch c.op {
+	case opcode.IsTruth:
+		switch argTp {
+		case tpReal:
+			sig = &builtinRealIsTrueSig{baseIntBuiltinFunc{bf}}
+		case tpDecimal:
+			sig = &builtinDecimalIsTrueSig{baseIntBuiltinFunc{bf}}
+		case tpInt:
+			sig = &builtinIntIsTrueSig{baseIntBuiltinFunc{bf}}
+		}
+	case opcode.IsFalsity:
+		switch argTp {
+		case tpReal:
+			sig = &builtinRealIsFalseSig{baseIntBuiltinFunc{bf}}
+		case tpDecimal:
+			sig = &builtinDecimalIsFalseSig{baseIntBuiltinFunc{bf}}
+		case tpInt:
+			sig = &builtinIntIsFalseSig{baseIntBuiltinFunc{bf}}
+		}
 	}
 	return sig.setSelf(sig), nil
 }
