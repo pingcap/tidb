@@ -66,11 +66,7 @@ type ownerManager struct {
 }
 
 // NewOwnerManager creates a new OwnerManager.
-func NewOwnerManager(etcdCli *clientv3.Client, id string, key string, cancel goctx.CancelFunc) OwnerManager {
-	prompt := "stats"
-	if id == DDLOwnerKey {
-		prompt = "ddl"
-	}
+func NewOwnerManager(etcdCli *clientv3.Client, prompt string, id string, key string, cancel goctx.CancelFunc) OwnerManager {
 	return &ownerManager{
 		etcdCli: etcdCli,
 		id:      id,
