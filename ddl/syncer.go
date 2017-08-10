@@ -140,7 +140,6 @@ func (s *schemaVersionSyncer) Done() <-chan struct{} {
 
 // Restart implements SchemaSyncer.Restart interface.
 func (s *schemaVersionSyncer) Restart(ctx goctx.Context) error {
-	var err error
 	session, err := newSession(ctx, "ddl", s.selfSchemaVerPath, s.etcdCli,
 		newSessionRetryUnlimited, SyncerSessionTTL)
 	if err != nil {

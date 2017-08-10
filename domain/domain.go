@@ -582,7 +582,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 		if do.etcdClient == nil {
 			statsOwner = ddl.NewMockOwnerManager(id, cancelFunc)
 		} else {
-			statsOwner = ddl.NewOwnerManager(do.etcdClient, id, statistics.StatsOwnerKey, cancelFunc)
+			statsOwner = ddl.NewOwnerManager(do.etcdClient, "stats", id, statistics.StatsOwnerKey, cancelFunc)
 		}
 		statsOwner.CampaignOwners(cancelCtx)
 		for {
