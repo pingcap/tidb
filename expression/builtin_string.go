@@ -1473,15 +1473,15 @@ func trimRight(str, remstr string) string {
 	}
 }
 
-func getFlen4LpadAndRpad(sc *variable.StatementContext, arg Expression) (int, error) {
+func getFlen4LpadAndRpad(sc *variable.StatementContext, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		length, isNull, err := constant.EvalInt(nil, sc)
 		if isNull || err != nil || length > mysql.MaxBlobWidth {
-			return mysql.MaxBlobWidth, errors.Trace(err)
+			return mysql.MaxBlobWidth
 		}
-		return int(length), nil
+		return int(length)
 	}
-	return mysql.MaxBlobWidth, nil
+	return mysql.MaxBlobWidth
 }
 
 type lpadFunctionClass struct {
@@ -1496,10 +1496,7 @@ func (c *lpadFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen, err = getFlen4LpadAndRpad(bf.ctx.GetSessionVars().StmtCtx, args[1])
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx.GetSessionVars().StmtCtx, args[1])
 	setBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	setBinFlagOrBinStr(args[2].GetType(), bf.tp)
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
@@ -1601,7 +1598,7 @@ func (c *rpadFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen, err = getFlen4LpadAndRpad(bf.ctx.GetSessionVars().StmtCtx, args[1])
+	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx.GetSessionVars().StmtCtx, args[1])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
