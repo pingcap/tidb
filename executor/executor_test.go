@@ -1230,7 +1230,11 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result := tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
 	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`))
 
-	tk.MustExec(`INSERT INTO test_gc_read SET a = 5, b = 6`)
+	tk.MustExec(`INSERT INTO test_gc_read SET a = 5, b = 10`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 10 15 50`))
+
+	tk.MustExec(`REPLACE INTO test_gc_read (a, b) VALUES (5, 6)`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
 	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 6 11 30`))
 
