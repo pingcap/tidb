@@ -31,21 +31,21 @@ import (
 )
 
 func (s *testSuite) TestNestedLoopJoin(c *C) {
-	bigExec := &MockExec{Rows: []*executor.Row{
-		{Data: types.MakeDatums(1)},
-		{Data: types.MakeDatums(2)},
-		{Data: types.MakeDatums(3)},
-		{Data: types.MakeDatums(4)},
-		{Data: types.MakeDatums(5)},
-		{Data: types.MakeDatums(6)},
+	bigExec := &MockExec{Rows: []executor.Row{
+		types.MakeDatums(1),
+		types.MakeDatums(2),
+		types.MakeDatums(3),
+		types.MakeDatums(4),
+		types.MakeDatums(5),
+		types.MakeDatums(6),
 	}}
-	smallExec := &MockExec{Rows: []*executor.Row{
-		{Data: types.MakeDatums(1)},
-		{Data: types.MakeDatums(2)},
-		{Data: types.MakeDatums(3)},
-		{Data: types.MakeDatums(4)},
-		{Data: types.MakeDatums(5)},
-		{Data: types.MakeDatums(6)},
+	smallExec := &MockExec{Rows: []executor.Row{
+		types.MakeDatums(1),
+		types.MakeDatums(2),
+		types.MakeDatums(3),
+		types.MakeDatums(4),
+		types.MakeDatums(5),
+		types.MakeDatums(6),
 	}}
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
@@ -64,23 +64,23 @@ func (s *testSuite) TestNestedLoopJoin(c *C) {
 	row, err := join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "1 1")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "1 1")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "2 2")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "2 2")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "3 3")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "3 3")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "4 4")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "4 4")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "5 5")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "5 5")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, IsNil)
