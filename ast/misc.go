@@ -431,7 +431,7 @@ func (u *UserSpec) SecurityString() string {
 		}
 	}
 	if withPassword {
-		return fmt.Sprintf("{%s, password = ***}", u.User)
+		return fmt.Sprintf("{%s password = ***}", u.User)
 	}
 	return u.User.String()
 }

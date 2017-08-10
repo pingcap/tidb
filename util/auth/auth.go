@@ -28,9 +28,9 @@ type UserIdentity struct {
 	Hostname string
 }
 
-// String converts UserIdentity to the format user@host
+// String converts UserIdentity to the format user@host.
 func (user *UserIdentity) String() string {
-	// TODO: Escape username and hostname
+	// TODO: Escape username and hostname.
 	return fmt.Sprintf("%s@%s", user.Username, user.Hostname)
 }
 
