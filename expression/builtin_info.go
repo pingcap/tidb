@@ -201,12 +201,14 @@ func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.C
 		return nil, errors.Trace(err)
 	}
 
-	var bf baseBuiltinFunc
 	argsTp := []evalTp{}
 	if len(args) == 1 {
 		argsTp = append(argsTp, tpInt)
 	}
-	bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, argsTp...)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argsTp...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf.tp.Flag |= mysql.UnsignedFlag
 	bf.deterministic = false
 
