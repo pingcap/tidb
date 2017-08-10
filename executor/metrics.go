@@ -47,9 +47,10 @@ func init() {
 	prometheus.MustRegister(expensiveQueryCounter)
 }
 
-func stmtCount(node ast.StmtNode, p plan.Plan) bool {
+func stmtCount(node ast.StmtNode, p plan.Plan, inRestrictedSQL bool) bool {
 	var isExpensive bool
-	if stmtLabel := StatementLabel(node, p, &isExpensive); stmtLabel != IGNORE {
+	stmtLabel := StatementLabel(node, p, &isExpensive)
+	if !inRestrictedSQL && stmtLabel != IGNORE {
 		stmtNodeCounter.WithLabelValues(stmtLabel).Inc()
 	}
 	return isExpensive
