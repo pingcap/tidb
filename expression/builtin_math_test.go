@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -530,34 +531,48 @@ func (s *testEvaluatorSuite) TestCRC32(c *C) {
 
 func (s *testEvaluatorSuite) TestConv(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg []interface{}
-		Ret interface{}
+	cases := []struct {
+		args     []interface{}
+		expected interface{}
+		isNil    bool
+		getErr   bool
 	}{
-		{[]interface{}{"a", 16, 2}, "1010"},
-		{[]interface{}{"6E", 18, 8}, "172"},
-		{[]interface{}{"-17", 10, -18}, "-H"},
-		{[]interface{}{"-17", 10, 18}, "2D3FGB0B9CG4BD1H"},
-		{[]interface{}{nil, 10, 10}, nil},
-		{[]interface{}{"+18aZ", 7, 36}, 1},
-		{[]interface{}{"18446744073709551615", -10, 16}, "7FFFFFFFFFFFFFFF"},
-		{[]interface{}{"12F", -10, 16}, "C"},
-		{[]interface{}{"  FF ", 16, 10}, "255"},
-		{[]interface{}{"TIDB", 10, 8}, "0"},
-		{[]interface{}{"aa", 10, 2}, "0"},
-		{[]interface{}{" A", -10, 16}, "0"},
-		{[]interface{}{"a6a", 10, 8}, "0"},
+		{[]interface{}{"a", 16, 2}, "1010", false, false},
+		{[]interface{}{"6E", 18, 8}, "172", false, false},
+		{[]interface{}{"-17", 10, -18}, "-H", false, false},
+		{[]interface{}{"-17", 10, 18}, "2D3FGB0B9CG4BD1H", false, false},
+		{[]interface{}{nil, 10, 10}, "0", true, false},
+		{[]interface{}{"+18aZ", 7, 36}, "1", false, false},
+		{[]interface{}{"18446744073709551615", -10, 16}, "7FFFFFFFFFFFFFFF", false, false},
+		{[]interface{}{"12F", -10, 16}, "C", false, false},
+		{[]interface{}{"  FF ", 16, 10}, "255", false, false},
+		{[]interface{}{"TIDB", 10, 8}, "0", false, false},
+		{[]interface{}{"aa", 10, 2}, "0", false, false},
+		{[]interface{}{" A", -10, 16}, "0", false, false},
+		{[]interface{}{"a6a", 10, 8}, "0", false, false},
+		{[]interface{}{"a6a", 1, 8}, "0", true, false},
 	}
 
-	Dtbl := tblToDtbl(tbl)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Conv, primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
+		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
+		c.Assert(tp.Collate, Equals, charset.CharsetUTF8)
+		c.Assert(tp.Flag, Equals, uint(0))
 
-	for _, t := range Dtbl {
-		fc := funcs[ast.Conv]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
-		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.expected)
+			}
+		}
 	}
 
 	v := []struct {
@@ -573,6 +588,10 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		r := getValidPrefix(t.s, t.base)
 		c.Assert(r, Equals, t.ret)
 	}
+
+	f, err := funcs[ast.Conv].getFunction([]Expression{Zero, Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSign(c *C) {
