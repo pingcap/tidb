@@ -1151,7 +1151,7 @@ func (b *builtinLocateBinary3ArgsSig) evalInt(row []types.Datum) (int64, bool, e
 		return 0, isNull, errors.Trace(err)
 	}
 	pos, isNull, err := b.args[2].EvalInt(row, sc)
-	// transfer the argument which starts from 1 to real index which starts from 0
+	// Transfer the argument which starts from 1 to real index which starts from 0.
 	pos--
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -1187,7 +1187,7 @@ func (b *builtinLocate3ArgsSig) evalInt(row []types.Datum) (int64, bool, error) 
 		return 0, isNull, errors.Trace(err)
 	}
 	pos, isNull, err := b.args[2].EvalInt(row, sc)
-	// transfer the argument which starts from 1 to real index which starts from 0
+	// Transfer the argument which starts from 1 to real index which starts from 0.
 	pos--
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
