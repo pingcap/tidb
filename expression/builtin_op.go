@@ -659,25 +659,29 @@ type isNullFunctionClass struct {
 }
 
 func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsNullSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 1
+	sig := &builtinIsNullSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinIsNullSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinIsNullSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
-func (b *builtinIsNullSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		d.SetInt64(1)
-	} else {
-		d.SetInt64(0)
+	if isNull {
+		return 1, false, nil
 	}
-	return d, nil
+	return 0, false, nil
 }

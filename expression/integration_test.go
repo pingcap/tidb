@@ -772,6 +772,13 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(-1 as unsigned)")
 	result.Check(testkit.Rows("18446744073709551615"))
 
+	// for ISNULL
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, d char(10), e datetime, f float, g decimal(10, 3))")
+	tk.MustExec("insert t values (1, 0, null, null, null, null, null)")
+	result = tk.MustQuery("select ISNULL(a), ISNULL(b), ISNULL(c), ISNULL(d), ISNULL(e), ISNULL(f), ISNULL(g) from t")
+	result.Check(testkit.Rows("0 0 1 1 1 1 1"))
+
 	// fix issue #3942
 	result = tk.MustQuery("select cast('-24 100:00:00' as time);")
 	result.Check(testkit.Rows("-676:00:00"))
