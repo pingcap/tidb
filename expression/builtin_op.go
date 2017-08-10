@@ -398,12 +398,9 @@ func (c *isTrueOrFalseFunctionClass) getFunction(args []Expression, ctx context.
 	return sig.setSelf(sig), nil
 }
 
-type builtinRealIsTrueSig struct{ baseIntBuiltinFunc }
-type builtinDecimalIsTrueSig struct{ baseIntBuiltinFunc }
-type builtinIntIsTrueSig struct{ baseIntBuiltinFunc }
-type builtinRealIsFalseSig struct{ baseIntBuiltinFunc }
-type builtinDecimalIsFalseSig struct{ baseIntBuiltinFunc }
-type builtinIntIsFalseSig struct{ baseIntBuiltinFunc }
+type builtinRealIsTrueSig struct {
+	baseIntBuiltinFunc
+}
 
 func (b *builtinRealIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
 	input, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
@@ -414,6 +411,10 @@ func (b *builtinRealIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
 		return 0, false, nil
 	}
 	return 1, false, nil
+}
+
+type builtinDecimalIsTrueSig struct {
+	baseIntBuiltinFunc
 }
 
 func (b *builtinDecimalIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
@@ -427,6 +428,10 @@ func (b *builtinDecimalIsTrueSig) evalInt(row []types.Datum) (int64, bool, error
 	return 1, false, nil
 }
 
+type builtinIntIsTrueSig struct {
+	baseIntBuiltinFunc
+}
+
 func (b *builtinIntIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
 	input, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
@@ -436,6 +441,10 @@ func (b *builtinIntIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
 		return 0, false, nil
 	}
 	return 1, false, nil
+}
+
+type builtinRealIsFalseSig struct {
+	baseIntBuiltinFunc
 }
 
 func (b *builtinRealIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
@@ -449,6 +458,10 @@ func (b *builtinRealIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) 
 	return 1, false, nil
 }
 
+type builtinDecimalIsFalseSig struct {
+	baseIntBuiltinFunc
+}
+
 func (b *builtinDecimalIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
 	input, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
@@ -458,6 +471,10 @@ func (b *builtinDecimalIsFalseSig) evalInt(row []types.Datum) (int64, bool, erro
 		return 0, false, nil
 	}
 	return 1, false, nil
+}
+
+type builtinIntIsFalseSig struct {
+	baseIntBuiltinFunc
 }
 
 func (b *builtinIntIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
