@@ -39,8 +39,12 @@ var (
 	_ builtinFunc = &builtinLogicAndSig{}
 	_ builtinFunc = &builtinLogicOrSig{}
 	_ builtinFunc = &builtinLogicXorSig{}
-	_ builtinFunc = &builtinIsTrueSig{}
-	_ builtinFunc = &builtinIsFalseSig{}
+	_ builtinFunc = &builtinRealIsTrueSig{}
+	_ builtinFunc = &builtinDecimalIsTrueSig{}
+	_ builtinFunc = &builtinIntIsTrueSig{}
+	_ builtinFunc = &builtinRealIsFalseSig{}
+	_ builtinFunc = &builtinDecimalIsFalseSig{}
+	_ builtinFunc = &builtinIntIsFalseSig{}
 	_ builtinFunc = &builtinUnaryOpSig{}
 	_ builtinFunc = &builtinUnaryMinusIntSig{}
 	_ builtinFunc = &builtinIsNullSig{}
@@ -351,39 +355,106 @@ func (c *isTrueOrFalseFunctionClass) getFunction(args []Expression, ctx context.
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+
+	argTp := tpInt
+	switch args[0].GetTypeClass() {
+	case types.ClassReal:
+		argTp = tpReal
+	case types.ClassDecimal:
+		argTp = tpDecimal
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = 1
-	if c.op == opcode.IsTruth {
-		sig := &builtinIsTrueSig{baseIntBuiltinFunc{bf}}
-		return sig.setSelf(sig), nil
+
+	var sig builtinFunc
+	switch {
+	case c.op == opcode.IsTruth && argTp == tpReal:
+		sig = &builtinRealIsTrueSig{baseIntBuiltinFunc{bf}}
+	case c.op == opcode.IsTruth && argTp == tpDecimal:
+		sig = &builtinDecimalIsTrueSig{baseIntBuiltinFunc{bf}}
+	case c.op == opcode.IsTruth && argTp == tpInt:
+		sig = &builtinIntIsTrueSig{baseIntBuiltinFunc{bf}}
+	case argTp == tpReal:
+		sig = &builtinRealIsFalseSig{baseIntBuiltinFunc{bf}}
+	case argTp == tpDecimal:
+		sig = &builtinDecimalIsFalseSig{baseIntBuiltinFunc{bf}}
+	default:
+		sig = &builtinIntIsFalseSig{baseIntBuiltinFunc{bf}}
 	}
-	sig := &builtinIsFalseSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-type builtinIsTrueSig struct{ baseIntBuiltinFunc }
-type builtinIsFalseSig struct{ baseIntBuiltinFunc }
+type builtinRealIsTrueSig struct{ baseIntBuiltinFunc }
+type builtinDecimalIsTrueSig struct{ baseIntBuiltinFunc }
+type builtinIntIsTrueSig struct{ baseIntBuiltinFunc }
+type builtinRealIsFalseSig struct{ baseIntBuiltinFunc }
+type builtinDecimalIsFalseSig struct{ baseIntBuiltinFunc }
+type builtinIntIsFalseSig struct{ baseIntBuiltinFunc }
 
-func (b *builtinIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
-	boolResult, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+func (b *builtinRealIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return 0, true, errors.Trace(err)
 	}
-	if isNull || boolResult == 0 {
+	if isNull || input == 0 {
 		return 0, false, nil
 	}
 	return 1, false, nil
 }
 
-func (b *builtinIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
-	boolResult, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+func (b *builtinDecimalIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return 0, true, errors.Trace(err)
 	}
-	if isNull || boolResult != 0 {
+	if isNull || input.IsZero() {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+func (b *builtinIntIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull || input == 0 {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+func (b *builtinRealIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull || input != 0 {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+func (b *builtinDecimalIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull || !input.IsZero() {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+func (b *builtinIntIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull || input != 0 {
 		return 0, false, nil
 	}
 	return 1, false, nil

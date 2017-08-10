@@ -688,10 +688,10 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(nil)
 	result = tk.MustQuery("select * from t where a is not true")
 	result.Check(nil)
-	result = tk.MustQuery(`select 1 is true, 0 is true, null is true, "aaa" is true, "" is true, -12.00 is true, 0.0 is true;`)
-	result.Check(testkit.Rows("1 0 0 0 0 1 0"))
-	result = tk.MustQuery(`select 1 is false, 0 is false, null is false, "aaa" is false, "" is false, -12.00 is false, 0.0 is false;`)
-	result.Check(testkit.Rows("0 1 0 1 1 0 1"))
+	result = tk.MustQuery(`select 1 is true, 0 is true, null is true, "aaa" is true, "" is true, -12.00 is true, 0.0 is true, 0.0000001 is true;`)
+	result.Check(testkit.Rows("1 0 0 0 0 1 0 1"))
+	result = tk.MustQuery(`select 1 is false, 0 is false, null is false, "aaa" is false, "" is false, -12.00 is false, 0.0 is false, 0.0000001 is false;`)
+	result.Check(testkit.Rows("0 1 0 1 1 0 1 0"))
 
 	// for in
 	result = tk.MustQuery("select * from t where b in (a)")

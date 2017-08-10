@@ -493,39 +493,39 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 		isFalse interface{}
 	}{
 		{
-			args:    []interface{}{int64(-12)},
-			isTrue:  int64(1),
-			isFalse: int64(0),
+			args:    []interface{}{-12},
+			isTrue:  1,
+			isFalse: 0,
 		},
 		{
-			args:    []interface{}{int64(12)},
-			isTrue:  int64(1),
-			isFalse: int64(0),
+			args:    []interface{}{12},
+			isTrue:  1,
+			isFalse: 0,
 		},
 		{
-			args:    []interface{}{int64(0)},
-			isTrue:  int64(0),
-			isFalse: int64(1),
+			args:    []interface{}{0},
+			isTrue:  0,
+			isFalse: 1,
 		},
 		{
 			args:    []interface{}{float64(0)},
-			isTrue:  int64(0),
-			isFalse: int64(1),
+			isTrue:  0,
+			isFalse: 1,
 		},
 		{
 			args:    []interface{}{"aaa"},
-			isTrue:  int64(0),
-			isFalse: int64(1),
+			isTrue:  0,
+			isFalse: 1,
 		},
 		{
 			args:    []interface{}{""},
-			isTrue:  int64(0),
-			isFalse: int64(1),
+			isTrue:  0,
+			isFalse: 1,
 		},
 		{
 			args:    []interface{}{nil},
-			isTrue:  int64(0),
-			isFalse: int64(0),
+			isTrue:  0,
+			isFalse: 0,
 		},
 	}
 
