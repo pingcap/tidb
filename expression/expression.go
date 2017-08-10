@@ -34,6 +34,7 @@ var (
 	errInvalidOperation        = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
 	errIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count in the call to native function '%s'")
 	errFunctionNotExists       = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
+	errZlibZData               = terror.ClassTypes.New(codeZlibZData, "ZLIB: Input data corrupted")
 	errIncorrectArgs           = terror.ClassExpression.New(codeIncorrectArgs, mysql.MySQLErrName[mysql.ErrWrongArguments])
 )
 
@@ -42,6 +43,7 @@ const (
 	codeInvalidOperation        terror.ErrCode = 1
 	codeIncorrectParameterCount                = 1582
 	codeFunctionNotExists                      = 1305
+	codeZlibZData                              = mysql.ErrZlibZData
 	codeIncorrectArgs                          = mysql.ErrWrongArguments
 )
 
@@ -49,6 +51,7 @@ func init() {
 	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
 		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
+		codeZlibZData:               mysql.ErrZlibZData,
 		codeIncorrectArgs:           mysql.ErrWrongArguments,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
