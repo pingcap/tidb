@@ -172,7 +172,7 @@ const (
 	maxNumberOfDiffsToLoad = 100
 )
 
-func shouldUpdateAllSchema(newVersion, usedVersion int64) bool {
+func isTooOldSchema(usedVersion, newVersion int64) bool {
 	if usedVersion == initialVersion || newVersion-usedVersion > maxNumberOfDiffsToLoad {
 		return true
 	}
@@ -185,7 +185,7 @@ func shouldUpdateAllSchema(newVersion, usedVersion int64) bool {
 // The second returned value is the delta updated table IDs.
 func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, []int64, error) {
 	// If there isn't any used version, or used version is too old, we do full load.
-	if shouldUpdateAllSchema(newVersion, usedVersion) {
+	if isTooOldSchema(usedVersion, newVersion) {
 		return false, nil, nil
 	}
 	if usedVersion > newVersion {
