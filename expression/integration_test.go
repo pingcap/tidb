@@ -86,6 +86,30 @@ func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
 	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
 }
 
+func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk.MustExec(`USE test;`)
+	tk.MustExec(`DROP TABLE IF EXISTS t;`)
+	tk.MustExec(`CREATE TABLE t(a BINARY(10), b CHAR(10));`)
+	tk.MustExec(`INSERT INTO t SELECT "中文", "abc";`)
+	result := tk.MustQuery(`SELECT LPAD(a, 11, "a"), LPAD(b, 2, "xx") FROM t;`)
+	result.Check(testkit.Rows("a中文\x00\x00\x00\x00 ab"))
+	result = tk.MustQuery(`SELECT RPAD(a, 11, "a"), RPAD(b, 2, "xx") FROM t;`)
+	result.Check(testkit.Rows("中文\x00\x00\x00\x00a ab"))
+	result = tk.MustQuery(`SELECT LPAD("中文", 5, "字符"), LPAD("中文", 1, "a");`)
+	result.Check(testkit.Rows("字符字中文 中"))
+	result = tk.MustQuery(`SELECT RPAD("中文", 5, "字符"), RPAD("中文", 1, "a");`)
+	result.Check(testkit.Rows("中文字符字 中"))
+	result = tk.MustQuery(`SELECT RPAD("中文", -5, "字符"), RPAD("中文", 10, "");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery(`SELECT LPAD("中文", -5, "字符"), LPAD("中文", 10, "");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+}
+
 func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -307,6 +331,20 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+
+	// for conv
+	result = tk.MustQuery("SELECT CONV('a', 16, 2);")
+	result.Check(testkit.Rows("1010"))
+	result = tk.MustQuery("SELECT CONV('6E', 18, 8);")
+	result.Check(testkit.Rows("172"))
+	result = tk.MustQuery("SELECT CONV(-17, 10, -18);")
+	result.Check(testkit.Rows("-H"))
+	result = tk.MustQuery("SELECT CONV(10+'10'+'10'+X'0a', 10, 10);")
+	result.Check(testkit.Rows("40"))
+	result = tk.MustQuery("SELECT CONV('a', 1, 10);")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("SELECT CONV('a', 37, 10);")
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
@@ -534,6 +572,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
 	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
 
+	// for bin
 	result = tk.MustQuery(`select bin(-1);`)
 	result.Check(testkit.Rows("1111111111111111111111111111111111111111111111111111111111111111"))
 	result = tk.MustQuery(`select bin(5);`)
@@ -553,6 +592,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select char_length(12.3456);`)
 	result.Check(testkit.Rows("7"))
 
+	// for instr
+	result = tk.MustQuery(`select instr("中国", "国"), instr("中国", ""), instr("abc", ""), instr("", ""), instr("", "abc");`)
+	result.Check(testkit.Rows("2 1 1 1 0"))
+	result = tk.MustQuery(`select instr("中国", null), instr(null, ""), instr(null, null);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a binary(20), b char(20));`)
+	tk.MustExec(`insert into t values("中国", cast("国" as binary)), ("中国", ""), ("abc", ""), ("", ""), ("", "abc");`)
+	result = tk.MustQuery(`select instr(a, b) from t;`)
+	result.Check(testkit.Rows("4", "1", "1", "1", "0"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
@@ -582,6 +631,31 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 	result.Check(testkit.Rows("c81e728d9d4c2f636f067f89cc14862c c81e728d9d4c2f636f067f89cc14862c 1a18da63cbbfb49cb9616e6bfd35f662 bad2fa88e1f35919ec7584cc2623a310 991f84d41d7acff6471e536caa8d97db 68b329da9893e34099c7d8ad5cb9c940 5c9f0e9b3b36276731bfba852a73ccc6 642e92efb79421734881b53e1e1b18b6 c337e11bfca9f12ae9b1342901e04379"))
 	result = tk.MustQuery("select md5('123'), md5(123), md5(''), md5('你好'), md5(NULL), md5('👍')")
 	result.Check(testkit.Rows(`202cb962ac59075b964b07152d234b70 202cb962ac59075b964b07152d234b70 d41d8cd98f00b204e9800998ecf8427e 7eca689f0d3389d9dea66ae112e5cfd7 <nil> 0215ac4dab1ecaf71d83f98af5726984`))
+
+	// for sha/sha1
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb")`)
+	result = tk.MustQuery("select sha1(a), sha1(b), sha1(c), sha1(d), sha1(e), sha1(f), sha1(g), sha1(h), sha1(i) from t")
+	result.Check(testkit.Rows("da4b9237bacccdf19c0760cab7aec4a8359010b0 da4b9237bacccdf19c0760cab7aec4a8359010b0 ce0d88c5002b6cf7664052f1fc7d652cbdadccec 6c6956de323692298e4e5ad3028ff491f7ad363c 1906f8aeb5a717ca0f84154724045839330b0ea9 adc83b19e793491b1c6ea0fd8b46cd9f32e592fc 9aadd14ceb737b28697b8026f205f4b3e31de147 64e095fe763fc62418378753f9402623bea9e227 4df56fc09a3e66b48fb896e90b0a6fc02c978e9e"))
+	result = tk.MustQuery("select sha1('123'), sha1(123), sha1(''), sha1('你好'), sha1(NULL)")
+	result.Check(testkit.Rows(`40bd001563085fc35165329ea1ff5c5ecbdbbeef 40bd001563085fc35165329ea1ff5c5ecbdbbeef da39a3ee5e6b4b0d3255bfef95601890afd80709 440ee0853ad1e99f962b63e459ef992d7c211722 <nil>`))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb")`)
+	result = tk.MustQuery("select sha(a), sha(b), sha(c), sha(d), sha(e), sha(f), sha(g), sha(h), sha(i) from t")
+	result.Check(testkit.Rows("da4b9237bacccdf19c0760cab7aec4a8359010b0 da4b9237bacccdf19c0760cab7aec4a8359010b0 ce0d88c5002b6cf7664052f1fc7d652cbdadccec 6c6956de323692298e4e5ad3028ff491f7ad363c 1906f8aeb5a717ca0f84154724045839330b0ea9 adc83b19e793491b1c6ea0fd8b46cd9f32e592fc 9aadd14ceb737b28697b8026f205f4b3e31de147 64e095fe763fc62418378753f9402623bea9e227 4df56fc09a3e66b48fb896e90b0a6fc02c978e9e"))
+	result = tk.MustQuery("select sha('123'), sha(123), sha(''), sha('你好'), sha(NULL)")
+	result.Check(testkit.Rows(`40bd001563085fc35165329ea1ff5c5ecbdbbeef 40bd001563085fc35165329ea1ff5c5ecbdbbeef da39a3ee5e6b4b0d3255bfef95601890afd80709 440ee0853ad1e99f962b63e459ef992d7c211722 <nil>`))
+
+	// for sha2
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
+	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb")`)
+	result = tk.MustQuery("select sha2(a, 224), sha2(b, 0), sha2(c, 512), sha2(d, 256), sha2(e, 384), sha2(f, 0), sha2(g, 512), sha2(h, 256), sha2(i, 224) from t")
+	result.Check(testkit.Rows("58b2aaa0bfae7acc021b3260e941117b529b2e69de878fd7d45c61a9 d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35 42415572557b0ca47e14fa928e83f5746d33f90c74270172cc75c61a78db37fe1485159a4fd75f33ab571b154572a5a300938f7d25969bdd05d8ac9dd6c66123 8c2fa3f276952c92b0b40ed7d27454e44b8399a19769e6bceb40da236e45a20a b11d35f1a37e54d5800d210d8e6b80b42c9f6d20ea7ae548c762383ebaa12c5954c559223c6c7a428e37af96bb4f1e0d 01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b 9550da35ea1683abaf5bfa8de68fe02b9c6d756c64589d1ef8367544c254f5f09218a6466cadcee8d74214f0c0b7fb342d1a9f3bd4d406aacf7be59c327c9306 98010bd9270f9b100b6214a21754fd33bdc8d41b2bc9f9dd16ff54d3c34ffd71 a7cddb7346fbc66ab7f803e865b74cbd99aace8e7dabbd8884c148cb"))
+	result = tk.MustQuery("select sha2('123', 512), sha2(123, 512), sha2('', 512), sha2('你好', 224), sha2(NULL, 256), sha2('foo', 123)")
+	result.Check(testkit.Rows(`3c9909afec25354d551dae21590bb26e38d53f2173b8d3dc3eee4c047e7ab1c1eb8b85103e3be7ba613b31bb5c9c36214dc9f14a42fd7a2fdb84856bca5c44c2 3c9909afec25354d551dae21590bb26e38d53f2173b8d3dc3eee4c047e7ab1c1eb8b85103e3be7ba613b31bb5c9c36214dc9f14a42fd7a2fdb84856bca5c44c2 cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e e91f006ed4e0882de2f6a3c96ec228a6a5c715f356d00091bce842b5 <nil> <nil>`))
 
 	// for AES_ENCRYPT
 	tk.MustExec("drop table if exists t")
@@ -771,6 +845,11 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("3 2"))
 	result = tk.MustQuery("select cast(-1 as unsigned)")
 	result.Check(testkit.Rows("18446744073709551615"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a decimal(3, 1), b double, c datetime, d time, e int)")
+	tk.MustExec("insert into t value(12.3, 1.23, '2017-01-01 12:12:12', '12:12:12', 123)")
+	result = tk.MustQuery("select cast(a as json), cast(b as json), cast(c as json), cast(d as json), cast(e as json) from t")
+	result.Check(testkit.Rows(`"12.3" 1.23 "2017-01-01 12:12:12.000000" "12:12:12.000000" 123`))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
@@ -1063,6 +1142,32 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_increment, a int, PRIMARY KEY (id))")
+	tk.MustExec("insert into t(a) values(1)")
+	result := tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t values(2, 1)")
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t(a) values(1)")
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("3"))
+
+	result = tk.MustQuery("select last_insert_id(5);")
+	result.Check(testkit.Rows("5"))
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("5"))
+}
+
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -1145,4 +1250,97 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
+}
+
+func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// compare as JSON
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (pk int  NOT NULL PRIMARY KEY AUTO_INCREMENT, i INT, j JSON);")
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (0, NULL)`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (1, '{"a": 2}')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (2, '[1,2]')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (3, '{"a":"b", "c":"d","ab":"abc", "bc": ["x", "y"]}')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (4, '["here", ["I", "am"], "!!!"]')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (5, '"scalar string"')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (6, 'true')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (7, 'false')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (8, 'null')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (9, '-1')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (10, CAST(CAST(1 AS UNSIGNED) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (11, '32767')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (12, '32768')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (13, '-32768')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (14, '-32769')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (15, '2147483647')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (16, '2147483648')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (17, '-2147483648')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (18, '-2147483649')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (19, '18446744073709551615')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (20, '18446744073709551616')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (21, '3.14')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (22, '{}')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (23, '[]')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (24, CAST(CAST('2015-01-15 23:24:25' AS DATETIME) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (25, CAST(CAST('23:24:25' AS TIME) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (26, CAST(CAST('2015-01-15' AS DATE) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (27, CAST(TIMESTAMP('2015-01-15 23:24:25') AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (28, CAST('[]' AS CHAR CHARACTER SET 'ascii'))`)
+
+	result := tk.MustQuery(`SELECT i,
+		(j = '"scalar string"') AS c1,
+		(j = 'scalar string') AS c2,
+		(j = CAST('"scalar string"' AS JSON)) AS c3,
+		(j = CAST(CAST(j AS CHAR CHARACTER SET 'utf8mb4') AS JSON)) AS c4,
+		(j = CAST(NULL AS JSON)) AS c5,
+		(j = NULL) AS c6,
+		(j <=> NULL) AS c7,
+		(j <=> CAST(NULL AS JSON)) AS c8,
+		(j IN (-1, 2, 32768, 3.14)) AS c9,
+		(j IN (CAST('[1, 2]' AS JSON), CAST('{}' AS JSON), CAST(3.14 AS JSON))) AS c10,
+		(j = (SELECT j FROM t WHERE j = CAST('null' AS JSON))) AS c11,
+		(j = (SELECT j FROM t WHERE j IS NULL)) AS c12,
+		(j = (SELECT j FROM t WHERE 1<>1)) AS c13,
+		(j = DATE('2015-01-15')) AS c14,
+		(j = TIME('23:24:25')) AS c15,
+		(j = TIMESTAMP('2015-01-15 23:24:25')) AS c16,
+		(j = CURRENT_TIMESTAMP) AS c17,
+		(JSON_EXTRACT(j, '$.a') = 2) AS c18
+		FROM t
+		ORDER BY i;`)
+	result.Check(testkit.Rows("0 <nil> <nil> <nil> <nil> <nil> <nil> 1 1 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil>",
+		"1 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 1",
+		"2 0 0 0 1 <nil> <nil> 0 0 0 1 0 <nil> <nil> 0 0 0 0 <nil>",
+		"3 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 0",
+		"4 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"5 0 1 1 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"6 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"7 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"8 0 0 0 1 <nil> <nil> 0 0 0 0 1 <nil> <nil> 0 0 0 0 <nil>",
+		"9 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"10 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"11 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"12 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"13 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"14 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"15 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"16 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"17 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"18 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"19 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"20 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"21 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"22 0 0 0 1 <nil> <nil> 0 0 0 1 0 <nil> <nil> 0 0 0 0 <nil>",
+		"23 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"24 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
+		"25 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 1 0 0 <nil>",
+		"26 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
+		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
+		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
 }
