@@ -257,6 +257,13 @@ func (c *rpcClient) callRPC(ctx goctx.Context, client tikvpb.TikvClient, req *ti
 		}
 		resp.GC = r
 		return resp, nil
+	case tikvrpc.CmdDeleteRange:
+		r, err := client.KvDeleteRange(ctx, req.DeleteRange)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.DeleteRange = r
+		return resp, nil
 	case tikvrpc.CmdRawGet:
 		r, err := client.RawGet(ctx, req.RawGet)
 		if err != nil {
