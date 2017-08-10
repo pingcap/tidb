@@ -252,9 +252,10 @@ func (s *testEvaluatorSuite) TestInet6AtoN(c *C) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{ip}), s.ctx)
 		c.Assert(err, IsNil)
-		result, _, err := f.evalString(nil)
+		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+		d := types.NewDatum(test.expect)
+		c.Assert(result, testutil.DatumEquals, types.NewStringDatum(d.GetString()))
 	}
 
 	var argNull types.Datum
