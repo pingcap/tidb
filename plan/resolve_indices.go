@@ -257,20 +257,16 @@ func (p *Insert) ResolveIndices() {
 // ResolveIndices implements Plan interface.
 func (p *DataSource) ResolveIndices() {
 	p.basePlan.ResolveIndices()
-	if p.GenValues != nil {
-		for _, expr := range p.GenValues {
-			expr.ResolveIndices(p.Schema())
-		}
+	for _, expr := range p.GenValues {
+		expr.ResolveIndices(p.Schema())
 	}
 }
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalTableScan) ResolveIndices() {
 	p.basePlan.ResolveIndices()
-	if p.GenValues != nil {
-		for _, expr := range p.GenValues {
-			expr.ResolveIndices(p.Schema())
-		}
+	for _, expr := range p.GenValues {
+		expr.ResolveIndices(p.Schema())
 	}
 }
 
