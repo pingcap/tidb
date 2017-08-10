@@ -93,7 +93,7 @@ func (e *PrepareExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next() (*Row, error) {
+func (e *PrepareExec) Next() (Row, error) {
 	e.DoPrepare()
 	return nil, e.Err
 }
@@ -202,7 +202,7 @@ func (e *ExecuteExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next() (*Row, error) {
+func (e *ExecuteExec) Next() (Row, error) {
 	// Will never be called.
 	return nil, nil
 }
@@ -289,7 +289,7 @@ func (e *DeallocateExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next() (*Row, error) {
+func (e *DeallocateExec) Next() (Row, error) {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {

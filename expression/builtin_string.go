@@ -1645,33 +1645,29 @@ type charLengthFunctionClass struct {
 }
 
 func (c *charLengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinCharLengthSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if argsErr := c.verifyArgs(args); argsErr != nil {
+		return nil, errors.Trace(argsErr)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinCharLengthSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinCharLengthSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinCharLengthSig.
+// evalInt evals a builtinCharLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char-length
-func (b *builtinCharLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinCharLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	switch args[0].Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		r := []rune(s)
-		d.SetInt64(int64(len(r)))
-		return d, nil
-	}
+	return int64(len([]rune(val))), false, nil
 }
 
 type findInSetFunctionClass struct {
