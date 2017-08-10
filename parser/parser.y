@@ -4191,7 +4191,7 @@ CastType:
 |	"JSON"
 	{
 		x := types.NewFieldType(mysql.TypeJSON)
-		x.Flen = 12582912
+		x.Flen = mysql.MaxBlobWidth
 		x.Decimal = 0
 		x.Flag |= mysql.BinaryFlag
 		x.Charset = charset.CharsetUTF8

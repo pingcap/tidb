@@ -1157,7 +1157,7 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(row []types.Datum) (res *types
 		res = new(types.MyDecimal)
 		err = res.FromFloat64(f64)
 	}
-	return res, false, err
+	return res, false, errors.Trace(err)
 }
 
 type builtinCastJSONAsStringSig struct {
