@@ -263,8 +263,7 @@ func hasRootPrivilege() bool {
 
 func flagBoolean(name string, defaultVal bool, usage string) *bool {
 	if defaultVal == false {
-		// golang do not print default false value in useage, so we append it.
-		// for #4125
+		// Fix #4125, golang do not print default false value in useage, so we append it.
 		usage = fmt.Sprintf("%s (default false)", usage)
 		return flag.Bool(name, defaultVal, usage)
 	}
