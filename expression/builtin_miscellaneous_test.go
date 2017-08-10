@@ -45,14 +45,19 @@ func (s *testEvaluatorSuite) TestInetAton(c *C) {
 
 	dtbl := tblToDtbl(tbl)
 	fc := funcs[ast.InetAton]
-	for i, t := range dtbl {
+	for _, t := range dtbl {
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		d := types.NewDatum(tbl[i].Expected)
-		c.Assert(r, testutil.DatumEquals, types.NewIntDatum(d.GetInt64()))
+		c.Assert(r, testutil.DatumEquals, types.NewIntDatum(t["Expected"][0].GetInt64()))
 	}
+
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(r.IsNull(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
@@ -193,9 +198,9 @@ func (s *testEvaluatorSuite) TestInetNtoa(c *C) {
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
-	r, _, err := f.evalString(nil)
+	r, err := f.eval(nil)
 	c.Assert(err, IsNil)
-	c.Assert(r, Equals, "")
+	c.Assert(r.IsNull(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestInet6NtoA(c *C) {
