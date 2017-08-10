@@ -1360,6 +1360,12 @@ func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, 
 		dec.FromUint(d.GetMysqlEnum().Value)
 	case KindMysqlSet:
 		dec.FromUint(d.GetMysqlSet().Value)
+	case KindMysqlJSON:
+		f, err := d.GetMysqlJSON().CastToReal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		dec.FromFloat64(f)
 	default:
 		err = fmt.Errorf("can't convert %v to decimal", d.GetValue())
 	}
