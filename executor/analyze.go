@@ -73,7 +73,7 @@ func (e *AnalyzeExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next() (*Row, error) {
+func (e *AnalyzeExec) Next() (Row, error) {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
