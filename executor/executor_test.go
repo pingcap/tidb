@@ -1848,6 +1848,15 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 			c.Assert(len(list[4]), Equals, 12)
 		}
 	}
+	tk.MustQuery("select sleep(1);").Check(testkit.Rows("0"))
+	tk.MustQuery("select sleep(0);").Check(testkit.Rows("0"))
+	tk.MustQuery("select sleep('a');").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1265 Data Truncated"))
+	rs, err := tk.Exec("select sleep(-1);")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
 }
 func (s *testSuite) TestSchemaCheckerSQL(c *C) {
 	defer testleak.AfterTest(c)()
@@ -1923,7 +1932,7 @@ func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrp
 	c.mu.RLock()
 	turnOn := c.mu.turnOn
 	c.mu.RUnlock()
-	if !turnOn {
+	if turnOn {
 		switch req.Type {
 		case tikvrpc.CmdCop:
 			if c.priority != req.Priority {
@@ -1981,4 +1990,11 @@ func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
 	// cli.priority = pb.CommandPri_High
 	// tk.MustExec("delete from t where id = 2")
 	// tk.MustExec("update t set id = 2 where id = 1")
+
+	// Test priority specified by SQL statement.
+	cli.priority = pb.CommandPri_High
+	tk.MustQuery("select HIGH_PRIORITY * from t")
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
 }
