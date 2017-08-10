@@ -273,7 +273,7 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		manager = NewMockOwnerManager(id, cancelFunc)
 		syncer = NewMockSchemaSyncer()
 	} else {
-		manager = NewOwnerManager(etcdCli, id, cancelFunc)
+		manager = NewOwnerManager(etcdCli, id, DDLOwnerKey, cancelFunc)
 		syncer = NewSchemaSyncer(etcdCli, id)
 	}
 	d := &ddl{

@@ -575,6 +575,26 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 			}
 		}
 	}(do)
+	go func(do *Domain) {
+		id := do.ddl.OwnerManager().ID()
+		cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
+		var statsOwner ddl.OwnerManager
+		if do.etcdClient == nil {
+			statsOwner = ddl.NewMockOwnerManager(id, cancelFunc)
+		} else {
+			statsOwner = ddl.NewOwnerManager(do.etcdClient, id, statistics.StatsOwnerKey, cancelFunc)
+		}
+		statsOwner.CampaignOwners(cancelCtx)
+		for {
+			if statsOwner.IsOwner() {
+				err := do.statsHandle.HandleAutoAnalyze(do.InfoSchema())
+				if err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
+			}
+			time.Sleep(lease)
+		}
+	}(do)
 	return nil
 }
 

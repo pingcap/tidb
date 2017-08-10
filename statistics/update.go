@@ -16,10 +16,13 @@ package statistics
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -132,4 +135,57 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) err
 	}
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute("commit")
 	return errors.Trace(err)
+}
+
+// StatsOwnerKey is the stats owner path that is saved to etcd.
+const StatsOwnerKey = "/tidb/stats/owner"
+
+func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
+	if tbl.ModifyCount == 0 {
+		return false
+	}
+	t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
+	if time.Now().Sub(t) < limit {
+		return false
+	}
+	for _, col := range tbl.Columns {
+		if len(col.Buckets) > 0 {
+			return false
+		}
+	}
+	for _, idx := range tbl.Indices {
+		if len(idx.Buckets) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// HandleAutoAnalyze analyze the newly created table or index.
+func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
+	dbs := is.AllSchemas()
+	for _, db := range dbs {
+		for _, tbl := range db.Tables {
+			statsTbl := h.GetTableStats(tbl.ID)
+			if statsTbl.Pseudo || statsTbl.Count == 0 {
+				continue
+			}
+			tblName := db.Name.O + "." + tbl.Name.O
+			if needAnalyzeTable(statsTbl, 20*h.Lease) {
+				sql := fmt.Sprintf("analyze table %s", tblName)
+				log.Infof("[stats] auto analyze table %s now", tblName)
+				_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
+				return errors.Trace(err)
+			}
+			for _, idx := range tbl.Indices {
+				if _, ok := statsTbl.Indices[idx.ID]; !ok {
+					sql := fmt.Sprintf("analyze table %s index %s", tblName, idx.Name.O)
+					log.Infof("[stats] auto analyze index %s for table %s now", idx.Name.O, tblName)
+					_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
+					return errors.Trace(err)
+				}
+			}
+		}
+	}
+	return nil
 }

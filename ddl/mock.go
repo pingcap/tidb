@@ -28,37 +28,37 @@ var _ SchemaSyncer = &mockSchemaSyncer{}
 
 // mockOwnerManager represents the structure which is used for electing owner.
 // It's used for local store and testing.
-// So this worker will always be the ddl owner and background owner.
+// So this worker will always be the owner.
 type mockOwnerManager struct {
-	ddlOwner int32
-	ddlID    string // id is the ID of DDL.
-	cancel   goctx.CancelFunc
+	owner  int32
+	id     string // id is the ID of manager.
+	cancel goctx.CancelFunc
 }
 
 // NewMockOwnerManager creates a new mock OwnerManager.
 func NewMockOwnerManager(id string, cancel goctx.CancelFunc) OwnerManager {
 	return &mockOwnerManager{
-		ddlID:  id,
+		id:     id,
 		cancel: cancel,
 	}
 }
 
 // ID implements mockOwnerManager.ID interface.
 func (m *mockOwnerManager) ID() string {
-	return m.ddlID
+	return m.id
 }
 
 // IsOwner implements mockOwnerManager.IsOwner interface.
 func (m *mockOwnerManager) IsOwner() bool {
-	return atomic.LoadInt32(&m.ddlOwner) == 1
+	return atomic.LoadInt32(&m.owner) == 1
 }
 
 // SetOwner implements mockOwnerManager.SetOwner interface.
 func (m *mockOwnerManager) SetOwner(isOwner bool) {
 	if isOwner {
-		atomic.StoreInt32(&m.ddlOwner, 1)
+		atomic.StoreInt32(&m.owner, 1)
 	} else {
-		atomic.StoreInt32(&m.ddlOwner, 0)
+		atomic.StoreInt32(&m.owner, 0)
 	}
 }
 
@@ -68,10 +68,7 @@ func (m *mockOwnerManager) Cancel() {
 }
 
 // GetOwnerID implements OwnerManager.GetOwnerID interface.
-func (m *mockOwnerManager) GetOwnerID(ctx goctx.Context, key string) (string, error) {
-	if key != DDLOwnerKey {
-		return "", errors.New("invalid owner key")
-	}
+func (m *mockOwnerManager) GetOwnerID(ctx goctx.Context) (string, error) {
 	if m.IsOwner() {
 		return m.ID(), nil
 	}
