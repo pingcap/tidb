@@ -42,7 +42,12 @@ var (
 	_ builtinFunc = &builtinIsTrueOpSig{}
 	_ builtinFunc = &builtinUnaryOpSig{}
 	_ builtinFunc = &builtinUnaryMinusIntSig{}
-	_ builtinFunc = &builtinIsNullSig{}
+	_ builtinFunc = &builtinDecimalIsNullSig{}
+	_ builtinFunc = &builtinDurationIsNullSig{}
+	_ builtinFunc = &builtinIntIsNullSig{}
+	_ builtinFunc = &builtinRealIsNullSig{}
+	_ builtinFunc = &builtinStringIsNullSig{}
+	_ builtinFunc = &builtinTimeIsNullSig{}
 	_ builtinFunc = &builtinUnaryNotSig{}
 )
 
@@ -659,25 +664,113 @@ type isNullFunctionClass struct {
 }
 
 func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsNullSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinIsNullSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinIsNullSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
-func (b *builtinIsNullSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	tc := args[0].GetType().ToClass()
+	var argTp evalTp
+	switch tc {
+	case types.ClassInt:
+		argTp = tpInt
+	case types.ClassDecimal:
+		argTp = tpDecimal
+	case types.ClassReal:
+		argTp = tpReal
+	default:
+		tp := args[0].GetType().Tp
+		if types.IsTypeTime(tp) {
+			argTp = tpTime
+		} else if tp == mysql.TypeDuration {
+			argTp = tpDuration
+		} else {
+			argTp = tpString
+		}
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		d.SetInt64(1)
-	} else {
-		d.SetInt64(0)
+	bf.tp.Flen = 1
+	var sig builtinFunc
+	switch argTp {
+	case tpInt:
+		sig = &builtinIntIsNullSig{baseIntBuiltinFunc{bf}}
+	case tpDecimal:
+		sig = &builtinDecimalIsNullSig{baseIntBuiltinFunc{bf}}
+	case tpReal:
+		sig = &builtinRealIsNullSig{baseIntBuiltinFunc{bf}}
+	case tpTime:
+		sig = &builtinTimeIsNullSig{baseIntBuiltinFunc{bf}}
+	case tpDuration:
+		sig = &builtinDurationIsNullSig{baseIntBuiltinFunc{bf}}
+	case tpString:
+		sig = &builtinStringIsNullSig{baseIntBuiltinFunc{bf}}
+	default:
+		panic("unexpected evalTp")
 	}
-	return d, nil
+	return sig.setSelf(sig), nil
+}
+
+type builtinDecimalIsNullSig struct {
+	baseIntBuiltinFunc
+}
+
+func evalIsNull(isNull bool, err error) (int64, bool, error) {
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull {
+		return 1, false, nil
+	}
+	return 0, false, nil
+}
+
+func (b *builtinDecimalIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
+}
+
+type builtinDurationIsNullSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinDurationIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
+}
+
+type builtinIntIsNullSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinIntIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
+}
+
+type builtinRealIsNullSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinRealIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
+}
+
+type builtinStringIsNullSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinStringIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
+}
+
+type builtinTimeIsNullSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinTimeIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
 }

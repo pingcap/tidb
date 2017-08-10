@@ -1076,40 +1076,6 @@ func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 	c.Assert(f.isDeterministic(), IsTrue)
 }
 
-func (s *testEvaluatorSuite) TestRpad(c *C) {
-	tests := []struct {
-		str    string
-		len    int64
-		padStr string
-		expect interface{}
-	}{
-		{"hi", 5, "?", "hi???"},
-		{"hi", 1, "?", "h"},
-		{"hi", 0, "?", ""},
-		{"hi", -1, "?", nil},
-		{"hi", 1, "", "h"},
-		{"hi", 5, "", nil},
-		{"hi", 5, "ab", "hiaba"},
-		{"hi", 6, "ab", "hiabab"},
-	}
-	fc := funcs[ast.Rpad]
-	for _, test := range tests {
-		str := types.NewStringDatum(test.str)
-		length := types.NewIntDatum(test.len)
-		padStr := types.NewStringDatum(test.padStr)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, length, padStr}), s.ctx)
-		c.Assert(err, IsNil)
-		result, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		if test.expect == nil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
-		} else {
-			expect, _ := test.expect.(string)
-			c.Assert(result.GetString(), Equals, expect)
-		}
-	}
-}
-
 func (s *testEvaluatorSuite) TestBitLength(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
@@ -1298,6 +1264,44 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 		padStr := types.NewStringDatum(test.padStr)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, length, padStr}), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.expect == nil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestRpad(c *C) {
+	tests := []struct {
+		str    string
+		len    int64
+		padStr string
+		expect interface{}
+	}{
+		{"hi", 5, "?", "hi???"},
+		{"hi", 1, "?", "h"},
+		{"hi", 0, "?", ""},
+		{"hi", -1, "?", nil},
+		{"hi", 1, "", "h"},
+		{"hi", 5, "", nil},
+		{"hi", 5, "ab", "hiaba"},
+		{"hi", 6, "ab", "hiabab"},
+	}
+	fc := funcs[ast.Rpad]
+	for _, test := range tests {
+		str := types.NewStringDatum(test.str)
+		length := types.NewIntDatum(test.len)
+		padStr := types.NewStringDatum(test.padStr)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, length, padStr}), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
