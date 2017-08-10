@@ -851,6 +851,13 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(a as json), cast(b as json), cast(c as json), cast(d as json), cast(e as json) from t")
 	result.Check(testkit.Rows(`"12.3" 1.23 "2017-01-01 12:12:12.000000" "12:12:12.000000" 123`))
 
+	// for ISNULL
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, d char(10), e datetime, f float, g decimal(10, 3))")
+	tk.MustExec("insert t values (1, 0, null, null, null, null, null)")
+	result = tk.MustQuery("select ISNULL(a), ISNULL(b), ISNULL(c), ISNULL(d), ISNULL(e), ISNULL(f), ISNULL(g) from t")
+	result.Check(testkit.Rows("0 0 1 1 1 1 1"))
+
 	// fix issue #3942
 	result = tk.MustQuery("select cast('-24 100:00:00' as time);")
 	result.Check(testkit.Rows("-676:00:00"))
