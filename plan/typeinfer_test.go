@@ -77,6 +77,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4LogicalFuncs()...)
 	tests = append(tests, s.createTestCase4ControlFuncs()...)
 	tests = append(tests, s.createTestCase4Aggregations()...)
+	tests = append(tests, s.createTestCase4InfoFunc()...)
 	tests = append(tests, s.createTestCase4EncryptionFuncs()...)
 	tests = append(tests, s.createTestCase4Miscellaneous()...)
 
@@ -162,6 +163,15 @@ func (s *testPlanSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"tidb_version()", mysql.TypeVarString, charset.CharsetUTF8, 0, len(printer.GetTiDBInfo()), types.UnspecifiedLength},
 		{"password(c_char)", mysql.TypeVarString, charset.CharsetUTF8, 0, mysql.PWDHashLen + 1, types.UnspecifiedLength},
 
+		{"lpad('TiDB',   12,    'go'    )", mysql.TypeVarString, charset.CharsetUTF8, 0, 48, types.UnspecifiedLength},
+		{"lpad(c_binary, 12,    'go'    )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 12, types.UnspecifiedLength},
+		{"lpad(c_char,   c_int, c_binary)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
+		{"lpad(c_char,   c_int, c_char  )", mysql.TypeLongBlob, charset.CharsetUTF8, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
+		{"rpad('TiDB',   12,    'go'    )", mysql.TypeVarString, charset.CharsetUTF8, 0, 48, types.UnspecifiedLength},
+		{"rpad(c_binary, 12,    'go'    )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 12, types.UnspecifiedLength},
+		{"rpad(c_char,   c_int, c_binary)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
+		{"rpad(c_char,   c_int, c_char  )", mysql.TypeLongBlob, charset.CharsetUTF8, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
+
 		{"from_base64(c_int      )", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"from_base64(c_bigint   )", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"from_base64(c_float    )", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
@@ -244,6 +254,10 @@ func (s *testPlanSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"char(c_blob     , c_blob      using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
 		{"char(c_set      , c_set       using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
 		{"char(c_enum     , c_enum      using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
+
+		{"instr(c_char, c_binary)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"instr(c_char, c_char  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"instr(c_char, c_time  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 	}
 }
 
@@ -373,6 +387,13 @@ func (s *testPlanSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 func (s *testPlanSuite) createTestCase4Aggregations() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"sum(c_int)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
+	}
+}
+
+func (s *testPlanSuite) createTestCase4InfoFunc() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"last_insert_id()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
+		{"last_insert_id(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
 	}
 }
 

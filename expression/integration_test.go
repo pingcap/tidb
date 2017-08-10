@@ -86,6 +86,30 @@ func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
 	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
 }
 
+func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk.MustExec(`USE test;`)
+	tk.MustExec(`DROP TABLE IF EXISTS t;`)
+	tk.MustExec(`CREATE TABLE t(a BINARY(10), b CHAR(10));`)
+	tk.MustExec(`INSERT INTO t SELECT "中文", "abc";`)
+	result := tk.MustQuery(`SELECT LPAD(a, 11, "a"), LPAD(b, 2, "xx") FROM t;`)
+	result.Check(testkit.Rows("a中文\x00\x00\x00\x00 ab"))
+	result = tk.MustQuery(`SELECT RPAD(a, 11, "a"), RPAD(b, 2, "xx") FROM t;`)
+	result.Check(testkit.Rows("中文\x00\x00\x00\x00a ab"))
+	result = tk.MustQuery(`SELECT LPAD("中文", 5, "字符"), LPAD("中文", 1, "a");`)
+	result.Check(testkit.Rows("字符字中文 中"))
+	result = tk.MustQuery(`SELECT RPAD("中文", 5, "字符"), RPAD("中文", 1, "a");`)
+	result.Check(testkit.Rows("中文字符字 中"))
+	result = tk.MustQuery(`SELECT RPAD("中文", -5, "字符"), RPAD("中文", 10, "");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery(`SELECT LPAD("中文", -5, "字符"), LPAD("中文", 10, "");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+}
+
 func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -548,6 +572,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
 	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
 
+	// for bin
 	result = tk.MustQuery(`select bin(-1);`)
 	result.Check(testkit.Rows("1111111111111111111111111111111111111111111111111111111111111111"))
 	result = tk.MustQuery(`select bin(5);`)
@@ -567,6 +592,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select char_length(12.3456);`)
 	result.Check(testkit.Rows("7"))
 
+	// for instr
+	result = tk.MustQuery(`select instr("中国", "国"), instr("中国", ""), instr("abc", ""), instr("", ""), instr("", "abc");`)
+	result.Check(testkit.Rows("2 1 1 1 0"))
+	result = tk.MustQuery(`select instr("中国", null), instr(null, ""), instr(null, null);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a binary(20), b char(20));`)
+	tk.MustExec(`insert into t values("中国", cast("国" as binary)), ("中国", ""), ("abc", ""), ("", ""), ("", "abc");`)
+	result = tk.MustQuery(`select instr(a, b) from t;`)
+	result.Check(testkit.Rows("4", "1", "1", "1", "0"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
@@ -1098,6 +1133,32 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustQuery("select count(*) from t") // Test ProjectionExec
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_increment, a int, PRIMARY KEY (id))")
+	tk.MustExec("insert into t(a) values(1)")
+	result := tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t values(2, 1)")
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t(a) values(1)")
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("3"))
+
+	result = tk.MustQuery("select last_insert_id(5);")
+	result.Check(testkit.Rows("5"))
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("5"))
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
