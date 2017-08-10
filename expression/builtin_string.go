@@ -608,7 +608,7 @@ func (b *builtinReverseBinarySig) evalString(row []types.Datum) (string, bool, e
 		return "", true, errors.Trace(err)
 	}
 	reversed := reverseBytes([]byte(str))
-	return hack.String(reversed), false, nil
+	return string(reversed), false, nil
 }
 
 type builtinReverseSig struct {
