@@ -272,7 +272,7 @@ func (e *ExecuteExec) Build() error {
 	e.Stmt = prepared.Stmt
 	e.Plan = p
 	ResetStmtCtx(e.Ctx, e.Stmt)
-	stmtCount(e.Stmt, e.Plan)
+	stmtCount(e.Stmt, e.Plan, e.Ctx.GetSessionVars().InRestrictedSQL)
 	return nil
 }
 
