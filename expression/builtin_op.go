@@ -563,17 +563,13 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Cont
 	return tp, overflow
 }
 
-func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	err = b.verifyArgs(args)
-	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	argExpr, argExprTp := args[0], args[0].GetType()
-	retTp, intOverflow := b.typeInfer(argExpr, ctx)
+	retTp, intOverflow := c.typeInfer(argExpr, ctx)
 
 	var bf baseBuiltinFunc
 	switch argExpr.GetTypeClass() {
