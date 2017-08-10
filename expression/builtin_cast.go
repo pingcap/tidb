@@ -99,8 +99,11 @@ type castFunctionClass struct {
 }
 
 func (c *castFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinCastSig{newBaseBuiltinFunc(args, ctx), c.tp}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 // builtinCastSig is old built-in cast signature and will be removed later.
@@ -138,12 +141,15 @@ type castAsIntFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (b *castAsIntFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsIntFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf := baseIntBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
-	bf.tp = b.tp
+	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
-		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+		return sig.setSelf(sig), nil
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -162,7 +168,7 @@ func (b *castAsIntFunctionClass) getFunction(args []Expression, ctx context.Cont
 			sig = &builtinCastStringAsIntSig{bf}
 		}
 	}
-	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type castAsRealFunctionClass struct {
@@ -171,12 +177,15 @@ type castAsRealFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (b *castAsRealFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsRealFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf := baseRealBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
-	bf.tp = b.tp
+	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
-		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+		return sig.setSelf(sig), nil
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -195,7 +204,7 @@ func (b *castAsRealFunctionClass) getFunction(args []Expression, ctx context.Con
 			sig = &builtinCastStringAsRealSig{bf}
 		}
 	}
-	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type castAsDecimalFunctionClass struct {
@@ -204,12 +213,15 @@ type castAsDecimalFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (b *castAsDecimalFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsDecimalFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf := baseDecimalBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
-	bf.tp = b.tp
+	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
-		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+		return sig.setSelf(sig), nil
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -228,7 +240,7 @@ func (b *castAsDecimalFunctionClass) getFunction(args []Expression, ctx context.
 			sig = &builtinCastStringAsDecimalSig{bf}
 		}
 	}
-	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type castAsStringFunctionClass struct {
@@ -237,12 +249,15 @@ type castAsStringFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (b *castAsStringFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsStringFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
-	bf.tp = b.tp
+	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastStringAsStringSig{bf}
-		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+		return sig.setSelf(sig), nil
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -261,7 +276,7 @@ func (b *castAsStringFunctionClass) getFunction(args []Expression, ctx context.C
 			sig = &builtinCastStringAsStringSig{bf}
 		}
 	}
-	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type castAsTimeFunctionClass struct {
@@ -270,12 +285,15 @@ type castAsTimeFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (b *castAsTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf := baseTimeBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
-	bf.tp = b.tp
+	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastTimeAsTimeSig{bf}
-		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+		return sig.setSelf(sig), nil
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -294,7 +312,7 @@ func (b *castAsTimeFunctionClass) getFunction(args []Expression, ctx context.Con
 			sig = &builtinCastStringAsTimeSig{bf}
 		}
 	}
-	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type castAsDurationFunctionClass struct {
@@ -303,12 +321,15 @@ type castAsDurationFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (b *castAsDurationFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsDurationFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf := baseDurationBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
-	bf.tp = b.tp
+	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastDurationAsDurationSig{bf}
-		return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+		return sig.setSelf(sig), nil
 	}
 	switch args[0].GetTypeClass() {
 	case types.ClassInt:
@@ -327,7 +348,7 @@ func (b *castAsDurationFunctionClass) getFunction(args []Expression, ctx context
 			sig = &builtinCastStringAsDurationSig{bf}
 		}
 	}
-	return sig.setSelf(sig), errors.Trace(b.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCastIntAsIntSig struct {

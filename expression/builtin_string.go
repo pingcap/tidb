@@ -150,13 +150,16 @@ type lengthFunctionClass struct {
 }
 
 func (c *lengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = 10
 	sig := &builtinLengthSig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinLengthSig struct {
@@ -178,13 +181,16 @@ type asciiFunctionClass struct {
 }
 
 func (c *asciiFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = 3
 	sig := &builtinASCIISig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinASCIISig struct {
@@ -209,6 +215,9 @@ type concatFunctionClass struct {
 }
 
 func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	argTps := make([]evalTp, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		argTps = append(argTps, tpString)
@@ -231,7 +240,7 @@ func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 	sig := &builtinConcatSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinConcatSig struct {
@@ -256,6 +265,9 @@ type concatWSFunctionClass struct {
 }
 
 func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	argTps := make([]evalTp, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		argTps = append(argTps, tpString)
@@ -289,7 +301,7 @@ func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Conte
 	}
 
 	sig := &builtinConcatWSSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinConcatWSSig struct {
@@ -481,6 +493,9 @@ type repeatFunctionClass struct {
 }
 
 func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -488,7 +503,7 @@ func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context
 	bf.tp.Flen = mysql.MaxBlobWidth
 	setBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	sig := &builtinRepeatSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinRepeatSig struct {
@@ -526,6 +541,9 @@ type lowerFunctionClass struct {
 }
 
 func (c *lowerFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -534,7 +552,7 @@ func (c *lowerFunctionClass) getFunction(args []Expression, ctx context.Context)
 	bf.tp.Flen = argTp.Flen
 	setBinFlagOrBinStr(argTp, bf.tp)
 	sig := &builtinLowerSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinLowerSig struct {
@@ -561,8 +579,11 @@ type reverseFunctionClass struct {
 }
 
 func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinReverseSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinReverseSig struct {
@@ -595,13 +616,16 @@ type spaceFunctionClass struct {
 }
 
 func (c *spaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = mysql.MaxBlobWidth
 	sig := &builtinSpaceSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinSpaceSig struct {
@@ -631,6 +655,9 @@ type upperFunctionClass struct {
 }
 
 func (c *upperFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -639,7 +666,7 @@ func (c *upperFunctionClass) getFunction(args []Expression, ctx context.Context)
 	bf.tp.Flen = argTp.Flen
 	setBinFlagOrBinStr(argTp, bf.tp)
 	sig := &builtinUpperSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinUpperSig struct {
@@ -666,6 +693,9 @@ type strcmpFunctionClass struct {
 }
 
 func (c *strcmpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -673,7 +703,7 @@ func (c *strcmpFunctionClass) getFunction(args []Expression, ctx context.Context
 	bf.tp.Flen = 2
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinStrcmpSig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinStrcmpSig struct {
@@ -707,6 +737,9 @@ type replaceFunctionClass struct {
 }
 
 func (c *replaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -716,7 +749,7 @@ func (c *replaceFunctionClass) getFunction(args []Expression, ctx context.Contex
 		setBinFlagOrBinStr(a.GetType(), bf.tp)
 	}
 	sig := &builtinReplaceSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 // fixLength calculate the Flen of the return type.
@@ -763,8 +796,11 @@ type convertFunctionClass struct {
 }
 
 func (c *convertFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinConvertSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinConvertSig struct {
@@ -985,6 +1021,9 @@ type substringIndexFunctionClass struct {
 }
 
 func (c *substringIndexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -993,7 +1032,7 @@ func (c *substringIndexFunctionClass) getFunction(args []Expression, ctx context
 	bf.tp.Flen = argType.Flen
 	setBinFlagOrBinStr(argType, bf.tp)
 	sig := &builtinSubstringIndexSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinSubstringIndexSig struct {
@@ -1047,8 +1086,11 @@ type locateFunctionClass struct {
 }
 
 func (c *locateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinLocateSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinLocateSig struct {
@@ -1193,6 +1235,9 @@ type unhexFunctionClass struct {
 }
 
 func (c *unhexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	var retFlen int
 
 	if err := c.verifyArgs(args); err != nil {
@@ -1475,8 +1520,11 @@ type rpadFunctionClass struct {
 }
 
 func (c *rpadFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinRpadSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinRpadSig struct {
@@ -1527,13 +1575,16 @@ type bitLengthFunctionClass struct {
 }
 
 func (c *bitLengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = 10
 	sig := &builtinBitLengthSig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinBitLengthSig struct {
@@ -1675,8 +1726,11 @@ type findInSetFunctionClass struct {
 }
 
 func (c *findInSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinFindInSetSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinFindInSetSig struct {
@@ -1725,8 +1779,11 @@ type fieldFunctionClass struct {
 }
 
 func (c *fieldFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinFieldSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinFieldSig struct {
@@ -1810,8 +1867,11 @@ type makeSetFunctionClass struct {
 }
 
 func (c *makeSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinMakeSetSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinMakeSetSig struct {
@@ -1862,8 +1922,11 @@ type octFunctionClass struct {
 }
 
 func (c *octFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinOctSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinOctSig struct {
@@ -1924,13 +1987,16 @@ type ordFunctionClass struct {
 }
 
 func (c *ordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = 10
 	sig := &builtinOrdSig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinOrdSig struct {
@@ -1965,8 +2031,11 @@ type quoteFunctionClass struct {
 }
 
 func (c *quoteFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinQuoteSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinQuoteSig struct {
@@ -2049,8 +2118,11 @@ type eltFunctionClass struct {
 }
 
 func (c *eltFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinEltSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinEltSig struct {
@@ -2089,8 +2161,11 @@ type exportSetFunctionClass struct {
 }
 
 func (c *exportSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinExportSetSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinExportSetSig struct {
@@ -2164,8 +2239,11 @@ type formatFunctionClass struct {
 }
 
 func (c *formatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinFormatSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinFormatSig struct {
@@ -2255,13 +2333,16 @@ type toBase64FunctionClass struct {
 }
 
 func (c *toBase64FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
 	sig := &builtinToBase64Sig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinToBase64Sig struct {
@@ -2333,8 +2414,11 @@ type insertFuncFunctionClass struct {
 }
 
 func (c *insertFuncFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinInsertFuncSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinInsertFuncSig struct {
@@ -2396,8 +2480,11 @@ type instrFunctionClass struct {
 }
 
 func (c *instrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinInstrSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinInstrSig struct {
@@ -2455,8 +2542,11 @@ type loadFileFunctionClass struct {
 }
 
 func (c *loadFileFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinLoadFileSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinLoadFileSig struct {
@@ -2474,8 +2564,11 @@ type lpadFunctionClass struct {
 }
 
 func (c *lpadFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinLpadSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinLpadSig struct {

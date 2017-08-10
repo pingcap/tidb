@@ -348,8 +348,11 @@ type isTrueOpFunctionClass struct {
 }
 
 func (c *isTrueOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinIsTrueOpSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinIsTrueOpSig struct {
@@ -414,8 +417,11 @@ type unaryOpFunctionClass struct {
 }
 
 func (c *unaryOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinUnaryOpSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinUnaryOpSig struct {
@@ -558,6 +564,9 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Cont
 }
 
 func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	err = b.verifyArgs(args)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -659,8 +668,11 @@ type isNullFunctionClass struct {
 }
 
 func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinIsNullSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinIsNullSig struct {
