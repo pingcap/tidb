@@ -210,8 +210,8 @@ const (
 	BitLength       = "bit_length"
 	CharFunc        = "char_func"
 	CharLength      = "char_length"
-	FindInSet       = "find_in_set"
 	CharacterLength = "character_length"
+	FindInSet       = "find_in_set"
 
 	// information functions
 	Benchmark    = "benchmark"
