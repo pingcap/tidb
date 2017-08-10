@@ -553,6 +553,11 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select char_length(12.3456);`)
 	result.Check(testkit.Rows("7"))
 
+	// for elt
+	result = tk.MustQuery(`select elt(0, "abc", "def"), elt(2, "hello", "中文", "tidb"), elt(4, "hello", "中文",
+	"tidb");`)
+	result.Check(testkit.Rows("<nil> 中文 <nil>"))
+
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
