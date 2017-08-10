@@ -100,7 +100,7 @@ func fromHex(str interface{}) (d types.Datum) {
 	return d
 }
 
-var shaTests = []struct {
+var sha1Tests = []struct {
 	origin interface{}
 	crypt  string
 }{
@@ -112,10 +112,10 @@ var shaTests = []struct {
 	{123.45, "22f8b438ad7e89300b51d88684f3f0b9fa1d7a32"},
 }
 
-func (s *testEvaluatorSuite) TestShaEncrypt(c *C) {
+func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.SHA]
-	for _, tt := range shaTests {
+	for _, tt := range sha1Tests {
 		in := types.NewDatum(tt.origin)
 		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
 		crypt, err := f.eval(nil)
@@ -153,7 +153,7 @@ var sha2Tests = []struct {
 	{"pingcap", 123, nil, false},
 }
 
-func (s *testEvaluatorSuite) TestSha2Encrypt(c *C) {
+func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.SHA2]
 	for _, tt := range sha2Tests {
@@ -172,7 +172,7 @@ func (s *testEvaluatorSuite) TestSha2Encrypt(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestMD5(c *C) {
+func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
 	defer testleak.AfterTest(c)()
 
 	cases := []struct {
