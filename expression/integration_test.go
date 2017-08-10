@@ -86,6 +86,30 @@ func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
 	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
 }
 
+func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk.MustExec(`USE test;`)
+	tk.MustExec(`DROP TABLE IF EXISTS t;`)
+	tk.MustExec(`CREATE TABLE t(a BINARY(10), b CHAR(10));`)
+	tk.MustExec(`INSERT INTO t SELECT "中文", "abc";`)
+	result := tk.MustQuery(`SELECT LPAD(a, 11, "a"), LPAD(b, 2, "xx") FROM t;`)
+	result.Check(testkit.Rows("a中文\x00\x00\x00\x00 ab"))
+	result = tk.MustQuery(`SELECT RPAD(a, 11, "a"), RPAD(b, 2, "xx") FROM t;`)
+	result.Check(testkit.Rows("中文\x00\x00\x00\x00a ab"))
+	result = tk.MustQuery(`SELECT LPAD("中文", 5, "字符"), LPAD("中文", 1, "a");`)
+	result.Check(testkit.Rows("字符字中文 中"))
+	result = tk.MustQuery(`SELECT RPAD("中文", 5, "字符"), RPAD("中文", 1, "a");`)
+	result.Check(testkit.Rows("中文字符字 中"))
+	result = tk.MustQuery(`SELECT RPAD("中文", -5, "字符"), RPAD("中文", 10, "");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery(`SELECT LPAD("中文", -5, "字符"), LPAD("中文", 10, "");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+}
+
 func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
