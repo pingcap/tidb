@@ -252,6 +252,7 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	mustExec(c, se, `CREATE USER 'u1'@'localhost';`)
 	mustExec(c, se, `CREATE USER 'u2'@'localhost' identified by 'abc';`)
 	mustExec(c, se, `CREATE USER 'u3@example.com'@'localhost';`)
+	mustExec(c, se, `CREATE USER u4@localhost;`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil), IsFalse)
@@ -259,16 +260,19 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	authentication := []byte{24, 180, 183, 225, 166, 6, 81, 102, 70, 248, 199, 143, 91, 204, 169, 9, 161, 171, 203, 33}
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, authentication, salt), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil), IsTrue)
 
 	se1 := newSession(c, s.store, s.dbName)
 	mustExec(c, se1, "drop user 'u1'@'localhost'")
 	mustExec(c, se1, "drop user 'u2'@'localhost'")
 	mustExec(c, se1, "drop user 'u3@example.com'@'localhost'")
+	mustExec(c, se1, "drop user u4@localhost")
 	mustExec(c, se1, `FLUSH PRIVILEGES;`)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil), IsFalse)
 }
 
 func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
