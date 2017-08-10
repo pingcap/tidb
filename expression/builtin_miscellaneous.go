@@ -253,15 +253,12 @@ type builtinInetAtonSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-aton
 func (b *builtinInetAtonSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-	if isNull {
-		return 0, true, nil
+	if err != nil || isNull {
+		return 0, true, errors.Trace(err)
 	}
 	// ip address should not end with '.'.
 	if len(val) == 0 || val[len(val)-1] == '.' {
-		return 0, false, nil
+		return 0, true, nil
 	}
 
 	var (
@@ -273,17 +270,17 @@ func (b *builtinInetAtonSig) evalInt(row []types.Datum) (int64, bool, error) {
 			digit := uint64(c - '0')
 			byteResult = byteResult*10 + digit
 			if byteResult > 255 {
-				return 0, false, nil
+				return 0, true, nil
 			}
 		} else if c == '.' {
 			dotCount++
 			if dotCount > 3 {
-				return 0, false, nil
+				return 0, true, nil
 			}
 			result = (result << 8) + byteResult
 			byteResult = 0
 		} else {
-			return 0, false, nil
+			return 0, true, nil
 		}
 	}
 	// 127 		-> 0.0.0.127
@@ -326,24 +323,20 @@ type builtinInetNtoaSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-ntoa
 func (b *builtinInetNtoaSig) evalString(row []types.Datum) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return "", isNull, errors.Trace(err)
-	}
-
-	if isNull {
-		return "", true, nil
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
 	}
 
 	if val < 0 || uint64(val) > math.MaxUint32 {
 		//not an IPv4 address.
-		return "", false, nil
+		return "", true, nil
 	}
 	ip := make(net.IP, net.IPv4len)
 	binary.BigEndian.PutUint32(ip, uint32(val))
 	ipv4 := ip.To4()
 	if ipv4 == nil {
 		//Not a vaild ipv4 address.
-		return "", false, nil
+		return "", true, nil
 	}
 
 	return ipv4.String(), false, nil
@@ -377,20 +370,17 @@ type builtinInet6AtonSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
 func (b *builtinInet6AtonSig) evalString(row []types.Datum) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return "", isNull, errors.Trace(err)
-	}
-	if isNull {
-		return "", true, nil
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
 	}
 
 	if len(val) == 0 {
-		return "", false, nil
+		return "", true, nil
 	}
 
 	ip := net.ParseIP(val)
 	if ip == nil {
-		return "", false, nil
+		return "", true, nil
 	}
 
 	var isMappedIpv6 bool
@@ -445,11 +435,8 @@ type builtinInet6NtoaSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
 func (b *builtinInet6NtoaSig) evalString(row []types.Datum) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return "", isNull, errors.Trace(err)
-	}
-	if isNull {
-		return "", true, nil
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
 	}
 	ip := net.IP([]byte(val)).String()
 	if len(val) == net.IPv6len && !strings.Contains(ip, ":") {
@@ -457,7 +444,7 @@ func (b *builtinInet6NtoaSig) evalString(row []types.Datum) (string, bool, error
 	}
 
 	if net.ParseIP(ip) == nil {
-		return "", false, nil
+		return "", true, nil
 	}
 
 	return ip, false, nil

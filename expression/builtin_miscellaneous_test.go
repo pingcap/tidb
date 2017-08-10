@@ -29,6 +29,7 @@ func (s *testEvaluatorSuite) TestInetAton(c *C) {
 		Input    interface{}
 		Expected interface{}
 	}{
+		{nil, nil},
 		{"", nil},
 		{"255.255.255.255", 4294967295},
 		{"0.0.0.0", 0},
@@ -50,14 +51,8 @@ func (s *testEvaluatorSuite) TestInetAton(c *C) {
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewIntDatum(t["Expected"][0].GetInt64()))
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
 	}
-
-	var argNull types.Datum
-	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
-	r, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(r.IsNull(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
@@ -192,8 +187,7 @@ func (s *testEvaluatorSuite) TestInetNtoa(c *C) {
 		c.Assert(err, IsNil)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		d := types.NewDatum(test.expect)
-		c.Assert(result, testutil.DatumEquals, types.NewStringDatum(d.GetString()))
+		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 
 	var argNull types.Datum
@@ -230,8 +224,7 @@ func (s *testEvaluatorSuite) TestInet6NtoA(c *C) {
 		c.Assert(err, IsNil)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		d := types.NewDatum(test.expect)
-		c.Assert(result, testutil.DatumEquals, types.NewStringDatum(d.GetString()))
+		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 
 	var argNull types.Datum
@@ -261,8 +254,7 @@ func (s *testEvaluatorSuite) TestInet6AtoN(c *C) {
 		c.Assert(err, IsNil)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		d := types.NewDatum(test.expect)
-		c.Assert(result, testutil.DatumEquals, types.NewStringDatum(d.GetString()))
+		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 
 	var argNull types.Datum
