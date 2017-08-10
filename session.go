@@ -1068,7 +1068,7 @@ func finishBootstrap(store kv.Storage) {
 }
 
 const quoteCommaQuote = "', '"
-const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where variable_name in ('" +
+const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" +
 	variable.AutocommitVar + quoteCommaQuote +
 	variable.SQLModeVar + quoteCommaQuote +
 	variable.MaxAllowedPacket + quoteCommaQuote +
