@@ -1477,6 +1477,9 @@ func trimRight(str, remstr string) string {
 func getFlen4LpadAndRpad(sc *variable.StatementContext, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		length, isNull, err := constant.EvalInt(nil, sc)
+		if err != nil {
+			log.Errorf("getFlen4LpadAndRpad with error: %v", err.Error())
+		}
 		if isNull || err != nil || length > mysql.MaxBlobWidth {
 			return mysql.MaxBlobWidth
 		}
