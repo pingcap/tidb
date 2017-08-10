@@ -465,7 +465,7 @@ type builtinIsIPv4Sig struct {
 func (b *builtinIsIPv4Sig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return int64(0), isNull, errors.Trace(err)
+		return int64(0), false, errors.Trace(err)
 	}
 	// isIPv4(str)
 	// args[0] string
@@ -546,7 +546,7 @@ type builtinIsIPv4PrefixedSig struct {
 func (b *builtinIsIPv4PrefixedSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return int64(0), isNull, errors.Trace(err)
+		return int64(0), false, errors.Trace(err)
 	}
 	var (
 		prefixMapped = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
@@ -596,7 +596,7 @@ type builtinIsIPv6Sig struct {
 func (b *builtinIsIPv6Sig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return int64(0), isNull, errors.Trace(err)
+		return int64(0), false, errors.Trace(err)
 	}
 	ip := net.ParseIP(val)
 	if ip != nil && !isIPv4(val) {
