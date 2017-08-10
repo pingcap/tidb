@@ -79,6 +79,9 @@ var distFuncs = map[tipb.ExprType]string{
 	tipb.ExprType_JsonSet:     ast.JSONSet,
 	tipb.ExprType_JsonInsert:  ast.JSONInsert,
 	tipb.ExprType_JsonReplace: ast.JSONReplace,
+	tipb.ExprType_JsonRemove:  ast.JSONRemove,
+	tipb.ExprType_JsonArray:   ast.JSONArray,
+	tipb.ExprType_JsonObject:  ast.JSONObject,
 }
 
 // newDistSQLFunction only creates function for mock-tikv.
