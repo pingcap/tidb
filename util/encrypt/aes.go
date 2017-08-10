@@ -85,21 +85,37 @@ func newECBDecrypter(b cipher.Block) cipher.BlockMode {
 	return (*ecbDecrypter)(newECB(b))
 }
 
-// pkcs7Padding pads data using PKCS7.
-// See https://en.wikipedia.org/wiki/Padding_(cryptography)#PKCS7
-func pkcs7Padding(ciphertext []byte, blockSize int) []byte {
-	// The bytes need to padding.
-	padding := blockSize - len(ciphertext)%blockSize
-	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
-	return append(ciphertext, padtext...)
+// PKCS7Pad pads data using PKCS7.
+// See hhttp://tools.ietf.org/html/rfc2315.
+func PKCS7Pad(data []byte, blockSize int) ([]byte, error) {
+	length := len(data)
+	padLen := blockSize - (length % blockSize)
+	padText := bytes.Repeat([]byte{byte(padLen)}, padLen)
+	return append(data, padText...), nil
 }
 
-// pkcs5UnPadding unPads data using PKCS7.
-// See https://en.wikipedia.org/wiki/Padding_(cryptography)#PKCS7
-func pkcs5UnPadding(origData []byte) []byte {
-	length := len(origData)
-	unpadding := int(origData[length-1])
-	return origData[:(length - unpadding)]
+// PKCS7Unpad unpads data using PKCS7.
+// See http://tools.ietf.org/html/rfc2315.
+func PKCS7Unpad(data []byte, blockSize int) ([]byte, error) {
+	length := len(data)
+	if length == 0 {
+		return nil, errors.New("Invalid padding size")
+	}
+	if length%blockSize != 0 {
+		return nil, errors.New("Invalid padding size")
+	}
+	pad := data[length-1]
+	padLen := int(pad)
+	if padLen > blockSize || padLen == 0 {
+		return nil, errors.New("Invalid padding size")
+	}
+	// TODO: Fix timing attack here.
+	for _, v := range data[length-padLen : length-1] {
+		if v != pad {
+			return nil, errors.New("Invalid padding")
+		}
+	}
+	return data[:length-padLen], nil
 }
 
 // AESEncryptWithECB encrypts data using AES with ECB mode.
@@ -112,7 +128,10 @@ func AESEncryptWithECB(str, key []byte) ([]byte, error) {
 	// The str arguments can be any length, and padding is automatically added to
 	// str so it is a multiple of a block as required by block-based algorithms such as AES.
 	// This padding is automatically removed by the AES_DECRYPT() function.
-	data := pkcs7Padding(str, blockSize)
+	data, err := PKCS7Pad(str, blockSize)
+	if err != nil {
+		return nil, err
+	}
 	crypted := make([]byte, len(data))
 	ecb := newECBEncrypter(cb)
 	ecb.CryptBlocks(crypted, data)
@@ -125,9 +144,31 @@ func AESDecryptWithECB(cryptStr, key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	blockSize := cb.BlockSize()
+	if len(cryptStr)%blockSize != 0 {
+		return nil, errors.New("Corrupted data")
+	}
 	mode := newECBDecrypter(cb)
 	data := make([]byte, len(cryptStr))
 	mode.CryptBlocks(data, cryptStr)
-	d := pkcs5UnPadding(data)
-	return d, nil
+	plain, err := PKCS7Unpad(data, blockSize)
+	if err != nil {
+		return nil, err
+	}
+	return plain, nil
+}
+
+// DeriveKeyMySQL derives the encryption key from a password in MySQL algorithm.
+// See https://security.stackexchange.com/questions/4863/mysql-aes-encrypt-key-length.
+func DeriveKeyMySQL(key []byte, blockSize int) []byte {
+	rKey := make([]byte, blockSize)
+	rIdx := 0
+	for _, k := range key {
+		if rIdx == blockSize {
+			rIdx = 0
+		}
+		rKey[rIdx] ^= k
+		rIdx++
+	}
+	return rKey
 }
