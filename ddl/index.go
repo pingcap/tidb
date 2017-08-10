@@ -357,16 +357,6 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		err = d.runReorgJob(job, func() error {
-			return d.dropTableIndex(indexInfo, job)
-		})
-		if err != nil {
-			// If the timeout happens, we should return.
-			// Then check for the owner and re-wait job to finish.
-			return ver, errors.Trace(filterError(err, errWaitReorgTimeout))
-		}
-
-		// All reorganization jobs are done, drop this index.
 		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 		for _, idx := range tblInfo.Indices {
 			if idx.Name.L != indexName.L {
@@ -390,6 +380,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.State = model.JobDone
 		}
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		job.Args = append(job.Args, indexInfo.ID)
 		d.asyncNotifyEvent(&Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
@@ -646,7 +637,7 @@ func (d *ddl) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, st
 	ret := new(taskResult)
 	handleInfo := &handleInfo{startHandle: startHandle}
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		err1 := d.isReorgRunnable(txn, ddlJobFlag)
+		err1 := d.isReorgRunnable(txn)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -700,14 +691,6 @@ func (d *ddl) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, taskOp
 		}
 	}
 	return taskRet
-}
-
-func (d *ddl) dropTableIndex(indexInfo *model.IndexInfo, job *model.Job) error {
-	startKey := tablecodec.EncodeTableIndexPrefix(job.TableID, indexInfo.ID)
-	// It's asynchronous so it doesn't need to consider if it completes.
-	deleteAll := -1
-	_, _, err := d.delKeysWithStartKey(startKey, startKey, ddlJobFlag, job, deleteAll)
-	return errors.Trace(err)
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
