@@ -58,8 +58,7 @@ import (
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts
+	mysql.ClientMultiResults | mysql.ClientLocalFiles | mysql.ClientConnectAtts
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
