@@ -392,8 +392,11 @@ func (s *builtinArithmeticMultiplyRealSig) evalReal(row []types.Datum) (float64,
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	// TODO: How to check a * b overflow ?
-	return a * b, false, nil
+	result := a * b
+	if math.IsInf(result, 1) || math.IsInf(result, -1) {
+		return 0, true, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("(%s * %s)", s.args[0].String(), s.args[1].String()))
+	}
+	return result, false, nil
 }
 
 func (s *builtinArithmeticMultiplyDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
