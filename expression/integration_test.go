@@ -564,9 +564,9 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	// for reverse
 	tk.MustExec(`DROP TABLE IF EXISTS t;`)
 	tk.MustExec(`CREATE TABLE t(a BINARY(6));`)
-	tk.MustExec(`INSERT INTO t VALUES("abcdef");`)
+	tk.MustExec(`INSERT INTO t VALUES("中文");`)
 	result = tk.MustQuery(`SELECT a, REVERSE(a), REVERSE("中文"), REVERSE("123 ") FROM t;`)
-	result.Check(testkit.Rows("abcdef fedcba 文中  321"))
+	result.Check(testkit.Rows("中文 \x87\x96歸\xe4 文中  321"))
 	result = tk.MustQuery(`SELECT REVERSE(123), REVERSE(12.09) FROM t;`)
 	result.Check(testkit.Rows("321 90.21"))
 
