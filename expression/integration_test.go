@@ -572,6 +572,27 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
 	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
 
+	// for locate
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time, f binary(5))")
+	tk.MustExec(`insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01", "HelLo")`)
+	result = tk.MustQuery(`select locate(".ping", a), locate(".ping", a, 5) from t`)
+	result.Check(testkit.Rows("4 0"))
+	result = tk.MustQuery(`select locate("234", b), locate("235", b, 10) from t`)
+	result.Check(testkit.Rows("2 0"))
+	result = tk.MustQuery(`select locate(".45", c), locate(".35", b) from t`)
+	result.Check(testkit.Rows("4 0"))
+	result = tk.MustQuery(`select locate("El", f), locate("ll", f), locate("lL", f), locate("Lo", f), locate("lo", f) from t`)
+	result.Check(testkit.Rows("0 0 3 4 0"))
+	result = tk.MustQuery(`select locate("01 12", d) from t`)
+	result.Check(testkit.Rows("9"))
+	result = tk.MustQuery(`select locate("文", "中文字符串", 2)`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`select locate("文", "中文字符串", 3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select locate("文", "中文字符串")`)
+	result.Check(testkit.Rows("2"))
+
 	// for bin
 	result = tk.MustQuery(`select bin(-1);`)
 	result.Check(testkit.Rows("1111111111111111111111111111111111111111111111111111111111111111"))
