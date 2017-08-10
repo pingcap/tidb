@@ -265,36 +265,6 @@ func (b *builtinEncryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ENCRYPT")
 }
 
-type md5FunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *md5FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	bf.tp.Flen = 32
-	sig := &builtinMD5Sig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinMD5Sig struct {
-	baseStringBuiltinFunc
-}
-
-// evalString evals a builtinMD5Sig.
-// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_md5
-func (b *builtinMD5Sig) evalString(row []types.Datum) (string, bool, error) {
-	arg, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
-	}
-	sum := md5.Sum([]byte(arg))
-	hexStr := fmt.Sprintf("%x", sum)
-	return hexStr, false, nil
-}
-
 type oldPasswordFunctionClass struct {
 	baseFunctionClass
 }
@@ -386,41 +356,71 @@ func (b *builtinRandomBytesSig) eval(row []types.Datum) (d types.Datum, err erro
 	return d, nil
 }
 
+type md5FunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *md5FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 32
+	sig := &builtinMD5Sig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinMD5Sig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinMD5Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_md5
+func (b *builtinMD5Sig) evalString(row []types.Datum) (string, bool, error) {
+	arg, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	sum := md5.Sum([]byte(arg))
+	hexStr := fmt.Sprintf("%x", sum)
+	return hexStr, false, nil
+}
+
 type sha1FunctionClass struct {
 	baseFunctionClass
 }
 
 func (c *sha1FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinSHA1Sig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 40
+	sig := &builtinSHA1Sig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinSHA1Sig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinSHA1Sig.
+// evalString evals SHA1(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha1
 // The value is returned as a string of 40 hexadecimal digits, or NULL if the argument was NULL.
-func (b *builtinSHA1Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// SHA/SHA1 function only accept 1 parameter
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-	bin, err := arg.ToBytes()
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinSHA1Sig) evalString(row []types.Datum) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
 	hasher := sha1.New()
-	hasher.Write(bin)
-	data := fmt.Sprintf("%x", hasher.Sum(nil))
-	d.SetString(data)
-	return d, nil
+	hasher.Write([]byte(str))
+	return fmt.Sprintf("%x", hasher.Sum(nil)), false, nil
 }
 
 type sha2FunctionClass struct {
@@ -428,12 +428,20 @@ type sha2FunctionClass struct {
 }
 
 func (c *sha2FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinSHA2Sig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 128 // sha512
+	sig := &builtinSHA2Sig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinSHA2Sig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // Supported hash length of SHA-2 family
@@ -445,28 +453,16 @@ const (
 	SHA512 int = 512
 )
 
-// eval evals a builtinSHA2Sig.
+// evalString evals SHA2(str, hash_length).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha2
-func (b *builtinSHA2Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinSHA2Sig) evalString(row []types.Datum) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	for _, arg := range args {
-		if arg.IsNull() {
-			return d, nil
-		}
-	}
-	// Meaning of each argument:
-	// args[0]: the cleartext string to be hashed
-	// args[1]: desired bit length of result
-	bin, err := args[0].ToBytes()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	hashLength, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
+	hashLength, isNull, err := b.args[1].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
 	var hasher hash.Hash
 	switch int(hashLength) {
@@ -479,12 +475,12 @@ func (b *builtinSHA2Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	case SHA512:
 		hasher = sha512.New()
 	}
-	if hasher != nil {
-		hasher.Write(bin)
-		data := fmt.Sprintf("%x", hasher.Sum(nil))
-		d.SetString(data)
+	if hasher == nil {
+		return "", true, nil
 	}
-	return d, nil
+
+	hasher.Write([]byte(str))
+	return fmt.Sprintf("%x", hasher.Sum(nil)), false, nil
 }
 
 // deflate compresses a string using the DEFLATE format.
