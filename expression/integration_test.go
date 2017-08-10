@@ -597,6 +597,43 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 	result.Check(testkit.Rows("foo"))
 	result = tk.MustQuery("select AES_DECRYPT(UNHEX('45ABDD5C4802EFA6771A94C43F805208'), 'foobar'), AES_DECRYPT(UNHEX('791F1AEB6A6B796E6352BF381895CA0E'), 'foobar'), AES_DECRYPT(UNHEX('D0147E2EB856186F146D9F6DE33F9546'), 'foobar'), AES_DECRYPT(NULL, 'foobar'), AES_DECRYPT('SOME_THING_STRANGE', 'foobar')")
 	result.Check(testkit.Rows(`123  你好 <nil> <nil>`))
+
+	// for COMPRESS
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1(a VARCHAR(1000));")
+	tk.MustExec("INSERT INTO t1 VALUES('12345'), ('23456');")
+	result = tk.MustQuery("SELECT HEX(COMPRESS(a)) FROM t1;")
+	result.Check(testkit.Rows("05000000789C323432363105040000FFFF02F80100", "05000000789C323236313503040000FFFF03070105"))
+	tk.MustExec("DROP TABLE IF EXISTS t2;")
+	tk.MustExec("CREATE TABLE t2(a VARCHAR(1000), b VARBINARY(1000));")
+	tk.MustExec("INSERT INTO t2 (a, b) SELECT a, COMPRESS(a) from t1;")
+	result = tk.MustQuery("SELECT a, HEX(b) FROM t2;")
+	result.Check(testkit.Rows("12345 05000000789C323432363105040000FFFF02F80100", "23456 05000000789C323236313503040000FFFF03070105"))
+
+	// for UNCOMPRESS
+	result = tk.MustQuery("SELECT UNCOMPRESS(COMPRESS('123'))")
+	result.Check(testkit.Rows("123"))
+	result = tk.MustQuery("SELECT UNCOMPRESS(UNHEX('03000000789C3334320600012D0097'))")
+	result.Check(testkit.Rows("123"))
+	result = tk.MustQuery("SELECT UNCOMPRESS(UNHEX('03000000789C32343206040000FFFF012D0097'))")
+	result.Check(testkit.Rows("123"))
+	tk.MustExec("INSERT INTO t2 VALUES ('12345', UNHEX('05000000789C3334323631050002F80100'))")
+	result = tk.MustQuery("SELECT UNCOMPRESS(a), UNCOMPRESS(b) FROM t2;")
+	result.Check(testkit.Rows("<nil> 12345", "<nil> 23456", "<nil> 12345"))
+
+	// for UNCOMPRESSED_LENGTH
+	result = tk.MustQuery("SELECT UNCOMPRESSED_LENGTH(COMPRESS('123'))")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("SELECT UNCOMPRESSED_LENGTH(UNHEX('03000000789C3334320600012D0097'))")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("SELECT UNCOMPRESSED_LENGTH(UNHEX('03000000789C32343206040000FFFF012D0097'))")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("SELECT UNCOMPRESSED_LENGTH('')")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT UNCOMPRESSED_LENGTH(UNHEX('0100'))")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT UNCOMPRESSED_LENGTH(a), UNCOMPRESSED_LENGTH(b) FROM t2;")
+	result.Check(testkit.Rows("875770417 5", "892613426 5", "875770417 5"))
 }
 
 func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
