@@ -47,9 +47,10 @@ func init() {
 	prometheus.MustRegister(expensiveQueryCounter)
 }
 
-func stmtCount(node ast.StmtNode, p plan.Plan) bool {
+func stmtCount(node ast.StmtNode, p plan.Plan, inRestrictedSQL bool) bool {
 	var isExpensive bool
-	if stmtLabel := StatementLabel(node, p, &isExpensive); stmtLabel != IGNORE {
+	stmtLabel := StatementLabel(node, p, &isExpensive)
+	if !inRestrictedSQL && stmtLabel != IGNORE {
 		stmtNodeCounter.WithLabelValues(stmtLabel).Inc()
 	}
 	return isExpensive
@@ -252,12 +253,25 @@ func (pa *stmtAttributes) fromPlan(p plan.Plan) {
 		if len(x.AccessCondition) > 0 {
 			pa.hasRange = true
 		}
-		if x.DoubleRead {
-			pa.hasIndexDouble = true
-		}
 		pa.setIsSystemTable(x.DBName)
 	case *plan.PhysicalHashSemiJoin:
 		pa.hasJoin = true
+	case *plan.PhysicalTableReader:
+		for _, child := range x.TablePlans {
+			pa.fromPlan(child)
+		}
+	case *plan.PhysicalIndexReader:
+		for _, child := range x.IndexPlans {
+			pa.fromPlan(child)
+		}
+	case *plan.PhysicalIndexLookUpReader:
+		for _, child := range x.IndexPlans {
+			pa.fromPlan(child)
+		}
+		for _, child := range x.TablePlans {
+			pa.fromPlan(child)
+		}
+		pa.hasIndexDouble = true
 	}
 	children := p.Children()
 	for _, child := range children {

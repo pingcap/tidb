@@ -1076,40 +1076,6 @@ func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 	c.Assert(f.isDeterministic(), IsTrue)
 }
 
-func (s *testEvaluatorSuite) TestRpad(c *C) {
-	tests := []struct {
-		str    string
-		len    int64
-		padStr string
-		expect interface{}
-	}{
-		{"hi", 5, "?", "hi???"},
-		{"hi", 1, "?", "h"},
-		{"hi", 0, "?", ""},
-		{"hi", -1, "?", nil},
-		{"hi", 1, "", "h"},
-		{"hi", 5, "", nil},
-		{"hi", 5, "ab", "hiaba"},
-		{"hi", 6, "ab", "hiabab"},
-	}
-	fc := funcs[ast.Rpad]
-	for _, test := range tests {
-		str := types.NewStringDatum(test.str)
-		length := types.NewIntDatum(test.len)
-		padStr := types.NewStringDatum(test.padStr)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, length, padStr}), s.ctx)
-		c.Assert(err, IsNil)
-		result, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		if test.expect == nil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
-		} else {
-			expect, _ := test.expect.(string)
-			c.Assert(result.GetString(), Equals, expect)
-		}
-	}
-}
-
 func (s *testEvaluatorSuite) TestBitLength(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
@@ -1211,6 +1177,7 @@ func (s *testEvaluatorSuite) TestCharLength(c *C) {
 		fc := funcs[ast.CharLength]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.input)), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
@@ -1297,6 +1264,44 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 		padStr := types.NewStringDatum(test.padStr)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, length, padStr}), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.expect == nil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestRpad(c *C) {
+	tests := []struct {
+		str    string
+		len    int64
+		padStr string
+		expect interface{}
+	}{
+		{"hi", 5, "?", "hi???"},
+		{"hi", 1, "?", "h"},
+		{"hi", 0, "?", ""},
+		{"hi", -1, "?", nil},
+		{"hi", 1, "", "h"},
+		{"hi", 5, "", nil},
+		{"hi", 5, "ab", "hiaba"},
+		{"hi", 6, "ab", "hiabab"},
+	}
+	fc := funcs[ast.Rpad]
+	for _, test := range tests {
+		str := types.NewStringDatum(test.str)
+		length := types.NewIntDatum(test.len)
+		padStr := types.NewStringDatum(test.padStr)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, length, padStr}), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
@@ -1332,9 +1337,9 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 		{[]interface{}{"live LONG and prosper", "long"}, 6},
 
 		{[]interface{}{"not BINARY string", "binary"}, 5},
-		{[]interface{}{[]byte("BINARY string"), []byte("binary")}, 0},
-		{[]interface{}{[]byte("BINARY string"), []byte("BINARY")}, 1},
-		{[]interface{}{[]byte("中文abc"), []byte("abc")}, 7},
+		{[]interface{}{"UPPER case", "upper"}, 1},
+		{[]interface{}{"UPPER case", "CASE"}, 7},
+		{[]interface{}{"中文abc", "abc"}, 3},
 
 		{[]interface{}{"foobar", nil}, nil},
 		{[]interface{}{nil, "foobar"}, nil},
@@ -1346,6 +1351,8 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 	for i, t := range Dtbl {
 		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
