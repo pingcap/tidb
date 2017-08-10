@@ -506,7 +506,7 @@ func (b *builtinCastIntAsJSONSig) evalJSON(row []types.Datum) (res json.JSON, is
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if mysql.HasUnsignedFlag(b.tp.Flag) {
+	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = json.CreateJSON(uint64(val))
 	} else {
 		res = json.CreateJSON(val)
@@ -530,8 +530,12 @@ type builtinCastDecimalAsJSONSig struct {
 
 func (b *builtinCastDecimalAsJSONSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
-	// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `STRING` now.
-	return json.CreateJSON(string(val.ToString())), isNull, errors.Trace(err)
+	// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.
+	f64, err := val.ToFloat64()
+	if err == nil {
+		return json.CreateJSON(f64), isNull, errors.Trace(err)
+	}
+	return res, isNull, errors.Trace(err)
 }
 
 type builtinCastStringAsJSONSig struct {
