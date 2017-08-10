@@ -676,6 +676,7 @@ type builtinIsNullSig struct {
 }
 
 func (b *builtinIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	// Evaluate to string to prevent truncate warning.
 	_, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return 0, true, errors.Trace(err)
