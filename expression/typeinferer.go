@@ -417,7 +417,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.JSONType, ast.JSONUnquote:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
-	case ast.JSONExtract, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONMerge:
+	case ast.JSONExtract, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONMerge,
+		ast.JSONObject, ast.JSONArray:
 		tp = types.NewFieldType(mysql.TypeJSON)
 		chs = v.defaultCharset
 	case ast.AnyValue:
