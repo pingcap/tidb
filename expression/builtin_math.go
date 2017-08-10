@@ -675,61 +675,63 @@ type convFunctionClass struct {
 }
 
 func (c *convFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinConvSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpInt)
+	bf.tp.Flen = 64
+	sig := &builtinConvSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), errors.Trace(err)
 }
 
 type builtinConvSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinConvSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv
-func (b *builtinConvSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+// evalString evals CONV(N,from_base,to_base).
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv.
+func (b *builtinConvSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	n, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
 	}
+
+	fromBase, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+
+	toBase, isNull, err := b.args[2].EvalInt(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+
 	var (
 		signed     bool
 		negative   bool
 		ignoreSign bool
 	)
-	for _, arg := range args {
-		if arg.IsNull() {
-			return d, nil
-		}
-	}
-	n, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	fromBase, err := args[1].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	toBase, err := args[2].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
 	if fromBase < 0 {
 		fromBase = -fromBase
 		signed = true
 	}
+
 	if toBase < 0 {
-		ignoreSign = true
 		toBase = -toBase
+		ignoreSign = true
 	}
+
 	if fromBase > 36 || fromBase < 2 || toBase > 36 || toBase < 2 {
-		return d, nil
+		return res, true, nil
 	}
+
 	n = getValidPrefix(strings.TrimSpace(n), fromBase)
 	if len(n) == 0 {
-		d.SetString("0")
-		return d, nil
+		return "0", false, nil
 	}
+
 	if n[0] == '-' {
 		negative = true
 		n = n[1:]
@@ -737,9 +739,8 @@ func (b *builtinConvSig) eval(row []types.Datum) (d types.Datum, err error) {
 
 	val, err := strconv.ParseUint(n, int(fromBase), 64)
 	if err != nil {
-		return d, types.ErrOverflow.GenByArgs("BIGINT UNSINGED", n)
+		return res, false, types.ErrOverflow.GenByArgs("BIGINT UNSINGED", n)
 	}
-	// See https://github.com/mysql/mysql-server/blob/5.7/strings/ctype-simple.c#L598
 	if signed {
 		if negative && val > -math.MinInt64 {
 			val = -math.MinInt64
@@ -751,7 +752,7 @@ func (b *builtinConvSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if negative {
 		val = -val
 	}
-	// See https://github.com/mysql/mysql-server/blob/5.7/strings/longlong2str.c#L58
+
 	if int64(val) < 0 {
 		negative = true
 	} else {
@@ -765,8 +766,8 @@ func (b *builtinConvSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if negative && ignoreSign {
 		s = "-" + s
 	}
-	d.SetString(strings.ToUpper(s))
-	return d, nil
+	res = strings.ToUpper(s)
+	return res, false, nil
 }
 
 type crc32FunctionClass struct {
