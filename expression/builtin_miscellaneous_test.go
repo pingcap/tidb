@@ -30,7 +30,6 @@ func (s *testEvaluatorSuite) TestInetAton(c *C) {
 		Expected interface{}
 	}{
 		{"", nil},
-		{nil, nil},
 		{"255.255.255.255", 4294967295},
 		{"0.0.0.0", 0},
 		{"127.0.0.1", 2130706433},
@@ -49,9 +48,10 @@ func (s *testEvaluatorSuite) TestInetAton(c *C) {
 	for i, t := range dtbl {
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		d, _, err := f.evalInt(nil)
+		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, Equals, tbl[i].Expected)
+		d := types.NewDatum(tbl[i].Expected)
+		c.Assert(r, testutil.DatumEquals, types.NewIntDatum(d.GetInt64()))
 	}
 }
 
@@ -185,9 +185,10 @@ func (s *testEvaluatorSuite) TestInetNtoa(c *C) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{ip}), s.ctx)
 		c.Assert(err, IsNil)
-		result, _, err := f.evalString(nil)
+		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+		d := types.NewDatum(test.expect)
+		c.Assert(result, testutil.DatumEquals, types.NewStringDatum(d.GetString()))
 	}
 
 	var argNull types.Datum
@@ -222,9 +223,10 @@ func (s *testEvaluatorSuite) TestInet6NtoA(c *C) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{ip}), s.ctx)
 		c.Assert(err, IsNil)
-		result, _, err := f.evalString(nil)
+		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(result, Equals, types.NewDatum(test.expect))
+		d := types.NewDatum(test.expect)
+		c.Assert(result, testutil.DatumEquals, types.NewStringDatum(d.GetString()))
 	}
 
 	var argNull types.Datum
@@ -283,14 +285,14 @@ func (s *testEvaluatorSuite) TestIsIPv4Mapped(c *C) {
 		c.Assert(err, IsNil)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(result, Equals, types.NewDatum(test.expect))
+		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
 	r, err := f.eval(nil)
 	c.Assert(err, IsNil)
-	c.Assert(r, Equals, int64(0))
+	c.Assert(r, testutil.DatumEquals, types.NewDatum(int64(0)))
 }
 
 func (s *testEvaluatorSuite) TestIsIPv4Compat(c *C) {

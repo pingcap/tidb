@@ -23,6 +23,8 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/twinj/uuid"
 )
@@ -84,6 +86,7 @@ func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 21
 	sig := &builtinSleepSig{baseIntBuiltinFunc{bf}}
 	sig.deterministic = false
 	return sig.setSelf(sig), nil
@@ -236,6 +239,8 @@ func (c *inetAtonFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 21
+	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinInetAtonSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -307,6 +312,8 @@ func (c *inetNtoaFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 93
+	bf.tp.Decimal = 0
 	sig := &builtinInetNtoaSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -354,6 +361,10 @@ func (c *inet6AtonFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 16
+	bf.tp.Flag |= mysql.BinaryFlag
+	bf.tp.Charset = charset.CharsetBin
+	bf.tp.Decimal = 0
 	sig := &builtinInet6AtonSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -420,6 +431,8 @@ func (c *inet6NtoaFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 117
+	bf.tp.Decimal = 0
 	sig := &builtinInet6NtoaSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
