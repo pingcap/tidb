@@ -1589,6 +1589,8 @@ func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 			"05:42:03 PM 17:42:03 05:42PM 05:42:03 PM 17 42 03"},
 		{[]string{"07:42:03.000001", "%f"},
 			"000001"},
+		{[]string{"1990-05-07 19:30:10", "%H %i %s"},
+			"19 30 10"},
 	}
 	dtblDate := tblToDtbl(tblDate)
 	for i, t := range dtblDate {

@@ -2505,13 +2505,16 @@ type timeFormatFunctionClass struct {
 }
 
 func (c *timeFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = mysql.MaxBlobWidth
 	sig := &builtinTimeFormatSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinTimeFormatSig struct {
