@@ -1336,9 +1336,9 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 		{[]interface{}{"live LONG and prosper", "long"}, 6},
 
 		{[]interface{}{"not BINARY string", "binary"}, 5},
-		{[]interface{}{[]byte("BINARY string"), []byte("binary")}, 0},
-		{[]interface{}{[]byte("BINARY string"), []byte("BINARY")}, 1},
-		{[]interface{}{[]byte("中文abc"), []byte("abc")}, 7},
+		{[]interface{}{"UPPER case", "upper"}, 1},
+		{[]interface{}{"UPPER case", "CASE"}, 7},
+		{[]interface{}{"中文abc", "abc"}, 3},
 
 		{[]interface{}{"foobar", nil}, nil},
 		{[]interface{}{nil, "foobar"}, nil},
@@ -1350,6 +1350,8 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 	for i, t := range Dtbl {
 		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
