@@ -259,7 +259,7 @@ func (s *testMyDecimalSuite) TestShift(c *C) {
 	wordBufLen = maxWordBufLen
 }
 
-func (s *testMyDecimalSuite) TestRound(c *C) {
+func (s *testMyDecimalSuite) TestRoundWithHalfEven(c *C) {
 	type tcase struct {
 		input  string
 		scale  int
@@ -283,6 +283,82 @@ func (s *testMyDecimalSuite) TestRound(c *C) {
 		{"15.5", 0, "16", nil},
 		{"15.9", 0, "16", nil},
 		{"-15.1", 0, "-15", nil},
+		{"-15.5", 0, "-16", nil},
+		{"-15.9", 0, "-16", nil},
+		{"15.1", 1, "15.1", nil},
+		{"-15.1", 1, "-15.1", nil},
+		{"15.17", 1, "15.2", nil},
+		{"15.4", -1, "20", nil},
+		{"-15.4", -1, "-20", nil},
+		{"5.4", -1, "10", nil},
+		{".999", 0, "1", nil},
+		{"999999999", -9, "1000000000", nil},
+	}
+	doTest(c, tests)
+}
+
+func (s *testMyDecimalSuite) TestRoundWithTruncate(c *C) {
+	type tcase struct {
+		input  string
+		scale  int
+		output string
+		err    error
+	}
+	var doTest = func(c *C, tests []tcase) {
+		for _, ca := range tests {
+			var dec MyDecimal
+			dec.FromString([]byte(ca.input))
+			var rounded MyDecimal
+			err := dec.Round(&rounded, ca.scale, ModeTruncate)
+			c.Check(err, Equals, ca.err)
+			result := rounded.ToString()
+			c.Check(string(result), Equals, ca.output)
+		}
+	}
+	tests := []tcase{
+		{"123456789.987654321", 1, "123456789.9", nil},
+		{"15.1", 0, "15", nil},
+		{"15.5", 0, "15", nil},
+		{"15.9", 0, "15", nil},
+		{"-15.1", 0, "-15", nil},
+		{"-15.5", 0, "-15", nil},
+		{"-15.9", 0, "-15", nil},
+		{"15.1", 1, "15.1", nil},
+		{"-15.1", 1, "-15.1", nil},
+		{"15.17", 1, "15.1", nil},
+		{"15.4", -1, "10", nil},
+		{"-15.4", -1, "-10", nil},
+		{"5.4", -1, "0", nil},
+		{".999", 0, "0", nil},
+		{"999999999", -9, "0", nil},
+	}
+	doTest(c, tests)
+}
+
+func (s *testMyDecimalSuite) TestRoundWithCeil(c *C) {
+	type tcase struct {
+		input  string
+		scale  int
+		output string
+		err    error
+	}
+	var doTest = func(c *C, tests []tcase) {
+		for _, ca := range tests {
+			var dec MyDecimal
+			dec.FromString([]byte(ca.input))
+			var rounded MyDecimal
+			err := dec.Round(&rounded, ca.scale, modeCeiling)
+			c.Check(err, Equals, ca.err)
+			result := rounded.ToString()
+			c.Check(string(result), Equals, ca.output)
+		}
+	}
+	tests := []tcase{
+		{"123456789.987654321", 1, "123456790.0", nil},
+		{"15.1", 0, "16", nil},
+		{"15.5", 0, "16", nil},
+		{"15.9", 0, "16", nil},
+		{"-15.1", 0, "-16", nil},
 		{"-15.5", 0, "-16", nil},
 		{"-15.9", 0, "-16", nil},
 		{"15.1", 1, "15.1", nil},
