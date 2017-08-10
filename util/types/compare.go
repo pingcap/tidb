@@ -13,6 +13,9 @@
 
 package types
 
+// floatEpsilon is the acceptable error quantity when comparing two float numbers.
+const floatEpsilon float64 = 2.2204460492503131e-16
+
 // CompareInt64 returns an integer comparing the int64 x to y.
 func CompareInt64(x, y int64) int {
 	if x < y {
@@ -31,18 +34,16 @@ func CompareUint64(x, y uint64) int {
 	} else if x == y {
 		return 0
 	}
-
 	return 1
 }
 
 // CompareFloat64 returns an integer comparing the float64 x to y.
 func CompareFloat64(x, y float64) int {
-	if x < y {
-		return -1
-	} else if x == y {
+	if x-y < floatEpsilon && y-x < floatEpsilon {
 		return 0
+	} else if x < y {
+		return -1
 	}
-
 	return 1
 }
 
