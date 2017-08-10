@@ -70,7 +70,7 @@ var (
 	slowThreshold              = flag.Int("slow-threshold", 300, "Queries with execution time greater than this value will be logged. (Milliseconds)")
 	queryLogMaxlen             = flag.Int("query-log-max-len", 2048, "Maximum query length recorded in log")
 	tcpKeepAlive               = flagBoolean("tcp-keep-alive", false, "set keep alive option for tcp connection.")
-  proxyProtocolNetworks      = flag.String("proxy-protocol-networks", "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
+	proxyProtocolNetworks      = flag.String("proxy-protocol-networks", "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Int("proxy-protocol-header-timeout", 5, "proxy protocol header read timeout, unit is second.")
 	timeJumpBackCounter        = prometheus.NewCounter(
 		prometheus.CounterOpts{
