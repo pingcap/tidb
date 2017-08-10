@@ -174,6 +174,17 @@ const (
 		lower_bound blob ,
 		unique index tbl(table_id, is_index, hist_id, bucket_id)
 	);`
+
+	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
+	CreateGCDeleteRangeTable = `CREATE TABLE IF NOT EXISTS mysql.gc_delete_range (
+		job_id BIGINT NOT NULL COMMENT "the DDL job ID",
+		element_id BIGINT NOT NULL COMMENT "the schema element ID",
+		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		ts BIGINT NOT NULL COMMENT "timestamp in int64",
+		UNIQUE KEY (element_id),
+		KEY (job_id, element_id)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -214,6 +225,7 @@ const (
 	version12 = 12
 	version13 = 13
 	version14 = 14
+	version15 = 15
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -322,6 +334,10 @@ func upgrade(s Session) {
 
 	if ver < version14 {
 		upgradeToVer14(s)
+	}
+
+	if ver < version15 {
+		upgradeToVer15(s)
 	}
 
 	updateBootstrapVer(s)
@@ -523,6 +539,26 @@ func upgradeToVer14(s Session) {
 	}
 }
 
+func upgradeToVer15(s Session) {
+	var err error
+	_, err = s.Execute(CreateGCDeleteRangeTable)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = s.NewTxn()
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = ddl.LoadPendingBgJobsIntoDeleteTable(s)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = s.CommitTxn()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -567,6 +603,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsColsTable)
 	// Create stats_buckets table.
 	mustExecute(s, CreateStatsBucketsTable)
+	// Create gc_delete_range table.
+	mustExecute(s, CreateGCDeleteRangeTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
