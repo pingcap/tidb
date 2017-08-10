@@ -2236,7 +2236,9 @@ func (c *eltFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	}
 	for _, arg := range args[1:] {
 		argType := arg.GetType()
-		setBinFlagOrBinStr(argType, bf.tp)
+		if types.IsBinaryStr(argType) {
+			types.SetBinChsClnFlag(bf.tp)
+		}
 		if argType.Flen > bf.tp.Flen {
 			bf.tp.Flen = argType.Flen
 		}
