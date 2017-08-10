@@ -662,7 +662,7 @@ func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -676,7 +676,7 @@ type builtinIsNullSig struct {
 }
 
 func (b *builtinIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
-	_, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	_, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return 0, true, errors.Trace(err)
 	}
