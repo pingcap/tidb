@@ -132,7 +132,7 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if !e.aggregate {
+		if !e.aggregate && e.genValues != nil {
 			if evalGeneratedColumns(e.columns, e.genValues, values) != nil {
 				return nil, errors.Trace(err)
 			}

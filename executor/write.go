@@ -921,7 +921,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 	for i, expr := range e.GenExprs {
 		var val types.Datum
 		val, err = expr.Eval(row)
-		if err != nil {
+		if err = e.filterErr(err, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
 		offset := cols[len(vals)+i].Offset

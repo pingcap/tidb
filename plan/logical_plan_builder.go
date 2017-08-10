@@ -1186,6 +1186,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		statisticTable: statisticTable,
 		DBName:         schemaName,
 		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
+		GenValues:      nil,
 		NeedColHandle:  b.needColHandle > 0,
 	}.init(b.allocator, b.ctx)
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
@@ -1223,6 +1224,9 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			if err != nil {
 				b.err = errors.Trace(err)
 				return nil
+			}
+			if p.GenValues == nil {
+				p.GenValues = make(map[int]expression.Expression)
 			}
 			p.GenValues[idx] = expr
 		}
@@ -1413,7 +1417,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		return nil
 	}
 	p = np
-	updt := Update{OrderedList: orderedList, NormalAssignLength: len(update.List)}.init(b.allocator, b.ctx)
+	updt := Update{OrderedList: orderedList}.init(b.allocator, b.ctx)
 	addChild(updt, p)
 	updt.SetSchema(p.Schema())
 	return updt

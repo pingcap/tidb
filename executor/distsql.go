@@ -832,8 +832,10 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 			return nil, errors.Trace(err)
 		}
 		// Calculate generated columns here.
-		if err := evalGeneratedColumns(e.columns, e.genValues, values); err != nil {
-			return nil, errors.Trace(err)
+		if e.genValues != nil {
+			if err := evalGeneratedColumns(e.columns, e.genValues, values); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		rows = append(rows, values)
 	}
