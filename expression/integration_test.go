@@ -1126,6 +1126,17 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	select ifnull(a, 0) as a from t2
 	) t;`)
 	result.Check(testkit.Rows("2.4690"))
+
+	// for if
+	result = tk.MustQuery(`select IF(0,"ERROR","this"),IF(1,"is","ERROR"),IF(NULL,"ERROR","a"),IF(1,2,3)|0,IF(1,2.0,3.0)+0;`)
+	result.Check(testkit.Rows("this is a 2 2.0"))
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (st varchar(255) NOT NULL, u int(11) NOT NULL);")
+	tk.MustExec("INSERT INTO t1 VALUES ('a',1),('A',1),('aa',1),('AA',1),('a',1),('aaa',0),('BBB',0);")
+	result = tk.MustQuery("select if(1,st,st) s from t1 order by s;")
+	result.Check(testkit.Rows("A", "AA", "BBB", "a", "a", "aa", "aaa"))
+	result = tk.MustQuery("select if(u=1,st,st) s from t1 order by s;")
+	result.Check(testkit.Rows("A", "AA", "BBB", "a", "a", "aa", "aaa"))
 }
 
 func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {

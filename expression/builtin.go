@@ -39,6 +39,25 @@ const (
 	tpDuration
 )
 
+func fieldTp2EvalTp(tp *types.FieldType) evalTp {
+	switch tp.ToClass() {
+	case types.ClassInt:
+		return tpInt
+	case types.ClassReal:
+		return tpReal
+	case types.ClassDecimal:
+		return tpDecimal
+	case types.ClassString:
+		switch {
+		case types.IsTypeTime(tp.Tp):
+			return tpTime
+		case tp.Tp == mysql.TypeDuration:
+			return tpDuration
+		}
+	}
+	return tpString
+}
+
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
 	args          []Expression
