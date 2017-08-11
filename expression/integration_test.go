@@ -601,17 +601,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select bin("中文");`)
 	result.Check(testkit.Rows("0"))
 
+	// for character_length
+	result = tk.MustQuery(`select character_length(null), character_length("Hello"), character_length("a中b文c"),
+	character_length(123), character_length(12.3456);`)
+	result.Check(testkit.Rows("<nil> 5 5 3 7"))
+
 	// for char_length
-	result = tk.MustQuery(`select char_length(null);`)
-	result.Check(testkit.Rows("<nil>"))
-	result = tk.MustQuery(`select char_length("Hello");`)
-	result.Check(testkit.Rows("5"))
-	result = tk.MustQuery(`select char_length("a中b文c");`)
-	result.Check(testkit.Rows("5"))
-	result = tk.MustQuery(`select char_length(123);`)
-	result.Check(testkit.Rows("3"))
-	result = tk.MustQuery(`select char_length(12.3456);`)
-	result.Check(testkit.Rows("7"))
+	result = tk.MustQuery(`select char_length(null), char_length("Hello"), char_length("a中b文c"), char_length(123),char_length(12.3456);`)
+	result.Check(testkit.Rows("<nil> 5 5 3 7"))
 
 	// for instr
 	result = tk.MustQuery(`select instr("中国", "国"), instr("中国", ""), instr("abc", ""), instr("", ""), instr("", "abc");`)
