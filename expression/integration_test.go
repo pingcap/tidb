@@ -152,6 +152,21 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	tk.MustQuery("SELECT INET6_NTOA(INET6_ATON('10.0.5.9'));").Check(testkit.Rows("10.0.5.9"))
 	tk.MustQuery("SELECT INET6_NTOA(UNHEX('FDFE0000000000005A55CAFFFEFA9089'));").Check(testkit.Rows("fdfe::5a55:caff:fefa:9089"))
 	tk.MustQuery("SELECT INET6_NTOA(UNHEX('0A000509'));").Check(testkit.Rows("10.0.5.9"))
+
+	tk.MustQuery(`SELECT IS_IPV4('10.0.5.9'), IS_IPV4('10.0.5.256');`).Check(testkit.Rows("1 0"))
+	tk.MustQuery(`SELECT IS_IPV4_COMPAT(INET6_ATON('::10.0.5.9'));`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT IS_IPV4_COMPAT(INET6_ATON('::ffff:10.0.5.9'));`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT
+	  IS_IPV4_COMPAT(INET6_ATON('::192.168.0.1')),
+	  IS_IPV4_COMPAT(INET6_ATON('::c0a8:0001')),
+	  IS_IPV4_COMPAT(INET6_ATON('::c0a8:1'));`).Check(testkit.Rows("1 1 1"))
+	tk.MustQuery(`SELECT IS_IPV4_MAPPED(INET6_ATON('::10.0.5.9'));`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT IS_IPV4_MAPPED(INET6_ATON('::ffff:10.0.5.9'));`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:192.168.0.1')),
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:c0a8:0001')),
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:c0a8:1'));`).Check(testkit.Rows("1 1 1"))
+	tk.MustQuery(`SELECT IS_IPV6('10.0.5.9'), IS_IPV6('::1');`).Check(testkit.Rows("0 1"))
 }
 
 func (s *testIntegrationSuite) TestConvertToBit(c *C) {
