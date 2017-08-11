@@ -180,7 +180,9 @@ func (b *builtinAbsIntToIntSig) evalInt(row []types.Datum) (int64, bool, error) 
 	if val >= 0 {
 		return val, false, nil
 	}
-	// TODO: What if val == MIN_INT64?
+	if val == math.MinInt64 {
+		return 0, false, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("abs(%d)", val))
+	}
 	return -val, false, nil
 }
 
