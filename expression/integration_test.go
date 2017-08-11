@@ -1210,6 +1210,13 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	result.Check(testkit.Rows("A", "AA", "BBB", "a", "a", "aa", "aaa"))
 	result = tk.MustQuery("select if(u=1,st,st) s from t1 order by s;")
 	result.Check(testkit.Rows("A", "AA", "BBB", "a", "a", "aa", "aaa"))
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (a varchar(255), b time, c int)")
+	tk.MustExec("INSERT INTO t1 VALUE('abc', '12:00:00', 0)")
+	tk.MustExec("INSERT INTO t1 VALUE('1abc', '00:00:00', 1)")
+	tk.MustExec("INSERT INTO t1 VALUE('0abc', '12:59:59', 0)")
+	result = tk.MustQuery("select if(a, b, c), if(b, a, c), if(c, a, b) from t1")
+	result.Check(testkit.Rows("0 abc 12:00:00", "00:00:00 1 1abc", "0 0abc 12:59:59"))
 }
 
 func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {

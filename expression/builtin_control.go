@@ -37,6 +37,12 @@ var (
 	_ builtinFunc = &builtinIfNullStringSig{}
 	_ builtinFunc = &builtinIfNullTimeSig{}
 	_ builtinFunc = &builtinIfNullDurationSig{}
+	_ builtinFunc = &builtinIfIntSig{}
+	_ builtinFunc = &builtinIfRealSig{}
+	_ builtinFunc = &builtinIfDecimalSig{}
+	_ builtinFunc = &builtinIfStringSig{}
+	_ builtinFunc = &builtinIfDurationSig{}
+	_ builtinFunc = &builtinIfTimeSig{}
 )
 
 type caseWhenFunctionClass struct {
@@ -92,7 +98,7 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	retTp := c.inferType(args[0].GetType(), args[1].GetType())
+	retTp := c.inferType(args[1].GetType(), args[2].GetType())
 	evalTps := fieldTp2EvalTp(retTp)
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
 	if err != nil {
