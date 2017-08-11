@@ -855,7 +855,6 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for logicAnd
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
-
 	// for bitNeg
 	result = tk.MustQuery("select ~123, ~-123, ~null")
 	result.Check(testkit.Rows("18446744073709551492 122 <nil>"))
@@ -883,6 +882,9 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for logicOr
 	result = tk.MustQuery("select 1 || 1, 1 || 0, 0 || 1, 0 || 0, 2 || -1, null || 1, '1a' || 'a'")
 	result.Check(testkit.Rows("1 1 1 0 1 1 1"))
+	// for unaryPlus
+	result = tk.MustQuery(`select +1, +0, +(-9), +(-0.001), +0.999, +null, +"aaa"`)
+	result.Check(testkit.Rows("1 0 -9 -0.001 0.999 <nil> aaa"))
 }
 
 func (s *testIntegrationSuite) TestBuiltin(c *C) {
