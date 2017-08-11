@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testIntegrationSuite{})
@@ -345,6 +346,44 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT CONV('a', 37, 10);")
 	result.Check(testkit.Rows("<nil>"))
+
+	// for abs
+	result = tk.MustQuery("SELECT ABS(-1);")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("SELECT ABS('abc');")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT ABS(18446744073709551615);")
+	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("SELECT ABS(123.4);")
+	result.Check(testkit.Rows("123.4"))
+	result = tk.MustQuery("SELECT ABS(-123.4);")
+	result.Check(testkit.Rows("123.4"))
+	result = tk.MustQuery("SELECT ABS(1234E-1);")
+	result.Check(testkit.Rows("123.4"))
+	result = tk.MustQuery("SELECT ABS(-9223372036854775807);")
+	result.Check(testkit.Rows("9223372036854775807"))
+	result = tk.MustQuery("SELECT ABS(NULL);")
+	result.Check(testkit.Rows("<nil>"))
+	rs, err = tk.Exec("SELECT ABS(-9223372036854775808);")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+
+	// for round
+	result = tk.MustQuery("SELECT ROUND(2.5), ROUND(-2.5), ROUND(25E-1);")
+	result.Check(testkit.Rows("3 -3 3")) // TODO: Should be 3 -3 2
+	result = tk.MustQuery("SELECT ROUND(2.5, NULL), ROUND(NULL, 4), ROUND(NULL, NULL), ROUND(NULL);")
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery("SELECT ROUND('123.4'), ROUND('123e-2');")
+	result.Check(testkit.Rows("123 1"))
+	result = tk.MustQuery("SELECT ROUND(-9223372036854775808);")
+	result.Check(testkit.Rows("-9223372036854775808"))
+	result = tk.MustQuery("SELECT ROUND(123.456, 0), ROUND(123.456, 1), ROUND(123.456, 2), ROUND(123.456, 3), ROUND(123.456, 4), ROUND(123.456, -1), ROUND(123.456, -2), ROUND(123.456, -3), ROUND(123.456, -4);")
+	result.Check(testkit.Rows("123 123.5 123.46 123.456 123.4560 120 100 0 0"))
+	result = tk.MustQuery("SELECT ROUND(123456E-3, 0), ROUND(123456E-3, 1), ROUND(123456E-3, 2), ROUND(123456E-3, 3), ROUND(123456E-3, 4), ROUND(123456E-3, -1), ROUND(123456E-3, -2), ROUND(123456E-3, -3), ROUND(123456E-3, -4);")
+	result.Check(testkit.Rows("123 123.5 123.46 123.456 123.456 120 100 0 0")) // TODO: Column 5 should be 123.4560
 }
 
 func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
@@ -560,6 +599,15 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testutil.RowsWithSep(",", "bar   ,bar,,<nil>"))
 	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
 	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
+
+	// for reverse
+	tk.MustExec(`DROP TABLE IF EXISTS t;`)
+	tk.MustExec(`CREATE TABLE t(a BINARY(6));`)
+	tk.MustExec(`INSERT INTO t VALUES("中文");`)
+	result = tk.MustQuery(`SELECT a, REVERSE(a), REVERSE("中文"), REVERSE("123 ") FROM t;`)
+	result.Check(testkit.Rows("中文 \x87\x96歸\xe4 文中  321"))
+	result = tk.MustQuery(`SELECT REVERSE(123), REVERSE(12.09) FROM t;`)
+	result.Check(testkit.Rows("321 90.21"))
 
 	// for trim
 	result = tk.MustQuery(`select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx')`)
@@ -830,7 +878,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	// for is true
+	// for is true && is false
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index idx_b (b))")
 	tk.MustExec("insert t values (1, 1)")
@@ -844,6 +892,11 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(nil)
 	result = tk.MustQuery("select * from t where a is not true")
 	result.Check(nil)
+	result = tk.MustQuery(`select 1 is true, 0 is true, null is true, "aaa" is true, "" is true, -12.00 is true, 0.0 is true, 0.0000001 is true;`)
+	result.Check(testkit.Rows("1 0 0 0 0 1 0 1"))
+	result = tk.MustQuery(`select 1 is false, 0 is false, null is false, "aaa" is false, "" is false, -12.00 is false, 0.0 is false, 0.0000001 is false;`)
+	result.Check(testkit.Rows("0 1 0 1 1 0 1 0"))
+
 	// for in
 	result = tk.MustQuery("select * from t where b in (a)")
 	result.Check(testkit.Rows("1 1", "2 2"))
@@ -1268,6 +1321,29 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
+
+	tk.MustQuery("select 1234567890 * 1234567890").Check(testkit.Rows("1524157875019052100"))
+	rs, err = tk.Exec("select 1234567890 * 12345671890")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	tk.MustQuery("select cast(1234567890 as unsigned int) * 12345671890").Check(testkit.Rows("15241570095869612100"))
+	tk.MustQuery("select 123344532434234234267890.0 * 1234567118923479823749823749.230").Check(testkit.Rows("152277104042296270209916846800130443726237424001224.7000"))
+	rs, err = tk.Exec("select 123344532434234234267890.0 * 12345671189234798237498232384982309489238402830480239849238048239084749.230")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	// FIXME: There is something wrong in showing float number.
+	//tk.MustQuery("select 1.797693134862315708145274237317043567981e+308 * 1").Check(testkit.Rows("1.7976931348623157e308"))
+	//tk.MustQuery("select 1.797693134862315708145274237317043567981e+308 * -1").Check(testkit.Rows("-1.7976931348623157e308"))
+	rs, err = tk.Exec("select 1.797693134862315708145274237317043567981e+308 * 1.1")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	rs, err = tk.Exec("select 1.797693134862315708145274237317043567981e+308 * -1.1")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
@@ -1361,4 +1437,17 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"26 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
 		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
 		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
+}
+
+func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a decimal(7, 6))")
+	tk.MustExec("insert into t values(1.123456), (1.123456)")
+	result := tk.MustQuery("select avg(a) from t")
+	result.Check(testkit.Rows("1.1234560000"))
 }
