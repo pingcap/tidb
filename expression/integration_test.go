@@ -601,17 +601,14 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select bin("中文");`)
 	result.Check(testkit.Rows("0"))
 
+	// for character_length
+	result = tk.MustQuery(`select character_length(null), character_length("Hello"), character_length("a中b文c"),
+	character_length(123), character_length(12.3456);`)
+	result.Check(testkit.Rows("<nil> 5 5 3 7"))
+
 	// for char_length
-	result = tk.MustQuery(`select char_length(null);`)
-	result.Check(testkit.Rows("<nil>"))
-	result = tk.MustQuery(`select char_length("Hello");`)
-	result.Check(testkit.Rows("5"))
-	result = tk.MustQuery(`select char_length("a中b文c");`)
-	result.Check(testkit.Rows("5"))
-	result = tk.MustQuery(`select char_length(123);`)
-	result.Check(testkit.Rows("3"))
-	result = tk.MustQuery(`select char_length(12.3456);`)
-	result.Check(testkit.Rows("7"))
+	result = tk.MustQuery(`select char_length(null), char_length("Hello"), char_length("a中b文c"), char_length(123),char_length(12.3456);`)
+	result.Check(testkit.Rows("<nil> 5 5 3 7"))
 
 	// for elt
 	result = tk.MustQuery(`select elt(0, "abc", "def"), elt(2, "hello", "中文", "tidb"), elt(4, "hello", "中文",
@@ -875,7 +872,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustExec("create table t(a decimal(3, 1), b double, c datetime, d time, e int)")
 	tk.MustExec("insert into t value(12.3, 1.23, '2017-01-01 12:12:12', '12:12:12', 123)")
 	result = tk.MustQuery("select cast(a as json), cast(b as json), cast(c as json), cast(d as json), cast(e as json) from t")
-	result.Check(testkit.Rows(`"12.3" 1.23 "2017-01-01 12:12:12.000000" "12:12:12.000000" 123`))
+	result.Check(testkit.Rows(`12.3 1.23 "2017-01-01 12:12:12.000000" "12:12:12.000000" 123`))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
@@ -1361,7 +1358,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"18 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"19 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"20 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
-		"21 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"21 0 0 0 1 <nil> <nil> 0 0 1 1 0 <nil> <nil> 0 0 0 0 <nil>",
 		"22 0 0 0 1 <nil> <nil> 0 0 0 1 0 <nil> <nil> 0 0 0 0 <nil>",
 		"23 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"24 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
