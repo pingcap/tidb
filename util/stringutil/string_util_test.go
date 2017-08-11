@@ -30,24 +30,6 @@ var _ = Suite(&testStringUtilSuite{})
 type testStringUtilSuite struct {
 }
 
-func (s *testStringUtilSuite) TestReverse(c *C) {
-	defer testleak.AfterTest(c)()
-	table := []struct {
-		str    string
-		expect string
-	}{
-		{"zxcf", "fcxz"},
-		{"abc", "cba"},
-		{"Hello, 世界", "界世 ,olleH"},
-		{"", ""},
-	}
-
-	for _, t := range table {
-		x := Reverse(t.str)
-		c.Assert(x, Equals, t.expect)
-	}
-}
-
 func (s *testStringUtilSuite) TestUnquote(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []struct {

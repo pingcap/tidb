@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/privilege"
@@ -105,39 +107,16 @@ var gcVariableComments = map[string]string{
 
 func (w *GCWorker) start(ctx goctx.Context) {
 	log.Infof("[gc worker] %s start.", w.uuid)
+
+	w.createSession()
+	w.tick(ctx) // Immediately tick once to initialize configs.
+
 	ticker := time.NewTicker(gcWorkerTickInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			if w.session == nil {
-				if !w.storeIsBootstrapped() {
-					break
-				}
-				var err error
-				w.session, err = tidb.CreateSession(w.store)
-				if err != nil {
-					log.Warnf("[gc worker] create session err: %v", err)
-					break
-				}
-				// Disable privilege check for gc worker session.
-				privilege.BindPrivilegeManager(w.session, nil)
-			}
-
-			isLeader, err := w.checkLeader()
-			if err != nil {
-				log.Warnf("[gc worker] check leader err: %v", err)
-				break
-			}
-			if isLeader {
-				err = w.leaderTick(ctx)
-				if err != nil {
-					log.Warnf("[gc worker] leader tick err: %v", err)
-				}
-			} else {
-				// Config metrics should always be updated by leader.
-				gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
-				gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
-			}
+			w.tick(ctx)
 		case err := <-w.done:
 			w.gcIsRunning = false
 			w.lastFinish = time.Now()
@@ -149,6 +128,44 @@ func (w *GCWorker) start(ctx goctx.Context) {
 			log.Infof("[gc worker] (%s) quit.", w.uuid)
 			return
 		}
+	}
+}
+
+func (w *GCWorker) createSession() {
+	for {
+		time.Sleep(time.Second)
+
+		if !w.storeIsBootstrapped() {
+			log.Warnf("[gc worker] wait for store bootstrapping")
+			continue
+		}
+		var err error
+		w.session, err = tidb.CreateSession(w.store)
+		if err != nil {
+			log.Warnf("[gc worker] create session err: %v", err)
+			continue
+		}
+		// Disable privilege check for gc worker session.
+		privilege.BindPrivilegeManager(w.session, nil)
+		return
+	}
+}
+
+func (w *GCWorker) tick(ctx goctx.Context) {
+	isLeader, err := w.checkLeader()
+	if err != nil {
+		log.Warnf("[gc worker] check leader err: %v", err)
+		return
+	}
+	if isLeader {
+		err = w.leaderTick(ctx)
+		if err != nil {
+			log.Warnf("[gc worker] leader tick err: %v", err)
+		}
+	} else {
+		// Config metrics should always be updated by leader, set them to 0 when current instance is not leader.
+		gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
+		gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
 	}
 }
 
@@ -174,15 +191,16 @@ func (w *GCWorker) leaderTick(ctx goctx.Context) error {
 	if w.gcIsRunning {
 		return nil
 	}
-	// When the worker is just started, or an old GC job has just finished,
-	// wait a while before starting a new job.
-	if time.Since(w.lastFinish) < gcWaitTime {
-		return nil
-	}
 
 	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
 		return errors.Trace(err)
+	}
+
+	// When the worker is just started, or an old GC job has just finished,
+	// wait a while before starting a new job.
+	if time.Since(w.lastFinish) < gcWaitTime {
+		return nil
 	}
 
 	w.gcIsRunning = true
@@ -280,12 +298,99 @@ func RunGCJob(ctx goctx.Context, store kv.Storage, safePoint uint64, identifier 
 
 func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
-	err := RunGCJob(ctx, w.store, safePoint, w.uuid)
+	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
+	if err != nil {
+		w.done <- errors.Trace(err)
+		return
+	}
+	err = w.deleteRanges(ctx, safePoint)
+	if err != nil {
+		w.done <- errors.Trace(err)
+		return
+	}
+	err = doGC(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
 		w.done <- errors.Trace(err)
 		return
 	}
 	w.done <- nil
+}
+
+func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
+	gcWorkerCounter.WithLabelValues("delete_range").Inc()
+
+	ranges, err := ddl.LoadDeleteRanges(w.session, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	bo := NewBackoffer(gcDeleteRangeMaxBackoff, goctx.Background())
+	log.Infof("[gc worker] %s start delete %v ranges", w.uuid, len(ranges))
+	startTime := time.Now()
+	regions := 0
+	for _, r := range ranges {
+		startKey, rangeEndKey := r.Range()
+		for {
+			select {
+			case <-ctx.Done():
+				return errors.New("[gc worker] gc job canceled")
+			default:
+			}
+
+			loc, err := w.store.regionCache.LocateKey(bo, startKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			endKey := loc.EndKey
+			if loc.Contains(rangeEndKey) {
+				endKey = rangeEndKey
+			}
+
+			req := &tikvrpc.Request{
+				Type: tikvrpc.CmdDeleteRange,
+				DeleteRange: &kvrpcpb.DeleteRangeRequest{
+					StartKey: startKey,
+					EndKey:   endKey,
+				},
+			}
+
+			resp, err := w.store.SendReq(bo, req, loc.Region, readTimeoutMedium)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			regionErr, err := resp.GetRegionError()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if regionErr != nil {
+				err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
+				continue
+			}
+			deleteRangeResp := resp.DeleteRange
+			if deleteRangeResp == nil {
+				return errors.Trace(errBodyMissing)
+			}
+			if err := deleteRangeResp.GetError(); err != "" {
+				return errors.Errorf("unexpected delete range err: %v", err)
+			}
+			regions++
+			if bytes.Equal(endKey, rangeEndKey) {
+				break
+			}
+			startKey = endKey
+		}
+		err := ddl.CompleteDeleteRange(w.session, r)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	log.Infof("[gc worker] %s finish delete %v ranges, regions: %v, cost time: %s", w.uuid, len(ranges), regions, time.Since(startTime))
+	gcHistogram.WithLabelValues("delete_ranges").Observe(time.Since(startTime).Seconds())
+	return nil
 }
 
 func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier string) error {
@@ -564,4 +669,43 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 	_, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
+}
+
+// MockGCWorker is for test.
+type MockGCWorker struct {
+	worker GCWorker
+}
+
+// NewMockGCWorker creates a MockGCWorker instance ONLY for test.
+func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
+	ver, err := store.CurrentVersion()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	hostName, err := os.Hostname()
+	if err != nil {
+		hostName = "unknown"
+	}
+	worker := GCWorker{
+		uuid:        strconv.FormatUint(ver.Ver, 16),
+		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		store:       store.(*tikvStore),
+		gcIsRunning: false,
+		lastFinish:  time.Now(),
+		done:        make(chan error),
+	}
+	worker.session, err = tidb.CreateSession(worker.store)
+	if err != nil {
+		log.Errorf("initialize MockGCWorker session fail: %s", err)
+		return nil, errors.Trace(err)
+	}
+	privilege.BindPrivilegeManager(worker.session, nil)
+	worker.session.GetSessionVars().InRestrictedSQL = true
+	return &MockGCWorker{worker: worker}, nil
+}
+
+// DeleteRanges call deleteRanges internally, just for test.
+func (w *MockGCWorker) DeleteRanges(ctx goctx.Context, safePoint uint64) error {
+	log.Errorf("deleteRanges is called")
+	return w.worker.deleteRanges(ctx, safePoint)
 }
