@@ -462,8 +462,6 @@ func (b *builtinIsIPv4Sig) evalInt(row []types.Datum) (int64, bool, error) {
 	if err != nil || isNull {
 		return 0, false, errors.Trace(err)
 	}
-	// isIPv4(str)
-	// args[0] string
 	if isIPv4(val) {
 		return 1, false, nil
 	}
