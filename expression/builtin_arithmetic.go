@@ -393,7 +393,7 @@ func (s *builtinArithmeticMultiplyRealSig) evalReal(row []types.Datum) (float64,
 		return 0, isNull, errors.Trace(err)
 	}
 	result := a * b
-	if math.IsInf(result, 1) || math.IsInf(result, -1) {
+	if math.IsInf(result, 0) {
 		return 0, true, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("(%s * %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return result, false, nil
