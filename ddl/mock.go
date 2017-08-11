@@ -78,8 +78,8 @@ func (m *mockOwnerManager) GetOwnerID(ctx goctx.Context, key string) (string, er
 	return "", errors.New("no owner")
 }
 
-// CampaignOwners implements mockOwnerManager.CampaignOwners interface.
-func (m *mockOwnerManager) CampaignOwners(_ goctx.Context) error {
+// CampaignOwner implements mockOwnerManager.CampaignOwner interface.
+func (m *mockOwnerManager) CampaignOwner(_ goctx.Context) error {
 	m.SetOwner(true)
 	return nil
 }
