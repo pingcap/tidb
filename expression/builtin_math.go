@@ -62,15 +62,15 @@ var (
 
 var (
 	_ builtinFunc = &builtinAbsRealSig{}
-	_ builtinFunc = &builtinAbsIntToIntSig{}
-	_ builtinFunc = &builtinAbsUIntToUIntSig{}
-	_ builtinFunc = &builtinAbsDecToDecSig{}
+	_ builtinFunc = &builtinAbsIntSig{}
+	_ builtinFunc = &builtinAbsUIntSig{}
+	_ builtinFunc = &builtinAbsDecSig{}
 	_ builtinFunc = &builtinRoundRealSig{}
-	_ builtinFunc = &builtinRoundIntToIntSig{}
-	_ builtinFunc = &builtinRoundDecToDecSig{}
+	_ builtinFunc = &builtinRoundIntSig{}
+	_ builtinFunc = &builtinRoundDecSig{}
 	_ builtinFunc = &builtinRoundWithFracRealSig{}
-	_ builtinFunc = &builtinRoundWithFracIntToIntSig{}
-	_ builtinFunc = &builtinRoundWithFracDecToDecSig{}
+	_ builtinFunc = &builtinRoundWithFracIntSig{}
+	_ builtinFunc = &builtinRoundWithFracDecSig{}
 	_ builtinFunc = &builtinCeilRealSig{}
 	_ builtinFunc = &builtinCeilIntToDecSig{}
 	_ builtinFunc = &builtinCeilIntToIntSig{}
@@ -138,12 +138,12 @@ func (c *absFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	switch argTp {
 	case tpInt:
 		if mysql.HasUnsignedFlag(argFieldTp.Flag) {
-			sig = &builtinAbsUIntToUIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinAbsUIntSig{baseIntBuiltinFunc{bf}}
 		} else {
-			sig = &builtinAbsIntToIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinAbsIntSig{baseIntBuiltinFunc{bf}}
 		}
 	case tpDecimal:
-		sig = &builtinAbsDecToDecSig{baseDecimalBuiltinFunc{bf}}
+		sig = &builtinAbsDecSig{baseDecimalBuiltinFunc{bf}}
 	case tpReal:
 		sig = &builtinAbsRealSig{baseRealBuiltinFunc{bf}}
 	default:
@@ -166,13 +166,13 @@ func (b *builtinAbsRealSig) evalReal(row []types.Datum) (float64, bool, error) {
 	return math.Abs(val), false, nil
 }
 
-type builtinAbsIntToIntSig struct {
+type builtinAbsIntSig struct {
 	baseIntBuiltinFunc
 }
 
 // evalInt evals ABS(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_abs
-func (b *builtinAbsIntToIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinAbsIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -186,23 +186,23 @@ func (b *builtinAbsIntToIntSig) evalInt(row []types.Datum) (int64, bool, error) 
 	return -val, false, nil
 }
 
-type builtinAbsUIntToUIntSig struct {
+type builtinAbsUIntSig struct {
 	baseIntBuiltinFunc
 }
 
 // evalInt evals ABS(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_abs
-func (b *builtinAbsUIntToUIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinAbsUIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	return b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 }
 
-type builtinAbsDecToDecSig struct {
+type builtinAbsDecSig struct {
 	baseDecimalBuiltinFunc
 }
 
 // evalDecimal evals ABS(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_abs
-func (b *builtinAbsDecToDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *builtinAbsDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
@@ -246,9 +246,9 @@ func (c *roundFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if len(args) > 1 {
 		switch argTp {
 		case tpInt:
-			sig = &builtinRoundWithFracIntToIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinRoundWithFracIntSig{baseIntBuiltinFunc{bf}}
 		case tpDecimal:
-			sig = &builtinRoundWithFracDecToDecSig{baseDecimalBuiltinFunc{bf}}
+			sig = &builtinRoundWithFracDecSig{baseDecimalBuiltinFunc{bf}}
 		case tpReal:
 			sig = &builtinRoundWithFracRealSig{baseRealBuiltinFunc{bf}}
 		default:
@@ -257,9 +257,9 @@ func (c *roundFunctionClass) getFunction(args []Expression, ctx context.Context)
 	} else {
 		switch argTp {
 		case tpInt:
-			sig = &builtinRoundIntToIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinRoundIntSig{baseIntBuiltinFunc{bf}}
 		case tpDecimal:
-			sig = &builtinRoundDecToDecSig{baseDecimalBuiltinFunc{bf}}
+			sig = &builtinRoundDecSig{baseDecimalBuiltinFunc{bf}}
 		case tpReal:
 			sig = &builtinRoundRealSig{baseRealBuiltinFunc{bf}}
 		default:
@@ -283,23 +283,23 @@ func (b *builtinRoundRealSig) evalReal(row []types.Datum) (float64, bool, error)
 	return types.Round(val, 0), false, nil
 }
 
-type builtinRoundIntToIntSig struct {
+type builtinRoundIntSig struct {
 	baseIntBuiltinFunc
 }
 
 // evalInt evals ROUND(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func (b *builtinRoundIntToIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinRoundIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	return b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 }
 
-type builtinRoundDecToDecSig struct {
+type builtinRoundDecSig struct {
 	baseDecimalBuiltinFunc
 }
 
 // evalDecimal evals ROUND(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func (b *builtinRoundDecToDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *builtinRoundDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
@@ -329,13 +329,13 @@ func (b *builtinRoundWithFracRealSig) evalReal(row []types.Datum) (float64, bool
 	return types.Round(val, int(frac)), false, nil
 }
 
-type builtinRoundWithFracIntToIntSig struct {
+type builtinRoundWithFracIntSig struct {
 	baseIntBuiltinFunc
 }
 
 // evalInt evals ROUND(value, frac).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func (b *builtinRoundWithFracIntToIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinRoundWithFracIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -347,13 +347,13 @@ func (b *builtinRoundWithFracIntToIntSig) evalInt(row []types.Datum) (int64, boo
 	return int64(types.Round(float64(val), int(frac))), false, nil
 }
 
-type builtinRoundWithFracDecToDecSig struct {
+type builtinRoundWithFracDecSig struct {
 	baseDecimalBuiltinFunc
 }
 
 // evalDecimal evals ROUND(value, frac).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func (b *builtinRoundWithFracDecToDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *builtinRoundWithFracDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
