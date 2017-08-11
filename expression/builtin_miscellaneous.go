@@ -24,7 +24,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/twinj/uuid"
 )
@@ -355,8 +354,7 @@ func (c *inet6AtonFunctionClass) getFunction(args []Expression, ctx context.Cont
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = 16
-	bf.tp.Flag |= mysql.BinaryFlag
-	bf.tp.Charset = charset.CharsetBin
+	types.SetBinChsClnFlag(bf.tp)
 	bf.tp.Decimal = 0
 	sig := &builtinInet6AtonSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
