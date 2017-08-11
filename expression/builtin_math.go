@@ -150,9 +150,6 @@ type ceilFunctionClass struct {
 }
 
 func (c *ceilFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
 	var (
 		bf  baseBuiltinFunc
 		sig builtinFunc
@@ -291,9 +288,6 @@ func fixFloorAndCeilType(arg Expression) (retTp, argTp evalTp) {
 }
 
 func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
 	var (
 		bf  baseBuiltinFunc
 		sig builtinFunc
@@ -706,7 +700,7 @@ func (c *convFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpInt)
 	bf.tp.Flen = 64
 	sig := &builtinConvSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), nil
+	return sig.setSelf(sig), errors.Trace(err)
 }
 
 type builtinConvSig struct {

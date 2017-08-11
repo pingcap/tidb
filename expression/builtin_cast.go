@@ -382,12 +382,12 @@ type castAsJSONFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (b *castAsJSONFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	if err := b.verifyArgs(args); err != nil {
-		return sig, errors.Trace(err)
+func (c *castAsJSONFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
 	}
 	bf := baseJSONBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
-	bf.tp = b.tp
+	bf.tp = c.tp
 	if IsHybridType(args[0]) {
 		sig = &builtinCastJSONAsJSONSig{bf}
 		return sig.setSelf(sig), nil

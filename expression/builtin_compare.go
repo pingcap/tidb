@@ -296,7 +296,7 @@ func isTemporalColumn(expr Expression) bool {
 
 // getFunction sets compare built-in function signatures for various types.
 func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	ft0, ft1 := args[0].GetType(), args[1].GetType()
