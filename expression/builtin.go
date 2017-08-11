@@ -41,6 +41,25 @@ const (
 	tpJSON
 )
 
+func fieldTp2EvalTp(tp *types.FieldType) evalTp {
+	switch tp.ToClass() {
+	case types.ClassInt:
+		return tpInt
+	case types.ClassReal:
+		return tpReal
+	case types.ClassDecimal:
+		return tpDecimal
+	case types.ClassString:
+		switch {
+		case types.IsTypeTime(tp.Tp):
+			return tpTime
+		case tp.Tp == mysql.TypeDuration:
+			return tpDuration
+		}
+	}
+	return tpString
+}
+
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
 	args          []Expression
@@ -876,7 +895,6 @@ var funcs = map[string]functionClass{
 	ast.UnaryNot:   &unaryNotFunctionClass{baseFunctionClass{ast.UnaryNot, 1, 1}},
 	ast.Or:         &bitOrFunctionClass{baseFunctionClass{ast.Or, 2, 2}},
 	ast.Xor:        &bitXorFunctionClass{baseFunctionClass{ast.Xor, 2, 2}},
-	ast.UnaryPlus:  &unaryOpFunctionClass{baseFunctionClass{ast.UnaryPlus, 1, 1}, opcode.Plus},
 	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
 	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 1, -1}},
 	ast.IsTruth:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
