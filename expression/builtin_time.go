@@ -2525,7 +2525,7 @@ type builtinTimeFormatSig struct {
 // evalString evals a builtinTimeFormatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
 func (b *builtinTimeFormatSig) evalString(row []types.Datum) (string, bool, error) {
-	time, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	dur, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
 		return "", isNull, errors.Trace(err)
 	}
@@ -2534,7 +2534,7 @@ func (b *builtinTimeFormatSig) evalString(row []types.Datum) (string, bool, erro
 		return "", isNull, errors.Trace(err)
 	}
 	var res string
-	res, err = b.builtinTimeFormat(time, formatMask, b.ctx)
+	res, err = b.builtinTimeFormat(dur, formatMask, b.ctx)
 	return res, isNull, err
 }
 
