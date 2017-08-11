@@ -284,6 +284,20 @@ func (s *testPlanSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"instr(c_char, c_binary)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"instr(c_char, c_char  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"instr(c_char, c_time  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+
+		{"reverse(c_int      )", mysql.TypeVarString, charset.CharsetUTF8, 0, 11, types.UnspecifiedLength},
+		{"reverse(c_bigint   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 21, types.UnspecifiedLength},
+		{"reverse(c_float    )", mysql.TypeVarString, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"reverse(c_double   )", mysql.TypeVarString, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"reverse(c_decimal  )", mysql.TypeVarString, charset.CharsetUTF8, 0, 6, types.UnspecifiedLength},
+		{"reverse(c_char     )", mysql.TypeString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
+		{"reverse(c_varchar  )", mysql.TypeVarchar, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
+		{"reverse(c_text     )", mysql.TypeBlob, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"reverse(c_binary   )", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+		{"reverse(c_varbinary)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+		{"reverse(c_blob     )", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"reverse(c_set      )", mysql.TypeSet, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"reverse(c_enum     )", mysql.TypeEnum, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
 	}
 }
 

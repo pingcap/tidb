@@ -562,6 +562,15 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
 	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
 
+	// for reverse
+	tk.MustExec(`DROP TABLE IF EXISTS t;`)
+	tk.MustExec(`CREATE TABLE t(a BINARY(6));`)
+	tk.MustExec(`INSERT INTO t VALUES("中文");`)
+	result = tk.MustQuery(`SELECT a, REVERSE(a), REVERSE("中文"), REVERSE("123 ") FROM t;`)
+	result.Check(testkit.Rows("中文 \x87\x96歸\xe4 文中  321"))
+	result = tk.MustQuery(`SELECT REVERSE(123), REVERSE(12.09) FROM t;`)
+	result.Check(testkit.Rows("321 90.21"))
+
 	// for trim
 	result = tk.MustQuery(`select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx')`)
 	result.Check(testkit.Rows("bar barxxx barx bar"))

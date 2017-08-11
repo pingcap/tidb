@@ -175,8 +175,11 @@ type decodeFunctionClass struct {
 }
 
 func (c *decodeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinDecodeSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinDecodeSig struct {
@@ -194,8 +197,11 @@ type desDecryptFunctionClass struct {
 }
 
 func (c *desDecryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinDesDecryptSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinDesDecryptSig struct {
@@ -213,8 +219,11 @@ type desEncryptFunctionClass struct {
 }
 
 func (c *desEncryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinDesEncryptSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinDesEncryptSig struct {
@@ -232,8 +241,11 @@ type encodeFunctionClass struct {
 }
 
 func (c *encodeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinEncodeSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinEncodeSig struct {
@@ -251,8 +263,11 @@ type encryptFunctionClass struct {
 }
 
 func (c *encryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinEncryptSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinEncryptSig struct {
@@ -270,8 +285,11 @@ type oldPasswordFunctionClass struct {
 }
 
 func (c *oldPasswordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinOldPasswordSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinOldPasswordSig struct {
@@ -289,13 +307,16 @@ type passwordFunctionClass struct {
 }
 
 func (c *passwordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = mysql.PWDHashLen + 1
 	sig := &builtinPasswordSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinPasswordSig struct {
@@ -323,8 +344,11 @@ type randomBytesFunctionClass struct {
 }
 
 func (c *randomBytesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinRandomBytesSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinRandomBytesSig struct {
@@ -667,8 +691,11 @@ type validatePasswordStrengthFunctionClass struct {
 }
 
 func (c *validatePasswordStrengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinValidatePasswordStrengthSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinValidatePasswordStrengthSig struct {
