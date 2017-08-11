@@ -110,7 +110,6 @@ func randomBuf(size int) []byte {
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
 	cc := &clientConn{
-		pkt:          newPacketIO(conn),
 		server:       s,
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysql.DefaultCollationID,
@@ -131,10 +130,12 @@ func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
 		if err != nil {
 			return cc, errors.Trace(fmt.Errorf("%s (%s)", err.Error(), conn.RemoteAddr().String()))
 		}
+		cc.pkt = newPacketIO(wconn)
 		cc.conn = wconn
 		cc.clientAddr = wconn.RemoteAddr()
 		log.Infof("[%d] new connection %s (through proxy %s)", cc.connectionID, cc.clientAddr, conn.RemoteAddr().String())
 	} else {
+		cc.pkt = newPacketIO(conn)
 		cc.conn = conn
 		cc.clientAddr = conn.RemoteAddr()
 		log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
