@@ -22,17 +22,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func (s *testEvaluatorSuite) TestNewCastFunc(c *C) {
-	defer testleak.AfterTest(c)()
-
-	res := NewCastFunc(types.NewFieldType(mysql.TypeJSON), &Column{RetType: types.NewFieldType(mysql.TypeLonglong)}, s.ctx)
-	castFunc := res.(*ScalarFunction)
-	c.Assert(castFunc.FuncName.L, Equals, "cast")
-	c.Assert(castFunc.RetType.Tp, Equals, mysql.TypeJSON)
-	_, ok := castFunc.Function.(*builtinCastSig)
-	c.Assert(ok, IsTrue)
-}
-
 func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 	defer testleak.AfterTest(c)()
 

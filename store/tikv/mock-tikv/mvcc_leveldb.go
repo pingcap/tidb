@@ -730,3 +730,22 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 	}
 	return mvcc.db.Write(batch, nil)
 }
+
+// DeleteRange implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) DeleteRange(startKey, endKey []byte) error {
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
+	iter, _, err := newScanIterator(mvcc.db, startKey, endKey)
+	defer iter.Release()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var batch leveldb.Batch
+	for iter.Valid() {
+		batch.Delete(iter.Key())
+		iter.Next()
+	}
+	return mvcc.db.Write(&batch, nil)
+}

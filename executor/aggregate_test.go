@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"sync/atomic"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
@@ -25,7 +27,7 @@ import (
 
 type MockExec struct {
 	fields    []*ast.ResultField
-	Rows      []*executor.Row
+	Rows      []executor.Row
 	curRowIdx int
 }
 
@@ -33,14 +35,14 @@ func (m *MockExec) Schema() *expression.Schema {
 	return expression.NewSchema()
 }
 
-func (m *MockExec) Next() (*executor.Row, error) {
+func (m *MockExec) Next() (executor.Row, error) {
 	if m.curRowIdx >= len(m.Rows) {
 		return nil, nil
 	}
 	r := m.Rows[m.curRowIdx]
 	m.curRowIdx++
 	if len(m.fields) > 0 {
-		for i, d := range r.Data {
+		for i, d := range r {
 			m.fields[i].Expr.SetValue(d.GetValue())
 		}
 	}
@@ -59,10 +61,10 @@ func (m *MockExec) Open() error {
 
 func (s *testSuite) TestAggregation(c *C) {
 	// New expression evaluation architecture does not support aggregation functions now.
-	origin := expression.TurnOnNewExprEval
-	expression.TurnOnNewExprEval = false
+	origin := atomic.LoadInt32(&expression.TurnOnNewExprEval)
+	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 	defer func() {
-		expression.TurnOnNewExprEval = origin
+		atomic.StoreInt32(&expression.TurnOnNewExprEval, origin)
 	}()
 	plan.JoinConcurrency = 1
 	defer func() {
@@ -284,7 +286,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory table in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "733"
+	columnCountOfAllInformationSchemaTables := "738"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
