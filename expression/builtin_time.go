@@ -2508,7 +2508,7 @@ func (c *timeFormatFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpString, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpDuration, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
