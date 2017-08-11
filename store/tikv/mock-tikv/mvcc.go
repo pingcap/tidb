@@ -55,7 +55,7 @@ type mvccEntry struct {
 	lock   *mvccLock
 }
 
-// MarshalBinary implements encoding.BinaryMarshaler.
+// MarshalBinary implements encoding.BinaryMarshaler interface.
 func (l *mvccLock) MarshalBinary() ([]byte, error) {
 	var (
 		mh  marshalHelper
@@ -69,7 +69,7 @@ func (l *mvccLock) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), errors.Trace(mh.err)
 }
 
-// UnmarshalBinary implements encoding.BinaryUnmarshaler.
+// UnmarshalBinary implements encoding.BinaryUnmarshaler interface.
 func (l *mvccLock) UnmarshalBinary(data []byte) error {
 	var mh marshalHelper
 	buf := bytes.NewBuffer(data)
@@ -81,7 +81,7 @@ func (l *mvccLock) UnmarshalBinary(data []byte) error {
 	return errors.Trace(mh.err)
 }
 
-// MarshalBinary implements encoding.BinaryMarshaler.
+// MarshalBinary implements encoding.BinaryMarshaler interface.
 func (v mvccValue) MarshalBinary() ([]byte, error) {
 	var (
 		mh  marshalHelper
@@ -94,7 +94,7 @@ func (v mvccValue) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), errors.Trace(mh.err)
 }
 
-// UnmarshalBinary implements encoding.BinaryUnmarshaler.
+// UnmarshalBinary implements encoding.BinaryUnmarshaler interface.
 func (v *mvccValue) UnmarshalBinary(data []byte) error {
 	var mh marshalHelper
 	buf := bytes.NewBuffer(data)
