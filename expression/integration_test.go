@@ -600,6 +600,15 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
 	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
 
+	// for reverse
+	tk.MustExec(`DROP TABLE IF EXISTS t;`)
+	tk.MustExec(`CREATE TABLE t(a BINARY(6));`)
+	tk.MustExec(`INSERT INTO t VALUES("中文");`)
+	result = tk.MustQuery(`SELECT a, REVERSE(a), REVERSE("中文"), REVERSE("123 ") FROM t;`)
+	result.Check(testkit.Rows("中文 \x87\x96歸\xe4 文中  321"))
+	result = tk.MustQuery(`SELECT REVERSE(123), REVERSE(12.09) FROM t;`)
+	result.Check(testkit.Rows("321 90.21"))
+
 	// for trim
 	result = tk.MustQuery(`select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx')`)
 	result.Check(testkit.Rows("bar barxxx barx bar"))
@@ -1428,4 +1437,17 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"26 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
 		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
 		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
+}
+
+func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a decimal(7, 6))")
+	tk.MustExec("insert into t values(1.123456), (1.123456)")
+	result := tk.MustQuery("select avg(a) from t")
+	result.Check(testkit.Rows("1.1234560000"))
 }
