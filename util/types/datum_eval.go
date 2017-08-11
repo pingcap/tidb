@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/cznic/mathutil"
 )
 
 // CoerceArithmetic converts datum to appropriate datum for arithmetic computing.
@@ -109,6 +110,7 @@ func ComputePlus(a, b Datum) (d Datum, err error) {
 			r := new(MyDecimal)
 			err = DecimalAdd(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)
+			d.SetFrac(mathutil.Max(a.Frac(), b.Frac()))
 			return d, err
 		}
 	}
