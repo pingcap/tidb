@@ -28,7 +28,6 @@ var (
 	_ functionClass = &logicAndFunctionClass{}
 	_ functionClass = &logicOrFunctionClass{}
 	_ functionClass = &logicXorFunctionClass{}
-	_ functionClass = &unaryPlusFunctionClass{}
 	_ functionClass = &isTrueOrFalseFunctionClass{}
 	_ functionClass = &unaryMinusFunctionClass{}
 	_ functionClass = &isNullFunctionClass{}
@@ -40,11 +39,6 @@ var (
 	_ builtinFunc = &builtinLogicOrSig{}
 	_ builtinFunc = &builtinLogicXorSig{}
 	_ builtinFunc = &builtinUnaryMinusIntSig{}
-	_ builtinFunc = &builtinUnaryPlusIntSig{}
-	_ builtinFunc = &builtinUnaryPlusDecimalSig{}
-	_ builtinFunc = &builtinUnaryPlusRealSig{}
-	_ builtinFunc = &builtinUnaryPlusTimeSig{}
-	_ builtinFunc = &builtinUnaryPlusDurationSig{}
 	_ builtinFunc = &builtinRealIsTrueSig{}
 	_ builtinFunc = &builtinDecimalIsTrueSig{}
 	_ builtinFunc = &builtinIntIsTrueSig{}
@@ -697,81 +691,6 @@ func (b *builtinUnaryMinusRealSig) evalReal(row []types.Datum) (float64, bool, e
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	val, isNull, err := b.args[0].EvalReal(row, sc)
 	return -val, isNull, errors.Trace(err)
-}
-
-type unaryPlusFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *unaryPlusFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	if err = c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var bf baseBuiltinFunc
-	argTp := args[0].GetType()
-	switch args[0].GetTypeClass() {
-	case types.ClassInt:
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
-		sig = &builtinUnaryPlusIntSig{baseIntBuiltinFunc{bf}}
-		bf.tp.Decimal = 0
-	case types.ClassDecimal:
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal)
-		sig = &builtinUnaryPlusDecimalSig{baseDecimalBuiltinFunc{bf}}
-		bf.tp.Decimal = argTp.Decimal
-	case types.ClassReal:
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-		sig = &builtinUnaryPlusRealSig{baseRealBuiltinFunc{bf}}
-		bf.tp.Decimal = argTp.Decimal
-	case types.ClassString:
-		if types.IsTypeTime(argTp.Tp) {
-			bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpTime)
-			sig = &builtinUnaryPlusTimeSig{baseTimeBuiltinFunc{bf}}
-		} else if argTp.Tp == mysql.TypeDuration {
-			bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpDuration)
-			sig = &builtinUnaryPlusDurationSig{baseDurationBuiltinFunc{bf}}
-		} else {
-			bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-			sig = &builtinUnaryPlusRealSig{baseRealBuiltinFunc{bf}}
-			bf.tp.Decimal = argTp.Decimal
-		}
-	}
-	bf.tp.Flen = argTp.Flen
-	return sig.setSelf(sig), errors.Trace(err)
-}
-
-type builtinUnaryPlusIntSig struct{ baseIntBuiltinFunc }
-type builtinUnaryPlusDecimalSig struct{ baseDecimalBuiltinFunc }
-type builtinUnaryPlusRealSig struct{ baseRealBuiltinFunc }
-type builtinUnaryPlusTimeSig struct{ baseTimeBuiltinFunc }
-type builtinUnaryPlusDurationSig struct{ baseDurationBuiltinFunc }
-
-func (b *builtinUnaryPlusIntSig) evalInt(row []types.Datum) (int64, bool, error) {
-	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
-	return val, isNull, errors.Trace(err)
-}
-
-func (b *builtinUnaryPlusDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return nil, true, errors.Trace(err)
-	}
-	copy := *val
-	return &copy, false, nil
-}
-
-func (b *builtinUnaryPlusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
-	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
-	return val, isNull, errors.Trace(err)
-}
-
-func (b *builtinUnaryPlusTimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
-	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
-	return val, isNull, errors.Trace(err)
-}
-func (b *builtinUnaryPlusDurationSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	val, isNull, err := b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
-	return val, isNull, errors.Trace(err)
 }
 
 type isNullFunctionClass struct {
