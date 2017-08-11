@@ -1241,6 +1241,11 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t1 VALUE('0abc', '12:59:59', 0)")
 	result = tk.MustQuery("select if(a, b, c), if(b, a, c), if(c, a, b) from t1")
 	result.Check(testkit.Rows("0 abc 12:00:00", "00:00:00 1 1abc", "0 0abc 12:59:59"))
+	result = tk.MustQuery("select if(1, 1.0, 1)")
+	result.Check(testkit.Rows("1.0"))
+	// FIXME: MySQL returns `1.0`.
+	result = tk.MustQuery("select if(1, 1, 1.0)")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
