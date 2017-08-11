@@ -525,8 +525,11 @@ type unaryOpFunctionClass struct {
 }
 
 func (c *unaryOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinUnaryOpSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinUnaryOpSig struct {
@@ -625,7 +628,7 @@ type unaryMinusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (b *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow bool) {
+func (c *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow bool) {
 	if mysql.HasUnsignedFlag(arg.GetType().Flag) {
 		uval := arg.Value.GetUint64()
 		// -math.MinInt64 is 9223372036854775808, so if uval is more than 9223372036854775808, like
@@ -646,7 +649,7 @@ func (b *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow boo
 
 // typeInfer infers unaryMinus function return type. when the arg is an int constant and overflow,
 // typerInfer will infers the return type as tpDecimal, not tpInt.
-func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Context) (evalTp, bool) {
+func (c *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Context) (evalTp, bool) {
 	tp := tpInt
 	switch argExpr.GetTypeClass() {
 	case types.ClassString, types.ClassReal:
@@ -660,7 +663,7 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Cont
 	// TODO: Handle float overflow.
 	if arg, ok := argExpr.(*Constant); sc.InSelectStmt && ok &&
 		arg.GetTypeClass() == types.ClassInt {
-		overflow = b.handleIntOverflow(arg)
+		overflow = c.handleIntOverflow(arg)
 		if overflow {
 			tp = tpDecimal
 		}
@@ -668,14 +671,13 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Cont
 	return tp, overflow
 }
 
-func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	err = b.verifyArgs(args)
-	if err != nil {
+func (c *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	argExpr, argExprTp := args[0], args[0].GetType()
-	retTp, intOverflow := b.typeInfer(argExpr, ctx)
+	retTp, intOverflow := c.typeInfer(argExpr, ctx)
 
 	var bf baseBuiltinFunc
 	switch argExpr.GetTypeClass() {
