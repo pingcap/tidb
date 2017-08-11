@@ -83,7 +83,7 @@ func IsBinaryStr(ft *FieldType) bool {
 	return false
 }
 
-// IsBinaryStr returns a boolean indicating
+// IsNonBinaryStr returns a boolean indicating
 // whether the field type is a non-binary string type.
 func IsNonBinaryStr(ft *FieldType) bool {
 	if ft.Collate != charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp)) {
