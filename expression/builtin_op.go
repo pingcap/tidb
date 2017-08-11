@@ -38,7 +38,6 @@ var (
 	_ builtinFunc = &builtinLogicAndSig{}
 	_ builtinFunc = &builtinLogicOrSig{}
 	_ builtinFunc = &builtinLogicXorSig{}
-	_ builtinFunc = &builtinUnaryMinusIntSig{}
 	_ builtinFunc = &builtinRealIsTrueSig{}
 	_ builtinFunc = &builtinDecimalIsTrueSig{}
 	_ builtinFunc = &builtinIntIsTrueSig{}
