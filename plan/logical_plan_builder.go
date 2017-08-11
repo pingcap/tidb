@@ -1217,7 +1217,6 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	p.SetSchema(schema)
 
 	// for calculating generated column
-	p.GenValues = make(map[int]expression.Expression)
 	for idx, column := range columns {
 		if column.IsGenerated() && !column.GeneratedStored {
 			expr, _, err := b.rewrite(column.GeneratedExpr, p, nil, true)
