@@ -342,13 +342,9 @@ func (h *rpcHandler) handleKvResolveLock(req *kvrpcpb.ResolveLockRequest) *kvrpc
 }
 
 func (h *rpcHandler) handleKvDeleteRange(req *kvrpcpb.DeleteRangeRequest) *kvrpcpb.DeleteRangeResponse {
-	err := h.mvccStore.DeleteRange(req.StartKey, req.EndKey)
-	if err != nil {
-		return &kvrpcpb.DeleteRangeResponse{
-			Error: err.Error(),
-		}
+	return &kvrpcpb.DeleteRangeResponse{
+		Error: "not implemented",
 	}
-	return &kvrpcpb.DeleteRangeResponse{}
 }
 
 func (h *rpcHandler) handleKvRawGet(req *kvrpcpb.RawGetRequest) *kvrpcpb.RawGetResponse {
@@ -388,7 +384,12 @@ func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.R
 func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawScanResponse {
 	kv, ok := h.mvccStore.(RawKV)
 	if !ok {
-		return &kvrpcpb.RawScanResponse{}
+		errStr := "not implemented"
+		return &kvrpcpb.RawScanResponse{
+			RegionError: &errorpb.Error{
+				Message: &errStr,
+			},
+		}
 	}
 	pairs := kv.RawScan(req.GetStartKey(), h.endKey, int(req.GetLimit()))
 	return &kvrpcpb.RawScanResponse{

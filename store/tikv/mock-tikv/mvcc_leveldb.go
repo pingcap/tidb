@@ -139,6 +139,8 @@ func newScanIterator(db *leveldb.DB, startKey, endKey []byte) (*Iterator, []byte
 		Start: start,
 		Limit: end,
 	})
+	// newScanIterator must handle startKey is nil, in this case, the real startKey
+	// should be change the frist key of the store.
 	if len(startKey) == 0 && iter.Valid() {
 		key, _, err := mvccDecode(iter.Key())
 		if err != nil {
@@ -729,23 +731,4 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 		currKey = skip.currKey
 	}
 	return mvcc.db.Write(batch, nil)
-}
-
-// DeleteRange implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) DeleteRange(startKey, endKey []byte) error {
-	mvcc.mu.RLock()
-	defer mvcc.mu.RUnlock()
-
-	iter, _, err := newScanIterator(mvcc.db, startKey, endKey)
-	defer iter.Release()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	var batch leveldb.Batch
-	for iter.Valid() {
-		batch.Delete(iter.Key())
-		iter.Next()
-	}
-	return mvcc.db.Write(&batch, nil)
 }

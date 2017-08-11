@@ -422,7 +422,6 @@ type MVCCStore interface {
 	Cleanup(key []byte, startTS uint64) error
 	ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error)
 	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
-	DeleteRange(startKey, endKey []byte) error
 }
 
 // RawKV is a key-value storage. MVCCStore can be implemented upon it with timestamp encoded into key.
@@ -701,27 +700,6 @@ func (s *MvccStore) ResolveLock(startKey, endKey []byte, startTS, commitTS uint6
 		return errors.Trace(err)
 	}
 	s.submit(ents...)
-	return nil
-}
-
-// DeleteRange deletes all keys in [startKey, endKey).
-func (s *MvccStore) DeleteRange(startKey, endKey []byte) error {
-	s.Lock()
-	defer s.Unlock()
-
-	var ents []*mvccEntry
-	iterator := func(item llrb.Item) bool {
-		ent := item.(*mvccEntry)
-		if !regionContains(startKey, endKey, ent.key) {
-			return false
-		}
-		ents = append(ents, ent)
-		return true
-	}
-	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
-	for _, ent := range ents {
-		s.tree.Delete(ent)
-	}
 	return nil
 }
 
