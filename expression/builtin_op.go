@@ -29,7 +29,7 @@ var (
 	_ functionClass = &logicOrFunctionClass{}
 	_ functionClass = &logicXorFunctionClass{}
 	_ functionClass = &isTrueOpFunctionClass{}
-	_ functionClass = &unaryOpFunctionClass{}
+	_ functionClass = &unaryPlusFunctionClass{}
 	_ functionClass = &unaryMinusFunctionClass{}
 	_ functionClass = &isNullFunctionClass{}
 	_ functionClass = &unaryNotFunctionClass{}
@@ -40,8 +40,12 @@ var (
 	_ builtinFunc = &builtinLogicOrSig{}
 	_ builtinFunc = &builtinLogicXorSig{}
 	_ builtinFunc = &builtinIsTrueOpSig{}
-	_ builtinFunc = &builtinUnaryOpSig{}
 	_ builtinFunc = &builtinUnaryMinusIntSig{}
+	_ builtinFunc = &builtinUnaryPlusIntSig{}
+	_ builtinFunc = &builtinUnaryPlusDecimalSig{}
+	_ builtinFunc = &builtinUnaryPlusRealSig{}
+	_ builtinFunc = &builtinUnaryPlusTimeSig{}
+	_ builtinFunc = &builtinUnaryPlusDurationSig{}
 	_ builtinFunc = &builtinIsNullSig{}
 	_ builtinFunc = &builtinUnaryNotSig{}
 )
@@ -407,74 +411,6 @@ func (b *builtinBitNegSig) evalInt(row []types.Datum) (int64, bool, error) {
 	return ^arg, false, nil
 }
 
-type unaryOpFunctionClass struct {
-	baseFunctionClass
-
-	op opcode.Op
-}
-
-func (c *unaryOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinUnaryOpSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinUnaryOpSig struct {
-	baseBuiltinFunc
-
-	op opcode.Op
-}
-
-func (b *builtinUnaryOpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	defer func() {
-		if er := recover(); er != nil {
-			err = errors.Errorf("%v", er)
-		}
-	}()
-	aDatum := args[0]
-	if aDatum.IsNull() {
-		return
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	switch b.op {
-	case opcode.Not:
-		var n int64
-		n, err = aDatum.ToBool(sc)
-		if err != nil {
-			err = errors.Trace(err)
-		} else if n == 0 {
-			d.SetInt64(1)
-		} else {
-			d.SetInt64(0)
-		}
-	case opcode.Plus:
-		switch aDatum.Kind() {
-		case types.KindInt64,
-			types.KindUint64,
-			types.KindFloat64,
-			types.KindFloat32,
-			types.KindMysqlDuration,
-			types.KindMysqlTime,
-			types.KindString,
-			types.KindMysqlDecimal,
-			types.KindBytes,
-			types.KindMysqlHex,
-			types.KindMysqlBit,
-			types.KindMysqlEnum,
-			types.KindMysqlSet:
-			d = aDatum
-		default:
-			return d, errInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
-		}
-	default:
-		return d, errInvalidOperation.Gen("Unsupported op %v for unary op", b.op)
-	}
-	return
-}
-
 type unaryNotFunctionClass struct {
 	baseFunctionClass
 }
@@ -558,8 +494,7 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Cont
 }
 
 func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	err = b.verifyArgs(args)
-	if err != nil {
+	if err = b.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -646,12 +581,85 @@ type builtinUnaryMinusRealSig struct {
 	baseRealBuiltinFunc
 }
 
-func (b *builtinUnaryMinusRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
+func (b *builtinUnaryMinusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	var val float64
-	val, isNull, err = b.args[0].EvalReal(row, sc)
-	res = -val
-	return
+	val, isNull, err := b.args[0].EvalReal(row, sc)
+	return -val, isNull, errors.Trace(err)
+}
+
+type unaryPlusFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *unaryPlusFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var bf baseBuiltinFunc
+	argTp := args[0].GetType()
+	switch args[0].GetTypeClass() {
+	case types.ClassInt:
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+		sig = &builtinUnaryPlusIntSig{baseIntBuiltinFunc{bf}}
+		bf.tp.Decimal = 0
+	case types.ClassDecimal:
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal)
+		sig = &builtinUnaryPlusDecimalSig{baseDecimalBuiltinFunc{bf}}
+		bf.tp.Decimal = argTp.Decimal
+	case types.ClassReal:
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+		sig = &builtinUnaryPlusRealSig{baseRealBuiltinFunc{bf}}
+		bf.tp.Decimal = argTp.Decimal
+	case types.ClassString:
+		if types.IsTypeTime(argTp.Tp) {
+			bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpTime)
+			sig = &builtinUnaryPlusTimeSig{baseTimeBuiltinFunc{bf}}
+		} else if argTp.Tp == mysql.TypeDuration {
+			bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpDuration)
+			sig = &builtinUnaryPlusDurationSig{baseDurationBuiltinFunc{bf}}
+		} else {
+			bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+			sig = &builtinUnaryPlusRealSig{baseRealBuiltinFunc{bf}}
+			bf.tp.Decimal = argTp.Decimal
+		}
+	}
+	bf.tp.Flen = argTp.Flen
+	return sig.setSelf(sig), errors.Trace(err)
+}
+
+type builtinUnaryPlusIntSig struct{ baseIntBuiltinFunc }
+type builtinUnaryPlusDecimalSig struct{ baseDecimalBuiltinFunc }
+type builtinUnaryPlusRealSig struct{ baseRealBuiltinFunc }
+type builtinUnaryPlusTimeSig struct{ baseTimeBuiltinFunc }
+type builtinUnaryPlusDurationSig struct{ baseDurationBuiltinFunc }
+
+func (b *builtinUnaryPlusIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+	return val, isNull, errors.Trace(err)
+}
+
+func (b *builtinUnaryPlusDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return nil, true, errors.Trace(err)
+	}
+	copy := *val
+	return &copy, false, nil
+}
+
+func (b *builtinUnaryPlusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
+	return val, isNull, errors.Trace(err)
+}
+
+func (b *builtinUnaryPlusTimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
+	return val, isNull, errors.Trace(err)
+}
+func (b *builtinUnaryPlusDurationSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	val, isNull, err := b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
+	return val, isNull, errors.Trace(err)
 }
 
 type isNullFunctionClass struct {

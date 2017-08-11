@@ -562,7 +562,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 
 		ret, err := result.CompareDatum(s.ctx.GetSessionVars().StmtCtx, types.NewDatum(t.result))
 		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, 0)
+		c.Assert(ret, Equals, 0, Commentf("%v %s", t.arg, t.op))
 	}
 }
 
