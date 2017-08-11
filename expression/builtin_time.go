@@ -2508,7 +2508,7 @@ func (c *timeFormatFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpDuration, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2525,7 +2525,7 @@ type builtinTimeFormatSig struct {
 // evalString evals a builtinTimeFormatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
 func (b *builtinTimeFormatSig) evalString(row []types.Datum) (string, bool, error) {
-	time, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	time, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
 		return "", isNull, errors.Trace(err)
 	}
@@ -2539,9 +2539,7 @@ func (b *builtinTimeFormatSig) evalString(row []types.Datum) (string, bool, erro
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
-func (b *builtinTimeFormatSig) builtinTimeFormat(time string, formatMask string, ctx context.Context) (res string, err error) {
-	t, err := types.ParseDuration(time, types.MaxFsp)
-
+func (b *builtinTimeFormatSig) builtinTimeFormat(t types.Duration, formatMask string, ctx context.Context) (res string, err error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
