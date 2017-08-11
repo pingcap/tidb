@@ -609,6 +609,10 @@ func (s *testPlanSuite) createTestCase4EncryptionFuncs() []typeInferTestCase {
 		{"UNCOMPRESS(c_varchar)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"UNCOMPRESSED_LENGTH(c_varchar)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"UNCOMPRESSED_LENGTH(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+
+		{"RANDOM_BYTES(5)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 1024, types.UnspecifiedLength},
+		{"RANDOM_BYTES('123')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 1024, types.UnspecifiedLength},
+		{"RANDOM_BYTES('abc')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 1024, types.UnspecifiedLength},
 	}
 }
 

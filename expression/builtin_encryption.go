@@ -347,37 +347,37 @@ func (c *randomBytesFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinRandomBytesSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 1024 // Max allowed random bytes
+	types.SetBinChsClnFlag(bf.tp)
+	sig := &builtinRandomBytesSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinRandomBytesSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinRandomBytesSig.
+// evalString evals RANDOM_BYTES(len).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_random-bytes
-func (b *builtinRandomBytesSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinRandomBytesSig) evalString(row []types.Datum) (string, bool, error) {
+	len, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
+	if len < 1 || len > 1024 {
+		return "", false, types.ErrOverflow.GenByArgs("length", "random_bytes")
 	}
-	size := arg.GetInt64()
-	if size < 1 || size > 1024 {
-		return d, mysql.NewErr(mysql.ErrDataOutOfRange, "length", "random_bytes")
-	}
-	buf := make([]byte, size)
+	buf := make([]byte, len)
 	if n, err := rand.Read(buf); err != nil {
-		return d, errors.Trace(err)
-	} else if int64(n) != size {
-		return d, errors.New("fail to generate random bytes")
+		return "", false, errors.Trace(err)
+	} else if int64(n) != len {
+		return "", false, errors.New("fail to generate random bytes")
 	}
-	d.SetBytes(buf)
-	return d, nil
+	return string(buf), false, nil
 }
 
 type md5FunctionClass struct {
