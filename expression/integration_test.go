@@ -1400,3 +1400,16 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
 		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
 }
+
+func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a decimal(7, 6))")
+	tk.MustExec("insert into t values(1.123456), (1.123456)")
+	result := tk.MustQuery("select avg(a) from t")
+	result.Check(testkit.Rows("1.1234560000"))
+}
