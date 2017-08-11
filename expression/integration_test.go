@@ -774,6 +774,21 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNCOMPRESSED_LENGTH(a), UNCOMPRESSED_LENGTH(b) FROM t2;")
 	result.Check(testkit.Rows("875770417 5", "892613426 5", "875770417 5"))
+
+	// for RANDOM_BYTES
+	lengths := []int{0, -5, 1025, 4000}
+	for _, len := range lengths {
+		rs, err := tk.Exec(fmt.Sprintf("SELECT RANDOM_BYTES(%d);", len))
+		c.Assert(err, IsNil, Commentf("%v", len))
+		_, err = tidb.GetRows(rs)
+		c.Assert(err, NotNil, Commentf("%v", len))
+		terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+		c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange), Commentf("%v", len))
+	}
+	tk.MustQuery("SELECT RANDOM_BYTES('1');")
+	tk.MustQuery("SELECT RANDOM_BYTES(1024);")
+	result = tk.MustQuery("SELECT RANDOM_BYTES(NULL);")
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
@@ -840,7 +855,6 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for logicAnd
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
-
 	// for bitNeg
 	result = tk.MustQuery("select ~123, ~-123, ~null")
 	result.Check(testkit.Rows("18446744073709551492 122 <nil>"))
@@ -868,6 +882,9 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for logicOr
 	result = tk.MustQuery("select 1 || 1, 1 || 0, 0 || 1, 0 || 0, 2 || -1, null || 1, '1a' || 'a'")
 	result.Check(testkit.Rows("1 1 1 0 1 1 1"))
+	// for unaryPlus
+	result = tk.MustQuery(`select +1, +0, +(-9), +(-0.001), +0.999, +null, +"aaa"`)
+	result.Check(testkit.Rows("1 0 -9 -0.001 0.999 <nil> aaa"))
 }
 
 func (s *testIntegrationSuite) TestBuiltin(c *C) {
