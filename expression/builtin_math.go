@@ -208,8 +208,12 @@ func (b *builtinAbsDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, boo
 		return nil, isNull, errors.Trace(err)
 	}
 	to := new(types.MyDecimal)
-	if err = types.DecimalSub(new(types.MyDecimal), val, to); err != nil {
-		return nil, false, err
+	if !val.IsNegative() {
+		*to = *val
+	} else {
+		if err = types.DecimalSub(new(types.MyDecimal), val, to); err != nil {
+			return nil, false, err
+		}
 	}
 	return to, false, errors.Trace(err)
 }
