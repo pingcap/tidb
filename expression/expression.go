@@ -328,37 +328,55 @@ func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 
 // EvalInt returns int representation of Constant.
 func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return 0, true, nil
+	}
 	val, isNull, err := evalExprToInt(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
 // EvalReal returns real representation of Constant.
 func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return 0, true, nil
+	}
 	val, isNull, err := evalExprToReal(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
 // EvalString returns string representation of Constant.
 func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return "", true, nil
+	}
 	val, isNull, err := evalExprToString(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
 // EvalDecimal returns decimal representation of Constant.
 func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return nil, true, nil
+	}
 	val, isNull, err := evalExprToDecimal(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
-func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
-	val, isNull, err := evalExprToTime(c, nil, sc)
+func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (val types.Time, isNull bool, err error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return val, true, nil
+	}
+	val, isNull, err = evalExprToTime(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
 // EvalDuration returns Duration representation of Constant.
-func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
-	val, isNull, err := evalExprToDuration(c, nil, sc)
+func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return val, true, nil
+	}
+	val, isNull, err = evalExprToDuration(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
