@@ -572,6 +572,27 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
 	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
 
+	// for locate
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time, f binary(5))")
+	tk.MustExec(`insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01", "HelLo")`)
+	result = tk.MustQuery(`select locate(".ping", a), locate(".ping", a, 5) from t`)
+	result.Check(testkit.Rows("4 0"))
+	result = tk.MustQuery(`select locate("234", b), locate("235", b, 10) from t`)
+	result.Check(testkit.Rows("2 0"))
+	result = tk.MustQuery(`select locate(".45", c), locate(".35", b) from t`)
+	result.Check(testkit.Rows("4 0"))
+	result = tk.MustQuery(`select locate("El", f), locate("ll", f), locate("lL", f), locate("Lo", f), locate("lo", f) from t`)
+	result.Check(testkit.Rows("0 0 3 4 0"))
+	result = tk.MustQuery(`select locate("01 12", d) from t`)
+	result.Check(testkit.Rows("9"))
+	result = tk.MustQuery(`select locate("文", "中文字符串", 2)`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`select locate("文", "中文字符串", 3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select locate("文", "中文字符串")`)
+	result.Check(testkit.Rows("2"))
+
 	// for bin
 	result = tk.MustQuery(`select bin(-1);`)
 	result.Check(testkit.Rows("1111111111111111111111111111111111111111111111111111111111111111"))
@@ -846,7 +867,14 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustExec("create table t(a decimal(3, 1), b double, c datetime, d time, e int)")
 	tk.MustExec("insert into t value(12.3, 1.23, '2017-01-01 12:12:12', '12:12:12', 123)")
 	result = tk.MustQuery("select cast(a as json), cast(b as json), cast(c as json), cast(d as json), cast(e as json) from t")
-	result.Check(testkit.Rows(`"12.3" 1.23 "2017-01-01 12:12:12.000000" "12:12:12.000000" 123`))
+	result.Check(testkit.Rows(`12.3 1.23 "2017-01-01 12:12:12.000000" "12:12:12.000000" 123`))
+
+	// for ISNULL
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, d char(10), e datetime, f float, g decimal(10, 3))")
+	tk.MustExec("insert t values (1, 0, null, null, null, null, null)")
+	result = tk.MustQuery("select ISNULL(a), ISNULL(b), ISNULL(c), ISNULL(d), ISNULL(e), ISNULL(f), ISNULL(g) from t")
+	result.Check(testkit.Rows("0 0 1 1 1 1 1"))
 
 	// fix issue #3942
 	result = tk.MustQuery("select cast('-24 100:00:00' as time);")
@@ -1325,7 +1353,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"18 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"19 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"20 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
-		"21 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"21 0 0 0 1 <nil> <nil> 0 0 1 1 0 <nil> <nil> 0 0 0 0 <nil>",
 		"22 0 0 0 1 <nil> <nil> 0 0 0 1 0 <nil> <nil> 0 0 0 0 <nil>",
 		"23 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"24 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
