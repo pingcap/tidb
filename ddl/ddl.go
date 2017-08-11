@@ -316,7 +316,7 @@ func (d *ddl) Stop() error {
 
 func (d *ddl) start(ctx goctx.Context) {
 	d.quitCh = make(chan struct{})
-	d.ownerManager.CampaignOwners(ctx)
+	d.ownerManager.CampaignOwner(ctx)
 
 	d.wait.Add(1)
 	go d.onDDLWorker()
