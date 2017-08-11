@@ -260,24 +260,12 @@ func (s *testMyDecimalSuite) TestShift(c *C) {
 }
 
 func (s *testMyDecimalSuite) TestRoundWithHalfEven(c *C) {
-	type tcase struct {
+	tests := []struct {
 		input  string
 		scale  int
 		output string
 		err    error
-	}
-	var doTest = func(c *C, tests []tcase) {
-		for _, ca := range tests {
-			var dec MyDecimal
-			dec.FromString([]byte(ca.input))
-			var rounded MyDecimal
-			err := dec.Round(&rounded, ca.scale, ModeHalfEven)
-			c.Check(err, Equals, ca.err)
-			result := rounded.ToString()
-			c.Check(string(result), Equals, ca.output)
-		}
-	}
-	tests := []tcase{
+	}{
 		{"123456789.987654321", 1, "123456790.0", nil},
 		{"15.1", 0, "15", nil},
 		{"15.5", 0, "16", nil},
@@ -294,28 +282,25 @@ func (s *testMyDecimalSuite) TestRoundWithHalfEven(c *C) {
 		{".999", 0, "1", nil},
 		{"999999999", -9, "1000000000", nil},
 	}
-	doTest(c, tests)
+
+	for _, ca := range tests {
+		var dec MyDecimal
+		dec.FromString([]byte(ca.input))
+		var rounded MyDecimal
+		err := dec.Round(&rounded, ca.scale, ModeHalfEven)
+		c.Check(err, Equals, ca.err)
+		result := rounded.ToString()
+		c.Check(string(result), Equals, ca.output)
+	}
 }
 
 func (s *testMyDecimalSuite) TestRoundWithTruncate(c *C) {
-	type tcase struct {
+	tests := []struct {
 		input  string
 		scale  int
 		output string
 		err    error
-	}
-	var doTest = func(c *C, tests []tcase) {
-		for _, ca := range tests {
-			var dec MyDecimal
-			dec.FromString([]byte(ca.input))
-			var rounded MyDecimal
-			err := dec.Round(&rounded, ca.scale, ModeTruncate)
-			c.Check(err, Equals, ca.err)
-			result := rounded.ToString()
-			c.Check(string(result), Equals, ca.output)
-		}
-	}
-	tests := []tcase{
+	}{
 		{"123456789.987654321", 1, "123456789.9", nil},
 		{"15.1", 0, "15", nil},
 		{"15.5", 0, "15", nil},
@@ -332,28 +317,24 @@ func (s *testMyDecimalSuite) TestRoundWithTruncate(c *C) {
 		{".999", 0, "0", nil},
 		{"999999999", -9, "0", nil},
 	}
-	doTest(c, tests)
+	for _, ca := range tests {
+		var dec MyDecimal
+		dec.FromString([]byte(ca.input))
+		var rounded MyDecimal
+		err := dec.Round(&rounded, ca.scale, ModeTruncate)
+		c.Check(err, Equals, ca.err)
+		result := rounded.ToString()
+		c.Check(string(result), Equals, ca.output)
+	}
 }
 
 func (s *testMyDecimalSuite) TestRoundWithCeil(c *C) {
-	type tcase struct {
+	tests := []struct {
 		input  string
 		scale  int
 		output string
 		err    error
-	}
-	var doTest = func(c *C, tests []tcase) {
-		for _, ca := range tests {
-			var dec MyDecimal
-			dec.FromString([]byte(ca.input))
-			var rounded MyDecimal
-			err := dec.Round(&rounded, ca.scale, modeCeiling)
-			c.Check(err, Equals, ca.err)
-			result := rounded.ToString()
-			c.Check(string(result), Equals, ca.output)
-		}
-	}
-	tests := []tcase{
+	}{
 		{"123456789.987654321", 1, "123456790.0", nil},
 		{"15.1", 0, "16", nil},
 		{"15.5", 0, "16", nil},
@@ -371,7 +352,15 @@ func (s *testMyDecimalSuite) TestRoundWithCeil(c *C) {
 		{".999", 0, "1", nil},
 		{"999999999", -9, "1000000000", nil},
 	}
-	doTest(c, tests)
+	for _, ca := range tests {
+		var dec MyDecimal
+		dec.FromString([]byte(ca.input))
+		var rounded MyDecimal
+		err := dec.Round(&rounded, ca.scale, modeCeiling)
+		c.Check(err, Equals, ca.err)
+		result := rounded.ToString()
+		c.Check(string(result), Equals, ca.output)
+	}
 }
 
 func (s *testMyDecimalSuite) TestFromString(c *C) {
