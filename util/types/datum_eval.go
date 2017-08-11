@@ -16,10 +16,10 @@ package types
 import (
 	"math"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/cznic/mathutil"
 )
 
 // CoerceArithmetic converts datum to appropriate datum for arithmetic computing.
