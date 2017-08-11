@@ -60,7 +60,8 @@ var (
 	_ builtinFunc = &builtinInet6AtonSig{}
 	_ builtinFunc = &builtinInet6NtoaSig{}
 	_ builtinFunc = &builtinIsIPv4Sig{}
-	_ builtinFunc = &builtinIsIPv4PrefixedSig{}
+	_ builtinFunc = &builtinIsIPv4CompatSig{}
+	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
 	_ builtinFunc = &builtinUUIDSig{}
 )
@@ -459,14 +460,14 @@ type builtinIsIPv4Sig struct {
 func (b *builtinIsIPv4Sig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return int64(0), false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	// isIPv4(str)
 	// args[0] string
 	if isIPv4(val) {
-		return int64(1), false, nil
+		return 1, false, nil
 	}
-	return int64(0), false, nil
+	return 0, false, nil
 }
 
 // isIPv4 checks IPv4 address which satisfying the format A.B.C.D(0<=A/B/C/D<=255).
@@ -508,8 +509,33 @@ func (c *isIPv4CompatFunctionClass) getFunction(args []Expression, ctx context.C
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinIsIPv4PrefixedSig{baseIntBuiltinFunc{bf}, false}
+	sig := &builtinIsIPv4CompatSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
+}
+
+type builtinIsIPv4CompatSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals Is_IPv4_Compat
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
+func (b *builtinIsIPv4CompatSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return int64(0), false, errors.Trace(err)
+	}
+
+	ipAddress := []byte(val)
+	if len(ipAddress) != net.IPv6len {
+		//Not an IPv6 address, return false
+		return 0, false, nil
+	}
+
+	prefixCompat := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	if !bytes.HasPrefix(ipAddress, prefixCompat) {
+		return 0, false, nil
+	}
+	return 1, false, nil
 }
 
 type isIPv4MappedFunctionClass struct {
@@ -524,45 +550,33 @@ func (c *isIPv4MappedFunctionClass) getFunction(args []Expression, ctx context.C
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinIsIPv4PrefixedSig{baseIntBuiltinFunc{bf}, true}
+	sig := &builtinIsIPv4MappedSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-type builtinIsIPv4PrefixedSig struct {
+type builtinIsIPv4MappedSig struct {
 	baseIntBuiltinFunc
-	// isIPv4MappedPrefix true for `Is_IPv4_Mapped`, false for `Is_IPv4_Compat`
-	isIPv4MappedPrefix bool
 }
 
-// evalInt evals Is_IPv4_Mapped or Is_IPv4_Compat
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
+// evalInt evals Is_IPv4_Mapped
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
-func (b *builtinIsIPv4PrefixedSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinIsIPv4MappedSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
 		return int64(0), false, errors.Trace(err)
 	}
-	var (
-		prefixMapped = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
-		prefixCompat = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-	)
 
 	ipAddress := []byte(val)
 	if len(ipAddress) != net.IPv6len {
 		//Not an IPv6 address, return false
-		return int64(0), false, nil
+		return 0, false, nil
 	}
 
-	if b.isIPv4MappedPrefix {
-		if !bytes.HasPrefix(ipAddress, prefixMapped) {
-			return int64(0), false, nil
-		}
-	} else {
-		if !bytes.HasPrefix(ipAddress, prefixCompat) {
-			return int64(0), false, nil
-		}
+	prefixMapped := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
+	if !bytes.HasPrefix(ipAddress, prefixMapped) {
+		return 0, false, nil
 	}
-	return int64(1), false, nil
+	return 1, false, nil
 }
 
 type isIPv6FunctionClass struct {
@@ -590,13 +604,13 @@ type builtinIsIPv6Sig struct {
 func (b *builtinIsIPv6Sig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return int64(0), false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	ip := net.ParseIP(val)
 	if ip != nil && !isIPv4(val) {
-		return int64(1), false, nil
+		return 1, false, nil
 	}
-	return int64(0), false, nil
+	return 0, false, nil
 }
 
 type isUsedLockFunctionClass struct {
