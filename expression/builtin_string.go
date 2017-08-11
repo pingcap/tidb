@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -61,6 +62,7 @@ var (
 	_ functionClass = &trimFunctionClass{}
 	_ functionClass = &lTrimFunctionClass{}
 	_ functionClass = &rTrimFunctionClass{}
+	_ functionClass = &lpadFunctionClass{}
 	_ functionClass = &rpadFunctionClass{}
 	_ functionClass = &bitLengthFunctionClass{}
 	_ functionClass = &charFunctionClass{}
@@ -80,7 +82,6 @@ var (
 	_ functionClass = &insertFuncFunctionClass{}
 	_ functionClass = &instrFunctionClass{}
 	_ functionClass = &loadFileFunctionClass{}
-	_ functionClass = &lpadFunctionClass{}
 )
 
 var (
@@ -105,7 +106,10 @@ var (
 	_ builtinFunc = &builtinSubstring2ArgsSig{}
 	_ builtinFunc = &builtinSubstring3ArgsSig{}
 	_ builtinFunc = &builtinSubstringIndexSig{}
-	_ builtinFunc = &builtinLocateSig{}
+	_ builtinFunc = &builtinLocate2ArgsSig{}
+	_ builtinFunc = &builtinLocate3ArgsSig{}
+	_ builtinFunc = &builtinLocateBinary2ArgsSig{}
+	_ builtinFunc = &builtinLocateBinary3ArgsSig{}
 	_ builtinFunc = &builtinHexStrArgSig{}
 	_ builtinFunc = &builtinHexIntArgSig{}
 	_ builtinFunc = &builtinUnHexSig{}
@@ -114,7 +118,10 @@ var (
 	_ builtinFunc = &builtinTrim3ArgsSig{}
 	_ builtinFunc = &builtinLTrimSig{}
 	_ builtinFunc = &builtinRTrimSig{}
+	_ builtinFunc = &builtinLpadSig{}
+	_ builtinFunc = &builtinLpadBinarySig{}
 	_ builtinFunc = &builtinRpadSig{}
+	_ builtinFunc = &builtinRpadBinarySig{}
 	_ builtinFunc = &builtinBitLengthSig{}
 	_ builtinFunc = &builtinCharSig{}
 	_ builtinFunc = &builtinCharLengthSig{}
@@ -131,8 +138,8 @@ var (
 	_ builtinFunc = &builtinToBase64Sig{}
 	_ builtinFunc = &builtinInsertFuncSig{}
 	_ builtinFunc = &builtinInstrSig{}
+	_ builtinFunc = &builtinInstrBinarySig{}
 	_ builtinFunc = &builtinLoadFileSig{}
-	_ builtinFunc = &builtinLpadSig{}
 )
 
 // setBinFlagOrBinStr sets resTp to binary string if argTp is a binary string,
@@ -1047,83 +1054,160 @@ type locateFunctionClass struct {
 }
 
 func (c *locateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLocateSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if argsErr := c.verifyArgs(args); argsErr != nil {
+		return nil, errors.Trace(argsErr)
+	}
+	hasStartPos, argTps := len(args) == 3, []evalTp{tpString, tpString}
+	if hasStartPos {
+		argTps = append(argTps, tpInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var sig builtinFunc
+	// Loacte is multibyte safe, and is case-sensitive only if at least one argument is a binary string.
+	hasBianryInput := types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType())
+	switch {
+	case hasStartPos && hasBianryInput:
+		sig = &builtinLocateBinary3ArgsSig{baseIntBuiltinFunc{bf}}
+		break
+	case hasStartPos:
+		sig = &builtinLocate3ArgsSig{baseIntBuiltinFunc{bf}}
+		break
+	case hasBianryInput:
+		sig = &builtinLocateBinary2ArgsSig{baseIntBuiltinFunc{bf}}
+		break
+	default:
+		sig = &builtinLocate2ArgsSig{baseIntBuiltinFunc{bf}}
+	}
+	return sig.setSelf(sig), nil
 }
 
-type builtinLocateSig struct {
-	baseBuiltinFunc
+type builtinLocateBinary2ArgsSig struct {
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinLocateSig.
+// evalInt evals LOCATE(substr,str), case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
-func (b *builtinLocateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinLocateBinary2ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	subStr, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	// The meaning of the elements of args.
-	// args[0] -> SubStr
-	// args[1] -> Str
-	// args[2] -> Pos
+	str, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	subStrLen := len(subStr)
+	if subStrLen == 0 {
+		return 1, false, nil
+	}
+	ret, idx := 0, strings.Index(str, subStr)
+	if idx != -1 {
+		ret = idx + 1
+	}
+	return int64(ret), false, nil
+}
 
-	// eval str
-	if args[1].IsNull() {
-		return d, nil
-	}
-	str, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	// eval substr
-	if args[0].IsNull() {
-		return d, nil
-	}
-	subStr, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	// eval pos
-	pos := int64(0)
-	if len(args) == 3 {
-		p, err := args[2].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		pos = p - 1
-	}
-	var ret, subStrLen, sentinel int64
-	caseSensitive := false
-	if args[0].Kind() == types.KindBytes || args[1].Kind() == types.KindBytes {
-		caseSensitive = true
-		subStrLen = int64(len(subStr))
-		sentinel = int64(len(str)) - subStrLen
-	} else {
-		subStrLen = int64(len([]rune(subStr)))
-		sentinel = int64(len([]rune(strings.ToLower(str)))) - subStrLen
-	}
+type builtinLocate2ArgsSig struct {
+	baseIntBuiltinFunc
+}
 
-	if pos < 0 || pos > sentinel {
-		d.SetInt64(0)
-		return d, nil
+// evalInt evals LOCATE(substr,str), non case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
+func (b *builtinLocate2ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	subStr, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	str, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if int64(len([]rune(subStr))) == 0 {
+		return 1, false, nil
+	}
+	slice := string([]rune(strings.ToLower(str)))
+	ret, idx := 0, strings.Index(slice, strings.ToLower(subStr))
+	if idx != -1 {
+		ret = utf8.RuneCountInString(slice[:idx]) + 1
+	}
+	return int64(ret), false, nil
+}
+
+type builtinLocateBinary3ArgsSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals LOCATE(substr,str,pos), case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
+func (b *builtinLocateBinary3ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	subStr, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	str, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	pos, isNull, err := b.args[2].EvalInt(row, sc)
+	// Transfer the argument which starts from 1 to real index which starts from 0.
+	pos--
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	subStrLen := len(subStr)
+	if pos < 0 || pos > int64(len(str)-subStrLen) {
+		return 0, false, nil
 	} else if subStrLen == 0 {
-		d.SetInt64(pos + 1)
-		return d, nil
-	} else if caseSensitive {
-		slice := str[pos:]
-		idx := strings.Index(slice, subStr)
-		if idx != -1 {
-			ret = pos + int64(idx) + 1
-		}
-	} else {
-		slice := string([]rune(strings.ToLower(str))[pos:])
-		idx := strings.Index(slice, strings.ToLower(subStr))
-		if idx != -1 {
-			ret = pos + int64(utf8.RuneCountInString(slice[:idx])) + 1
-		}
+		return pos + 1, false, nil
 	}
-	d.SetInt64(ret)
-	return d, nil
+	slice := str[pos:]
+	idx := strings.Index(slice, subStr)
+	if idx != -1 {
+		return pos + int64(idx) + 1, false, nil
+	}
+	return 0, false, nil
+}
+
+type builtinLocate3ArgsSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals LOCATE(substr,str,pos), non case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
+func (b *builtinLocate3ArgsSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	subStr, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	str, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	pos, isNull, err := b.args[2].EvalInt(row, sc)
+	// Transfer the argument which starts from 1 to real index which starts from 0.
+	pos--
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	subStrLen := len([]rune(subStr))
+	if pos < 0 || pos > int64(len([]rune(strings.ToLower(str)))-subStrLen) {
+		return 0, false, nil
+	} else if subStrLen == 0 {
+		return pos + 1, false, nil
+	}
+	slice := string([]rune(strings.ToLower(str))[pos:])
+	idx := strings.Index(slice, strings.ToLower(subStr))
+	if idx != -1 {
+		return pos + int64(utf8.RuneCountInString(slice[:idx])) + 1, false, nil
+	}
+	return 0, false, nil
 }
 
 type hexFunctionClass struct {
@@ -1470,56 +1554,225 @@ func trimRight(str, remstr string) string {
 	}
 }
 
+func getFlen4LpadAndRpad(sc *variable.StatementContext, arg Expression) int {
+	if constant, ok := arg.(*Constant); ok {
+		length, isNull, err := constant.EvalInt(nil, sc)
+		if err != nil {
+			log.Errorf("getFlen4LpadAndRpad with error: %v", err.Error())
+		}
+		if isNull || err != nil || length > mysql.MaxBlobWidth {
+			return mysql.MaxBlobWidth
+		}
+		return int(length)
+	}
+	return mysql.MaxBlobWidth
+}
+
+type lpadFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *lpadFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx.GetSessionVars().StmtCtx, args[1])
+	setBinFlagOrBinStr(args[0].GetType(), bf.tp)
+	setBinFlagOrBinStr(args[2].GetType(), bf.tp)
+	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
+		sig := &builtinLpadBinarySig{baseStringBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	}
+	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
+	}
+	sig := &builtinLpadSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinLpadBinarySig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals LPAD(str,len,padstr).
+// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_lpad
+func (b *builtinLpadBinarySig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	byteLength := len(str)
+
+	length, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	targetLength := int(length)
+
+	padStr, isNull, err := b.args[2].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	padLength := len(padStr)
+
+	if targetLength < 0 || targetLength > b.tp.Flen || (byteLength < targetLength && padLength == 0) {
+		return "", true, nil
+	}
+
+	if tailLen := targetLength - byteLength; tailLen > 0 {
+		repeatCount := tailLen/padLength + 1
+		str = strings.Repeat(padStr, repeatCount)[:tailLen] + str
+	}
+	return str[:targetLength], false, nil
+}
+
+type builtinLpadSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals LPAD(str,len,padstr).
+// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_lpad
+func (b *builtinLpadSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	runeLength := len([]rune(str))
+
+	length, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	targetLength := int(length)
+
+	padStr, isNull, err := b.args[2].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	padLength := len([]rune(padStr))
+
+	if targetLength < 0 || targetLength*4 > b.tp.Flen || (runeLength < targetLength && padLength == 0) {
+		return "", true, nil
+	}
+
+	if tailLen := targetLength - runeLength; tailLen > 0 {
+		repeatCount := tailLen/padLength + 1
+		str = string([]rune(strings.Repeat(padStr, repeatCount))[:tailLen]) + str
+	}
+	return string([]rune(str)[:targetLength]), false, nil
+}
+
 type rpadFunctionClass struct {
 	baseFunctionClass
 }
 
 func (c *rpadFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRpadSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx.GetSessionVars().StmtCtx, args[1])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	setBinFlagOrBinStr(args[0].GetType(), bf.tp)
+	setBinFlagOrBinStr(args[2].GetType(), bf.tp)
+	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
+		sig := &builtinRpadBinarySig{baseStringBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	}
+	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
+	}
+	sig := &builtinRpadSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinRpadBinarySig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals RPAD(str,len,padstr).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
+func (b *builtinRpadBinarySig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	byteLength := len(str)
+
+	length, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	targetLength := int(length)
+
+	padStr, isNull, err := b.args[2].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	padLength := len(padStr)
+
+	if targetLength < 0 || targetLength > b.tp.Flen || (byteLength < targetLength && padLength == 0) {
+		return "", true, nil
+	}
+
+	if tailLen := targetLength - byteLength; tailLen > 0 {
+		repeatCount := tailLen/padLength + 1
+		str = str + strings.Repeat(padStr, repeatCount)
+	}
+	return str[:targetLength], false, nil
 }
 
 type builtinRpadSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinRpadSig.
+// evalString evals RPAD(str,len,padstr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
-func (b *builtinRpadSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// RPAD(str,len,padstr)
-	// args[0] string, args[1] int, args[2] string
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	length, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	l := int(length)
+func (b *builtinRpadSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
 
-	padStr, err := args[2].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
+	runeLength := len([]rune(str))
 
-	if l < 0 || (len(str) < l && padStr == "") {
-		d.SetNull()
-		return d, nil
+	length, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	targetLength := int(length)
+
+	padStr, isNull, err := b.args[2].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	padLength := len([]rune(padStr))
+
+	if targetLength < 0 || targetLength*4 > b.tp.Flen || (runeLength < targetLength && padLength == 0) {
+		return "", true, nil
 	}
 
-	tailLen := l - len(str)
-	if tailLen > 0 {
-		repeatCount := tailLen/len(padStr) + 1
+	if tailLen := targetLength - runeLength; tailLen > 0 {
+		repeatCount := tailLen/padLength + 1
 		str = str + strings.Repeat(padStr, repeatCount)
 	}
-	d.SetString(str[:l])
-
-	return d, nil
+	return string([]rune(str)[:targetLength]), false, nil
 }
 
 type bitLengthFunctionClass struct {
@@ -2396,58 +2649,69 @@ type instrFunctionClass struct {
 }
 
 func (c *instrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinInstrSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinInstrSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinInstrSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
-func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
 	if err != nil {
-		return d, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	// INSTR(str, substr)
-	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
+	bf.tp.Flen = 11
+	if types.IsBinaryStr(bf.args[0].GetType()) || types.IsBinaryStr(bf.args[1].GetType()) {
+		sig := &builtinInstrBinarySig{baseIntBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
 	}
+	sig := &builtinInstrSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
 
-	var str, substr string
-	if str, err = args[0].ToString(); err != nil {
-		return d, errors.Trace(err)
-	}
-	if substr, err = args[1].ToString(); err != nil {
-		return d, errors.Trace(err)
-	}
+type builtinInstrSig struct{ baseIntBuiltinFunc }
+type builtinInstrBinarySig struct{ baseIntBuiltinFunc }
 
-	// INSTR performs case **insensitive** search by default, while at least one argument is binary string
-	// we do case sensitive search.
-	var caseSensitive bool
-	if args[0].Kind() == types.KindBytes || args[1].Kind() == types.KindBytes {
-		caseSensitive = true
-	}
+// evalInt evals INSTR(str,substr), case insensitive
+// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
+func (b *builtinInstrSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
 
-	var pos, idx int
-	if caseSensitive {
-		idx = strings.Index(str, substr)
-	} else {
-		idx = strings.Index(strings.ToLower(str), strings.ToLower(substr))
+	str, IsNull, err := b.args[0].EvalString(row, sc)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
 	}
+	str = strings.ToLower(str)
+
+	substr, IsNull, err := b.args[1].EvalString(row, sc)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	substr = strings.ToLower(substr)
+
+	idx := strings.Index(str, substr)
 	if idx == -1 {
-		pos = 0
-	} else {
-		if caseSensitive {
-			pos = idx + 1
-		} else {
-			pos = utf8.RuneCountInString(str[:idx]) + 1
-		}
+		return 0, false, nil
 	}
-	d.SetInt64(int64(pos))
-	return d, nil
+	return int64(utf8.RuneCountInString(str[:idx]) + 1), false, nil
+}
+
+// evalInt evals INSTR(str,substr), case sensitive
+// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
+func (b *builtinInstrBinarySig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	str, IsNull, err := b.args[0].EvalString(row, sc)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	substr, IsNull, err := b.args[1].EvalString(row, sc)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	idx := strings.Index(str, substr)
+	if idx == -1 {
+		return 0, false, nil
+	}
+	return int64(idx + 1), false, nil
 }
 
 type loadFileFunctionClass struct {
@@ -2467,55 +2731,4 @@ type builtinLoadFileSig struct {
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_load-file
 func (b *builtinLoadFileSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("load_file")
-}
-
-type lpadFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *lpadFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLpadSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinLpadSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinLpadSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_lpad
-func (b *builtinLpadSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// LPAD(str,len,padstr)
-	// args[0] string, args[1] int, args[2] string
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	length, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	l := int(length)
-
-	padStr, err := args[2].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if l < 0 || (len(str) < l && padStr == "") {
-		return d, nil
-	}
-
-	tailLen := l - len(str)
-	if tailLen > 0 {
-		repeatCount := tailLen/len(padStr) + 1
-		str = strings.Repeat(padStr, repeatCount)[:tailLen] + str
-	}
-	d.SetString(str[:l])
-
-	return d, nil
 }
