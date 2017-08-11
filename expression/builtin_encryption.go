@@ -345,7 +345,7 @@ type randomBytesFunctionClass struct {
 
 func (c *randomBytesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(c.verifyArgs(args))
+		return nil, errors.Trace(err)
 	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
 	if err != nil {
