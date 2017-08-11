@@ -1394,11 +1394,13 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 	for _, tt := range octTests {
 		in := types.NewDatum(tt.origin)
 		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		res, err := r.ToString()
 		c.Assert(err, IsNil)
-		c.Assert(res, Equals, tt.ret)
+		c.Assert(res, Equals, tt.ret, Commentf("select oct(%v);", tt.origin))
 	}
 	// tt NULL input for sha
 	var argNull types.Datum
