@@ -18,6 +18,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -50,8 +51,11 @@ type caseWhenFunctionClass struct {
 }
 
 func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinCaseWhenSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCaseWhenSig struct {
@@ -139,7 +143,18 @@ func (c *ifFunctionClass) inferType(tp1, tp2 *types.FieldType) *types.FieldType 
 		typeClass = types.AggTypeClass([]*types.FieldType{tp1, tp2}, &unsignedFlag)
 		retTp = types.AggFieldType([]*types.FieldType{tp1, tp2})
 		retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
-
+		types.SetBinChsClnFlag(retTp)
+		if types.IsNonBinaryStr(tp1) && !types.IsBinaryStr(tp2) {
+			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+			if mysql.HasBinaryFlag(tp1.Flag) {
+				retTp.Flag |= mysql.BinaryFlag
+			}
+		} else if types.IsNonBinaryStr(tp2) && !types.IsBinaryStr(tp1) {
+			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+			if mysql.HasBinaryFlag(tp2.Flag) {
+				retTp.Flag |= mysql.BinaryFlag
+			}
+		}
 		if typeClass == types.ClassDecimal || typeClass == types.ClassInt {
 			unsignedFlag1, unsignedFlag2 := mysql.HasUnsignedFlag(tp1.Flag), mysql.HasUnsignedFlag(tp2.Flag)
 			flagLen1, flagLen2 := 0, 0
@@ -470,8 +485,11 @@ type nullIfFunctionClass struct {
 }
 
 func (c *nullIfFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinNullIfSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinNullIfSig struct {
