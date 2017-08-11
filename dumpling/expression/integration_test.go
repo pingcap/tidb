@@ -1287,6 +1287,29 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	select ifnull(a, 0) as a from t2
 	) t;`)
 	result.Check(testkit.Rows("2.4690"))
+
+	// for if
+	result = tk.MustQuery(`select IF(0,"ERROR","this"),IF(1,"is","ERROR"),IF(NULL,"ERROR","a"),IF(1,2,3)|0,IF(1,2.0,3.0)+0;`)
+	result.Check(testkit.Rows("this is a 2 2.0"))
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (st varchar(255) NOT NULL, u int(11) NOT NULL);")
+	tk.MustExec("INSERT INTO t1 VALUES ('a',1),('A',1),('aa',1),('AA',1),('a',1),('aaa',0),('BBB',0);")
+	result = tk.MustQuery("select if(1,st,st) s from t1 order by s;")
+	result.Check(testkit.Rows("A", "AA", "BBB", "a", "a", "aa", "aaa"))
+	result = tk.MustQuery("select if(u=1,st,st) s from t1 order by s;")
+	result.Check(testkit.Rows("A", "AA", "BBB", "a", "a", "aa", "aaa"))
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (a varchar(255), b time, c int)")
+	tk.MustExec("INSERT INTO t1 VALUE('abc', '12:00:00', 0)")
+	tk.MustExec("INSERT INTO t1 VALUE('1abc', '00:00:00', 1)")
+	tk.MustExec("INSERT INTO t1 VALUE('0abc', '12:59:59', 0)")
+	result = tk.MustQuery("select if(a, b, c), if(b, a, c), if(c, a, b) from t1")
+	result.Check(testkit.Rows("0 abc 12:00:00", "00:00:00 1 1abc", "0 0abc 12:59:59"))
+	result = tk.MustQuery("select if(1, 1.0, 1)")
+	result.Check(testkit.Rows("1.0"))
+	// FIXME: MySQL returns `1.0`.
+	result = tk.MustQuery("select if(1, 1, 1.0)")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {

@@ -465,8 +465,16 @@ func (s *testPlanSuite) createTestCase4LogicalFuncs() []typeInferTestCase {
 
 func (s *testPlanSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
-		{"ifnull(c_int, c_int)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
+		{"ifnull(c_int, c_int    )", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
 		{"ifnull(c_int, c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 17, 3},
+		{"if(c_int, c_decimal, c_int)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 3},
+		{"if(c_int, c_char, c_int)", mysql.TypeString, charset.CharsetUTF8, 0, 20, -1},
+		{"if(c_int, c_binary, c_int)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, -1},
+		{"if(c_int, c_binary_char, c_int)", mysql.TypeString, charset.CharsetUTF8, mysql.BinaryFlag, 20, -1},
+		{"if(c_int, c_char, c_decimal)", mysql.TypeString, charset.CharsetUTF8, 0, 20, 3},
+		{"if(c_int, c_datetime, c_int)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 11, 2},
+		{"if(c_int, c_int, c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 11, -1},
+		{"if(c_int, c_time, c_datetime)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, -1, 2},
 	}
 }
 
