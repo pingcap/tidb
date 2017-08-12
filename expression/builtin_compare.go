@@ -34,7 +34,13 @@ var (
 )
 
 var (
-	_ builtinFunc = &builtinCoalesceSig{}
+	_ builtinFunc = &builtinCoalesceIntSig{}
+	_ builtinFunc = &builtinCoalesceRealSig{}
+	_ builtinFunc = &builtinCoalesceDecimalSig{}
+	_ builtinFunc = &builtinCoalesceStringSig{}
+	_ builtinFunc = &builtinCoalesceTimeSig{}
+	_ builtinFunc = &builtinCoalesceDurationSig{}
+
 	_ builtinFunc = &builtinGreatestSig{}
 	_ builtinFunc = &builtinLeastSig{}
 	_ builtinFunc = &builtinIntervalSig{}
@@ -86,33 +92,181 @@ type coalesceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinCoalesceSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinCoalesceSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinCoalesceSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	// builtinCoalesce returns the first non-NULL value in the list,
+	// or NULL if there are no non-NULL values.
+	// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
 	}
-	return builtinCoalesce(args, b.ctx)
-}
 
-// builtinCoalesce returns the first non-NULL value in the list,
-// or NULL if there are no non-NULL values.
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
-func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	for _, d = range args {
-		if !d.IsNull() {
-			return d, nil
+	fieldTps := make([]*types.FieldType, 0, len(args))
+	for _, arg := range args {
+		fieldTps = append(fieldTps, arg.GetType())
+	}
+
+	// Get the aggregate field type as retType
+	retTp := types.AggFieldType(fieldTps)
+	retCTp := types.AggTypeClass(fieldTps, &retTp.Flag)
+	retEvalTp := tpString
+
+	// Infer the result evalTp
+	switch retCTp {
+	case types.ClassInt:
+		retEvalTp = tpInt
+	case types.ClassReal:
+		retEvalTp = tpReal
+	case types.ClassDecimal:
+		retEvalTp = tpDecimal
+	case types.ClassString:
+		if types.IsTypeTime(retTp.Tp) {
+			retEvalTp = tpTime
+		} else if retTp.Tp == mysql.TypeDuration {
+			retEvalTp = tpDuration
 		}
 	}
-	return d, nil
+
+	// Set retType to BINARY(0) if all arguments are of type NULL
+	if retTp.Tp == mysql.TypeNull {
+		retTp.Flen, retTp.Decimal = 0, 0
+		types.SetBinChsClnFlag(retTp)
+	}
+
+	fieldEvalTps := make([]evalTp, 0, len(args))
+	for range args {
+		fieldEvalTps = append(fieldEvalTps, retEvalTp)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, retEvalTp, fieldEvalTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp = retTp
+
+	switch retEvalTp {
+	case tpInt:
+		sig = &builtinCoalesceIntSig{baseIntBuiltinFunc{bf}}
+	case tpReal:
+		sig = &builtinCoalesceRealSig{baseRealBuiltinFunc{bf}}
+	case tpDecimal:
+		sig = &builtinCoalesceDecimalSig{baseDecimalBuiltinFunc{bf}}
+	case tpString:
+		sig = &builtinCoalesceStringSig{baseStringBuiltinFunc{bf}}
+	case tpTime:
+		sig = &builtinCoalesceTimeSig{baseTimeBuiltinFunc{bf}}
+	case tpDuration:
+		sig = &builtinCoalesceDurationSig{baseDurationBuiltinFunc{bf}}
+	}
+
+	return sig.setSelf(sig), nil
+}
+
+type builtinCoalesceIntSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinCoalesceIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for _, a := range b.getArgs() {
+		arg, isNull, err := a.EvalInt(row, sc)
+		if err != nil {
+			return arg, isNull, errors.Trace(err)
+		}
+		if !isNull {
+			return arg, false, nil
+		}
+	}
+	return 0, true, nil
+}
+
+type builtinCoalesceRealSig struct {
+	baseRealBuiltinFunc
+}
+
+func (b *builtinCoalesceRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for _, a := range b.getArgs() {
+		arg, isNull, err := a.EvalReal(row, sc)
+		if err != nil {
+			return arg, isNull, errors.Trace(err)
+		}
+		if !isNull {
+			return arg, false, nil
+		}
+	}
+	return 0, true, nil
+}
+
+type builtinCoalesceDecimalSig struct {
+	baseDecimalBuiltinFunc
+}
+
+func (b *builtinCoalesceDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for _, a := range b.getArgs() {
+		arg, isNull, err := a.EvalDecimal(row, sc)
+		if err != nil {
+			return arg, isNull, errors.Trace(err)
+		}
+		if !isNull {
+			return arg, false, nil
+		}
+	}
+	return nil, true, nil
+}
+
+type builtinCoalesceStringSig struct {
+	baseStringBuiltinFunc
+}
+
+func (b *builtinCoalesceStringSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for _, a := range b.getArgs() {
+		arg, isNull, err := a.EvalString(row, sc)
+		if err != nil {
+			return arg, isNull, errors.Trace(err)
+		}
+		if !isNull {
+			return arg, false, nil
+		}
+	}
+	return "", true, nil
+}
+
+type builtinCoalesceTimeSig struct {
+	baseTimeBuiltinFunc
+}
+
+func (b *builtinCoalesceTimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for _, a := range b.getArgs() {
+		arg, isNull, err := a.EvalTime(row, sc)
+		if err != nil {
+			return arg, isNull, errors.Trace(err)
+		}
+		if !isNull {
+			return arg, false, nil
+		}
+	}
+	return types.Time{}, true, nil
+}
+
+type builtinCoalesceDurationSig struct {
+	baseDurationBuiltinFunc
+}
+
+func (b *builtinCoalesceDurationSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	for _, a := range b.getArgs() {
+		arg, isNull, err := a.EvalDuration(row, sc)
+		if err != nil {
+			return arg, isNull, errors.Trace(err)
+		}
+		if !isNull {
+			return arg, false, nil
+		}
+	}
+	return types.Duration{}, true, nil
 }
 
 type greatestFunctionClass struct {

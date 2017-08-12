@@ -14,13 +14,14 @@
 package expression
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
-	"time"
 )
 
 func (s *testEvaluatorSuite) TestCompare(c *C) {
@@ -111,20 +112,48 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	defer testleak.AfterTest(c)()
 
-	tests := []struct {
+	cases := []struct {
 		args     []interface{}
 		expected interface{}
+		isNil    bool
+		getErr   bool
 	}{
-		{[]interface{}{1, nil, 1.2}, int64(1)},
-		{[]interface{}{nil, 1, 1, 2}, int64(1)},
-		{[]interface{}{nil, nil, 1}, int64(1)},
+		{[]interface{}{nil}, nil, true, false},
+		{[]interface{}{nil, nil}, nil, true, false},
+		{[]interface{}{nil, nil, nil}, nil, true, false},
+		{[]interface{}{nil, 1}, int64(1), false, false},
+		{[]interface{}{nil, 1.1}, float64(1.1), false, false},
+		{[]interface{}{1, 1.1}, float64(1), false, false},
+		{[]interface{}{nil, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromFloatForTest(123.456), false, false},
+		{[]interface{}{1, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromInt(1), false, false},
+		{[]interface{}{nil, duration}, duration, false, false},
+		{[]interface{}{nil, tm, nil}, tm, false, false},
+		{[]interface{}{nil, dt, nil}, dt, false, false},
+		{[]interface{}{tm, dt}, tm, false, false},
 	}
 
-	for _, t := range tests {
-		bf, err := funcs[ast.Coalesce].getFunction(primitiveValsToConstants(t.args), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Coalesce, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		result, err := bf.eval(nil)
-		c.Assert(result.GetValue(), Equals, t.expected)
-		c.Assert(err, IsNil)
+
+		//tp := f.GetType()
+		//TODO check rettype
+
+		d, err := f.Eval(nil)
+
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetValue(), DeepEquals, t.expected)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Length].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }
