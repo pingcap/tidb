@@ -275,13 +275,16 @@ type tidbVersionFunctionClass struct {
 }
 
 func (c *tidbVersionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = len(printer.GetTiDBInfo())
 	sig := &builtinTiDBVersionSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinTiDBVersionSig struct {
@@ -299,8 +302,11 @@ type benchmarkFunctionClass struct {
 }
 
 func (c *benchmarkFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinBenchmarkSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinBenchmarkSig struct {
@@ -318,8 +324,11 @@ type charsetFunctionClass struct {
 }
 
 func (c *charsetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinCharsetSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCharsetSig struct {
@@ -337,8 +346,11 @@ type coercibilityFunctionClass struct {
 }
 
 func (c *coercibilityFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinCoercibilitySig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCoercibilitySig struct {
@@ -356,8 +368,11 @@ type collationFunctionClass struct {
 }
 
 func (c *collationFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinCollationSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCollationSig struct {
