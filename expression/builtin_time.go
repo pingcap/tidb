@@ -2533,27 +2533,18 @@ func (b *builtinTimeFormatSig) evalString(row []types.Datum) (string, bool, erro
 	if err != nil || isNull {
 		return "", isNull, errors.Trace(err)
 	}
-	var res string
-	res, err = b.builtinTimeFormat(dur, formatMask, b.ctx)
-	return res, isNull, err
+	res, err := b.formatTime(dur, formatMask, b.ctx)
+	return res, isNull, errors.Trace(err)
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
-func (b *builtinTimeFormatSig) builtinTimeFormat(t types.Duration, formatMask string, ctx context.Context) (res string, err error) {
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-
+func (b *builtinTimeFormatSig) formatTime(t types.Duration, formatMask string, ctx context.Context) (res string, err error) {
 	t2 := types.Time{
 		Time: types.FromDate(0, 0, 0, t.Hour(), t.Minute(), t.Second(), t.MicroSecond()),
 		Type: mysql.TypeDate, Fsp: 0}
 
 	str, err := t2.DateFormat(formatMask)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-
-	return str, err
+	return str, errors.Trace(err)
 }
 
 type timeToSecFunctionClass struct {
