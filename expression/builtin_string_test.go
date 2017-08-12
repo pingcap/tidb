@@ -1640,6 +1640,7 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 	for _, t := range tbl {
 		fc := funcs[ast.Elt]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
