@@ -346,11 +346,11 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 	}
 	tp0, tp1 := args[0].GetType(), args[1].GetType()
 	fieldTp := types.AggFieldType([]*types.FieldType{tp0, tp1})
-	types.SetBinChsClnFlag(fieldTp)
 	classType := types.AggTypeClass([]*types.FieldType{tp0, tp1}, &fieldTp.Flag)
 	fieldTp.Decimal = mathutil.Max(tp0.Decimal, tp1.Decimal)
 	// TODO: make it more accurate when inferring FLEN
 	fieldTp.Flen = tp0.Flen + tp1.Flen
+	fieldTp.Flag |= (tp0.Flag & mysql.NotNullFlag) | (tp1.Flag & mysql.NotNullFlag)
 
 	var evalTps evalTp
 	switch classType {
@@ -365,7 +365,6 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 		evalTps = tpString
 		if !types.IsBinaryStr(tp0) && !types.IsBinaryStr(tp1) {
 			fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
-			fieldTp.Flag ^= mysql.BinaryFlag
 		}
 		if types.IsTypeTime(fieldTp.Tp) {
 			evalTps = tpTime
