@@ -384,6 +384,9 @@ func checkIndexInfo(indexName string, indexColNames []*ast.IndexColName) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return ddl.ErrWrongNameForIndex.GenByArgs(indexName)
 	}
+	if len(indexColNames) > 16 {
+		return infoschema.ErrTooManyKeyParts.GenByArgs(16)
+	}
 	return checkDuplicateColumnName(indexColNames)
 }
 
