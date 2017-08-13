@@ -4192,6 +4192,11 @@ CastType:
 |	"JSON"
 	{
 		x := types.NewFieldType(mysql.TypeJSON)
+		x.Flen = mysql.MaxBlobWidth
+		x.Decimal = 0
+		x.Flag |= mysql.BinaryFlag
+		x.Charset = charset.CharsetUTF8
+		x.Collate = charset.CollationUTF8
 		$$ = x
 	}
 

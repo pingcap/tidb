@@ -48,6 +48,7 @@ var (
 	_ builtinFunc = &builtinUserSig{}
 	_ builtinFunc = &builtinConnectionIDSig{}
 	_ builtinFunc = &builtinLastInsertIDSig{}
+	_ builtinFunc = &builtinLastInsertIDWithIDSig{}
 	_ builtinFunc = &builtinVersionSig{}
 	_ builtinFunc = &builtinBenchmarkSig{}
 	_ builtinFunc = &builtinCharsetSig{}
@@ -195,35 +196,56 @@ type lastInsertIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinLastInsertIDSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	argsTp := []evalTp{}
+	if len(args) == 1 {
+		argsTp = append(argsTp, tpInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argsTp...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.deterministic = false
+
+	if len(args) == 1 {
+		sig = &builtinLastInsertIDWithIDSig{baseIntBuiltinFunc{bf}}
+	} else {
+		sig = &builtinLastInsertIDSig{baseIntBuiltinFunc{bf}}
+	}
+	return sig.setSelf(sig), errors.Trace(err)
 }
 
 type builtinLastInsertIDSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinLastInsertIDSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
-func (b *builtinLastInsertIDSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+// evalInt evals LAST_INSERT_ID().
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
+func (b *builtinLastInsertIDSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
+	res = int64(b.ctx.GetSessionVars().PrevLastInsertID)
+	return res, false, nil
+}
+
+type builtinLastInsertIDWithIDSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals LAST_INSERT_ID(expr).
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
+func (b *builtinLastInsertIDWithIDSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	res, isNull, err = b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
 	}
-	if len(args) == 1 {
-		id, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		b.ctx.GetSessionVars().SetLastInsertID(uint64(id))
-		d.SetUint64(uint64(id))
-	} else {
-		d.SetUint64(b.ctx.GetSessionVars().PrevLastInsertID)
-	}
-	return
+
+	b.ctx.GetSessionVars().SetLastInsertID(uint64(res))
+	return res, false, nil
 }
 
 type versionFunctionClass struct {
@@ -253,13 +275,16 @@ type tidbVersionFunctionClass struct {
 }
 
 func (c *tidbVersionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = len(printer.GetTiDBInfo())
 	sig := &builtinTiDBVersionSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinTiDBVersionSig struct {
@@ -277,8 +302,11 @@ type benchmarkFunctionClass struct {
 }
 
 func (c *benchmarkFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinBenchmarkSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinBenchmarkSig struct {
@@ -296,8 +324,11 @@ type charsetFunctionClass struct {
 }
 
 func (c *charsetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinCharsetSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCharsetSig struct {
@@ -315,8 +346,11 @@ type coercibilityFunctionClass struct {
 }
 
 func (c *coercibilityFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinCoercibilitySig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCoercibilitySig struct {
@@ -334,8 +368,11 @@ type collationFunctionClass struct {
 }
 
 func (c *collationFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinCollationSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCollationSig struct {
