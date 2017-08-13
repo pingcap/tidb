@@ -41,6 +41,7 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	fc := funcs[ast.Case]
 	for _, t := range tbl {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg...)), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
