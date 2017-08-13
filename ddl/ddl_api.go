@@ -498,6 +498,10 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, fo
 		colName := constr.Keys[0].Column.Name.L
 		constrName := colName
 		i := 2
+		if strings.EqualFold(constrName, mysql.PrimaryKeyName) {
+			constrName = fmt.Sprintf("%s_%d", constrName, 2)
+			i = 3
+		}
 		for namesMap[constrName] {
 			// We loop forever until we find constrName that haven't been used.
 			if foreign {
@@ -620,7 +624,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		case ast.ConstraintPrimaryKey:
 			idxInfo.Primary = true
 			idxInfo.Unique = true
-			idxInfo.Name = model.NewCIStr(table.PrimaryKeyName)
+			idxInfo.Name = model.NewCIStr(mysql.PrimaryKeyName)
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			idxInfo.Unique = true
 		}
@@ -951,20 +955,9 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
 
-	// Check whether there are other columns depend on this column or not.
-	for _, col := range t.Cols() {
-		for dep := range col.Dependences {
-			if dep == colName.L {
-				return errDependentByGeneratedColumn.GenByArgs(dep)
-			}
-		}
-	}
-
 	tblInfo := t.Meta()
-	// We don't support dropping column with index covered now.
-	// We must drop the index first, then drop the column.
-	if isColumnWithIndex(colName.L, tblInfo.Indices) {
-		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
+	if err = isDroppableColumn(tblInfo, colName); err != nil {
+		return errors.Trace(err)
 	}
 	// We don't support dropping column with PK handle covered now.
 	if col.IsPKHandleColumn(tblInfo) {
@@ -1530,5 +1523,26 @@ func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
 		}
 	}
 
+	return nil
+}
+
+func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
+	// Check whether there are other columns depend on this column or not.
+	for _, col := range tblInfo.Columns {
+		for dep := range col.Dependences {
+			if dep == colName.L {
+				return errDependentByGeneratedColumn.GenByArgs(dep)
+			}
+		}
+	}
+	if len(tblInfo.Columns) == 1 {
+		return ErrCantRemoveAllFields.Gen("can't drop only column %s in table %s",
+			colName, tblInfo.Name)
+	}
+	// We don't support dropping column with index covered now.
+	// We must drop the index first, then drop the column.
+	if isColumnWithIndex(colName.L, tblInfo.Indices) {
+		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
+	}
 	return nil
 }

@@ -146,6 +146,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			sql:  "select c from t where t.c = 1 and t.a = 1 order by t.d limit 1",
 			best: "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.a, 1)])->Limit)->Limit->Projection",
 		},
+		// Test composed index.
+		// FIXME: The TopN didn't be pushed.
+		{
+			sql:  "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
+			best: "IndexReader(Index(t.c_d_e)[[1 1,1 1]])->TopN([test.t.a],0,1)->Projection",
+		},
 		// Test PK in index double read.
 		{
 			sql:  "select * from t where t.c = 1 and t.a = 1 order by t.d limit 1",
@@ -212,6 +218,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.b,t2.a)->Limit",
 		},
 		{
+			sql:  "select * from t t1 join t t2 on t1.b = t2.a and t1.c = 1 and t1.d = 1 and t1.e = 1 order by t1.a limit 1",
+			best: "IndexJoin{IndexLookUp(Index(t.c_d_e)[[1 1 1,1 1 1]], Table(t))->TableReader(Table(t))}(t1.b,t2.a)->TopN([t1.a],0,1)",
+		},
+		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.b join t t3 on t1.b = t3.b",
 			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.b,t2.b)->TableReader(Table(t))}(t1.b,t3.b)",
 		},
@@ -245,6 +255,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a",
 			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+		},
+		// Test Single Merge Join + Sort + desc.
+		{
+			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a desc",
+			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort",
 		},
 		// Test Multi Merge Join.
 		{
@@ -357,10 +372,15 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 			sql:  "select * from t where a in (select s.a from t s) order by t.a",
 			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)",
 		},
+		// Test Nested sub query.
 		{
-			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
 			best: "SemiJoin{TableReader(Table(t))->Projection->SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(s.d,k.d)(s.c,k.c)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection",
+		},
+		// Test Semi Join + Order by.
+		{
+			sql:  "select * from t where a in (select a from t) order by b",
+			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Sort",
 		},
 		// Test Apply.
 		{

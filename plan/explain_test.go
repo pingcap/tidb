@@ -212,6 +212,15 @@ func (s *testExplainSuite) TestExplain(c *C) {
 				"Projection_2  Apply_13 root eq(test.t1.c2, test.t2.c2) 8000",
 			},
 		},
+		{
+			"select * from t1 order by c1 desc limit 1",
+			[]string{
+				"TableScan_11 Limit_14  cop table:t1, range:(-inf,+inf), keep order:true, desc 1.25",
+				"Limit_14  TableScan_11 cop offset:0, count:1 1",
+				"TableReader_15 Limit_6  root data:Limit_14 1",
+				"Limit_6  TableReader_15 root offset:0, count:1 1",
+			},
+		},
 	}
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
 	for _, tt := range tests {

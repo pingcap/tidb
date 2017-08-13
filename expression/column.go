@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -76,6 +77,12 @@ func (col *CorrelatedColumn) EvalTime(row []types.Datum, sc *variable.StatementC
 // EvalDuration returns Duration representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
 	val, isNull, err := evalExprToDuration(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalJSON returns JSON representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalJSON(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	val, isNull, err := evalExprToJSON(col, row, sc)
 	return val, isNull, errors.Trace(err)
 }
 
@@ -200,6 +207,12 @@ func (col *Column) EvalTime(row []types.Datum, sc *variable.StatementContext) (t
 // EvalDuration returns Duration representation of Column.
 func (col *Column) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
 	val, isNull, err := evalExprToDuration(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalJSON returns JSON representation of Column.
+func (col *Column) EvalJSON(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	val, isNull, err := evalExprToJSON(col, row, sc)
 	return val, isNull, errors.Trace(err)
 }
 
