@@ -1596,6 +1596,7 @@ func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 	for i, t := range dtblDate {
 		fc := funcs[ast.TimeFormat]
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
