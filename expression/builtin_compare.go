@@ -88,14 +88,13 @@ var (
 	_ builtinFunc = &builtinNullEQDurationSig{}
 )
 
+// builtinCoalesce returns the first non-NULL value in the list,
+// or NULL if there are no non-NULL values.
 type coalesceFunctionClass struct {
 	baseFunctionClass
 }
 
 func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	// builtinCoalesce returns the first non-NULL value in the list,
-	// or NULL if there are no non-NULL values.
-	// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -126,12 +125,6 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 		}
 	}
 
-	// Set retType to BINARY(0) if all arguments are of type NULL
-	if retTp.Tp == mysql.TypeNull {
-		retTp.Flen, retTp.Decimal = 0, 0
-		types.SetBinChsClnFlag(retTp)
-	}
-
 	fieldEvalTps := make([]evalTp, 0, len(args))
 	for range args {
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
@@ -141,7 +134,47 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp = retTp
+
+	bf.tp.Flag |= retTp.Flag
+	// Set retType to BINARY(0) if all arguments are of type NULL
+	retTp.Flen, retTp.Decimal = 0, types.UnspecifiedLength
+	if retTp.Tp == mysql.TypeNull {
+		types.SetBinChsClnFlag(bf.tp)
+	} else {
+		maxIntLen := 0
+		maxFlen := 0
+		for _, argTp := range fieldTps {
+			if argTp.Decimal > retTp.Decimal {
+				retTp.Decimal = argTp.Decimal
+			}
+			argIntLen := argTp.Flen
+			if argTp.Decimal > 0 {
+				argIntLen -= (argTp.Decimal + 1)
+			}
+			if !mysql.HasUnsignedFlag(argTp.Flag) {
+				argIntLen--
+			}
+			if argIntLen > maxIntLen {
+				maxIntLen = argIntLen
+			}
+			if argTp.Flen > maxFlen || argTp.Flen == types.UnspecifiedLength {
+				maxFlen = argTp.Flen
+			}
+		}
+
+		if retCTp == types.ClassInt || retCTp == types.ClassDecimal {
+			retTp.Flen = maxIntLen + retTp.Decimal
+			if retTp.Decimal > 0 {
+				retTp.Flen++
+			}
+			if !mysql.HasUnsignedFlag(retTp.Flag) {
+				retTp.Flen++
+			}
+			bf.tp = retTp
+		} else {
+			bf.tp.Flen = maxFlen
+		}
+	}
 
 	switch retEvalTp {
 	case tpInt:
@@ -161,6 +194,7 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 	return sig.setSelf(sig), nil
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceIntSig struct {
 	baseIntBuiltinFunc
 }
@@ -179,6 +213,7 @@ func (b *builtinCoalesceIntSig) evalInt(row []types.Datum) (int64, bool, error) 
 	return 0, true, nil
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceRealSig struct {
 	baseRealBuiltinFunc
 }
@@ -197,6 +232,7 @@ func (b *builtinCoalesceRealSig) evalReal(row []types.Datum) (float64, bool, err
 	return 0, true, nil
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDecimalSig struct {
 	baseDecimalBuiltinFunc
 }
@@ -215,6 +251,7 @@ func (b *builtinCoalesceDecimalSig) evalDecimal(row []types.Datum) (*types.MyDec
 	return nil, true, nil
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceStringSig struct {
 	baseStringBuiltinFunc
 }
@@ -233,6 +270,7 @@ func (b *builtinCoalesceStringSig) evalString(row []types.Datum) (string, bool, 
 	return "", true, nil
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceTimeSig struct {
 	baseTimeBuiltinFunc
 }
@@ -251,6 +289,7 @@ func (b *builtinCoalesceTimeSig) evalTime(row []types.Datum) (types.Time, bool, 
 	return types.Time{}, true, nil
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDurationSig struct {
 	baseDurationBuiltinFunc
 }

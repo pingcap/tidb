@@ -1859,25 +1859,6 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite) TestCompareBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	// for uuid
-	r := tk.MustQuery("select coalesce(NULL), coalesce(NULL, NULL), coalesce(NULL, NULL, NULL);")
-	r.Check(testkit.Rows("<nil> <nil> <nil>"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20), f bit(10))")
-	tk.MustExec(`insert into t values(1, 1.1, "2017-08-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
-	result := tk.MustQuery("select coalesce(NULL, a), coalesce(NULL, b, a), coalesce(c, NULL, a, b), coalesce(d, NULL), coalesce(d, c), coalesce(NULL, NULL, e, 1), coalesce(f), coalesce(1, a, b, c, d, e, f) from t")
-	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef 21 1", time.Now().Format("2006-01-02"))))
-}
-
 func (s *testSuite) TestSchemaCheckerSQL(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := tikv.NewMockTikvStore()

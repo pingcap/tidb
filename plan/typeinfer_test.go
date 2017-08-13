@@ -121,6 +121,8 @@ func (s *testPlanSuite) createTestCase4Columns() []typeInferTestCase {
 		{"c_int", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, types.UnspecifiedLength},
 		{"c_char", mysql.TypeString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
 		{"c_enum", mysql.TypeEnum, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		// this doesn't pass
+		//{"c_datetime", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
 	}
 }
 
@@ -648,6 +650,11 @@ func (s *testPlanSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 		{"isnull(c_blob     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"isnull(c_set      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"isnull(c_enum     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+
+		{"coalesce(c_int, 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"coalesce(NULL, c_int)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"coalesce(c_int, c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 3},
+		{"coalesce(c_int, c_datetime)", mysql.TypeVarString, charset.CharsetUTF8, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
 	}
 }
 
