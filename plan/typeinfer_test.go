@@ -82,6 +82,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4CompareFuncs()...)
 	tests = append(tests, s.createTestCase4Miscellaneous()...)
 	tests = append(tests, s.createTestCase4OpFuncs()...)
+	tests = append(tests, s.createTestCase4TimeFuncs()...)
 
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -690,7 +691,7 @@ func (s *testPlanSuite) createTestCase4OpFuncs() []typeInferTestCase {
 	}
 }
 
-func (s *testPlanSuite) createTestCase4OpFuncs() []typeInferTestCase {
+func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"time_format('150:02:28', '%r%r%r%r')", mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
 	}
