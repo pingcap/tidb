@@ -18,8 +18,8 @@ node ('master') {
                 def ws = pwd()
 
                 // tidb
-                container('centos7') {
-                    dir("go/src/github.com/pingcap/tidb") {
+                dir("go/src/github.com/pingcap/tidb") {
+                    container('centos7') {
                         // checkout
                         checkout scm
 
@@ -27,27 +27,27 @@ node ('master') {
                         sh "GOPATH=${ws}/go:$GOPATH WITH_RACE=1 make && mv bin/tidb-server bin/tidb-server-race"
                         sh "GOPATH=${ws}/go:$GOPATH make"
                     }
-                    stash includes: "go/src/github.com/pingcap/tidb/**", name: "tidb"
                 }
+                stash includes: "go/src/github.com/pingcap/tidb/**", name: "tidb"
 
                 // tidb-test
-                container('centos7') {
-                    dir("go/src/github.com/pingcap/tidb-test") {
+                dir("go/src/github.com/pingcap/tidb-test") {
+                    container('centos7') {
                         // checkout
                         git changelog: false, credentialsId: 'github-iamxy-ssh', poll: false, url: 'git@github.com:pingcap/tidb-test.git', branch: "${TIDB_TEST_BRANCH}"
                     }
-                    stash includes: "go/src/github.com/pingcap/tidb-test/**", name: "tidb-test"
                 }
+                stash includes: "go/src/github.com/pingcap/tidb-test/**", name: "tidb-test"
 
                 // mybatis
-                container('centos7') {
-                    dir("mybatis3") {
+                dir("mybatis3") {
+                    container('centos7') {
                         //git changelog: false, credentialsId: 'github-iamxy-ssh', poll: false, branch: 'travis-tidb', url: 'git@github.com:pingcap/mybatis-3.git'
                         sh "curl -L ${MYBATIS3_URL} -o travis-tidb.zip && unzip travis-tidb.zip && rm -rf travis-tidb.zip"
                         sh "cp -R mybatis-3-travis-tidb/* . && rm -rf mybatis-3-travis-tidb"
                     }
-                    stash includes: "mybatis3/**", name: "mybatis"
                 }
+                stash includes: "mybatis3/**", name: "mybatis"
 
                 // tikv
                 def tikv_sha1 = sh(returnStdout: true, script: "curl ${UCLOUD_OSS_URL}/refs/pingcap/tikv/${TIKV_BRANCH}/unportable_centos7/sha1").trim()
@@ -195,7 +195,7 @@ node ('master') {
                         }
 
                         try {
-                            sh "mvn -B -f mybatis3/pom.xml clean test"
+                            sh "mvn -B -f mybatis3/pom.xml -s /pingcap/.m2/settings.xml clean test"
                         } catch (err) {
                             sh "cat ${ws}/tidb_mybatis3_test.log"
                             throw err
