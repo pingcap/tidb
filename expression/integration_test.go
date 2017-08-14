@@ -658,6 +658,11 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select char_length(null), char_length("Hello"), char_length("a中b文c"), char_length(123),char_length(12.3456);`)
 	result.Check(testkit.Rows("<nil> 5 5 3 7"))
 
+	// for elt
+	result = tk.MustQuery(`select elt(0, "abc", "def"), elt(2, "hello", "中文", "tidb"), elt(4, "hello", "中文",
+	"tidb");`)
+	result.Check(testkit.Rows("<nil> 中文 <nil>"))
+
 	// for instr
 	result = tk.MustQuery(`select instr("中国", "国"), instr("中国", ""), instr("abc", ""), instr("", ""), instr("", "abc");`)
 	result.Check(testkit.Rows("2 1 1 1 0"))
