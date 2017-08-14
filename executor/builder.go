@@ -643,7 +643,6 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		aggFuncs:    v.AggFuncsPB,
 		byItems:     v.GbyItemsPB,
 		orderByList: v.SortItemsPB,
-		genValues:   v.GenValues,
 		handleCol:   handleCol,
 		priority:    b.priority,
 	}
@@ -683,7 +682,6 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggregate:            v.Aggregated,
 		aggFuncs:             v.AggFuncsPB,
 		byItems:              v.GbyItemsPB,
-		genValues:            v.GenValues,
 		handleCol:            handleCol,
 		priority:             b.priority,
 	}
@@ -1055,19 +1053,17 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		desc:      ts.Desc,
 		ranges:    ts.Ranges,
 		columns:   ts.Columns,
-		genValues: ts.GenValues,
 		handleCol: handleCol,
 		priority:  b.priority,
 	}
+
 	for i := range v.Schema().Columns {
 		if v.Schema().Columns[i].ID == model.ExtraHandleID {
 			break
 		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	if dagReq.Executors[len(dagReq.Executors)-1].Tp == tipb.ExecType_TypeAggregation {
-		e.aggregate = true
-	}
+
 	return e
 }
 
@@ -1149,12 +1145,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		columns:      is.Columns,
 		handleCol:    handleCol,
 		priority:     b.priority,
-	}
-	for _, p := range v.TablePlans {
-		if ts, ok := p.(*plan.PhysicalTableScan); ok {
-			e.genValues = ts.GenValues
-			break
-		}
 	}
 	return e
 }

@@ -1186,7 +1186,6 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		statisticTable: statisticTable,
 		DBName:         schemaName,
 		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
-		GenValues:      nil,
 		NeedColHandle:  b.needColHandle > 0,
 	}.init(b.allocator, b.ctx)
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
@@ -1253,7 +1252,9 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 }
 
 func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) LogicalPlan {
-	// for calculating generated column
+	if b.inUpdateStmt {
+		return ds
+	}
 	var hasVirtualGeneratedColumn = false
 	for _, column := range columns {
 		if column.IsGenerated() && !column.GeneratedStored {
@@ -1292,6 +1293,8 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 			})
 		}
 		proj.SetSchema(schema)
+		proj.SetChildren(ds)
+		ds.SetParents(proj)
 		return proj
 	} else {
 		return ds

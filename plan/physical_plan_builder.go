@@ -57,7 +57,6 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			NeedColHandle:   p.NeedColHandle,
 			unionScanSchema: p.unionScanSchema,
 		},
-		GenValues: p.GenValues,
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.schema)
 	if p.ctx.Txn() != nil {
@@ -128,7 +127,6 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			NeedColHandle:   p.NeedColHandle,
 			unionScanSchema: p.unionScanSchema,
 		},
-		GenValues: p.GenValues,
 	}.init(p.allocator, p.ctx)
 	is.SetSchema(p.schema)
 	if p.ctx.Txn() != nil {

@@ -285,10 +285,6 @@ type DataSource struct {
 
 	statisticTable *statistics.Table
 
-	// GenValues is for virtual generated columns without indices.
-	// The key is the offset in row datums, like expression.Column.Index.
-	GenValues map[int]expression.Expression
-
 	// NeedColHandle is used in execution phase.
 	NeedColHandle bool
 

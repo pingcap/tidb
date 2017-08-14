@@ -707,7 +707,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
-		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table, GenValues: p.GenValues}.init(p.allocator, p.ctx)
+		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
 		cop.tablePlan.SetSchema(is.dataSourceSchema)
 		// If it's parent requires single read task, return max cost.
 		if prop.taskTp == copSingleReadTaskType {
@@ -840,7 +840,6 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		TableAsName:         p.TableAsName,
 		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle || p.unionScanSchema != nil},
-		GenValues:           p.GenValues,
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
