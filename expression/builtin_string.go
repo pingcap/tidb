@@ -139,7 +139,6 @@ var (
 	_ builtinFunc = &builtinInsertFuncSig{}
 	_ builtinFunc = &builtinInstrSig{}
 	_ builtinFunc = &builtinInstrBinarySig{}
-	_ builtinFunc = &builtinLoadFileSig{}
 )
 
 func reverseBytes(origin []byte) []byte {
@@ -2829,19 +2828,5 @@ type loadFileFunctionClass struct {
 }
 
 func (c *loadFileFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinLoadFileSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinLoadFileSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinLoadFileSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_load-file
-func (b *builtinLoadFileSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("load_file")
+	return nil, errFunctionNotExists.GenByArgs("load_file")
 }
