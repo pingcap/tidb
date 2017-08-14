@@ -107,23 +107,7 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 	// Get the aggregate field type as retType
 	retTp := types.AggFieldType(fieldTps)
 	retCTp := types.AggTypeClass(fieldTps, &retTp.Flag)
-	retEvalTp := tpString
-
-	// Infer the result evalTp
-	switch retCTp {
-	case types.ClassInt:
-		retEvalTp = tpInt
-	case types.ClassReal:
-		retEvalTp = tpReal
-	case types.ClassDecimal:
-		retEvalTp = tpDecimal
-	case types.ClassString:
-		if types.IsTypeTime(retTp.Tp) {
-			retEvalTp = tpTime
-		} else if retTp.Tp == mysql.TypeDuration {
-			retEvalTp = tpDuration
-		}
-	}
+	retEvalTp := fieldTp2EvalTp(retTp)
 
 	fieldEvalTps := make([]evalTp, 0, len(args))
 	for range args {
