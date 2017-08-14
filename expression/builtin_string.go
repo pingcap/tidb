@@ -2214,7 +2214,7 @@ type builtinOctSig struct {
 func (b *builtinOctSig) evalString(row []types.Datum) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return "", true, errors.Trace(err)
+		return "", isNull, errors.Trace(err)
 	}
 	negative, overflow := false, false
 	val = getValidPrefix(strings.TrimSpace(val), 10)
