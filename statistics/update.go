@@ -167,7 +167,7 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 
 // HandleAutoAnalyze analyze the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
-	dbs := is.AllSchemas()
+	dbs := is.Clone()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			statsTbl := h.GetTableStats(tbl.ID)
