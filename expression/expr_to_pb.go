@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -64,7 +65,7 @@ type pbConverter struct {
 func (pc pbConverter) exprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
 	case *Constant:
-		return pc.datumToPBExpr(x.Value)
+		return pc.datumToPBExpr(x.Value, x.GetType())
 	case *Column:
 		return pc.columnToPBExpr(x)
 	case *ScalarFunction:
@@ -73,7 +74,7 @@ func (pc pbConverter) exprToPB(expr Expression) *tipb.Expr {
 	return nil
 }
 
-func (pc pbConverter) datumToPBExpr(d types.Datum) *tipb.Expr {
+func (pc pbConverter) datumToPBExpr(d types.Datum, ft *types.FieldType) *tipb.Expr {
 	var tp tipb.ExprType
 	var val []byte
 	switch d.Kind() {
@@ -103,6 +104,17 @@ func (pc pbConverter) datumToPBExpr(d types.Datum) *tipb.Expr {
 	case types.KindMysqlDecimal:
 		tp = tipb.ExprType_MysqlDecimal
 		val = codec.EncodeDecimal(nil, d)
+	case types.KindMysqlTime:
+		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
+			loc := pc.sc.TimeZone
+			val, err := tablecodec.EncodeValue(d, loc)
+			if err != nil {
+				log.Error(err.Error())
+				return nil
+			}
+			return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+		}
+		return nil
 	default:
 		return nil
 	}
@@ -110,6 +122,24 @@ func (pc pbConverter) datumToPBExpr(d types.Datum) *tipb.Expr {
 		return nil
 	}
 	return &tipb.Expr{Tp: tp, Val: val}
+}
+
+func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
+	return &tipb.FieldType{
+		Tp:      int32(ft.Tp),
+		Flag:    uint32(ft.Flag),
+		Flen:    int32(ft.Flen),
+		Decimal: int32(ft.Decimal),
+		Collate: collationToProto(ft.Collate),
+	}
+}
+
+func collationToProto(c string) int32 {
+	v, ok := mysql.CollationNames[c]
+	if ok {
+		return int32(v)
+	}
+	return int32(mysql.DefaultCollationID)
 }
 
 func (pc pbConverter) columnToPBExpr(column *Column) *tipb.Expr {
@@ -309,7 +339,7 @@ func (pc pbConverter) constListToPB(list []Expression) *tipb.Expr {
 		if !ok {
 			return nil
 		}
-		d := pc.datumToPBExpr(v.Value)
+		d := pc.datumToPBExpr(v.Value, v.RetType)
 		if d == nil {
 			return nil
 		}

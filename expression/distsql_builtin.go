@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
@@ -161,6 +162,8 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *variable.StatementCon
 		return convertDecimal(expr.Val)
 	case tipb.ExprType_MysqlDuration:
 		return convertDuration(expr.Val)
+	case tipb.ExprType_MysqlTime:
+		return convertTime(expr.Val, expr.FieldType, sc.TimeZone)
 	}
 	// Then it must be a scalar function.
 	args := make([]Expression, 0, len(expr.Children))
@@ -183,6 +186,25 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *variable.StatementCon
 		args = append(args, arg)
 	}
 	return newDistSQLFunction(sc, expr.Tp, args)
+}
+
+func fieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
+	return &types.FieldType{
+		Tp:      byte(ft.GetTp()),
+		Flag:    uint(ft.GetFlag()),
+		Flen:    int(ft.GetFlen()),
+		Decimal: int(ft.GetDecimal()),
+		Collate: mysql.Collations[uint8(ft.GetCollate())],
+	}
+}
+
+func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constant, error) {
+	ft := fieldTypeFromPB(ftPB)
+	d, err := tablecodec.DecodeColumnValue(data, ft, tz)
+	if err != nil {
+		return nil, errors.Trace(nil)
+	}
+	return &Constant{Value: d, RetType: ft}, nil
 }
 
 func decodeValueList(data []byte) ([]Expression, error) {
