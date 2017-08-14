@@ -693,6 +693,6 @@ func (s *testPlanSuite) createTestCase4OpFuncs() []typeInferTestCase {
 
 func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
-		//{"timestamp(HOUR, c_int, c_timestamp)", mysql.TypeDatetime, charset.CharsetUTF8, mysql.BinaryFlag, 1, -1},
+		{"timestampadd(HOUR, c_int, c_timestamp)", mysql.TypeString, charset.CharsetUTF8, 0, 19, -1},
 	}
 }

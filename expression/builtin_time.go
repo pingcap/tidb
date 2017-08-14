@@ -2729,48 +2729,49 @@ func (c *timestampAddFunctionClass) getFunction(args []Expression, ctx context.C
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpString, tpInt, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpString)
+	bf.tp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxDatetimeWidthNoFsp, Decimal: types.UnspecifiedLength}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinTimestampAddSig{baseTimeBuiltinFunc{bf}}
+	sig := &builtinTimestampAddSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 
 }
 
 type builtinTimestampAddSig struct {
-	baseTimeBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // evalTime evals a builtinTimestampAddSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
-func (b *builtinTimestampAddSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *builtinTimestampAddSig) evalString(row []types.Datum) (string, bool, error) {
 	ctx := b.getCtx().GetSessionVars().StmtCtx
 	unit, isNull, err := b.args[0].EvalString(row, ctx)
 	if isNull || err != nil {
-		return types.Time{}, true, errors.Trace(err)
+		return "", isNull, errors.Trace(err)
 	}
 	v, isNull, err := b.args[1].EvalInt(row, ctx)
 	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
+		return "", isNull, errors.Trace(err)
 	}
 	if isNull {
-		return types.Time{}, true, nil
+		return "", isNull, nil
 	}
 	arg, isNull, err := b.args[2].EvalString(row, ctx)
 	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
+		return "", isNull, errors.Trace(err)
 	}
 	if isNull {
-		return types.Time{}, true, nil
+		return "", isNull, nil
 	}
 	date, err := types.ParseTime(arg, mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
+		return "", isNull, errors.Trace(err)
 	}
 	tm1, err := date.Time.GoTime(time.Local)
 	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
+		return "", isNull, errors.Trace(err)
 	}
 	var tb time.Time
 	fsp := types.DefaultFsp
@@ -2795,14 +2796,14 @@ func (b *builtinTimestampAddSig) evalTime(row []types.Datum) (types.Time, bool, 
 	case "YEAR":
 		tb = tm1.AddDate(int(v), 0, 0)
 	default:
-		return types.Time{}, true, errors.Trace(types.ErrInvalidTimeFormat)
+		return "", true, errors.Trace(types.ErrInvalidTimeFormat)
 	}
 	r := types.Time{Time: types.FromGoTime(tb), Type: mysql.TypeDatetime, Fsp: fsp}
 	err = r.Check()
 	if err != nil {
-		return types.Time{}, true, errorOrWarning(err, b.ctx)
+		return "", true, errorOrWarning(err, b.ctx)
 	}
-	return r, false, nil
+	return r.String(), false, nil
 }
 
 type toDaysFunctionClass struct {
