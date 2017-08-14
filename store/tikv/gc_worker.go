@@ -70,7 +70,7 @@ func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go worker.start(ctx, &wg)
-	wg.Wait()
+	wg.Wait() // Wait create session finish in worker, some test code depend on this to avoid race.
 	return worker, nil
 }
 
