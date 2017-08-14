@@ -1251,6 +1251,9 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	return b.projectVirtualColumns(p, columns)
 }
 
+// projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
+// we add a projection on the original DataSource, and calculate those columns in the projection
+// so that plans above it can reference generated columns by their name.
 func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) LogicalPlan {
 	if b.inUpdateStmt {
 		return ds
@@ -1296,9 +1299,8 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		proj.SetChildren(ds)
 		ds.SetParents(proj)
 		return proj
-	} else {
-		return ds
 	}
+	return ds
 }
 
 // ApplyConditionChecker checks whether all or any output of apply matches a condition.
