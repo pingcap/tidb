@@ -27,6 +27,7 @@ import (
 var (
 	_ functionClass = &arithmeticPlusFunctionClass{}
 	_ functionClass = &arithmeticMinusFunctionClass{}
+	_ functionClass = &arithmeticDivideFunctionClass{}
 	_ functionClass = &arithmeticMultiplyFunctionClass{}
 	_ functionClass = &arithmeticFunctionClass{}
 )
@@ -40,12 +41,17 @@ var (
 	_ builtinFunc = &builtinArithmeticMinusDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMinusIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMinusIntSig{}
+	_ builtinFunc = &builtinArithmeticDivideRealSig{}
+	_ builtinFunc = &builtinArithmeticDivideDecimalSig{}
+	_ builtinFunc = &builtinArithmeticDivideIntSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyRealSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 )
+
+const floatEpsilon float64 = 2.2204460492503131e-16
 
 // numericContextResultType returns TypeClass for numeric function's parameters.
 // the returned TypeClass should be one of: ClassInt, ClassDecimal, ClassReal
@@ -332,6 +338,107 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row []types.Datum) (val int64, is
 		return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return a - b, false, nil
+}
+
+type arithmeticDivideFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *arithmeticDivideFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	tpA, tpB := args[0].GetType(), args[1].GetType()
+	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
+	if tcA == types.ClassReal || tcB == types.ClassReal {
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		setFlenDecimal4RealOrDecimal(bf.tp, tpA, tpB, true)
+		sig := &builtinArithmeticDivideRealSig{baseRealBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		setFlenDecimal4RealOrDecimal(bf.tp, tpA, tpB, false)
+		sig := &builtinArithmeticDivideDecimalSig{baseDecimalBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	} else {
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpInt, tpInt)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		setFlenDecimal4Int(bf.tp, tpA, tpB)
+		sig := &builtinArithmeticDivideIntSig{baseDecimalBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	}
+}
+
+type builtinArithmeticDivideRealSig struct{ baseRealBuiltinFunc }
+type builtinArithmeticDivideDecimalSig struct{ baseDecimalBuiltinFunc }
+type builtinArithmeticDivideIntSig struct{ baseDecimalBuiltinFunc }
+
+func (s *builtinArithmeticDivideRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	a, isNull, err := s.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	b, isNull, err := s.args[1].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if math.Abs(b) < floatEpsilon {
+		return 0, true, nil
+	}
+
+	return a / b, false, nil
+}
+
+func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	a, isNull, err := s.args[0].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
+	}
+
+	b, isNull, err := s.args[1].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
+	}
+
+	c := &types.MyDecimal{}
+	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
+	if err == types.ErrDivByZero {
+		return c, true, nil
+	}
+	return c, false, err
+}
+
+func (s *builtinArithmeticDivideIntSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	t, isNull, err := s.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
+	}
+	a := types.NewDecFromInt(t)
+
+	t, isNull, err = s.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
+	}
+
+	if t == 0 {
+		return nil, true, nil
+	}
+
+	b := types.NewDecFromInt(t)
+	c := &types.MyDecimal{}
+	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
+	return c, false, err
 }
 
 type arithmeticMultiplyFunctionClass struct {
