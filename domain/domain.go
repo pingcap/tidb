@@ -55,19 +55,19 @@ type Domain struct {
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
 // infoschema version, if it is the same as the schema version at startTS, we don't need to reload again.
-// It returns the latest schema version and an error.
-func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) (int64, error) {
+// It returns the latest schema version, the changed table IDs and an error.
+func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) (int64, []int64, error) {
 	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, nil, errors.Trace(err)
 	}
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersion()
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, nil, errors.Trace(err)
 	}
 	if usedSchemaVersion != 0 && usedSchemaVersion == latestSchemaVersion {
-		return latestSchemaVersion, nil
+		return latestSchemaVersion, nil, nil
 	}
 
 	// Update self schema version to etcd.
@@ -83,7 +83,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	}()
 
 	startTime := time.Now()
-	ok, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
+	ok, tblIDs, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
 	if err != nil {
 		// We can fall back to full load, don't need to return the error.
 		log.Errorf("[ddl] failed to load schema diff err %v", err)
@@ -91,22 +91,22 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	if ok {
 		log.Infof("[ddl] diff load InfoSchema from version %d to %d, in %v",
 			usedSchemaVersion, latestSchemaVersion, time.Since(startTime))
-		return latestSchemaVersion, nil
+		return latestSchemaVersion, tblIDs, nil
 	}
 
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, nil, errors.Trace(err)
 	}
 
 	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, latestSchemaVersion)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, nil, errors.Trace(err)
 	}
 	log.Infof("[ddl] full load InfoSchema from version %d to %d, in %v",
 		usedSchemaVersion, latestSchemaVersion, time.Since(startTime))
 	newISBuilder.Build()
-	return latestSchemaVersion, nil
+	return latestSchemaVersion, nil, nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
@@ -172,41 +172,51 @@ const (
 	maxNumberOfDiffsToLoad = 100
 )
 
-// tryLoadSchemaDiffs tries to only load latest schema changes.
-// Returns true if the schema is loaded successfully.
-// Returns false if the schema can not be loaded by schema diff, then we need to do full load.
-func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, error) {
+func isTooOldSchema(usedVersion, newVersion int64) bool {
 	if usedVersion == initialVersion || newVersion-usedVersion > maxNumberOfDiffsToLoad {
-		// If there isn't any used version, or used version is too old, we do full load.
-		return false, nil
+		return true
+	}
+	return false
+}
+
+// tryLoadSchemaDiffs tries to only load latest schema changes.
+// Return true if the schema is loaded successfully.
+// Return false if the schema can not be loaded by schema diff, then we need to do full load.
+// The second returned value is the delta updated table IDs.
+func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, []int64, error) {
+	// If there isn't any used version, or used version is too old, we do full load.
+	if isTooOldSchema(usedVersion, newVersion) {
+		return false, nil, nil
 	}
 	if usedVersion > newVersion {
 		// When user use History Read feature, history schema will be loaded.
 		// usedVersion may be larger than newVersion, full load is needed.
-		return false, nil
+		return false, nil, nil
 	}
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
 		diff, err := m.GetSchemaDiff(usedVersion)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, nil, errors.Trace(err)
 		}
 		if diff == nil {
 			// If diff is missing for any version between used and new version, we fall back to full reload.
-			return false, nil
+			return false, nil, nil
 		}
 		diffs = append(diffs, diff)
 	}
 	builder := infoschema.NewBuilder(do.infoHandle).InitWithOldInfoSchema()
+	tblIDs := make([]int64, 0, len(diffs))
 	for _, diff := range diffs {
-		err := builder.ApplyDiff(m, diff)
+		ids, err := builder.ApplyDiff(m, diff)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, nil, errors.Trace(err)
 		}
+		tblIDs = append(tblIDs, ids...)
 	}
 	builder.Build()
-	return true, nil
+	return true, tblIDs, nil
 }
 
 // InfoSchema gets information schema from domain.
@@ -217,7 +227,7 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
 	snapHandle := do.infoHandle.EmptyClone()
-	_, err := do.loadInfoSchema(snapHandle, do.infoHandle.Get().SchemaMetaVersion(), snapshotTS)
+	_, _, err := do.loadInfoSchema(snapHandle, do.infoHandle.Get().SchemaMetaVersion(), snapshotTS)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -242,7 +252,7 @@ func (do *Domain) Store() kv.Storage {
 // GetScope gets the status variables scope.
 func (do *Domain) GetScope(status string) variable.ScopeFlag {
 	// Now domain status variables scope are all default scope.
-	return variable.DefaultScopeFlag
+	return variable.DefaultStatusVarScopeFlag
 }
 
 func (do *Domain) mockReloadFailed() error {
@@ -277,7 +287,8 @@ func (do *Domain) Reload() error {
 		schemaVersion = oldInfoSchema.SchemaMetaVersion()
 	}
 
-	latestSchemaVersion, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
+	var changedTableIDs []int64
+	latestSchemaVersion, changedTableIDs, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
 	loadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		loadSchemaCounter.WithLabelValues("failed").Inc()
@@ -285,7 +296,7 @@ func (do *Domain) Reload() error {
 	}
 	loadSchemaCounter.WithLabelValues("succ").Inc()
 
-	do.SchemaValidator.Update(ver.Ver, latestSchemaVersion)
+	do.SchemaValidator.Update(ver.Ver, schemaVersion, latestSchemaVersion, changedTableIDs)
 
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
@@ -386,12 +397,12 @@ type etcdBackend interface {
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory) (d *Domain, err error) {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory, sysFactory func(*Domain) (pools.Resource, error)) (d *Domain, err error) {
 	capacity := 200                // capacity of the sysSessionPool size
 	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
 	d = &Domain{
 		store:           store,
-		SchemaValidator: newSchemaValidator(ddlLease),
+		SchemaValidator: NewSchemaValidator(ddlLease),
 		exit:            make(chan struct{}),
 		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, idleTimeout),
 		statsLease:      statsLease,
@@ -399,7 +410,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	if ebd, ok := store.(etcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
-			cli, err := clientv3.New(clientv3.Config{
+			var cli *clientv3.Client
+			cli, err = clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
 				DialTimeout: 5 * time.Second,
 			})
@@ -416,7 +428,19 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 	ctx := goctx.Background()
 	callback := &ddlCallback{do: d}
-	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease)
+
+	// TODO: Here we create new sessions with sysFac in DDL,
+	// which will use `d` as Domain instead of call `domap.Get`.
+	// That's because `domap.Get` requires a lock, but before
+	// we initialize Domain finish, we can't require that again.
+	// After we remove the lazy logic of creating Domain, we
+	// can simplify code here.
+	sysFac := func() (pools.Resource, error) {
+		return sysFactory(d)
+	}
+	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, idleTimeout)
+	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease, sysCtxPool)
+
 	if err = d.ddl.SchemaSyncer().Init(ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -442,6 +466,7 @@ func (do *Domain) SysSessionPool() *pools.ResourcePool {
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
+	ctx.GetSessionVars().InRestrictedSQL = true
 	do.privHandle = privileges.NewHandle()
 	err := do.privHandle.Update(ctx)
 	if err != nil {
@@ -505,6 +530,7 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It
 // should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
+	ctx.GetSessionVars().InRestrictedSQL = true
 	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
 	do.ddl.RegisterEventCh(do.statsHandle.DDLEventCh())
 	err := do.statsHandle.Update(do.InfoSchema())
@@ -525,17 +551,24 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 		for {
 			select {
 			case <-loadTicker.C:
-				err := do.statsHandle.Update(do.InfoSchema())
+				err = do.statsHandle.Update(do.InfoSchema())
 				if err != nil {
 					log.Error(errors.ErrorStack(err))
 				}
 			case <-do.exit:
 				return
-			// This channel is sent only by ddl owner. Only owner know if this ddl is done or not.
+			// This channel is sent only by ddl owner or the drop stats executor.
 			case t := <-do.statsHandle.DDLEventCh():
-				err := do.statsHandle.HandleDDLEvent(t)
+				err = do.statsHandle.HandleDDLEvent(t)
 				if err != nil {
 					log.Error(errors.ErrorStack(err))
+				}
+			case t := <-do.statsHandle.AnalyzeResultCh():
+				for _, hg := range t.Hist {
+					err = hg.SaveToStorage(t.Ctx, t.TableID, t.Count, t.IsIndex)
+					if err != nil {
+						log.Error(errors.ErrorStack(err))
+					}
 				}
 			case <-deltaUpdateTicker.C:
 				do.statsHandle.DumpStatsDeltaToKV()

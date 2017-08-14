@@ -99,6 +99,10 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 			sql:  "select * from t where t.b <= 1 order by t.a limit 10",
 			best: "IndexLookUp(Index(t.b)[[-inf,1]]->TopN([test.t.a],0,10), Table(t))->TopN([test.t.a],0,10)",
 		},
+		{
+			sql:  "select * from t use index(b) where b = 1 order by a",
+			best: "IndexLookUp(Index(t.b)[[1,1]], Table(t))->Sort",
+		},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -146,6 +150,10 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		{
 			sql:  "select * from t, t1 where t.c1 = t1.c1",
 			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t1))}(test.t.c1,test.t1.c1)",
+		},
+		{
+			sql:  "select * from t limit 0",
+			best: "TableReader(Table(t)->Limit)->Limit",
 		},
 	}
 	for _, tt := range tests {

@@ -55,6 +55,7 @@ const (
 	MaxTableNameLength    int = 64
 	MaxDatabaseNameLength int = 64
 	MaxColumnNameLength   int = 64
+	MaxKeyParts           int = 16
 )
 
 // Command information.
@@ -201,6 +202,7 @@ const (
 
 	MaxIntWidth             = 20
 	MaxRealWidth            = 23
+	MaxDecimalWidth         = 65
 	MaxDateWidth            = 10 // YYYY-MM-DD.
 	MaxDatetimeWidthNoFsp   = 19 // YYYY-MM-DD HH:MM:SS
 	MaxDatetimeWidthWithFsp = 26 // YYYY-MM-DD HH:MM:SS[.fraction]
@@ -481,4 +483,9 @@ const (
 	LowPriority
 	HighPriority
 	DelayedPriority
+)
+
+// PrimaryKeyName defines primary key name.
+const (
+	PrimaryKeyName = "PRIMARY"
 )

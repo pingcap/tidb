@@ -25,6 +25,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 )
 
 func truncateStr(str string, flen int) string {
@@ -164,6 +165,38 @@ func StrToUint(sc *variable.StatementContext, str string) (uint64, error) {
 	return uVal, errors.Trace(err)
 }
 
+// StrToDateTime converts str to MySQL DateTime.
+func StrToDateTime(str string, fsp int) (Time, error) {
+	return ParseTime(str, mysql.TypeDatetime, fsp)
+}
+
+// StrToDuration converts str to Duration.
+// See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-literals.html.
+func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, err error) {
+	str = strings.TrimSpace(str)
+	length := len(str)
+	if length > 0 && str[0] == '-' {
+		length--
+	}
+	// Timestamp format is 'YYYYMMDDHHMMSS' or 'YYMMDDHHMMSS', which length is 12.
+	// See #3923, it explains what we do here.
+	if len(str) >= 12 {
+		t, err = StrToDateTime(str, fsp)
+		if err == nil {
+			return t, nil
+		}
+	}
+
+	duration, err := ParseDuration(str, fsp)
+	if terror.ErrorEqual(err, ErrTruncatedWrongVal) {
+		err = sc.HandleTruncate(err)
+	}
+	if err != nil {
+		return Time{}, errors.Trace(err)
+	}
+	return duration.ConvertToTime(mysql.TypeDuration)
+}
+
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
 func getValidIntPrefix(sc *variable.StatementContext, str string) (string, error) {
 	floatPrefix, err := getValidFloatPrefix(sc, str)
@@ -222,6 +255,7 @@ func floatStrToIntStr(validFloat string) (string, error) {
 	if intCnt <= len(digits) {
 		validInt = string(digits[:intCnt])
 	} else {
+		// convert scientific notation decimal number
 		extraZeroCount := intCnt - len(digits)
 		if extraZeroCount > 20 {
 			// Return overflow to avoid allocating too much memory.

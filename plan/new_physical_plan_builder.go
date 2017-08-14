@@ -43,6 +43,7 @@ func (p *requiredProp) enforceProperty(task task, ctx context.Context, allocator
 	if task.plan() == nil {
 		return task
 	}
+	task = finishCopTask(task, ctx, allocator)
 	sort := Sort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(allocator, ctx)
 	for _, col := range p.cols {
 		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
@@ -124,6 +125,7 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 		DefaultValues:   p.DefaultValues,
 		outerSchema:     p.children[outerIdx].Schema(),
 	}.init(p.allocator, p.ctx, p.children[outerIdx], p.children[1-outerIdx])
+	join.SetSchema(expression.MergeSchema(p.children[outerIdx].Schema(), p.children[1-outerIdx].Schema()))
 	join.profile = p.profile
 	orderJoin := join.Copy().(*PhysicalIndexJoin)
 	orderJoin.KeepOrder = true
@@ -208,6 +210,9 @@ func (p *PhysicalMergeJoin) getChildrenPossibleProps(prop *requiredProp) [][]*re
 	lProp := &requiredProp{taskTp: rootTaskType, cols: p.leftKeys, expectedCnt: math.MaxFloat64}
 	rProp := &requiredProp{taskTp: rootTaskType, cols: p.rightKeys, expectedCnt: math.MaxFloat64}
 	if !prop.isEmpty() {
+		if prop.desc {
+			return nil
+		}
 		if !prop.equal(lProp) && !prop.equal(rProp) {
 			return nil
 		}
@@ -447,12 +452,12 @@ func (p *TopN) generatePhysicalPlans() []PhysicalPlan {
 // If this sort is a topN plan, we will try to push the sort down and leave the limit.
 // TODO: If this is a sort plan and the coming prop is not nil, this plan is redundant and can be removed.
 func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
+	t, err := p.getTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if task != nil {
-		return task, nil
+	if t != nil {
+		return t, nil
 	}
 	if prop.taskTp != rootTaskType {
 		// TODO: This is a trick here, because an operator that can be pushed to Coprocessor can never be pushed across sort.
@@ -462,11 +467,11 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		return invalidTask, p.storeTask(prop, invalidTask)
 	}
 	// enforce branch
-	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
+	t, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	task = p.attach2Task(task)
+	t = p.attach2Task(t)
 	newProp, canPassProp := getPropByOrderByItems(p.ByItems)
 	if canPassProp {
 		newProp.expectedCnt = prop.expectedCnt
@@ -474,52 +479,52 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if orderedTask.cost() < task.cost() {
-			task = orderedTask
+		if orderedTask.cost() < t.cost() {
+			t = orderedTask
 		}
 	}
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
-	return task, p.storeTask(prop, task)
+	t = prop.enforceProperty(t, p.ctx, p.allocator)
+	return t, p.storeTask(prop, t)
 }
 
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	// look up the task map
-	task, err := p.getTask(prop)
+	t, err := p.getTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if task != nil {
-		return task, nil
+	if t != nil {
+		return t, nil
 	}
-	task = invalidTask
+	t = invalidTask
 	if prop.taskTp != rootTaskType {
 		// Currently all plan cannot totally push down.
-		return task, p.storeTask(prop, task)
+		return t, p.storeTask(prop, t)
 	}
 	// Now we only consider rootTask.
 	if len(p.basePlan.children) == 0 {
 		// When the children length is 0, we process it specially.
-		task = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
-		task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
-		return task, p.storeTask(prop, task)
+		t = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
+		t = prop.enforceProperty(t, p.basePlan.ctx, p.basePlan.allocator)
+		return t, p.storeTask(prop, t)
 	}
 	// Else we suppose it only has one child.
 	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
 		// We consider to add enforcer firstly.
-		task, err = p.getBestTask(task, prop, pp, true)
+		t, err = p.getBestTask(t, prop, pp, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if prop.isEmpty() {
 			continue
 		}
-		task, err = p.getBestTask(task, prop, pp, false)
+		t, err = p.getBestTask(t, prop, pp, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	return task, p.storeTask(prop, task)
+	return t, p.storeTask(prop, t)
 }
 
 func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan, enforced bool) (task, error) {
@@ -549,17 +554,15 @@ func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp Phys
 	return bestTask, nil
 }
 
-func tryToAddUnionScan(cop *copTask, conds []expression.Expression, ctx context.Context, allocator *idAllocator) task {
-	if ctx.Txn() == nil || ctx.Txn().IsReadOnly() {
-		return cop
-	}
-	task := finishCopTask(cop, ctx, allocator)
+func addUnionScan(cop *copTask, ds *DataSource) task {
+	t := finishCopTask(cop, ds.ctx, ds.allocator)
 	us := PhysicalUnionScan{
-		Conditions: conds,
-	}.init(allocator, ctx)
-	us.SetSchema(task.plan().Schema())
-	us.profile = task.plan().statsProfile()
-	return us.attach2Task(task)
+		Conditions:    ds.pushedDownConds,
+		NeedColHandle: ds.NeedColHandle,
+	}.init(ds.allocator, ds.ctx)
+	us.SetSchema(ds.unionScanSchema)
+	us.profile = t.plan().statsProfile()
+	return us.attach2Task(t)
 }
 
 // tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task and store it.
@@ -618,57 +621,60 @@ func (p *DataSource) tryToGetDualTask() (task, error) {
 // convert2NewPhysicalPlan implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	task, err := p.getTask(prop)
+	t, err := p.getTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if task != nil {
-		return task, nil
+	if t != nil {
+		return t, nil
 	}
-	task, err = p.tryToGetDualTask()
+	t, err = p.tryToGetDualTask()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if task != nil {
-		return task, p.storeTask(prop, task)
+	if t != nil {
+		return t, p.storeTask(prop, t)
 	}
-	task, err = p.tryToGetMemTask(prop)
+	t, err = p.tryToGetMemTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if task != nil {
-		return task, p.storeTask(prop, task)
+	if t != nil {
+		return t, p.storeTask(prop, t)
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
-	task = invalidTask
+	t = invalidTask
 	if includeTableScan {
-		task, err = p.convertToTableScan(prop)
+		t, err = p.convertToTableScan(prop)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	for _, idx := range indices {
-		idxTask, err := p.convertToIndexScan(prop, idx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if idxTask.cost() < task.cost() {
-			task = idxTask
+	if !includeTableScan || len(p.pushedDownConds) > 0 || len(prop.cols) > 0 {
+		for _, idx := range indices {
+			idxTask, err := p.convertToIndexScan(prop, idx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if idxTask.cost() < t.cost() {
+				t = idxTask
+			}
 		}
 	}
-	return task, p.storeTask(prop, task)
+	return t, p.storeTask(prop, t)
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo) (task task, err error) {
 	is := PhysicalIndexScan{
-		Table:            p.tableInfo,
-		TableAsName:      p.TableAsName,
-		DBName:           p.DBName,
-		Columns:          p.Columns,
-		Index:            idx,
-		dataSourceSchema: p.schema,
+		Table:               p.tableInfo,
+		TableAsName:         p.TableAsName,
+		DBName:              p.DBName,
+		Columns:             p.Columns,
+		Index:               idx,
+		dataSourceSchema:    p.schema,
+		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle || p.unionScanSchema != nil},
 	}.init(p.allocator, p.ctx)
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
@@ -702,7 +708,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
 		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
-		cop.tablePlan.SetSchema(p.schema)
+		cop.tablePlan.SetSchema(is.dataSourceSchema)
 		// If it's parent requires single read task, return max cost.
 		if prop.taskTp == copSingleReadTaskType {
 			return &copTask{cst: math.MaxFloat64}, nil
@@ -725,15 +731,16 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 	// Check if this plan matches the property.
-	matchProperty := true
+	matchProperty := false
 	if !prop.isEmpty() {
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.cols[0].ColName.L {
 				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
 				break
-			} else if i >= len(is.AccessCondition) || is.AccessCondition[i].(*expression.ScalarFunction).FuncName.L != ast.EQ {
-				matchProperty = false
+			} else if i >= len(is.AccessCondition) {
+				break
+			} else if sf, ok := is.AccessCondition[i].(*expression.ScalarFunction); !ok || sf.FuncName.L != ast.EQ {
 				break
 			}
 		}
@@ -748,13 +755,16 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	}
 	is.expectedCnt = rowCount
 	cop.cst = rowCount * scanFactor
-	if matchProperty && !prop.isEmpty() {
+	task = cop
+	if matchProperty {
 		if prop.desc {
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
 		is.addPushedDownSelection(cop, p, prop.expectedCnt)
-		task = tryToAddUnionScan(cop, p.pushedDownConds, p.ctx, p.allocator)
+		if p.unionScanSchema != nil {
+			task = addUnionScan(cop, p)
+		}
 	} else {
 		is.OutOfOrder = true
 		expectedCnt := math.MaxFloat64
@@ -762,7 +772,9 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			expectedCnt = prop.expectedCnt
 		}
 		is.addPushedDownSelection(cop, p, expectedCnt)
-		task = tryToAddUnionScan(cop, p.pushedDownConds, p.ctx, p.allocator)
+		if p.unionScanSchema != nil {
+			task = addUnionScan(cop, p)
+		}
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	if prop.taskTp == rootTaskType {
@@ -823,10 +835,11 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		return &copTask{cst: math.MaxFloat64}, nil
 	}
 	ts := PhysicalTableScan{
-		Table:       p.tableInfo,
-		Columns:     p.Columns,
-		TableAsName: p.TableAsName,
-		DBName:      p.DBName,
+		Table:               p.tableInfo,
+		Columns:             p.Columns,
+		TableAsName:         p.TableAsName,
+		DBName:              p.DBName,
+		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle || p.unionScanSchema != nil},
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
@@ -868,10 +881,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		indexPlanFinished: true,
 	}
 	task = copTask
-	matchProperty := true
-	if !prop.isEmpty() {
-		matchProperty = pkCol != nil && prop.cols[0].Equal(pkCol, nil)
-	}
+	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(pkCol, nil)
 	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
 		selectivity, err := p.statisticTable.Selectivity(p.ctx, ts.filterCondition)
 		if err != nil {
@@ -882,21 +892,25 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}
 	ts.expectedCnt = rowCount
 	copTask.cst = rowCount * scanFactor
-	if matchProperty && !prop.isEmpty() {
+	if matchProperty {
 		if prop.desc {
 			ts.Desc = true
 			copTask.cst = rowCount * descScanFactor
 		}
 		ts.KeepOrder = true
 		ts.addPushedDownSelection(copTask, p.profile, prop.expectedCnt)
-		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
+		if p.unionScanSchema != nil {
+			task = addUnionScan(copTask, p)
+		}
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
 			expectedCnt = prop.expectedCnt
 		}
 		ts.addPushedDownSelection(copTask, p.profile, expectedCnt)
-		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
+		if p.unionScanSchema != nil {
+			task = addUnionScan(copTask, p)
+		}
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	if prop.taskTp == rootTaskType {
@@ -962,19 +976,19 @@ func (p *PhysicalHashJoin) getChildrenPossibleProps(prop *requiredProp) [][]*req
 
 func (p *PhysicalHashSemiJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
-	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols, expectedCnt: prop.expectedCnt}
+	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols, expectedCnt: prop.expectedCnt, desc: prop.desc}
 	for _, col := range lProp.cols {
 		idx := p.Schema().ColumnIndex(col)
 		if idx == -1 || idx >= p.rightChOffset {
 			return nil
 		}
 	}
-	return [][]*requiredProp{{&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}, &requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}}}
+	return [][]*requiredProp{{lProp, &requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64}}}
 }
 
 func (p *PhysicalApply) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
-	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols, expectedCnt: prop.expectedCnt}
+	lProp := &requiredProp{taskTp: rootTaskType, cols: prop.cols, expectedCnt: prop.expectedCnt, desc: prop.desc}
 	for _, col := range lProp.cols {
 		idx := p.Schema().ColumnIndex(col)
 		if idx == -1 || idx >= p.rightChOffset {

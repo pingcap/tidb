@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -83,7 +84,7 @@ type Show struct {
 	Column *ast.ColumnName // Used for `desc table column`.
 	Flag   int             // Some flag parsed from sql, such as FULL.
 	Full   bool
-	User   string // Used for show grants.
+	User   *auth.UserIdentity // Used for show grants.
 
 	// Used by show variables
 	GlobalScope bool
@@ -198,9 +199,15 @@ func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
 	for _, parent := range parents {
 		parentIDs = append(parentIDs, parent.ID())
 	}
+	childrenIDs := make([]string, 0, len(p.Children()))
+	for _, ch := range p.Children() {
+		childrenIDs = append(childrenIDs, ch.ID())
+	}
 	parentInfo := strings.Join(parentIDs, ",")
+	childrenInfo := strings.Join(childrenIDs, ",")
 	operatorInfo := p.ExplainInfo()
-	row := types.MakeDatums(p.ID(), parentInfo, taskType, operatorInfo)
+	count := p.statsProfile().count
+	row := types.MakeDatums(p.ID(), parentInfo, childrenInfo, taskType, operatorInfo, count)
 	e.Rows = append(e.Rows, row)
 }
 
