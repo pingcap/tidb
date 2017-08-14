@@ -50,11 +50,6 @@ var (
 	_ builtinFunc = &builtinLastInsertIDSig{}
 	_ builtinFunc = &builtinLastInsertIDWithIDSig{}
 	_ builtinFunc = &builtinVersionSig{}
-	_ builtinFunc = &builtinBenchmarkSig{}
-	_ builtinFunc = &builtinCharsetSig{}
-	_ builtinFunc = &builtinCoercibilitySig{}
-	_ builtinFunc = &builtinCollationSig{}
-	_ builtinFunc = &builtinRowCountSig{}
 	_ builtinFunc = &builtinTiDBVersionSig{}
 )
 
@@ -302,21 +297,7 @@ type benchmarkFunctionClass struct {
 }
 
 func (c *benchmarkFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinBenchmarkSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinBenchmarkSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinBenchmarkSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
-func (b *builtinBenchmarkSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("BENCHMARK")
+	return nil, errFunctionNotExists.GenByArgs("BENCHMARK")
 }
 
 type charsetFunctionClass struct {
@@ -324,21 +305,7 @@ type charsetFunctionClass struct {
 }
 
 func (c *charsetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinCharsetSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinCharsetSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinCharsetSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_charset
-func (b *builtinCharsetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("CHARSET")
+	return nil, errFunctionNotExists.GenByArgs("CHARSET")
 }
 
 type coercibilityFunctionClass struct {
@@ -346,21 +313,7 @@ type coercibilityFunctionClass struct {
 }
 
 func (c *coercibilityFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinCoercibilitySig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinCoercibilitySig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinCoercibilitySig.
-// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_coercibility
-func (b *builtinCoercibilitySig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("COERCIBILITY")
+	return nil, errFunctionNotExists.GenByArgs("COERCIBILITY")
 }
 
 type collationFunctionClass struct {
@@ -368,21 +321,7 @@ type collationFunctionClass struct {
 }
 
 func (c *collationFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinCollationSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinCollationSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinCollationSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_collation
-func (b *builtinCollationSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("COLLATION")
+	return nil, errFunctionNotExists.GenByArgs("COLLATION")
 }
 
 type rowCountFunctionClass struct {
@@ -390,18 +329,5 @@ type rowCountFunctionClass struct {
 }
 
 func (c *rowCountFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinRowCountSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
-}
-
-type builtinRowCountSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinRowCountSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count
-func (b *builtinRowCountSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ROW_COUNT")
+	return nil, errFunctionNotExists.GenByArgs("ROW_COUNT")
 }
