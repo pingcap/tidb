@@ -2729,7 +2729,7 @@ func (c *timestampAddFunctionClass) getFunction(args []Expression, ctx context.C
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpTime)
 	bf.tp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxDatetimeWidthNoFsp, Decimal: types.UnspecifiedLength}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2743,7 +2743,7 @@ type builtinTimestampAddSig struct {
 	baseStringBuiltinFunc
 }
 
-// evalTime evals a builtinTimestampAddSig.
+// evalString evals a builtinTimestampAddSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
 func (b *builtinTimestampAddSig) evalString(row []types.Datum) (string, bool, error) {
 	ctx := b.getCtx().GetSessionVars().StmtCtx
@@ -2752,24 +2752,17 @@ func (b *builtinTimestampAddSig) evalString(row []types.Datum) (string, bool, er
 		return "", isNull, errors.Trace(err)
 	}
 	v, isNull, err := b.args[1].EvalInt(row, ctx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	arg, isNull, err := b.args[2].EvalTime(row, ctx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
 	if err != nil {
 		return "", isNull, errors.Trace(err)
 	}
-	if isNull {
-		return "", isNull, nil
-	}
-	arg, isNull, err := b.args[2].EvalString(row, ctx)
-	if err != nil {
-		return "", isNull, errors.Trace(err)
-	}
-	if isNull {
-		return "", isNull, nil
-	}
-	date, err := types.ParseTime(arg, mysql.TypeDatetime, types.MaxFsp)
-	if err != nil {
-		return "", isNull, errors.Trace(err)
-	}
-	tm1, err := date.Time.GoTime(time.Local)
+	tm1, err := arg.Time.GoTime(time.Local)
 	if err != nil {
 		return "", isNull, errors.Trace(err)
 	}
@@ -2799,8 +2792,7 @@ func (b *builtinTimestampAddSig) evalString(row []types.Datum) (string, bool, er
 		return "", true, errors.Trace(types.ErrInvalidTimeFormat)
 	}
 	r := types.Time{Time: types.FromGoTime(tb), Type: mysql.TypeDatetime, Fsp: fsp}
-	err = r.Check()
-	if err != nil {
+	if err = r.Check(); err != nil {
 		return "", true, errorOrWarning(err, b.ctx)
 	}
 	return r.String(), false, nil
