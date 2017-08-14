@@ -144,7 +144,6 @@ var (
 	_ builtinFunc = &builtinQuarterSig{}
 	_ builtinFunc = &builtinSecToTimeSig{}
 	_ builtinFunc = &builtinSubTimeSig{}
-	_ builtinFunc = &builtinTimeFormatSig{}
 	_ builtinFunc = &builtinTimeToSecSig{}
 	_ builtinFunc = &builtinTimestampAddSig{}
 	_ builtinFunc = &builtinToDaysSig{}

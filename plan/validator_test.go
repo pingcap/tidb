@@ -142,6 +142,9 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		// issue 3843
 		{"create index `primary` on t (i)", true, errors.New("[ddl:1280]Incorrect index name 'primary'")},
 		{"alter table t add index `primary` (i)", true, errors.New("[ddl:1280]Incorrect index name 'primary'")},
+
+		// issue 2273
+		{"create table t(a char, b char, c char, d char, e char, f char, g char, h char ,i char, j char, k int, l char ,m char , n char, o char , p char, q char, index(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q))", true, errors.New("[schema:1070]Too many key parts specified; max 16 parts allowed")},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
