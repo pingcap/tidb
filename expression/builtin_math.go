@@ -1401,7 +1401,7 @@ type builtinRadiansSig struct {
 func (b *builtinRadiansSig) evalReal(row []types.Datum) (float64, bool, error) {
 	x, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, isNull, errors.Trace(err)
 	}
 	return x * math.Pi / 180, false, nil
 }
