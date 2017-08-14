@@ -415,9 +415,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		Arg []interface{}
 	}{
 		{[]interface{}{"test", "test"}},
-		{[]interface{}{nil, nil}},
 		{[]interface{}{1, "test"}},
-		{[]interface{}{1, nil}},
 		{[]interface{}{10, 700}}, // added overflow test
 	}
 

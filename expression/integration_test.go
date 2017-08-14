@@ -384,6 +384,22 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("123 123.5 123.46 123.456 123.4560 120 100 0 0"))
 	result = tk.MustQuery("SELECT ROUND(123456E-3, 0), ROUND(123456E-3, 1), ROUND(123456E-3, 2), ROUND(123456E-3, 3), ROUND(123456E-3, 4), ROUND(123456E-3, -1), ROUND(123456E-3, -2), ROUND(123456E-3, -3), ROUND(123456E-3, -4);")
 	result.Check(testkit.Rows("123 123.5 123.46 123.456 123.456 120 100 0 0")) // TODO: Column 5 should be 123.4560
+
+	// for pow
+	result = tk.MustQuery("SELECT POW('12', 2), POW(1.2e1, '2.0'), POW(12, 2.0);")
+	result.Check(testkit.Rows("144 144 144"))
+	result = tk.MustQuery("SELECT POW(null, 2), POW(2, null), POW(null, null);")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery("SELECT POW(0, 0);")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("SELECT POW(0, 0.1), POW(0, 0.5), POW(0, 1);")
+	result.Check(testkit.Rows("0 0 0"))
+	rs, err = tk.Exec("SELECT POW(0, -1);")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 }
 
 func (s *testIntegrationSuite) TestStringBuiltin(c *C) {

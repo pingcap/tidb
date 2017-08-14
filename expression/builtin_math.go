@@ -842,38 +842,35 @@ func (c *powFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinPowSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinPowSig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinPowSig struct {
-	baseBuiltinFunc
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinPowSig.
+// evalReal evals POW(x, y).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pow
-func (b *builtinPowSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
+func (b *builtinPowSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	x, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	x, isNull, err := b.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-
-	y, err := args[1].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	y, isNull, err := b.args[1].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-
 	power := math.Pow(x, y)
 	if math.IsInf(power, -1) || math.IsInf(power, 1) || math.IsNaN(power) {
-		return d, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x, 'f', -1, 64), strconv.FormatFloat(y, 'f', -1, 64)))
+		return 0, false, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x, 'f', -1, 64), strconv.FormatFloat(y, 'f', -1, 64)))
 	}
-	d.SetFloat64(power)
-	return d, nil
+	return power, false, nil
 }
 
 type roundFunctionClass struct {
