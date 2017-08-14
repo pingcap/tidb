@@ -61,22 +61,15 @@ type TableReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
-	columns   []*model.ColumnInfo
-
+	// columns are only required by union scan.
+	columns []*model.ColumnInfo
 	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
-
-	// aggregate indicates whether it contains Aggregation executors or not.
-	aggregate bool
-
-	// genValues is for calculating virtual generated columns.
-	genValues map[int]expression.Expression
-
-	priority int
+	priority      int
 }
 
 // Schema implements the Executor Schema interface.
@@ -131,11 +124,6 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		if !e.aggregate && e.genValues != nil {
-			if evalGeneratedColumns(e.columns, e.genValues, values) != nil {
-				return nil, errors.Trace(err)
-			}
 		}
 		return values, nil
 	}
@@ -311,12 +299,8 @@ type IndexLookUpExecutor struct {
 	taskCurr *lookupTableTask
 
 	tableRequest *tipb.DAGRequest
-
-	columns []*model.ColumnInfo
-
-	// genValues is for calculating virtual generated columns.
-	genValues map[int]expression.Expression
-
+	// columns are only required by union scan.
+	columns  []*model.ColumnInfo
 	priority int
 }
 
@@ -387,9 +371,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		dagPB:     e.tableRequest,
 		schema:    schema,
 		ctx:       e.ctx,
-		genValues: e.genValues,
 		handleCol: handleCol,
-		columns:   e.columns,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {

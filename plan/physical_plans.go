@@ -165,9 +165,6 @@ type PhysicalIndexScan struct {
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
 	dataSourceSchema *expression.Schema
-
-	// GenValues is for virtual generated columns without indices. Only used if DoubleRead is true.
-	GenValues map[int]expression.Expression
 }
 
 // PhysicalMemTable reads memory table.
@@ -464,9 +461,6 @@ type PhysicalTableScan struct {
 
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
-
-	// GenValues is for virtual generated columns without indices.
-	GenValues map[int]expression.Expression
 }
 
 // PhysicalApply represents apply plan, only used for subquery.

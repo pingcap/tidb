@@ -923,19 +923,19 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
-	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0, c4 int as (c1 + id));`)
+	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
 	ctx := tk.Se.(context.Context)
 	ld := makeLoadDataInfo(2, []string{"c1", "c2"}, ctx, c)
 	// test
 	tests := []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("7\ta string\n"), []string{"1|7|a string|0|8"}, nil},
-		{nil, []byte("8\tstr \\t\n"), []string{"2|8|str \t|0|10"}, nil},
-		{nil, []byte("9\tstr \\n\n"), []string{"3|9|str \n|0|12"}, nil},
-		{nil, []byte("10\tboth \\t\\n\n"), []string{"4|10|both \t\n|0|14"}, nil},
-		{nil, []byte("11\tstr \\\\\n"), []string{"5|11|str \\|0|16"}, nil},
-		{nil, []byte("12\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|12|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'}) + "|0|18"}, nil},
+		{nil, []byte("7\ta string\n"), []string{"1|7|a string|0"}, nil},
+		{nil, []byte("8\tstr \\t\n"), []string{"2|8|str \t|0"}, nil},
+		{nil, []byte("9\tstr \\n\n"), []string{"3|9|str \n|0"}, nil},
+		{nil, []byte("10\tboth \\t\\n\n"), []string{"4|10|both \t\n|0"}, nil},
+		{nil, []byte("11\tstr \\\\\n"), []string{"5|11|str \\|0"}, nil},
+		{nil, []byte("12\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|12|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'}) + "|0"}, nil},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"

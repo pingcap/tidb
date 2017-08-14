@@ -43,22 +43,6 @@ const (
 	minLogDuration = 50 * time.Millisecond
 )
 
-// evalGeneratedColumns calculates all virtual generated columns, with such arguments:
-//  cols is the collection of columns of vs;
-//  gvs's keys are index in cols, and the values are generation expressions.
-func evalGeneratedColumns(cols []*model.ColumnInfo, gvs map[int]expression.Expression, vs []types.Datum) error {
-	for i, col := range cols {
-		if !col.GeneratedStored && col.IsGenerated() {
-			val, err := gvs[col.Offset].Eval(vs)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			vs[i] = val
-		}
-	}
-	return nil
-}
-
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
 var LookupTableTaskChannelSize int32 = 50
 
@@ -389,9 +373,6 @@ type XSelectIndexExec struct {
 	indexConditionPBExpr *tipb.Expr
 	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol *expression.Column
-
-	// genValues is for calculating virtual generated columns.
-	genValues map[int]expression.Expression
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -831,12 +812,6 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Calculate generated columns here.
-		if e.genValues != nil {
-			if err := evalGeneratedColumns(e.columns, e.genValues, values); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
 		rows = append(rows, values)
 	}
 	return rows, nil
@@ -901,9 +876,6 @@ type XSelectTableExec struct {
 	orderByList  []*tipb.ByItem
 	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol *expression.Column
-
-	// genValues is for calculating virtual generated columns.
-	genValues map[int]expression.Expression
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -1042,10 +1014,6 @@ func (e *XSelectTableExec) Next() (Row, error) {
 		if e.aggregate {
 			// compose aggregate row
 			return values, nil
-		}
-		// Calculate generated columns here.
-		if err := evalGeneratedColumns(e.Columns, e.genValues, values); err != nil {
-			return nil, errors.Trace(err)
 		}
 		return values, nil
 	}
