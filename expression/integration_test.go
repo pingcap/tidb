@@ -400,6 +400,18 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+
+	// for sign
+	result = tk.MustQuery("SELECT SIGN('12'), SIGN(1.2e1), SIGN(12), SIGN(0.0000012);")
+	result.Check(testkit.Rows("1 1 1 1"))
+	result = tk.MustQuery("SELECT SIGN('-12'), SIGN(-1.2e1), SIGN(-12), SIGN(-0.0000012);")
+	result.Check(testkit.Rows("-1 -1 -1 -1"))
+	result = tk.MustQuery("SELECT SIGN('0'), SIGN('-0'), SIGN(0);")
+	result.Check(testkit.Rows("0 0 0"))
+	result = tk.MustQuery("SELECT SIGN(NULL);")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("SELECT SIGN(-9223372036854775808), SIGN(9223372036854775808);")
+	result.Check(testkit.Rows("-1 1"))
 }
 
 func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
