@@ -1267,8 +1267,8 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 	}
 	if hasVirtualGeneratedColumn {
 		var proj = Projection{Exprs: make([]expression.Expression, 0, len(columns))}.init(b.allocator, b.ctx)
-		var schema = expression.NewSchema(make([]*expression.Column, 0, len(ds.schema.Columns))...)
-		for i, colExpr := range ds.schema.Columns {
+		var schema = expression.NewSchema(make([]*expression.Column, 0, len(ds.Schema().Columns))...)
+		for i, colExpr := range ds.Schema().Columns {
 			var exprIsGen = false
 			var expr expression.Expression
 			if i < len(columns) {
