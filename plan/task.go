@@ -146,7 +146,7 @@ func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
 		lCnt = 1
 	}
 	cst := lCnt * netWorkFactor
-	batchSize := p.ctx.GetSessionVars().IndexLookupSize
+	batchSize := p.ctx.GetSessionVars().IndexJoinBatchSize
 	if p.KeepOrder {
 		batchSize = 1
 	}
@@ -166,7 +166,7 @@ func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
 	if smallTableCnt <= 1 {
 		smallTableCnt = 1
 	}
-	return (lCnt + rCnt) * (1 + math.Log2(smallTableCnt))
+	return (lCnt + rCnt) * (1 + math.Log2(smallTableCnt)/float64(p.Concurrency))
 }
 
 func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
@@ -300,6 +300,9 @@ func (p *Limit) attach2Task(tasks ...task) task {
 }
 
 func (p *Sort) getCost(count float64) float64 {
+	if count < 2.0 {
+		count = 2.0
+	}
 	return count*cpuFactor + count*memoryFactor
 }
 
@@ -327,7 +330,6 @@ func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 
 func (p *Sort) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
-	t = finishCopTask(t, p.ctx, p.allocator)
 	t = attachPlan2Task(p.Copy(), t)
 	t.addCost(p.getCost(t.count()))
 	return t

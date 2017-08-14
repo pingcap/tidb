@@ -42,7 +42,9 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	isExpensive := stmtCount(node, p)
+
+	// Don't take restricted SQL into account for metrics.
+	isExpensive := stmtCount(node, p, ctx.GetSessionVars().InRestrictedSQL)
 	sa := &statement{
 		is:        is,
 		plan:      p,

@@ -15,6 +15,8 @@ package plan
 
 import (
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
@@ -409,6 +411,72 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	return selection
 }
 
+// buildProjectionFieldNameFromColumns builds the field name and the table name when field expression is a column reference.
+func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (model.CIStr, model.CIStr) {
+	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
+		return astCol.Name.Name, astCol.Name.Table
+	}
+	return c.ColName, c.TblName
+}
+
+// buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
+func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectField) model.CIStr {
+	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
+		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
+		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name
+	}
+
+	innerExpr := getInnerFromParentheses(field.Expr)
+	valueExpr, isValueExpr := innerExpr.(*ast.ValueExpr)
+
+	// Non-literal: Output as inputed, except that comments need to be removed.
+	if !isValueExpr {
+		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
+	}
+
+	// Literal: Need special processing
+	switch valueExpr.Kind() {
+	case types.KindString:
+		// See #3686, #3994:
+		// For string literals, string content is used as column name. Non-graph initial characters are trimmed.
+		fieldName := strings.TrimLeftFunc(valueExpr.GetString(), func(r rune) bool {
+			return !unicode.IsOneOf(mysql.RangeGraph, r)
+		})
+		return model.NewCIStr(fieldName)
+	case types.KindNull:
+		// See #4053, #3685
+		return model.NewCIStr("NULL")
+	default:
+		// Keep as it is.
+		if innerExpr.Text() != "" {
+			return model.NewCIStr(innerExpr.Text())
+		}
+		return model.NewCIStr(field.Text())
+	}
+}
+
+// buildProjectionField builds the field object according to SelectField in projection.
+func (b *planBuilder) buildProjectionField(id string, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
+	var tblName, colName model.CIStr
+	if field.AsName.L != "" {
+		// Field has alias.
+		colName = field.AsName
+	} else if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
+		// Field is a column reference.
+		colName, tblName = b.buildProjectionFieldNameFromColumns(field, c)
+	} else {
+		// Other: field is an expression.
+		colName = b.buildProjectionFieldNameFromExpressions(field)
+	}
+	return &expression.Column{
+		FromID:   id,
+		Position: position,
+		TblName:  tblName,
+		ColName:  colName,
+		RetType:  expr.GetType(),
+	}
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	b.optFlag |= flagEliminateProjection
@@ -423,50 +491,13 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		}
 		p = np
 		proj.Exprs = append(proj.Exprs, newExpr)
-		var tblName, colName model.CIStr
-		if field.AsName.L != "" {
-			colName = field.AsName
-		} else if c, ok := newExpr.(*expression.Column); ok && !c.IsAggOrSubq {
-			if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
-				colName = astCol.Name.Name
-				tblName = astCol.Name.Table
-			} else {
-				colName = c.ColName
-				tblName = c.TblName
-			}
-		} else {
-			// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
-			if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
-				if col, ok := agg.Args[0].(*ast.ColumnNameExpr); ok {
-					colName = col.Name.Name
-				}
-			} else {
-				innerExpr := getInnerFromParentheses(field.Expr)
-				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
-					colName = model.NewCIStr(innerExpr.Text())
-				} else {
-					//Change column name \N to NULL, just when original sql contains \N column
-					fieldText := field.Text()
-					if fieldText == "\\N" {
-						fieldText = "NULL"
-					}
 
-					// Remove special comment code for field part, see issue #3739 for detail.
-					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(fieldText, parser.TrimComment))
-				}
-			}
-		}
-		col := &expression.Column{
-			FromID:  proj.id,
-			TblName: tblName,
-			ColName: colName,
-			RetType: newExpr.GetType(),
-		}
+		col := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
+		schema.Append(col)
+
 		if !field.Auxiliary {
 			oldLen++
 		}
-		schema.Append(col)
-		col.Position = schema.Len()
 	}
 	proj.SetSchema(schema)
 	addChild(proj, p)
@@ -957,7 +988,8 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		tblName := field.WildCard.Table
 		for _, col := range p.Schema().Columns {
 			if (dbName.L == "" || dbName.L == col.DBName.L) &&
-				(tblName.L == "" || tblName.L == col.TblName.L) {
+				(tblName.L == "" || tblName.L == col.TblName.L) &&
+				col.ID != model.ExtraHandleID {
 				colName := &ast.ColumnNameExpr{
 					Name: &ast.ColumnName{
 						Schema: col.DBName,
@@ -1014,6 +1046,10 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.pushTableHints(sel.TableHints) {
 			defer b.popTableHints()
 		}
+	}
+
+	if sel.LockTp == ast.SelectLockForUpdate {
+		b.needColHandle++
 	}
 
 	hasAgg := b.detectSelectAgg(sel)
@@ -1099,6 +1135,9 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 	sel.Fields.Fields = originalFields
+	if sel.LockTp == ast.SelectLockForUpdate {
+		b.needColHandle--
+	}
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.allocator, b.ctx)
 		addChild(proj, p)
@@ -1145,6 +1184,8 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		tableInfo:      tableInfo,
 		statisticTable: statisticTable,
 		DBName:         schemaName,
+		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
+		NeedColHandle:  b.needColHandle > 0,
 	}.init(b.allocator, b.ctx)
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
@@ -1154,6 +1195,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		columns = tbl.Cols()
 	}
+	var pkCol *expression.Column
 	p.Columns = make([]*model.ColumnInfo, 0, len(columns))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
@@ -1166,6 +1208,44 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			RetType:  &col.FieldType,
 			Position: i,
 			ID:       col.ID})
+		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			pkCol = schema.Columns[schema.Len()-1]
+		}
+	}
+	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
+	if b.needColHandle == 0 && !needUnionScan {
+		p.SetSchema(schema)
+		return p
+	}
+	if pkCol == nil || needUnionScan {
+		idCol := &expression.Column{
+			FromID:   p.id,
+			DBName:   schemaName,
+			TblName:  tableInfo.Name,
+			ColName:  model.NewCIStr("_rowid"),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Position: schema.Len(),
+			Index:    schema.Len(),
+			ID:       model.ExtraHandleID,
+		}
+		if needUnionScan {
+			p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+			for _, col := range schema.Columns {
+				p.unionScanSchema.Append(col)
+			}
+			if b.needColHandle > 0 {
+				p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
+				p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+			}
+		}
+		p.Columns = append(p.Columns, &model.ColumnInfo{
+			ID:   model.ExtraHandleID,
+			Name: model.NewCIStr("_rowid"),
+		})
+		schema.Append(idCol)
+		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+	} else {
+		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
 	}
 	p.SetSchema(schema)
 	return p
@@ -1277,6 +1357,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	b.inUpdateStmt = true
+	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
@@ -1369,6 +1450,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
+	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {

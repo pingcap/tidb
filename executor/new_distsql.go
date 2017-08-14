@@ -15,6 +15,7 @@ package executor
 
 import (
 	"sort"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -41,6 +42,14 @@ type DataReader interface {
 	doRequestForDatums(datums [][]types.Datum, goCtx goctx.Context) error
 }
 
+// handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
+func handleIsExtra(col *expression.Column) bool {
+	if col != nil && col.ID == model.ExtraHandleID {
+		return true
+	}
+	return false
+}
+
 // TableReaderExecutor sends dag request and reads table data from kv layer.
 type TableReaderExecutor struct {
 	asName    *model.CIStr
@@ -54,6 +63,8 @@ type TableReaderExecutor struct {
 	schema    *expression.Schema
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
+	// This is the column that represent the handle, we can use handleCol.Index to know its position.
+	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -75,7 +86,7 @@ func (e *TableReaderExecutor) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *TableReaderExecutor) Next() (*Row, error) {
+func (e *TableReaderExecutor) Next() (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -101,7 +112,12 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		err = codec.SetRawValues(rowData, values)
+		if handleIsExtra(e.handleCol) {
+			err = codec.SetRawValues(rowData, values[:len(values)-1])
+			values[len(values)-1].SetInt64(h)
+		} else {
+			err = codec.SetRawValues(rowData, values)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -109,7 +125,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return values, nil
 	}
 }
 
@@ -160,6 +176,8 @@ type IndexReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
+	// This is the column that represent the handle, we can use handleCol.Index to know its position.
+	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -183,7 +201,7 @@ func (e *IndexReaderExecutor) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *IndexReaderExecutor) Next() (*Row, error) {
+func (e *IndexReaderExecutor) Next() (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -209,7 +227,12 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 			continue
 		}
 		values := make([]types.Datum, e.schema.Len())
-		err = codec.SetRawValues(rowData, values)
+		if handleIsExtra(e.handleCol) {
+			err = codec.SetRawValues(rowData, values[:len(values)-1])
+			values[len(values)-1].SetInt64(h)
+		} else {
+			err = codec.SetRawValues(rowData, values)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -217,7 +240,7 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return values, nil
 	}
 }
 
@@ -265,6 +288,8 @@ type IndexLookUpExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
+	// This is the column that represent the handle, we can use handleCol.Index to know its position.
+	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult.
 	result distsql.SelectResult
@@ -298,7 +323,7 @@ func (e *IndexLookUpExecutor) Open() error {
 	// Use a background goroutine to fetch index and put the result in e.taskChan.
 	// e.taskChan serves as a pipeline, so fetching index and getting table data can
 	// run concurrently.
-	e.taskChan = make(chan *lookupTableTask, LookupTableTaskChannelSize)
+	e.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 	go e.fetchHandlesAndStartWorkers()
 	return nil
 }
@@ -314,7 +339,7 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 		return errors.Trace(err)
 	}
 	e.result.Fetch(goCtx)
-	e.taskChan = make(chan *lookupTableTask, LookupTableTaskChannelSize)
+	e.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 	go e.fetchHandlesAndStartWorkers()
 	return nil
 }
@@ -322,24 +347,38 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
 func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Context) {
-	var err error
+	var (
+		err       error
+		handleCol *expression.Column
+	)
+	schema := e.schema.Clone()
 	defer func() {
 		task.doneCh <- errors.Trace(err)
 	}()
+	if e.handleCol != nil {
+		handleCol = e.handleCol
+	} else if e.keepOrder {
+		handleCol = &expression.Column{
+			ID:    model.ExtraHandleID,
+			Index: e.schema.Len(),
+		}
+		schema.Append(handleCol)
+	}
 	tableReader := &TableReaderExecutor{
-		asName:  e.asName,
-		table:   e.table,
-		tableID: e.tableID,
-		dagPB:   e.tableRequest,
-		schema:  e.schema,
-		ctx:     e.ctx,
+		asName:    e.asName,
+		table:     e.table,
+		tableID:   e.tableID,
+		dagPB:     e.tableRequest,
+		schema:    schema,
+		ctx:       e.ctx,
+		handleCol: handleCol,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {
 		return
 	}
 	for {
-		var row *Row
+		var row Row
 		row, err = tableReader.Next()
 		if err != nil || row == nil {
 			break
@@ -348,11 +387,12 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 	if e.keepOrder {
 		// Restore the index order.
-		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows}
-		if e.desc {
-			sort.Sort(sort.Reverse(sorter))
-		} else {
-			sort.Sort(sorter)
+		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: handleCol.Index}
+		sort.Sort(sorter)
+		if e.handleCol == nil {
+			for i, row := range task.rows {
+				task.rows[i] = row[:len(row)-1]
+			}
 		}
 	}
 }
@@ -465,7 +505,7 @@ func (e *IndexLookUpExecutor) Close() error {
 }
 
 // Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next() (*Row, error) {
+func (e *IndexLookUpExecutor) Next() (Row, error) {
 	for {
 		if e.taskCurr == nil {
 			taskCurr, ok := <-e.taskChan

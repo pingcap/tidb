@@ -46,7 +46,7 @@ type SimpleExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *SimpleExec) Next() (*Row, error) {
+func (e *SimpleExec) Next() (Row, error) {
 	if e.done {
 		return nil, nil
 	}

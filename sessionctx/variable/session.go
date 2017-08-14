@@ -195,6 +195,9 @@ type SessionVars struct {
 	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
 	BuildStatsConcurrencyVar int
 
+	// IndexJoinBatchSize is the batch size of a index lookup join.
+	IndexJoinBatchSize int
+
 	// IndexLookupSize is the number of handles for an index lookup task in index double read executor.
 	IndexLookupSize int
 
@@ -231,6 +234,7 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                    new(StatementContext),
 		AllowAggPushDown:           true,
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
+		IndexJoinBatchSize:         DefIndexJoinBatchSize,
 		IndexLookupSize:            DefIndexLookupSize,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
@@ -346,6 +350,7 @@ type StatementContext struct {
 
 	// Copied from SessionVars.TimeZone.
 	TimeZone *time.Location
+	Priority mysql.PriorityEnum
 }
 
 // AddAffectedRows adds affected rows.

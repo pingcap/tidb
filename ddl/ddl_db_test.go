@@ -323,6 +323,18 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 	s.mustExec(c, "alter table t_anonymous_index drop index c3")
 	s.mustExec(c, "alter table t_anonymous_index add index c3 (C3)")
 	s.mustExec(c, "alter table t_anonymous_index drop index C3")
+	// for anonymous index with column name `primary`
+	s.mustExec(c, "create table t_primary (`primary` int, key (`primary`))")
+	t = s.testGetTable(c, "t_primary")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	s.mustExec(c, "create table t_primary_2 (`primary` int, key primary_2 (`primary`), key (`primary`))")
+	t = s.testGetTable(c, "t_primary_2")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
+	s.mustExec(c, "create table t_primary_3 (`primary_2` int, key(`primary_2`), `primary` int, key(`primary`));")
+	t = s.testGetTable(c, "t_primary_3")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
 }
 
 func (s *testDBSuite) testAlterLock(c *C) {
@@ -499,8 +511,7 @@ LOOP:
 	// check in index, must no index in kv
 	ctx := s.s.(context.Context)
 
-	handles := make(map[int64]struct{})
-
+	// Make sure there is no index with name c3_index.
 	t = s.testGetTable(c, "t1")
 	var nidx table.Index
 	for _, tidx := range t.Indices() {
@@ -509,26 +520,40 @@ LOOP:
 			break
 		}
 	}
-	// Make sure there is no index with name c3_index.
 	c.Assert(nidx, IsNil)
+
 	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
-	c.Assert(ctx.NewTxn(), IsNil)
-	defer ctx.Txn().Rollback()
+	f := func() map[int64]struct{} {
+		handles := make(map[int64]struct{})
 
-	it, err := idx.SeekFirst(ctx.Txn())
-	c.Assert(err, IsNil)
-	defer it.Close()
+		c.Assert(ctx.NewTxn(), IsNil)
+		defer ctx.Txn().Rollback()
 
-	for {
-		_, h, err := it.Next()
-		if terror.ErrorEqual(err, io.EOF) {
-			break
-		}
-
+		it, err := idx.SeekFirst(ctx.Txn())
 		c.Assert(err, IsNil)
-		handles[h] = struct{}{}
+		defer it.Close()
+
+		for {
+			_, h, err := it.Next()
+			if terror.ErrorEqual(err, io.EOF) {
+				break
+			}
+
+			c.Assert(err, IsNil)
+			handles[h] = struct{}{}
+		}
+		return handles
 	}
 
+	var handles map[int64]struct{}
+	for i := 0; i < 30; i++ {
+		handles = f()
+		if len(handles) != 0 {
+			time.Sleep(time.Millisecond * 100)
+		} else {
+			break
+		}
+	}
 	c.Assert(handles, HasLen, 0)
 }
 

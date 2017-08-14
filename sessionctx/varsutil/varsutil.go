@@ -134,6 +134,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.AllowInSubqueryUnFolding = tidbOptOn(sVal)
 	case variable.TiDBIndexLookupConcurrency:
 		vars.IndexLookupConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexLookupConcurrency)
+	case variable.TiDBIndexJoinBatchSize:
+		vars.IndexJoinBatchSize = tidbOptPositiveInt(sVal, variable.DefIndexJoinBatchSize)
 	case variable.TiDBIndexLookupSize:
 		vars.IndexLookupSize = tidbOptPositiveInt(sVal, variable.DefIndexLookupSize)
 	case variable.TiDBDistSQLScanConcurrency:
