@@ -29,7 +29,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -245,7 +245,7 @@ func (b *builtinPasswordSig) evalString(row []types.Datum) (d string, isNull boo
 		return "", false, nil
 	}
 
-	return util.EncodePassword(pass), false, nil
+	return auth.EncodePassword(pass), false, nil
 }
 
 type randomBytesFunctionClass struct {
