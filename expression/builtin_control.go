@@ -346,7 +346,7 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 	}
 	tp0, tp1 := args[0].GetType(), args[1].GetType()
 	fieldTp := types.AggFieldType([]*types.FieldType{tp0, tp1})
-	classType := types.AggTypeClass([]*types.FieldType{tp0, tp1}, &fieldTp.Flag)
+	classType := types.AggTypeClass4FieldType([]*types.FieldType{tp0, tp1}, fieldTp)
 	fieldTp.Decimal = mathutil.Max(tp0.Decimal, tp1.Decimal)
 	// TODO: make it more accurate when inferring FLEN
 	fieldTp.Flen = tp0.Flen + tp1.Flen
