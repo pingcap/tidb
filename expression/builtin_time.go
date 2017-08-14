@@ -2818,7 +2818,7 @@ func (c *toDaysFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2834,18 +2834,14 @@ type builtinToDaysSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-days
 func (b *builtinToDaysSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	arg, isNull, err := b.args[0].EvalString(row, sc)
-	if err != nil {
-		return 0, isNull, errors.Trace(err)
+	arg, isNull, err := b.args[0].EvalTime(row, sc)
+	if isNull || err != nil {
+		return 0, true, errorOrWarning(err, b.ctx)
 	}
-	if isNull {
-		return 0, isNull, nil
-	}
-	date, err := types.ParseTime(arg, mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
 		return 0, true, errorOrWarning(err, b.ctx)
 	}
-	ret := types.TimestampDiff("DAY", types.ZeroDate, date)
+	ret := types.TimestampDiff("DAY", types.ZeroDate, arg)
 	if ret == 0 {
 		return 0, true, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
 	}
