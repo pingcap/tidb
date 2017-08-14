@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 	"github.com/twinj/uuid"
 )
 
@@ -55,7 +56,13 @@ var (
 	_ builtinFunc = &builtinSleepSig{}
 	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinReleaseLockSig{}
-	_ builtinFunc = &builtinAnyValueSig{}
+	_ builtinFunc = &builtinDecimalAnyValueSig{}
+	_ builtinFunc = &builtinDurationAnyValueSig{}
+	_ builtinFunc = &builtinIntAnyValueSig{}
+	_ builtinFunc = &builtinJSONAnyValueSig{}
+	_ builtinFunc = &builtinRealAnyValueSig{}
+	_ builtinFunc = &builtinStringAnyValueSig{}
+	_ builtinFunc = &builtinTimeAnyValueSig{}
 	_ builtinFunc = &builtinInetAtonSig{}
 	_ builtinFunc = &builtinInetNtoaSig{}
 	_ builtinFunc = &builtinInet6AtonSig{}
@@ -179,23 +186,129 @@ func (c *anyValueFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinAnyValueSig{newBaseBuiltinFunc(args, ctx)}
+	argTp := fieldTp2EvalTp(args[0].GetType())
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, argTp, argTp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var sig builtinFunc
+	switch argTp {
+	case tpDecimal:
+		sig = &builtinDecimalAnyValueSig{baseDecimalBuiltinFunc{bf}}
+	case tpDuration:
+		sig = &builtinDurationAnyValueSig{baseDurationBuiltinFunc{bf}}
+	case tpInt:
+		sig = &builtinIntAnyValueSig{baseIntBuiltinFunc{bf}}
+	case tpJSON:
+		sig = &builtinJSONAnyValueSig{baseJSONBuiltinFunc{bf}}
+	case tpReal:
+		sig = &builtinRealAnyValueSig{baseRealBuiltinFunc{bf}}
+	case tpString:
+		sig = &builtinStringAnyValueSig{baseStringBuiltinFunc{bf}}
+	case tpTime:
+		sig = &builtinTimeAnyValueSig{baseTimeBuiltinFunc{bf}}
+	default:
+		panic("unexpected evalTp")
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinAnyValueSig struct {
-	baseBuiltinFunc
+type builtinDecimalAnyValueSig struct {
+	baseDecimalBuiltinFunc
 }
 
-// eval evals a builtinAnyValueSig.
+// evalDecimal evals a builtinDecimalAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinAnyValueSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinDecimalAnyValueSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	val, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return nil, true, errors.Trace(err)
 	}
-	d = args[0]
-	return d, nil
+	return val, false, nil
+}
+
+type builtinDurationAnyValueSig struct {
+	baseDurationBuiltinFunc
+}
+
+// evalDuration evals a builtinDurationAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinDurationAnyValueSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	val, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return types.Duration{}, true, errors.Trace(err)
+	}
+	return val, false, nil
+}
+
+type builtinIntAnyValueSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals a builtinIntAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinIntAnyValueSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return 0, true, errors.Trace(err)
+	}
+	return val, false, nil
+}
+
+type builtinJSONAnyValueSig struct {
+	baseJSONBuiltinFunc
+}
+
+// evalJSON evals a builtinJSONAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinJSONAnyValueSig) evalJSON(row []types.Datum) (json.JSON, bool, error) {
+	val, isNull, err := b.args[0].EvalJSON(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return json.JSON{}, true, errors.Trace(err)
+	}
+	return val, false, nil
+}
+
+type builtinRealAnyValueSig struct {
+	baseRealBuiltinFunc
+}
+
+// evalReal evals a builtinRealAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinRealAnyValueSig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return 0, true, errors.Trace(err)
+	}
+	return val, false, nil
+}
+
+type builtinStringAnyValueSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinStringAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinStringAnyValueSig) evalString(row []types.Datum) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
+	}
+	return val, false, nil
+}
+
+type builtinTimeAnyValueSig struct {
+	baseTimeBuiltinFunc
+}
+
+// evalTime evals a builtinTimeAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinTimeAnyValueSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	val, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return types.Time{}, true, errors.Trace(err)
+	}
+	return val, false, nil
 }
 
 type defaultFunctionClass struct {
