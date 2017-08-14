@@ -164,6 +164,12 @@ func (s *testPlanSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"c_int like 'abc%'", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"tidb_version()", mysql.TypeVarString, charset.CharsetUTF8, 0, len(printer.GetTiDBInfo()), types.UnspecifiedLength},
 		{"password(c_char)", mysql.TypeVarString, charset.CharsetUTF8, 0, mysql.PWDHashLen + 1, types.UnspecifiedLength},
+		{"elt(c_int, c_char, c_char, c_char)", mysql.TypeVarString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
+		{"elt(c_int, c_char, c_char, c_binary)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+		{"elt(c_int, c_char, c_int)", mysql.TypeVarString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
+		{"elt(c_int, c_char, c_double, c_int)", mysql.TypeVarString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
+		{"elt(c_int, c_char, c_double, c_int, c_binary)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+
 		{"locate(c_char, c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"locate(c_binary, c_binary)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"locate(c_char, c_binary)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
@@ -465,8 +471,16 @@ func (s *testPlanSuite) createTestCase4LogicalFuncs() []typeInferTestCase {
 
 func (s *testPlanSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
-		{"ifnull(c_int, c_int)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
+		{"ifnull(c_int, c_int    )", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
 		{"ifnull(c_int, c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 17, 3},
+		{"if(c_int, c_decimal, c_int)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 3},
+		{"if(c_int, c_char, c_int)", mysql.TypeString, charset.CharsetUTF8, 0, 20, -1},
+		{"if(c_int, c_binary, c_int)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, -1},
+		{"if(c_int, c_binary_char, c_int)", mysql.TypeString, charset.CharsetUTF8, mysql.BinaryFlag, 20, -1},
+		{"if(c_int, c_char, c_decimal)", mysql.TypeString, charset.CharsetUTF8, 0, 20, 3},
+		{"if(c_int, c_datetime, c_int)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 11, 2},
+		{"if(c_int, c_int, c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 11, -1},
+		{"if(c_int, c_time, c_datetime)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, -1, 2},
 	}
 }
 
@@ -609,6 +623,10 @@ func (s *testPlanSuite) createTestCase4EncryptionFuncs() []typeInferTestCase {
 		{"UNCOMPRESS(c_varchar)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"UNCOMPRESSED_LENGTH(c_varchar)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"UNCOMPRESSED_LENGTH(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+
+		{"RANDOM_BYTES(5)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 1024, types.UnspecifiedLength},
+		{"RANDOM_BYTES('123')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 1024, types.UnspecifiedLength},
+		{"RANDOM_BYTES('abc')", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 1024, types.UnspecifiedLength},
 	}
 }
 
