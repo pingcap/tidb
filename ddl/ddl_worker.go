@@ -366,13 +366,13 @@ func (d *ddl) handleException(job *model.Job, waitTime time.Duration) {
 	defer cancelFunc()
 
 	startTime := time.Now()
-	log.Infof("[ddl] the elapsed time from last update is %s < %s, wait again")
 	latestSchemaVersion, err := d.schemaSyncer.MustGetGlobalVersion(ctx)
 	if err != nil {
-		log.Warnf("[ddl] handle Exception take time %v", time.Since(startTime))
+		log.Warnf("[ddl] handle exception take time %v", time.Since(startTime))
 		return
 	}
 	d.waitSchemaChanged(ctx, waitTime, latestSchemaVersion)
+	log.Infof("[ddl] the handle exception take time %v", time.Since(startTime))
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
