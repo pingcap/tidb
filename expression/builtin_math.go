@@ -773,38 +773,65 @@ type randFunctionClass struct {
 }
 
 func (c *randFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinRandSig{baseBuiltinFunc: newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	var sig builtinFunc
+	if len(args) == 0 {
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		bt := baseRealBuiltinFunc{bf}
+		bt.deterministic = false
+		sig = &builtinRandSig{bt, nil}
+	} else {
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpInt)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		bt := baseRealBuiltinFunc{bf}
+		bt.deterministic = false
+		sig = &builtinRandWithSeedSig{bt, nil}
+	}
+	return sig.setSelf(sig), nil
 }
 
 type builtinRandSig struct {
-	baseBuiltinFunc
+	baseRealBuiltinFunc
 	randGen *rand.Rand
 }
 
-// eval evals a builtinRandSig.
+// evalReal evals RAND().
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
-func (b *builtinRandSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinRandSig) evalReal(row []types.Datum) (float64, bool, error) {
+	if b.randGen == nil {
+		b.randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+	return b.randGen.Float64(), false, nil
+}
+
+type builtinRandWithSeedSig struct {
+	baseRealBuiltinFunc
+	randGen *rand.Rand
+}
+
+// evalReal evals RAND(N).
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
+func (b *builtinRandWithSeedSig) evalReal(row []types.Datum) (float64, bool, error) {
+	seed, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
-		return d, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	if b.randGen == nil {
-		if len(args) == 1 && !args[0].IsNull() {
-			seed, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			b.randGen = rand.New(rand.NewSource(seed))
-		} else {
-			// If seed is not set, we use current timestamp as seed.
+		if isNull {
+			// When seed is NULL, it is equal to RAND()
 			b.randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
+		} else {
+			b.randGen = rand.New(rand.NewSource(seed))
 		}
 	}
-	d.SetFloat64(b.randGen.Float64())
-	return d, nil
+	return b.randGen.Float64(), false, nil
 }
 
 type powFunctionClass struct {
