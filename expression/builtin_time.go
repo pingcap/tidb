@@ -144,7 +144,6 @@ var (
 	_ builtinFunc = &builtinQuarterSig{}
 	_ builtinFunc = &builtinSecToTimeSig{}
 	_ builtinFunc = &builtinSubTimeSig{}
-	_ builtinFunc = &builtinTimeFormatSig{}
 	_ builtinFunc = &builtinTimeToSecSig{}
 	_ builtinFunc = &builtinTimestampAddSig{}
 	_ builtinFunc = &builtinToDaysSig{}
@@ -2680,21 +2679,7 @@ type timeFormatFunctionClass struct {
 }
 
 func (c *timeFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinTimeFormatSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinTimeFormatSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinTimeFormatSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
-func (b *builtinTimeFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("TIME_FORMAT")
+	return nil, errFunctionNotExists.GenByArgs("TIME_FORMAT")
 }
 
 type timeToSecFunctionClass struct {

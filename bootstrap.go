@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -668,7 +668,7 @@ func oldPasswordUpgrade(pass string) (string, error) {
 		return "", errors.Trace(err)
 	}
 
-	hash2 := util.Sha1Hash(hash1)
+	hash2 := auth.Sha1Hash(hash1)
 	newpass := fmt.Sprintf("*%X", hash2)
 	return newpass, nil
 }
