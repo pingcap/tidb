@@ -65,7 +65,7 @@ type pbConverter struct {
 func (pc pbConverter) exprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
 	case *Constant:
-		return pc.datumToPBExpr(x.Value, x.GetType())
+		return pc.constantToPBExpr(x)
 	case *Column:
 		return pc.columnToPBExpr(x)
 	case *ScalarFunction:
@@ -74,9 +74,14 @@ func (pc pbConverter) exprToPB(expr Expression) *tipb.Expr {
 	return nil
 }
 
-func (pc pbConverter) datumToPBExpr(d types.Datum, ft *types.FieldType) *tipb.Expr {
-	var tp tipb.ExprType
-	var val []byte
+func (pc pbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
+	var (
+		tp  tipb.ExprType
+		val []byte
+		d   = con.Value
+		ft  = con.GetType()
+	)
+
 	switch d.Kind() {
 	case types.KindNull:
 		tp = tipb.ExprType_Null
@@ -339,7 +344,7 @@ func (pc pbConverter) constListToPB(list []Expression) *tipb.Expr {
 		if !ok {
 			return nil
 		}
-		d := pc.datumToPBExpr(v.Value, v.RetType)
+		d := pc.constantToPBExpr(v)
 		if d == nil {
 			return nil
 		}
