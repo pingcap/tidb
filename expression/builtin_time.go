@@ -2857,35 +2857,37 @@ func (c *toSecondsFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinToSecondsSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinToSecondsSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinToSecondsSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinToSecondsSig.
+// evalInt evals a builtinToSecondsSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-seconds
-func (b *builtinToSecondsSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinToSecondsSig) evalInt(row []types.Datum) (int64, bool, error) {
+	arg, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
 	if err != nil {
-		return d, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		return
+	if isNull {
+		return 0, true, nil
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	date, err := convertDatumToTime(sc, args[0])
+	date, err := types.ParseTime(arg, mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
-		return d, errorOrWarning(err, b.ctx)
+		return 0, true, errorOrWarning(err, b.ctx)
 	}
 	ret := types.TimestampDiff("SECOND", types.ZeroDate, date)
 	if ret == 0 {
-		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
+		return 0, true, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
 	}
-	d.SetInt64(ret)
-	return
+	return ret, false, nil
 }
 
 type utcTimeFunctionClass struct {
