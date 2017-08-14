@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -143,7 +144,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
-	c.Assert(se.Auth(`show@%`, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
 	tk1.Se = se
 
 	// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA.
