@@ -88,6 +88,9 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 		}
 	}
 	buffer.WriteString(fmt.Sprintf(", out of order:%v", p.OutOfOrder))
+	if p.Desc {
+		buffer.WriteString(fmt.Sprint(", desc"))
+	}
 	return buffer.String()
 }
 
@@ -112,6 +115,9 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 		}
 	}
 	buffer.WriteString(fmt.Sprintf(", keep order:%v", p.KeepOrder))
+	if p.Desc {
+		buffer.WriteString(fmt.Sprint(", desc"))
+	}
 	return buffer.String()
 }
 
@@ -191,7 +197,7 @@ func (p *PhysicalAggregation) ExplainInfo() string {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalApply) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.PhysicalJoin.ExplainInfo())
-	buffer.WriteString(fmt.Sprintf(", right:%s", p.Children()[p.rightChOffset].ID()))
+	buffer.WriteString(fmt.Sprintf(", right:%s", p.Children()[1].ID()))
 	return buffer.String()
 }
 

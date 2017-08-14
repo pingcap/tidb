@@ -1061,7 +1061,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		if err != nil {
-			er.err = errors.Trace(err)
+			er.err = ErrAmbiguous.GenByArgs(v.Name)
 			return
 		}
 	}
@@ -1076,5 +1076,5 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-	er.err = errors.Errorf("Unknown column %s %s %s.", v.Schema.L, v.Table.L, v.Name.L)
+	er.err = ErrUnknownColumn.GenByArgs(v.Text(), "field list")
 }

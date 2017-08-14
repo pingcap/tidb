@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 )
 
 const (
@@ -130,8 +131,8 @@ type SessionVars struct {
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
-	// User is the username with which the session login.
-	User string
+	// User is the user identity with which the session login.
+	User *auth.UserIdentity
 
 	// CurrentDB is the default database of this session.
 	CurrentDB string
@@ -191,6 +192,9 @@ type SessionVars struct {
 	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
 	BuildStatsConcurrencyVar int
 
+	// IndexJoinBatchSize is the batch size of a index lookup join.
+	IndexJoinBatchSize int
+
 	// IndexLookupSize is the number of handles for an index lookup task in index double read executor.
 	IndexLookupSize int
 
@@ -208,6 +212,9 @@ type SessionVars struct {
 
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
+
+	// CBO indicates if we use new planner with cbo.
+	CBO bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -224,11 +231,13 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                    new(StatementContext),
 		AllowAggPushDown:           true,
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
+		IndexJoinBatchSize:         DefIndexJoinBatchSize,
 		IndexLookupSize:            DefIndexLookupSize,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
+		CBO:                        true,
 	}
 }
 
@@ -338,6 +347,7 @@ type StatementContext struct {
 
 	// Copied from SessionVars.TimeZone.
 	TimeZone *time.Location
+	Priority mysql.PriorityEnum
 }
 
 // AddAffectedRows adds affected rows.

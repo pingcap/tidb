@@ -1,5 +1,5 @@
-hash: 4ff8f14860bbc326efc0549a48c2b37d3058a41bb6f03ad658127f65894ff0e2
-updated: 2017-07-25T12:22:31.695259691+08:00
+hash: 1441ffe10dd6081e0b6959fea996b5f5c81bc74966513eece1c9db61058d6821
+updated: 2017-08-11T18:20:37.833208572+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -129,7 +129,7 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: 5e4b9cf7c32d2b09ba71aa9ab6675ec135f9fbda
+  version: 71392cb4002785b809739112d744c610f1c89353
   subpackages:
   - go-binlog
   - go-tipb
@@ -193,7 +193,7 @@ imports:
   subpackages:
   - rate
 - name: google.golang.org/genproto
-  version: aa2eb687b4d3e17154372564ad8d6bf11c3cf21f
+  version: 09f6ed296fc66555a25fe4ce95173148778dfa85
   subpackages:
   - googleapis/rpc/status
 - name: google.golang.org/grpc

@@ -14,7 +14,7 @@
 package expression
 
 import (
-	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,11 +44,11 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
-	TurnOnNewExprEval = true
+	atomic.StoreInt32(&TurnOnNewExprEval, 1)
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
-	TurnOnNewExprEval = false
+	atomic.StoreInt32(&TurnOnNewExprEval, 0)
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {
@@ -62,37 +62,42 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(datumsToConstants(d), ctx)
 	c.Assert(err, IsNil)
-	ret, err := f.eval(nil)
+	ret, isNull, err := f.evalInt(nil)
 	c.Assert(err, IsNil)
-	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
+	c.Assert(isNull, IsTrue)
+	c.Assert(ret, Equals, int64(0))
 	d[0].SetInt64(-1)
 	f, err = fc.getFunction(datumsToConstants(d), ctx)
 	c.Assert(err, IsNil)
-	ret, err = f.eval(nil)
+	ret, isNull, err = f.evalInt(nil)
 	c.Assert(err, IsNil)
-	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
+	c.Assert(isNull, IsFalse)
+	c.Assert(ret, Equals, int64(0))
 
 	// for error case under the strict model
 	sessVars.StrictSQLMode = true
 	d[0].SetNull()
 	_, err = fc.getFunction(datumsToConstants(d), ctx)
 	c.Assert(err, IsNil)
-	ret, err = f.eval(nil)
+	ret, isNull, err = f.evalInt(nil)
 	c.Assert(err, NotNil)
+	c.Assert(isNull, IsFalse)
 	d[0].SetFloat64(-2.5)
 	_, err = fc.getFunction(datumsToConstants(d), ctx)
 	c.Assert(err, IsNil)
-	ret, err = f.eval(nil)
+	ret, isNull, err = f.evalInt(nil)
 	c.Assert(err, NotNil)
+	c.Assert(isNull, IsFalse)
 
 	// strict model
 	d[0].SetFloat64(0.5)
 	start := time.Now()
 	f, err = fc.getFunction(datumsToConstants(d), ctx)
 	c.Assert(err, IsNil)
-	ret, err = f.eval(nil)
+	ret, isNull, err = f.evalInt(nil)
 	c.Assert(err, IsNil)
-	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
+	c.Assert(isNull, IsFalse)
+	c.Assert(ret, Equals, int64(0))
 	sub := time.Since(start)
 	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
 }
@@ -399,28 +404,6 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
 
-func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
-	defer testleak.AfterTest(c)()
-	tests := []struct {
-		args      []interface{}
-		resultStr string
-	}{
-		{nil, "0"},
-		{[]interface{}{1}, "1"},
-	}
-
-	c.Log(s.ctx)
-	for _, tt := range tests {
-		fc := funcs[ast.LastInsertId]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(tt.args...)), s.ctx)
-		c.Assert(err, IsNil)
-		val, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		valStr := fmt.Sprintf("%v", val.GetValue())
-		c.Assert(valStr, Equals, tt.resultStr, Commentf("for %v", tt.args))
-	}
-}
-
 func (s *testEvaluatorSuite) TestLike(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
@@ -492,21 +475,6 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{nil, ast.BitNeg, nil},
 		{-1, ast.BitNeg, uint64(0)},
 
-		// test Plus.
-		{nil, ast.UnaryPlus, nil},
-		{float64(1.0), ast.UnaryPlus, float64(1.0)},
-		{int64(1), ast.UnaryPlus, int64(1)},
-		{int64(1), ast.UnaryPlus, int64(1)},
-		{uint64(1), ast.UnaryPlus, uint64(1)},
-		{"1.0", ast.UnaryPlus, "1.0"},
-		{[]byte("1.0"), ast.UnaryPlus, []byte("1.0")},
-		{types.Hex{Value: 1}, ast.UnaryPlus, types.Hex{Value: 1}},
-		{types.Bit{Value: 1, Width: 1}, ast.UnaryPlus, types.Bit{Value: 1, Width: 1}},
-		{true, ast.UnaryPlus, int64(1)},
-		{false, ast.UnaryPlus, int64(0)},
-		{types.Enum{Name: "a", Value: 1}, ast.UnaryPlus, types.Enum{Name: "a", Value: 1}},
-		{types.Set{Name: "a", Value: 1}, ast.UnaryPlus, types.Set{Name: "a", Value: 1}},
-
 		// test Minus.
 		{nil, ast.UnaryMinus, nil},
 		{float64(1.0), ast.UnaryMinus, float64(-1.0)},
@@ -536,17 +504,6 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		op     string
 		result interface{}
 	}{
-		{types.NewDecFromInt(1), ast.UnaryPlus, types.NewDecFromInt(1)},
-		{types.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: types.DefaultFsp}, ast.UnaryPlus,
-			types.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: types.DefaultFsp}},
-		{types.Time{
-			Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)),
-			Type: mysql.TypeDatetime,
-			Fsp:  0},
-			ast.UnaryPlus,
-			types.Time{
-				Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)),
-				Type: mysql.TypeDatetime, Fsp: 0}},
 		{types.NewDecFromInt(1), ast.UnaryMinus, types.NewDecFromInt(-1)},
 		{types.ZeroDuration, ast.UnaryMinus, new(types.MyDecimal)},
 		{types.Time{Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)), Type: mysql.TypeDatetime, Fsp: 0}, ast.UnaryMinus, types.NewDecFromInt(-20091110230000)},
@@ -561,7 +518,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 
 		ret, err := result.CompareDatum(s.ctx.GetSessionVars().StmtCtx, types.NewDatum(t.result))
 		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, 0)
+		c.Assert(ret, Equals, 0, Commentf("%v %s", t.arg, t.op))
 	}
 }
 
