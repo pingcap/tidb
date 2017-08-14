@@ -1389,6 +1389,16 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tidb.GetRows(rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));")
+	tk.MustExec("INSERT INTO t(a, b) VALUES(-1.09, 1.999);")
+	result = tk.MustQuery("SELECT a/b, a/12, a/-0.01, b/12, b/-0.01, b/0.000, NULL/b, b/NULL, NULL/NULL FROM t;")
+	result.Check(testkit.Rows("-0.545273 -0.090833 109.000000 0.1665833 -199.9000000 <nil> <nil> <nil> <nil>"))
+	rs, err = tk.Exec("select 1e200/1e-200")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
