@@ -191,6 +191,7 @@ func (c *anyValueFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	*bf.tp = *args[0].GetType()
 	var sig builtinFunc
 	switch argTp {
 	case tpDecimal:
