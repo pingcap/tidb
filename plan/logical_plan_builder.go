@@ -1216,58 +1216,86 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	p.SetSchema(schema)
 
-	// for calculating generated column
-	for idx, column := range columns {
-		if column.IsGenerated() && !column.GeneratedStored {
-			expr, _, err := b.rewrite(column.GeneratedExpr, p, nil, true)
-			if err != nil {
-				b.err = errors.Trace(err)
-				return nil
-			}
-			if p.GenValues == nil {
-				p.GenValues = make(map[int]expression.Expression)
-			}
-			p.GenValues[idx] = expr
-		}
-	}
-
 	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
-	if b.needColHandle == 0 && !needUnionScan {
-		return p
+	if b.needColHandle != 0 || needUnionScan {
+		if pkCol == nil || needUnionScan {
+			idCol := &expression.Column{
+				FromID:   p.id,
+				DBName:   schemaName,
+				TblName:  tableInfo.Name,
+				ColName:  model.NewCIStr("_rowid"),
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				Position: schema.Len(),
+				Index:    schema.Len(),
+				ID:       model.ExtraHandleID,
+			}
+			if needUnionScan {
+				p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+				for _, col := range p.schema.Columns {
+					p.unionScanSchema.Append(col)
+				}
+				if b.needColHandle > 0 {
+					p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
+					p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+				}
+			}
+			p.Columns = append(p.Columns, &model.ColumnInfo{
+				ID:   model.ExtraHandleID,
+				Name: model.NewCIStr("_rowid"),
+			})
+			p.schema.Append(idCol)
+			p.schema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+		} else {
+			p.schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
+		}
 	}
+	return b.projectVirtualColumns(p, columns)
+}
 
-	if pkCol == nil || needUnionScan {
-		idCol := &expression.Column{
-			FromID:   p.id,
-			DBName:   schemaName,
-			TblName:  tableInfo.Name,
-			ColName:  model.NewCIStr("_rowid"),
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			Position: schema.Len(),
-			Index:    schema.Len(),
-			ID:       model.ExtraHandleID,
+func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) LogicalPlan {
+	// for calculating generated column
+	var hasVirtualGeneratedColumn = false
+	for _, column := range columns {
+		if column.IsGenerated() && !column.GeneratedStored {
+			hasVirtualGeneratedColumn = true
+			break
 		}
-		if needUnionScan {
-			p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
-			for _, col := range p.schema.Columns {
-				p.unionScanSchema.Append(col)
+	}
+	if hasVirtualGeneratedColumn {
+		var proj = Projection{Exprs: make([]expression.Expression, 0, len(columns))}.init(b.allocator, b.ctx)
+		var schema = expression.NewSchema(make([]*expression.Column, 0, len(ds.schema.Columns))...)
+		for i, colExpr := range ds.schema.Columns {
+			var exprIsGen = false
+			var expr expression.Expression
+			if i < len(columns) {
+				var column = columns[i]
+				if column.IsGenerated() && !column.GeneratedStored {
+					var err error
+					expr, _, err = b.rewrite(column.GeneratedExpr, ds, nil, true)
+					if err != nil {
+						b.err = errors.Trace(err)
+						return nil
+					}
+					exprIsGen = true
+				}
 			}
-			if b.needColHandle > 0 {
-				p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
-				p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+			if !exprIsGen {
+				expr = colExpr.Clone()
 			}
+			proj.Exprs = append(proj.Exprs, expr)
+			schema.Columns = append(schema.Columns, &expression.Column{
+				FromID:   proj.id,
+				Position: colExpr.Position,
+				TblName:  colExpr.TblName,
+				ColName:  colExpr.ColName,
+				RetType:  colExpr.RetType,
+			})
 		}
-		p.Columns = append(p.Columns, &model.ColumnInfo{
-			ID:   model.ExtraHandleID,
-			Name: model.NewCIStr("_rowid"),
-		})
-		p.schema.Append(idCol)
-		p.schema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+		proj.SetSchema(schema)
+		return proj
 	} else {
-		p.schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
+		return ds
 	}
-
-	return p
 }
 
 // ApplyConditionChecker checks whether all or any output of apply matches a condition.
