@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/auth"
 )
 
 var (
@@ -401,7 +402,7 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 type SetPwdStmt struct {
 	stmtNode
 
-	User     string
+	User     *auth.UserIdentity
 	Password string
 }
 
@@ -417,7 +418,7 @@ func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
 
 // UserSpec is used for parsing create user statement.
 type UserSpec struct {
-	User    string
+	User    *auth.UserIdentity
 	AuthOpt *AuthOption
 }
 
@@ -432,7 +433,7 @@ func (u *UserSpec) SecurityString() string {
 	if withPassword {
 		return fmt.Sprintf("{%s password = ***}", u.User)
 	}
-	return u.User
+	return u.User.String()
 }
 
 // CreateUserStmt creates user account.
@@ -480,7 +481,7 @@ type DropUserStmt struct {
 	stmtNode
 
 	IfExists bool
-	UserList []string
+	UserList []*auth.UserIdentity
 }
 
 // Accept implements Node Accept interface.
