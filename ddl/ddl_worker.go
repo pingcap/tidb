@@ -352,11 +352,12 @@ func (d *ddl) waitSchemaChanged(ctx goctx.Context, waitTime time.Duration, lates
 	return
 }
 
-// If we enter a new state, crash when waiting 2 * lease time, and restart quickly,
-// we may run the job immediately again, but we don't wait enough 2 * lease time to
-// let other servers update the schema.
-// So here we must check the elapsed time from last update, if < 2 * lease, we must
-// wait again.
+// handleException handles the following situation:
+// If the job enters a new state, and the worker crashs when it's in the process of waiting for 2 * lease time,
+// Then the worker restarts quickly, we may run the job immediately again,
+// but in this case we don't wait enough 2 * lease time to let other servers update the schema.
+// So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
+// in a cluster, or to wait for 2 * lease time.
 func (d *ddl) handleException(job *model.Job, waitTime time.Duration) {
 	if !job.IsRunning() && !job.IsDone() {
 		return
