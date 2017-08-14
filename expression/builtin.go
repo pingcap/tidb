@@ -41,6 +41,25 @@ const (
 	tpJSON
 )
 
+func fieldTp2EvalTp(tp *types.FieldType) evalTp {
+	switch tp.ToClass() {
+	case types.ClassInt:
+		return tpInt
+	case types.ClassReal:
+		return tpReal
+	case types.ClassDecimal:
+		return tpDecimal
+	case types.ClassString:
+		switch {
+		case types.IsTypeTime(tp.Tp):
+			return tpTime
+		case tp.Tp == mysql.TypeDuration:
+			return tpDuration
+		}
+	}
+	return tpString
+}
+
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
 	args          []Expression
@@ -753,53 +772,54 @@ var funcs = map[string]functionClass{
 	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
 
 	// string functions
-	ast.ASCII:          &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
-	ast.Bin:            &binFunctionClass{baseFunctionClass{ast.Bin, 1, 1}},
-	ast.Concat:         &concatFunctionClass{baseFunctionClass{ast.Concat, 1, -1}},
-	ast.ConcatWS:       &concatWSFunctionClass{baseFunctionClass{ast.ConcatWS, 2, -1}},
-	ast.Convert:        &convertFunctionClass{baseFunctionClass{ast.Convert, 2, 2}},
-	ast.Elt:            &eltFunctionClass{baseFunctionClass{ast.Elt, 2, -1}},
-	ast.ExportSet:      &exportSetFunctionClass{baseFunctionClass{ast.ExportSet, 3, 5}},
-	ast.Field:          &fieldFunctionClass{baseFunctionClass{ast.Field, 2, -1}},
-	ast.Format:         &formatFunctionClass{baseFunctionClass{ast.Format, 2, 3}},
-	ast.FromBase64:     &fromBase64FunctionClass{baseFunctionClass{ast.FromBase64, 1, 1}},
-	ast.InsertFunc:     &insertFuncFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
-	ast.Instr:          &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 2}},
-	ast.Lcase:          &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
-	ast.Left:           &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
-	ast.Right:          &rightFunctionClass{baseFunctionClass{ast.Right, 2, 2}},
-	ast.Length:         &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}},
-	ast.LoadFile:       &loadFileFunctionClass{baseFunctionClass{ast.LoadFile, 1, 1}},
-	ast.Locate:         &locateFunctionClass{baseFunctionClass{ast.Locate, 2, 3}},
-	ast.Lower:          &lowerFunctionClass{baseFunctionClass{ast.Lower, 1, 1}},
-	ast.Lpad:           &lpadFunctionClass{baseFunctionClass{ast.Lpad, 3, 3}},
-	ast.LTrim:          &lTrimFunctionClass{baseFunctionClass{ast.LTrim, 1, 1}},
-	ast.Mid:            &substringFunctionClass{baseFunctionClass{ast.Mid, 3, 3}},
-	ast.MakeSet:        &makeSetFunctionClass{baseFunctionClass{ast.MakeSet, 2, -1}},
-	ast.Oct:            &octFunctionClass{baseFunctionClass{ast.Oct, 1, 1}},
-	ast.Ord:            &ordFunctionClass{baseFunctionClass{ast.Ord, 1, 1}},
-	ast.Position:       &locateFunctionClass{baseFunctionClass{ast.Position, 2, 2}},
-	ast.Quote:          &quoteFunctionClass{baseFunctionClass{ast.Quote, 1, 1}},
-	ast.Repeat:         &repeatFunctionClass{baseFunctionClass{ast.Repeat, 2, 2}},
-	ast.Replace:        &replaceFunctionClass{baseFunctionClass{ast.Replace, 3, 3}},
-	ast.Reverse:        &reverseFunctionClass{baseFunctionClass{ast.Reverse, 1, 1}},
-	ast.RTrim:          &rTrimFunctionClass{baseFunctionClass{ast.RTrim, 1, 1}},
-	ast.Space:          &spaceFunctionClass{baseFunctionClass{ast.Space, 1, 1}},
-	ast.Strcmp:         &strcmpFunctionClass{baseFunctionClass{ast.Strcmp, 2, 2}},
-	ast.Substring:      &substringFunctionClass{baseFunctionClass{ast.Substring, 2, 3}},
-	ast.Substr:         &substringFunctionClass{baseFunctionClass{ast.Substr, 2, 3}},
-	ast.SubstringIndex: &substringIndexFunctionClass{baseFunctionClass{ast.SubstringIndex, 3, 3}},
-	ast.ToBase64:       &toBase64FunctionClass{baseFunctionClass{ast.ToBase64, 1, 1}},
-	ast.Trim:           &trimFunctionClass{baseFunctionClass{ast.Trim, 1, 3}},
-	ast.Upper:          &upperFunctionClass{baseFunctionClass{ast.Upper, 1, 1}},
-	ast.Ucase:          &upperFunctionClass{baseFunctionClass{ast.Ucase, 1, 1}},
-	ast.Hex:            &hexFunctionClass{baseFunctionClass{ast.Hex, 1, 1}},
-	ast.Unhex:          &unhexFunctionClass{baseFunctionClass{ast.Unhex, 1, 1}},
-	ast.Rpad:           &rpadFunctionClass{baseFunctionClass{ast.Rpad, 3, 3}},
-	ast.BitLength:      &bitLengthFunctionClass{baseFunctionClass{ast.BitLength, 1, 1}},
-	ast.CharFunc:       &charFunctionClass{baseFunctionClass{ast.CharFunc, 2, -1}},
-	ast.CharLength:     &charLengthFunctionClass{baseFunctionClass{ast.CharLength, 1, 1}},
-	ast.FindInSet:      &findInSetFunctionClass{baseFunctionClass{ast.FindInSet, 2, 2}},
+	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
+	ast.Bin:             &binFunctionClass{baseFunctionClass{ast.Bin, 1, 1}},
+	ast.Concat:          &concatFunctionClass{baseFunctionClass{ast.Concat, 1, -1}},
+	ast.ConcatWS:        &concatWSFunctionClass{baseFunctionClass{ast.ConcatWS, 2, -1}},
+	ast.Convert:         &convertFunctionClass{baseFunctionClass{ast.Convert, 2, 2}},
+	ast.Elt:             &eltFunctionClass{baseFunctionClass{ast.Elt, 2, -1}},
+	ast.ExportSet:       &exportSetFunctionClass{baseFunctionClass{ast.ExportSet, 3, 5}},
+	ast.Field:           &fieldFunctionClass{baseFunctionClass{ast.Field, 2, -1}},
+	ast.Format:          &formatFunctionClass{baseFunctionClass{ast.Format, 2, 3}},
+	ast.FromBase64:      &fromBase64FunctionClass{baseFunctionClass{ast.FromBase64, 1, 1}},
+	ast.InsertFunc:      &insertFuncFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
+	ast.Instr:           &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 2}},
+	ast.Lcase:           &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
+	ast.Left:            &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
+	ast.Right:           &rightFunctionClass{baseFunctionClass{ast.Right, 2, 2}},
+	ast.Length:          &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}},
+	ast.LoadFile:        &loadFileFunctionClass{baseFunctionClass{ast.LoadFile, 1, 1}},
+	ast.Locate:          &locateFunctionClass{baseFunctionClass{ast.Locate, 2, 3}},
+	ast.Lower:           &lowerFunctionClass{baseFunctionClass{ast.Lower, 1, 1}},
+	ast.Lpad:            &lpadFunctionClass{baseFunctionClass{ast.Lpad, 3, 3}},
+	ast.LTrim:           &lTrimFunctionClass{baseFunctionClass{ast.LTrim, 1, 1}},
+	ast.Mid:             &substringFunctionClass{baseFunctionClass{ast.Mid, 3, 3}},
+	ast.MakeSet:         &makeSetFunctionClass{baseFunctionClass{ast.MakeSet, 2, -1}},
+	ast.Oct:             &octFunctionClass{baseFunctionClass{ast.Oct, 1, 1}},
+	ast.Ord:             &ordFunctionClass{baseFunctionClass{ast.Ord, 1, 1}},
+	ast.Position:        &locateFunctionClass{baseFunctionClass{ast.Position, 2, 2}},
+	ast.Quote:           &quoteFunctionClass{baseFunctionClass{ast.Quote, 1, 1}},
+	ast.Repeat:          &repeatFunctionClass{baseFunctionClass{ast.Repeat, 2, 2}},
+	ast.Replace:         &replaceFunctionClass{baseFunctionClass{ast.Replace, 3, 3}},
+	ast.Reverse:         &reverseFunctionClass{baseFunctionClass{ast.Reverse, 1, 1}},
+	ast.RTrim:           &rTrimFunctionClass{baseFunctionClass{ast.RTrim, 1, 1}},
+	ast.Space:           &spaceFunctionClass{baseFunctionClass{ast.Space, 1, 1}},
+	ast.Strcmp:          &strcmpFunctionClass{baseFunctionClass{ast.Strcmp, 2, 2}},
+	ast.Substring:       &substringFunctionClass{baseFunctionClass{ast.Substring, 2, 3}},
+	ast.Substr:          &substringFunctionClass{baseFunctionClass{ast.Substr, 2, 3}},
+	ast.SubstringIndex:  &substringIndexFunctionClass{baseFunctionClass{ast.SubstringIndex, 3, 3}},
+	ast.ToBase64:        &toBase64FunctionClass{baseFunctionClass{ast.ToBase64, 1, 1}},
+	ast.Trim:            &trimFunctionClass{baseFunctionClass{ast.Trim, 1, 3}},
+	ast.Upper:           &upperFunctionClass{baseFunctionClass{ast.Upper, 1, 1}},
+	ast.Ucase:           &upperFunctionClass{baseFunctionClass{ast.Ucase, 1, 1}},
+	ast.Hex:             &hexFunctionClass{baseFunctionClass{ast.Hex, 1, 1}},
+	ast.Unhex:           &unhexFunctionClass{baseFunctionClass{ast.Unhex, 1, 1}},
+	ast.Rpad:            &rpadFunctionClass{baseFunctionClass{ast.Rpad, 3, 3}},
+	ast.BitLength:       &bitLengthFunctionClass{baseFunctionClass{ast.BitLength, 1, 1}},
+	ast.CharFunc:        &charFunctionClass{baseFunctionClass{ast.CharFunc, 2, -1}},
+	ast.CharLength:      &charLengthFunctionClass{baseFunctionClass{ast.CharLength, 1, 1}},
+	ast.CharacterLength: &charLengthFunctionClass{baseFunctionClass{ast.CharacterLength, 1, 1}},
+	ast.FindInSet:       &findInSetFunctionClass{baseFunctionClass{ast.FindInSet, 2, 2}},
 
 	// information functions
 	ast.ConnectionID: &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},
@@ -866,7 +886,7 @@ var funcs = map[string]functionClass{
 	ast.Minus:      &arithmeticMinusFunctionClass{baseFunctionClass{ast.Minus, 2, 2}},
 	ast.Mod:        &arithmeticFunctionClass{baseFunctionClass{ast.Mod, 2, 2}, opcode.Mod},
 	ast.Div:        &arithmeticFunctionClass{baseFunctionClass{ast.Div, 2, 2}, opcode.Div},
-	ast.Mul:        &arithmeticFunctionClass{baseFunctionClass{ast.Mul, 2, 2}, opcode.Mul},
+	ast.Mul:        &arithmeticMultiplyFunctionClass{baseFunctionClass{ast.Mul, 2, 2}},
 	ast.IntDiv:     &arithmeticFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}, opcode.IntDiv},
 	ast.BitNeg:     &bitNegFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}},
 	ast.And:        &bitAndFunctionClass{baseFunctionClass{ast.And, 2, 2}},
@@ -875,11 +895,10 @@ var funcs = map[string]functionClass{
 	ast.UnaryNot:   &unaryNotFunctionClass{baseFunctionClass{ast.UnaryNot, 1, 1}},
 	ast.Or:         &bitOrFunctionClass{baseFunctionClass{ast.Or, 2, 2}},
 	ast.Xor:        &bitXorFunctionClass{baseFunctionClass{ast.Xor, 2, 2}},
-	ast.UnaryPlus:  &unaryOpFunctionClass{baseFunctionClass{ast.UnaryPlus, 1, 1}, opcode.Plus},
 	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
 	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 1, -1}},
-	ast.IsTruth:    &isTrueOpFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
-	ast.IsFalsity:  &isTrueOpFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
+	ast.IsTruth:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
+	ast.IsFalsity:  &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
 	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 2, 3}},
 	ast.Regexp:     &regexpFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
 	ast.Case:       &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
