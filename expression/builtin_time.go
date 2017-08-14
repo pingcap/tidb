@@ -2759,9 +2759,6 @@ func (b *builtinTimestampAddSig) evalString(row []types.Datum) (string, bool, er
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
-	if err != nil {
-		return "", isNull, errors.Trace(err)
-	}
 	tm1, err := arg.Time.GoTime(time.Local)
 	if err != nil {
 		return "", isNull, errors.Trace(err)
