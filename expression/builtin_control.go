@@ -65,11 +65,15 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 	decimal, flen, isBinaryStr := args[1].GetType().Decimal, 0, false
 	for i := 1; i < l; i += 2 {
 		fieldTps = append(fieldTps, args[i].GetType())
-		decimal, flen, isBinaryStr = mathutil.Max(decimal, args[i].GetType().Decimal), mathutil.Max(flen, args[i].GetType().Flen), isBinaryStr || types.IsBinaryStr(args[i].GetType())
+		decimal = mathutil.Max(decimal, args[i].GetType().Decimal)
+		flen = mathutil.Max(flen, args[i].GetType().Flen)
+		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[i].GetType())
 	}
 	if l%2 == 1 {
 		fieldTps = append(fieldTps, args[l-1].GetType())
-		decimal, flen, isBinaryStr = mathutil.Max(decimal, args[l-1].GetType().Decimal), mathutil.Max(flen, args[l-1].GetType().Flen), isBinaryStr || types.IsBinaryStr(args[l-1].GetType())
+		decimal = mathutil.Max(decimal, args[l-1].GetType().Decimal)
+		flen = mathutil.Max(flen, args[l-1].GetType().Flen)
+		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[l-1].GetType())
 	}
 	fieldTp := types.AggFieldType(fieldTps)
 	classType := types.AggTypeClass(fieldTps, &fieldTp.Flag)
@@ -150,7 +154,7 @@ func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (int64, bool, error) 
 	for i := 0; i < l-1; i += 2 {
 		arg, isNull, err = args[i].EvalInt(row, sc)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, isNull, errors.Trace(err)
 		}
 		if isNull {
 			continue
@@ -169,7 +173,7 @@ func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (int64, bool, error) 
 	if l%2 == 1 {
 		arg, isNull, err = args[l-1].EvalInt(row, sc)
 		if err != nil {
-			return 0, isNull, errors.Trace(err)
+			return arg, isNull, errors.Trace(err)
 		}
 		return arg, isNull, nil
 	}
@@ -194,7 +198,7 @@ func (b *builtinCaseWhenRealSig) evalReal(row []types.Datum) (float64, bool, err
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(row, sc)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, isNull, errors.Trace(err)
 		}
 		if isNull {
 			continue
@@ -238,7 +242,7 @@ func (b *builtinCaseWhenDecimalSig) evalDecimal(row []types.Datum) (*types.MyDec
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(row, sc)
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, isNull, errors.Trace(err)
 		}
 		if isNull {
 			continue
@@ -282,7 +286,7 @@ func (b *builtinCaseWhenStringSig) evalString(row []types.Datum) (string, bool, 
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(row, sc)
 		if err != nil {
-			return "", false, errors.Trace(err)
+			return "", isNull, errors.Trace(err)
 		}
 		if isNull {
 			continue
@@ -326,7 +330,7 @@ func (b *builtinCaseWhenTimeSig) evalTime(row []types.Datum) (types.Time, bool, 
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(row, sc)
 		if err != nil {
-			return ret, false, errors.Trace(err)
+			return ret, isNull, errors.Trace(err)
 		}
 		if isNull {
 			continue
