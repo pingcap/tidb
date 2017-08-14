@@ -137,8 +137,12 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) err
 	return errors.Trace(err)
 }
 
-// StatsOwnerKey is the stats owner path that is saved to etcd.
-const StatsOwnerKey = "/tidb/stats/owner"
+const (
+	// StatsOwnerKey is the stats owner path that is saved to etcd.
+	StatsOwnerKey = "/tidb/stats/owner"
+	// StatsPrompt is the prompt for stats owner manager.
+	StatsPrompt = "stats"
+)
 
 func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 	if tbl.ModifyCount == 0 {

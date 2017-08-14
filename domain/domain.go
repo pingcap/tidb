@@ -582,14 +582,17 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 		if do.etcdClient == nil {
 			statsOwner = ddl.NewMockOwnerManager(id, cancelFunc)
 		} else {
-			statsOwner = ddl.NewOwnerManager(do.etcdClient, "stats", id, statistics.StatsOwnerKey, cancelFunc)
+			statsOwner = ddl.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
 		}
-		statsOwner.CampaignOwners(cancelCtx)
+		err := statsOwner.CampaignOwner(cancelCtx)
+		if err != nil {
+			log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
+		}
 		for {
 			if statsOwner.IsOwner() {
 				err := do.statsHandle.HandleAutoAnalyze(do.InfoSchema())
 				if err != nil {
-					log.Error(errors.ErrorStack(err))
+					log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
 				}
 			}
 			time.Sleep(lease)
