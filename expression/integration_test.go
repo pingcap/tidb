@@ -838,6 +838,9 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select timediff('2014-1-2 12:00:00', '2014-1-1 12:00:00');")
 	result.Check(testkit.Rows("24:00:00"))
+	result = tk.MustQuery("select timestampadd(MINUTE, 1, '2003-01-02'), timestampadd(WEEK, 1, '2003-01-02 23:59:59')" +
+		", timestampadd(MICROSECOND, 1, 950501,);")
+	result.Check(testkit.Rows("2003-01-02 00:01:00 2003-01-09 23:59:59 1995-05-01 00:00:00.000001"))
 
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
