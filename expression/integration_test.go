@@ -384,6 +384,14 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("123 123.5 123.46 123.456 123.4560 120 100 0 0"))
 	result = tk.MustQuery("SELECT ROUND(123456E-3, 0), ROUND(123456E-3, 1), ROUND(123456E-3, 2), ROUND(123456E-3, 3), ROUND(123456E-3, 4), ROUND(123456E-3, -1), ROUND(123456E-3, -2), ROUND(123456E-3, -3), ROUND(123456E-3, -4);")
 	result.Check(testkit.Rows("123 123.5 123.46 123.456 123.456 120 100 0 0")) // TODO: Column 5 should be 123.4560
+
+	// for truncate
+	result = tk.MustQuery("SELECT truncate(100, -2), truncate(100, 2), truncate(100, 1), truncate(100, 3);")
+	result.Check(testkit.Rows("100 100 100 100"))
+	result = tk.MustQuery("SELECT truncate(100.001, -2), truncate(100.001, 2), truncate(100.001, 1), truncate(100.001, 3);")
+	result.Check(testkit.Rows("100 100.00 100.0 100.001"))
+	result = tk.MustQuery("SELECT truncate(1.00, 100);")
+	result.Check(testkit.Rows("1.000000000000000000000000000000"))
 }
 
 func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
