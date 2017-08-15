@@ -172,10 +172,7 @@ func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (int64, bool, error) 
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		arg, isNull, err = args[l-1].EvalInt(row, sc)
-		if err != nil {
-			return arg, isNull, errors.Trace(err)
-		}
-		return arg, isNull, nil
+		return arg, isNull, errors.Trace(err)
 	}
 	return 0, true, nil
 }
