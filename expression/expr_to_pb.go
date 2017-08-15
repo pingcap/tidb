@@ -110,6 +110,7 @@ func (pc pbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 		tp = tipb.ExprType_MysqlDecimal
 		val = codec.EncodeDecimal(nil, d)
 	case types.KindMysqlTime:
+		tp = tipb.ExprType_MysqlTime
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			loc := pc.sc.TimeZone
 			val, err := tablecodec.EncodeValue(d, loc)
