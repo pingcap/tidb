@@ -2701,7 +2701,7 @@ type builtinTimeFormatSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
 func (b *builtinTimeFormatSig) evalString(row []types.Datum) (string, bool, error) {
 	dur, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
-	// if err != nil, then dur is ZeroDuration, outputs 00:00:00 in this case which follows the behavior of mysql
+	// if err != nil, then dur is ZeroDuration, outputs 00:00:00 in this case which follows the behavior of mysql.
 	if err != nil {
 		log.Warnf("Expression.EvalDuration() in time_format() failed, due to %s", err.Error())
 	}
