@@ -67,8 +67,8 @@ func NewFieldType(tp byte) *FieldType {
 // Aggregation is performed by MergeFieldType function.
 func AggFieldType(tps []*FieldType) *FieldType {
 	var currType FieldType
-	for _, t := range tps {
-		if currType.Tp == mysql.TypeUnspecified {
+	for i, t := range tps {
+		if i == 0 && currType.Tp == mysql.TypeUnspecified {
 			currType = *t
 			continue
 		}
