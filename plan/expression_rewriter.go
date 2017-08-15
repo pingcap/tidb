@@ -1030,9 +1030,12 @@ func (er *expressionRewriter) checkArgsOneColumn(args ...expression.Expression) 
 	}
 }
 
+// rewriteFuncCall handles a FuncCallExpr and generates a customized function.
+// It should return true if for the given FuncCallExpr a rewrite is performed so that original behavior is skipped.
+// Otherwise it should return false to indicate (the caller) that original behavior needs to be performed.
 func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	switch v.FnName.L {
-	case "nullif":
+	case ast.Nullif:
 		if len(v.Args) != 2 {
 			er.err = expression.ErrIncorrectParameterCount.GenByArgs(v.FnName.O)
 			return true
@@ -1047,7 +1050,7 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			return true
 		}
 		// if(param1 = param2, null, param1)
-		funcIf, err := expression.NewFunction(er.ctx, "if", &v.Type, funcCompare, expression.Null, param1)
+		funcIf, err := expression.NewFunction(er.ctx, ast.If, &v.Type, funcCompare, expression.Null, param1)
 		if err != nil {
 			er.err = err
 			return true
