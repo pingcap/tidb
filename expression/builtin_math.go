@@ -1056,39 +1056,29 @@ func (c *sqrtFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinSqrtSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinSqrtSig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinSqrtSig struct {
-	baseBuiltinFunc
+	baseRealBuiltinFunc
 }
 
-// eval evals a builtinSqrtSig.
+// evalReal evals a SQRT(x).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sqrt
-func (b *builtinSqrtSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinSqrtSig) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		return d, nil
+	if val < 0 {
+		return 0, true, nil
 	}
-
-	sc := b.ctx.GetSessionVars().StmtCtx
-	f, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	// negative value does not have any square root in rational number
-	// Need return null directly.
-	if f < 0 {
-		return d, nil
-	}
-
-	d.SetFloat64(math.Sqrt(f))
-	return
+	return math.Sqrt(val), false, nil
 }
 
 type acosFunctionClass struct {

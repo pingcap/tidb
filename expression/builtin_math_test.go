@@ -674,26 +674,24 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 func (s *testEvaluatorSuite) TestSqrt(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		Arg interface{}
+		Arg []interface{}
 		Ret interface{}
 	}{
-		{nil, nil},
-		{int64(1), float64(1)},
-		{float64(4), float64(2)},
-		{"4", float64(2)},
-		{"9", float64(3)},
-		{"-16", nil},
+		{[]interface{}{nil}, nil},
+		{[]interface{}{int64(1)}, float64(1)},
+		{[]interface{}{float64(4)}, float64(2)},
+		{[]interface{}{"4"}, float64(2)},
+		{[]interface{}{"9"}, float64(3)},
+		{[]interface{}{"-16"}, nil},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-
-	for _, t := range Dtbl {
+	for _, t := range tbl {
 		fc := funcs[ast.Sqrt]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		f, err := fc.getFunction(primitiveValsToConstants(t.Arg), s.ctx)
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Ret), Commentf("%v", t))
 	}
 }
 

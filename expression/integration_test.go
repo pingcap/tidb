@@ -412,6 +412,10 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT SIGN(-9223372036854775808), SIGN(9223372036854775808);")
 	result.Check(testkit.Rows("-1 1"))
+
+	// for sqrt
+	result = tk.MustQuery("SELECT SQRT(-10), SQRT(144), SQRT(4.84), SQRT(0.04), SQRT(0);")
+	result.Check(testkit.Rows("<nil> 12 2.2 0.2 0"))
 }
 
 func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
