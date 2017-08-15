@@ -691,6 +691,11 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	tk.MustExec(`insert into t values("中国", cast("国" as binary)), ("中国", ""), ("abc", ""), ("", ""), ("", "abc");`)
 	result = tk.MustQuery(`select instr(a, b) from t;`)
 	result.Check(testkit.Rows("4", "1", "1", "1", "0"))
+
+	result = tk.MustQuery(`select oct("aaaa"), oct("-1.9"),  oct("-9999999999999999999999999"), oct("9999999999999999999999999");`)
+	result.Check(testkit.Rows("0 1777777777777777777777 1777777777777777777777 1777777777777777777777"))
+	result = tk.MustQuery(`select oct(-1.9), oct(1.9), oct(-1), oct(1), oct(-9999999999999999999999999), oct(9999999999999999999999999);`)
+	result.Check(testkit.Rows("1777777777777777777777 1 1777777777777777777777 1 1777777777777777777777 1777777777777777777777"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
