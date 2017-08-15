@@ -152,6 +152,21 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	tk.MustQuery("SELECT INET6_NTOA(INET6_ATON('10.0.5.9'));").Check(testkit.Rows("10.0.5.9"))
 	tk.MustQuery("SELECT INET6_NTOA(UNHEX('FDFE0000000000005A55CAFFFEFA9089'));").Check(testkit.Rows("fdfe::5a55:caff:fefa:9089"))
 	tk.MustQuery("SELECT INET6_NTOA(UNHEX('0A000509'));").Check(testkit.Rows("10.0.5.9"))
+
+	tk.MustQuery(`SELECT IS_IPV4('10.0.5.9'), IS_IPV4('10.0.5.256');`).Check(testkit.Rows("1 0"))
+	tk.MustQuery(`SELECT IS_IPV4_COMPAT(INET6_ATON('::10.0.5.9'));`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT IS_IPV4_COMPAT(INET6_ATON('::ffff:10.0.5.9'));`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT
+	  IS_IPV4_COMPAT(INET6_ATON('::192.168.0.1')),
+	  IS_IPV4_COMPAT(INET6_ATON('::c0a8:0001')),
+	  IS_IPV4_COMPAT(INET6_ATON('::c0a8:1'));`).Check(testkit.Rows("1 1 1"))
+	tk.MustQuery(`SELECT IS_IPV4_MAPPED(INET6_ATON('::10.0.5.9'));`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT IS_IPV4_MAPPED(INET6_ATON('::ffff:10.0.5.9'));`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:192.168.0.1')),
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:c0a8:0001')),
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:c0a8:1'));`).Check(testkit.Rows("1 1 1"))
+	tk.MustQuery(`SELECT IS_IPV6('10.0.5.9'), IS_IPV6('::1');`).Check(testkit.Rows("0 1"))
 }
 
 func (s *testIntegrationSuite) TestConvertToBit(c *C) {
@@ -865,6 +880,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select timediff('2014-1-2 12:00:00', '2014-1-1 12:00:00');")
 	result.Check(testkit.Rows("24:00:00"))
+	result = tk.MustQuery("select timestampadd(MINUTE, 1, '2003-01-02'), timestampadd(WEEK, 1, '2003-01-02 23:59:59')" +
+		", timestampadd(MICROSECOND, 1, 950501);")
+	result.Check(testkit.Rows("2003-01-02 00:01:00 2003-01-09 23:59:59 1995-05-01 00:00:00.000001"))
+	result = tk.MustQuery("select timestampadd(day, 2, 950501), timestampadd(MINUTE, 37.5,'2003-01-02'), timestampadd(MINUTE, 37.49,'2003-01-02')," +
+		" timestampadd(YeAr, 1, '2003-01-02');")
+	result.Check(testkit.Rows("1995-05-03 00:00:00 2003-01-02 00:38:00 2003-01-02 00:37:00 2004-01-02 00:00:00"))
 	result = tk.MustQuery("select to_seconds(950501), to_seconds('2009-11-29'), to_seconds('2009-11-29 13:43:32'), to_seconds('09-11-29 13:43:32');")
 	result.Check(testkit.Rows("62966505600 63426672000 63426721412 63426721412"))
 	result = tk.MustQuery("select to_days(950501), to_days('2007-10-07'), to_days('2007-10-07 00:00:59'), to_days('0000-01-01')")
@@ -1513,6 +1534,28 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"26 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
 		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
 		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
+
+	// nullif
+	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
+	result.Check(testkit.Rows("<nil> 1 <nil> <nil>"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1, 1.0), NULLIF(1, "1.0");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+
+	result = tk.MustQuery(`SELECT NULLIF("abc", 1);`)
+	result.Check(testkit.Rows("abc"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1+2, 1);`)
+	result.Check(testkit.Rows("3"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1, 1+2);`)
+	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery(`SELECT NULLIF(2+3, 1+2);`)
+	result.Check(testkit.Rows("5"))
+
+	result = tk.MustQuery(`SELECT HEX(NULLIF("abc", 1));`)
+	result.Check(testkit.Rows("616263"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
@@ -1526,4 +1569,25 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	tk.MustExec("insert into t values(1.123456), (1.123456)")
 	result := tk.MustQuery("select avg(a) from t")
 	result.Check(testkit.Rows("1.1234560000"))
+}
+
+func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c varchar(20), d datetime, e time)")
+	tk.MustExec("insert into t value(1, 2, 'string', '2017-01-01 12:12:12', '12:12:12')")
+	result := tk.MustQuery("select 1 in (a, b, c), 'string' in (a, b, c), '2017-01-01 12:12:12' in (c, d, e), '12:12:12' in (c, d, e) from t")
+	result.Check(testkit.Rows("1 1 1 1"))
+	result = tk.MustQuery("select 1 in (null, c), 2 in (null, c) from t")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery("select 0 in (a, b, c), 0 in (a, b, c), 3 in (a, b, c), 4 in (a, b, c) from t")
+	result.Check(testkit.Rows("1 1 0 0"))
+	result = tk.MustQuery("select (0,1) in ((0,1), (0,2)), (0,1) in ((0,0), (0,2))")
+	result.Check(testkit.Rows("1 0"))
 }
