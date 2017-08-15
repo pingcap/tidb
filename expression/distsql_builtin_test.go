@@ -419,63 +419,6 @@ func (s *testEvalSuite) TestLike(c *C) {
 	}
 }
 
-func (s *testEvalSuite) TestWhereIn(c *C) {
-	tests := []struct {
-		expr   *tipb.Expr
-		result interface{}
-	}{
-		{
-			expr:   inExpr(1, 1, 2),
-			result: true,
-		},
-		{
-			expr:   inExpr(1, 1, nil),
-			result: true,
-		},
-		{
-			expr:   inExpr(1, 2, nil),
-			result: nil,
-		},
-		{
-			expr:   inExpr(nil, 1, nil),
-			result: nil,
-		},
-		{
-			expr:   inExpr(2, 1, nil),
-			result: nil,
-		},
-		{
-			expr:   inExpr(2),
-			result: false,
-		},
-		{
-			expr:   inExpr("abc", "abc", "ab"),
-			result: true,
-		},
-		{
-			expr:   inExpr("abc", "aba", "bab"),
-			result: false,
-		},
-	}
-	sc := new(variable.StatementContext)
-	for _, tt := range tests {
-		expr, err := PBToExpr(tt.expr, nil, sc)
-		c.Check(err, IsNil)
-		res, err := expr.Eval(nil)
-		c.Check(err, IsNil)
-		if tt.result == nil {
-			c.Check(res.Kind(), Equals, types.KindNull)
-		} else {
-			c.Check(res.Kind(), Equals, types.KindInt64)
-			if tt.result == true {
-				c.Check(res.GetInt64(), Equals, int64(1))
-			} else {
-				c.Check(res.GetInt64(), Equals, int64(0))
-			}
-		}
-	}
-}
-
 func (s *testEvalSuite) TestEvalIsNull(c *C) {
 	null, trueAns, falseAns := types.Datum{}, types.NewIntDatum(1), types.NewIntDatum(0)
 	tests := []struct {
@@ -506,18 +449,4 @@ func (s *testEvalSuite) TestEvalIsNull(c *C) {
 		c.Assert(err, IsNil, Commentf("%v", tt))
 		c.Assert(cmp, Equals, 0, Commentf("%v", tt))
 	}
-}
-
-func inExpr(target interface{}, list ...interface{}) *tipb.Expr {
-	targetDatum := types.NewDatum(target)
-	var listDatums []types.Datum
-	for _, v := range list {
-		listDatums = append(listDatums, types.NewDatum(v))
-	}
-	sc := new(variable.StatementContext)
-	types.SortDatums(sc, listDatums)
-	targetExpr := datumExpr(targetDatum)
-	val, _ := codec.EncodeValue(nil, listDatums...)
-	listExpr := &tipb.Expr{Tp: tipb.ExprType_ValueList, Val: val}
-	return &tipb.Expr{Tp: tipb.ExprType_In, Children: []*tipb.Expr{targetExpr, listExpr}}
 }
