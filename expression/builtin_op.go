@@ -29,7 +29,6 @@ var (
 	_ functionClass = &logicOrFunctionClass{}
 	_ functionClass = &logicXorFunctionClass{}
 	_ functionClass = &isTrueOrFalseFunctionClass{}
-	_ functionClass = &unaryOpFunctionClass{}
 	_ functionClass = &unaryMinusFunctionClass{}
 	_ functionClass = &isNullFunctionClass{}
 	_ functionClass = &unaryNotFunctionClass{}
@@ -45,7 +44,6 @@ var (
 	_ builtinFunc = &builtinRealIsFalseSig{}
 	_ builtinFunc = &builtinDecimalIsFalseSig{}
 	_ builtinFunc = &builtinIntIsFalseSig{}
-	_ builtinFunc = &builtinUnaryOpSig{}
 	_ builtinFunc = &builtinUnaryMinusIntSig{}
 	_ builtinFunc = &builtinDecimalIsNullSig{}
 	_ builtinFunc = &builtinDurationIsNullSig{}
@@ -518,77 +516,6 @@ func (b *builtinBitNegSig) evalInt(row []types.Datum) (int64, bool, error) {
 	return ^arg, false, nil
 }
 
-type unaryOpFunctionClass struct {
-	baseFunctionClass
-
-	op opcode.Op
-}
-
-func (c *unaryOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinUnaryOpSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), nil
-}
-
-type builtinUnaryOpSig struct {
-	baseBuiltinFunc
-
-	op opcode.Op
-}
-
-func (b *builtinUnaryOpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	defer func() {
-		if er := recover(); er != nil {
-			err = errors.Errorf("%v", er)
-		}
-	}()
-	aDatum := args[0]
-	if aDatum.IsNull() {
-		return
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	switch b.op {
-	case opcode.Not:
-		var n int64
-		n, err = aDatum.ToBool(sc)
-		if err != nil {
-			err = errors.Trace(err)
-		} else if n == 0 {
-			d.SetInt64(1)
-		} else {
-			d.SetInt64(0)
-		}
-	case opcode.Plus:
-		switch aDatum.Kind() {
-		case types.KindInt64,
-			types.KindUint64,
-			types.KindFloat64,
-			types.KindFloat32,
-			types.KindMysqlDuration,
-			types.KindMysqlTime,
-			types.KindString,
-			types.KindMysqlDecimal,
-			types.KindBytes,
-			types.KindMysqlHex,
-			types.KindMysqlBit,
-			types.KindMysqlEnum,
-			types.KindMysqlSet:
-			d = aDatum
-		default:
-			return d, errInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
-		}
-	default:
-		return d, errInvalidOperation.Gen("Unsupported op %v for unary op", b.op)
-	}
-	return
-}
-
 type unaryNotFunctionClass struct {
 	baseFunctionClass
 }
@@ -759,12 +686,10 @@ type builtinUnaryMinusRealSig struct {
 	baseRealBuiltinFunc
 }
 
-func (b *builtinUnaryMinusRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
+func (b *builtinUnaryMinusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	var val float64
-	val, isNull, err = b.args[0].EvalReal(row, sc)
-	res = -val
-	return
+	val, isNull, err := b.args[0].EvalReal(row, sc)
+	return -val, isNull, errors.Trace(err)
 }
 
 type isNullFunctionClass struct {

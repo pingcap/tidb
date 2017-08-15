@@ -658,6 +658,11 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select char_length(null), char_length("Hello"), char_length("a中b文c"), char_length(123),char_length(12.3456);`)
 	result.Check(testkit.Rows("<nil> 5 5 3 7"))
 
+	// for elt
+	result = tk.MustQuery(`select elt(0, "abc", "def"), elt(2, "hello", "中文", "tidb"), elt(4, "hello", "中文",
+	"tidb");`)
+	result.Check(testkit.Rows("<nil> 中文 <nil>"))
+
 	// for instr
 	result = tk.MustQuery(`select instr("中国", "国"), instr("中国", ""), instr("abc", ""), instr("", ""), instr("", "abc");`)
 	result.Check(testkit.Rows("2 1 1 1 0"))
@@ -833,6 +838,10 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select timediff('2014-1-2 12:00:00', '2014-1-1 12:00:00');")
 	result.Check(testkit.Rows("24:00:00"))
+	result = tk.MustQuery("select to_seconds(950501), to_seconds('2009-11-29'), to_seconds('2009-11-29 13:43:32'), to_seconds('09-11-29 13:43:32');")
+	result.Check(testkit.Rows("62966505600 63426672000 63426721412 63426721412"))
+	result = tk.MustQuery("select to_days(950501), to_days('2007-10-07'), to_days('2007-10-07 00:00:59'), to_days('0000-01-01')")
+	result.Check(testkit.Rows("728779 733321 733321 1"))
 
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
@@ -855,7 +864,6 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for logicAnd
 	result := tk.MustQuery("select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a'")
 	result.Check(testkit.Rows("1 0 0 0 1 <nil> 0"))
-
 	// for bitNeg
 	result = tk.MustQuery("select ~123, ~-123, ~null")
 	result.Check(testkit.Rows("18446744073709551492 122 <nil>"))
@@ -883,6 +891,9 @@ func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
 	// for logicOr
 	result = tk.MustQuery("select 1 || 1, 1 || 0, 0 || 1, 0 || 0, 2 || -1, null || 1, '1a' || 'a'")
 	result.Check(testkit.Rows("1 1 1 0 1 1 1"))
+	// for unaryPlus
+	result = tk.MustQuery(`select +1, +0, +(-9), +(-0.001), +0.999, +null, +"aaa"`)
+	result.Check(testkit.Rows("1 0 -9 -0.001 0.999 <nil> aaa"))
 }
 
 func (s *testIntegrationSuite) TestBuiltin(c *C) {
@@ -1285,6 +1296,29 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	select ifnull(a, 0) as a from t2
 	) t;`)
 	result.Check(testkit.Rows("2.4690"))
+
+	// for if
+	result = tk.MustQuery(`select IF(0,"ERROR","this"),IF(1,"is","ERROR"),IF(NULL,"ERROR","a"),IF(1,2,3)|0,IF(1,2.0,3.0)+0;`)
+	result.Check(testkit.Rows("this is a 2 2.0"))
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (st varchar(255) NOT NULL, u int(11) NOT NULL);")
+	tk.MustExec("INSERT INTO t1 VALUES ('a',1),('A',1),('aa',1),('AA',1),('a',1),('aaa',0),('BBB',0);")
+	result = tk.MustQuery("select if(1,st,st) s from t1 order by s;")
+	result.Check(testkit.Rows("A", "AA", "BBB", "a", "a", "aa", "aaa"))
+	result = tk.MustQuery("select if(u=1,st,st) s from t1 order by s;")
+	result.Check(testkit.Rows("A", "AA", "BBB", "a", "a", "aa", "aaa"))
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (a varchar(255), b time, c int)")
+	tk.MustExec("INSERT INTO t1 VALUE('abc', '12:00:00', 0)")
+	tk.MustExec("INSERT INTO t1 VALUE('1abc', '00:00:00', 1)")
+	tk.MustExec("INSERT INTO t1 VALUE('0abc', '12:59:59', 0)")
+	result = tk.MustQuery("select if(a, b, c), if(b, a, c), if(c, a, b) from t1")
+	result.Check(testkit.Rows("0 abc 12:00:00", "00:00:00 1 1abc", "0 0abc 12:59:59"))
+	result = tk.MustQuery("select if(1, 1.0, 1)")
+	result.Check(testkit.Rows("1.0"))
+	// FIXME: MySQL returns `1.0`.
+	result = tk.MustQuery("select if(1, 1, 1.0)")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
