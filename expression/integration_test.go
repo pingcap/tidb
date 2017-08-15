@@ -899,6 +899,24 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t VALUES (0), (20030101010160), (20030101016001), (20030101240101), (20030132010101), (20031301010101), (20031200000000), (20030000000000);")
 	result = tk.MustQuery("SELECT CAST(ix AS SIGNED) FROM t;")
 	result.Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "0"))
+
+	// test time
+	result = tk.MustQuery("select time('2003-12-31 01:02:03')")
+	result.Check(testkit.Rows("01:02:03"))
+	result = tk.MustQuery("select time('2003-12-31 01:02:03.000123')")
+	result.Check(testkit.Rows("01:02:03.000123"))
+	result = tk.MustQuery("select time('01:02:03.000123')")
+	result.Check(testkit.Rows("01:02:03.000123"))
+	result = tk.MustQuery("select time('01:02:03')")
+	result.Check(testkit.Rows("01:02:03"))
+	result = tk.MustQuery("select time('-838:59:59.000000')")
+	result.Check(testkit.Rows("-838:59:59.000000"))
+	result = tk.MustQuery("select time('-838:59:59.000001')")
+	result.Check(testkit.Rows("-838:59:59.000000"))
+	result = tk.MustQuery("select time('-839:59:59.000000')")
+	result.Check(testkit.Rows("-838:59:59.000000"))
+	result = tk.MustQuery("select time('840:59:59.000000')")
+	result.Check(testkit.Rows("838:59:59.000000"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
