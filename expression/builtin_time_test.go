@@ -319,6 +319,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		fc := funcs[ast.Hour]
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Hour"][0])
@@ -326,6 +327,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		fc = funcs[ast.Minute]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Minute"][0])
@@ -333,6 +335,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		fc = funcs[ast.Second]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Second"][0])
@@ -340,6 +343,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		fc = funcs[ast.MicroSecond]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MicroSecond"][0])
@@ -356,6 +360,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	fc := funcs[ast.Hour]
 	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
@@ -363,6 +368,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	fc = funcs[ast.Minute]
 	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
@@ -370,6 +376,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	fc = funcs[ast.Second]
 	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
@@ -377,6 +384,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	fc = funcs[ast.MicroSecond]
 	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
