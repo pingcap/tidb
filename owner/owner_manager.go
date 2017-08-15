@@ -98,8 +98,8 @@ func (m *ownerManager) Cancel() {
 	m.cancel()
 }
 
-// managerSessionTTL is the etcd session's TTL in seconds.
-var managerSessionTTL = 60
+// ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
+var ManagerSessionTTL = 60
 
 // NewSession creates a new etcd session.
 func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
@@ -124,7 +124,7 @@ func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, r
 // CampaignOwner implements Manager.CampaignOwner interface.
 func (m *ownerManager) CampaignOwner(ctx goctx.Context) error {
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
-	session, err := NewSession(ctx, logPrefix, m.etcdCli, NewSessionDefaultRetryCnt, managerSessionTTL)
+	session, err := NewSession(ctx, logPrefix, m.etcdCli, NewSessionDefaultRetryCnt, ManagerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -140,7 +140,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		select {
 		case <-etcdSession.Done():
 			log.Infof("%s etcd session is done, creates a new one", logPrefix)
-			etcdSession, err = NewSession(ctx, logPrefix, m.etcdCli, NewSessionRetryUnlimited, managerSessionTTL)
+			etcdSession, err = NewSession(ctx, logPrefix, m.etcdCli, NewSessionRetryUnlimited, ManagerSessionTTL)
 			if err != nil {
 				log.Infof("%s break campaign loop, err %v", logPrefix, err)
 				return
@@ -149,7 +149,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 			// Revoke the session lease.
 			// If revoke takes longer than the ttl, lease is expired anyway.
 			cancelCtx, cancel := goctx.WithTimeout(goctx.Background(),
-				time.Duration(managerSessionTTL)*time.Second)
+				time.Duration(ManagerSessionTTL)*time.Second)
 			_, err = m.etcdCli.Revoke(cancelCtx, etcdSession.Lease())
 			cancel()
 			log.Infof("%s break campaign loop err %v", logPrefix, err)
