@@ -17,7 +17,6 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -141,7 +140,6 @@ func (us *UnionScanExec) Next() (Row, error) {
 		if !us.handleColIsUsed {
 			row = append(row[:us.belowHandleIndex], row[us.belowHandleIndex+1:]...)
 		}
-		log.Warnf("row len: %v", len(row))
 		return row, nil
 	}
 }
