@@ -27,12 +27,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/owner"
 	goctx "golang.org/x/net/context"
 )
 

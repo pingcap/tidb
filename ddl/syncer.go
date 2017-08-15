@@ -23,8 +23,8 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/owner"
 	goctx "golang.org/x/net/context"
 )
 
