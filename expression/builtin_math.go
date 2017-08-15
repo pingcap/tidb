@@ -825,7 +825,7 @@ func (b *builtinRandWithSeedSig) evalReal(row []types.Datum) (float64, bool, err
 	}
 	if b.randGen == nil {
 		if isNull {
-			// When seed is NULL, it is equal to RAND()
+			// When seed is NULL, it is equal to RAND().
 			b.randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
 		} else {
 			b.randGen = rand.New(rand.NewSource(seed))
