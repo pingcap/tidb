@@ -223,7 +223,7 @@ type builtinDecimalAnyValueSig struct {
 func (b *builtinDecimalAnyValueSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return nil, true, errors.Trace(err)
+		return val, isNull, errors.Trace(err)
 	}
 	return val, false, nil
 }
@@ -237,7 +237,7 @@ type builtinDurationAnyValueSig struct {
 func (b *builtinDurationAnyValueSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
 	val, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return types.Duration{}, true, errors.Trace(err)
+		return val, isNull, errors.Trace(err)
 	}
 	return val, false, nil
 }
@@ -251,7 +251,7 @@ type builtinIntAnyValueSig struct {
 func (b *builtinIntAnyValueSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return 0, true, errors.Trace(err)
+		return val, isNull, errors.Trace(err)
 	}
 	return val, false, nil
 }
@@ -265,7 +265,7 @@ type builtinJSONAnyValueSig struct {
 func (b *builtinJSONAnyValueSig) evalJSON(row []types.Datum) (json.JSON, bool, error) {
 	val, isNull, err := b.args[0].EvalJSON(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return json.JSON{}, true, errors.Trace(err)
+		return val, isNull, errors.Trace(err)
 	}
 	return val, false, nil
 }
@@ -279,7 +279,7 @@ type builtinRealAnyValueSig struct {
 func (b *builtinRealAnyValueSig) evalReal(row []types.Datum) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return 0, true, errors.Trace(err)
+		return val, isNull, errors.Trace(err)
 	}
 	return val, false, nil
 }
@@ -293,7 +293,7 @@ type builtinStringAnyValueSig struct {
 func (b *builtinStringAnyValueSig) evalString(row []types.Datum) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return "", true, errors.Trace(err)
+		return val, isNull, errors.Trace(err)
 	}
 	return val, false, nil
 }
@@ -307,7 +307,7 @@ type builtinTimeAnyValueSig struct {
 func (b *builtinTimeAnyValueSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	val, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return types.Time{}, true, errors.Trace(err)
+		return val, isNull, errors.Trace(err)
 	}
 	return val, false, nil
 }
