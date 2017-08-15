@@ -896,7 +896,6 @@ var funcs = map[string]functionClass{
 	ast.Or:         &bitOrFunctionClass{baseFunctionClass{ast.Or, 2, 2}},
 	ast.Xor:        &bitXorFunctionClass{baseFunctionClass{ast.Xor, 2, 2}},
 	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
-	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 1, -1}},
 	ast.IsTruth:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
 	ast.IsFalsity:  &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
 	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 2, 3}},

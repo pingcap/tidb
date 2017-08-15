@@ -120,9 +120,20 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
-	// If it failed because the context is canceled, don't retry on this error.
-	if errors.Cause(err) == goctx.Canceled || grpc.Code(errors.Cause(err)) == codes.Canceled {
+	// If it failed because the context is cancelled by ourself, don't retry.
+	if errors.Cause(err) == goctx.Canceled {
 		return errors.Trace(err)
+	}
+	if grpc.Code(errors.Cause(err)) == codes.Canceled {
+		select {
+		case <-bo.ctx.Done():
+			return errors.Trace(err)
+		default:
+			// If we don't cancel, but the error code is Canceled, it must be from grpc remote.
+			// This may happen when tikv is killed and exiting.
+			// Backoff and retry in this case.
+			log.Warn("receive a grpc cancel signal from remote:", errors.ErrorStack(err))
+		}
 	}
 
 	s.regionCache.OnRequestFail(ctx, err)
