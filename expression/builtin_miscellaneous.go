@@ -447,6 +447,7 @@ func (c *isIPv4FunctionClass) getFunction(args []Expression, ctx context.Context
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 1
 	sig := &builtinIsIPv4Sig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -507,6 +508,7 @@ func (c *isIPv4CompatFunctionClass) getFunction(args []Expression, ctx context.C
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 1
 	sig := &builtinIsIPv4CompatSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -548,6 +550,7 @@ func (c *isIPv4MappedFunctionClass) getFunction(args []Expression, ctx context.C
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 1
 	sig := &builtinIsIPv4MappedSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -589,6 +592,7 @@ func (c *isIPv6FunctionClass) getFunction(args []Expression, ctx context.Context
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 1
 	sig := &builtinIsIPv6Sig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
