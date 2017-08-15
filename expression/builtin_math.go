@@ -393,7 +393,7 @@ func (c *ceilFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	setFlag4FloorAndCeil(&bf, args[0])
+	setFlag4FloorAndCeil(bf.tp, args[0])
 	argFieldTp := args[0].GetType()
 	bf.tp.Flen = argFieldTp.Flen
 	bf.tp.Decimal = 0
@@ -515,13 +515,13 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp evalTp) {
 	return
 }
 
-// setFlag4FloorAndCeil sets return flag of FLOOR and CEIL
-func setFlag4FloorAndCeil(bf *baseBuiltinFunc, arg Expression) {
+// setFlag4FloorAndCeil sets return flag of FLOOR and CEIL.
+func setFlag4FloorAndCeil(tp *types.FieldType, arg Expression) {
 	fieldTp := arg.GetType()
 	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
-		bf.tp.Flag |= mysql.UnsignedFlag
+		tp.Flag |= mysql.UnsignedFlag
 	}
-	// TODO: when argument type is timestamp, add not full flag
+	// TODO: when argument type is timestamp, add not null flag.
 }
 
 func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
@@ -540,7 +540,7 @@ func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	setFlag4FloorAndCeil(&bf, args[0])
+	setFlag4FloorAndCeil(bf.tp, args[0])
 	bf.tp.Flen = args[0].GetType().Flen
 	bf.tp.Decimal = 0
 	switch args[0].GetTypeClass() {
