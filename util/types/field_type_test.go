@@ -184,7 +184,7 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 		case mysql.TypeDate:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeNewDate)
 		case mysql.TypeJSON:
-			c.Assert(aggTp.Tp, Equals, mysql.TypeBit)
+			c.Assert(aggTp.Tp, Equals, mysql.TypeJSON)
 		case mysql.TypeEnum, mysql.TypeSet, mysql.TypeVarString:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeVarchar)
 		default:
