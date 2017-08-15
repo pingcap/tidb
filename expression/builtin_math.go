@@ -388,11 +388,12 @@ func (c *ceilFunctionClass) getFunction(args []Expression, ctx context.Context) 
 		return nil, errors.Trace(err)
 	}
 
-	retTp, argTp := fixFloorAndCeilType(args[0])
+	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
 	bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	setFlag4FloorAndCeil(bf.tp, args[0])
 	argFieldTp := args[0].GetType()
 	bf.tp.Flen = argFieldTp.Flen
 	bf.tp.Decimal = 0
@@ -493,15 +494,14 @@ type floorFunctionClass struct {
 	baseFunctionClass
 }
 
-// fixFloorAndCeilType fixes the evalTp of FLOOR and CEIL.
-func fixFloorAndCeilType(arg Expression) (retTp, argTp evalTp) {
+// getEvalTp4FloorAndCeil gets the evalTp of FLOOR and CEIL.
+func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp evalTp) {
 	fieldTp := arg.GetType()
 	switch arg.GetTypeClass() {
 	case types.ClassInt:
-		if !mysql.HasUnsignedFlag(fieldTp.Flag) {
-			retTp, argTp = tpInt, tpInt
-		} else {
-			retTp, argTp = tpDecimal, tpInt
+		retTp, argTp = tpInt, tpInt
+		if fieldTp.Tp == mysql.TypeLonglong {
+			retTp = tpDecimal
 		}
 	case types.ClassDecimal:
 		if fieldTp.Flen-fieldTp.Decimal <= mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
@@ -515,6 +515,15 @@ func fixFloorAndCeilType(arg Expression) (retTp, argTp evalTp) {
 	return
 }
 
+// setFlag4FloorAndCeil sets return flag of FLOOR and CEIL.
+func setFlag4FloorAndCeil(tp *types.FieldType, arg Expression) {
+	fieldTp := arg.GetType()
+	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
+		tp.Flag |= mysql.UnsignedFlag
+	}
+	// TODO: when argument type is timestamp, add not null flag.
+}
+
 func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	var (
 		bf  baseBuiltinFunc
@@ -526,11 +535,12 @@ func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context)
 		return nil, errors.Trace(err)
 	}
 
-	retTp, argTp := fixFloorAndCeilType(args[0])
+	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
 	bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	setFlag4FloorAndCeil(bf.tp, args[0])
 	bf.tp.Flen = args[0].GetType().Flen
 	bf.tp.Decimal = 0
 	switch args[0].GetTypeClass() {
