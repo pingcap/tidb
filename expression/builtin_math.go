@@ -86,6 +86,7 @@ var (
 	_ builtinFunc = &builtinLog2Sig{}
 	_ builtinFunc = &builtinLog10Sig{}
 	_ builtinFunc = &builtinRandSig{}
+	_ builtinFunc = &builtinRandWithSeedSig{}
 	_ builtinFunc = &builtinPowSig{}
 	_ builtinFunc = &builtinConvSig{}
 	_ builtinFunc = &builtinCRC32Sig{}
@@ -777,21 +778,19 @@ func (c *randFunctionClass) getFunction(args []Expression, ctx context.Context) 
 		return nil, errors.Trace(err)
 	}
 	var sig builtinFunc
+	var argTps []evalTp
+	if len(args) > 0 {
+		argTps = []evalTp{tpInt}
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := baseRealBuiltinFunc{bf}
+	bt.deterministic = false
 	if len(args) == 0 {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		bt := baseRealBuiltinFunc{bf}
-		bt.deterministic = false
 		sig = &builtinRandSig{bt, nil}
 	} else {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpInt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		bt := baseRealBuiltinFunc{bf}
-		bt.deterministic = false
 		sig = &builtinRandWithSeedSig{bt, nil}
 	}
 	return sig.setSelf(sig), nil
