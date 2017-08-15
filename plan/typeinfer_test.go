@@ -654,14 +654,50 @@ func (s *testPlanSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 
 func (s *testPlanSuite) createTestCase4Miscellaneous() []typeInferTestCase {
 	return []typeInferTestCase{
-		{"sleep(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
-		{"sleep(c_float)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
-		{"sleep(c_double)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
-		{"sleep(c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
-		{"sleep(c_datetime)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
-		{"sleep(c_time)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
-		{"sleep(c_timestamp)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
-		{"sleep(c_binary)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"sleep(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, 0},
+		{"sleep(c_float)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, 0},
+		{"sleep(c_double)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, 0},
+		{"sleep(c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, 0},
+		{"sleep(c_datetime)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, 0},
+		{"sleep(c_time)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, 0},
+		{"sleep(c_timestamp)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, 0},
+		{"sleep(c_binary)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, 0},
+
+		{"inet_aton(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 21, 0},
+		{"inet_aton(c_float)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 21, 0},
+		{"inet_aton(c_double)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 21, 0},
+		{"inet_aton(c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 21, 0},
+		{"inet_aton(c_datetime)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 21, 0},
+		{"inet_aton(c_time)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 21, 0},
+		{"inet_aton(c_timestamp)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 21, 0},
+		{"inet_aton(c_binary)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 21, 0},
+
+		{"inet_ntoa(c_int)", mysql.TypeVarString, charset.CharsetUTF8, 0, 93, 0},
+		{"inet_ntoa(c_float)", mysql.TypeVarString, charset.CharsetUTF8, 0, 93, 0},
+		{"inet_ntoa(c_double)", mysql.TypeVarString, charset.CharsetUTF8, 0, 93, 0},
+		{"inet_ntoa(c_decimal)", mysql.TypeVarString, charset.CharsetUTF8, 0, 93, 0},
+		{"inet_ntoa(c_datetime)", mysql.TypeVarString, charset.CharsetUTF8, 0, 93, 0},
+		{"inet_ntoa(c_time)", mysql.TypeVarString, charset.CharsetUTF8, 0, 93, 0},
+		{"inet_ntoa(c_timestamp)", mysql.TypeVarString, charset.CharsetUTF8, 0, 93, 0},
+		{"inet_ntoa(c_binary)", mysql.TypeVarString, charset.CharsetUTF8, 0, 93, 0},
+
+		{"inet6_aton(c_int)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, 0},
+		{"inet6_aton(c_float)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, 0},
+		{"inet6_aton(c_double)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, 0},
+		{"inet6_aton(c_decimal)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, 0},
+		{"inet6_aton(c_datetime)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, 0},
+		{"inet6_aton(c_time)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, 0},
+		{"inet6_aton(c_timestamp)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, 0},
+		{"inet6_aton(c_binary)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 16, 0},
+
+		{"inet6_ntoa(c_int)", mysql.TypeVarString, charset.CharsetUTF8, 0, 117, 0},
+		{"inet6_ntoa(c_float)", mysql.TypeVarString, charset.CharsetUTF8, 0, 117, 0},
+		{"inet6_ntoa(c_double)", mysql.TypeVarString, charset.CharsetUTF8, 0, 117, 0},
+		{"inet6_ntoa(c_decimal)", mysql.TypeVarString, charset.CharsetUTF8, 0, 117, 0},
+		{"inet6_ntoa(c_datetime)", mysql.TypeVarString, charset.CharsetUTF8, 0, 117, 0},
+		{"inet6_ntoa(c_time)", mysql.TypeVarString, charset.CharsetUTF8, 0, 117, 0},
+		{"inet6_ntoa(c_timestamp)", mysql.TypeVarString, charset.CharsetUTF8, 0, 117, 0},
+		{"inet6_ntoa(c_binary)", mysql.TypeVarString, charset.CharsetUTF8, 0, 117, 0},
 	}
 }
 

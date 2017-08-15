@@ -23,6 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/twinj/uuid"
 )
@@ -77,6 +78,7 @@ func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 21
 	sig := &builtinSleepSig{baseIntBuiltinFunc{bf}}
 	sig.deterministic = false
 	return sig.setSelf(sig), nil
@@ -211,55 +213,52 @@ func (c *inetAtonFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinInetAtonSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 21
+	bf.tp.Flag |= mysql.UnsignedFlag
+	sig := &builtinInetAtonSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinInetAtonSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinInetAtonSig.
+// evalInt evals a builtinInetAtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-aton
-func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinInetAtonSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return 0, true, errors.Trace(err)
 	}
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-	s, err := arg.ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
 	// ip address should not end with '.'.
-	if len(s) == 0 || s[len(s)-1] == '.' {
-		return d, nil
+	if len(val) == 0 || val[len(val)-1] == '.' {
+		return 0, true, nil
 	}
 
 	var (
 		byteResult, result uint64
 		dotCount           int
 	)
-	for _, c := range s {
+	for _, c := range val {
 		if c >= '0' && c <= '9' {
 			digit := uint64(c - '0')
 			byteResult = byteResult*10 + digit
 			if byteResult > 255 {
-				return d, nil
+				return 0, true, nil
 			}
 		} else if c == '.' {
 			dotCount++
 			if dotCount > 3 {
-				return d, nil
+				return 0, true, nil
 			}
 			result = (result << 8) + byteResult
 			byteResult = 0
 		} else {
-			return d, nil
+			return 0, true, nil
 		}
 	}
 	// 127 		-> 0.0.0.127
@@ -273,8 +272,7 @@ func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) 
 	case 2:
 		result <<= 8
 	}
-	d.SetUint64((result << 8) + byteResult)
-	return d, nil
+	return int64((result << 8) + byteResult), false, nil
 }
 
 type inetNtoaFunctionClass struct {
@@ -285,45 +283,41 @@ func (c *inetNtoaFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinInetNtoaSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 93
+	bf.tp.Decimal = 0
+	sig := &builtinInetNtoaSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinInetNtoaSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinInetNtoaSig.
+// evalString evals a builtinInetNtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-ntoa
-func (b *builtinInetNtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinInetNtoaSig) evalString(row []types.Datum) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
 	}
 
-	if args[0].IsNull() {
-		return d, nil
-	}
-
-	ipArg, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if ipArg < 0 || uint64(ipArg) > math.MaxUint32 {
+	if val < 0 || uint64(val) > math.MaxUint32 {
 		//not an IPv4 address.
-		return d, nil
+		return "", true, nil
 	}
 	ip := make(net.IP, net.IPv4len)
-	binary.BigEndian.PutUint32(ip, uint32(ipArg))
+	binary.BigEndian.PutUint32(ip, uint32(val))
 	ipv4 := ip.To4()
 	if ipv4 == nil {
 		//Not a vaild ipv4 address.
-		return d, nil
+		return "", true, nil
 	}
 
-	d.SetString(ipv4.String())
-	return d, nil
+	return ipv4.String(), false, nil
 }
 
 type inet6AtonFunctionClass struct {
@@ -334,42 +328,40 @@ func (c *inet6AtonFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinInet6AtonSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 16
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.Decimal = 0
+	sig := &builtinInet6AtonSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinInet6AtonSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinInet6AtonSig.
+// evalString evals a builtinInet6AtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
-func (b *builtinInet6AtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinInet6AtonSig) evalString(row []types.Datum) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
 	}
 
-	if args[0].IsNull() {
-		return d, nil
+	if len(val) == 0 {
+		return "", true, nil
 	}
 
-	ipAddress, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if len(ipAddress) == 0 {
-		return d, nil
-	}
-
-	ip := net.ParseIP(ipAddress)
+	ip := net.ParseIP(val)
 	if ip == nil {
-		return d, nil
+		return "", true, nil
 	}
 
 	var isMappedIpv6 bool
-	if ip.To4() != nil && strings.Contains(ipAddress, ":") {
+	if ip.To4() != nil && strings.Contains(val, ":") {
 		//mapped ipv6 address.
 		isMappedIpv6 = true
 	}
@@ -391,8 +383,7 @@ func (b *builtinInet6AtonSig) eval(row []types.Datum) (d types.Datum, err error)
 		copy(result, ip.To4())
 	}
 
-	d.SetBytes(result)
-	return d, nil
+	return string(result[:]), false, nil
 }
 
 type inet6NtoaFunctionClass struct {
@@ -403,43 +394,37 @@ func (c *inet6NtoaFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinInet6NtoaSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 117
+	bf.tp.Decimal = 0
+	sig := &builtinInet6NtoaSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinInet6NtoaSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinInet6NtoaSig.
+// evalString evals a builtinInet6NtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
-func (b *builtinInet6NtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinInet6NtoaSig) evalString(row []types.Datum) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
 	}
-
-	if args[0].IsNull() {
-		return d, nil
-	}
-
-	ipArg, err := args[0].ToBytes()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	ip := net.IP(ipArg).String()
-	if len(ipArg) == net.IPv6len && !strings.Contains(ip, ":") {
+	ip := net.IP([]byte(val)).String()
+	if len(val) == net.IPv6len && !strings.Contains(ip, ":") {
 		ip = fmt.Sprintf("::ffff:%s", ip)
 	}
 
 	if net.ParseIP(ip) == nil {
-		return d, nil
+		return "", true, nil
 	}
 
-	d.SetString(ip)
-
-	return d, nil
+	return ip, false, nil
 }
 
 type isFreeLockFunctionClass struct {
