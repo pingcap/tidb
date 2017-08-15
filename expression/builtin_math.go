@@ -494,7 +494,7 @@ type floorFunctionClass struct {
 	baseFunctionClass
 }
 
-// getEvalTp4FloorAndCeil fixes the evalTp of FLOOR and CEIL.
+// getEvalTp4FloorAndCeil gets the evalTp of FLOOR and CEIL.
 func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp evalTp) {
 	fieldTp := arg.GetType()
 	switch arg.GetTypeClass() {
@@ -515,7 +515,7 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp evalTp) {
 	return
 }
 
-// setFlag4FloorAndCeil add return flag of FLOOR and CEIL
+// setFlag4FloorAndCeil sets return flag of FLOOR and CEIL
 func setFlag4FloorAndCeil(bf *baseBuiltinFunc, arg Expression) {
 	fieldTp := arg.GetType()
 	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
