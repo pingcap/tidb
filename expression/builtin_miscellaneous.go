@@ -209,7 +209,7 @@ func (c *anyValueFunctionClass) getFunction(args []Expression, ctx context.Conte
 	case tpTime:
 		sig = &builtinTimeAnyValueSig{baseTimeBuiltinFunc{bf}}
 	default:
-		panic("unexpected evalTp")
+		panic("unexpected evalTp of builtin function ANY_VALUE")
 	}
 	return sig.setSelf(sig), nil
 }
