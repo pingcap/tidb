@@ -721,6 +721,8 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 		fc := funcs[ast.Radians]
 		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
