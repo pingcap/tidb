@@ -975,7 +975,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 	}{
 		{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001", "-00:00:00.000001"},
 		{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002", "46:58:57.999999"},
-		{"2016-12-00 12:00:00", "2016-12-01 12:00:00", "-24:00:00.000000"},
+		{"2016-12-00 12:00:00", "2016-12-01 12:00:00", "-24:00:00"},
 	}
 	fc := funcs[ast.TimeDiff]
 	for _, test := range tests {
@@ -1444,6 +1444,7 @@ func (s *testEvaluatorSuite) TestToSeconds(c *C) {
 	for _, test := range tests {
 		t := []types.Datum{types.NewDatum(test.param)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1459,6 +1460,7 @@ func (s *testEvaluatorSuite) TestToSeconds(c *C) {
 	for _, i := range testsNull {
 		t := []types.Datum{types.NewDatum(i)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1483,6 +1485,7 @@ func (s *testEvaluatorSuite) TestToDays(c *C) {
 	for _, test := range tests {
 		t := []types.Datum{types.NewDatum(test.param)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1498,6 +1501,7 @@ func (s *testEvaluatorSuite) TestToDays(c *C) {
 	for _, i := range testsNull {
 		t := []types.Datum{types.NewDatum(i)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)

@@ -194,6 +194,9 @@ func (s *mockTikvGrpcServer) KvResolveLock(goctx.Context, *kvrpcpb.ResolveLockRe
 func (s *mockTikvGrpcServer) KvGC(goctx.Context, *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
 	return nil, errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) KvDeleteRange(goctx.Context, *kvrpcpb.DeleteRangeRequest) (*kvrpcpb.DeleteRangeResponse, error) {
+	return nil, errors.New("unreachable")
+}
 
 func (s *mockTikvGrpcServer) RawGet(goctx.Context, *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
 	return nil, errors.New("unreachable")
@@ -202,9 +205,6 @@ func (s *mockTikvGrpcServer) RawPut(goctx.Context, *kvrpcpb.RawPutRequest) (*kvr
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) RawDelete(goctx.Context, *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
-	return nil, errors.New("unreachable")
-}
-func (s *mockTikvGrpcServer) KvDeleteRange(goctx.Context, *kvrpcpb.DeleteRangeRequest) (*kvrpcpb.DeleteRangeResponse, error) {
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) RawScan(goctx.Context, *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {

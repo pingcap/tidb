@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
@@ -73,7 +74,7 @@ type Session interface {
 	SetConnectionID(uint64)
 	SetSessionManager(util.SessionManager)
 	Close()
-	Auth(user string, auth []byte, salt []byte) bool
+	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	// Cancel the execution of current transaction.
 	Cancel()
 	ShowProcess() util.ProcessInfo
@@ -520,6 +521,19 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 	}
 }
 
+func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
+	return func(dom *domain.Domain) (pools.Resource, error) {
+		se, err := createSessionWithDomain(store, dom)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		se.sessionVars.CommonGlobalLoaded = true
+		se.sessionVars.InRestrictedSQL = true
+		return se, nil
+	}
+}
+
 func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
 	var rows []*ast.Row
 	for {
@@ -597,10 +611,9 @@ func (s *session) SetProcessInfo(sql string) {
 		State:   s.Status(),
 		Info:    sql,
 	}
-	strs := strings.Split(s.sessionVars.User, "@")
-	if len(strs) == 2 {
-		pi.User = strs[0]
-		pi.Host = strs[1]
+	if s.sessionVars.User != nil {
+		pi.User = s.sessionVars.User.Username
+		pi.Host = s.sessionVars.User.Hostname
 	}
 	s.processInfo.Store(pi)
 }
@@ -847,32 +860,27 @@ func (s *session) getPassword(name, host string) (string, error) {
 	return pwd, errors.Trace(err)
 }
 
-func (s *session) Auth(user string, auth []byte, salt []byte) bool {
-	strs := strings.Split(user, "@")
-	if len(strs) != 2 {
-		log.Warnf("Invalid format for user: %s", user)
-		return false
-	}
-	// Get user password.
-	name := strs[0]
-	host := strs[1]
+func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
 	pm := privilege.GetPrivilegeManager(s)
 
 	// Check IP.
-	if pm.ConnectionVerification(name, host, auth, salt) {
-		s.sessionVars.User = name + "@" + host
+	if pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt) {
+		s.sessionVars.User = user
 		return true
 	}
 
 	// Check Hostname.
-	for _, addr := range getHostByIP(host) {
-		if pm.ConnectionVerification(name, addr, auth, salt) {
-			s.sessionVars.User = name + "@" + addr
+	for _, addr := range getHostByIP(user.Hostname) {
+		if pm.ConnectionVerification(user.Username, addr, authentication, salt) {
+			s.sessionVars.User = &auth.UserIdentity{
+				Username: user.Username,
+				Hostname: addr,
+			}
 			return true
 		}
 	}
 
-	log.Errorf("User connection verification failed %v", user)
+	log.Errorf("User connection verification failed %s", user)
 	return false
 }
 
@@ -991,9 +999,26 @@ func createSession(store kv.Storage) (*session, error) {
 	return s, nil
 }
 
+// createSessionWithDomain creates a new Session and binds it with a Domain.
+// We need this because when we start DDL in Domain, the DDL need a session
+// to change some system tables. But at that time, we have been already in
+// a lock context, which cause we can't call createSesion directly.
+func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
+	s := &session{
+		store:       store,
+		parser:      parser.New(),
+		sessionVars: variable.NewSessionVars(),
+	}
+	s.mu.values = make(map[fmt.Stringer]interface{})
+	sessionctx.BindDomain(s, dom)
+	// session implements variable.GlobalVarAccessor. Bind it to ctx.
+	s.sessionVars.GlobalVarsAccessor = s
+	return s, nil
+}
+
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 14
+	currentBootstrapVersion = 15
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1038,7 +1063,7 @@ func finishBootstrap(store kv.Storage) {
 }
 
 const quoteCommaQuote = "', '"
-const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where variable_name in ('" +
+const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" +
 	variable.AutocommitVar + quoteCommaQuote +
 	variable.SQLModeVar + quoteCommaQuote +
 	variable.MaxAllowedPacket + quoteCommaQuote +
@@ -1179,6 +1204,11 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// GetStore gets the store of session.
+func (s *session) GetStore() kv.Storage {
+	return s.store
 }
 
 func (s *session) ShowProcess() util.ProcessInfo {

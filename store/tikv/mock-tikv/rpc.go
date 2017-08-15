@@ -328,6 +328,16 @@ func (h *rpcHandler) handleKvResolveLock(req *kvrpcpb.ResolveLockRequest) *kvrpc
 	return &kvrpcpb.ResolveLockResponse{}
 }
 
+func (h *rpcHandler) handleKvDeleteRange(req *kvrpcpb.DeleteRangeRequest) *kvrpcpb.DeleteRangeResponse {
+	err := h.mvccStore.DeleteRange(req.StartKey, req.EndKey)
+	if err != nil {
+		return &kvrpcpb.DeleteRangeResponse{
+			Error: err.Error(),
+		}
+	}
+	return &kvrpcpb.DeleteRangeResponse{}
+}
+
 func (h *rpcHandler) handleKvRawGet(req *kvrpcpb.RawGetRequest) *kvrpcpb.RawGetResponse {
 	return &kvrpcpb.RawGetResponse{
 		Value: h.mvccStore.RawGet(req.GetKey()),
@@ -482,6 +492,13 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 			return resp, nil
 		}
 		resp.GC = &kvrpcpb.GCResponse{}
+	case tikvrpc.CmdDeleteRange:
+		r := req.DeleteRange
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.DeleteRange = &kvrpcpb.DeleteRangeResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.DeleteRange = &kvrpcpb.DeleteRangeResponse{}
 	case tikvrpc.CmdRawGet:
 		r := req.RawGet
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {

@@ -159,26 +159,13 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	ctx, cancel = goctx.WithTimeout(goctx.Background(), 3*time.Second)
-	e.bgOwnerID, err = ownerManager.GetOwnerID(ctx, ddl.BgOwnerKey)
-	cancel()
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
 
 	ddlInfo, err := inspectkv.GetDDLInfo(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	bgInfo, err := inspectkv.GetBgDDLInfo(e.ctx.Txn())
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
 	e.ddlInfo = ddlInfo
-	e.bgInfo = bgInfo
 	e.selfID = ownerManager.ID()
 	return e
 }
@@ -255,7 +242,7 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 		GlobalScope:  v.GlobalScope,
 		is:           b.is,
 	}
-	if e.Tp == ast.ShowGrants && len(e.User) == 0 {
+	if e.Tp == ast.ShowGrants && e.User == nil {
 		e.User = e.ctx.GetSessionVars().User
 	}
 	return e
@@ -371,9 +358,9 @@ func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	exec := &ExplainExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 	}
-	exec.rows = make([]*Row, 0, len(v.Rows))
+	exec.rows = make([]Row, 0, len(v.Rows))
 	for _, row := range v.Rows {
-		exec.rows = append(exec.rows, &Row{Data: row})
+		exec.rows = append(exec.rows, row)
 	}
 	return exec
 }
