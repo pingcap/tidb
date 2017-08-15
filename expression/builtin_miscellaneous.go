@@ -520,7 +520,7 @@ type builtinIsIPv4CompatSig struct {
 func (b *builtinIsIPv4CompatSig) evalInt(row []types.Datum) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil || isNull {
-		return int64(0), false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 
 	ipAddress := []byte(val)
