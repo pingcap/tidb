@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -1162,7 +1163,7 @@ Symbol:
  * Currently it is only useful for syncer which depends heavily on tidb parser to do some dirty work.
  *******************************************************************************************/
 RenameTableStmt:
-	"RENAME" "TABLE" TableToTableList 
+	"RENAME" "TABLE" TableToTableList
 	{
 		$$ = &ast.RenameTableStmt{
 			OldTable: $3.([]*ast.TableToTable)[0].OldTable,
@@ -1899,11 +1900,11 @@ DropViewStmt:
 DropUserStmt:
     "DROP" "USER" UsernameList
 	{
-        $$ = &ast.DropUserStmt{IfExists: false, UserList: $3.([]string)}
+        $$ = &ast.DropUserStmt{IfExists: false, UserList: $3.([]*auth.UserIdentity)}
 	}
 |   "DROP" "USER" "IF" "EXISTS" UsernameList
 	{
-        $$ = &ast.DropUserStmt{IfExists: true, UserList: $5.([]string)}
+        $$ = &ast.DropUserStmt{IfExists: true, UserList: $5.([]*auth.UserIdentity)}
 	}
 
 DropStatsStmt:
@@ -4964,7 +4965,7 @@ SetStmt:
 	}
 |	"SET" "PASSWORD" "FOR" Username eq PasswordOpt
 	{
-		$$ = &ast.SetPwdStmt{User: $4.(string), Password: $6.(string)}
+		$$ = &ast.SetPwdStmt{User: $4.(*auth.UserIdentity), Password: $6.(string)}
 	}
 |	"SET" "GLOBAL" "TRANSACTION" TransactionChars
 	{
@@ -5165,26 +5166,26 @@ UserVariable:
 Username:
 	StringName
 	{
-		$$ = $1.(string) + "@%"
+		$$ = &auth.UserIdentity{Username: $1.(string), Hostname: "%"}
 	}
 |	StringName "AT" StringName
 	{
-		$$ = $1.(string) + "@" + $3.(string)
+		$$ = &auth.UserIdentity{Username: $1.(string), Hostname: $3.(string)}
 	}
 |	StringName singleAtIdentifier
 	{
-		$$ = $1.(string) + $2
+		$$ = &auth.UserIdentity{Username: $1.(string), Hostname: strings.TrimPrefix($2, "@")}
 	}
 
 UsernameList:
     Username
 	{
-        $$ = []string{$1.(string)}
+        $$ = []*auth.UserIdentity{$1.(*auth.UserIdentity)}
 	}
 |   UsernameList ',' Username
 
 	{
-        $$ = append($1.([]string), $3.(string))
+        $$ = append($1.([]*auth.UserIdentity), $3.(*auth.UserIdentity))
 	}
 
 PasswordOpt:
@@ -5255,7 +5256,7 @@ ShowStmt:
 		// See https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
 		$$ = &ast.ShowStmt{
 			Tp:	ast.ShowGrants,
-			User:	$4.(string),
+			User:	$4.(*auth.UserIdentity),
 		}
 	}
 |	"SHOW" "PROCESSLIST"
@@ -6346,7 +6347,7 @@ UserSpec:
 	Username AuthOption
 	{
 		userSpec := &ast.UserSpec{
-			User: $1.(string),
+			User: $1.(*auth.UserIdentity),
 		}
 		if $2 != nil {
 			userSpec.AuthOpt = $2.(*ast.AuthOption)

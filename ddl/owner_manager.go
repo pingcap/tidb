@@ -42,8 +42,8 @@ type OwnerManager interface {
 	SetOwner(isOwner bool)
 	// GetOwnerID gets the owner ID.
 	GetOwnerID(ctx goctx.Context, ownerKey string) (string, error)
-	// CampaignOwners campaigns the DDL owner and the background owner.
-	CampaignOwners(ctx goctx.Context) error
+	// CampaignOwner campaigns the DDL owner.
+	CampaignOwner(ctx goctx.Context) error
 	// Cancel cancels this etcd ownerManager campaign.
 	Cancel()
 }
@@ -132,8 +132,8 @@ func newSession(ctx goctx.Context, flag string, etcdCli *clientv3.Client, retryC
 	return etcdSession, errors.Trace(err)
 }
 
-// CampaignOwners implements OwnerManager.CampaignOwners interface.
-func (m *ownerManager) CampaignOwners(ctx goctx.Context) error {
+// CampaignOwner implements OwnerManager.CampaignOwner interface.
+func (m *ownerManager) CampaignOwner(ctx goctx.Context) error {
 	ddlSession, err := newSession(ctx, DDLOwnerKey, m.etcdCli, newSessionDefaultRetryCnt, ManagerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)

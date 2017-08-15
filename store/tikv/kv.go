@@ -107,6 +107,7 @@ type tikvStore struct {
 	gcWorker     *GCWorker
 	etcdAddrs    []string
 	mock         bool
+	enableGC     bool
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
@@ -124,17 +125,26 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		mock:        mock,
 	}
 	store.lockResolver = newLockResolver(store)
-	if enableGC {
-		store.gcWorker, err = NewGCWorker(store)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
+	store.enableGC = enableGC
 	return store, nil
 }
 
 func (s *tikvStore) EtcdAddrs() []string {
 	return s.etcdAddrs
+}
+
+// StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
+func (s *tikvStore) StartGCWorker() error {
+	if !s.enableGC {
+		return nil
+	}
+
+	gcWorker, err := NewGCWorker(s)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.gcWorker = gcWorker
+	return nil
 }
 
 type mockOptions struct {
