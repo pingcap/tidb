@@ -134,6 +134,24 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 			c.Assert(len(list[4]), Equals, 12)
 		}
 	}
+	tk.MustQuery("select sleep(1);").Check(testkit.Rows("0"))
+	tk.MustQuery("select sleep(0);").Check(testkit.Rows("0"))
+	tk.MustQuery("select sleep('a');").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1265 Data Truncated"))
+	rs, err := tk.Exec("select sleep(-1);")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+
+	tk.MustQuery("SELECT INET_ATON('10.0.5.9');").Check(testkit.Rows("167773449"))
+	tk.MustQuery("SELECT INET_NTOA(167773449);").Check(testkit.Rows("10.0.5.9"))
+	tk.MustQuery("SELECT HEX(INET6_ATON('fdfe::5a55:caff:fefa:9089'));").Check(testkit.Rows("FDFE0000000000005A55CAFFFEFA9089"))
+	tk.MustQuery("SELECT HEX(INET6_ATON('10.0.5.9'));").Check(testkit.Rows("0A000509"))
+	tk.MustQuery("SELECT INET6_NTOA(INET6_ATON('fdfe::5a55:caff:fefa:9089'));").Check(testkit.Rows("fdfe::5a55:caff:fefa:9089"))
+	tk.MustQuery("SELECT INET6_NTOA(INET6_ATON('10.0.5.9'));").Check(testkit.Rows("10.0.5.9"))
+	tk.MustQuery("SELECT INET6_NTOA(UNHEX('FDFE0000000000005A55CAFFFEFA9089'));").Check(testkit.Rows("fdfe::5a55:caff:fefa:9089"))
+	tk.MustQuery("SELECT INET6_NTOA(UNHEX('0A000509'));").Check(testkit.Rows("10.0.5.9"))
 }
 
 func (s *testIntegrationSuite) TestConvertToBit(c *C) {
@@ -843,6 +861,10 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select timediff('2014-1-2 12:00:00', '2014-1-1 12:00:00');")
 	result.Check(testkit.Rows("24:00:00"))
+	result = tk.MustQuery("select to_seconds(950501), to_seconds('2009-11-29'), to_seconds('2009-11-29 13:43:32'), to_seconds('09-11-29 13:43:32');")
+	result.Check(testkit.Rows("62966505600 63426672000 63426721412 63426721412"))
+	result = tk.MustQuery("select to_days(950501), to_days('2007-10-07'), to_days('2007-10-07 00:00:59'), to_days('0000-01-01')")
+	result.Check(testkit.Rows("728779 733321 733321 1"))
 
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
