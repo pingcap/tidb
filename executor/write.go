@@ -242,13 +242,24 @@ func (e *DeleteExec) deleteSingleTable() error {
 		id        int64
 		tbl       table.Table
 		handleCol *expression.Column
+		rowCount  int
 	)
 	for i, t := range e.tblID2Table {
 		id, tbl = i, t
 		handleCol = e.SelectExec.Schema().TblID2Handle[id][0]
 		break
 	}
+	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
+	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
 	for {
+		if batchDelete && rowCount >= BatchDeleteSize {
+			if err := e.ctx.NewTxn(); err != nil {
+				// We should return a special error for batch insert.
+				return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
+			}
+			// txn = e.ctx.Txn()
+			rowCount = 0
+		}
 		row, err := e.SelectExec.Next()
 		if err != nil {
 			return errors.Trace(err)
@@ -659,6 +670,8 @@ func (e *InsertExec) Schema() *expression.Schema {
 // BatchInsertSize is the batch size of auto-splitted insert data.
 // This will be used when tidb_batch_insert is set to ON.
 var BatchInsertSize = 20000
+
+var BatchDeleteSize = 20000
 
 // Next implements the Executor Next interface.
 func (e *InsertExec) Next() (Row, error) {
