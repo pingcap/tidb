@@ -111,16 +111,13 @@ func (pc pbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 		val = codec.EncodeDecimal(nil, d)
 	case types.KindMysqlTime:
 		tp = tipb.ExprType_MysqlTime
-		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
-			loc := pc.sc.TimeZone
-			val, err := tablecodec.EncodeValue(d, loc)
-			if err != nil {
-				log.Errorf("Fail to encode value, err: %s", err.Error())
-				return nil
-			}
-			return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+		loc := pc.sc.TimeZone
+		val, err := tablecodec.EncodeValue(d, loc)
+		if err != nil {
+			log.Errorf("Fail to encode value, err: %s", err.Error())
+			return nil
 		}
-		return nil
+		return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
 	default:
 		return nil
 	}

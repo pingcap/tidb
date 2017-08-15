@@ -53,7 +53,7 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
-		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlDecimal,
+		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
 		tipb.ExprType_ColumnRef:
 		return true
 	// logic operators.
@@ -81,8 +81,6 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
-	case tipb.ExprType_MysqlTime:
-		return c.store.mock
 	default:
 		return false
 	}
