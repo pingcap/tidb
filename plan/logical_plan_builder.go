@@ -133,6 +133,11 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 		if v, ok := p.(*DataSource); ok {
 			v.TableAsName = &x.AsName
 		}
+		if v, ok := p.(*Projection); ok && v.calculateGenCols {
+			// For projection calculating generated columns
+			ds := v.Children()[0].(*DataSource)
+			ds.TableAsName = &x.AsName
+		}
 		if x.AsName.L != "" {
 			for _, col := range p.Schema().Columns {
 				col.TblName = x.AsName
@@ -204,7 +209,15 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 }
 
 func extractTableAlias(p LogicalPlan) *model.CIStr {
-	if dataSource, ok := p.(*DataSource); ok {
+	if proj, ok := p.(*Projection); ok && proj.calculateGenCols {
+		// It's for projection calculating generated columns.
+		ds := proj.Children()[0].(*DataSource)
+		if ds.TableAsName.L != "" {
+			return ds.TableAsName
+		} else if len(proj.Schema().Columns) > 0 {
+			return &(proj.Schema().Columns[0].TblName)
+		}
+	} else if dataSource, ok := p.(*DataSource); ok {
 		if dataSource.TableAsName.L != "" {
 			return dataSource.TableAsName
 		}
@@ -1255,9 +1268,6 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 // we add a projection on the original DataSource, and calculate those columns in the projection
 // so that plans above it can reference generated columns by their name.
 func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) LogicalPlan {
-	if b.inUpdateStmt {
-		return ds
-	}
 	var hasVirtualGeneratedColumn = false
 	for _, column := range columns {
 		if column.IsGenerated() && !column.GeneratedStored {
@@ -1266,8 +1276,10 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		}
 	}
 	if hasVirtualGeneratedColumn {
-		var proj = Projection{Exprs: make([]expression.Expression, 0, len(columns))}.init(b.allocator, b.ctx)
-		var schema = expression.NewSchema(make([]*expression.Column, 0, len(ds.Schema().Columns))...)
+		var proj = Projection{
+			Exprs:            make([]expression.Expression, 0, len(columns)),
+			calculateGenCols: true,
+		}.init(b.allocator, b.ctx)
 		for i, colExpr := range ds.Schema().Columns {
 			var exprIsGen = false
 			var expr expression.Expression
@@ -1287,15 +1299,8 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 				expr = colExpr.Clone()
 			}
 			proj.Exprs = append(proj.Exprs, expr)
-			schema.Columns = append(schema.Columns, &expression.Column{
-				FromID:   proj.id,
-				Position: colExpr.Position,
-				TblName:  colExpr.TblName,
-				ColName:  colExpr.ColName,
-				RetType:  colExpr.RetType,
-			})
 		}
-		proj.SetSchema(schema)
+		proj.SetSchema(ds.Schema().Clone())
 		proj.SetChildren(ds)
 		ds.SetParents(proj)
 		return proj
@@ -1470,8 +1475,9 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
-	tableAsName := make(map[*model.TableInfo][]model.CIStr)
+	tableAsName := make(map[*model.TableInfo][]*model.CIStr)
 	extractTableAsNameForUpdate(p, tableAsName)
+
 	for _, tn := range tableList {
 		tableInfo := tn.TableInfo
 		table, found := b.is.TableByID(tableInfo.ID)
@@ -1494,15 +1500,15 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				// So here, we change generated columns in all alias in order to ensure we can do it correctly.
 				for _, asName := range asNames {
 					virtualAssignments = append(virtualAssignments, &ast.Assignment{
-						Column: &ast.ColumnName{Table: asName, Name: colInfo.Name},
+						Column: &ast.ColumnName{Table: *asName, Name: colInfo.Name},
 						Expr:   table.Cols()[i].GeneratedExpr,
 					})
 				}
-			} else {
-				virtualAssignments = append(virtualAssignments, &ast.Assignment{
-					Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
-					Expr:   table.Cols()[i].GeneratedExpr,
-				})
+				// } else {
+				// 	virtualAssignments = append(virtualAssignments, &ast.Assignment{
+				// 		Column: &ast.ColumnName{Name: colInfo.Name},
+				// 		Expr:   table.Cols()[i].GeneratedExpr,
+				// 	})
 			}
 		}
 	}
@@ -1545,11 +1551,27 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 }
 
 // extractTableAsNameForUpdate extracts tables' alias names for update.
-func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]model.CIStr) {
+func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.CIStr) {
 	switch x := p.(type) {
-	case *Projection: // We can skip memory table.
 	case *DataSource:
-		asNames[x.tableInfo] = append(asNames[x.tableInfo], *x.TableAsName)
+		alias := extractTableAlias(p.(LogicalPlan))
+		if alias != nil {
+			if _, ok := asNames[x.tableInfo]; !ok {
+				asNames[x.tableInfo] = make([]*model.CIStr, 0, 1)
+			}
+			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
+		}
+	case *Projection:
+		if x.calculateGenCols {
+			ds := x.Children()[0].(*DataSource)
+			alias := extractTableAlias(p.(LogicalPlan))
+			if alias != nil {
+				if _, ok := asNames[ds.tableInfo]; !ok {
+					asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
+				}
+				asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
+			}
+		}
 	default:
 		for _, child := range p.Children() {
 			extractTableAsNameForUpdate(child, asNames)

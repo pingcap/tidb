@@ -1262,6 +1262,20 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE d = 64`)
 	result.Check(testkit.Rows(`8 8 16 64`))
 
+	// Test update where-conditions on virtual/generated columns.
+	tk.MustExec(`UPDATE test_gc_read SET a = a + 100 WHERE c = 7`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE c = 107`)
+	result.Check(testkit.Rows(`103 4 107 412`))
+
+	// Test update where-conditions on virtual/generated columns.
+	tk.MustExec(`UPDATE test_gc_read m SET m.a = m.a + 100 WHERE c = 107`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE c = 207`)
+	result.Check(testkit.Rows(`203 4 207 812`))
+
+	tk.MustExec(`UPDATE test_gc_read SET a = a - 200 WHERE d = 812`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE d = 12`)
+	result.Check(testkit.Rows(`3 4 7 12`))
+
 	// Test on-conditions on virtual/stored generated columns.
 	tk.MustExec(`CREATE TABLE test_gc_help(a int primary key, b int, c int, d int)`)
 	tk.MustExec(`INSERT INTO test_gc_help(a, b, c, d) SELECT * FROM test_gc_read`)
