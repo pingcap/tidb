@@ -115,7 +115,7 @@ func (pc pbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 			loc := pc.sc.TimeZone
 			val, err := tablecodec.EncodeValue(d, loc)
 			if err != nil {
-				log.Error(err.Error())
+				log.Errorf("Fail to encode value, err: %s", err.Error())
 				return nil
 			}
 			return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
