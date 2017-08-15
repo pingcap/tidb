@@ -91,6 +91,7 @@ func mvccDecode(encodedKey []byte) ([]byte, uint64, error) {
 	return key, ver, nil
 }
 
+// NewMVCCLevelDB returns a new MVCCLevelDB object.
 func NewMVCCLevelDB(path string) (*MVCCLevelDB, error) {
 	var (
 		d   *leveldb.DB
