@@ -515,7 +515,6 @@ func commitKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, commit
 	if err = commitLock(batch, dec.lock, key, startTS, commitTS); err != nil {
 		return errors.Trace(err)
 	}
-	batch.Delete(startKey)
 	return nil
 }
 
@@ -579,7 +578,6 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 			if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
 				return errors.Trace(err)
 			}
-			// batch.Delete(startKey)
 			return nil
 		}
 
