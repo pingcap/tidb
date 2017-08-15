@@ -36,7 +36,7 @@ func checkGoContext(ctx goctx.Context) error {
 }
 
 func convertToKeyError(err error) *kvrpcpb.KeyError {
-	if locked, ok := err.(*ErrLocked); ok {
+	if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 		return &kvrpcpb.KeyError{
 			Locked: &kvrpcpb.LockInfo{
 				Key:         locked.Key.Raw(),
@@ -46,7 +46,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			},
 		}
 	}
-	if retryable, ok := err.(ErrRetryable); ok {
+	if retryable, ok := errors.Cause(err).(ErrRetryable); ok {
 		return &kvrpcpb.KeyError{
 			Retryable: retryable.Error(),
 		}
@@ -260,7 +260,7 @@ func (h *rpcHandler) handleKvCleanup(req *kvrpcpb.CleanupRequest) *kvrpcpb.Clean
 	var resp kvrpcpb.CleanupResponse
 	err := h.mvccStore.Cleanup(req.Key, req.GetStartVersion())
 	if err != nil {
-		if commitTS, ok := err.(ErrAlreadyCommitted); ok {
+		if commitTS, ok := errors.Cause(err).(ErrAlreadyCommitted); ok {
 			resp.CommitVersion = uint64(commitTS)
 		} else {
 			resp.Error = convertToKeyError(err)

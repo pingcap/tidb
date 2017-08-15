@@ -91,7 +91,7 @@ func mvccDecode(encodedKey []byte) ([]byte, uint64, error) {
 	return key, ver, nil
 }
 
-func newMVCCLevelDB(path string) (*MVCCLevelDB, error) {
+func NewMVCCLevelDB(path string) (*MVCCLevelDB, error) {
 	var (
 		d   *leveldb.DB
 		err error
@@ -153,7 +153,7 @@ func newScanIterator(db *leveldb.DB, startKey, endKey []byte) (*Iterator, []byte
 
 // iterDecoder tries to decode an Iterator value.
 // If current iterator value can be decoded by this decoder, store the value and call iter.Next(),
-// Otherwise current iterator is not touched and return false.
+// Otherwise current iterator is not touched and returns false.
 type iterDecoder interface {
 	Decode(iter *Iterator) (bool, error)
 }
@@ -322,6 +322,7 @@ func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.Isola
 		if value.valueType == typeRollback {
 			continue
 		}
+		// Read the first committed value that can be seen at startTS.
 		if value.commitTS <= startTS {
 			if value.valueType == typeDelete {
 				return nil, nil
@@ -346,7 +347,7 @@ func (mvcc *MVCCLevelDB) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.
 		pairs = append(pairs, Pair{
 			Key:   k,
 			Value: v,
-			Err:   err,
+			Err:   errors.Trace(err),
 		})
 	}
 	return pairs
@@ -394,7 +395,8 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 
 // ReverseScan implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
-	return nil
+	// TODO: Implement it.
+	panic("not implemented")
 }
 
 // Prewrite implements the MVCCStore interface.
@@ -577,7 +579,7 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 			if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
 				return errors.Trace(err)
 			}
-			batch.Delete(startKey)
+			// batch.Delete(startKey)
 			return nil
 		}
 
@@ -653,7 +655,7 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS uint64) error {
 	batch := &leveldb.Batch{}
 	err := rollbackKey(mvcc.db, batch, key, startTS)
 	if err != nil {
-		errors.Trace(err)
+		return errors.Trace(err)
 	}
 	return mvcc.db.Write(batch, nil)
 }

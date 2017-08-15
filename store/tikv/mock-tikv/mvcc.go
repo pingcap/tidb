@@ -186,9 +186,11 @@ func newEntry(key MvccKey) *mvccEntry {
 	}
 }
 
+// lockErr returns ErrLocked.
+// Note that parameter key is raw key, while key in ErrLocked is mvcc key.
 func (l *mvccLock) lockErr(key []byte) error {
 	return &ErrLocked{
-		Key:     key,
+		Key:     mvccEncode(key, lockVer),
 		Primary: l.primary,
 		StartTS: l.startTS,
 		TTL:     l.ttl,

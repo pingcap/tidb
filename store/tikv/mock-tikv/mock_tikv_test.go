@@ -55,7 +55,7 @@ type testMVCCLevelDB struct {
 
 func (s *testMockTiKVSuite) SetUpTest(c *C) {
 	var err error
-	s.store, err = newMVCCLevelDB("")
+	s.store, err = NewMVCCLevelDB("")
 	c.Assert(err, IsNil)
 }
 
