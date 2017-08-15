@@ -1527,3 +1527,24 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	result := tk.MustQuery("select avg(a) from t")
 	result.Check(testkit.Rows("1.1234560000"))
 }
+
+func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c varchar(20), d datetime, e time)")
+	tk.MustExec("insert into t value(1, 2, 'string', '2017-01-01 12:12:12', '12:12:12')")
+	result := tk.MustQuery("select 1 in (a, b, c), 'string' in (a, b, c), '2017-01-01 12:12:12' in (c, d, e), '12:12:12' in (c, d, e) from t")
+	result.Check(testkit.Rows("1 1 1 1"))
+	result = tk.MustQuery("select 1 in (null, c), 2 in (null, c) from t")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery("select 0 in (a, b, c), 0 in (a, b, c), 3 in (a, b, c), 4 in (a, b, c) from t")
+	result.Check(testkit.Rows("1 1 0 0"))
+	result = tk.MustQuery("select (0,1) in ((0,1), (0,2)), (0,1) in ((0,0), (0,2))")
+	result.Check(testkit.Rows("1 0"))
+}
