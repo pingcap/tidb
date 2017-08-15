@@ -57,8 +57,7 @@ func (e *RevokeExec) Next() (Row, error) {
 	// Revoke for each user
 	for _, user := range e.Users {
 		// Check if user exists.
-		userName, host := parseUser(user.User)
-		exists, err := userExists(e.ctx, userName, host)
+		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -66,7 +65,7 @@ func (e *RevokeExec) Next() (Row, error) {
 			return nil, errors.Errorf("Unknown user: %s", user.User)
 		}
 
-		err = e.revokeOneUser(userName, host)
+		err = e.revokeOneUser(user.User.Username, user.User.Hostname)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

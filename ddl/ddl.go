@@ -406,6 +406,15 @@ func (d *ddl) OwnerManager() OwnerManager {
 	return d.ownerManager
 }
 
+func checkJobMaxInterval(job *model.Job) time.Duration {
+	// The job of adding index takes more time to process.
+	// So it uses the longer time.
+	if job.Type == model.ActionAddIndex {
+		return 3 * time.Second
+	}
+	return 1 * time.Second
+}
+
 func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	// For every DDL, we must commit current transaction.
 	if err := ctx.NewTxn(); err != nil {
@@ -426,8 +435,8 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	jobID := job.ID
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
-	// But we use etcd to speed up, normally it takes less than 1s now, so we use 3s as the max value.
-	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 3*time.Second))
+	// But we use etcd to speed up, normally it takes less than 1s now, so we use 1s or 3s as the max value.
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, checkJobMaxInterval(job)))
 	startTime := time.Now()
 	jobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
@@ -450,7 +459,7 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 			log.Errorf("[ddl] get history DDL job err %v, check again", err)
 			continue
 		} else if historyJob == nil {
-			log.Infof("[ddl] DDL job %d is not in history, maybe not run", jobID)
+			log.Debugf("[ddl] DDL job %d is not in history, maybe not run", jobID)
 			continue
 		}
 

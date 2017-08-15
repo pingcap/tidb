@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
 )
 
@@ -67,7 +67,10 @@ func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 	}
 	var ctx goctx.Context
 	ctx, worker.cancel = util.WithCancel(goctx.Background())
-	go worker.start(ctx)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go worker.start(ctx, &wg)
+	wg.Wait() // Wait create session finish in worker, some test code depend on this to avoid race.
 	return worker, nil
 }
 
@@ -105,11 +108,12 @@ var gcVariableComments = map[string]string{
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
 }
 
-func (w *GCWorker) start(ctx goctx.Context) {
+func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 	log.Infof("[gc worker] %s start.", w.uuid)
 
 	w.createSession()
 	w.tick(ctx) // Immediately tick once to initialize configs.
+	wg.Done()
 
 	ticker := time.NewTicker(gcWorkerTickInterval)
 	defer ticker.Stop()
@@ -133,12 +137,6 @@ func (w *GCWorker) start(ctx goctx.Context) {
 
 func (w *GCWorker) createSession() {
 	for {
-		time.Sleep(time.Second)
-
-		if !w.storeIsBootstrapped() {
-			log.Warnf("[gc worker] wait for store bootstrapping")
-			continue
-		}
 		var err error
 		w.session, err = tidb.CreateSession(w.store)
 		if err != nil {
@@ -147,6 +145,7 @@ func (w *GCWorker) createSession() {
 		}
 		// Disable privilege check for gc worker session.
 		privilege.BindPrivilegeManager(w.session, nil)
+		w.session.GetSessionVars().InRestrictedSQL = true
 		return
 	}
 }
@@ -644,7 +643,7 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 
 func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
+	rs, err := w.session.Execute(stmt)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -666,7 +665,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
 		key, value, gcVariableComments[key])
-	_, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
+	_, err := w.session.Execute(stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
 }
