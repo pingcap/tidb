@@ -393,6 +393,7 @@ func (c *ceilFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	fixFloorAndCeilReturnFlag(&bf, args[0])
 	argFieldTp := args[0].GetType()
 	bf.tp.Flen = argFieldTp.Flen
 	bf.tp.Decimal = 0
@@ -498,10 +499,9 @@ func fixFloorAndCeilType(arg Expression) (retTp, argTp evalTp) {
 	fieldTp := arg.GetType()
 	switch arg.GetTypeClass() {
 	case types.ClassInt:
-		if !mysql.HasUnsignedFlag(fieldTp.Flag) {
-			retTp, argTp = tpInt, tpInt
-		} else {
-			retTp, argTp = tpDecimal, tpInt
+		retTp, argTp = tpInt, tpInt
+		if fieldTp.Tp == mysql.TypeLonglong {
+			retTp = tpDecimal
 		}
 	case types.ClassDecimal:
 		if fieldTp.Flen-fieldTp.Decimal <= mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
@@ -513,6 +513,15 @@ func fixFloorAndCeilType(arg Expression) (retTp, argTp evalTp) {
 		retTp, argTp = tpReal, tpReal
 	}
 	return
+}
+
+// fixFloorAndCeilReturnFlag add return flag of FLOOR and CEIL
+func fixFloorAndCeilReturnFlag(bf *baseBuiltinFunc, arg Expression) {
+	fieldTp := arg.GetType()
+	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
+		bf.tp.Flag |= mysql.UnsignedFlag
+	}
+	// TODO: when argument type is timestamp, add not full flag
 }
 
 func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
@@ -531,6 +540,7 @@ func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	fixFloorAndCeilReturnFlag(&bf, args[0])
 	bf.tp.Flen = args[0].GetType().Flen
 	bf.tp.Decimal = 0
 	switch args[0].GetTypeClass() {
