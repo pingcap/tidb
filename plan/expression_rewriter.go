@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -880,8 +881,9 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-// inToExpression convert in expression to a scalar function. The argument lLen means the length of in list.
+// inToExpression converts in expression to a scalar function. The argument lLen means the length of in list.
 // The argument not means if the expression is not in. The tp stands for the expression type, which is always bool.
+// a in (b, c, d) will be rewritted as `(a = b) or (a = c) or (a = d)`.
 func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	l := getRowLen(er.ctxStack[stkLen-lLen-1])
@@ -891,7 +893,37 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			return
 		}
 	}
-	function := er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
+	// a in (b, c, d)
+	leftArg := er.ctxStack[stkLen-lLen-1]
+	// function ==> a = b
+	function, err := er.constructBinaryOpFunction(leftArg, er.ctxStack[stkLen-lLen], ast.EQ)
+	if err != nil {
+		er.err = err
+		return
+	}
+	// function ==> (a = b) or (a = c) or (a = d)
+	for i := stkLen - lLen + 1; i < stkLen; i++ {
+		var expr expression.Expression
+		expr, err = er.constructBinaryOpFunction(leftArg, er.ctxStack[i], ast.EQ)
+		if err != nil {
+			er.err = err
+			return
+		}
+		fieldTp := &types.FieldType{Tp: mysql.TypeLonglong, Flen: 1, Decimal: 0, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag}
+		function, err = expression.NewFunction(er.ctx, ast.LogicOr, fieldTp, function, expr)
+		if err != nil {
+			er.err = err
+			return
+		}
+	}
+	if not {
+		tp := *function.GetType()
+		function, err = expression.NewFunction(er.ctx, ast.UnaryNot, &tp, function)
+		if err != nil {
+			er.err = err
+			return
+		}
+	}
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
 	er.ctxStack = append(er.ctxStack, function)
 }
