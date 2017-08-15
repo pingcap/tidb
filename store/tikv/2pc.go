@@ -462,7 +462,6 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		defer c.mu.RUnlock()
 		err = errors.Errorf("2PC commit failed: %v", keyErr.String())
 		if c.mu.committed {
-
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
 			log.Errorf("2PC failed commit key after primary key committed: %v, tid: %d", err, c.startTS)
