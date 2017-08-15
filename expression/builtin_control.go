@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 var (
@@ -38,12 +39,14 @@ var (
 	_ builtinFunc = &builtinIfNullStringSig{}
 	_ builtinFunc = &builtinIfNullTimeSig{}
 	_ builtinFunc = &builtinIfNullDurationSig{}
+	_ builtinFunc = &builtinIfNullJSONSig{}
 	_ builtinFunc = &builtinIfIntSig{}
 	_ builtinFunc = &builtinIfRealSig{}
 	_ builtinFunc = &builtinIfDecimalSig{}
 	_ builtinFunc = &builtinIfStringSig{}
-	_ builtinFunc = &builtinIfDurationSig{}
 	_ builtinFunc = &builtinIfTimeSig{}
+	_ builtinFunc = &builtinIfDurationSig{}
+	_ builtinFunc = &builtinIfJSONSig{}
 )
 
 type caseWhenFunctionClass struct {
@@ -122,6 +125,8 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 		sig = &builtinIfTimeSig{baseTimeBuiltinFunc{bf}}
 	case tpDuration:
 		sig = &builtinIfDurationSig{baseDurationBuiltinFunc{bf}}
+	case tpJSON:
+		sig = &builtinIfJSONSig{baseJSONBuiltinFunc{bf}}
 	}
 	return sig.setSelf(sig), nil
 }
@@ -336,6 +341,33 @@ func (b *builtinIfDurationSig) evalDuration(row []types.Datum) (ret types.Durati
 	return
 }
 
+type builtinIfJSONSig struct {
+	baseJSONBuiltinFunc
+}
+
+func (b *builtinIfJSONSig) evalJSON(row []types.Datum) (ret json.JSON, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
+	if err != nil {
+		return ret, false, errors.Trace(err)
+	}
+	arg1, isNull1, err := b.args[1].EvalJSON(row, sc)
+	if err != nil {
+		return ret, false, errors.Trace(err)
+	}
+	arg2, isNull2, err := b.args[2].EvalJSON(row, sc)
+	if err != nil {
+		return ret, false, errors.Trace(err)
+	}
+	switch {
+	case isNull0 || arg0 == 0:
+		ret, isNull = arg2, isNull2
+	case arg0 != 0:
+		ret, isNull = arg1, isNull1
+	}
+	return
+}
+
 type ifNullFunctionClass struct {
 	baseFunctionClass
 }
@@ -371,6 +403,8 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 			evalTps = tpTime
 		} else if fieldTp.Tp == mysql.TypeDuration {
 			evalTps = tpDuration
+		} else if fieldTp.Tp == mysql.TypeJSON {
+			evalTps = tpJSON
 		}
 	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
@@ -477,6 +511,20 @@ func (b *builtinIfNullDurationSig) evalDuration(row []types.Datum) (types.Durati
 		return arg0, false, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalDuration(row, sc)
+	return arg1, isNull, errors.Trace(err)
+}
+
+type builtinIfNullJSONSig struct {
+	baseJSONBuiltinFunc
+}
+
+func (b *builtinIfNullJSONSig) evalJSON(row []types.Datum) (json.JSON, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalJSON(row, sc)
+	if !isNull {
+		return arg0, false, errors.Trace(err)
+	}
+	arg1, isNull, err := b.args[1].EvalJSON(row, sc)
 	return arg1, isNull, errors.Trace(err)
 }
 
