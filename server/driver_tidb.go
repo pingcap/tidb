@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -219,7 +220,7 @@ func (tc *TiDBContext) Close() error {
 }
 
 // Auth implements QueryCtx Auth method.
-func (tc *TiDBContext) Auth(user string, auth []byte, salt []byte) bool {
+func (tc *TiDBContext) Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool {
 	return tc.session.Auth(user, auth, salt)
 }
 

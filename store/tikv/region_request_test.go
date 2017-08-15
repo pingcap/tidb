@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 )
 
 type testRegionRequestSuite struct {
@@ -240,10 +239,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 		wg.Done()
 	}()
 
-	client := &cancelContextClient{
-		Client:       newRPCClient(),
-		redirectAddr: addr,
-	}
+	client := newRPCClient()
 	sender := NewRegionRequestSender(s.cache, client, kvrpcpb.IsolationLevel_SI)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
@@ -255,9 +251,19 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 
-	_, err = sender.SendReq(s.bo, req, region.Region, 3*time.Second)
-	c.Assert(grpc.Code(errors.Cause(err)), Equals, codes.Canceled)
+	bo, cancel := s.bo.Fork()
+	cancel()
+	_, err = sender.SendReq(bo, req, region.Region, 3*time.Second)
+	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
 	c.Assert(s.cache.getRegionByIDFromCache(s.region), NotNil)
+
+	// Just for covering error code = codes.Canceled.
+	client1 := &cancelContextClient{
+		Client:       newRPCClient(),
+		redirectAddr: addr,
+	}
+	sender = NewRegionRequestSender(s.cache, client1, kvrpcpb.IsolationLevel_SI)
+	sender.SendReq(s.bo, req, region.Region, 3*time.Second)
 
 	// cleanup
 	server.Stop()
