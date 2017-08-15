@@ -684,6 +684,21 @@ func (s *testPlanSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 		{"isnull(c_blob     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"isnull(c_set      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"isnull(c_enum     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+
+		{"nullif(c_int      , 123)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, types.UnspecifiedLength},                       // TODO: tp should be TypeLonglong, decimal should be 0
+		{"nullif(c_bigint   , 123)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, types.UnspecifiedLength},                   // TODO: flen should be 20, decimal should be 0
+		{"nullif(c_float    , 123)", mysql.TypeFloat, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength}, // TODO: tp should be TypeDouble
+		{"nullif(c_double   , 123)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"nullif(c_decimal  , 123)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 6, 3},
+		{"nullif(c_datetime , 123)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, 2},                       // TODO: tp should be TypeVarString, flen is incorrect, no binary flag
+		{"nullif(c_time     , 123)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, 0},                       // TODO: tp should be TypeVarString, no binary flag
+		{"nullif(c_timestamp, 123)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength}, // TODO: tp should be TypeVarString, flen is incorrect, decimal should be 0, no binary flag
+		{"nullif(c_char     , 123)", mysql.TypeString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
+		{"nullif(c_varchar  , 123)", mysql.TypeVarchar, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},                                 // TODO: tp should be TypeVarString
+		{"nullif(c_text     , 123)", mysql.TypeBlob, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},               // TODO: tp should be TypeMediumBlob, flen should be 589815
+		{"nullif(c_binary   , 123)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},                    // TODO: tp should be TypeVarString
+		{"nullif(c_varbinary, 123)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},                   // TODO: tp should be TypeVarString
+		{"nullif(c_blob     , 123)", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength}, // TODO: tp should be TypeVarString, flen should be 65535
 	}
 }
 

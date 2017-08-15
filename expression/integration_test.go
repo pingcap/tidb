@@ -1534,6 +1534,28 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"26 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
 		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
 		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
+
+	// nullif
+	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
+	result.Check(testkit.Rows("<nil> 1 <nil> <nil>"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1, 1.0), NULLIF(1, "1.0");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+
+	result = tk.MustQuery(`SELECT NULLIF("abc", 1);`)
+	result.Check(testkit.Rows("abc"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1+2, 1);`)
+	result.Check(testkit.Rows("3"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1, 1+2);`)
+	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery(`SELECT NULLIF(2+3, 1+2);`)
+	result.Check(testkit.Rows("5"))
+
+	result = tk.MustQuery(`SELECT HEX(NULLIF("abc", 1));`)
+	result.Check(testkit.Rows("616263"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
