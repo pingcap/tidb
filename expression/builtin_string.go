@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
 	"golang.org/x/text/transform"
 )
@@ -96,6 +95,7 @@ var (
 	_ builtinFunc = &builtinRepeatSig{}
 	_ builtinFunc = &builtinLowerSig{}
 	_ builtinFunc = &builtinReverseSig{}
+	_ builtinFunc = &builtinReverseBinarySig{}
 	_ builtinFunc = &builtinSpaceSig{}
 	_ builtinFunc = &builtinUpperSig{}
 	_ builtinFunc = &builtinStrcmpSig{}
@@ -139,8 +139,21 @@ var (
 	_ builtinFunc = &builtinInsertFuncSig{}
 	_ builtinFunc = &builtinInstrSig{}
 	_ builtinFunc = &builtinInstrBinarySig{}
-	_ builtinFunc = &builtinLoadFileSig{}
 )
+
+func reverseBytes(origin []byte) []byte {
+	for i, length := 0, len(origin); i < length/2; i++ {
+		origin[i], origin[length-i-1] = origin[length-i-1], origin[i]
+	}
+	return origin
+}
+
+func reverseRunes(origin []rune) []rune {
+	for i, length := 0, len(origin); i < length/2; i++ {
+		origin[i], origin[length-i-1] = origin[length-i-1], origin[i]
+	}
+	return origin
+}
 
 // setBinFlagOrBinStr sets resTp to binary string if argTp is a binary string,
 // if not, sets the binary flag of resTp to true if argTp has binary flag.
@@ -589,33 +602,48 @@ func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinReverseSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	*bf.tp = *args[0].GetType()
+	var sig builtinFunc
+	if types.IsBinaryStr(bf.tp) {
+		sig = &builtinReverseBinarySig{baseStringBuiltinFunc{bf}}
+	} else {
+		sig = &builtinReverseSig{baseStringBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinReverseSig struct {
-	baseBuiltinFunc
+type builtinReverseBinarySig struct {
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinReverseSig.
+// evalString evals a REVERSE(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
-func (b *builtinReverseSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinReverseBinarySig) evalString(row []types.Datum) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	x := args[0]
-	switch x.Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := x.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(stringutil.Reverse(s))
-		return d, nil
+	reversed := reverseBytes([]byte(str))
+	return string(reversed), false, nil
+}
+
+type builtinReverseSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a REVERSE(str).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
+func (b *builtinReverseSig) evalString(row []types.Datum) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
+	reversed := reverseRunes([]rune(str))
+	return string(reversed), false, nil
 }
 
 type spaceFunctionClass struct {
@@ -1887,12 +1915,7 @@ func (b *builtinCharSig) convertToBytes(ints []int64) []byte {
 			}
 		}
 	}
-
-	result := buffer.Bytes()
-	for i, length := 0, len(result); i < length/2; i++ {
-		result[i], result[length-1-i] = result[length-1-i], result[i]
-	}
-	return result
+	return reverseBytes(buffer.Bytes())
 }
 
 // evalString evals CHAR(N,... [USING charset_name]).
@@ -2353,8 +2376,8 @@ type builtinBinSig struct {
 // evalString evals BIN(N).
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_bin
 func (b *builtinBinSig) evalString(row []types.Datum) (string, bool, error) {
-	val, IsNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
-	if IsNull || err != nil {
+	val, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
 	return fmt.Sprintf("%b", uint64(val)), false, nil
@@ -2365,42 +2388,50 @@ type eltFunctionClass struct {
 }
 
 func (c *eltFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if argsErr := c.verifyArgs(args); argsErr != nil {
+		return nil, errors.Trace(argsErr)
+	}
+	argTps := make([]evalTp, 0, len(args))
+	argTps = append(argTps, tpInt)
+	for i := 1; i < len(args); i++ {
+		argTps = append(argTps, tpString)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinEltSig{newBaseBuiltinFunc(args, ctx)}
+	for _, arg := range args[1:] {
+		argType := arg.GetType()
+		if types.IsBinaryStr(argType) {
+			types.SetBinChsClnFlag(bf.tp)
+		}
+		if argType.Flen > bf.tp.Flen {
+			bf.tp.Flen = argType.Flen
+		}
+	}
+	sig := &builtinEltSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinEltSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinEltSig.
+// evalString evals a builtinEltSig.
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_elt
-func (b *builtinEltSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinEltSig) evalString(row []types.Datum) (string, bool, error) {
+	idx, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-
-	index, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
+	if idx < 1 || idx >= int64(len(b.args)) {
+		return "", true, nil
 	}
-
-	argsLength := int64(len(args))
-	if index < 1 || index > (argsLength-1) {
-		return d, nil
+	arg, isNull, err := b.args[idx].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-
-	result, err := args[index].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetString(result)
-
-	return d, nil
+	return arg, false, nil
 }
 
 type exportSetFunctionClass struct {
@@ -2797,19 +2828,5 @@ type loadFileFunctionClass struct {
 }
 
 func (c *loadFileFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinLoadFileSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinLoadFileSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinLoadFileSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_load-file
-func (b *builtinLoadFileSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("load_file")
+	return nil, errFunctionNotExists.GenByArgs("load_file")
 }

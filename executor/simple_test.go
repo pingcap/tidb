@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -100,7 +100,7 @@ func (s *testSuite) TestUser(c *C) {
 	tk.MustExec(createUserSQL)
 	// Make sure user test in mysql.User.
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
-	result.Check(testkit.Rows(util.EncodePassword("123")))
+	result.Check(testkit.Rows(auth.EncodePassword("123")))
 	// Create duplicate user with IfNotExists will be success.
 	createUserSQL = `CREATE USER IF NOT EXISTS 'test'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
@@ -116,7 +116,7 @@ func (s *testSuite) TestUser(c *C) {
 	tk.MustExec(createUserSQL)
 	// Make sure user test in mysql.User.
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
-	result.Check(testkit.Rows(util.EncodePassword("")))
+	result.Check(testkit.Rows(auth.EncodePassword("")))
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
 
@@ -126,17 +126,17 @@ func (s *testSuite) TestUser(c *C) {
 	alterUserSQL := `ALTER USER 'test1'@'localhost' IDENTIFIED BY '111';`
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
-	result.Check(testkit.Rows(util.EncodePassword("111")))
+	result.Check(testkit.Rows(auth.EncodePassword("111")))
 	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
 	_, err = tk.Exec(alterUserSQL)
 	c.Check(err, NotNil)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test2" and Host="localhost"`)
-	result.Check(testkit.Rows(util.EncodePassword("222")))
+	result.Check(testkit.Rows(auth.EncodePassword("222")))
 	alterUserSQL = `ALTER USER IF EXISTS'test_not_exist'@'localhost' IDENTIFIED BY '1', 'test3'@'localhost' IDENTIFIED BY '333';`
 	_, err = tk.Exec(alterUserSQL)
 	c.Check(err, NotNil)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test3" and Host="localhost"`)
-	result.Check(testkit.Rows(util.EncodePassword("333")))
+	result.Check(testkit.Rows(auth.EncodePassword("333")))
 	// Test alter user user().
 	alterUserSQL = `ALTER USER USER() IDENTIFIED BY '1';`
 	_, err = tk.Exec(alterUserSQL)
@@ -144,10 +144,10 @@ func (s *testSuite) TestUser(c *C) {
 	tk.Se, err = tidb.CreateSession(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(context.Context)
-	ctx.GetSessionVars().User = "test1@localhost"
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
-	result.Check(testkit.Rows(util.EncodePassword("1")))
+	result.Check(testkit.Rows(auth.EncodePassword("1")))
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(dropUserSQL)
 
@@ -187,7 +187,7 @@ func (s *testSuite) TestSetPwd(c *C) {
 	// set password for
 	tk.MustExec(`SET PASSWORD FOR 'testpwd'@'localhost' = 'password';`)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
-	result.Check(testkit.Rows(util.EncodePassword("password")))
+	result.Check(testkit.Rows(auth.EncodePassword("password")))
 
 	// set password
 	setPwdSQL := `SET PASSWORD = 'pwd'`
@@ -197,15 +197,15 @@ func (s *testSuite) TestSetPwd(c *C) {
 	tk.Se, err = tidb.CreateSession(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(context.Context)
-	ctx.GetSessionVars().User = "testpwd1@localhost"
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost"}
 	// Session user doesn't exist.
 	_, err = tk.Exec(setPwdSQL)
 	c.Check(terror.ErrorEqual(err, executor.ErrPasswordNoMatch), IsTrue)
 	// normal
-	ctx.GetSessionVars().User = "testpwd@localhost"
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd", Hostname: "localhost"}
 	tk.MustExec(setPwdSQL)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
-	result.Check(testkit.Rows(util.EncodePassword("pwd")))
+	result.Check(testkit.Rows(auth.EncodePassword("pwd")))
 }
 
 func (s *testSuite) TestFlushPrivileges(c *C) {
@@ -223,7 +223,7 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	se, err := tidb.CreateSession(s.store)
 	c.Check(err, IsNil)
 	defer se.Close()
-	c.Assert(se.Auth("testflush@localhost", nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil), IsTrue)
 
 	// Before flush.
 	_, err = se.Execute(`SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/perfschema"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -60,7 +61,7 @@ func newSession(c *C, store kv.Storage, dbName string) tidb.Session {
 	id := atomic.AddUint64(&testConnID, 1)
 	se.SetConnectionID(id)
 	c.Assert(err, IsNil)
-	se.Auth(`root@%`, nil, []byte("012345678901234567890"))
+	se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
 	if len(dbName) != 0 {
 		mustExecSQL(c, se, "create database if not exists "+dbName)
 		mustExecSQL(c, se, "use "+dbName)
