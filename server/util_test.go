@@ -65,7 +65,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(string(bs), Equals, "11")
 
-	colInfo.Type = mysql.TypeDouble
+	colInfo.Type = mysql.TypeFloat
 	colInfo.Decimal = 1
 	f32 := types.NewFloat32Datum(1.2)
 	bs, err = dumpTextValue(colInfo, f32)
@@ -78,6 +78,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(string(bs), Equals, "1.20")
 
 	f64 := types.NewFloat64Datum(2.2)
+	colInfo.Type = mysql.TypeDouble
 	colInfo.Decimal = 1
 	bs, err = dumpTextValue(colInfo, f64)
 	c.Assert(err, IsNil)
