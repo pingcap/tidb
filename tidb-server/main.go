@@ -15,6 +15,7 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -24,8 +25,6 @@ import (
 	"runtime"
 	"syscall"
 	"time"
-
-	"crypto/x509"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
