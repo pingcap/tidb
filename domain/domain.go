@@ -392,8 +392,10 @@ func (m *MockFailure) getValue() bool {
 	return m.val
 }
 
-type etcdBackend interface {
+// EtcdBackend is used for judging a storage is a real TiKV.
+type EtcdBackend interface {
 	EtcdAddrs() []string
+	StartGCWorker() error
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
@@ -408,7 +410,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		statsLease:      statsLease,
 	}
 
-	if ebd, ok := store.(etcdBackend); ok {
+	if ebd, ok := store.(EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			var cli *clientv3.Client
 			cli, err = clientv3.New(clientv3.Config{
