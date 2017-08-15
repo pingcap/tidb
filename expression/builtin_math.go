@@ -388,12 +388,12 @@ func (c *ceilFunctionClass) getFunction(args []Expression, ctx context.Context) 
 		return nil, errors.Trace(err)
 	}
 
-	retTp, argTp := fixFloorAndCeilType(args[0])
+	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
 	bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fixFloorAndCeilReturnFlag(&bf, args[0])
+	setFlag4FloorAndCeil(&bf, args[0])
 	argFieldTp := args[0].GetType()
 	bf.tp.Flen = argFieldTp.Flen
 	bf.tp.Decimal = 0
@@ -494,8 +494,8 @@ type floorFunctionClass struct {
 	baseFunctionClass
 }
 
-// fixFloorAndCeilType fixes the evalTp of FLOOR and CEIL.
-func fixFloorAndCeilType(arg Expression) (retTp, argTp evalTp) {
+// getEvalTp4FloorAndCeil fixes the evalTp of FLOOR and CEIL.
+func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp evalTp) {
 	fieldTp := arg.GetType()
 	switch arg.GetTypeClass() {
 	case types.ClassInt:
@@ -515,8 +515,8 @@ func fixFloorAndCeilType(arg Expression) (retTp, argTp evalTp) {
 	return
 }
 
-// fixFloorAndCeilReturnFlag add return flag of FLOOR and CEIL
-func fixFloorAndCeilReturnFlag(bf *baseBuiltinFunc, arg Expression) {
+// setFlag4FloorAndCeil add return flag of FLOOR and CEIL
+func setFlag4FloorAndCeil(bf *baseBuiltinFunc, arg Expression) {
 	fieldTp := arg.GetType()
 	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
@@ -535,12 +535,12 @@ func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context)
 		return nil, errors.Trace(err)
 	}
 
-	retTp, argTp := fixFloorAndCeilType(args[0])
+	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
 	bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fixFloorAndCeilReturnFlag(&bf, args[0])
+	setFlag4FloorAndCeil(&bf, args[0])
 	bf.tp.Flen = args[0].GetType().Flen
 	bf.tp.Decimal = 0
 	switch args[0].GetTypeClass() {
