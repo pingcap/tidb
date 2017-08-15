@@ -916,6 +916,39 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		//mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
+	/* mysql.TypeJSON -> */
+	{
+		//mysql.TypeDecimal      mysql.TypeTiny
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeShort        mysql.TypeLong
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeNewFloat     mysql.TypeDouble
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeNull         mysql.TypeTimestamp
+		mysql.TypeJSON, mysql.TypeVarchar,
+		//mysql.TypeLongLONG     mysql.TypeInt24
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeDate         MYSQL_TYPE_TIME
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeDatetime     MYSQL_TYPE_YEAR
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeNewDate      mysql.TypeVarchar
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
+		mysql.TypeJSON,
+		//mysql.TypeNewDecimal   MYSQL_TYPE_ENUM
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeSet          mysql.TypeTinyBlob
+		mysql.TypeVarchar, mysql.TypeLongBlob,
+		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		mysql.TypeLongBlob, mysql.TypeLongBlob,
+		//mysql.TypeBlob         mysql.TypeVarString
+		mysql.TypeLongBlob, mysql.TypeVarchar,
+		//mysql.TypeString       MYSQL_TYPE_GEOMETRY
+		mysql.TypeString, mysql.TypeVarchar,
+	},
 	/* mysql.TypeNewDecimal -> */
 	{
 		//mysql.TypeDecimal      mysql.TypeTiny
