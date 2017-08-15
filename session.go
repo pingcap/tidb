@@ -952,6 +952,17 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 	err = dom.UpdateTableStatsLoop(se1)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if raw, ok := store.(domain.EtcdBackend); ok {
+		err = raw.StartGCWorker()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
 	return dom, errors.Trace(err)
 }
 
