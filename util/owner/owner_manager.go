@@ -30,8 +30,8 @@ import (
 	"google.golang.org/grpc"
 )
 
-// OwnerManager is used to campaign the owner and manage the owner information.
-type OwnerManager interface {
+// Manager is used to campaign the owner and manage the owner information.
+type Manager interface {
 	// ID returns the ID of the manager.
 	ID() string
 	// IsOwner returns whether the ownerManager is the owner.
@@ -63,8 +63,8 @@ type ownerManager struct {
 	cancel  goctx.CancelFunc
 }
 
-// NewOwnerManager creates a new OwnerManager.
-func NewOwnerManager(etcdCli *clientv3.Client, prompt, id, key string, cancel goctx.CancelFunc) OwnerManager {
+// NewOwnerManager creates a new Manager.
+func NewOwnerManager(etcdCli *clientv3.Client, prompt, id, key string, cancel goctx.CancelFunc) Manager {
 	return &ownerManager{
 		etcdCli: etcdCli,
 		id:      id,
@@ -74,17 +74,17 @@ func NewOwnerManager(etcdCli *clientv3.Client, prompt, id, key string, cancel go
 	}
 }
 
-// ID implements OwnerManager.ID interface.
+// ID implements Manager.ID interface.
 func (m *ownerManager) ID() string {
 	return m.id
 }
 
-// IsOwner implements OwnerManager.IsOwner interface.
+// IsOwner implements Manager.IsOwner interface.
 func (m *ownerManager) IsOwner() bool {
 	return atomic.LoadInt32(&m.owner) == 1
 }
 
-// SetOwner implements OwnerManager.SetOwner interface.
+// SetOwner implements Manager.SetOwner interface.
 func (m *ownerManager) SetOwner(isOwner bool) {
 	if isOwner {
 		atomic.StoreInt32(&m.owner, 1)
@@ -93,7 +93,7 @@ func (m *ownerManager) SetOwner(isOwner bool) {
 	}
 }
 
-// Cancel implements OwnerManager.Cancel interface.
+// Cancel implements Manager.Cancel interface.
 func (m *ownerManager) Cancel() {
 	m.cancel()
 }
@@ -121,7 +121,7 @@ func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, r
 	return etcdSession, errors.Trace(err)
 }
 
-// CampaignOwner implements OwnerManager.CampaignOwner interface.
+// CampaignOwner implements Manager.CampaignOwner interface.
 func (m *ownerManager) CampaignOwner(ctx goctx.Context) error {
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
 	session, err := NewSession(ctx, logPrefix, m.etcdCli, NewSessionDefaultRetryCnt, managerSessionTTL)
@@ -189,7 +189,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 	}
 }
 
-// GetOwnerID implements OwnerManager.GetOwnerID interface.
+// GetOwnerID implements Manager.GetOwnerID interface.
 func (m *ownerManager) GetOwnerID(ctx goctx.Context) (string, error) {
 	resp, err := m.etcdCli.Get(ctx, m.key, clientv3.WithFirstCreate()...)
 	if err != nil {

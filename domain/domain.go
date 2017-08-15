@@ -586,9 +586,9 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 func (do *Domain) autoAnalyzeWorker(lease time.Duration) {
 	id := do.ddl.OwnerManager().ID()
 	cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
-	var statsOwner owner.OwnerManager
+	var statsOwner owner.Manager
 	if do.etcdClient == nil {
-		statsOwner = owner.NewMockOwnerManager(id, cancelFunc)
+		statsOwner = owner.NewMockManager(id, cancelFunc)
 	} else {
 		statsOwner = owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
 	}
