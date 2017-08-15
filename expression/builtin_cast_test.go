@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
@@ -212,6 +213,15 @@ var (
 		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
 		Type: mysql.TypeDate,
 		Fsp:  types.DefaultFsp}
+
+	// jsonInt indicates json(3)
+	jsonInt = types.NewDatum(json.CreateJSON(int64(3)))
+
+	// jsonTime indicates "CURRENT_DAY 12:59:59"
+	jsonTime = types.NewDatum(json.CreateJSON(tm.String()))
+
+	// jsonDuration indicates
+	jsonDuration = types.NewDatum(json.CreateJSON(duration.String()))
 )
 
 func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
@@ -404,6 +414,12 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			125959,
 			[]types.Datum{durationDatum},
 		},
+		// cast JSON as int.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
+			3,
+			[]types.Datum{jsonInt},
+		},
 	}
 	for i, t := range castToIntCases {
 		args := []Expression{t.before}
@@ -419,6 +435,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			sig = &builtinCastTimeAsIntSig{intFunc}
 		case 4:
 			sig = &builtinCastDurationAsIntSig{intFunc}
+		case 5:
+			sig = &builtinCastJSONAsIntSig{intFunc}
 		}
 		res, isNull, err := sig.evalInt(t.row)
 		c.Assert(isNull, Equals, false)
@@ -462,6 +480,12 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			125959,
 			[]types.Datum{durationDatum},
 		},
+		// cast JSON as real.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
+			3.0,
+			[]types.Datum{jsonInt},
+		},
 	}
 	for i, t := range castToRealCases {
 		args := []Expression{t.before}
@@ -477,6 +501,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			sig = &builtinCastTimeAsRealSig{realFunc}
 		case 4:
 			sig = &builtinCastDurationAsRealSig{realFunc}
+		case 5:
+			sig = &builtinCastJSONAsRealSig{realFunc}
 		}
 		res, isNull, err := sig.evalReal(t.row)
 		c.Assert(isNull, Equals, false)
@@ -520,6 +546,12 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			"12:59:59",
 			[]types.Datum{durationDatum},
 		},
+		// cast JSON as string.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
+			"3",
+			[]types.Datum{jsonInt},
+		},
 		// cast string as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
@@ -545,6 +577,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 4:
 			sig = &builtinCastDurationAsStringSig{stringFunc}
 		case 5:
+			sig = &builtinCastJSONAsStringSig{stringFunc}
+		case 6:
 			sig = &builtinCastStringAsStringSig{stringFunc}
 		}
 		res, isNull, err := sig.evalString(t.row)
@@ -665,6 +699,12 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			tm,
 			[]types.Datum{durationDatum},
 		},
+		// cast JSON as Time.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
+			tm,
+			[]types.Datum{jsonTime},
+		},
 		// cast Time as Time.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
@@ -690,6 +730,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 4:
 			sig = &builtinCastDurationAsTimeSig{timeFunc}
 		case 5:
+			sig = &builtinCastJSONAsTimeSig{timeFunc}
+		case 6:
 			sig = &builtinCastTimeAsTimeSig{timeFunc}
 		}
 		res, isNull, err := sig.evalTime(t.row)
@@ -822,6 +864,12 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			duration,
 			[]types.Datum{timeDatum},
 		},
+		// cast JSON as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
+			duration,
+			[]types.Datum{jsonDuration},
+		},
 		// cast Duration as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
@@ -847,6 +895,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 4:
 			sig = &builtinCastTimeAsDurationSig{durationFunc}
 		case 5:
+			sig = &builtinCastJSONAsDurationSig{durationFunc}
+		case 6:
 			sig = &builtinCastDurationAsDurationSig{durationFunc}
 		}
 		res, isNull, err := sig.evalDuration(t.row)

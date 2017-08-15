@@ -55,21 +55,14 @@ var (
 	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinReleaseLockSig{}
 	_ builtinFunc = &builtinAnyValueSig{}
-	_ builtinFunc = &builtinDefaultSig{}
 	_ builtinFunc = &builtinInetAtonSig{}
 	_ builtinFunc = &builtinInetNtoaSig{}
 	_ builtinFunc = &builtinInet6AtonSig{}
 	_ builtinFunc = &builtinInet6NtoaSig{}
-	_ builtinFunc = &builtinIsFreeLockSig{}
 	_ builtinFunc = &builtinIsIPv4Sig{}
 	_ builtinFunc = &builtinIsIPv4PrefixedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
-	_ builtinFunc = &builtinIsUsedLockSig{}
-	_ builtinFunc = &builtinMasterPosWaitSig{}
-	_ builtinFunc = &builtinNameConstSig{}
-	_ builtinFunc = &builtinReleaseAllLocksSig{}
 	_ builtinFunc = &builtinUUIDSig{}
-	_ builtinFunc = &builtinUUIDShortSig{}
 )
 
 type sleepFunctionClass struct {
@@ -130,8 +123,11 @@ type lockFunctionClass struct {
 }
 
 func (c *lockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinLockSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinLockSig struct {
@@ -152,8 +148,11 @@ type releaseLockFunctionClass struct {
 }
 
 func (c *releaseLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinReleaseLockSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinReleaseLockSig struct {
@@ -174,8 +173,11 @@ type anyValueFunctionClass struct {
 }
 
 func (c *anyValueFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinAnyValueSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinAnyValueSig struct {
@@ -198,18 +200,7 @@ type defaultFunctionClass struct {
 }
 
 func (c *defaultFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinDefaultSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinDefaultSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinDefaultSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_default
-func (b *builtinDefaultSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("DEFAULT")
+	return nil, errFunctionNotExists.GenByArgs("DEFAULT")
 }
 
 type inetAtonFunctionClass struct {
@@ -217,8 +208,11 @@ type inetAtonFunctionClass struct {
 }
 
 func (c *inetAtonFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinInetAtonSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinInetAtonSig struct {
@@ -288,8 +282,11 @@ type inetNtoaFunctionClass struct {
 }
 
 func (c *inetNtoaFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinInetNtoaSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinInetNtoaSig struct {
@@ -334,8 +331,11 @@ type inet6AtonFunctionClass struct {
 }
 
 func (c *inet6AtonFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinInet6AtonSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinInet6AtonSig struct {
@@ -400,8 +400,11 @@ type inet6NtoaFunctionClass struct {
 }
 
 func (c *inet6NtoaFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinInet6NtoaSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinInet6NtoaSig struct {
@@ -444,18 +447,7 @@ type isFreeLockFunctionClass struct {
 }
 
 func (c *isFreeLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsFreeLockSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinIsFreeLockSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinIsFreeLockSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-free-lock
-func (b *builtinIsFreeLockSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_FREE_LOCK")
+	return nil, errFunctionNotExists.GenByArgs("IS_FREE_LOCK")
 }
 
 type isIPv4FunctionClass struct {
@@ -463,8 +455,11 @@ type isIPv4FunctionClass struct {
 }
 
 func (c *isIPv4FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinIsIPv4Sig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinIsIPv4Sig struct {
@@ -528,8 +523,11 @@ type isIPv4CompatFunctionClass struct {
 }
 
 func (c *isIPv4CompatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinIsIPv4PrefixedSig{newBaseBuiltinFunc(args, ctx), false}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinIsIPv4PrefixedSig struct {
@@ -587,8 +585,11 @@ type isIPv4MappedFunctionClass struct {
 }
 
 func (c *isIPv4MappedFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinIsIPv4PrefixedSig{newBaseBuiltinFunc(args, ctx), true}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type isIPv6FunctionClass struct {
@@ -596,8 +597,11 @@ type isIPv6FunctionClass struct {
 }
 
 func (c *isIPv6FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinIsIPv6Sig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinIsIPv6Sig struct {
@@ -635,18 +639,7 @@ type isUsedLockFunctionClass struct {
 }
 
 func (c *isUsedLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsUsedLockSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinIsUsedLockSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinIsUsedLockSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-used-lock
-func (b *builtinIsUsedLockSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_USED_LOCK")
+	return nil, errFunctionNotExists.GenByArgs("IS_USED_LOCK")
 }
 
 type masterPosWaitFunctionClass struct {
@@ -654,18 +647,7 @@ type masterPosWaitFunctionClass struct {
 }
 
 func (c *masterPosWaitFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinMasterPosWaitSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinMasterPosWaitSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinMasterPosWaitSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_master-pos-wait
-func (b *builtinMasterPosWaitSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("MASTER_POS_WAIT")
+	return nil, errFunctionNotExists.GenByArgs("MASTER_POS_WAIT")
 }
 
 type nameConstFunctionClass struct {
@@ -673,18 +655,7 @@ type nameConstFunctionClass struct {
 }
 
 func (c *nameConstFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinNameConstSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinNameConstSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinNameConstSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_name-const
-func (b *builtinNameConstSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("NAME_CONST")
+	return nil, errFunctionNotExists.GenByArgs("NAME_CONST")
 }
 
 type releaseAllLocksFunctionClass struct {
@@ -692,18 +663,7 @@ type releaseAllLocksFunctionClass struct {
 }
 
 func (c *releaseAllLocksFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinReleaseAllLocksSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinReleaseAllLocksSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinReleaseAllLocksSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-all-locks
-func (b *builtinReleaseAllLocksSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("RELEASEA_ALL_LOCKS")
+	return nil, errFunctionNotExists.GenByArgs("RELEASEA_ALL_LOCKS")
 }
 
 type uuidFunctionClass struct {
@@ -711,6 +671,9 @@ type uuidFunctionClass struct {
 }
 
 func (c *uuidFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -718,7 +681,7 @@ func (c *uuidFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	bf.tp.Flen = 36
 	bf.deterministic = false
 	sig := &builtinUUIDSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinUUIDSig struct {
@@ -736,16 +699,5 @@ type uuidShortFunctionClass struct {
 }
 
 func (c *uuidShortFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinUUIDShortSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinUUIDShortSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinUUIDShortSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid-short
-func (b *builtinUUIDShortSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("UUID_SHORT")
+	return nil, errFunctionNotExists.GenByArgs("UUID_SHORT")
 }

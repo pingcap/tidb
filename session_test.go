@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -2065,7 +2066,7 @@ func (s *testSessionSuite) TestSessionAuth(c *C) {
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
 	se := newSession(c, s.store, dbName)
 	defer se.Close()
-	c.Assert(se.Auth("Any not exist username with zero password! @anyhost", []byte(""), []byte("")), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")), IsFalse)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -2081,11 +2082,11 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 
 	privileges.Enable = true
 	privileges.SkipWithGrant = false
-	c.Assert(se.Auth("user_not_exist", []byte("yyy"), []byte("zzz")), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")), IsFalse)
 
 	privileges.SkipWithGrant = true
-	c.Assert(se.Auth(`xxx@%`, []byte("yyy"), []byte("zzz")), IsTrue)
-	c.Assert(se.Auth(`root@%`, []byte(""), []byte("")), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "%"}, []byte("yyy"), []byte("zzz")), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "create table t (id int)")
 
 	privileges.Enable = save1

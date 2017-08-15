@@ -1932,7 +1932,7 @@ func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrp
 	c.mu.RLock()
 	turnOn := c.mu.turnOn
 	c.mu.RUnlock()
-	if !turnOn {
+	if turnOn {
 		switch req.Type {
 		case tikvrpc.CmdCop:
 			if c.priority != req.Priority {
@@ -1990,4 +1990,11 @@ func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
 	// cli.priority = pb.CommandPri_High
 	// tk.MustExec("delete from t where id = 2")
 	// tk.MustExec("update t set id = 2 where id = 1")
+
+	// Test priority specified by SQL statement.
+	cli.priority = pb.CommandPri_High
+	tk.MustQuery("select HIGH_PRIORITY * from t")
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
 }

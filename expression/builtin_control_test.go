@@ -15,6 +15,7 @@ package expression
 
 import (
 	"errors"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -53,6 +54,12 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 
 func (s *testEvaluatorSuite) TestIf(c *C) {
 	defer testleak.AfterTest(c)()
+	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+	origin := stmtCtx.IgnoreTruncate
+	stmtCtx.IgnoreTruncate = true
+	defer func() {
+		stmtCtx.IgnoreTruncate = origin
+	}()
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}
@@ -62,12 +69,19 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 		{1, 1, 2, 1},
 		{nil, 1, 2, 2},
 		{0, 1, 2, 2},
+		{"abc", 1, 2, 2},
+		{"1abc", 1, 2, 1},
+		{tm, 1, 2, 1},
+		{duration, 1, 2, 1},
+		{types.Duration{Duration: time.Duration(0)}, 1, 2, 2},
+		{types.NewDecFromStringForTest("1.2"), 1, 2, 1},
 	}
 
 	fc := funcs[ast.If]
 	for _, t := range tbl {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
@@ -75,6 +89,8 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)), s.ctx)
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+	_, err = fc.getFunction(datumsToConstants(types.MakeDatums(1, 2)), s.ctx)
 	c.Assert(err, NotNil)
 }
 
