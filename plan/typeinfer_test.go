@@ -695,7 +695,9 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"to_seconds(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
 		{"to_days(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
-		{"timestampdiff(MONTH, c_datetime, c_datetime)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag,
-			20, 0},
+		{"timestampdiff(MONTH, c_datetime, c_datetime)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"timestampdiff(QuarteR, c_char, c_varchar)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"timestampdiff(second, c_int, c_binary_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"timestampdiff(YEAR, c_blob, c_bigint)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
 	}
 }
