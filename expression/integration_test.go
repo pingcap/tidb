@@ -1496,3 +1496,41 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	result := tk.MustQuery("select avg(a) from t")
 	result.Check(testkit.Rows("1.1234560000"))
 }
+
+func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("create table t (d date);")
+	tk.MustExec("insert into t values ('1997-01-02')")
+	tk.MustExec("insert into t values ('1998-01-02')")
+	r := tk.MustQuery("select * from t where d < date '1998-01-01';")
+	r.Check(testkit.Rows("1997-01-02"))
+
+	r = tk.MustQuery("select date'20171212'")
+	r.Check(testkit.Rows("2017-12-12"))
+
+	r = tk.MustQuery("select date'2017/12/12'")
+	r.Check(testkit.Rows("2017-12-12"))
+
+	r = tk.MustQuery("select date'2017/12-12'")
+	r.Check(testkit.Rows("2017-12-12"))
+
+	rs, _ := tk.Exec("select date'2017-99-99';")
+	_, err := tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+
+	rs, _ = tk.Exec("select date'2017-2-31';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+
+	rs, _ = tk.Exec("select date'201712-31';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+
+}

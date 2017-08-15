@@ -1101,7 +1101,8 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 	case KindMysqlSet:
 		dec.FromFloat64(d.GetMysqlSet().ToNumber())
 	case KindMysqlJSON:
-		f, err := d.GetMysqlJSON().CastToReal()
+		var f float64
+		f, err = d.GetMysqlJSON().CastToReal()
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
@@ -1361,7 +1362,8 @@ func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, 
 	case KindMysqlSet:
 		dec.FromUint(d.GetMysqlSet().Value)
 	case KindMysqlJSON:
-		f, err := d.GetMysqlJSON().CastToReal()
+		var f float64
+		f, err = d.GetMysqlJSON().CastToReal()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
