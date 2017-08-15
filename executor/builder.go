@@ -370,7 +370,15 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	if b.err != nil {
 		return nil
 	}
-	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src), needColHandle: v.NeedColHandle}
+	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src)}
+	for _, cols := range v.Children()[0].Schema().TblID2Handle {
+		for _, col := range cols {
+			us.belowHandleIndex = col.Index
+			if us.schema.ColumnIndex(col) != -1 {
+				us.handleColIsUsed = true
+			}
+		}
+	}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc

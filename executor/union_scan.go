@@ -17,6 +17,7 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -91,11 +92,14 @@ type UnionScanExec struct {
 
 	dirty *dirtyTable
 	// usedIndex is the column offsets of the index which Src executor has used.
-	usedIndex     []int
-	desc          bool
-	conditions    []expression.Expression
-	columns       []*model.ColumnInfo
-	needColHandle bool
+	usedIndex  []int
+	desc       bool
+	conditions []expression.Expression
+	columns    []*model.ColumnInfo
+
+	// belowHandleIndex is the handle's position of the below scan plan.
+	belowHandleIndex int
+	handleColIsUsed  bool
 
 	addedRows   []Row
 	cursor      int
@@ -134,9 +138,10 @@ func (us *UnionScanExec) Next() (Row, error) {
 		} else {
 			us.cursor++
 		}
-		if !us.needColHandle {
-			row = row[:len(row)-1]
+		if !us.handleColIsUsed {
+			row = append(row[:us.belowHandleIndex], row[us.belowHandleIndex+1:]...)
 		}
+		log.Warnf("row len: %v", len(row))
 		return row, nil
 	}
 }
@@ -172,7 +177,7 @@ func (us *UnionScanExec) getSnapshotRow() (Row, error) {
 			if us.snapshotRow == nil {
 				break
 			}
-			snapshotHandle := us.snapshotRow[len(us.snapshotRow)-1].GetInt64()
+			snapshotHandle := us.snapshotRow[us.belowHandleIndex].GetInt64()
 			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
 				continue
 			}
@@ -231,9 +236,8 @@ func (us *UnionScanExec) compare(a, b Row) (int, error) {
 			return cmp, nil
 		}
 	}
-	dataLen := len(a)
-	aHandle := a[dataLen-1].GetInt64()
-	bHandle := b[dataLen-1].GetInt64()
+	aHandle := a[us.belowHandleIndex].GetInt64()
+	bHandle := b[us.belowHandleIndex].GetInt64()
 	var cmp int
 	if aHandle == bHandle {
 		cmp = 0
@@ -247,17 +251,14 @@ func (us *UnionScanExec) compare(a, b Row) (int, error) {
 
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CIStr) error {
 	us.addedRows = make([]Row, 0, len(us.dirty.addedRows))
-	newLen := us.schema.Len()
-	if !us.needColHandle {
-		newLen++
-	}
 	for h, data := range us.dirty.addedRows {
-		newData := make([]types.Datum, 0, newLen)
+		newData := make([]types.Datum, 0, us.schema.Len())
 		for _, col := range us.columns {
 			if col.ID == model.ExtraHandleID {
-				continue
+				newData = append(newData, types.NewIntDatum(h))
+			} else {
+				newData = append(newData, data[col.Offset])
 			}
-			newData = append(newData, data[col.Offset])
 		}
 		matched, err := expression.EvalBool(us.conditions, newData, us.ctx)
 		if err != nil {
@@ -266,7 +267,6 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 		if !matched {
 			continue
 		}
-		newData = append(newData, types.NewIntDatum(h))
 
 		row := newData
 		us.addedRows = append(us.addedRows, row)
