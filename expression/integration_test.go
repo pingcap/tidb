@@ -1537,7 +1537,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 
 	tk.MustQuery("select coalesce(NULL), coalesce(NULL, NULL), coalesce(NULL, NULL, NULL);").Check(testkit.Rows("<nil> <nil> <nil>"))
 
-	// tests for coalesce builtinq
+	// for coalesce
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int, b double, c datetime, d time, e char(20), f bit(10))")
 	tk.MustExec(`insert into t2 values(1, 1.1, "2017-08-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)

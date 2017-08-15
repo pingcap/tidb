@@ -123,8 +123,6 @@ func (s *testPlanSuite) createTestCase4Columns() []typeInferTestCase {
 		{"c_int", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, types.UnspecifiedLength},
 		{"c_char", mysql.TypeString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
 		{"c_enum", mysql.TypeEnum, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
-		// this doesn't pass
-		//{"c_datetime", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
 	}
 }
 

@@ -136,9 +136,6 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Coalesce, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 
-		//tp := f.GetType()
-		//TODO check rettype
-
 		d, err := f.Eval(nil)
 
 		if t.getErr {

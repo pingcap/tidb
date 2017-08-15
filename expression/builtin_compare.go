@@ -88,7 +88,7 @@ var (
 	_ builtinFunc = &builtinNullEQDurationSig{}
 )
 
-// builtinCoalesce returns the first non-NULL value in the list,
+// Coalesce returns the first non-NULL value in the list,
 // or NULL if there are no non-NULL values.
 type coalesceFunctionClass struct {
 	baseFunctionClass
@@ -183,18 +183,15 @@ type builtinCoalesceIntSig struct {
 	baseIntBuiltinFunc
 }
 
-func (b *builtinCoalesceIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinCoalesceIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for _, a := range b.getArgs() {
-		arg, isNull, err := a.EvalInt(row, sc)
-		if err != nil {
-			return arg, isNull, errors.Trace(err)
-		}
-		if !isNull {
-			return arg, false, nil
+		res, isNull, err = a.EvalInt(row, sc)
+		if err != nil || !isNull {
+			break
 		}
 	}
-	return 0, true, nil
+	return res, isNull, errors.Trace(err)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
@@ -202,18 +199,15 @@ type builtinCoalesceRealSig struct {
 	baseRealBuiltinFunc
 }
 
-func (b *builtinCoalesceRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+func (b *builtinCoalesceRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for _, a := range b.getArgs() {
-		arg, isNull, err := a.EvalReal(row, sc)
-		if err != nil {
-			return arg, isNull, errors.Trace(err)
-		}
-		if !isNull {
-			return arg, false, nil
+		res, isNull, err = a.EvalReal(row, sc)
+		if err != nil || !isNull {
+			break
 		}
 	}
-	return 0, true, nil
+	return res, isNull, errors.Trace(err)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
@@ -221,18 +215,15 @@ type builtinCoalesceDecimalSig struct {
 	baseDecimalBuiltinFunc
 }
 
-func (b *builtinCoalesceDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *builtinCoalesceDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for _, a := range b.getArgs() {
-		arg, isNull, err := a.EvalDecimal(row, sc)
-		if err != nil {
-			return arg, isNull, errors.Trace(err)
-		}
-		if !isNull {
-			return arg, false, nil
+		res, isNull, err = a.EvalDecimal(row, sc)
+		if err != nil || !isNull {
+			break
 		}
 	}
-	return nil, true, nil
+	return res, isNull, errors.Trace(err)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
@@ -240,18 +231,15 @@ type builtinCoalesceStringSig struct {
 	baseStringBuiltinFunc
 }
 
-func (b *builtinCoalesceStringSig) evalString(row []types.Datum) (string, bool, error) {
+func (b *builtinCoalesceStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for _, a := range b.getArgs() {
-		arg, isNull, err := a.EvalString(row, sc)
-		if err != nil {
-			return arg, isNull, errors.Trace(err)
-		}
-		if !isNull {
-			return arg, false, nil
+		res, isNull, err = a.EvalString(row, sc)
+		if err != nil || !isNull {
+			break
 		}
 	}
-	return "", true, nil
+	return res, isNull, errors.Trace(err)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
@@ -259,18 +247,15 @@ type builtinCoalesceTimeSig struct {
 	baseTimeBuiltinFunc
 }
 
-func (b *builtinCoalesceTimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *builtinCoalesceTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for _, a := range b.getArgs() {
-		arg, isNull, err := a.EvalTime(row, sc)
-		if err != nil {
-			return arg, isNull, errors.Trace(err)
-		}
-		if !isNull {
-			return arg, false, nil
+		res, isNull, err = a.EvalTime(row, sc)
+		if err != nil || !isNull {
+			break
 		}
 	}
-	return types.Time{}, true, nil
+	return res, isNull, errors.Trace(err)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
@@ -278,18 +263,15 @@ type builtinCoalesceDurationSig struct {
 	baseDurationBuiltinFunc
 }
 
-func (b *builtinCoalesceDurationSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+func (b *builtinCoalesceDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for _, a := range b.getArgs() {
-		arg, isNull, err := a.EvalDuration(row, sc)
-		if err != nil {
-			return arg, isNull, errors.Trace(err)
-		}
-		if !isNull {
-			return arg, false, nil
+		res, isNull, err = a.EvalDuration(row, sc)
+		if err != nil || !isNull {
+			break
 		}
 	}
-	return types.Duration{}, true, nil
+	return res, isNull, errors.Trace(err)
 }
 
 type greatestFunctionClass struct {
