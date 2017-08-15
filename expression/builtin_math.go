@@ -1360,8 +1360,8 @@ func (c *piFunctionClass) getFunction(args []Expression, ctx context.Context) (b
 		return nil, errors.Trace(err)
 	}
 
-	bf.tp.Decimal = 15
-	bf.tp.Flen = 17
+	bf.tp.Decimal = 6
+	bf.tp.Flen = 8
 	sig = &builtinPISig{baseRealBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }

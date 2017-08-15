@@ -783,7 +783,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 					continue
 				}
 				var valData []byte
-				valData, err = dumpTextValue(columns[i].Type, value)
+				valData, err = dumpTextValue(columns[i], value)
 				if err != nil {
 					return errors.Trace(err)
 				}
