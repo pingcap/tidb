@@ -17,7 +17,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1825,39 +1824,6 @@ func (s *testSuite) TestIssue4024(c *C) {
 	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
 }
 
-func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	// for uuid
-	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
-	for _, it := range r.Rows() {
-		for _, item := range it {
-			uuid, ok := item.(string)
-			c.Assert(ok, Equals, true)
-			list := strings.Split(uuid, "-")
-			c.Assert(len(list), Equals, 5)
-			c.Assert(len(list[0]), Equals, 8)
-			c.Assert(len(list[1]), Equals, 4)
-			c.Assert(len(list[2]), Equals, 4)
-			c.Assert(len(list[3]), Equals, 4)
-			c.Assert(len(list[4]), Equals, 12)
-		}
-	}
-	tk.MustQuery("select sleep(1);").Check(testkit.Rows("0"))
-	tk.MustQuery("select sleep(0);").Check(testkit.Rows("0"))
-	tk.MustQuery("select sleep('a');").Check(testkit.Rows("0"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1265 Data Truncated"))
-	rs, err := tk.Exec("select sleep(-1);")
-	c.Assert(err, IsNil)
-	c.Assert(rs, NotNil)
-	_, err = tidb.GetRows(rs)
-	c.Assert(err, NotNil)
-}
 func (s *testSuite) TestSchemaCheckerSQL(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := tikv.NewMockTikvStore()
