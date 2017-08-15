@@ -104,7 +104,7 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 		fieldTps = append(fieldTps, arg.GetType())
 	}
 
-	// Get the aggregate field type as retType
+	// Use the aggregated field type as retType.
 	retTp := types.AggFieldType(fieldTps)
 	retCTp := types.AggTypeClass(fieldTps, &retTp.Flag)
 	retEvalTp := fieldTp2EvalTp(retTp)
@@ -120,13 +120,17 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 	}
 
 	bf.tp.Flag |= retTp.Flag
-	// Set retType to BINARY(0) if all arguments are of type NULL
 	retTp.Flen, retTp.Decimal = 0, types.UnspecifiedLength
+
+	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if retTp.Tp == mysql.TypeNull {
 		types.SetBinChsClnFlag(bf.tp)
 	} else {
 		maxIntLen := 0
 		maxFlen := 0
+
+		// Find the max length of field in `maxFlen`,
+		// and max integer-part length in `maxIntLen`.
 		for _, argTp := range fieldTps {
 			if argTp.Decimal > retTp.Decimal {
 				retTp.Decimal = argTp.Decimal
@@ -135,6 +139,8 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 			if argTp.Decimal > 0 {
 				argIntLen -= (argTp.Decimal + 1)
 			}
+
+			// Reduce the sign bit if it is a signed integer/decimal
 			if !mysql.HasUnsignedFlag(argTp.Flag) {
 				argIntLen--
 			}
@@ -146,6 +152,8 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 			}
 		}
 
+		// For integer, field length = maxIntLen + (1/0 for sign bit)
+		// For decimal, field lenght = maxIntLen + maxDecimal + (1/0 for sign bit)
 		if retCTp == types.ClassInt || retCTp == types.ClassDecimal {
 			retTp.Flen = maxIntLen + retTp.Decimal
 			if retTp.Decimal > 0 {
@@ -156,6 +164,7 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 			}
 			bf.tp = retTp
 		} else {
+			// Other type just set the field length to maxFlen
 			bf.tp.Flen = maxFlen
 		}
 	}
