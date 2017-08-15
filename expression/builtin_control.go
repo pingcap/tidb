@@ -77,11 +77,6 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 	}
 	fieldTp := types.AggFieldType(fieldTps)
 	classType := types.AggTypeClass(fieldTps, &fieldTp.Flag)
-	// Set retType to BINARY(0) if all arguments are of type NULL
-	if fieldTp.Tp == mysql.TypeNull {
-		fieldTp.Flen, fieldTp.Decimal = 0, 0
-		types.SetBinChsClnFlag(fieldTp)
-	}
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
 	var tp evalTp
 	switch classType {
@@ -103,7 +98,11 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 			tp = tpDuration
 		}
 	}
-
+	// Set retType to BINARY(0) if all arguments are of type NULL
+	if fieldTp.Tp == mysql.TypeNull {
+		fieldTp.Flen, fieldTp.Decimal = 0, -1
+		types.SetBinChsClnFlag(fieldTp)
+	}
 	argTps := make([]evalTp, 0, l)
 	for i := 0; i < l-1; i += 2 {
 		argTps = append(argTps, tpInt, tp)
