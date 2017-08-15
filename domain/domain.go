@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/owner"
 	goctx "golang.org/x/net/context"
 )
 
@@ -527,8 +528,9 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
 }
 
-// UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It
-// should be called only once in BootstrapSession.
+// UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
+// It will also start a goroutine to analyze tables automatically.
+// It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
@@ -541,64 +543,68 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	if lease <= 0 {
 		return nil
 	}
-	deltaUpdateDuration := lease * 5
-	go func(do *Domain) {
-		loadTicker := time.NewTicker(lease)
-		defer loadTicker.Stop()
-		deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
-		defer deltaUpdateTicker.Stop()
-
-		for {
-			select {
-			case <-loadTicker.C:
-				err = do.statsHandle.Update(do.InfoSchema())
-				if err != nil {
-					log.Error(errors.ErrorStack(err))
-				}
-			case <-do.exit:
-				return
-			// This channel is sent only by ddl owner or the drop stats executor.
-			case t := <-do.statsHandle.DDLEventCh():
-				err = do.statsHandle.HandleDDLEvent(t)
-				if err != nil {
-					log.Error(errors.ErrorStack(err))
-				}
-			case t := <-do.statsHandle.AnalyzeResultCh():
-				for _, hg := range t.Hist {
-					err = hg.SaveToStorage(t.Ctx, t.TableID, t.Count, t.IsIndex)
-					if err != nil {
-						log.Error(errors.ErrorStack(err))
-					}
-				}
-			case <-deltaUpdateTicker.C:
-				do.statsHandle.DumpStatsDeltaToKV()
-			}
-		}
-	}(do)
-	go func(do *Domain) {
-		id := do.ddl.OwnerManager().ID()
-		cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
-		var statsOwner ddl.OwnerManager
-		if do.etcdClient == nil {
-			statsOwner = ddl.NewMockOwnerManager(id, cancelFunc)
-		} else {
-			statsOwner = ddl.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
-		}
-		err := statsOwner.CampaignOwner(cancelCtx)
-		if err != nil {
-			log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
-		}
-		for {
-			if statsOwner.IsOwner() {
-				err := do.statsHandle.HandleAutoAnalyze(do.InfoSchema())
-				if err != nil {
-					log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
-				}
-			}
-			time.Sleep(lease)
-		}
-	}(do)
+	go do.updateStatsWorker(ctx, lease)
+	go do.autoAnalyzeWorker(lease)
 	return nil
+}
+
+func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
+	deltaUpdateDuration := lease * 5
+	loadTicker := time.NewTicker(lease)
+	defer loadTicker.Stop()
+	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
+	defer deltaUpdateTicker.Stop()
+
+	for {
+		select {
+		case <-loadTicker.C:
+			err := do.statsHandle.Update(do.InfoSchema())
+			if err != nil {
+				log.Error("[stats] update stats info fail: ", errors.ErrorStack(err))
+			}
+		case <-do.exit:
+			return
+			// This channel is sent only by ddl owner or the drop stats executor.
+		case t := <-do.statsHandle.DDLEventCh():
+			err := do.statsHandle.HandleDDLEvent(t)
+			if err != nil {
+				log.Error("[stats] handle ddl event fail: ", errors.ErrorStack(err))
+			}
+		case t := <-do.statsHandle.AnalyzeResultCh():
+			for _, hg := range t.Hist {
+				err := hg.SaveToStorage(ctx, t.TableID, t.Count, t.IsIndex)
+				if err != nil {
+					log.Error("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
+				}
+			}
+		case <-deltaUpdateTicker.C:
+			do.statsHandle.DumpStatsDeltaToKV()
+		}
+	}
+}
+
+func (do *Domain) autoAnalyzeWorker(lease time.Duration) {
+	id := do.ddl.OwnerManager().ID()
+	cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
+	var statsOwner owner.OwnerManager
+	if do.etcdClient == nil {
+		statsOwner = owner.NewMockOwnerManager(id, cancelFunc)
+	} else {
+		statsOwner = owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
+	}
+	err := statsOwner.CampaignOwner(cancelCtx)
+	if err != nil {
+		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
+	}
+	for {
+		if statsOwner.IsOwner() {
+			err := do.statsHandle.HandleAutoAnalyze(do.InfoSchema())
+			if err != nil {
+				log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
+			}
+		}
+		time.Sleep(lease)
+	}
 }
 
 const privilegeKey = "/tidb/privilege"

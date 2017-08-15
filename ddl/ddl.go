@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/owner"
 	"github.com/twinj/uuid"
 	goctx "golang.org/x/net/context"
 )
@@ -159,7 +160,7 @@ type DDL interface {
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager, and it's used for testing.
-	OwnerManager() OwnerManager
+	OwnerManager() owner.OwnerManager
 	// WorkerVars gets the session variables for DDL worker.
 	WorkerVars() *variable.SessionVars
 	// SetHook sets the hook. It's exported for testing.
@@ -197,7 +198,7 @@ type ddl struct {
 	hook         Callback
 	hookMu       sync.RWMutex
 	store        kv.Storage
-	ownerManager OwnerManager
+	ownerManager owner.OwnerManager
 	schemaSyncer SchemaSyncer
 	// lease is schema seconds.
 	lease        time.Duration
@@ -265,15 +266,15 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
-	var manager OwnerManager
+	var manager owner.OwnerManager
 	var syncer SchemaSyncer
 	if etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and mockSchemaSyncer.
-		manager = NewMockOwnerManager(id, cancelFunc)
+		manager = owner.NewMockOwnerManager(id, cancelFunc)
 		syncer = NewMockSchemaSyncer()
 	} else {
-		manager = NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
+		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
 		syncer = NewSchemaSyncer(etcdCli, id)
 	}
 	d := &ddl{
@@ -402,7 +403,7 @@ func (d *ddl) SchemaSyncer() SchemaSyncer {
 }
 
 // OwnerManager implements DDL.OwnerManager interface.
-func (d *ddl) OwnerManager() OwnerManager {
+func (d *ddl) OwnerManager() owner.OwnerManager {
 	return d.ownerManager
 }
 

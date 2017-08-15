@@ -24,6 +24,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/owner"
 	goctx "golang.org/x/net/context"
 )
 
@@ -34,6 +35,9 @@ const (
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	// It's exported for testing.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
+	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
+	DDLOwnerKey = "/tidb/ddl/fg/owner"
+	ddlPrompt   = "ddl"
 	// InitialVersion is the initial schema version for every server.
 	// It's exported for testing.
 	InitialVersion       = "0"
@@ -123,8 +127,8 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.session, err = newSession(ctx, "ddl", s.selfSchemaVerPath, s.etcdCli,
-		newSessionDefaultRetryCnt, SyncerSessionTTL)
+	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
+	s.session, err = owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionDefaultRetryCnt, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -140,8 +144,8 @@ func (s *schemaVersionSyncer) Done() <-chan struct{} {
 
 // Restart implements SchemaSyncer.Restart interface.
 func (s *schemaVersionSyncer) Restart(ctx goctx.Context) error {
-	session, err := newSession(ctx, "ddl", s.selfSchemaVerPath, s.etcdCli,
-		newSessionRetryUnlimited, SyncerSessionTTL)
+	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
+	session, err := owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionRetryUnlimited, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
