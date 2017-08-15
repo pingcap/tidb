@@ -55,6 +55,7 @@ const (
 	MaxTableNameLength    int = 64
 	MaxDatabaseNameLength int = 64
 	MaxColumnNameLength   int = 64
+	MaxKeyParts           int = 16
 )
 
 // Command information.

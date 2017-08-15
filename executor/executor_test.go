@@ -17,7 +17,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1825,6 +1824,7 @@ func (s *testSuite) TestIssue4024(c *C) {
 	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
 }
 
+<<<<<<< HEAD
 func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -1859,6 +1859,8 @@ func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
 	c.Assert(err, NotNil)
 }
 
+=======
+>>>>>>> upstream/master
 func (s *testSuite) TestSchemaCheckerSQL(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := tikv.NewMockTikvStore()
