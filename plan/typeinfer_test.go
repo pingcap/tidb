@@ -813,6 +813,13 @@ func (s *testPlanSuite) createTestCase4OtherFuncs() []typeInferTestCase {
 
 func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
+		{"timestampadd(HOUR, c_int, c_timestamp)", mysql.TypeString, charset.CharsetUTF8, 0, 19, -1},
+		{"timestampadd(minute, c_double, c_timestamp)", mysql.TypeString, charset.CharsetUTF8, 0, 19, -1},
+		{"timestampadd(SeconD, c_int, c_char)", mysql.TypeString, charset.CharsetUTF8, 0, 19, -1},
+		{"timestampadd(SeconD, c_varchar, c_time)", mysql.TypeString, charset.CharsetUTF8, 0, 19, -1},
+		{"timestampadd(SeconD, c_int, c_datetime)", mysql.TypeString, charset.CharsetUTF8, 0, 19, -1},
+		{"timestampadd(SeconD, c_double, c_binary_char)", mysql.TypeString, charset.CharsetUTF8, 0, 19, -1},
+		{"timestampadd(SeconD, c_int, c_blob)", mysql.TypeString, charset.CharsetUTF8, 0, 19, -1},
 		{"to_seconds(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
 		{"to_days(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
 	}
