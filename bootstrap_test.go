@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -51,7 +51,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(row, NotNil)
 	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
-	c.Assert(se.Auth("root@anyhost", []byte(""), []byte("")), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -228,7 +228,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
 	defer testleak.AfterTest(c)()
 	pwd := "abc"
-	oldpwd := fmt.Sprintf("%X", util.Sha1Hash([]byte(pwd)))
+	oldpwd := fmt.Sprintf("%X", auth.Sha1Hash([]byte(pwd)))
 	newpwd, err := oldPasswordUpgrade(oldpwd)
 	c.Assert(err, IsNil)
 	c.Assert(newpwd, Equals, "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")
