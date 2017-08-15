@@ -1535,7 +1535,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
 		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
 
-  // for coalesce
+	// for coalesce
 	tk.MustQuery("select coalesce(NULL), coalesce(NULL, NULL), coalesce(NULL, NULL, NULL);").Check(testkit.Rows("<nil> <nil> <nil>"))
 
 	tk.MustExec("drop table if exists t2")
