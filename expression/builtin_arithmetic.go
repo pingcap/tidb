@@ -80,7 +80,7 @@ func setFlenDecimal4Int(retTp, a, b *types.FieldType) {
 // type according to the two input parameter's types.
 func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
-		retTp.Decimal = int(math.Max(float64(a.Decimal), float64(b.Decimal)))
+		retTp.Decimal = a.Decimal + b.Decimal
 		if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
 			retTp.Flen = types.UnspecifiedLength
 			return

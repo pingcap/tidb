@@ -656,7 +656,7 @@ type baseFunctionClass struct {
 func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	l := len(args)
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
-		return errIncorrectParameterCount.GenByArgs(b.funcName)
+		return ErrIncorrectParameterCount.GenByArgs(b.funcName)
 	}
 	return nil
 }
@@ -845,7 +845,6 @@ var funcs = map[string]functionClass{
 	// control functions
 	ast.If:     &ifFunctionClass{baseFunctionClass{ast.If, 3, 3}},
 	ast.Ifnull: &ifNullFunctionClass{baseFunctionClass{ast.Ifnull, 2, 2}},
-	ast.Nullif: &nullIfFunctionClass{baseFunctionClass{ast.Nullif, 2, 2}},
 
 	// miscellaneous functions
 	ast.Sleep:           &sleepFunctionClass{baseFunctionClass{ast.Sleep, 1, 1}},
@@ -896,7 +895,6 @@ var funcs = map[string]functionClass{
 	ast.Or:         &bitOrFunctionClass{baseFunctionClass{ast.Or, 2, 2}},
 	ast.Xor:        &bitXorFunctionClass{baseFunctionClass{ast.Xor, 2, 2}},
 	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
-	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 1, -1}},
 	ast.IsTruth:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
 	ast.IsFalsity:  &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
 	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 2, 3}},
