@@ -455,6 +455,11 @@ func (c *RegionCache) PDClient() pd.Client {
 	return c.pdClient
 }
 
+// Close closes the pd.Client in RegionCache
+func (c *RegionCache) Close() {
+	c.pdClient.Close()
+}
+
 // moveLeaderToFirst moves the leader peer to the first and makes it easier to
 // try the next peer if the current peer does not respond.
 func moveLeaderToFirst(r *metapb.Region, leaderStoreID uint64) {

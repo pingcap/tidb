@@ -53,6 +53,7 @@ func NewRawKVClient(pdAddrs []string) (*RawKVClient, error) {
 
 // Close closes the client.
 func (c *RawKVClient) Close() error {
+	c.regionCache.Close()
 	return c.rpcClient.Close()
 }
 
