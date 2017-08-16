@@ -1474,11 +1474,12 @@ type truncateFunctionClass struct {
 	baseFunctionClass
 }
 
+// getDecimal return the `Decimal` value of return type for function `TRUNCATE`
 func (c *truncateFunctionClass) getDecimal(sc *variable.StatementContext, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		decimal, isNull, err := constant.EvalInt(nil, sc)
 		if err != nil {
-			log.Errorf("truncateFunctionClass.getDecimal with error: %v", err.Error())
+			log.Warningf("truncateFunctionClass.getDecimal() with error: %v", err.Error())
 		}
 		if isNull || err != nil {
 			return 0
@@ -1492,33 +1493,39 @@ func (c *truncateFunctionClass) getDecimal(sc *variable.StatementContext, arg Ex
 	return 3
 }
 
-func (c *truncateFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	if err = c.verifyArgs(args); err != nil {
+func (c *truncateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	var bf baseBuiltinFunc
-	switch args[0].GetTypeClass() {
-	case types.ClassInt:
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-		sig = &builtinTruncateIntSig{baseIntBuiltinFunc{bf}}
-	case types.ClassDecimal:
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpInt)
-		sig = &builtinTruncateDecimalSig{baseDecimalBuiltinFunc{bf}}
-	default:
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpReal, tpInt)
-		sig = &builtinTruncateRealSig{baseRealBuiltinFunc{bf}}
+	argTp := fieldTp2EvalTp(args[0].GetType())
+	if argTp == tpTime || argTp == tpDuration || argTp == tpString {
+		argTp = tpReal
 	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, argTp, argTp, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if args[0].GetTypeClass() == types.ClassInt {
+
+	if argTp == tpInt {
 		bf.tp.Decimal = 0
 	} else {
 		bf.tp.Decimal = c.getDecimal(bf.ctx.GetSessionVars().StmtCtx, args[1])
 	}
 	bf.tp.Flen = args[0].GetType().Flen - args[0].GetType().Decimal + bf.tp.Decimal
 	bf.tp.Flag |= args[0].GetType().Flag
+
+	var sig builtinFunc
+	switch argTp {
+	case tpInt:
+		sig = &builtinTruncateIntSig{baseIntBuiltinFunc{bf}}
+	case tpReal:
+		sig = &builtinTruncateRealSig{baseRealBuiltinFunc{bf}}
+	case tpDecimal:
+		sig = &builtinTruncateDecimalSig{baseDecimalBuiltinFunc{bf}}
+	}
+
 	return sig.setSelf(sig), nil
 }
 
@@ -1541,11 +1548,11 @@ func (b *builtinTruncateDecimalSig) evalDecimal(row []types.Datum) (*types.MyDec
 		return nil, isNull, errors.Trace(err)
 	}
 
-	var result types.MyDecimal
-	if err := x.Round(&result, int(d), types.ModeTruncate); err != nil {
+	result := new(types.MyDecimal)
+	if err := x.Round(result, int(d), types.ModeTruncate); err != nil {
 		return nil, true, errors.Trace(err)
 	}
-	return &result, false, nil
+	return result, false, nil
 }
 
 type builtinTruncateRealSig struct {

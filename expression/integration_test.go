@@ -406,10 +406,13 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	// for truncate
 	result = tk.MustQuery("SELECT truncate(123, -2), truncate(123, 2), truncate(123, 1), truncate(123, -1);")
 	result.Check(testkit.Rows("100 123 123 120"))
-	result = tk.MustQuery("SELECT truncate(123.456, -2), truncate(123.456, 2), truncate(123.456, 1), truncate(123.456, 3);")
-	result.Check(testkit.Rows("100 123.45 123.4 123.456"))
-	result = tk.MustQuery("SELECT truncate(1.23, 100);")
-	result.Check(testkit.Rows("1.230000000000000000000000000000"))
+	result = tk.MustQuery("SELECT truncate(123.456, -2), truncate(123.456, 2), truncate(123.456, 1), truncate(123.456, 3), truncate(1.23, 100), truncate(123456E-3, 2);")
+	result.Check(testkit.Rows("100 123.45 123.4 123.456 1.230000000000000000000000000000 123.45"))
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a date, b datetime, c timestamp);`)
+	tk.MustExec(`insert into t select "1234-12-29", "1234-12-29 16:24:13.9912", "2014-12-29 16:19:28";`)
+	result = tk.MustQuery(`select truncate(a, -1), truncate(a, 1), truncate(a, -2), truncate(a, 2) from t;`)
+	result.Check(testkit.Rows("12341220 12341229.0 12341200 12341229.00"))
 
 	// for radians
 	result = tk.MustQuery("SELECT radians(1.0), radians(pi()), radians(pi()/2), radians(180), radians(1.009);")
