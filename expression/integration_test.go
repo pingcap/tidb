@@ -418,6 +418,34 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("SELECT ROUND(123456E-3, 0), ROUND(123456E-3, 1), ROUND(123456E-3, 2), ROUND(123456E-3, 3), ROUND(123456E-3, 4), ROUND(123456E-3, -1), ROUND(123456E-3, -2), ROUND(123456E-3, -3), ROUND(123456E-3, -4);")
 	result.Check(testkit.Rows("123 123.5 123.46 123.456 123.456 120 100 0 0")) // TODO: Column 5 should be 123.4560
 
+	// for truncate
+	result = tk.MustQuery("SELECT truncate(123, -2), truncate(123, 2), truncate(123, 1), truncate(123, -1);")
+	result.Check(testkit.Rows("100 123 123 120"))
+	result = tk.MustQuery("SELECT truncate(123.456, -2), truncate(123.456, 2), truncate(123.456, 1), truncate(123.456, 3), truncate(1.23, 100), truncate(123456E-3, 2);")
+	result.Check(testkit.Rows("100 123.45 123.4 123.456 1.230000000000000000000000000000 123.45"))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a date, b datetime, c timestamp, d varchar(20));`)
+	tk.MustExec(`insert into t select "1234-12-29", "1234-12-29 16:24:13.9912", "2014-12-29 16:19:28", "12.34567";`)
+
+	// NOTE: the actually result is: 12341220 12341229.0 12341200 12341229.00,
+	// but Datum.ToString() don't format decimal length for float numbers.
+	result = tk.MustQuery(`select truncate(a, -1), truncate(a, 1), truncate(a, -2), truncate(a, 2) from t;`)
+	result.Check(testkit.Rows("12341220 12341229 12341200 12341229"))
+
+	// NOTE: the actually result is: 12341229162410 12341229162414.0 12341229162400 12341229162414.00,
+	// but Datum.ToString() don't format decimal length for float numbers.
+	result = tk.MustQuery(`select truncate(b, -1), truncate(b, 1), truncate(b, -2), truncate(b, 2) from t;`)
+	result.Check(testkit.Rows("12341229162410 12341229162414 12341229162400 12341229162414"))
+
+	// NOTE: the actually result is: 20141229161920 20141229161928.0 20141229161900 20141229161928.00,
+	// but Datum.ToString() don't format decimal length for float numbers.
+	result = tk.MustQuery(`select truncate(c, -1), truncate(c, 1), truncate(c, -2), truncate(c, 2) from t;`)
+	result.Check(testkit.Rows("20141229161920 20141229161928 20141229161900 20141229161928"))
+
+	result = tk.MustQuery(`select truncate(d, -1), truncate(d, 1), truncate(d, -2), truncate(d, 2) from t;`)
+	result.Check(testkit.Rows("10 12.3 0 12.34"))
+
 	// for pow
 	result = tk.MustQuery("SELECT POW('12', 2), POW(1.2e1, '2.0'), POW(12, 2.0);")
 	result.Check(testkit.Rows("144 144 144"))
