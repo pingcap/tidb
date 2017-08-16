@@ -29,7 +29,8 @@ type TidbTestSuite struct {
 	server  *Server
 }
 
-var _ = Suite(new(TidbTestSuite))
+var suite = new(TidbTestSuite)
+var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	log.SetLevelByString("error")

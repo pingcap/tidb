@@ -250,12 +250,12 @@ func runTestLoadData(c *C) {
 		err = os.Remove(path)
 		c.Assert(err, IsNil)
 	}()
-	_, err = fp.WriteString(`
-xxx row1_col1	- row1_col2	1abc
-xxx row2_col1	- row2_col2	
-xxxy row3_col1	- row3_col2	
-xxx row4_col1	- 		900
-xxx row5_col1	- 	row5_col3`)
+	_, err = fp.WriteString("\n" +
+		"xxx row1_col1	- row1_col2	1abc\n" +
+		"xxx row2_col1	- row2_col2	\n" +
+		"xxxy row3_col1	- row3_col2	\n" +
+		"xxx row4_col1	- 		900\n" +
+		"xxx row5_col1	- 	row5_col3")
 	c.Assert(err, IsNil)
 
 	// support ClientLocalFiles capability
@@ -366,18 +366,15 @@ xxx row5_col1	- 	row5_col3`)
 		dbt.Assert(err, NotNil)
 	})
 
-	// TODO: Fix me. We no longer support setting the global capability so that the
-	// following tests are broken.
-
-	// // unsupport ClientLocalFiles capability
-	// defaultCapability ^= tmysql.ClientLocalFiles
-	// runTests(c, dsn+"&allowAllFiles=true", func(dbt *DBTest) {
-	// 	dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
-	// 	_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
-	// 	dbt.Assert(err, NotNil)
-	// 	checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
-	// })
-	// defaultCapability |= tmysql.ClientLocalFiles
+	// unsupport ClientLocalFiles capability
+	suite.server.capability ^= tmysql.ClientLocalFiles
+	runTests(c, dsn+"&allowAllFiles=true", func(dbt *DBTest) {
+		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
+		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
+		dbt.Assert(err, NotNil)
+		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
+	})
+	suite.server.capability |= tmysql.ClientLocalFiles
 }
 
 func runTestConcurrentUpdate(c *C) {
