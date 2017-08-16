@@ -51,6 +51,12 @@ func NewRawKVClient(pdAddrs []string) (*RawKVClient, error) {
 	}, nil
 }
 
+// Close closes the client.
+func (c *RawKVClient) Close() error {
+	c.regionCache.Close()
+	return c.rpcClient.Close()
+}
+
 // ClusterID returns the TiKV cluster ID.
 func (c *RawKVClient) ClusterID() uint64 {
 	return c.clusterID
