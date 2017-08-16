@@ -851,6 +851,24 @@ func (s *testPlanSuite) createTestCase4Miscellaneous() []typeInferTestCase {
 		{"is_ipv6(c_time)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"is_ipv6(c_timestamp)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"is_ipv6(c_binary)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+
+		{"any_value(c_int)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, types.UnspecifiedLength},
+		{"any_value(c_bigint)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, types.UnspecifiedLength},
+		{"any_value(c_float)", mysql.TypeFloat, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"any_value(c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"any_value(c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 6, 3},
+		{"any_value(c_datetime)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, 2},
+		{"any_value(c_time)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, 0},
+		{"any_value(c_timestamp)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, types.UnspecifiedLength},
+		{"any_value(c_char)", mysql.TypeString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
+		{"any_value(c_binary_char)", mysql.TypeString, charset.CharsetUTF8, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+		{"any_value(c_varchar)", mysql.TypeVarchar, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
+		{"any_value(c_text)", mysql.TypeBlob, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"any_value(c_binary)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+		{"any_value(c_varbinary)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+		{"any_value(c_blob)", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"any_value(c_set)", mysql.TypeSet, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"any_value(c_enum)", mysql.TypeEnum, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
 	}
 }
 
