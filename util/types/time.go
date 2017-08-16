@@ -787,7 +787,7 @@ func (d Duration) ToNumber() *MyDecimal {
 func (d Duration) ConvertToTime(tp uint8) (Time, error) {
 	year, month, day := gotime.Now().Date()
 	// just use current year, month and day.
-	n := gotime.Date(year, month, day, 0, 0, 0, 0, gotime.Local)
+	n := gotime.Date(year, month, day, 0, 0, 0, 0, gotime.UTC)
 	n = n.Add(d.Duration)
 
 	t := Time{
