@@ -280,42 +280,34 @@ func (c *dateDiffFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinDateDiffSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinDateDiffSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinDateDiffSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinDateDiffSig.
+// evalInt evals a builtinDateDiffSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_datediff
-func (b *builtinDateDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinDateDiffSig) evalInt(row []types.Datum) (int64, bool, error) {
+	ctx := b.ctx.GetSessionVars().StmtCtx
+	t1, isNull, err := b.args[0].EvalTime(row, ctx)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	if args[0].IsNull() || args[1].IsNull() {
-		return
+	t2, isNull, err := b.args[1].EvalTime(row, ctx)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	t1, err := convertDatumToTime(sc, args[0])
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	t2, err := convertDatumToTime(sc, args[1])
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
 	if t1.Time.Month() == 0 || t1.Time.Day() == 0 || t2.Time.Month() == 0 || t2.Time.Day() == 0 {
-		return
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
-
-	r := types.DateDiff(t1.Time, t2.Time)
-	d.SetInt64(int64(r))
-	return
+	return int64(types.DateDiff(t1.Time, t2.Time)), false, nil
 }
 
 type timeDiffFunctionClass struct {
