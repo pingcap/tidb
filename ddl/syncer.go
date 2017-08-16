@@ -35,9 +35,6 @@ const (
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	// It's exported for testing.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
-	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
-	DDLOwnerKey = "/tidb/ddl/fg/owner"
-	ddlPrompt   = "ddl"
 	// InitialVersion is the initial schema version for every server.
 	// It's exported for testing.
 	InitialVersion       = "0"
