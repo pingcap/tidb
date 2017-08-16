@@ -458,9 +458,9 @@ func (s *testPlanSuite) createTestCase4MathFuncs() []typeInferTestCase {
 		{"truncate(c_int,   1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 12, 0},
 		{"truncate(c_int,  -5)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 12, 0},
 		{"truncate(c_int, 100)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 12, 0},
-		{"truncate(c_double,   1)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 1, 1},
-		{"truncate(c_double,   5)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 5, 5},
-		{"truncate(c_double, 100)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 30, 30},
+		{"truncate(c_double,   1)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 1, 1},
+		{"truncate(c_double,   5)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 5, 5},
+		{"truncate(c_double, 100)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 30, 30},
 
 		{"rand(     )", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"rand(c_int)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},

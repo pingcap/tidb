@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1499,13 +1498,10 @@ type truncateFunctionClass struct {
 	baseFunctionClass
 }
 
-// getDecimal return the `Decimal` value of return type for function `TRUNCATE`
+// getDecimal returns the `Decimal` value of return type for function `TRUNCATE`.
 func (c *truncateFunctionClass) getDecimal(sc *variable.StatementContext, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		decimal, isNull, err := constant.EvalInt(nil, sc)
-		if err != nil {
-			log.Warningf("truncateFunctionClass.getDecimal() with error: %v", err.Error())
-		}
 		if isNull || err != nil {
 			return 0
 		} else if decimal > 30 {
