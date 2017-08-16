@@ -972,6 +972,30 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t VALUES (0), (20030101010160), (20030101016001), (20030101240101), (20030132010101), (20031301010101), (20031200000000), (20030000000000);")
 	result = tk.MustQuery("SELECT CAST(ix AS SIGNED) FROM t;")
 	result.Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "0"))
+
+	//for hour
+	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(null), hour("27aaaa2:59:55");`)
+	result.Check(testkit.Rows("12 12 272 <nil> <nil>"))
+
+	// for minute
+	result = tk.MustQuery(`SELECT minute("12:13:14.123456"), minute("12:13:14.000010"), minute("272:59:55"), minute(null), minute("27aaaa2:59:55");`)
+	result.Check(testkit.Rows("13 13 59 <nil> <nil>"))
+
+	// for second
+	result = tk.MustQuery(`SELECT second("12:13:14.123456"), second("12:13:14.000010"), second("272:59:55"), second(null), second("27aaaa2:59:55");`)
+	result.Check(testkit.Rows("14 14 55 <nil> <nil>"))
+
+	// for microsecond
+	result = tk.MustQuery(`SELECT microsecond("12:00:00.123456"), microsecond("12:00:00.000010"), microsecond(null), microsecond("27aaaa2:59:55");`)
+	result.Check(testkit.Rows("123456 10 <nil> <nil>"))
+
+	// TODO: fix `CAST(xx as duration)` and release the test below:
+	// result = tk.MustQuery(`SELECT hour("aaa"), hour(123456), hour(1234567);`)
+	// result = tk.MustQuery(`SELECT minute("aaa"), minute(123456), minute(1234567);`)
+	// result = tk.MustQuery(`SELECT second("aaa"), second(123456), second(1234567);`)
+	// result = tk.MustQuery(`SELECT microsecond("aaa"), microsecond(123456), microsecond(1234567);`)
+
+	// for time_format
 	result = tk.MustQuery("SELECT TIME_FORMAT('150:02:28', '%H:%i:%s %p');")
 	result.Check(testkit.Rows("150:02:28 AM"))
 	result = tk.MustQuery("SELECT TIME_FORMAT('bad string', '%H:%i:%s %p');")
