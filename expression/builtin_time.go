@@ -1576,6 +1576,7 @@ func (b *builtinExtractSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return
 }
 
+// TODO: duplicate with types.CheckFsp, better use types.CheckFsp.
 func checkFsp(sc *variable.StatementContext, arg types.Datum) (int, error) {
 	fsp, err := arg.ToInt64(sc)
 	if err != nil {
