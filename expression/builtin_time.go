@@ -119,7 +119,8 @@ var (
 	_ builtinFunc = &builtinDayOfMonthSig{}
 	_ builtinFunc = &builtinDayOfWeekSig{}
 	_ builtinFunc = &builtinDayOfYearSig{}
-	_ builtinFunc = &builtinWeekSig{}
+	_ builtinFunc = &builtinWeekWithModeSig{}
+	_ builtinFunc = &builtinWeekWithoutModeSig{}
 	_ builtinFunc = &builtinWeekDaySig{}
 	_ builtinFunc = &builtinWeekOfYearSig{}
 	_ builtinFunc = &builtinYearSig{}
@@ -896,51 +897,71 @@ func (c *weekFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinWeekSig{newBaseBuiltinFunc(args, ctx)}
+
+	argTps := []evalTp{tpTime}
+	if len(args) == 2 {
+		argTps = append(argTps, tpInt)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bf.tp.Flen, bf.tp.Decimal = 2, 0
+
+	var sig builtinFunc
+	if len(args) == 2 {
+		sig = &builtinWeekWithModeSig{baseIntBuiltinFunc{bf}}
+	} else {
+		sig = &builtinWeekWithoutModeSig{baseIntBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinWeekSig struct {
-	baseBuiltinFunc
+type builtinWeekWithModeSig struct {
+	baseIntBuiltinFunc
 }
 
-func (b *builtinWeekSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+// evalInt evals WEEK(date, mode).
+// see: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
+func (b *builtinWeekWithModeSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, isNull, err := b.args[0].EvalTime(row, sc)
 	if err != nil {
-		return d, errors.Trace(err)
+		sc.AppendWarning(err)
 	}
-	return builtinWeek(args, b.ctx)
+	if isNull || err != nil || date.IsZero() {
+		return 0, true, nil
+	}
+
+	mode, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	week := date.Time.Week(int(mode))
+	return int64(week), false, nil
 }
 
-// builtinWeek ...
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
-func builtinWeek(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	d, err = convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
+type builtinWeekWithoutModeSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals WEEK(date).
+// see: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
+func (b *builtinWeekWithoutModeSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, isNull, err := b.args[0].EvalTime(row, sc)
+	if err != nil {
+		sc.AppendWarning(err)
+	}
+	if isNull || err != nil || date.IsZero() {
+		return 0, true, nil
 	}
 
-	// No need to check type here.
-	t := d.GetMysqlTime()
-	if t.IsZero() {
-		// TODO: log warning or return error?
-		d.SetNull()
-		return
-	}
-
-	var mode int
-	if len(args) > 1 {
-		v, err := args[1].ToInt64(ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		mode = int(v)
-	}
-
-	week := t.Time.Week(mode)
-	wi := int64(week)
-	d.SetInt64(wi)
-	return
+	week := date.Time.Week(0)
+	return int64(week), false, nil
 }
 
 type weekDayFunctionClass struct {
@@ -999,24 +1020,35 @@ func (c *weekOfYearFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinWeekOfYearSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bf.tp.Flen, bf.tp.Decimal = 2, 0
+
+	sig := &builtinWeekOfYearSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinWeekOfYearSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinWeekOfYearSig.
+// evalInt evals WEEKOFYEAR(date).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekofyear
-func (b *builtinWeekOfYearSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinWeekOfYearSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, isNull, err := b.args[0].EvalTime(row, sc)
 	if err != nil {
-		return d, errors.Trace(err)
+		sc.AppendWarning(err)
 	}
-	// WeekOfYear is equivalent to to Week(date, 3)
-	d.SetInt64(3)
-	return builtinWeek([]types.Datum{args[0], d}, b.ctx)
+	if isNull || err != nil || date.IsZero() {
+		return 0, true, nil
+	}
+
+	week := date.Time.Week(3)
+	return int64(week), false, nil
 }
 
 type yearFunctionClass struct {
