@@ -436,6 +436,49 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestTime(c *C) {
+	defer testleak.AfterTest(c)()
+
+	cases := []struct {
+		args     interface{}
+		expected string
+		isNil    bool
+		getErr   bool
+	}{
+		{"2003-12-31 01:02:03", "01:02:03", false, false},
+		{"2003-12-31 01:02:03.000123", "01:02:03.000123", false, false},
+		{"01:02:03.000123", "01:02:03.000123", false, false},
+		{"01:02:03", "01:02:03", false, false},
+		{"-838:59:59.000000", "-838:59:59.000000", false, false},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Time, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeDuration)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag&uint(mysql.BinaryFlag), Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, mysql.MaxDurationWidthWithFsp)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetMysqlDuration().String(), Equals, t.expected)
+			}
+		}
+	}
+
+	f, err := funcs[ast.Time].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	defer testleak.AfterTest(c)()
 
