@@ -1033,6 +1033,20 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
+
+	// for year
+	result = tk.MustQuery(`select year("2013-01-09"), year("2013-00-09"), year("000-01-09"), year("1-01-09"), year("20131-01-09"), year(null);`)
+	result.Check(testkit.Rows("2013 2013 0 1 <nil> <nil>"))
+	result = tk.MustQuery(`select year("aa"), year(2013), year(2012.09), year("1-01"), year("-09");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+
+	// for month
+	result = tk.MustQuery(`select month("2013-01-09"), month("2013-00-09"), month("000-01-09"), month("1-01-09"), month("20131-01-09"), month(null);`)
+	result.Check(testkit.Rows("1 0 1 1 <nil> <nil>"))
+	result = tk.MustQuery(`select month("aa"), month(2013), month(2012.09), month("1-01"), month("-09");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select month("2013-012-09"), month("2013-0000000012-09"), month("2013-30-09"), month("000-41-09");`)
+	result.Check(testkit.Rows("12 12 <nil> <nil>"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
