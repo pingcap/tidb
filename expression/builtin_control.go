@@ -35,7 +35,6 @@ var (
 	_ builtinFunc = &builtinCaseWhenStringSig{}
 	_ builtinFunc = &builtinCaseWhenTimeSig{}
 	_ builtinFunc = &builtinCaseWhenDurationSig{}
-	_ builtinFunc = &builtinNullIfSig{}
 	_ builtinFunc = &builtinIfNullIntSig{}
 	_ builtinFunc = &builtinIfNullRealSig{}
 	_ builtinFunc = &builtinIfNullDecimalSig{}
@@ -97,7 +96,7 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 			tp = tpDuration
 		}
 	}
-	// Set retType to BINARY(0) if all arguments are of type NULL
+	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if fieldTp.Tp == mysql.TypeNull {
 		fieldTp.Flen, fieldTp.Decimal = 0, -1
 		types.SetBinChsClnFlag(fieldTp)
@@ -110,9 +109,6 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 		argTps = append(argTps, tp)
 	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -154,16 +150,11 @@ func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (int64, bool, error) 
 		if err != nil {
 			return 0, isNull, errors.Trace(err)
 		}
-		if isNull {
+		if isNull || arg == 0 {
 			continue
 		}
-		if arg != 0 {
-			arg, isNull, err = args[i+1].EvalInt(row, sc)
-			if err != nil {
-				return 0, isNull, errors.Trace(err)
-			}
-			return arg, isNull, nil
-		}
+		arg, isNull, err = args[i+1].EvalInt(row, sc)
+		return arg, isNull, errors.Trace(err)
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
@@ -195,16 +186,11 @@ func (b *builtinCaseWhenRealSig) evalReal(row []types.Datum) (float64, bool, err
 		if err != nil {
 			return 0, isNull, errors.Trace(err)
 		}
-		if isNull {
+		if isNull || condition == 0 {
 			continue
 		}
-		if condition != 0 {
-			ret, isNull, err = args[i+1].EvalReal(row, sc)
-			if err != nil {
-				return ret, isNull, errors.Trace(err)
-			}
-			return ret, isNull, nil
-		}
+		ret, isNull, err = args[i+1].EvalReal(row, sc)
+		return ret, isNull, errors.Trace(err)
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
@@ -239,16 +225,11 @@ func (b *builtinCaseWhenDecimalSig) evalDecimal(row []types.Datum) (*types.MyDec
 		if err != nil {
 			return nil, isNull, errors.Trace(err)
 		}
-		if isNull {
+		if isNull || condition == 0 {
 			continue
 		}
-		if condition != 0 {
-			ret, isNull, err = args[i+1].EvalDecimal(row, sc)
-			if err != nil {
-				return nil, isNull, errors.Trace(err)
-			}
-			return ret, isNull, nil
-		}
+		ret, isNull, err = args[i+1].EvalDecimal(row, sc)
+		return ret, isNull, errors.Trace(err)
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
@@ -283,16 +264,11 @@ func (b *builtinCaseWhenStringSig) evalString(row []types.Datum) (string, bool, 
 		if err != nil {
 			return "", isNull, errors.Trace(err)
 		}
-		if isNull {
+		if isNull || condition == 0 {
 			continue
 		}
-		if condition != 0 {
-			ret, isNull, err = args[i+1].EvalString(row, sc)
-			if err != nil {
-				return "", isNull, errors.Trace(err)
-			}
-			return ret, isNull, nil
-		}
+		ret, isNull, err = args[i+1].EvalString(row, sc)
+		return ret, isNull, errors.Trace(err)
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
@@ -327,16 +303,11 @@ func (b *builtinCaseWhenTimeSig) evalTime(row []types.Datum) (types.Time, bool, 
 		if err != nil {
 			return ret, isNull, errors.Trace(err)
 		}
-		if isNull {
+		if isNull || condition == 0 {
 			continue
 		}
-		if condition != 0 {
-			ret, isNull, err = args[i+1].EvalTime(row, sc)
-			if err != nil {
-				return ret, isNull, errors.Trace(err)
-			}
-			return ret, isNull, nil
-		}
+		ret, isNull, err = args[i+1].EvalTime(row, sc)
+		return ret, isNull, errors.Trace(err)
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
@@ -371,16 +342,11 @@ func (b *builtinCaseWhenDurationSig) evalDuration(row []types.Datum) (types.Dura
 		if err != nil {
 			return ret, false, errors.Trace(err)
 		}
-		if isNull {
+		if isNull || condition == 0 {
 			continue
 		}
-		if condition != 0 {
-			ret, isNull, err = args[i+1].EvalDuration(row, sc)
-			if err != nil {
-				return ret, isNull, errors.Trace(err)
-			}
-			return ret, isNull, nil
-		}
+		ret, isNull, err = args[i+1].EvalDuration(row, sc)
+		return ret, isNull, errors.Trace(err)
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
