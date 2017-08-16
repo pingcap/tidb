@@ -1344,6 +1344,9 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("SELECT c4 FROM t where c4 < '-13:12:12';")
 	result.Check(testkit.Rows("-37:12:12"))
 
+	result = tk.MustQuery(`SELECT 1 DIV - - 28 + ( - SUM( - + 25 ) ) * - CASE - 18 WHEN 44 THEN NULL ELSE - 41 + 32 + + - 70 - + COUNT( - 95 ) * 15 END + 92`)
+	result.Check(testkit.Rows("2442"))
+
 	// testCase is for like and regexp
 	type testCase struct {
 		pattern string
