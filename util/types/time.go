@@ -1785,7 +1785,8 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'i':
 		fmt.Fprintf(buf, "%02d", t.Time.Minute())
 	case 'p':
-		if t.Time.Hour() < 12 {
+		hour := t.Time.Hour()
+		if hour/12%2 == 0 {
 			buf.WriteString("AM")
 		} else {
 			buf.WriteString("PM")
