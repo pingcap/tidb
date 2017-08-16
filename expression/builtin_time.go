@@ -1436,10 +1436,10 @@ func (b *builtinTimeSig) evalDuration(row []types.Datum) (res types.Duration, is
 	}
 
 	fsp := 0
-	idx := strings.Index(expr, ".")
-	if idx != -1 {
+	if idx := strings.Index(expr, "."); idx != -1 {
 		fsp = len(expr) - idx - 1
 	}
+
 	if fsp, err = types.CheckFsp(fsp); err != nil {
 		return res, isNull, errors.Trace(err)
 	}
