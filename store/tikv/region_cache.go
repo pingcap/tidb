@@ -450,12 +450,12 @@ func (c *RegionCache) OnRegionStale(ctx *RPCContext, newRegions []*metapb.Region
 	return nil
 }
 
-// PDClient returns the pd.Client in RegionCache
+// PDClient returns the pd.Client in RegionCache.
 func (c *RegionCache) PDClient() pd.Client {
 	return c.pdClient
 }
 
-// Close closes the pd.Client in RegionCache
+// Close closes the pd.Client in RegionCache.
 func (c *RegionCache) Close() {
 	c.pdClient.Close()
 }
