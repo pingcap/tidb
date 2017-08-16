@@ -138,26 +138,3 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 	f, err = funcs[ast.Ifnull].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, NotNil)
 }
-
-func (s *testEvaluatorSuite) TestNullIf(c *C) {
-	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg1 interface{}
-		Arg2 interface{}
-		Ret  interface{}
-	}{
-		{1, 1, nil},
-		{nil, 2, nil},
-		{1, nil, 1},
-		{1, 2, 1},
-	}
-
-	for _, t := range tbl {
-		fc := funcs[ast.Nullif]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2)), s.ctx)
-		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
-	}
-}
