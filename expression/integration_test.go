@@ -167,6 +167,19 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	  IS_IPV4_MAPPED(INET6_ATON('::ffff:c0a8:0001')),
 	  IS_IPV4_MAPPED(INET6_ATON('::ffff:c0a8:1'));`).Check(testkit.Rows("1 1 1"))
 	tk.MustQuery(`SELECT IS_IPV6('10.0.5.9'), IS_IPV6('::1');`).Check(testkit.Rows("0 1"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`create table t1(
+        a int,
+        b int not null,
+        c int not null default 0,
+        d int default 0,
+        unique key(b,c),
+        unique key(b,d)
+);`)
+	tk.MustExec("insert into t1 (a,b) values(1,10),(1,20),(2,30),(2,40);")
+	tk.MustQuery("select any_value(a), sum(b) from t1;").Check(testkit.Rows("1 100"))
+	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
 }
 
 func (s *testIntegrationSuite) TestConvertToBit(c *C) {
@@ -417,6 +430,66 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("123 123.5 123.46 123.456 123.4560 120 100 0 0"))
 	result = tk.MustQuery("SELECT ROUND(123456E-3, 0), ROUND(123456E-3, 1), ROUND(123456E-3, 2), ROUND(123456E-3, 3), ROUND(123456E-3, 4), ROUND(123456E-3, -1), ROUND(123456E-3, -2), ROUND(123456E-3, -3), ROUND(123456E-3, -4);")
 	result.Check(testkit.Rows("123 123.5 123.46 123.456 123.456 120 100 0 0")) // TODO: Column 5 should be 123.4560
+
+	// for truncate
+	result = tk.MustQuery("SELECT truncate(123, -2), truncate(123, 2), truncate(123, 1), truncate(123, -1);")
+	result.Check(testkit.Rows("100 123 123 120"))
+	result = tk.MustQuery("SELECT truncate(123.456, -2), truncate(123.456, 2), truncate(123.456, 1), truncate(123.456, 3), truncate(1.23, 100), truncate(123456E-3, 2);")
+	result.Check(testkit.Rows("100 123.45 123.4 123.456 1.230000000000000000000000000000 123.45"))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a date, b datetime, c timestamp, d varchar(20));`)
+	tk.MustExec(`insert into t select "1234-12-29", "1234-12-29 16:24:13.9912", "2014-12-29 16:19:28", "12.34567";`)
+
+	// NOTE: the actually result is: 12341220 12341229.0 12341200 12341229.00,
+	// but Datum.ToString() don't format decimal length for float numbers.
+	result = tk.MustQuery(`select truncate(a, -1), truncate(a, 1), truncate(a, -2), truncate(a, 2) from t;`)
+	result.Check(testkit.Rows("12341220 12341229 12341200 12341229"))
+
+	// NOTE: the actually result is: 12341229162410 12341229162414.0 12341229162400 12341229162414.00,
+	// but Datum.ToString() don't format decimal length for float numbers.
+	result = tk.MustQuery(`select truncate(b, -1), truncate(b, 1), truncate(b, -2), truncate(b, 2) from t;`)
+	result.Check(testkit.Rows("12341229162410 12341229162414 12341229162400 12341229162414"))
+
+	// NOTE: the actually result is: 20141229161920 20141229161928.0 20141229161900 20141229161928.00,
+	// but Datum.ToString() don't format decimal length for float numbers.
+	result = tk.MustQuery(`select truncate(c, -1), truncate(c, 1), truncate(c, -2), truncate(c, 2) from t;`)
+	result.Check(testkit.Rows("20141229161920 20141229161928 20141229161900 20141229161928"))
+
+	result = tk.MustQuery(`select truncate(d, -1), truncate(d, 1), truncate(d, -2), truncate(d, 2) from t;`)
+	result.Check(testkit.Rows("10 12.3 0 12.34"))
+
+	// for pow
+	result = tk.MustQuery("SELECT POW('12', 2), POW(1.2e1, '2.0'), POW(12, 2.0);")
+	result.Check(testkit.Rows("144 144 144"))
+	result = tk.MustQuery("SELECT POW(null, 2), POW(2, null), POW(null, null);")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery("SELECT POW(0, 0);")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("SELECT POW(0, 0.1), POW(0, 0.5), POW(0, 1);")
+	result.Check(testkit.Rows("0 0 0"))
+	rs, err = tk.Exec("SELECT POW(0, -1);")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+
+	// for sign
+	result = tk.MustQuery("SELECT SIGN('12'), SIGN(1.2e1), SIGN(12), SIGN(0.0000012);")
+	result.Check(testkit.Rows("1 1 1 1"))
+	result = tk.MustQuery("SELECT SIGN('-12'), SIGN(-1.2e1), SIGN(-12), SIGN(-0.0000012);")
+	result.Check(testkit.Rows("-1 -1 -1 -1"))
+	result = tk.MustQuery("SELECT SIGN('0'), SIGN('-0'), SIGN(0);")
+	result.Check(testkit.Rows("0 0 0"))
+	result = tk.MustQuery("SELECT SIGN(NULL);")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("SELECT SIGN(-9223372036854775808), SIGN(9223372036854775808);")
+	result.Check(testkit.Rows("-1 1"))
+
+	// for sqrt
+	result = tk.MustQuery("SELECT SQRT(-10), SQRT(144), SQRT(4.84), SQRT(0.04), SQRT(0);")
+	result.Check(testkit.Rows("<nil> 12 2.2 0.2 0"))
 
 	// for radians
 	result = tk.MustQuery("SELECT radians(1.0), radians(pi()), radians(pi()/2), radians(180), radians(1.009);")
@@ -899,6 +972,67 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t VALUES (0), (20030101010160), (20030101016001), (20030101240101), (20030132010101), (20031301010101), (20031200000000), (20030000000000);")
 	result = tk.MustQuery("SELECT CAST(ix AS SIGNED) FROM t;")
 	result.Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "0"))
+
+	// test time
+	result = tk.MustQuery("select time('2003-12-31 01:02:03')")
+	result.Check(testkit.Rows("01:02:03"))
+	result = tk.MustQuery("select time('2003-12-31 01:02:03.000123')")
+	result.Check(testkit.Rows("01:02:03.000123"))
+	result = tk.MustQuery("select time('01:02:03.000123')")
+	result.Check(testkit.Rows("01:02:03.000123"))
+	result = tk.MustQuery("select time('01:02:03')")
+	result.Check(testkit.Rows("01:02:03"))
+	result = tk.MustQuery("select time('-838:59:59.000000')")
+	result.Check(testkit.Rows("-838:59:59.000000"))
+	result = tk.MustQuery("select time('-838:59:59.000001')")
+	result.Check(testkit.Rows("-838:59:59.000000"))
+	result = tk.MustQuery("select time('-839:59:59.000000')")
+	result.Check(testkit.Rows("-838:59:59.000000"))
+	result = tk.MustQuery("select time('840:59:59.000000')")
+	result.Check(testkit.Rows("838:59:59.000000"))
+	// FIXME: #issue 4193
+	// result = tk.MustQuery("select time('840:59:60.000000')")
+	// result.Check(testkit.Rows("<nil>"))
+	// result = tk.MustQuery("select time('800:59:59.9999999')")
+	// result.Check(testkit.Rows("801:00:00.000000"))
+	// result = tk.MustQuery("select time('12003-12-10 01:02:03.000123')")
+	// result.Check(testkit.Rows("<nil>")
+	// result = tk.MustQuery("select time('')")
+	// result.Check(testkit.Rows("<nil>")
+	// result = tk.MustQuery("select time('2003-12-10-10 01:02:03.000123')")
+	// result.Check(testkit.Rows("00:20:03")
+
+	//for hour
+	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(null), hour("27aaaa2:59:55");`)
+	result.Check(testkit.Rows("12 12 272 <nil> <nil>"))
+
+	// for minute
+	result = tk.MustQuery(`SELECT minute("12:13:14.123456"), minute("12:13:14.000010"), minute("272:59:55"), minute(null), minute("27aaaa2:59:55");`)
+	result.Check(testkit.Rows("13 13 59 <nil> <nil>"))
+
+	// for second
+	result = tk.MustQuery(`SELECT second("12:13:14.123456"), second("12:13:14.000010"), second("272:59:55"), second(null), second("27aaaa2:59:55");`)
+	result.Check(testkit.Rows("14 14 55 <nil> <nil>"))
+
+	// for microsecond
+	result = tk.MustQuery(`SELECT microsecond("12:00:00.123456"), microsecond("12:00:00.000010"), microsecond(null), microsecond("27aaaa2:59:55");`)
+	result.Check(testkit.Rows("123456 10 <nil> <nil>"))
+
+	// TODO: fix `CAST(xx as duration)` and release the test below:
+	// result = tk.MustQuery(`SELECT hour("aaa"), hour(123456), hour(1234567);`)
+	// result = tk.MustQuery(`SELECT minute("aaa"), minute(123456), minute(1234567);`)
+	// result = tk.MustQuery(`SELECT second("aaa"), second(123456), second(1234567);`)
+	// result = tk.MustQuery(`SELECT microsecond("aaa"), microsecond(123456), microsecond(1234567);`)
+
+	// for time_format
+	result = tk.MustQuery("SELECT TIME_FORMAT('150:02:28', '%H:%i:%s %p');")
+	result.Check(testkit.Rows("150:02:28 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('bad string', '%H:%i:%s %p');")
+	result.Check(testkit.Rows("00:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT(null, '%H:%i:%s %p');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
+	result.Check(testkit.Rows("00:01:23 AM"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
@@ -1534,6 +1668,28 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"26 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
 		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
 		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
+
+	// nullif
+	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
+	result.Check(testkit.Rows("<nil> 1 <nil> <nil>"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1, 1.0), NULLIF(1, "1.0");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+
+	result = tk.MustQuery(`SELECT NULLIF("abc", 1);`)
+	result.Check(testkit.Rows("abc"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1+2, 1);`)
+	result.Check(testkit.Rows("3"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1, 1+2);`)
+	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery(`SELECT NULLIF(2+3, 1+2);`)
+	result.Check(testkit.Rows("5"))
+
+	result = tk.MustQuery(`SELECT HEX(NULLIF("abc", 1));`)
+	result.Check(testkit.Rows("616263"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {

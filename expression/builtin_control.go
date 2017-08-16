@@ -27,12 +27,10 @@ var (
 	_ functionClass = &caseWhenFunctionClass{}
 	_ functionClass = &ifFunctionClass{}
 	_ functionClass = &ifNullFunctionClass{}
-	_ functionClass = &nullIfFunctionClass{}
 )
 
 var (
 	_ builtinFunc = &builtinCaseWhenSig{}
-	_ builtinFunc = &builtinNullIfSig{}
 	_ builtinFunc = &builtinIfNullIntSig{}
 	_ builtinFunc = &builtinIfNullRealSig{}
 	_ builtinFunc = &builtinIfNullDecimalSig{}
