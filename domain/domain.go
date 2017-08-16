@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
+	"sync/atomic"
+	"unsafe"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -521,7 +523,8 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 // StatsHandle returns the statistic handle.
 func (do *Domain) StatsHandle() *statistics.Handle {
-	return do.statsHandle
+	p := unsafe.Pointer(do.statsHandle)
+	return (*statistics.Handle)(atomic.LoadPointer(&p))
 }
 
 // CreateStatsHandle is used only for test.
@@ -533,7 +536,8 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 // should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
+	p := unsafe.Pointer(do.statsHandle)
+	atomic.StorePointer(&p, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 	do.ddl.RegisterEventCh(do.statsHandle.DDLEventCh())
 	err := do.statsHandle.Update(do.InfoSchema())
 	if err != nil {
