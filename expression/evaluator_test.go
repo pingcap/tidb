@@ -475,21 +475,6 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{nil, ast.BitNeg, nil},
 		{-1, ast.BitNeg, uint64(0)},
 
-		// test Plus.
-		{nil, ast.UnaryPlus, nil},
-		{float64(1.0), ast.UnaryPlus, float64(1.0)},
-		{int64(1), ast.UnaryPlus, int64(1)},
-		{int64(1), ast.UnaryPlus, int64(1)},
-		{uint64(1), ast.UnaryPlus, uint64(1)},
-		{"1.0", ast.UnaryPlus, "1.0"},
-		{[]byte("1.0"), ast.UnaryPlus, []byte("1.0")},
-		{types.Hex{Value: 1}, ast.UnaryPlus, types.Hex{Value: 1}},
-		{types.Bit{Value: 1, Width: 1}, ast.UnaryPlus, types.Bit{Value: 1, Width: 1}},
-		{true, ast.UnaryPlus, int64(1)},
-		{false, ast.UnaryPlus, int64(0)},
-		{types.Enum{Name: "a", Value: 1}, ast.UnaryPlus, types.Enum{Name: "a", Value: 1}},
-		{types.Set{Name: "a", Value: 1}, ast.UnaryPlus, types.Set{Name: "a", Value: 1}},
-
 		// test Minus.
 		{nil, ast.UnaryMinus, nil},
 		{float64(1.0), ast.UnaryMinus, float64(-1.0)},
@@ -519,17 +504,6 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		op     string
 		result interface{}
 	}{
-		{types.NewDecFromInt(1), ast.UnaryPlus, types.NewDecFromInt(1)},
-		{types.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: types.DefaultFsp}, ast.UnaryPlus,
-			types.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: types.DefaultFsp}},
-		{types.Time{
-			Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)),
-			Type: mysql.TypeDatetime,
-			Fsp:  0},
-			ast.UnaryPlus,
-			types.Time{
-				Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)),
-				Type: mysql.TypeDatetime, Fsp: 0}},
 		{types.NewDecFromInt(1), ast.UnaryMinus, types.NewDecFromInt(-1)},
 		{types.ZeroDuration, ast.UnaryMinus, new(types.MyDecimal)},
 		{types.Time{Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)), Type: mysql.TypeDatetime, Fsp: 0}, ast.UnaryMinus, types.NewDecFromInt(-20091110230000)},
@@ -544,7 +518,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 
 		ret, err := result.CompareDatum(s.ctx.GetSessionVars().StmtCtx, types.NewDatum(t.result))
 		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, 0)
+		c.Assert(ret, Equals, 0, Commentf("%v %s", t.arg, t.op))
 	}
 }
 

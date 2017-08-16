@@ -37,6 +37,9 @@ type likeFunctionClass struct {
 }
 
 func (c *likeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	argTp := []evalTp{tpString, tpString}
 	if len(args) == 3 {
 		argTp = append(argTp, tpInt)
@@ -47,7 +50,7 @@ func (c *likeFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	}
 	bf.tp.Flen = 1
 	sig := &builtinLikeSig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinLikeSig struct {
@@ -88,8 +91,11 @@ type regexpFunctionClass struct {
 }
 
 func (c *regexpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinRegexpSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinRegexpSig struct {

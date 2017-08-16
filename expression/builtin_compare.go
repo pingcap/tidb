@@ -87,8 +87,11 @@ type coalesceFunctionClass struct {
 }
 
 func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinCoalesceSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCoalesceSig struct {
@@ -120,8 +123,11 @@ type greatestFunctionClass struct {
 }
 
 func (c *greatestFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinGreatestSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinGreatestSig struct {
@@ -163,8 +169,11 @@ type leastFunctionClass struct {
 }
 
 func (c *leastFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinLeastSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinLeastSig struct {
@@ -206,8 +215,11 @@ type intervalFunctionClass struct {
 }
 
 func (c *intervalFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinIntervalSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinIntervalSig struct {
@@ -284,6 +296,9 @@ func isTemporalColumn(expr Expression) bool {
 
 // getFunction sets compare built-in function signatures for various types.
 func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	ft0, ft1 := args[0].GetType(), args[1].GetType()
 	tc0, tc1 := ft0.ToClass(), ft1.ToClass()
 	cmpType := getCmpType(tc0, tc1)
@@ -350,7 +365,7 @@ func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Contex
 			return nil, errors.Trace(err)
 		}
 	}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 // genCmpSigs generates compare function signatures.
@@ -1024,72 +1039,6 @@ func (s *builtinNullEQJSONSig) evalInt(row []types.Datum) (val int64, isNull boo
 		}
 	}
 	return res, false, nil
-}
-
-type builtinCompareSig struct {
-	baseBuiltinFunc
-
-	op opcode.Op
-}
-
-func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := s.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-
-	sc := s.ctx.GetSessionVars().StmtCtx
-	var a, b = args[0], args[1]
-
-	if a.IsNull() || b.IsNull() {
-		// For <=>, if a and b are both nil, return true.
-		// If a or b is nil, return false.
-		if s.op == opcode.NullEQ {
-			if a.IsNull() && b.IsNull() {
-				d.SetInt64(oneI64)
-			} else {
-				d.SetInt64(zeroI64)
-			}
-		}
-		return
-	}
-
-	if s.op != opcode.NullEQ {
-		var aa, bb types.Datum
-		if aa, bb, err = types.CoerceDatum(sc, a, b); err == nil {
-			a = aa
-			b = bb
-		}
-	}
-
-	n, err := a.CompareDatum(sc, b)
-	if err != nil {
-		// TODO: should deal with error here.
-		return d, errors.Trace(err)
-	}
-	var result bool
-	switch s.op {
-	case opcode.LT:
-		result = n < 0
-	case opcode.LE:
-		result = n <= 0
-	case opcode.EQ, opcode.NullEQ:
-		result = n == 0
-	case opcode.GT:
-		result = n > 0
-	case opcode.GE:
-		result = n >= 0
-	case opcode.NE:
-		result = n != 0
-	default:
-		return d, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
-	}
-	if result {
-		d.SetInt64(oneI64)
-	} else {
-		d.SetInt64(zeroI64)
-	}
-	return
 }
 
 func resOfLT(val int64, isNull bool, err error) (int64, bool, error) {

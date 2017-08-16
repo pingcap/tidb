@@ -30,7 +30,6 @@ func (s *testExplainSuite) TestExplain(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		testleak.AfterTest(c)()
-		tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")
@@ -154,7 +153,7 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			},
 		},
 		{
-			"select * from t1 where c1 =1 and c2 > 1",
+			"select * from t1 where c1 = 1 and c2 > 1",
 			[]string{
 				"TableScan_4 Selection_5  cop table:t1, range:[1,1], keep order:false 10",
 				"Selection_5  TableScan_4 cop gt(test.t1.c2, 1) 10",
@@ -165,7 +164,7 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
 			[]string{
 				"TableScan_9 HashAgg_8  cop table:t1, range:(-inf,+inf), keep order:false 8000",
-				"HashAgg_8  TableScan_9 cop type:complete, funcs:sum(in(test.t1.c1, 1, 2)) 1",
+				"HashAgg_8  TableScan_9 cop type:complete, funcs:sum(or(eq(test.t1.c1, 1), eq(test.t1.c1, 2))) 1",
 				"TableReader_11 HashAgg_10  root data:HashAgg_8 1",
 				"HashAgg_10  TableReader_11 root type:final, funcs:sum(col_0) 1",
 			},
@@ -224,6 +223,51 @@ func (s *testExplainSuite) TestExplain(c *C) {
 	}
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
 	for _, tt := range tests {
+		result := tk.MustQuery("explain " + tt.sql)
+		result.Check(testkit.Rows(tt.expect...))
+	}
+
+	insubqueryFoldTests := []struct {
+		sql    string
+		expect []string
+	}{
+		{
+			"select sum(t1.c1 in (select c1 from t2)) from t1",
+			[]string{
+				"TableScan_10   cop table:t1, range:(-inf,+inf), keep order:false 8000",
+				"TableReader_11 HashSemiJoin_9  root data:TableScan_10 8000",
+				"TableScan_12   cop table:t2, range:(-inf,+inf), keep order:false 8000",
+				"TableReader_13 HashSemiJoin_9  root data:TableScan_12 8000",
+				"HashSemiJoin_9 HashAgg_8 TableReader_11,TableReader_13 root right:TableReader_13, aux, equal:[eq(test.t1.c1, test.t2.c1)] 8000",
+				"HashAgg_8  HashSemiJoin_9 root type:complete, funcs:sum(join_5_aux_0) 1",
+			},
+		},
+		{
+			"select 1 in (select c2 from t2) from t1",
+			[]string{
+				"TableScan_8   cop table:t1, range:(-inf,+inf), keep order:false 8000",
+				"TableReader_9 HashSemiJoin_7  root data:TableScan_8 8000",
+				"TableScan_10 Selection_11  cop table:t2, range:(-inf,+inf), keep order:false 10",
+				"Selection_11  TableScan_10 cop eq(1, test.t2.c2) 10",
+				"TableReader_12 HashSemiJoin_7  root data:Selection_11 10",
+				"HashSemiJoin_7  TableReader_9,TableReader_12 root right:TableReader_12, aux 8000",
+			},
+		},
+		{
+			"select sum(6 in (select c2 from t2)) from t1",
+			[]string{
+				"TableScan_10   cop table:t1, range:(-inf,+inf), keep order:false 8000",
+				"TableReader_11 HashSemiJoin_9  root data:TableScan_10 8000",
+				"TableScan_12 Selection_13  cop table:t2, range:(-inf,+inf), keep order:false 10",
+				"Selection_13  TableScan_12 cop eq(6, test.t2.c2) 10",
+				"TableReader_14 HashSemiJoin_9  root data:Selection_13 10",
+				"HashSemiJoin_9 HashAgg_8 TableReader_11,TableReader_14 root right:TableReader_14, aux 8000",
+				"HashAgg_8  HashSemiJoin_9 root type:complete, funcs:sum(join_5_aux_0) 1",
+			},
+		},
+	}
+	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
+	for _, tt := range insubqueryFoldTests {
 		result := tk.MustQuery("explain " + tt.sql)
 		result.Check(testkit.Rows(tt.expect...))
 	}
