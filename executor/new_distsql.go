@@ -302,10 +302,12 @@ type IndexLookUpExecutor struct {
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
+	finish   chan struct{}
 }
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open() error {
+	e.finish = make(chan struct{})
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
@@ -409,6 +411,8 @@ func (e *IndexLookUpExecutor) pickAndExecTask(workCh <-chan *lookupTableTask, tx
 			e.executeTask(task, childCtx)
 		case <-childCtx.Done():
 			return
+		case <-e.finish:
+			return
 		}
 	}
 }
@@ -440,6 +444,8 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 		for _, task := range tasks {
 			select {
 			case <-txnCtx.Done():
+				return
+			case <-e.finish:
 				return
 			case workCh <- task:
 			}
@@ -494,7 +500,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	if e.taskChan == nil {
 		return nil
 	}
-	// TODO: It's better to notify fetchHandles to close instead of fetching all index handle.
+	close(e.finish)
 	// Consume the task channel in case channel is full.
 	for range e.taskChan {
 	}
