@@ -1578,6 +1578,13 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tidb.GetRows(rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+
+	result = tk.MustQuery("SELECT 13 DIV 12, 13 DIV 0.01, -13 DIV 2, 13 DIV NULL, NULL DIV 13, NULL DIV NULL FROM t;")
+	result.Check(testkit.Rows("1 1300 -6 <nil> <nil> <nil>"))
+	rs, err = tk.Exec("select 1e300 DIV 1.5")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {

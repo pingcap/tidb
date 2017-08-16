@@ -28,6 +28,7 @@ var (
 	_ functionClass = &arithmeticPlusFunctionClass{}
 	_ functionClass = &arithmeticMinusFunctionClass{}
 	_ functionClass = &arithmeticMultiplyFunctionClass{}
+	_ functionClass = &arithmeticIntDivideFunctionClass{}
 	_ functionClass = &arithmeticFunctionClass{}
 )
 
@@ -44,6 +45,7 @@ var (
 	_ builtinFunc = &builtinArithmeticMultiplyDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntSig{}
+	_ builtinFunc = &builtinArithmeticIntDivideIntSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 )
 
@@ -451,6 +453,56 @@ func (s *builtinArithmeticMultiplyIntSig) evalInt(row []types.Datum) (val int64,
 		return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s * %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return result, false, nil
+}
+
+type arithmeticIntDivideFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *arithmeticIntDivideFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
+	sig := &builtinArithmeticIntDivideIntSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinArithmeticIntDivideIntSig struct{ baseIntBuiltinFunc }
+
+func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	a, isNull, err := s.args[0].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	b, isNull, err := s.args[1].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	c := &types.MyDecimal{}
+	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
+	if err == types.ErrDivByZero {
+		return 0, true, nil
+	}
+
+	if err != nil {
+		return 0, false, err
+	}
+
+	ret, err := c.ToInt()
+	if err == types.ErrOverflow {
+		return 0, false, err
+	}
+
+	return ret, false, nil
 }
 
 type arithmeticFunctionClass struct {
