@@ -137,13 +137,9 @@ type builtinCaseWhenIntSig struct {
 
 // evalInt evals a builtinCaseWhenIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (ret int64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	var (
-		condition, ret int64
-		isNull         bool
-		err            error
-	)
+	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(row, sc)
@@ -172,14 +168,9 @@ type builtinCaseWhenRealSig struct {
 
 // evalReal evals a builtinCaseWhenRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+func (b *builtinCaseWhenRealSig) evalReal(row []types.Datum) (ret float64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	var (
-		condition int64
-		ret       float64
-		isNull    bool
-		err       error
-	)
+	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(row, sc)
@@ -197,10 +188,7 @@ func (b *builtinCaseWhenRealSig) evalReal(row []types.Datum) (float64, bool, err
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		ret, isNull, err = args[l-1].EvalReal(row, sc)
-		if err != nil {
-			return ret, isNull, errors.Trace(err)
-		}
-		return ret, isNull, nil
+		return ret, isNull, errors.Trace(err)
 	}
 	return 0, true, nil
 }
@@ -211,14 +199,9 @@ type builtinCaseWhenDecimalSig struct {
 
 // evalDecimal evals a builtinCaseWhenDecimalSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *builtinCaseWhenDecimalSig) evalDecimal(row []types.Datum) (ret *types.MyDecimal, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	var (
-		condition int64
-		ret       *types.MyDecimal
-		isNull    bool
-		err       error
-	)
+	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(row, sc)
@@ -236,10 +219,7 @@ func (b *builtinCaseWhenDecimalSig) evalDecimal(row []types.Datum) (*types.MyDec
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		ret, isNull, err = args[l-1].EvalDecimal(row, sc)
-		if err != nil {
-			return ret, isNull, errors.Trace(err)
-		}
-		return ret, isNull, nil
+		return ret, isNull, errors.Trace(err)
 	}
 	return nil, true, nil
 }
@@ -250,14 +230,9 @@ type builtinCaseWhenStringSig struct {
 
 // evalString evals a builtinCaseWhenStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenStringSig) evalString(row []types.Datum) (string, bool, error) {
+func (b *builtinCaseWhenStringSig) evalString(row []types.Datum) (ret string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	var (
-		condition int64
-		ret       string
-		isNull    bool
-		err       error
-	)
+	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(row, sc)
@@ -275,10 +250,7 @@ func (b *builtinCaseWhenStringSig) evalString(row []types.Datum) (string, bool, 
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		ret, isNull, err = args[l-1].EvalString(row, sc)
-		if err != nil {
-			return "", isNull, errors.Trace(err)
-		}
-		return ret, isNull, nil
+		return ret, isNull, errors.Trace(err)
 	}
 	return "", true, nil
 }
@@ -289,14 +261,9 @@ type builtinCaseWhenTimeSig struct {
 
 // evalTime evals a builtinCaseWhenTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenTimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *builtinCaseWhenTimeSig) evalTime(row []types.Datum) (ret types.Time, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	var (
-		condition int64
-		ret       types.Time
-		isNull    bool
-		err       error
-	)
+	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(row, sc)
@@ -314,10 +281,7 @@ func (b *builtinCaseWhenTimeSig) evalTime(row []types.Datum) (types.Time, bool, 
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		ret, isNull, err = args[l-1].EvalTime(row, sc)
-		if err != nil {
-			return ret, isNull, errors.Trace(err)
-		}
-		return ret, isNull, nil
+		return ret, isNull, errors.Trace(err)
 	}
 	return types.Time{}, true, nil
 }
@@ -328,14 +292,9 @@ type builtinCaseWhenDurationSig struct {
 
 // evalDuration evals a builtinCaseWhenDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenDurationSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+func (b *builtinCaseWhenDurationSig) evalDuration(row []types.Datum) (ret types.Duration, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	var (
-		condition int64
-		ret       types.Duration
-		isNull    bool
-		err       error
-	)
+	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(row, sc)
@@ -353,10 +312,7 @@ func (b *builtinCaseWhenDurationSig) evalDuration(row []types.Datum) (types.Dura
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		ret, isNull, err = args[l-1].EvalDuration(row, sc)
-		if err != nil {
-			return ret, isNull, errors.Trace(err)
-		}
-		return ret, isNull, nil
+		return ret, isNull, errors.Trace(err)
 	}
 	return types.Duration{}, true, nil
 }
