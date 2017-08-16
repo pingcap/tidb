@@ -244,7 +244,7 @@ func JSONMerge(args []types.Datum, sc *variable.StatementContext) (d types.Datum
 // JSONObject creates a json from an ordered key-value slice. It retrieves 2 arguments at least.
 func JSONObject(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
 	if len(args)&1 == 1 {
-		err = errIncorrectParameterCount.GenByArgs(ast.JSONObject)
+		err = ErrIncorrectParameterCount.GenByArgs(ast.JSONObject)
 		return
 	}
 	var jsonMap = make(map[string]json.JSON, len(args)>>1)

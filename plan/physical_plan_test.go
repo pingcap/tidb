@@ -285,7 +285,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 		// nullif
 		{
 			sql:  "a = nullif(a, 1)",
-			cond: "eq(test.t.a, nullif(test.t.a, 1))",
+			cond: "eq(test.t.a, if(eq(test.t.a, 1), <nil>, test.t.a))",
 		},
 		// ifnull
 		// TODO: ifnull(null, a) will be wrapped with cast which can not be pushed down.
