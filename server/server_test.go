@@ -56,17 +56,7 @@ func getDSN(overrideConfig map[string]interface{}) string {
 	structValue := reflect.ValueOf(&config).Elem()
 	for k, v := range defaultDSNConfig {
 		structFieldValue := structValue.FieldByName(k)
-		if !structFieldValue.IsValid() {
-			panic(fmt.Sprintf("No such field: %s in config", k))
-		}
-		if !structFieldValue.CanSet() {
-			panic(fmt.Sprintf("Cannot set value of field %s", k))
-		}
-		structFieldType := structFieldValue.Type()
 		val := reflect.ValueOf(v)
-		if structFieldType != val.Type() {
-			panic(fmt.Sprintf("Provided value type didn't match field type for field %s", k))
-		}
 		structFieldValue.Set(val)
 	}
 	if overrideConfig != nil {
@@ -426,21 +416,23 @@ func runTestLoadData(c *C) {
 }
 
 func runTestConcurrentUpdate(c *C) {
+	// TODO: Should be runTestsOnNewDB. See #4205.
 	runTests(c, nil, func(dbt *DBTest) {
-		dbt.mustExec("create table test (a int, b int)")
-		dbt.mustExec("insert test values (1, 1)")
+		dbt.mustExec("drop table if exists test2")
+		dbt.mustExec("create table test2 (a int, b int)")
+		dbt.mustExec("insert test2 values (1, 1)")
 		txn1, err := dbt.db.Begin()
 		c.Assert(err, IsNil)
 
 		txn2, err := dbt.db.Begin()
 		c.Assert(err, IsNil)
 
-		_, err = txn2.Exec("update test set a = a + 1 where b = 1")
+		_, err = txn2.Exec("update test2 set a = a + 1 where b = 1")
 		c.Assert(err, IsNil)
 		err = txn2.Commit()
 		c.Assert(err, IsNil)
 
-		_, err = txn1.Exec("update test set a = a + 1 where b = 1")
+		_, err = txn1.Exec("update test2 set a = a + 1 where b = 1")
 		c.Assert(err, IsNil)
 
 		err = txn1.Commit()

@@ -89,8 +89,7 @@ func (ts *TidbTestSuite) TestLoadData(c *C) {
 }
 
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
-	// TODO: Disabled due to #4205.
-	// c.Parallel()
+	c.Parallel()
 	runTestConcurrentUpdate(c)
 }
 
