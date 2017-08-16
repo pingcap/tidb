@@ -318,7 +318,7 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 	return
 }
 
-func dumpTextValue(mysqlType uint8, value types.Datum) ([]byte, error) {
+func dumpTextValue(colInfo *ColumnInfo, value types.Datum) ([]byte, error) {
 	switch value.Kind() {
 	case types.KindInt64:
 		return strconv.AppendInt(nil, value.GetInt64(), 10), nil
@@ -326,14 +326,14 @@ func dumpTextValue(mysqlType uint8, value types.Datum) ([]byte, error) {
 		return strconv.AppendUint(nil, value.GetUint64(), 10), nil
 	case types.KindFloat32:
 		prec := -1
-		if frac := value.Frac(); frac > 0 {
-			prec = frac
+		if colInfo.Decimal > 0 && int(colInfo.Decimal) != mysql.NotFixedDec {
+			prec = int(colInfo.Decimal)
 		}
 		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', prec, 32), nil
 	case types.KindFloat64:
 		prec := -1
-		if frac := value.Frac(); frac > 0 {
-			prec = frac
+		if colInfo.Decimal > 0 && int(colInfo.Decimal) != mysql.NotFixedDec {
+			prec = int(colInfo.Decimal)
 		}
 		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', prec, 64), nil
 	case types.KindString, types.KindBytes:

@@ -418,6 +418,38 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("SELECT ROUND(123456E-3, 0), ROUND(123456E-3, 1), ROUND(123456E-3, 2), ROUND(123456E-3, 3), ROUND(123456E-3, 4), ROUND(123456E-3, -1), ROUND(123456E-3, -2), ROUND(123456E-3, -3), ROUND(123456E-3, -4);")
 	result.Check(testkit.Rows("123 123.5 123.46 123.456 123.456 120 100 0 0")) // TODO: Column 5 should be 123.4560
 
+	// for pow
+	result = tk.MustQuery("SELECT POW('12', 2), POW(1.2e1, '2.0'), POW(12, 2.0);")
+	result.Check(testkit.Rows("144 144 144"))
+	result = tk.MustQuery("SELECT POW(null, 2), POW(2, null), POW(null, null);")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery("SELECT POW(0, 0);")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("SELECT POW(0, 0.1), POW(0, 0.5), POW(0, 1);")
+	result.Check(testkit.Rows("0 0 0"))
+	rs, err = tk.Exec("SELECT POW(0, -1);")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+
+	// for sign
+	result = tk.MustQuery("SELECT SIGN('12'), SIGN(1.2e1), SIGN(12), SIGN(0.0000012);")
+	result.Check(testkit.Rows("1 1 1 1"))
+	result = tk.MustQuery("SELECT SIGN('-12'), SIGN(-1.2e1), SIGN(-12), SIGN(-0.0000012);")
+	result.Check(testkit.Rows("-1 -1 -1 -1"))
+	result = tk.MustQuery("SELECT SIGN('0'), SIGN('-0'), SIGN(0);")
+	result.Check(testkit.Rows("0 0 0"))
+	result = tk.MustQuery("SELECT SIGN(NULL);")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("SELECT SIGN(-9223372036854775808), SIGN(9223372036854775808);")
+	result.Check(testkit.Rows("-1 1"))
+
+	// for sqrt
+	result = tk.MustQuery("SELECT SQRT(-10), SQRT(144), SQRT(4.84), SQRT(0.04), SQRT(0);")
+	result.Check(testkit.Rows("<nil> 12 2.2 0.2 0"))
+
 	// for radians
 	result = tk.MustQuery("SELECT radians(1.0), radians(pi()), radians(pi()/2), radians(180), radians(1.009);")
 	result.Check(testkit.Rows("0.017453292519943295 0.05483113556160754 0.02741556778080377 3.141592653589793 0.01761037215262278"))
@@ -899,6 +931,14 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t VALUES (0), (20030101010160), (20030101016001), (20030101240101), (20030132010101), (20031301010101), (20031200000000), (20030000000000);")
 	result = tk.MustQuery("SELECT CAST(ix AS SIGNED) FROM t;")
 	result.Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "0"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('150:02:28', '%H:%i:%s %p');")
+	result.Check(testkit.Rows("150:02:28 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT('bad string', '%H:%i:%s %p');")
+	result.Check(testkit.Rows("00:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT(null, '%H:%i:%s %p');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
+	result.Check(testkit.Rows("00:01:23 AM"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
@@ -1541,6 +1581,28 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"26 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
 		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
 		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
+
+	// nullif
+	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
+	result.Check(testkit.Rows("<nil> 1 <nil> <nil>"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1, 1.0), NULLIF(1, "1.0");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+
+	result = tk.MustQuery(`SELECT NULLIF("abc", 1);`)
+	result.Check(testkit.Rows("abc"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1+2, 1);`)
+	result.Check(testkit.Rows("3"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1, 1+2);`)
+	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery(`SELECT NULLIF(2+3, 1+2);`)
+	result.Check(testkit.Rows("5"))
+
+	result = tk.MustQuery(`SELECT HEX(NULLIF("abc", 1));`)
+	result.Check(testkit.Rows("616263"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {

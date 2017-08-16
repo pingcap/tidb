@@ -1062,11 +1062,47 @@ func (er *expressionRewriter) checkArgsOneColumn(args ...expression.Expression) 
 	}
 }
 
+// rewriteFuncCall handles a FuncCallExpr and generates a customized function.
+// It should return true if for the given FuncCallExpr a rewrite is performed so that original behavior is skipped.
+// Otherwise it should return false to indicate (the caller) that original behavior needs to be performed.
+func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
+	switch v.FnName.L {
+	case ast.Nullif:
+		if len(v.Args) != 2 {
+			er.err = expression.ErrIncorrectParameterCount.GenByArgs(v.FnName.O)
+			return true
+		}
+		stackLen := len(er.ctxStack)
+		param1 := er.ctxStack[stackLen-2]
+		param2 := er.ctxStack[stackLen-1]
+		// param1 = param2
+		funcCompare, err := er.constructBinaryOpFunction(param1, param2, ast.EQ)
+		if err != nil {
+			er.err = err
+			return true
+		}
+		// if(param1 = param2, null, param1)
+		funcIf, err := expression.NewFunction(er.ctx, ast.If, &v.Type, funcCompare, expression.Null, param1)
+		if err != nil {
+			er.err = err
+			return true
+		}
+		er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
+		er.ctxStack = append(er.ctxStack, funcIf)
+		return true
+	default:
+		return false
+	}
+}
+
 func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	stackLen := len(er.ctxStack)
 	args := er.ctxStack[stackLen-len(v.Args):]
 	er.checkArgsOneColumn(args...)
 	if er.err != nil {
+		return
+	}
+	if er.rewriteFuncCall(v) {
 		return
 	}
 	var function expression.Expression

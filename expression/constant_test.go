@@ -146,7 +146,7 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 		},
 		{
 			condition: newFunction(ast.EQ, newColumn("a"), newFunction(ast.Rand)),
-			result:    "eq(test.t.a, rand())",
+			result:    "eq(cast(test.t.a), rand())",
 		},
 		{
 			condition: newFunction(ast.IsNull, newLonglong(1)),
