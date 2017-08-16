@@ -466,7 +466,7 @@ func (c *hourFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen, bf.tp.Decimal = 2, 0
+	bf.tp.Flen, bf.tp.Decimal = 3, 0
 	sig := &builtinHourSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -479,8 +479,9 @@ type builtinHourSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_hour
 func (b *builtinHourSig) evalInt(row []types.Datum) (int64, bool, error) {
 	dur, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	// ignore error and return NULL
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, nil
 	}
 	return int64(dur.Hour()), false, nil
 }
@@ -510,8 +511,9 @@ type builtinMinuteSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_minute
 func (b *builtinMinuteSig) evalInt(row []types.Datum) (int64, bool, error) {
 	dur, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	// ignore error and return NULL
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, nil
 	}
 	return int64(dur.Minute()), false, nil
 }
@@ -541,8 +543,9 @@ type builtinSecondSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_second
 func (b *builtinSecondSig) evalInt(row []types.Datum) (int64, bool, error) {
 	dur, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	// ignore error and return NULL
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, nil
 	}
 	return int64(dur.Second()), false, nil
 }
@@ -559,7 +562,7 @@ func (c *microSecondFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen, bf.tp.Decimal = 21, 0
+	bf.tp.Flen, bf.tp.Decimal = 6, 0
 	sig := &builtinMicroSecondSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -572,8 +575,9 @@ type builtinMicroSecondSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_microsecond
 func (b *builtinMicroSecondSig) evalInt(row []types.Datum) (int64, bool, error) {
 	dur, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	// ignore error and return NULL
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, nil
 	}
 	return int64(dur.MicroSecond()), false, nil
 }

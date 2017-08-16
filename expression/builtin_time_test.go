@@ -408,25 +408,25 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		f, err := fc.getFunction(datumsToConstants(td), s.ctx)
 		c.Assert(err, IsNil)
 		_, err = f.eval(nil)
-		c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
 
 		fc = funcs[ast.Minute]
 		f, err = fc.getFunction(datumsToConstants(td), s.ctx)
 		c.Assert(err, IsNil)
 		_, err = f.eval(nil)
-		c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
 
 		fc = funcs[ast.Second]
 		f, err = fc.getFunction(datumsToConstants(td), s.ctx)
 		c.Assert(err, IsNil)
 		_, err = f.eval(nil)
-		c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
 
 		fc = funcs[ast.MicroSecond]
 		f, err = fc.getFunction(datumsToConstants(td), s.ctx)
 		c.Assert(err, IsNil)
 		_, err = f.eval(nil)
-		c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
 
 		fc = funcs[ast.Time]
 		f, err = fc.getFunction(datumsToConstants(td), s.ctx)
