@@ -164,7 +164,7 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 			}
 			bf.tp = retTp
 		} else {
-			// Other type just set the field length to maxFlen
+			// Set the field length to maxFlen for other types.
 			bf.tp.Flen = maxFlen
 		}
 	}
