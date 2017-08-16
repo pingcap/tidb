@@ -990,6 +990,17 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("-838:59:59.000000"))
 	result = tk.MustQuery("select time('840:59:59.000000')")
 	result.Check(testkit.Rows("838:59:59.000000"))
+	// FIXME: #issue 4193
+	// result = tk.MustQuery("select time('840:59:60.000000')")
+	// result.Check(testkit.Rows("<nil>"))
+	// result = tk.MustQuery("select time('800:59:59.9999999')")
+	// result.Check(testkit.Rows("801:00:00.000000"))
+	// result = tk.MustQuery("select time('12003-12-10 01:02:03.000123')")
+	// result.Check(testkit.Rows("<nil>")
+	// result = tk.MustQuery("select time('')")
+	// result.Check(testkit.Rows("<nil>")
+	// result = tk.MustQuery("select time('2003-12-10-10 01:02:03.000123')")
+	// result.Check(testkit.Rows("00:20:03")
 
 	//for hour
 	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(null), hour("27aaaa2:59:55");`)
