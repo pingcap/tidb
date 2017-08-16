@@ -15,7 +15,9 @@ package domain
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
@@ -33,8 +35,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
-	"sync/atomic"
-	"unsafe"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
