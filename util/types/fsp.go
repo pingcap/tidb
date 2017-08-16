@@ -33,7 +33,7 @@ const (
 	DefaultFsp int = 0
 )
 
-// CheckFsp check fsp is in valid range.
+// CheckFsp checks fsp is in valid range.
 func CheckFsp(fsp int) (int, error) {
 	if fsp == UnspecifiedFsp {
 		return DefaultFsp, nil
