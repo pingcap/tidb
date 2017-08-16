@@ -494,6 +494,8 @@ func (s *testEvaluatorSuite) TestReverse(c *C) {
 	for _, t := range dtbl {
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		d, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
@@ -769,6 +771,7 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLocate(c *C) {
+	// 1. Test LOCATE without binary input.
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Args []interface{}
@@ -783,26 +786,8 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{[]interface{}{"界面", "你好世界"}, 0},
 		{[]interface{}{"b", "中a英b文"}, 4},
 		{[]interface{}{"BaR", "foobArbar"}, 4},
-		{[]interface{}{[]byte("BaR"), "foobArbar"}, 0},
-		{[]interface{}{"BaR", []byte("foobArbar")}, 0},
 		{[]interface{}{nil, "foobar"}, nil},
 		{[]interface{}{"bar", nil}, nil},
-	}
-
-	Dtbl := tblToDtbl(tbl)
-	instr := funcs[ast.Locate]
-	for i, t := range Dtbl {
-		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
-		c.Assert(err, IsNil)
-		got, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
-	}
-
-	tbl2 := []struct {
-		Args []interface{}
-		Want interface{}
-	}{
 		{[]interface{}{"bar", "foobarbar", 5}, 7},
 		{[]interface{}{"xbar", "foobar", 1}, 0},
 		{[]interface{}{"", "foobar", 2}, 2},
@@ -813,56 +798,49 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{[]interface{}{"A", "大A写的A", 2}, 2},
 		{[]interface{}{"A", "大A写的A", 3}, 5},
 		{[]interface{}{"bAr", "foobarBaR", 5}, 7},
+		{[]interface{}{nil, nil}, nil},
+		{[]interface{}{"", nil}, nil},
+		{[]interface{}{nil, ""}, nil},
+		{[]interface{}{nil, nil, 1}, nil},
+		{[]interface{}{"", nil, 1}, nil},
+		{[]interface{}{nil, "", 1}, nil},
+		{[]interface{}{"foo", nil, -1}, nil},
+		{[]interface{}{nil, "bar", 0}, nil},
+	}
+	Dtbl := tblToDtbl(tbl)
+	instr := funcs[ast.Locate]
+	for i, t := range Dtbl {
+		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
+		c.Assert(err, IsNil)
+		got, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
+	}
+	// 2. Test LOCATE with binary input
+	tbl2 := []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{[]byte("BaR"), "foobArbar"}, 0},
+		{[]interface{}{"BaR", []byte("foobArbar")}, 0},
 		{[]interface{}{[]byte("bAr"), "foobarBaR", 5}, 0},
 		{[]interface{}{"bAr", []byte("foobarBaR"), 5}, 0},
 		{[]interface{}{"bAr", []byte("foobarbAr"), 5}, 7},
 	}
 	Dtbl2 := tblToDtbl(tbl2)
 	for i, t := range Dtbl2 {
-		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
+		exprs := datumsToConstants(t["Args"])
+		types.SetBinChsClnFlag(exprs[0].GetType())
+		types.SetBinChsClnFlag(exprs[1].GetType())
+		f, err := instr.getFunction(exprs, s.ctx)
 		c.Assert(err, IsNil)
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), Equals, true)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
-	}
-
-	errTbl := []struct {
-		subStr interface{}
-		Str    interface{}
-	}{
-		{nil, nil},
-		{"", nil},
-		{nil, ""},
-		{"foo", nil},
-		{nil, "bar"},
-	}
-	for _, v := range errTbl {
-		fc := funcs[ast.Locate]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
-		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(r.Kind(), Equals, types.KindNull)
-	}
-
-	errTbl2 := []struct {
-		subStr interface{}
-		Str    interface{}
-		pos    interface{}
-	}{
-		{nil, nil, 1},
-		{"", nil, 1},
-		{nil, "", 1},
-		{"foo", nil, -1},
-		{nil, "bar", 0},
-	}
-	for _, v := range errTbl2 {
-		fc := funcs[ast.Locate]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
-		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(r.Kind(), Equals, types.KindNull)
 	}
 }
 
@@ -1416,11 +1394,13 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 	for _, tt := range octTests {
 		in := types.NewDatum(tt.origin)
 		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		res, err := r.ToString()
 		c.Assert(err, IsNil)
-		c.Assert(res, Equals, tt.ret)
+		c.Assert(res, Equals, tt.ret, Commentf("select oct(%v);", tt.origin))
 	}
 	// tt NULL input for sha
 	var argNull types.Datum
@@ -1662,6 +1642,7 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 	for _, t := range tbl {
 		fc := funcs[ast.Elt]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)

@@ -371,6 +371,7 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	fc := funcs[ast.Rand]
 	f, err := fc.getFunction(nil, s.ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsFalse)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Less, float64(1))
@@ -405,6 +406,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
@@ -414,9 +416,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		Arg []interface{}
 	}{
 		{[]interface{}{"test", "test"}},
-		{[]interface{}{nil, nil}},
 		{[]interface{}{1, "test"}},
-		{[]interface{}{1, nil}},
 		{[]interface{}{10, 700}}, // added overflow test
 	}
 
@@ -597,30 +597,37 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 func (s *testEvaluatorSuite) TestSign(c *C) {
 	defer testleak.AfterTest(c)()
 
+	sc := s.ctx.GetSessionVars().StmtCtx
+	tmpIT := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = tmpIT
+	}()
+
 	for _, t := range []struct {
-		num interface{}
+		num []interface{}
 		ret interface{}
-		err Checker
 	}{
-		{nil, nil, IsNil},
-		{1, 1, IsNil},
-		{0, 0, IsNil},
-		{-1, -1, IsNil},
-		{0.4, 1, IsNil},
-		{-0.4, -1, IsNil},
-		{"1", 1, IsNil},
-		{"-1", -1, IsNil},
-		{"1a", 1, NotNil},
-		{"-1a", -1, NotNil},
-		{"a", 0, NotNil},
-		{uint64(9223372036854775808), 1, IsNil},
+		{[]interface{}{nil}, nil},
+		{[]interface{}{1}, int64(1)},
+		{[]interface{}{0}, int64(0)},
+		{[]interface{}{-1}, int64(-1)},
+		{[]interface{}{0.4}, int64(1)},
+		{[]interface{}{-0.4}, int64(-1)},
+		{[]interface{}{"1"}, int64(1)},
+		{[]interface{}{"-1"}, int64(-1)},
+		{[]interface{}{"1a"}, int64(1)},
+		{[]interface{}{"-1a"}, int64(-1)},
+		{[]interface{}{"a"}, int64(0)},
+		{[]interface{}{uint64(9223372036854775808)}, int64(1)},
 	} {
 		fc := funcs[ast.Sign]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.num)), s.ctx)
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(primitiveValsToConstants(t.num), s.ctx)
+		c.Assert(err, IsNil, Commentf("%v", t))
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err := f.eval(nil)
-		c.Assert(err, t.err)
-		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
+		c.Assert(err, IsNil, Commentf("%v", t))
+		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret), Commentf("%v", t))
 	}
 }
 
@@ -669,26 +676,25 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 func (s *testEvaluatorSuite) TestSqrt(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		Arg interface{}
+		Arg []interface{}
 		Ret interface{}
 	}{
-		{nil, nil},
-		{int64(1), float64(1)},
-		{float64(4), float64(2)},
-		{"4", float64(2)},
-		{"9", float64(3)},
-		{"-16", nil},
+		{[]interface{}{nil}, nil},
+		{[]interface{}{int64(1)}, float64(1)},
+		{[]interface{}{float64(4)}, float64(2)},
+		{[]interface{}{"4"}, float64(2)},
+		{[]interface{}{"9"}, float64(3)},
+		{[]interface{}{"-16"}, nil},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-
-	for _, t := range Dtbl {
+	for _, t := range tbl {
 		fc := funcs[ast.Sqrt]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		f, err := fc.getFunction(primitiveValsToConstants(t.Arg), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Ret), Commentf("%v", t))
 	}
 }
 
@@ -721,6 +727,8 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 		fc := funcs[ast.Radians]
 		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])

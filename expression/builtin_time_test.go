@@ -1444,6 +1444,7 @@ func (s *testEvaluatorSuite) TestToSeconds(c *C) {
 	for _, test := range tests {
 		t := []types.Datum{types.NewDatum(test.param)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1459,6 +1460,7 @@ func (s *testEvaluatorSuite) TestToSeconds(c *C) {
 	for _, i := range testsNull {
 		t := []types.Datum{types.NewDatum(i)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1483,6 +1485,7 @@ func (s *testEvaluatorSuite) TestToDays(c *C) {
 	for _, test := range tests {
 		t := []types.Datum{types.NewDatum(test.param)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1498,6 +1501,7 @@ func (s *testEvaluatorSuite) TestToDays(c *C) {
 	for _, i := range testsNull {
 		t := []types.Datum{types.NewDatum(i)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1521,6 +1525,7 @@ func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
 	for _, test := range tests {
 		t := []types.Datum{types.NewStringDatum(test.unit), types.NewIntDatum(test.interval), types.NewDatum(test.date)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1560,6 +1565,48 @@ func (s *testEvaluatorSuite) TestPeriodAdd(c *C) {
 		c.Assert(result.Kind(), Equals, types.KindInt64)
 		value := result.GetInt64()
 		c.Assert(value, Equals, test.Expect)
+	}
+}
+
+func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
+	defer testleak.AfterTest(c)()
+
+	// SELECT TIME_FORMAT(null,'%H %k %h %I %l')
+	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum("%H %k %h %I %l")}
+	fc := funcs[ast.TimeFormat]
+	f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), Equals, true)
+
+	tblDate := []struct {
+		Input  []string
+		Expect interface{}
+	}{
+		{[]string{"100:00:00", "%H %k %h %I %l"},
+			"100 100 04 04 4"},
+		{[]string{"23:00:00", "%H %k %h %I %l"},
+			"23 23 11 11 11"},
+		{[]string{"11:00:00", "%H %k %h %I %l"},
+			"11 11 11 11 11"},
+		{[]string{"17:42:03.000001", "%r %T %h:%i%p %h:%i:%s %p %H %i %s"},
+			"05:42:03 PM 17:42:03 05:42PM 05:42:03 PM 17 42 03"},
+		{[]string{"07:42:03.000001", "%f"},
+			"000001"},
+		{[]string{"1990-05-07 19:30:10", "%H %i %s"},
+			"19 30 10"},
+	}
+	dtblDate := tblToDtbl(tblDate)
+	for i, t := range dtblDate {
+		fc := funcs[ast.TimeFormat]
+		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Expect"][0], Commentf("no.%d \nobtain:%v \nexpect:%v\n", i,
+			v.GetValue(), t["Expect"][0].GetValue()))
 	}
 }
 

@@ -19,6 +19,7 @@
 		Aggregation
 		TopN
 		Limit
+		FieldType
 		Expr
 		ByItem
 		TableInfo
