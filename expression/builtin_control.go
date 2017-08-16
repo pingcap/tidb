@@ -140,28 +140,28 @@ type builtinCaseWhenIntSig struct {
 func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	var (
-		arg    int64
-		isNull bool
-		err    error
+		condition, ret int64
+		isNull         bool
+		err            error
 	)
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
-		arg, isNull, err = args[i].EvalInt(row, sc)
+		condition, isNull, err = args[i].EvalInt(row, sc)
 		if err != nil {
 			return 0, isNull, errors.Trace(err)
 		}
-		if isNull || arg == 0 {
+		if isNull || condition == 0 {
 			continue
 		}
-		arg, isNull, err = args[i+1].EvalInt(row, sc)
-		return arg, isNull, errors.Trace(err)
+		ret, isNull, err = args[i+1].EvalInt(row, sc)
+		return ret, isNull, errors.Trace(err)
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
-		arg, isNull, err = args[l-1].EvalInt(row, sc)
-		return arg, isNull, errors.Trace(err)
+		ret, isNull, err = args[l-1].EvalInt(row, sc)
+		return ret, isNull, errors.Trace(err)
 	}
 	return 0, true, nil
 }
