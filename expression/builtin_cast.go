@@ -1294,9 +1294,6 @@ func WrapWithCastAsReal(expr Expression, ctx context.Context) (Expression, error
 	}
 	tp := types.NewFieldType(mysql.TypeDouble)
 	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
-	if exprTp := expr.GetType(); exprTp.ToClass() == types.ClassInt {
-		tp.Flen, tp.Decimal = exprTp.Flen, 0
-	}
 	types.SetBinChsClnFlag(tp)
 	return buildCastFunction(expr, tp, ctx)
 }
@@ -1310,9 +1307,6 @@ func WrapWithCastAsDecimal(expr Expression, ctx context.Context) (Expression, er
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
-	if exprTp := expr.GetType(); exprTp.ToClass() == types.ClassInt {
-		tp.Flen, tp.Decimal = exprTp.Flen, 0
-	}
 	types.SetBinChsClnFlag(tp)
 	return buildCastFunction(expr, tp, ctx)
 }
