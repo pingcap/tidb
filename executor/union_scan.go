@@ -98,7 +98,8 @@ type UnionScanExec struct {
 
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
-	handleColIsUsed  bool
+	// handleColIsUsed checks whether this executor need to output handle column in its output row.
+	handleColIsUsed bool
 
 	addedRows   []Row
 	cursor      int
