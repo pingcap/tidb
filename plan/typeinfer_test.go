@@ -566,7 +566,7 @@ func (s *testPlanSuite) createTestCase4ArithmeticFuncs() []typeInferTestCase {
 		{"c_int / c_time", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
 		{"c_int / c_double", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
 		{"c_int / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 18, 4},
-		{"c_datetime / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, 6},
+		{"c_datetime / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
 		{"c_bigint / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 28, 4},
 		{"c_double / c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
 		{"c_double / c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
