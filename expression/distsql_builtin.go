@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
@@ -200,11 +199,21 @@ func fieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 
 func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constant, error) {
 	ft := fieldTypeFromPB(ftPB)
-	d, err := tablecodec.DecodeColumnValue(data, ft, tz)
+	_, v, err := codec.DecodeUint(data)
 	if err != nil {
 		return nil, errors.Trace(nil)
 	}
-	return &Constant{Value: d, RetType: ft}, nil
+	var t types.Time
+	t.Type = ft.Tp
+	t.Fsp = ft.Decimal
+	err = t.FromPackedUint(v)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
+		t.ConvertTimeZone(time.UTC, tz)
+	}
+	return &Constant{Value: types.NewTimeDatum(t), RetType: ft}, nil
 }
 
 func decodeValueList(data []byte) ([]Expression, error) {

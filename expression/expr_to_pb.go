@@ -14,12 +14,13 @@
 package expression
 
 import (
+	"time"
+
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -113,11 +114,16 @@ func (pc pbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
 			loc := pc.sc.TimeZone
-			val, err := tablecodec.EncodeValue(d, loc)
+			t := d.GetMysqlTime()
+			if t.Type == mysql.TypeTimestamp && loc != time.UTC {
+				t.ConvertTimeZone(loc, time.UTC)
+			}
+			v, err := t.ToPackedUint()
 			if err != nil {
 				log.Errorf("Fail to encode value, err: %s", err.Error())
 				return nil
 			}
+			val = codec.EncodeUint(nil, v)
 			return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
 		}
 		return nil
