@@ -1,5 +1,5 @@
-hash: 582c0481477c24b4fb6721162771f5155de55d651396416e1022283e471599b3
-updated: 2017-08-14T18:36:50.774799322+08:00
+hash: e7138b459686bbcdecd0005a1a7e785686171ae6229c4b44855e7e4d1422064d
+updated: 2017-08-16T14:52:37.068717494+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -49,7 +49,7 @@ imports:
 - name: github.com/ghodss/yaml
   version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
 - name: github.com/go-sql-driver/mysql
-  version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
+  version: 3955978caca48c1658a4bb7a9c6a0f084e326af3
 - name: github.com/gogo/protobuf
   version: 100ba4e885062801d56799d78530b73b178a78f3
   subpackages:
@@ -193,7 +193,7 @@ imports:
   subpackages:
   - rate
 - name: google.golang.org/genproto
-  version: 09f6ed296fc66555a25fe4ce95173148778dfa85
+  version: 6b7d9516179cd47f4714cfeb0103ad1dede756c4
   subpackages:
   - googleapis/rpc/status
 - name: google.golang.org/grpc
