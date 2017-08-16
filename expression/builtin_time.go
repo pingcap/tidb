@@ -1461,41 +1461,41 @@ func (c *timeFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinTimeSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinTimeSig{baseDurationBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinTimeSig struct {
-	baseBuiltinFunc
+	baseDurationBuiltinFunc
 }
 
-// eval evals a builtinTimeSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time
-func (b *builtinTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return
+// evalDuration evals a builtinTimeSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time.
+func (b *builtinTimeSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	expr, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
 	}
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	idx := strings.Index(str, ".")
 	fsp := 0
-	if idx != -1 {
-		fsp = len(str) - idx - 1
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	fspD := types.NewIntDatum(int64(fsp))
-	if fsp, err = checkFsp(sc, fspD); err != nil {
-		return d, errors.Trace(err)
+	if idx := strings.Index(expr, "."); idx != -1 {
+		fsp = len(expr) - idx - 1
 	}
 
-	return convertToDuration(sc, args[0], fsp)
+	if fsp, err = types.CheckFsp(fsp); err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+
+	res, err = types.ParseDuration(expr, fsp)
+	if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+		err = sc.HandleTruncate(err)
+	}
+	return res, isNull, errors.Trace(err)
 }
 
 type utcDateFunctionClass struct {
@@ -1680,6 +1680,7 @@ func (b *builtinExtractSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return
 }
 
+// TODO: duplicate with types.CheckFsp, better use types.CheckFsp.
 func checkFsp(sc *variable.StatementContext, arg types.Datum) (int, error) {
 	fsp, err := arg.ToInt64(sc)
 	if err != nil {

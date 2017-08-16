@@ -973,6 +973,35 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("SELECT CAST(ix AS SIGNED) FROM t;")
 	result.Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "0"))
 
+	// test time
+	result = tk.MustQuery("select time('2003-12-31 01:02:03')")
+	result.Check(testkit.Rows("01:02:03"))
+	result = tk.MustQuery("select time('2003-12-31 01:02:03.000123')")
+	result.Check(testkit.Rows("01:02:03.000123"))
+	result = tk.MustQuery("select time('01:02:03.000123')")
+	result.Check(testkit.Rows("01:02:03.000123"))
+	result = tk.MustQuery("select time('01:02:03')")
+	result.Check(testkit.Rows("01:02:03"))
+	result = tk.MustQuery("select time('-838:59:59.000000')")
+	result.Check(testkit.Rows("-838:59:59.000000"))
+	result = tk.MustQuery("select time('-838:59:59.000001')")
+	result.Check(testkit.Rows("-838:59:59.000000"))
+	result = tk.MustQuery("select time('-839:59:59.000000')")
+	result.Check(testkit.Rows("-838:59:59.000000"))
+	result = tk.MustQuery("select time('840:59:59.000000')")
+	result.Check(testkit.Rows("838:59:59.000000"))
+	// FIXME: #issue 4193
+	// result = tk.MustQuery("select time('840:59:60.000000')")
+	// result.Check(testkit.Rows("<nil>"))
+	// result = tk.MustQuery("select time('800:59:59.9999999')")
+	// result.Check(testkit.Rows("801:00:00.000000"))
+	// result = tk.MustQuery("select time('12003-12-10 01:02:03.000123')")
+	// result.Check(testkit.Rows("<nil>")
+	// result = tk.MustQuery("select time('')")
+	// result.Check(testkit.Rows("<nil>")
+	// result = tk.MustQuery("select time('2003-12-10-10 01:02:03.000123')")
+	// result.Check(testkit.Rows("00:20:03")
+
 	//for hour
 	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(null), hour("27aaaa2:59:55");`)
 	result.Check(testkit.Rows("12 12 272 <nil> <nil>"))
@@ -1314,6 +1343,9 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t SET c1 = '2000-04-01', c2 = '2000-04-01', c3 = '2000-04-01 12:12:12', c4 = '-1 13:12:12', c5 = 2000;")
 	result = tk.MustQuery("SELECT c4 FROM t where c4 < '-13:12:12';")
 	result.Check(testkit.Rows("-37:12:12"))
+
+	result = tk.MustQuery(`SELECT 1 DIV - - 28 + ( - SUM( - + 25 ) ) * - CASE - 18 WHEN 44 THEN NULL ELSE - 41 + 32 + + - 70 - + COUNT( - 95 ) * 15 END + 92`)
+	result.Check(testkit.Rows("2442"))
 
 	// testCase is for like and regexp
 	type testCase struct {

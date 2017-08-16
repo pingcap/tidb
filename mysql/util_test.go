@@ -25,10 +25,17 @@ func TestGetFieldLength(t *testing.T) {
 		{TypeInt24, 9},
 		{TypeLong, 11},
 		{TypeLonglong, 21},
-		{TypeBit, -1},
-		{TypeBlob, -1},
+		{TypeBit, 1},
+		{TypeBlob, 65535},
 		{TypeNull, -1},
 		{TypeNewDecimal, 10},
+		{TypeFloat, 12},
+		{TypeDouble, 22},
+		{TypeDate, 10},
+		{TypeDuration, 10},
+		{TypeDatetime, 19},
+		{TypeTimestamp, 19},
+		{TypeString, 1},
 	}
 
 	for _, test := range tbl {
