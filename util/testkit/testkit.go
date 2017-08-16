@@ -132,7 +132,7 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
-	comment := check.Commentf("sql:%s, %v", sql, args)
+	comment := check.Commentf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)

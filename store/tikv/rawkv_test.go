@@ -38,6 +38,10 @@ func (s *testRawKVSuite) SetUpTest(c *C) {
 	s.bo = NewBackoffer(5000, goctx.Background())
 }
 
+func (s *testRawKVSuite) TearDownTest(c *C) {
+	s.client.Close()
+}
+
 func (s *testRawKVSuite) mustNotExist(c *C, key []byte) {
 	v, err := s.client.Get(key)
 	c.Assert(err, IsNil)
