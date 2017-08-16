@@ -30,11 +30,21 @@ func GetDefaultFieldLength(tp byte) int {
 		return 11
 	case TypeLonglong:
 		return 21
+	case TypeFloat:
+		return 12
+	case TypeDouble:
+		return 22
+	case TypeDate, TypeDuration:
+		return 10
+	case TypeDatetime, TypeTimestamp:
+		return 19
+	case TypeString, TypeBit:
+		return 1
 	case TypeNewDecimal:
 		// See https://dev.mysql.com/doc/refman/5.7/en/fixed-point-types.html
 		return 10
-	case TypeBit, TypeBlob:
-		return -1
+	case TypeBlob:
+		return 65535
 	default:
 		//TODO: Add more types.
 		return -1
