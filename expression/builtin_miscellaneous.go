@@ -221,11 +221,7 @@ type builtinDecimalAnyValueSig struct {
 // evalDecimal evals a builtinDecimalAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinDecimalAnyValueSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	val, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil || isNull {
-		return val, isNull, errors.Trace(err)
-	}
-	return val, false, nil
+	return b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type builtinDurationAnyValueSig struct {
@@ -235,11 +231,7 @@ type builtinDurationAnyValueSig struct {
 // evalDuration evals a builtinDurationAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinDurationAnyValueSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	val, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil || isNull {
-		return val, isNull, errors.Trace(err)
-	}
-	return val, false, nil
+	return b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type builtinIntAnyValueSig struct {
@@ -249,11 +241,7 @@ type builtinIntAnyValueSig struct {
 // evalInt evals a builtinIntAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinIntAnyValueSig) evalInt(row []types.Datum) (int64, bool, error) {
-	val, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil || isNull {
-		return val, isNull, errors.Trace(err)
-	}
-	return val, false, nil
+	return b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type builtinJSONAnyValueSig struct {
@@ -263,11 +251,7 @@ type builtinJSONAnyValueSig struct {
 // evalJSON evals a builtinJSONAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinJSONAnyValueSig) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	val, isNull, err := b.args[0].EvalJSON(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil || isNull {
-		return val, isNull, errors.Trace(err)
-	}
-	return val, false, nil
+	return b.args[0].EvalJSON(row, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type builtinRealAnyValueSig struct {
@@ -277,11 +261,7 @@ type builtinRealAnyValueSig struct {
 // evalReal evals a builtinRealAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinRealAnyValueSig) evalReal(row []types.Datum) (float64, bool, error) {
-	val, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil || isNull {
-		return val, isNull, errors.Trace(err)
-	}
-	return val, false, nil
+	return b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type builtinStringAnyValueSig struct {
@@ -291,11 +271,7 @@ type builtinStringAnyValueSig struct {
 // evalString evals a builtinStringAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinStringAnyValueSig) evalString(row []types.Datum) (string, bool, error) {
-	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil || isNull {
-		return val, isNull, errors.Trace(err)
-	}
-	return val, false, nil
+	return b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type builtinTimeAnyValueSig struct {
@@ -305,11 +281,7 @@ type builtinTimeAnyValueSig struct {
 // evalTime evals a builtinTimeAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinTimeAnyValueSig) evalTime(row []types.Datum) (types.Time, bool, error) {
-	val, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil || isNull {
-		return val, isNull, errors.Trace(err)
-	}
-	return val, false, nil
+	return b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type defaultFunctionClass struct {
