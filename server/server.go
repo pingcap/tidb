@@ -30,6 +30,8 @@ package server
 
 import (
 	"crypto/tls"
+	"crypto/x509"
+	"io/ioutil"
 	"math/rand"
 	"net"
 	"sync"
@@ -42,6 +44,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
@@ -137,24 +140,23 @@ func (s *Server) skipAuth() bool {
 const tokenLimit = 1000
 
 // NewServer creates a new Server.
-func NewServer(cfg *config.Config, driver IDriver, tlsConfig *tls.Config) (*Server, error) {
+func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
-		tlsConfig:         tlsConfig, // tlsConfig will be NotNil only if SSLEnabled and valid certs are provided
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(tokenLimit),
 		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
+	s.loadTLSCertificates()
 
 	s.capability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 		mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 		mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 		mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
 		mysql.ClientConnectAtts
-
-	if cfg.SSLEnabled {
+	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
 
@@ -173,6 +175,54 @@ func NewServer(cfg *config.Config, driver IDriver, tlsConfig *tls.Config) (*Serv
 	rand.Seed(time.Now().UTC().UnixNano())
 	log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Addr)
 	return s, nil
+}
+
+func (s *Server) loadTLSCertificates() {
+	defer func() {
+		if s.tlsConfig != nil {
+			log.Info("Secure connection is enabled")
+			variable.SysVars["have_openssl"].Value = "YES"
+			variable.SysVars["have_ssl"].Value = "YES"
+			variable.SysVars["ssl_cert"].Value = s.cfg.SSLCertPath
+			variable.SysVars["ssl_key"].Value = s.cfg.SSLKeyPath
+		} else {
+			log.Warn("Secure connection is NOT ENABLED")
+		}
+	}()
+
+	if len(s.cfg.SSLCertPath) == 0 || len(s.cfg.SSLKeyPath) == 0 {
+		s.tlsConfig = nil
+		return
+	}
+
+	tlsCert, err := tls.LoadX509KeyPair(s.cfg.SSLCertPath, s.cfg.SSLKeyPath)
+	if err != nil {
+		log.Warn(errors.ErrorStack(err))
+		s.tlsConfig = nil
+		return
+	}
+
+	// Try loading CA cert.
+	clientAuthPolicy := tls.NoClientCert
+	var certPool *x509.CertPool
+	if len(s.cfg.SSLCAPath) > 0 {
+		caCert, err := ioutil.ReadFile(s.cfg.SSLCAPath)
+		if err != nil {
+			log.Warn(errors.ErrorStack(err))
+		} else {
+			certPool = x509.NewCertPool()
+			if certPool.AppendCertsFromPEM(caCert) {
+				clientAuthPolicy = tls.VerifyClientCertIfGiven
+			}
+			variable.SysVars["ssl_ca"].Value = s.cfg.SSLCAPath
+		}
+	}
+	s.tlsConfig = &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		ClientCAs:    certPool,
+		ClientAuth:   clientAuthPolicy,
+		MinVersion:   0,
+	}
 }
 
 // Run runs the server.

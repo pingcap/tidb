@@ -20,6 +20,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"testing"
@@ -40,7 +41,43 @@ func TestT(t *testing.T) {
 
 var regression = true
 
-var dsn = "root@tcp(localhost:4001)/test?strict=true"
+var defaultDSNConfig = map[string]interface{}{
+	"User":   "root",
+	"Net":    "tcp",
+	"Addr":   "127.0.0.1:4001",
+	"DBName": "test",
+	"Strict": true,
+}
+
+// getDSN generates a DSN string for MySQL connection based on
+// defaultDSNConfig and the given overrideConfig.
+func getDSN(overrideConfig map[string]interface{}) string {
+	var config mysql.Config
+	structValue := reflect.ValueOf(&config).Elem()
+	for k, v := range defaultDSNConfig {
+		structFieldValue := structValue.FieldByName(k)
+		if !structFieldValue.IsValid() {
+			panic(fmt.Sprintf("No such field: %s in config", k))
+		}
+		if !structFieldValue.CanSet() {
+			panic(fmt.Sprintf("Cannot set value of field %s", k))
+		}
+		structFieldType := structFieldValue.Type()
+		val := reflect.ValueOf(v)
+		if structFieldType != val.Type() {
+			panic(fmt.Sprintf("Provided value type didn't match field type for field %s", k))
+		}
+		structFieldValue.Set(val)
+	}
+	if overrideConfig != nil {
+		for k, v := range overrideConfig {
+			structFieldValue := structValue.FieldByName(k)
+			val := reflect.ValueOf(v)
+			structFieldValue.Set(val)
+		}
+	}
+	return config.FormatDSN()
+}
 
 func runTests(c *C, dsn string, tests ...func(dbt *DBTest)) {
 	db, err := sql.Open("mysql", dsn)
@@ -57,7 +94,9 @@ func runTests(c *C, dsn string, tests ...func(dbt *DBTest)) {
 }
 
 func runTestsOnNewDB(c *C, dbName string, tests ...func(dbt *DBTest)) {
-	db, err := sql.Open("mysql", "root@tcp(localhost:4001)/?strict=true")
+	db, err := sql.Open("mysql", getDSN(map[string]interface{}{
+		"DBName": "",
+	}))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 
@@ -189,7 +228,7 @@ func runTestRegression(c *C, dbName string) {
 
 func runTestPrepareResultFieldType(t *C) {
 	var param int64 = 83
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, getDSN(nil), func(dbt *DBTest) {
 		stmt, err := dbt.db.Prepare(`SELECT ?`)
 		if err != nil {
 			dbt.Fatal(err)
@@ -259,7 +298,10 @@ func runTestLoadData(c *C) {
 	c.Assert(err, IsNil)
 
 	// support ClientLocalFiles capability
-	runTests(c, dsn+"&allowAllFiles=true&strict=false", func(dbt *DBTest) {
+	runTests(c, getDSN(map[string]interface{}{
+		"AllowAllFiles": true,
+		"Strict":        false,
+	}), func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		rs, err1 := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err1, IsNil)
@@ -368,7 +410,9 @@ func runTestLoadData(c *C) {
 
 	// unsupport ClientLocalFiles capability
 	suite.server.capability ^= tmysql.ClientLocalFiles
-	runTests(c, dsn+"&allowAllFiles=true", func(dbt *DBTest) {
+	runTests(c, getDSN(map[string]interface{}{
+		"AllowAllFiles": true,
+	}), func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err, NotNil)
@@ -378,7 +422,7 @@ func runTestLoadData(c *C) {
 }
 
 func runTestConcurrentUpdate(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
+	runTests(c, getDSN(nil), func(dbt *DBTest) {
 		dbt.mustExec("create table test (a int, b int)")
 		dbt.mustExec("insert test values (1, 1)")
 		txn1, err := dbt.db.Begin()
@@ -462,29 +506,68 @@ func checkErrorCode(c *C, e error, code uint16) {
 }
 
 func runTestAuth(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
+	runTests(c, getDSN(nil), func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'test'@'%' IDENTIFIED BY '123';`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
-	newDsn := "test:123@tcp(localhost:4001)/test?strict=true"
-	runTests(c, newDsn, func(dbt *DBTest) {
+	runTests(c, getDSN(map[string]interface{}{
+		"User":   "test",
+		"Passwd": "123",
+	}), func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
 
-	db, err := sql.Open("mysql", "test:456@tcp(localhost:4001)/test?strict=true")
+	db, err := sql.Open("mysql", getDSN(map[string]interface{}{
+		"User":   "test",
+		"Passwd": "456",
+	}))
 	_, err = db.Query("USE mysql;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
 	db.Close()
 
 	// Test login use IP that not exists in mysql.user.
-	runTests(c, dsn, func(dbt *DBTest) {
+	runTests(c, getDSN(nil), func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'xxx'@'localhost' IDENTIFIED BY 'yyy';`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
-	newDsn = "xxx:yyy@tcp(127.0.0.1:4001)/test?strict=true"
-	runTests(c, newDsn, func(dbt *DBTest) {
+	runTests(c, getDSN(map[string]interface{}{
+		"User":   "xxx",
+		"Passwd": "yyy",
+	}), func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
+}
+
+func runTestIssue3662(c *C) {
+	c.Parallel()
+	db, err := sql.Open("mysql", getDSN(map[string]interface{}{
+		"DBName": "non_existing_schema",
+	}))
+	c.Assert(err, IsNil)
+	defer db.Close()
+
+	// According to documentation, "Open may just validate its arguments without
+	// creating a connection to the database. To verify that the data source name
+	// is valid, call Ping."
+	err = db.Ping()
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Error 1049: Unknown database 'non_existing_schema'")
+}
+
+func runTestIssue3680(c *C) {
+	c.Parallel()
+	db, err := sql.Open("mysql", getDSN(map[string]interface{}{
+		"User": "non_existing_user",
+	}))
+	c.Assert(err, IsNil)
+	defer db.Close()
+
+	// According to documentation, "Open may just validate its arguments without
+	// creating a connection to the database. To verify that the data source name
+	// is valid, call Ping."
+	err = db.Ping()
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: YES)")
 }
 
 func runTestIssue3682(c *C) {
@@ -492,12 +575,17 @@ func runTestIssue3682(c *C) {
 		dbt.mustExec(`CREATE USER 'abc'@'%' IDENTIFIED BY '123';`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
-	newDsn := "abc:123@tcp(127.0.0.1:4001)/test?strict=true"
-	runTests(c, newDsn, func(dbt *DBTest) {
+	runTests(c, getDSN(map[string]interface{}{
+		"User":   "abc",
+		"Passwd": "123",
+	}), func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
-	wrongDsn := "abc:456@tcp(127.0.0.1:4001)/a_database_not_exist?strict=true"
-	db, err := sql.Open("mysql", wrongDsn)
+	db, err := sql.Open("mysql", getDSN(map[string]interface{}{
+		"User":   "abc",
+		"Passwd": "wrong_password",
+		"DBName": "non_existing_schema",
+	}))
 	c.Assert(err, IsNil)
 	defer db.Close()
 	err = db.Ping()
@@ -505,16 +593,19 @@ func runTestIssue3682(c *C) {
 	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'abc'@'127.0.0.1' (using password: YES)")
 }
 
-func runTestIssues(c *C) {
-	// For issue #263
-	unExistsSchemaDsn := "root@tcp(localhost:4001)/unexists_schema?strict=true"
-	db, err := sql.Open("mysql", unExistsSchemaDsn)
-	c.Assert(db, NotNil)
+func runTestIssue3713(c *C) {
+	runTests(c, getDSN(nil), func(dbt *DBTest) {
+		dbt.mustExec("create database `aa-a`;")
+	})
+	// The database name is aa-a, '-' is not permitted as identifier, it should be `aa-a` to be a legal sql.
+	db, err := sql.Open("mysql", getDSN(map[string]interface{}{
+		"DBName": "aa-a",
+	}))
 	c.Assert(err, IsNil)
-	// Open may just validate its arguments without creating a connection to the database. To verify that the data source name is valid, call Ping.
-	err = db.Ping()
-	c.Assert(err, NotNil, Commentf("Connecting to an unexists schema should be error"))
-	db.Close()
+	defer db.Close()
+	c.Assert(db.Ping(), IsNil)
+	_, err = db.Exec("drop database `aa-a`")
+	c.Assert(err, IsNil)
 }
 
 func runTestResultFieldTableIsNull(c *C) {
@@ -571,7 +662,7 @@ func runTestMultiStatements(c *C) {
 }
 
 func runTestStmtCount(t *C) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, getDSN(nil), func(dbt *DBTest) {
 		originStmtCnt := getStmtCnt(string(getMetrics(t)))
 
 		dbt.mustExec("create table test (a int)")
@@ -631,7 +722,7 @@ func waitUntilServerOnline(statusAddr string) {
 	retry := 0
 	for ; retry < retryTime; retry++ {
 		time.Sleep(time.Millisecond * 10)
-		db, err := sql.Open("mysql", dsn)
+		db, err := sql.Open("mysql", getDSN(nil))
 		if err == nil {
 			db.Close()
 			break

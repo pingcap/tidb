@@ -14,11 +14,8 @@
 package main
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/signal"
@@ -38,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
@@ -144,12 +140,6 @@ func main() {
 	printer.PrintTiDBInfo()
 	log.SetLevelByString(cfg.LogLevel)
 
-	// Try loading TLS certificates.
-	tlsConfig := loadTLSCertificates(*sslCAPath, *sslCertPath, *sslKeyPath)
-	if tlsConfig != nil {
-		cfg.SSLEnabled = true
-	}
-
 	store := createStore()
 
 	if *enablePS {
@@ -170,7 +160,7 @@ func main() {
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)
 	var svr *server.Server
-	svr, err = server.NewServer(cfg, driver, tlsConfig)
+	svr, err = server.NewServer(cfg, driver)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
@@ -276,52 +266,6 @@ func parseLease(lease string) time.Duration {
 
 func hasRootPrivilege() bool {
 	return os.Geteuid() == 0
-}
-
-func loadTLSCertificates(CAPath string, certPath string, keyPath string) (tlsConfig *tls.Config) {
-	defer func() {
-		if tlsConfig != nil {
-			log.Info("Secure connection is enabled")
-			variable.SysVars["have_openssl"].Value = "YES"
-			variable.SysVars["have_ssl"].Value = "YES"
-			variable.SysVars["ssl_cert"].Value = certPath
-			variable.SysVars["ssl_key"].Value = keyPath
-		} else {
-			log.Warn("Secure connection is NOT ENABLED")
-		}
-	}()
-
-	if len(CAPath) == 0 && len(certPath) == 0 && len(keyPath) == 0 {
-		return nil
-	}
-
-	tlsCert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	if err != nil {
-		log.Warn(errors.ErrorStack(err))
-		return nil
-	}
-
-	// Try loading CA cert.
-	clientAuthPolicy := tls.NoClientCert
-	var certPool *x509.CertPool
-	if len(CAPath) > 0 {
-		caCert, err := ioutil.ReadFile(CAPath)
-		if err != nil {
-			log.Warn(errors.ErrorStack(err))
-		} else {
-			certPool = x509.NewCertPool()
-			if certPool.AppendCertsFromPEM(caCert) {
-				clientAuthPolicy = tls.VerifyClientCertIfGiven
-			}
-			variable.SysVars["ssl_ca"].Value = CAPath
-		}
-	}
-	return &tls.Config{
-		Certificates: []tls.Certificate{tlsCert},
-		ClientCAs:    certPool,
-		ClientAuth:   clientAuthPolicy,
-		MinVersion:   0,
-	}
 }
 
 func flagBoolean(name string, defaultVal bool, usage string) *bool {

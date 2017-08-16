@@ -185,7 +185,7 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 		ReportStatus: true,
 		Store:        "tikv",
 	}
-	server, err := NewServer(cfg, tidbdrv, nil)
+	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go server.Run()
@@ -199,7 +199,7 @@ func (ts *TidbRegionHandlerTestSuite) stopServer(c *C) {
 }
 
 func (ts *TidbRegionHandlerTestSuite) prepareData(c *C) {
-	db, err := sql.Open("mysql", dsn)
+	db, err := sql.Open("mysql", getDSN(nil))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 	dbt := &DBTest{c, db}

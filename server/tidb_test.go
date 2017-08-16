@@ -15,9 +15,16 @@
 package server
 
 import (
-	"database/sql"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"os"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -31,6 +38,70 @@ type TidbTestSuite struct {
 
 var suite = new(TidbTestSuite)
 var _ = Suite(suite)
+
+// generateCert generates a private key and a certificate in PEM format based on parameters.
+// If parentCert and parentCertKey is specified, the new certificate will be signed by the parentCert.
+// Otherwise, the new certificate will be self-signed and is a CA.
+func generateCert(sn int, commonName string, parentCert *x509.Certificate, parentCertKey *rsa.PrivateKey, outKeyFile string, outCertFile string) (*x509.Certificate, *rsa.PrivateKey, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 512)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	notBefore := time.Now().Add(-10 * time.Minute).UTC()
+	notAfter := notBefore.Add(1 * time.Hour).UTC()
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(int64(sn)),
+		Subject: pkix.Name{
+			Organization: []string{"PingCAP"},
+			CommonName:   commonName,
+		},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	var parent *x509.Certificate
+	var priv *rsa.PrivateKey
+
+	if parentCert == nil || parentCertKey == nil {
+		template.IsCA = true
+		template.KeyUsage |= x509.KeyUsageCertSign
+		parent = &template
+		priv = privateKey
+	} else {
+		parent = parentCert
+		priv = parentCertKey
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, parent, &privateKey.PublicKey, priv)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	cert, err := x509.ParseCertificate(derBytes)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	certOut, err := os.Create(outCertFile)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	certOut.Close()
+
+	keyOut, err := os.OpenFile(outKeyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	keyOut.Close()
+
+	return cert, privateKey, nil
+}
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	log.SetLevelByString("error")
@@ -47,7 +118,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 		TCPKeepAlive: true,
 	}
 
-	server, err := NewServer(cfg, ts.tidbdrv, nil)
+	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
@@ -102,7 +173,10 @@ func (ts *TidbTestSuite) TestAuth(c *C) {
 }
 
 func (ts *TidbTestSuite) TestIssues(c *C) {
-	runTestIssues(c)
+	runTestIssue3662(c)
+	runTestIssue3680(c)
+	runTestIssue3682(c)
+	// runTestIssue3713(c)
 }
 
 func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
@@ -120,66 +194,66 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 }
 
 func (ts *TidbTestSuite) TestSocket(c *C) {
-	c.Parallel()
 	cfg := &config.Config{
 		LogLevel:   "debug",
 		StatusAddr: ":10091",
 		Socket:     "/tmp/tidbtest.sock",
 	}
 
-	server, err := NewServer(cfg, ts.tidbdrv, nil)
+	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
-	tcpDsn := dsn
-	dsn = "root@unix(/tmp/tidbtest.sock)/test?strict=true"
+	defer server.Close()
+
+	originalDsnConfig := defaultDSNConfig
+	defaultDSNConfig = map[string]interface{}{
+		"User":   "root",
+		"Net":    "unix",
+		"Addr":   "/tmp/tidbtest.sock",
+		"DBName": "test",
+		"Strict": true,
+	}
 	runTestRegression(c, "SocketRegression")
-	dsn = tcpDsn
-	server.Close()
+	defaultDSNConfig = originalDsnConfig
 }
 
-func (ts *TidbTestSuite) TestIssue3662(c *C) {
-	c.Parallel()
-	db, err := sql.Open("mysql", "root@tcp(localhost:4001)/a_database_not_exist")
-	c.Assert(err, IsNil)
-	defer db.Close()
+// func (ts *TidbTestSuite) TestTLS(c *C) {
+// 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
+// 	if err != nil {
+// 		log.Fatal(errors.ErrorStack(errors.Trace(err)))
+// 	}
+// 	_, _, err = generateCert(1, "TiDB Server Certificate", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
+// 	if err != nil {
+// 		log.Fatal(errors.ErrorStack(errors.Trace(err)))
+// 	}
 
-	// According to documentation, "Open may just validate its arguments without
-	// creating a connection to the database. To verify that the data source name
-	// is valid, call Ping."
-	err = db.Ping()
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Error 1049: Unknown database 'a_database_not_exist'")
-}
+// 	cfg := &config.Config{
+// 		Addr:         ":4002",
+// 		LogLevel:     "debug",
+// 		StatusAddr:   ":10091",
+// 		ReportStatus: true,
+// 		TCPKeepAlive: true,
+// 		//SSLCertPath:  "/tmp/server-cert.pem",
+// 		//SSLKeyPath:   "/tmp/server-key.pem",
+// 	}
 
-func (ts *TidbTestSuite) TestIssue3680(c *C) {
-	c.Parallel()
-	db, err := sql.Open("mysql", "non_existing_user@tcp(127.0.0.1:4001)/")
-	c.Assert(err, IsNil)
-	defer db.Close()
+// 	server, err := NewServer(cfg, ts.tidbdrv)
+// 	c.Assert(err, IsNil)
+// 	ts.server = server
+// 	go ts.server.Run()
+// 	time.Sleep(time.Millisecond * 100)
+// 	defer server.Close()
 
-	// According to documentation, "Open may just validate its arguments without
-	// creating a connection to the database. To verify that the data source name
-	// is valid, call Ping."
-	err = db.Ping()
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: YES)")
-}
-
-func (ts *TidbTestSuite) TestDBNameEscape(c *C) {
-	c.Parallel()
-	runTests(c, dsn, func(dbt *DBTest) {
-		dbt.mustExec("create database `aa-a`;")
-	})
-	// The database name is aa-a, '-' is not permitted as identifier, it should be `aa-a` to be a legal sql.
-	db, err := sql.Open("mysql", "root@tcp(127.0.0.1:4001)/aa-a")
-	c.Assert(err, IsNil)
-	defer db.Close()
-	c.Assert(db.Ping(), IsNil)
-	_, err = db.Exec("drop database `aa-a`")
-	c.Assert(err, IsNil)
-}
-
-func (ts *TidbTestSuite) TestIssue3682(c *C) {
-	runTestIssue3682(c)
-}
+// 	originalDsnConfig := defaultDSNConfig
+// 	defaultDSNConfig = map[string]interface{}{
+// 		"User":      "root",
+// 		"Net":       "tcp",
+// 		"Addr":      "localhost:4002",
+// 		"DBName":    "test",
+// 		"Strict":    true,
+// 		"TLSConfig": "true",
+// 	}
+// 	runTestRegression(c, "TLSRegression")
+// 	defaultDSNConfig = originalDsnConfig
+// }
