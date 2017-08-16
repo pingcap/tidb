@@ -307,7 +307,6 @@ type IndexLookUpExecutor struct {
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open() error {
-	e.finish = make(chan struct{})
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
