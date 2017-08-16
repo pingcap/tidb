@@ -418,6 +418,38 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("SELECT ROUND(123456E-3, 0), ROUND(123456E-3, 1), ROUND(123456E-3, 2), ROUND(123456E-3, 3), ROUND(123456E-3, 4), ROUND(123456E-3, -1), ROUND(123456E-3, -2), ROUND(123456E-3, -3), ROUND(123456E-3, -4);")
 	result.Check(testkit.Rows("123 123.5 123.46 123.456 123.456 120 100 0 0")) // TODO: Column 5 should be 123.4560
 
+	// for pow
+	result = tk.MustQuery("SELECT POW('12', 2), POW(1.2e1, '2.0'), POW(12, 2.0);")
+	result.Check(testkit.Rows("144 144 144"))
+	result = tk.MustQuery("SELECT POW(null, 2), POW(2, null), POW(null, null);")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	result = tk.MustQuery("SELECT POW(0, 0);")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("SELECT POW(0, 0.1), POW(0, 0.5), POW(0, 1);")
+	result.Check(testkit.Rows("0 0 0"))
+	rs, err = tk.Exec("SELECT POW(0, -1);")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+
+	// for sign
+	result = tk.MustQuery("SELECT SIGN('12'), SIGN(1.2e1), SIGN(12), SIGN(0.0000012);")
+	result.Check(testkit.Rows("1 1 1 1"))
+	result = tk.MustQuery("SELECT SIGN('-12'), SIGN(-1.2e1), SIGN(-12), SIGN(-0.0000012);")
+	result.Check(testkit.Rows("-1 -1 -1 -1"))
+	result = tk.MustQuery("SELECT SIGN('0'), SIGN('-0'), SIGN(0);")
+	result.Check(testkit.Rows("0 0 0"))
+	result = tk.MustQuery("SELECT SIGN(NULL);")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("SELECT SIGN(-9223372036854775808), SIGN(9223372036854775808);")
+	result.Check(testkit.Rows("-1 1"))
+
+	// for sqrt
+	result = tk.MustQuery("SELECT SQRT(-10), SQRT(144), SQRT(4.84), SQRT(0.04), SQRT(0);")
+	result.Check(testkit.Rows("<nil> 12 2.2 0.2 0"))
+
 	// for radians
 	result = tk.MustQuery("SELECT radians(1.0), radians(pi()), radians(pi()/2), radians(180), radians(1.009);")
 	result.Check(testkit.Rows("0.017453292519943295 0.05483113556160754 0.02741556778080377 3.141592653589793 0.01761037215262278"))
