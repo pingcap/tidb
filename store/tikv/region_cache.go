@@ -450,9 +450,14 @@ func (c *RegionCache) OnRegionStale(ctx *RPCContext, newRegions []*metapb.Region
 	return nil
 }
 
-// PDClient returns the pd.Client in RegionCache
+// PDClient returns the pd.Client in RegionCache.
 func (c *RegionCache) PDClient() pd.Client {
 	return c.pdClient
+}
+
+// Close closes the pd.Client in RegionCache.
+func (c *RegionCache) Close() {
+	c.pdClient.Close()
 }
 
 // moveLeaderToFirst moves the leader peer to the first and makes it easier to

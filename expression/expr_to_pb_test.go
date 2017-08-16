@@ -461,7 +461,6 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 		ast.Case,
 		ast.If,
 		ast.Ifnull,
-		ast.Nullif,
 	}
 	for i, funcName := range funcNames {
 		args := []Expression{dg.genColumn(mysql.TypeLong, 1)}

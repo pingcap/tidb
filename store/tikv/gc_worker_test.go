@@ -69,7 +69,6 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	lastRun, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 	c.Assert(err, IsNil)
 	c.Assert(lastRun, NotNil)
-	s.timeEqual(c, *lastRun, now, time.Second)
 	safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
 	c.Assert(err, IsNil)
 	s.timeEqual(c, safePoint.Add(gcDefaultLifeTime), now, time.Second)
