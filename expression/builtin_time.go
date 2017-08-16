@@ -463,30 +463,28 @@ func (c *hourFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinHourSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen, bf.tp.Decimal = 3, 0
+	sig := &builtinHourSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinHourSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinHourSig.
+// evalInt evals HOUR(time).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_hour
-func (b *builtinHourSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinHourSig) evalInt(row []types.Datum) (int64, bool, error) {
+	dur, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	// ignore error and return NULL
+	if isNull || err != nil {
+		return 0, true, nil
 	}
-	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
-	}
-
-	// No need to check type here.
-	h := int64(d.GetMysqlDuration().Hour())
-	d.SetInt64(h)
-	return
+	return int64(dur.Hour()), false, nil
 }
 
 type minuteFunctionClass struct {
@@ -497,30 +495,28 @@ func (c *minuteFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinMinuteSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen, bf.tp.Decimal = 2, 0
+	sig := &builtinMinuteSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinMinuteSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinMinuteSig.
+// evalInt evals MINUTE(time).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_minute
-func (b *builtinMinuteSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinMinuteSig) evalInt(row []types.Datum) (int64, bool, error) {
+	dur, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	// ignore error and return NULL
+	if isNull || err != nil {
+		return 0, true, nil
 	}
-	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
-	}
-
-	// No need to check type here.
-	m := int64(d.GetMysqlDuration().Minute())
-	d.SetInt64(m)
-	return
+	return int64(dur.Minute()), false, nil
 }
 
 type secondFunctionClass struct {
@@ -531,30 +527,28 @@ func (c *secondFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinSecondSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen, bf.tp.Decimal = 2, 0
+	sig := &builtinSecondSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinSecondSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinSecondSig.
+// evalInt evals SECOND(time).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_second
-func (b *builtinSecondSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinSecondSig) evalInt(row []types.Datum) (int64, bool, error) {
+	dur, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	// ignore error and return NULL
+	if isNull || err != nil {
+		return 0, true, nil
 	}
-	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
-	}
-
-	// No need to check type here.
-	s := int64(d.GetMysqlDuration().Second())
-	d.SetInt64(s)
-	return
+	return int64(dur.Second()), false, nil
 }
 
 type microSecondFunctionClass struct {
@@ -565,30 +559,28 @@ func (c *microSecondFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinMicroSecondSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen, bf.tp.Decimal = 6, 0
+	sig := &builtinMicroSecondSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinMicroSecondSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinMicroSecondSig.
+// evalInt evals MICROSECOND(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_microsecond
-func (b *builtinMicroSecondSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinMicroSecondSig) evalInt(row []types.Datum) (int64, bool, error) {
+	dur, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	// ignore error and return NULL
+	if isNull || err != nil {
+		return 0, true, nil
 	}
-	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
-	}
-
-	// No need to check type here.
-	m := int64(d.GetMysqlDuration().MicroSecond())
-	d.SetInt64(m)
-	return
+	return int64(dur.MicroSecond()), false, nil
 }
 
 type monthFunctionClass struct {
@@ -1422,41 +1414,41 @@ func (c *timeFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinTimeSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinTimeSig{baseDurationBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinTimeSig struct {
-	baseBuiltinFunc
+	baseDurationBuiltinFunc
 }
 
-// eval evals a builtinTimeSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time
-func (b *builtinTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return
+// evalDuration evals a builtinTimeSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time.
+func (b *builtinTimeSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	expr, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
 	}
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	idx := strings.Index(str, ".")
 	fsp := 0
-	if idx != -1 {
-		fsp = len(str) - idx - 1
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	fspD := types.NewIntDatum(int64(fsp))
-	if fsp, err = checkFsp(sc, fspD); err != nil {
-		return d, errors.Trace(err)
+	if idx := strings.Index(expr, "."); idx != -1 {
+		fsp = len(expr) - idx - 1
 	}
 
-	return convertToDuration(sc, args[0], fsp)
+	if fsp, err = types.CheckFsp(fsp); err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+
+	res, err = types.ParseDuration(expr, fsp)
+	if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+		err = sc.HandleTruncate(err)
+	}
+	return res, isNull, errors.Trace(err)
 }
 
 type utcDateFunctionClass struct {
@@ -1584,6 +1576,7 @@ func (b *builtinExtractSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return
 }
 
+// TODO: duplicate with types.CheckFsp, better use types.CheckFsp.
 func checkFsp(sc *variable.StatementContext, arg types.Datum) (int, error) {
 	fsp, err := arg.ToInt64(sc)
 	if err != nil {
