@@ -104,6 +104,7 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 		return nil, errors.Trace(err)
 	}
 	retTp := c.inferType(args[1].GetType(), args[2].GetType())
+
 	evalTps := fieldTp2EvalTp(retTp)
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
 	if err != nil {
@@ -423,6 +424,8 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 			sig = &builtinIfNullTimeSig{baseTimeBuiltinFunc{bf}}
 		} else if fieldTp.Tp == mysql.TypeDuration {
 			sig = &builtinIfNullDurationSig{baseDurationBuiltinFunc{bf}}
+		} else if fieldTp.Tp == mysql.TypeJSON {
+			sig = &builtinIfNullJSONSig{baseJSONBuiltinFunc{bf}}
 		}
 	}
 	return sig.setSelf(sig), nil
@@ -524,44 +527,4 @@ func (b *builtinIfNullJSONSig) evalJSON(row []types.Datum) (json.JSON, bool, err
 	}
 	arg1, isNull, err := b.args[1].EvalJSON(row, sc)
 	return arg1, isNull, errors.Trace(err)
-}
-
-type nullIfFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *nullIfFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinNullIfSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinNullIfSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinNullIfSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_nullif
-func (b *builtinNullIfSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// nullif(expr1, expr2)
-	// returns null if expr1 = expr2 is true, otherwise returns expr1
-	v1 := args[0]
-	v2 := args[1]
-
-	if v1.IsNull() || v2.IsNull() {
-		return v1, nil
-	}
-
-	if n, err1 := v1.CompareDatum(b.ctx.GetSessionVars().StmtCtx, v2); err1 != nil || n == 0 {
-		d := types.Datum{}
-		return d, errors.Trace(err1)
-	}
-
-	return v1, nil
 }
