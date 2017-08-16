@@ -994,5 +994,7 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"microsecond(c_blob     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 		{"microsecond(c_set      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 		{"microsecond(c_enum     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+
+		{"curdate(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 	}
 }

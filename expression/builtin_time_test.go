@@ -800,6 +800,7 @@ func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
 	fc := funcs[ast.CurrentDate]
 	f, err := fc.getFunction(datumsToConstants(nil), mock.NewContext())
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()

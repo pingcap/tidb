@@ -1352,23 +1352,28 @@ func (c *currentDateFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinCurrentDateSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen, bf.tp.Decimal = 10, 0
+	sig := &builtinCurrentDateSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCurrentDateSig struct {
-	baseBuiltinFunc
+	baseTimeBuiltinFunc
 }
 
-// eval evals a builtinCurrentDateSig.
+// eval evals CURDATE().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curdate
-func (b *builtinCurrentDateSig) eval(_ []types.Datum) (d types.Datum, err error) {
+func (b *builtinCurrentDateSig) evalTime(row []types.Datum) (d types.Time, isNull bool, err error) {
 	year, month, day := time.Now().Date()
-	t := types.Time{
+	result := types.Time{
 		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
-		Type: mysql.TypeDate, Fsp: 0}
-	d.SetMysqlTime(t)
-	return
+		Type: mysql.TypeDate,
+		Fsp:  0}
+	return result, false, nil
 }
 
 type currentTimeFunctionClass struct {
