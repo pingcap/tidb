@@ -50,9 +50,9 @@ var (
 	_ builtinFunc = &builtinArithmeticSig{}
 )
 
-// prec_increment indicates the number of digits by which to increase the scale of the result of division operations
+// precIncrement indicates the number of digits by which to increase the scale of the result of division operations
 // performed with the / operator.
-const prec_increment = 4
+const precIncrement = 4
 
 // numericContextResultType returns TypeClass for numeric function's parameters.
 // the returned TypeClass should be one of: ClassInt, ClassDecimal, ClassReal
@@ -106,7 +106,7 @@ func setType4DivDecimal(retTp, a, b *types.FieldType) {
 	if decb == types.UnspecifiedFsp {
 		decb = 0
 	}
-	retTp.Decimal = deca + prec_increment
+	retTp.Decimal = deca + precIncrement
 	if retTp.Decimal > mysql.MaxDecimalScale {
 		retTp.Decimal = mysql.MaxDecimalScale
 	}
@@ -114,7 +114,7 @@ func setType4DivDecimal(retTp, a, b *types.FieldType) {
 		retTp.Flen = types.UnspecifiedLength
 		return
 	}
-	retTp.Flen = a.Flen + decb + prec_increment
+	retTp.Flen = a.Flen + decb + precIncrement
 	retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxDecimalWidth)))
 }
 
