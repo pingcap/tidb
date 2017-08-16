@@ -50,6 +50,10 @@ var (
 	_ builtinFunc = &builtinArithmeticSig{}
 )
 
+// prec_increment indicates the number of digits by which to increase the scale of the result of division operations
+// performed with the / operator.
+const prec_increment = 4
+
 // numericContextResultType returns TypeClass for numeric function's parameters.
 // the returned TypeClass should be one of: ClassInt, ClassDecimal, ClassReal
 func numericContextResultType(ft *types.FieldType) types.TypeClass {
@@ -92,6 +96,31 @@ func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 	}
 	retTp.Decimal = types.UnspecifiedLength
 	retTp.Flen = types.UnspecifiedLength
+}
+
+func setType4DivDecimal(retTp, a, b *types.FieldType) {
+	var deca, decb = a.Decimal, b.Decimal
+	if deca == types.UnspecifiedFsp {
+		deca = 0
+	}
+	if decb == types.UnspecifiedFsp {
+		decb = 0
+	}
+	retTp.Decimal = deca + prec_increment
+	if retTp.Decimal > mysql.MaxDecimalScale {
+		retTp.Decimal = mysql.MaxDecimalScale
+	}
+	if a.Flen == types.UnspecifiedLength {
+		retTp.Flen = types.UnspecifiedLength
+		return
+	}
+	retTp.Flen = a.Flen + decb + prec_increment
+	retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxDecimalWidth)))
+}
+
+func setType4DivReal(retTp *types.FieldType) {
+	retTp.Decimal = mysql.NotFixedDec
+	retTp.Flen = mysql.MaxRealWidth
 }
 
 type arithmeticPlusFunctionClass struct {
@@ -471,7 +500,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(args []Expression, ctx conte
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		setFlenDecimal4RealOrDecimal(bf.tp, tpA, tpB, true)
+		setType4DivReal(bf.tp)
 		sig := &builtinArithmeticDivideRealSig{baseRealBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
@@ -479,7 +508,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(args []Expression, ctx conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	setFlenDecimal4RealOrDecimal(bf.tp, tpA, tpB, false)
+	setType4DivDecimal(bf.tp, tpA, tpB)
 	sig := &builtinArithmeticDivideDecimalSig{baseDecimalBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
