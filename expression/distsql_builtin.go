@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
@@ -93,45 +92,7 @@ func newDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, a
 	// TODO: Too ugly...
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = sc
-	tp, err := reinferFuncType(sc, name, args)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return NewFunction(ctx, name, tp, args...)
-}
-
-// reinferFuncType re-infer FieldType of ScalarFunction because FieldType information will be lost after ScalarFunction be converted to pb.
-// reinferFuncType is only used by mock-tikv, the real TiKV do not need to re-infer field type.
-// This is a temporary solution to make the new type inferer works normally, and will be replaced by passing function signature in the future.
-func reinferFuncType(sc *variable.StatementContext, funcName string, args []Expression) (*types.FieldType, error) {
-	newArgs := make([]ast.ExprNode, len(args))
-	for i, arg := range args {
-		switch x := arg.(type) {
-		case *Constant:
-			newArgs[i] = &ast.ValueExpr{}
-			newArgs[i].SetValue(x.Value.GetValue())
-		case *Column:
-			newArgs[i] = &ast.ColumnNameExpr{
-				Refer: &ast.ResultField{
-					Column: &model.ColumnInfo{
-						FieldType: *x.GetType(),
-					},
-				},
-			}
-		case *ScalarFunction:
-			newArgs[i] = &ast.FuncCallExpr{FnName: x.FuncName}
-			_, err := reinferFuncType(sc, x.FuncName.O, x.GetArgs())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-	}
-	funcNode := &ast.FuncCallExpr{FnName: model.NewCIStr(funcName), Args: newArgs}
-	err := InferType(sc, funcNode)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return funcNode.GetType(), nil
+	return NewFunction(ctx, name, types.NewFieldType(mysql.TypeUnspecified), args...)
 }
 
 // PBToExpr converts pb structure to expression.
