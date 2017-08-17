@@ -27,7 +27,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
-	"google.golang.org/grpc"
 )
 
 // Manager is used to campaign the owner and manage the owner information.
@@ -106,17 +105,17 @@ func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, r
 	var err error
 	var etcdSession *concurrency.Session
 	for i := 0; i < retryCnt; i++ {
+		if isContextDone(ctx) {
+			return etcdSession, errors.Trace(ctx.Err())
+		}
+
 		etcdSession, err = concurrency.NewSession(etcdCli,
 			concurrency.WithTTL(ttl), concurrency.WithContext(ctx))
 		if err == nil {
 			break
 		}
 		log.Warnf("%s failed to new session, err %v", logPrefix, err)
-		if isContextFinished(err) || terror.ErrorEqual(err, grpc.ErrClientConnClosing) {
-			break
-		}
 		time.Sleep(200 * time.Millisecond)
-		continue
 	}
 	return etcdSession, errors.Trace(err)
 }
@@ -171,10 +170,6 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		err = elec.Campaign(ctx, m.id)
 		if err != nil {
 			log.Infof("%s failed to campaign, err %v", logPrefix, err)
-			if isContextFinished(err) {
-				log.Warnf(" %s campaign loop, err %v", logPrefix, err)
-				return
-			}
 			continue
 		}
 
@@ -245,10 +240,11 @@ func (m *ownerManager) watchOwner(ctx goctx.Context, etcdSession *concurrency.Se
 	}
 }
 
-func isContextFinished(err error) bool {
-	if terror.ErrorEqual(err, goctx.Canceled) ||
-		terror.ErrorEqual(err, goctx.DeadlineExceeded) {
+func isContextDone(ctx goctx.Context) bool {
+	select {
+	case <-ctx.Done():
 		return true
+	default:
 	}
 	return false
 }
