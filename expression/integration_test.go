@@ -1314,6 +1314,13 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("str2 0"))
 	result = tk.MustQuery("select * from t where a = case null when b then 'str3' when 10 then 'str1' else 'str2' end")
 	result.Check(testkit.Rows("str2 0"))
+	tk.MustExec("insert t values (null, 4)")
+	result = tk.MustQuery("select * from t where b < case a when null then 0 when 'str2' then 0 else 9 end")
+	result.Check(testkit.Rows("<nil> 4"))
+	result = tk.MustQuery("select * from t where b = case when a is null then 4 when  a = 'str5' then 7 else 9 end")
+	result.Check(testkit.Rows("<nil> 4"))
+
+	// for cast
 	result = tk.MustQuery("select cast(1234 as char(3))")
 	result.Check(testkit.Rows("123"))
 	result = tk.MustQuery("select cast(1234 as char(0))")
