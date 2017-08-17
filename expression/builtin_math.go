@@ -997,31 +997,27 @@ func (c *crc32FunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinCRC32Sig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinCRC32Sig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCRC32Sig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinCRC32Sig.
+// evalInt evals a CRC32().
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
-func (b *builtinCRC32Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return d, nil
-	}
-	x, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinCRC32Sig) evalInt(row []types.Datum) (int64, bool, error) {
+	x, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 	r := crc32.ChecksumIEEE([]byte(x))
-	d.SetUint64(uint64(r))
-	return d, nil
+	return int64(r), false, nil
 }
 
 type signFunctionClass struct {
