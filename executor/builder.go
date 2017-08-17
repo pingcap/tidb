@@ -1050,9 +1050,6 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	}
 
 	for i := range v.Schema().Columns {
-		if v.Schema().Columns[i].ID == model.ExtraHandleID {
-			break
-		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
@@ -1087,10 +1084,6 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	}
 
 	for _, col := range v.OutputColumns {
-		// If it's ID is ExtraHandleID, then it must is the tail of the slice.
-		if col.ID == model.ExtraHandleID {
-			break
-		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
 	}
 
@@ -1114,9 +1107,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 
 	len := v.Schema().Len()
-	if handleIsExtra(handleCol) {
-		len--
-	}
 
 	for i := 0; i < len; i++ {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))

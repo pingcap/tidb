@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tidb/model"
 )
 
 type executor interface {
@@ -561,7 +562,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 	for _, col := range columns {
 		id := col.GetColumnId()
 		offset := colIDs[id]
-		if col.GetPkHandle() {
+		if col.GetPkHandle() || id == model.ExtraHandleID {
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
 				// PK column is Unsigned.

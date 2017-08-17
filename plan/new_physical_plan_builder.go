@@ -761,6 +761,13 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
+		if !is.NeedColHandle && cop.tablePlan != nil {
+			tblPlan := cop.tablePlan.(*PhysicalTableScan)
+			tblPlan.Columns = append(tblPlan.Columns, &model.ColumnInfo{
+				ID:   model.ExtraHandleID,
+				Name: model.NewCIStr("_rowid"),
+			})
+		}
 		is.addPushedDownSelection(cop, p, prop.expectedCnt)
 		if p.unionScanSchema != nil {
 			task = addUnionScan(cop, p)

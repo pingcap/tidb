@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/mysql"
 )
 
 var (
@@ -101,7 +102,7 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 			}
 		}
 		// Get a row from partial result.
-		h, rowData, err := e.partialResult.Next()
+		_, rowData, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -113,8 +114,9 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 		}
 		values := make([]types.Datum, e.schema.Len())
 		if handleIsExtra(e.handleCol) {
-			err = codec.SetRawValues(rowData, values[:len(values)-1])
-			values[len(values)-1].SetInt64(h)
+			// err = codec.SetRawValues(rowData, values[:len(values)-1])
+			// values[len(values)-1].SetInt64(h)
+			err = codec.SetRawValues(rowData, values)
 		} else {
 			err = codec.SetRawValues(rowData, values)
 		}
@@ -361,8 +363,10 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		handleCol = &expression.Column{
 			ID:    model.ExtraHandleID,
 			Index: e.schema.Len(),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
 		}
 		schema.Append(handleCol)
+		e.tableRequest.OutputOffsets = append(e.tableRequest.OutputOffsets, uint32(e.Schema().Len()))
 	}
 	tableReader := &TableReaderExecutor{
 		asName:    e.asName,
