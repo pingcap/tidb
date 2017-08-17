@@ -1217,7 +1217,13 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		p.SetSchema(schema)
 		return p
 	}
-	if pkCol == nil || needUnionScan {
+	if needUnionScan {
+		p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+		for _, col := range schema.Columns {
+			p.unionScanSchema.Append(col)
+		}
+	}
+	if pkCol == nil {
 		idCol := &expression.Column{
 			FromID:   p.id,
 			DBName:   schemaName,
@@ -1228,15 +1234,9 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			Index:    schema.Len(),
 			ID:       model.ExtraHandleID,
 		}
-		if needUnionScan {
-			p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
-			for _, col := range schema.Columns {
-				p.unionScanSchema.Append(col)
-			}
-			if b.needColHandle > 0 {
-				p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
-				p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
-			}
+		if needUnionScan && b.needColHandle > 0 {
+			p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
+			p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
 		}
 		p.Columns = append(p.Columns, &model.ColumnInfo{
 			ID:   model.ExtraHandleID,
@@ -1245,6 +1245,9 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		schema.Append(idCol)
 		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
 	} else {
+		if needUnionScan && b.needColHandle > 0 {
+			p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
+		}
 		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
 	}
 	p.SetSchema(schema)
