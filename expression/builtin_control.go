@@ -159,7 +159,7 @@ func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (ret int64, isNull bo
 		ret, isNull, err = args[l-1].EvalInt(row, sc)
 		return ret, isNull, errors.Trace(err)
 	}
-	return 0, true, nil
+	return ret, true, nil
 }
 
 type builtinCaseWhenRealSig struct {
@@ -190,7 +190,7 @@ func (b *builtinCaseWhenRealSig) evalReal(row []types.Datum) (ret float64, isNul
 		ret, isNull, err = args[l-1].EvalReal(row, sc)
 		return ret, isNull, errors.Trace(err)
 	}
-	return 0, true, nil
+	return ret, true, nil
 }
 
 type builtinCaseWhenDecimalSig struct {
@@ -221,7 +221,7 @@ func (b *builtinCaseWhenDecimalSig) evalDecimal(row []types.Datum) (ret *types.M
 		ret, isNull, err = args[l-1].EvalDecimal(row, sc)
 		return ret, isNull, errors.Trace(err)
 	}
-	return nil, true, nil
+	return ret, true, nil
 }
 
 type builtinCaseWhenStringSig struct {
@@ -252,7 +252,7 @@ func (b *builtinCaseWhenStringSig) evalString(row []types.Datum) (ret string, is
 		ret, isNull, err = args[l-1].EvalString(row, sc)
 		return ret, isNull, errors.Trace(err)
 	}
-	return "", true, nil
+	return ret, true, nil
 }
 
 type builtinCaseWhenTimeSig struct {
@@ -283,7 +283,7 @@ func (b *builtinCaseWhenTimeSig) evalTime(row []types.Datum) (ret types.Time, is
 		ret, isNull, err = args[l-1].EvalTime(row, sc)
 		return ret, isNull, errors.Trace(err)
 	}
-	return types.Time{}, true, nil
+	return ret, true, nil
 }
 
 type builtinCaseWhenDurationSig struct {
@@ -314,7 +314,7 @@ func (b *builtinCaseWhenDurationSig) evalDuration(row []types.Datum) (ret types.
 		ret, isNull, err = args[l-1].EvalDuration(row, sc)
 		return ret, isNull, errors.Trace(err)
 	}
-	return types.Duration{}, true, nil
+	return ret, true, nil
 }
 
 type ifFunctionClass struct {
