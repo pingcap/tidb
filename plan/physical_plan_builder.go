@@ -47,10 +47,9 @@ var JoinConcurrency = 5
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	client := p.ctx.GetClient()
 	ts := PhysicalTableScan{
-		Table:       p.tableInfo,
-		Columns:     p.Columns,
-		TableAsName: p.TableAsName,
-		DBName:      p.DBName,
+		Table:   p.tableInfo,
+		Columns: p.Columns,
+		DBName:  p.DBName,
 		physicalTableSource: physicalTableSource{
 			client:          client,
 			NeedColHandle:   p.NeedColHandle,
@@ -115,12 +114,11 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
 	client := p.ctx.GetClient()
 	is := PhysicalIndexScan{
-		Index:       index,
-		Table:       p.tableInfo,
-		Columns:     p.Columns,
-		TableAsName: p.TableAsName,
-		OutOfOrder:  true,
-		DBName:      p.DBName,
+		Index:      index,
+		Table:      p.tableInfo,
+		Columns:    p.Columns,
+		OutOfOrder: true,
+		DBName:     p.DBName,
 		physicalTableSource: physicalTableSource{
 			client:          client,
 			NeedColHandle:   p.NeedColHandle,
@@ -233,10 +231,9 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
 	if !isDistReq {
 		memTable := PhysicalMemTable{
-			DBName:      p.DBName,
-			Table:       p.tableInfo,
-			Columns:     p.Columns,
-			TableAsName: p.TableAsName,
+			DBName:  p.DBName,
+			Table:   p.tableInfo,
+			Columns: p.Columns,
 		}.init(p.allocator, p.ctx)
 		memTable.SetSchema(p.schema)
 		memTable.Ranges = ranger.FullIntRange()
@@ -1262,7 +1259,6 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		ts := PhysicalTableScan{
 			Table:               ds.tableInfo,
 			Columns:             ds.Columns,
-			TableAsName:         ds.TableAsName,
 			DBName:              ds.DBName,
 			physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
 		}.init(p.allocator, p.ctx)
@@ -1289,7 +1285,6 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 					Table:               ds.tableInfo,
 					Index:               idx,
 					Columns:             ds.Columns,
-					TableAsName:         ds.TableAsName,
 					OutOfOrder:          true,
 					DBName:              ds.DBName,
 					physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
