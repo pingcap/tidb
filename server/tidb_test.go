@@ -17,6 +17,7 @@ package server
 import (
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -127,7 +128,6 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 }
 
 func (ts *TidbTestSuite) TestSocket(c *C) {
-	c.Parallel()
 	cfg := &config.Config{
 		LogLevel:   "debug",
 		StatusAddr: ":10091",
@@ -140,11 +140,14 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
 
-	runTestRegression(c, map[string]interface{}{
-		"User":   "root",
-		"Net":    "unix",
-		"Addr":   "/tmp/tidbtest.sock",
-		"DBName": "test",
-		"Strict": true,
-	}, "SocketRegression")
+	originalDSNConfig := defaultDSNConfig
+	defaultDSNConfig = mysql.Config{
+		User:   "root",
+		Net:    "unix",
+		Addr:   "/tmp/tidbtest.sock",
+		DBName: "test",
+		Strict: true,
+	}
+	runTestRegression(c, nil, "SocketRegression")
+	defaultDSNConfig = originalDSNConfig
 }

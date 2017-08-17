@@ -20,7 +20,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
-	"reflect"
 	"regexp"
 	"strconv"
 	"testing"
@@ -41,37 +40,30 @@ func TestT(t *testing.T) {
 
 var regression = true
 
-var defaultDSNConfig = map[string]interface{}{
-	"User":   "root",
-	"Net":    "tcp",
-	"Addr":   "127.0.0.1:4001",
-	"DBName": "test",
-	"Strict": true,
+var defaultDSNConfig = mysql.Config{
+	User:   "root",
+	Net:    "tcp",
+	Addr:   "127.0.0.1:4001",
+	DBName: "test",
+	Strict: true,
 }
 
-// getDSN generates a DSN string for MySQL connection based on
-// defaultDSNConfig and the given overrideConfig.
-func getDSN(overrideConfig map[string]interface{}) string {
-	var config mysql.Config
-	structValue := reflect.ValueOf(&config).Elem()
-	for k, v := range defaultDSNConfig {
-		structFieldValue := structValue.FieldByName(k)
-		val := reflect.ValueOf(v)
-		structFieldValue.Set(val)
-	}
-	if overrideConfig != nil {
-		for k, v := range overrideConfig {
-			structFieldValue := structValue.FieldByName(k)
-			val := reflect.ValueOf(v)
-			structFieldValue.Set(val)
+type configOverrider func(*mysql.Config)
+
+// getDSN generates a DSN string for MySQL connection.
+func getDSN(overriders ...configOverrider) string {
+	var config = defaultDSNConfig
+	for _, overrider := range overriders {
+		if overrider != nil {
+			overrider(&config)
 		}
 	}
 	return config.FormatDSN()
 }
 
 // runTests run tests using the default database `test`.
-func runTests(c *C, config map[string]interface{}, tests ...func(dbt *DBTest)) {
-	db, err := sql.Open("mysql", getDSN(config))
+func runTests(c *C, overrider configOverrider, tests ...func(dbt *DBTest)) {
+	db, err := sql.Open("mysql", getDSN(overrider))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 
@@ -85,16 +77,11 @@ func runTests(c *C, config map[string]interface{}, tests ...func(dbt *DBTest)) {
 }
 
 // runTestsOnNewDB run tests using a specified database which will be created before the test and destroyed after the test.
-func runTestsOnNewDB(c *C, config map[string]interface{}, dbName string, tests ...func(dbt *DBTest)) {
-	newConfig := make(map[string]interface{})
-	if config != nil {
-		for k, v := range config {
-			newConfig[k] = v
-		}
-	}
-	newConfig["DBName"] = ""
-
-	db, err := sql.Open("mysql", getDSN(newConfig))
+func runTestsOnNewDB(c *C, overrider configOverrider, dbName string, tests ...func(dbt *DBTest)) {
+	dsn := getDSN(overrider, func(config *mysql.Config) {
+		config.DBName = ""
+	})
+	db, err := sql.Open("mysql", dsn)
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 
@@ -104,6 +91,11 @@ func runTestsOnNewDB(c *C, config map[string]interface{}, dbName string, tests .
 	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE `%s`;", dbName))
 	c.Assert(err, IsNil, Commentf("Error create database %s: %s", dbName, err))
 
+	defer func() {
+		_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;", dbName))
+		c.Assert(err, IsNil, Commentf("Error drop database %s: %s", dbName, err))
+	}()
+
 	_, err = db.Exec(fmt.Sprintf("USE `%s`;", dbName))
 	c.Assert(err, IsNil, Commentf("Error use database %s: %s", dbName, err))
 
@@ -112,9 +104,6 @@ func runTestsOnNewDB(c *C, config map[string]interface{}, dbName string, tests .
 		test(dbt)
 		dbt.db.Exec("DROP TABLE IF EXISTS test")
 	}
-
-	_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;", dbName))
-	c.Assert(err, IsNil, Commentf("Error drop database %s: %s", dbName, err))
 }
 
 type DBTest struct {
@@ -147,8 +136,8 @@ func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
 	rows.Close()
 }
 
-func runTestRegression(c *C, config map[string]interface{}, dbName string) {
-	runTestsOnNewDB(c, config, dbName, func(dbt *DBTest) {
+func runTestRegression(c *C, overrider configOverrider, dbName string) {
+	runTestsOnNewDB(c, overrider, dbName, func(dbt *DBTest) {
 		// Create Table
 		dbt.mustExec("CREATE TABLE test (val TINYINT)")
 
@@ -292,9 +281,9 @@ func runTestLoadData(c *C) {
 	c.Assert(err, IsNil)
 
 	// support ClientLocalFiles capability
-	runTestsOnNewDB(c, map[string]interface{}{
-		"AllowAllFiles": true,
-		"Strict":        false,
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		rs, err1 := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
@@ -404,8 +393,8 @@ func runTestLoadData(c *C) {
 
 	// unsupport ClientLocalFiles capability
 	defaultCapability ^= tmysql.ClientLocalFiles
-	runTestsOnNewDB(c, map[string]interface{}{
-		"AllowAllFiles": true,
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
@@ -506,16 +495,16 @@ func runTestAuth(c *C) {
 		dbt.mustExec(`CREATE USER 'test'@'%' IDENTIFIED BY '123';`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
-	runTests(c, map[string]interface{}{
-		"User":   "test",
-		"Passwd": "123",
+	runTests(c, func(config *mysql.Config) {
+		config.User = "test"
+		config.Passwd = "123"
 	}, func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
 
-	db, err := sql.Open("mysql", getDSN(map[string]interface{}{
-		"User":   "test",
-		"Passwd": "456",
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
+		config.User = "test"
+		config.Passwd = "456"
 	}))
 	_, err = db.Query("USE mysql;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
@@ -526,17 +515,17 @@ func runTestAuth(c *C) {
 		dbt.mustExec(`CREATE USER 'xxx'@'localhost' IDENTIFIED BY 'yyy';`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
-	runTests(c, map[string]interface{}{
-		"User":   "xxx",
-		"Passwd": "yyy",
+	runTests(c, func(config *mysql.Config) {
+		config.User = "xxx"
+		config.Passwd = "yyy"
 	}, func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
 }
 
 func runTestIssue3662(c *C) {
-	db, err := sql.Open("mysql", getDSN(map[string]interface{}{
-		"DBName": "non_existing_schema",
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
+		config.DBName = "non_existing_schema"
 	}))
 	c.Assert(err, IsNil)
 	defer db.Close()
@@ -550,8 +539,8 @@ func runTestIssue3662(c *C) {
 }
 
 func runTestIssue3680(c *C) {
-	db, err := sql.Open("mysql", getDSN(map[string]interface{}{
-		"User": "non_existing_user",
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
+		config.User = "non_existing_user"
 	}))
 	c.Assert(err, IsNil)
 	defer db.Close()
@@ -569,16 +558,16 @@ func runTestIssue3682(c *C) {
 		dbt.mustExec(`CREATE USER 'abc'@'%' IDENTIFIED BY '123';`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
-	runTests(c, map[string]interface{}{
-		"User":   "abc",
-		"Passwd": "123",
+	runTests(c, func(config *mysql.Config) {
+		config.User = "abc"
+		config.Passwd = "123"
 	}, func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
-	db, err := sql.Open("mysql", getDSN(map[string]interface{}{
-		"User":   "abc",
-		"Passwd": "wrong_password",
-		"DBName": "non_existing_schema",
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
+		config.User = "abc"
+		config.Passwd = "wrong_password"
+		config.DBName = "non_existing_schema"
 	}))
 	c.Assert(err, IsNil)
 	defer db.Close()
@@ -591,8 +580,8 @@ func runTestIssue3713(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec("CREATE DATABASE `aa-a`;")
 	})
-	runTests(c, map[string]interface{}{
-		"DBName": "aa-a",
+	runTests(c, func(config *mysql.Config) {
+		config.DBName = "aa-a"
 	}, func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 		dbt.mustExec("DROP DATABASE `aa-a`")
