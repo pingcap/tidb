@@ -1292,7 +1292,7 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.c in (SELECT t.c FROM test_gc_read t where t.c > 5)`)
 	result.Check(testkit.Rows(`3 4 7 12`, `8 8 16 64`))
 
-	result = tk.MustQuery(`SELECT tt.b FROM test_gc_read tt WHERE tt.a = (SELECT max(t.a) FROM test_gc_read t WHERE t.c = tt.c)`)
+	result = tk.MustQuery(`SELECT tt.b FROM test_gc_read tt WHERE tt.a = (SELECT max(t.a) FROM test_gc_read t WHERE t.c = tt.c) ORDER BY b`)
 	result.Check(testkit.Rows(`2`, `4`, `8`))
 
 	// Test aggregation on virtual/stored generated columns.

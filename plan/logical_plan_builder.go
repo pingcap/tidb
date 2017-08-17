@@ -133,11 +133,6 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 		if v, ok := p.(*DataSource); ok {
 			v.TableAsName = &x.AsName
 		}
-		if v, ok := p.(*Projection); ok && v.calculateGenCols {
-			// For projection calculating generated columns
-			ds := v.Children()[0].(*DataSource)
-			ds.TableAsName = &x.AsName
-		}
 		if x.AsName.L != "" {
 			for _, col := range p.Schema().Columns {
 				col.TblName = x.AsName
@@ -209,15 +204,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 }
 
 func extractTableAlias(p LogicalPlan) *model.CIStr {
-	if proj, ok := p.(*Projection); ok && proj.calculateGenCols {
-		// It's for projection calculating generated columns.
-		ds := proj.Children()[0].(*DataSource)
-		if ds.TableAsName.L != "" {
-			return ds.TableAsName
-		} else if len(proj.Schema().Columns) > 0 {
-			return &(proj.Schema().Columns[0].TblName)
-		}
-	} else if dataSource, ok := p.(*DataSource); ok {
+	if dataSource, ok := p.(*DataSource); ok {
 		if dataSource.TableAsName.L != "" {
 			return dataSource.TableAsName
 		}
