@@ -202,6 +202,7 @@ const (
 
 	MaxIntWidth             = 20
 	MaxRealWidth            = 23
+	MaxDecimalScale         = 30
 	MaxDecimalWidth         = 65
 	MaxDateWidth            = 10 // YYYY-MM-DD.
 	MaxDatetimeWidthNoFsp   = 19 // YYYY-MM-DD HH:MM:SS
