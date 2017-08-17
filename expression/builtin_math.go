@@ -1001,6 +1001,8 @@ func (c *crc32FunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Flen = 10
+	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinCRC32Sig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
