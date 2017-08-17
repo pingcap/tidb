@@ -27,6 +27,7 @@ import (
 var (
 	_ functionClass = &arithmeticPlusFunctionClass{}
 	_ functionClass = &arithmeticMinusFunctionClass{}
+	_ functionClass = &arithmeticDivideFunctionClass{}
 	_ functionClass = &arithmeticMultiplyFunctionClass{}
 	_ functionClass = &arithmeticFunctionClass{}
 )
@@ -40,12 +41,18 @@ var (
 	_ builtinFunc = &builtinArithmeticMinusDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMinusIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMinusIntSig{}
+	_ builtinFunc = &builtinArithmeticDivideRealSig{}
+	_ builtinFunc = &builtinArithmeticDivideDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyRealSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 )
+
+// precIncrement indicates the number of digits by which to increase the scale of the result of division operations
+// performed with the / operator.
+const precIncrement = 4
 
 // numericContextResultType returns TypeClass for numeric function's parameters.
 // the returned TypeClass should be one of: ClassInt, ClassDecimal, ClassReal
@@ -89,6 +96,31 @@ func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 	}
 	retTp.Decimal = types.UnspecifiedLength
 	retTp.Flen = types.UnspecifiedLength
+}
+
+func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldType) {
+	var deca, decb = a.Decimal, b.Decimal
+	if deca == types.UnspecifiedFsp {
+		deca = 0
+	}
+	if decb == types.UnspecifiedFsp {
+		decb = 0
+	}
+	retTp.Decimal = deca + precIncrement
+	if retTp.Decimal > mysql.MaxDecimalScale {
+		retTp.Decimal = mysql.MaxDecimalScale
+	}
+	if a.Flen == types.UnspecifiedLength {
+		retTp.Flen = types.UnspecifiedLength
+		return
+	}
+	retTp.Flen = a.Flen + decb + precIncrement
+	retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxDecimalWidth)))
+}
+
+func (c *arithmeticDivideFunctionClass) setType4DivReal(retTp *types.FieldType) {
+	retTp.Decimal = mysql.NotFixedDec
+	retTp.Flen = mysql.MaxRealWidth
 }
 
 type arithmeticPlusFunctionClass struct {
@@ -451,6 +483,77 @@ func (s *builtinArithmeticMultiplyIntSig) evalInt(row []types.Datum) (val int64,
 		return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s * %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return result, false, nil
+}
+
+type arithmeticDivideFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *arithmeticDivideFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	tpA, tpB := args[0].GetType(), args[1].GetType()
+	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
+	if tcA == types.ClassReal || tcB == types.ClassReal {
+		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		c.setType4DivReal(bf.tp)
+		sig := &builtinArithmeticDivideRealSig{baseRealBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	c.setType4DivDecimal(bf.tp, tpA, tpB)
+	sig := &builtinArithmeticDivideDecimalSig{baseDecimalBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinArithmeticDivideRealSig struct{ baseRealBuiltinFunc }
+type builtinArithmeticDivideDecimalSig struct{ baseDecimalBuiltinFunc }
+
+func (s *builtinArithmeticDivideRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	a, isNull, err := s.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	b, isNull, err := s.args[1].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if b == 0 {
+		return 0, true, nil
+	}
+	result := a / b
+	if math.IsInf(result, 0) {
+		return 0, true, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("(%s / %s)", s.args[0].String(), s.args[1].String()))
+	}
+	return result, false, nil
+}
+
+func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	a, isNull, err := s.args[0].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
+	}
+
+	b, isNull, err := s.args[1].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
+	}
+
+	c := &types.MyDecimal{}
+	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
+	if err == types.ErrDivByZero {
+		return c, true, nil
+	}
+	return c, false, err
 }
 
 type arithmeticFunctionClass struct {
