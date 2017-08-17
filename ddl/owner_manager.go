@@ -117,7 +117,7 @@ func newSession(ctx goctx.Context, flag string, etcdCli *clientv3.Client, retryC
 	var etcdSession *concurrency.Session
 	for i := 0; i < retryCnt; i++ {
 		if isContextDone(ctx) {
-			return nil, errors.Trace(err)
+			return etcdSession, errors.Trace(ctx.Err())
 		}
 
 		etcdSession, err = concurrency.NewSession(etcdCli,
@@ -180,10 +180,6 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		err = elec.Campaign(ctx, m.ddlID)
 		if err != nil {
 			log.Infof("[ddl] %s failed to campaign, err %v", idInfo, err)
-			if isCtxFinishedInETCD(err) {
-				log.Warnf("[ddl] %s campaign loop, err %v", idInfo, err)
-				return
-			}
 			continue
 		}
 

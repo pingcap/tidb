@@ -24,8 +24,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	goctx "golang.org/x/net/context"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 )
 
 const (
@@ -183,14 +181,6 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 	return errors.Trace(err)
 }
 
-func isCtxFinishedInETCD(err error) bool {
-	errCode := grpc.Code(errors.Cause(err))
-	if errCode == codes.Canceled || errCode == codes.DeadlineExceeded {
-		return true
-	}
-	return false
-}
-
 func isContextDone(ctx goctx.Context) bool {
 	select {
 	case <-ctx.Done():
@@ -212,9 +202,6 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 		}
 
 		resp, err := s.etcdCli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
-		if isCtxFinishedInETCD(err) {
-			return errors.Trace(err)
-		}
 		if err != nil {
 			log.Infof("[syncer] check all versions failed %v", err)
 			continue
