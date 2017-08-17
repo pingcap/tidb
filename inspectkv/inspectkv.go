@@ -185,7 +185,7 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx table.Index) err
 		}
 
 		vals2, err := rowWithCols(txn, t, h, cols)
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
+		if kv.ErrNotExist.Equal(err) {
 			record := &RecordData{Handle: h, Values: vals1}
 			err = errDateNotEqual.Gen("index:%v != record:%v", record, nil)
 		}
@@ -211,7 +211,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx table.Index) err
 	startKey := t.RecordKey(0)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		isExist, h2, err := idx.Exist(txn, vals1, h1)
-		if terror.ErrorEqual(err, kv.ErrKeyExists) {
+		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
 			return false, errDateNotEqual.Gen("index:%v != record:%v", record2, record1)
