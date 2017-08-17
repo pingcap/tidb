@@ -13,6 +13,8 @@
 
 package mysql
 
+import "math"
+
 // GetDefaultFieldLength is used for Interger Types, Flen is the display length.
 // Call this when no Flen assigned in ddl.
 // or column value is calculated from an expression.
@@ -45,6 +47,8 @@ func GetDefaultFieldLength(tp byte) int {
 		return 10
 	case TypeBlob:
 		return 65535
+	case TypeJSON:
+		return math.MaxUint32
 	default:
 		//TODO: Add more types.
 		return -1
