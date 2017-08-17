@@ -52,14 +52,15 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/hack"
 )
 
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts
+	mysql.ClientMultiResults | mysql.ClientLocalFiles |
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
@@ -160,6 +161,9 @@ func (cc *clientConn) writeInitialHandshake() error {
 	// auth-plugin-data-part-2
 	data = append(data, cc.salt[8:]...)
 	// filler [00]
+	data = append(data, 0)
+	// auth-plugin name
+	data = append(data, []byte("mysql_native_password")...)
 	data = append(data, 0)
 	err := cc.writePacket(data)
 	if err != nil {
@@ -312,8 +316,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 		if err1 != nil {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
 		}
-		user := fmt.Sprintf("%s@%s", cc.user, host)
-		if !cc.ctx.Auth(user, p.Auth, cc.salt) {
+		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, p.Auth, cc.salt) {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
 		}
 	}
@@ -783,7 +786,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 					continue
 				}
 				var valData []byte
-				valData, err = dumpTextValue(columns[i].Type, value)
+				valData, err = dumpTextValue(columns[i], value)
 				if err != nil {
 					return errors.Trace(err)
 				}

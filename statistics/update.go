@@ -177,7 +177,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 			if statsTbl.Pseudo || statsTbl.Count == 0 {
 				continue
 			}
-			tblName := db + "." + tblInfo.Name.O
+			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
 			if needAnalyzeTable(statsTbl, 20*h.Lease) {
 				sql := fmt.Sprintf("analyze table %s", tblName)
 				log.Infof("[stats] auto analyze table %s now", tblName)
@@ -186,8 +186,8 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 			}
 			for _, idx := range tblInfo.Indices {
 				if _, ok := statsTbl.Indices[idx.ID]; !ok {
-					sql := fmt.Sprintf("analyze table %s index %s", tblName, idx.Name.O)
-					log.Infof("[stats] auto analyze index %s for table %s now", idx.Name.O, tblName)
+					sql := fmt.Sprintf("analyze table %s index `%s`", tblName, idx.Name.O)
+					log.Infof("[stats] auto analyze index `%s` for table %s now", idx.Name.O, tblName)
 					_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 					return errors.Trace(err)
 				}

@@ -15,7 +15,9 @@ package domain
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
@@ -42,7 +44,7 @@ type Domain struct {
 	store           kv.Storage
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
-	statsHandle     *statistics.Handle
+	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
 	ddl             ddl.DDL
 	m               sync.Mutex
@@ -393,8 +395,10 @@ func (m *MockFailure) getValue() bool {
 	return m.val
 }
 
-type etcdBackend interface {
+// EtcdBackend is used for judging a storage is a real TiKV.
+type EtcdBackend interface {
 	EtcdAddrs() []string
+	StartGCWorker() error
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
@@ -409,7 +413,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		statsLease:      statsLease,
 	}
 
-	if ebd, ok := store.(etcdBackend); ok {
+	if ebd, ok := store.(EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			var cli *clientv3.Client
 			cli, err = clientv3.New(clientv3.Config{
@@ -520,12 +524,12 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 // StatsHandle returns the statistic handle.
 func (do *Domain) StatsHandle() *statistics.Handle {
-	return do.statsHandle
+	return (*statistics.Handle)(atomic.LoadPointer(&do.statsHandle))
 }
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx context.Context) {
-	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
+	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
@@ -533,9 +537,10 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
-	do.ddl.RegisterEventCh(do.statsHandle.DDLEventCh())
-	err := do.statsHandle.Update(do.InfoSchema())
+	statsHandle := statistics.NewHandle(ctx, do.statsLease)
+	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
+	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
+	err := statsHandle.Update(do.InfoSchema())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -554,23 +559,23 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 	defer loadTicker.Stop()
 	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
 	defer deltaUpdateTicker.Stop()
-
+	statsHandle := do.StatsHandle()
 	for {
 		select {
 		case <-loadTicker.C:
-			err := do.statsHandle.Update(do.InfoSchema())
+			err := statsHandle.Update(do.InfoSchema())
 			if err != nil {
 				log.Error("[stats] update stats info fail: ", errors.ErrorStack(err))
 			}
 		case <-do.exit:
 			return
 			// This channel is sent only by ddl owner or the drop stats executor.
-		case t := <-do.statsHandle.DDLEventCh():
-			err := do.statsHandle.HandleDDLEvent(t)
+		case t := <-statsHandle.DDLEventCh():
+			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
 				log.Error("[stats] handle ddl event fail: ", errors.ErrorStack(err))
 			}
-		case t := <-do.statsHandle.AnalyzeResultCh():
+		case t := <-statsHandle.AnalyzeResultCh():
 			for _, hg := range t.Hist {
 				err := hg.SaveToStorage(ctx, t.TableID, t.Count, t.IsIndex)
 				if err != nil {
@@ -578,7 +583,7 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 				}
 			}
 		case <-deltaUpdateTicker.C:
-			do.statsHandle.DumpStatsDeltaToKV()
+			statsHandle.DumpStatsDeltaToKV()
 		}
 	}
 }
@@ -596,9 +601,10 @@ func (do *Domain) autoAnalyzeWorker(lease time.Duration) {
 	if err != nil {
 		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
 	}
+	statsHandle := do.StatsHandle()
 	for {
 		if statsOwner.IsOwner() {
-			err := do.statsHandle.HandleAutoAnalyze(do.InfoSchema())
+			err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			if err != nil {
 				log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
 			}

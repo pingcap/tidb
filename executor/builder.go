@@ -241,7 +241,7 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 		GlobalScope:  v.GlobalScope,
 		is:           b.is,
 	}
-	if e.Tp == ast.ShowGrants && len(e.User) == 0 {
+	if e.Tp == ast.ShowGrants && e.User == nil {
 		e.User = e.ctx.GetSessionVars().User
 	}
 	return e
@@ -369,7 +369,19 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	if b.err != nil {
 		return nil
 	}
-	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src), needColHandle: v.NeedColHandle}
+	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src)}
+	// Get the handle column index of the below plan.
+	// We can guarantee that there must be only one col in the map.
+	for _, cols := range v.Children()[0].Schema().TblID2Handle {
+		for _, col := range cols {
+			us.belowHandleIndex = col.Index
+			// If we don't found the handle column in the union scan's schema,
+			// we need to remove it when output.
+			if us.schema.ColumnIndex(col) != -1 {
+				us.handleColIsUsed = true
+			}
+		}
+	}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc
@@ -1136,6 +1148,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		columns:      is.Columns,
 		handleCol:    handleCol,
 		priority:     b.priority,
+		finished:     make(chan struct{}),
 	}
 	return e
 }

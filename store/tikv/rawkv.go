@@ -35,6 +35,7 @@ var (
 type RawKVClient struct {
 	clusterID   uint64
 	regionCache *RegionCache
+	pdClient    pd.Client
 	rpcClient   Client
 }
 
@@ -47,8 +48,15 @@ func NewRawKVClient(pdAddrs []string) (*RawKVClient, error) {
 	return &RawKVClient{
 		clusterID:   pdCli.GetClusterID(goctx.TODO()),
 		regionCache: NewRegionCache(pdCli),
+		pdClient:    pdCli,
 		rpcClient:   newRPCClient(),
 	}, nil
+}
+
+// Close closes the client.
+func (c *RawKVClient) Close() error {
+	c.pdClient.Close()
+	return c.rpcClient.Close()
 }
 
 // ClusterID returns the TiKV cluster ID.
