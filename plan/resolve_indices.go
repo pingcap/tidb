@@ -129,9 +129,6 @@ func (p *PhysicalIndexJoin) ResolveIndices() {
 // ResolveIndices implements Plan interface.
 func (p *PhysicalUnionScan) ResolveIndices() {
 	p.basePlan.ResolveIndices()
-	for _, col := range p.Schema().Columns {
-		col.ResolveIndices(p.children[0].Schema())
-	}
 	for _, expr := range p.Conditions {
 		expr.ResolveIndices(p.children[0].Schema())
 	}
