@@ -760,7 +760,7 @@ func (s *testPlanSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 		{"coalesce(c_int, 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"coalesce(NULL, c_int)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"coalesce(c_int, c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 3},
-		{"coalesce(c_int, c_datetime)", mysql.TypeVarString, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"coalesce(c_int, c_datetime)", mysql.TypeVarString, charset.CharsetUTF8, 0, 19, types.UnspecifiedLength},
 
 		{"nullif(c_int      , 123)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, types.UnspecifiedLength},     // TODO: tp should be TypeLonglong, decimal should be 0
 		{"nullif(c_bigint   , 123)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, types.UnspecifiedLength}, // TODO: flen should be 20, decimal should be 0
