@@ -1009,7 +1009,7 @@ type builtinCRC32Sig struct {
 	baseIntBuiltinFunc
 }
 
-// evalInt evals a CRC32().
+// evalInt evals a CRC32(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
 func (b *builtinCRC32Sig) evalInt(row []types.Datum) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
