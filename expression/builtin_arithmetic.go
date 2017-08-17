@@ -98,7 +98,7 @@ func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 	retTp.Flen = types.UnspecifiedLength
 }
 
-func setType4DivDecimal(retTp, a, b *types.FieldType) {
+func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldType) {
 	var deca, decb = a.Decimal, b.Decimal
 	if deca == types.UnspecifiedFsp {
 		deca = 0
@@ -118,7 +118,7 @@ func setType4DivDecimal(retTp, a, b *types.FieldType) {
 	retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxDecimalWidth)))
 }
 
-func setType4DivReal(retTp *types.FieldType) {
+func (c *arithmeticDivideFunctionClass) setType4DivReal(retTp *types.FieldType) {
 	retTp.Decimal = mysql.NotFixedDec
 	retTp.Flen = mysql.MaxRealWidth
 }
@@ -500,7 +500,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(args []Expression, ctx conte
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		setType4DivReal(bf.tp)
+		c.setType4DivReal(bf.tp)
 		sig := &builtinArithmeticDivideRealSig{baseRealBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
@@ -508,7 +508,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(args []Expression, ctx conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	setType4DivDecimal(bf.tp, tpA, tpB)
+	c.setType4DivDecimal(bf.tp, tpA, tpB)
 	sig := &builtinArithmeticDivideDecimalSig{baseDecimalBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
