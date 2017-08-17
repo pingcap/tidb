@@ -26,12 +26,15 @@ var (
 	_ functionClass = &caseWhenFunctionClass{}
 	_ functionClass = &ifFunctionClass{}
 	_ functionClass = &ifNullFunctionClass{}
-	_ functionClass = &nullIfFunctionClass{}
 )
 
 var (
-	_ builtinFunc = &builtinCaseWhenSig{}
-	_ builtinFunc = &builtinNullIfSig{}
+	_ builtinFunc = &builtinCaseWhenIntSig{}
+	_ builtinFunc = &builtinCaseWhenRealSig{}
+	_ builtinFunc = &builtinCaseWhenDecimalSig{}
+	_ builtinFunc = &builtinCaseWhenStringSig{}
+	_ builtinFunc = &builtinCaseWhenTimeSig{}
+	_ builtinFunc = &builtinCaseWhenDurationSig{}
 	_ builtinFunc = &builtinIfNullIntSig{}
 	_ builtinFunc = &builtinIfNullRealSig{}
 	_ builtinFunc = &builtinIfNullDecimalSig{}
@@ -50,47 +53,268 @@ type caseWhenFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinCaseWhenSig{newBaseBuiltinFunc(args, ctx)}
+	l := len(args)
+	// Fill in each 'THEN' clause parameter type.
+	fieldTps := make([]*types.FieldType, 0, (l+1)/2)
+	decimal, flen, isBinaryStr := args[1].GetType().Decimal, 0, false
+	for i := 1; i < l; i += 2 {
+		fieldTps = append(fieldTps, args[i].GetType())
+		decimal = mathutil.Max(decimal, args[i].GetType().Decimal)
+		flen = mathutil.Max(flen, args[i].GetType().Flen)
+		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[i].GetType())
+	}
+	if l%2 == 1 {
+		fieldTps = append(fieldTps, args[l-1].GetType())
+		decimal = mathutil.Max(decimal, args[l-1].GetType().Decimal)
+		flen = mathutil.Max(flen, args[l-1].GetType().Flen)
+		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[l-1].GetType())
+	}
+	fieldTp := types.AggFieldType(fieldTps)
+	classType := types.AggTypeClass(fieldTps, &fieldTp.Flag)
+	fieldTp.Decimal, fieldTp.Flen = decimal, flen
+	var tp evalTp
+	switch classType {
+	case types.ClassInt:
+		tp = tpInt
+		fieldTp.Decimal = 0
+	case types.ClassReal:
+		tp = tpReal
+	case types.ClassDecimal:
+		tp = tpDecimal
+	case types.ClassString:
+		tp = tpString
+		if !isBinaryStr {
+			fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
+		}
+		if types.IsTypeTime(fieldTp.Tp) {
+			tp = tpTime
+		} else if fieldTp.Tp == mysql.TypeDuration {
+			tp = tpDuration
+		}
+	}
+	// Set retType to BINARY(0) if all arguments are of type NULL.
+	if fieldTp.Tp == mysql.TypeNull {
+		fieldTp.Flen, fieldTp.Decimal = 0, -1
+		types.SetBinChsClnFlag(fieldTp)
+	}
+	argTps := make([]evalTp, 0, l)
+	for i := 0; i < l-1; i += 2 {
+		argTps = append(argTps, tpInt, tp)
+	}
+	if l%2 == 1 {
+		argTps = append(argTps, tp)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp = fieldTp
+	switch classType {
+	case types.ClassInt:
+		sig = &builtinCaseWhenIntSig{baseIntBuiltinFunc{bf}}
+	case types.ClassReal:
+		sig = &builtinCaseWhenRealSig{baseRealBuiltinFunc{bf}}
+	case types.ClassDecimal:
+		sig = &builtinCaseWhenDecimalSig{baseDecimalBuiltinFunc{bf}}
+	case types.ClassString:
+		sig = &builtinCaseWhenStringSig{baseStringBuiltinFunc{bf}}
+		if types.IsTypeTime(fieldTp.Tp) {
+			sig = &builtinCaseWhenTimeSig{baseTimeBuiltinFunc{bf}}
+		} else if fieldTp.Tp == mysql.TypeDuration {
+			sig = &builtinCaseWhenDurationSig{baseDurationBuiltinFunc{bf}}
+		}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinCaseWhenSig struct {
-	baseBuiltinFunc
+type builtinCaseWhenIntSig struct {
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinCaseWhenSig.
+// evalInt evals a builtinCaseWhenIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
+func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (ret int64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	l := len(args)
+	var condition int64
+	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
-		if args[i].IsNull() {
+		condition, isNull, err = args[i].EvalInt(row, sc)
+		if err != nil {
+			return 0, isNull, errors.Trace(err)
+		}
+		if isNull || condition == 0 {
 			continue
 		}
-		b, err1 := args[i].ToBool(sc)
-		if err1 != nil {
-			return d, errors.Trace(err1)
-		}
-		if b == 1 {
-			d = args[i+1]
-			return
-		}
+		ret, isNull, err = args[i+1].EvalInt(row, sc)
+		return ret, isNull, errors.Trace(err)
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
-		d = args[l-1]
+		ret, isNull, err = args[l-1].EvalInt(row, sc)
+		return ret, isNull, errors.Trace(err)
 	}
-	return
+	return ret, true, nil
+}
+
+type builtinCaseWhenRealSig struct {
+	baseRealBuiltinFunc
+}
+
+// evalReal evals a builtinCaseWhenRealSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+func (b *builtinCaseWhenRealSig) evalReal(row []types.Datum) (ret float64, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	var condition int64
+	args, l := b.getArgs(), len(b.getArgs())
+	for i := 0; i < l-1; i += 2 {
+		condition, isNull, err = args[i].EvalInt(row, sc)
+		if err != nil {
+			return 0, isNull, errors.Trace(err)
+		}
+		if isNull || condition == 0 {
+			continue
+		}
+		ret, isNull, err = args[i+1].EvalReal(row, sc)
+		return ret, isNull, errors.Trace(err)
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		ret, isNull, err = args[l-1].EvalReal(row, sc)
+		return ret, isNull, errors.Trace(err)
+	}
+	return ret, true, nil
+}
+
+type builtinCaseWhenDecimalSig struct {
+	baseDecimalBuiltinFunc
+}
+
+// evalDecimal evals a builtinCaseWhenDecimalSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+func (b *builtinCaseWhenDecimalSig) evalDecimal(row []types.Datum) (ret *types.MyDecimal, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	var condition int64
+	args, l := b.getArgs(), len(b.getArgs())
+	for i := 0; i < l-1; i += 2 {
+		condition, isNull, err = args[i].EvalInt(row, sc)
+		if err != nil {
+			return nil, isNull, errors.Trace(err)
+		}
+		if isNull || condition == 0 {
+			continue
+		}
+		ret, isNull, err = args[i+1].EvalDecimal(row, sc)
+		return ret, isNull, errors.Trace(err)
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		ret, isNull, err = args[l-1].EvalDecimal(row, sc)
+		return ret, isNull, errors.Trace(err)
+	}
+	return ret, true, nil
+}
+
+type builtinCaseWhenStringSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinCaseWhenStringSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+func (b *builtinCaseWhenStringSig) evalString(row []types.Datum) (ret string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	var condition int64
+	args, l := b.getArgs(), len(b.getArgs())
+	for i := 0; i < l-1; i += 2 {
+		condition, isNull, err = args[i].EvalInt(row, sc)
+		if err != nil {
+			return "", isNull, errors.Trace(err)
+		}
+		if isNull || condition == 0 {
+			continue
+		}
+		ret, isNull, err = args[i+1].EvalString(row, sc)
+		return ret, isNull, errors.Trace(err)
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		ret, isNull, err = args[l-1].EvalString(row, sc)
+		return ret, isNull, errors.Trace(err)
+	}
+	return ret, true, nil
+}
+
+type builtinCaseWhenTimeSig struct {
+	baseTimeBuiltinFunc
+}
+
+// evalTime evals a builtinCaseWhenTimeSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+func (b *builtinCaseWhenTimeSig) evalTime(row []types.Datum) (ret types.Time, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	var condition int64
+	args, l := b.getArgs(), len(b.getArgs())
+	for i := 0; i < l-1; i += 2 {
+		condition, isNull, err = args[i].EvalInt(row, sc)
+		if err != nil {
+			return ret, isNull, errors.Trace(err)
+		}
+		if isNull || condition == 0 {
+			continue
+		}
+		ret, isNull, err = args[i+1].EvalTime(row, sc)
+		return ret, isNull, errors.Trace(err)
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		ret, isNull, err = args[l-1].EvalTime(row, sc)
+		return ret, isNull, errors.Trace(err)
+	}
+	return ret, true, nil
+}
+
+type builtinCaseWhenDurationSig struct {
+	baseDurationBuiltinFunc
+}
+
+// evalDuration evals a builtinCaseWhenDurationSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+func (b *builtinCaseWhenDurationSig) evalDuration(row []types.Datum) (ret types.Duration, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	var condition int64
+	args, l := b.getArgs(), len(b.getArgs())
+	for i := 0; i < l-1; i += 2 {
+		condition, isNull, err = args[i].EvalInt(row, sc)
+		if err != nil {
+			return ret, false, errors.Trace(err)
+		}
+		if isNull || condition == 0 {
+			continue
+		}
+		ret, isNull, err = args[i+1].EvalDuration(row, sc)
+		return ret, isNull, errors.Trace(err)
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		ret, isNull, err = args[l-1].EvalDuration(row, sc)
+		return ret, isNull, errors.Trace(err)
+	}
+	return ret, true, nil
 }
 
 type ifFunctionClass struct {
@@ -478,44 +702,4 @@ func (b *builtinIfNullDurationSig) evalDuration(row []types.Datum) (types.Durati
 	}
 	arg1, isNull, err := b.args[1].EvalDuration(row, sc)
 	return arg1, isNull, errors.Trace(err)
-}
-
-type nullIfFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *nullIfFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinNullIfSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinNullIfSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinNullIfSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_nullif
-func (b *builtinNullIfSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// nullif(expr1, expr2)
-	// returns null if expr1 = expr2 is true, otherwise returns expr1
-	v1 := args[0]
-	v2 := args[1]
-
-	if v1.IsNull() || v2.IsNull() {
-		return v1, nil
-	}
-
-	if n, err1 := v1.CompareDatum(b.ctx.GetSessionVars().StmtCtx, v2); err1 != nil || n == 0 {
-		d := types.Datum{}
-		return d, errors.Trace(err1)
-	}
-
-	return v1, nil
 }
