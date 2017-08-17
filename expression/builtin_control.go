@@ -73,28 +73,16 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 		flen = mathutil.Max(flen, args[l-1].GetType().Flen)
 		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[l-1].GetType())
 	}
+
 	fieldTp := types.AggFieldType(fieldTps)
-	classType := types.AggTypeClass(fieldTps, &fieldTp.Flag)
+	tp := fieldTp2EvalTp(fieldTp)
+
+	if tp == tpInt {
+		decimal = 0
+	}
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
-	var tp evalTp
-	switch classType {
-	case types.ClassInt:
-		tp = tpInt
-		fieldTp.Decimal = 0
-	case types.ClassReal:
-		tp = tpReal
-	case types.ClassDecimal:
-		tp = tpDecimal
-	case types.ClassString:
-		tp = tpString
-		if !isBinaryStr {
-			fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
-		}
-		if types.IsTypeTime(fieldTp.Tp) {
-			tp = tpTime
-		} else if fieldTp.Tp == mysql.TypeDuration {
-			tp = tpDuration
-		}
+	if fieldTp.ToClass() == types.ClassString && !isBinaryStr {
+		fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
 	}
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if fieldTp.Tp == mysql.TypeNull {
@@ -113,20 +101,20 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 		return nil, errors.Trace(err)
 	}
 	bf.tp = fieldTp
-	switch classType {
-	case types.ClassInt:
+
+	switch tp {
+	case tpInt:
 		sig = &builtinCaseWhenIntSig{baseIntBuiltinFunc{bf}}
-	case types.ClassReal:
+	case tpReal:
 		sig = &builtinCaseWhenRealSig{baseRealBuiltinFunc{bf}}
-	case types.ClassDecimal:
+	case tpDecimal:
 		sig = &builtinCaseWhenDecimalSig{baseDecimalBuiltinFunc{bf}}
-	case types.ClassString:
+	case tpString:
 		sig = &builtinCaseWhenStringSig{baseStringBuiltinFunc{bf}}
-		if types.IsTypeTime(fieldTp.Tp) {
-			sig = &builtinCaseWhenTimeSig{baseTimeBuiltinFunc{bf}}
-		} else if fieldTp.Tp == mysql.TypeDuration {
-			sig = &builtinCaseWhenDurationSig{baseDurationBuiltinFunc{bf}}
-		}
+	case tpTime:
+		sig = &builtinCaseWhenTimeSig{baseTimeBuiltinFunc{bf}}
+	case tpDuration:
+		sig = &builtinCaseWhenDurationSig{baseDurationBuiltinFunc{bf}}
 	}
 	return sig.setSelf(sig), nil
 }
