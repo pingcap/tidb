@@ -24,7 +24,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types/json"
@@ -1138,7 +1137,7 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.State
 		}
 	}
 
-	if terror.ErrorEqual(err, ErrOverflow) {
+	if ErrOverflow.Equal(err) {
 		// TODO: warnErr need to be ErrWarnDataOutOfRange
 		err = sc.HandleOverflow(err, err)
 	}
