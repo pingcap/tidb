@@ -1226,41 +1226,45 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			pkCol = schema.Columns[schema.Len()-1]
 		}
 	}
-	p.SetSchema(schema)
-
 	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
-	if b.needColHandle != 0 || needUnionScan {
-		if pkCol == nil || needUnionScan {
-			idCol := &expression.Column{
-				FromID:   p.id,
-				DBName:   schemaName,
-				TblName:  tableInfo.Name,
-				ColName:  model.NewCIStr("_rowid"),
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				Position: schema.Len(),
-				Index:    schema.Len(),
-				ID:       model.ExtraHandleID,
-			}
-			if needUnionScan {
-				p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
-				for _, col := range p.schema.Columns {
-					p.unionScanSchema.Append(col)
-				}
-				if b.needColHandle > 0 {
-					p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
-					p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
-				}
-			}
-			p.Columns = append(p.Columns, &model.ColumnInfo{
-				ID:   model.ExtraHandleID,
-				Name: model.NewCIStr("_rowid"),
-			})
-			p.schema.Append(idCol)
-			p.schema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
-		} else {
-			p.schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
+	if b.needColHandle == 0 && !needUnionScan {
+		p.SetSchema(schema)
+		return b.projectVirtualColumns(p, columns)
+	}
+	if needUnionScan {
+		p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+		for _, col := range schema.Columns {
+			p.unionScanSchema.Append(col)
 		}
 	}
+	if pkCol == nil {
+		idCol := &expression.Column{
+			FromID:   p.id,
+			DBName:   schemaName,
+			TblName:  tableInfo.Name,
+			ColName:  model.NewCIStr("_rowid"),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Position: schema.Len(),
+			Index:    schema.Len(),
+			ID:       model.ExtraHandleID,
+		}
+		if needUnionScan && b.needColHandle > 0 {
+			p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
+			p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+		}
+		p.Columns = append(p.Columns, &model.ColumnInfo{
+			ID:   model.ExtraHandleID,
+			Name: model.NewCIStr("_rowid"),
+		})
+		schema.Append(idCol)
+		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+	} else {
+		if needUnionScan && b.needColHandle > 0 {
+			p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
+		}
+		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
+	}
+	p.SetSchema(schema)
 	return b.projectVirtualColumns(p, columns)
 }
 
