@@ -59,8 +59,8 @@ import (
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts
+	mysql.ClientMultiResults | mysql.ClientLocalFiles |
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
@@ -161,6 +161,9 @@ func (cc *clientConn) writeInitialHandshake() error {
 	// auth-plugin-data-part-2
 	data = append(data, cc.salt[8:]...)
 	// filler [00]
+	data = append(data, 0)
+	// auth-plugin name
+	data = append(data, []byte("mysql_native_password")...)
 	data = append(data, 0)
 	err := cc.writePacket(data)
 	if err != nil {

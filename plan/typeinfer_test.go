@@ -588,6 +588,11 @@ func (s *testPlanSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 		{"if(c_int, c_int, c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"if(c_int, c_time, c_datetime)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 2},
 		{"if(c_int, c_time, c_json)", mysql.TypeVarchar, charset.CharsetUTF8, 0, 10, 0},
+		{"case when c_int then c_char else c_varchar end", mysql.TypeVarchar, charset.CharsetUTF8, 0, 20, -1},
+		{"case when c_int > 1 then c_double else c_binary_char end", mysql.TypeString, charset.CharsetUTF8, mysql.BinaryFlag, 22, -1},
+		{"case when c_int > 2 then c_double when c_int < 1 then c_decimal else c_double end", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, 3},
+		{"case when c_double > 2 then c_decimal else 1 end", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 6, 3},
+		{"case when null then null else null end", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag, 0, -1},
 	}
 }
 
