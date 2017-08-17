@@ -372,7 +372,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src)}
 	// Get the handle column index of the below plan.
-	// We can guarantee that there's must be only one col in the map.
+	// We can guarantee that there must be only one col in the map.
 	for _, cols := range v.Children()[0].Schema().TblID2Handle {
 		for _, col := range cols {
 			us.belowHandleIndex = col.Index
