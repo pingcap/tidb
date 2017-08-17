@@ -1279,37 +1279,37 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 			break
 		}
 	}
-	if hasVirtualGeneratedColumn {
-		var proj = Projection{
-			Exprs:            make([]expression.Expression, 0, len(columns)),
-			calculateGenCols: true,
-		}.init(b.allocator, b.ctx)
-		for i, colExpr := range ds.Schema().Columns {
-			var exprIsGen = false
-			var expr expression.Expression
-			if i < len(columns) {
-				var column = columns[i]
-				if column.IsGenerated() && !column.GeneratedStored {
-					var err error
-					expr, _, err = b.rewrite(column.GeneratedExpr, ds, nil, true)
-					if err != nil {
-						b.err = errors.Trace(err)
-						return nil
-					}
-					exprIsGen = true
-				}
-			}
-			if !exprIsGen {
-				expr = colExpr.Clone()
-			}
-			proj.Exprs = append(proj.Exprs, expr)
-		}
-		proj.SetSchema(ds.Schema().Clone())
-		proj.SetChildren(ds)
-		ds.SetParents(proj)
-		return proj
+	if !hasVirtualGeneratedColumn {
+		return ds
 	}
-	return ds
+	var proj = Projection{
+		Exprs:            make([]expression.Expression, 0, len(columns)),
+		calculateGenCols: true,
+	}.init(b.allocator, b.ctx)
+	for i, colExpr := range ds.Schema().Columns {
+		var exprIsGen = false
+		var expr expression.Expression
+		if i < len(columns) {
+			var column = columns[i]
+			if column.IsGenerated() && !column.GeneratedStored {
+				var err error
+				expr, _, err = b.rewrite(column.GeneratedExpr, ds, nil, true)
+				if err != nil {
+					b.err = errors.Trace(err)
+					return nil
+				}
+				exprIsGen = true
+			}
+		}
+		if !exprIsGen {
+			expr = colExpr.Clone()
+		}
+		proj.Exprs = append(proj.Exprs, expr)
+	}
+	proj.SetSchema(ds.Schema().Clone())
+	proj.SetChildren(ds)
+	ds.SetParents(proj)
+	return proj
 }
 
 // ApplyConditionChecker checks whether all or any output of apply matches a condition.
@@ -1558,7 +1558,7 @@ func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.C
 	case *Projection:
 		if x.calculateGenCols {
 			ds := x.Children()[0].(*DataSource)
-			alias := extractTableAlias(p.(LogicalPlan))
+			alias := extractTableAlias(x)
 			if alias != nil {
 				if _, ok := asNames[ds.tableInfo]; !ok {
 					asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)

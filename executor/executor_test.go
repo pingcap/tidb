@@ -1285,6 +1285,16 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result = tk.MustQuery(`SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.d = t2.d ORDER BY t1.a`)
 	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
 
+	// Test generated column in subqueries.
+	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.a not in (SELECT t.a FROM test_gc_read t where t.c > 5)`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`))
+
+	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.c in (SELECT t.c FROM test_gc_read t where t.c > 5)`)
+	result.Check(testkit.Rows(`3 4 7 12`, `8 8 16 64`))
+
+	result = tk.MustQuery(`SELECT tt.b FROM test_gc_read tt WHERE tt.a = (SELECT max(t.a) FROM test_gc_read t WHERE t.c = tt.c)`)
+	result.Check(testkit.Rows(`2`, `4`, `8`))
+
 	// Test aggregation on virtual/stored generated columns.
 	result = tk.MustQuery(`SELECT c, sum(a) aa, max(d) dd FROM test_gc_read GROUP BY c ORDER BY aa`)
 	result.Check(testkit.Rows(`<nil> 0 <nil>`, `3 1 2`, `7 3 12`, `16 8 64`))

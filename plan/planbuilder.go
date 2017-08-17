@@ -862,7 +862,8 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
-		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
+		db := b.ctx.GetSessionVars().CurrentDB
+		b.err = infoschema.ErrTableNotExists.GenByArgs(db, tableInfo.Name.O)
 		return nil
 	}
 	schema := expression.TableInfo2Schema(tableInfo)
