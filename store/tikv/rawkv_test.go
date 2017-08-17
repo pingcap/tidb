@@ -30,9 +30,11 @@ var _ = Suite(&testRawKVSuite{})
 func (s *testRawKVSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
+	pdClient := mocktikv.NewPDClient(s.cluster)
 	s.client = &RawKVClient{
 		clusterID:   0,
-		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		regionCache: NewRegionCache(pdClient),
+		pdClient:    pdClient,
 		rpcClient:   mocktikv.NewRPCClient(s.cluster, mocktikv.NewMvccStore()),
 	}
 	s.bo = NewBackoffer(5000, goctx.Background())
