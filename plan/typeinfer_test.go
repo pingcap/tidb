@@ -1002,9 +1002,8 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"now(3) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
 		{"now(4) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 24, 4},
 		{"now(5) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 25, 5},
-		{"now(6) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 25, 5},
-		{"now(7) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 25, 5},
-		{"now(-7)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"now(6) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+		{"now(7) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
 
 		{"utc_timestamp()  ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
 		{"utc_timestamp(0) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
@@ -1013,9 +1012,8 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"utc_timestamp(3) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
 		{"utc_timestamp(4) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 24, 4},
 		{"utc_timestamp(5) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 25, 5},
-		{"utc_timestamp(6) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 25, 5},
-		{"utc_timestamp(7) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 25, 5},
-		{"utc_timestamp(-7)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"utc_timestamp(6) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+		{"utc_timestamp(7) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
 
 		{"utc_date()  ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 	}
