@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -1445,7 +1444,7 @@ func (b *builtinTimeSig) evalDuration(row []types.Datum) (res types.Duration, is
 	}
 
 	res, err = types.ParseDuration(expr, fsp)
-	if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}
 	return res, isNull, errors.Trace(err)
@@ -2546,7 +2545,7 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	secondsFloat, err := args[0].ToFloat64(sc)
 	if err != nil {
-		if args[0].Kind() == types.KindString && terror.ErrorEqual(err, types.ErrTruncated) {
+		if args[0].Kind() == types.KindString && types.ErrTruncated.Equal(err) {
 			secondsFloat = float64(0)
 		} else {
 			return d, errors.Trace(err)
