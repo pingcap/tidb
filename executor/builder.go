@@ -1143,7 +1143,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		columns:      is.Columns,
 		handleCol:    handleCol,
 		priority:     b.priority,
-		finished:     make(chan struct{}),
 	}
 	return e
 }

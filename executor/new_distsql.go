@@ -304,6 +304,7 @@ type IndexLookUpExecutor struct {
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open() error {
+	e.finished = make(chan struct{})
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
@@ -328,6 +329,7 @@ func (e *IndexLookUpExecutor) Open() error {
 
 // doRequestForDatums constructs kv ranges by datums. It is used by index look up executor.
 func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx goctx.Context) error {
+	e.finished = make(chan struct{})
 	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
 	if err != nil {
 		return errors.Trace(err)
