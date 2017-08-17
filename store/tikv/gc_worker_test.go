@@ -71,7 +71,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(lastRun, NotNil)
 	safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
 	c.Assert(err, IsNil)
-	s.timeEqual(c, safePoint.Add(gcDefaultLifeTime), now, time.Second)
+	s.timeEqual(c, safePoint.Add(gcDefaultLifeTime), now, 2*time.Second)
 
 	// Change GC run interval.
 	err = s.gcWorker.saveDuration(gcRunIntervalKey, time.Minute*5)
@@ -100,5 +100,5 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(ok, IsTrue)
 	safePoint, err = s.gcWorker.loadTime(gcSafePointKey)
 	c.Assert(err, IsNil)
-	s.timeEqual(c, safePoint.Add(time.Minute*30), now, time.Second)
+	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
 }

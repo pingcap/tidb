@@ -117,7 +117,7 @@ func (s *dbSnapshot) reverseMvccSeek(key kv.Key) (kv.Key, []byte, error) {
 			return nil, nil, errors.Trace(err)
 		}
 		resultKey, v, err := s.mvccSeek(revKey, true)
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
+		if kv.ErrNotExist.Equal(err) {
 			key = revKey
 			continue
 		}
@@ -177,7 +177,7 @@ func newDBIter(s *dbSnapshot, key kv.Key, reverse bool) (*dbIter, error) {
 		k, v, err = s.mvccSeek(key, false)
 	}
 	if err != nil {
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
+		if kv.ErrNotExist.Equal(err) {
 			err = nil
 		}
 		return &dbIter{valid: false}, errors.Trace(err)
@@ -202,7 +202,7 @@ func (it *dbIter) Next() error {
 	}
 	if err != nil {
 		it.valid = false
-		if !terror.ErrorEqual(err, kv.ErrNotExist) {
+		if !kv.ErrNotExist.Equal(err) {
 			return errors.Trace(err)
 		}
 	}
