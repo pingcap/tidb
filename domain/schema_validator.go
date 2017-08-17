@@ -20,6 +20,17 @@ import (
 	"github.com/ngaut/log"
 )
 
+type checkResult int
+
+const (
+	// ResultSucc means schemaValidator's check is passing.
+	ResultSucc checkResult = iota
+	// ResultFail means schemaValidator's check is fail.
+	ResultFail
+	// ResultUnknown means schemaValidator doesn't know the check would be success or fail.
+	ResultUnknown
+)
+
 // SchemaValidator is the interface for checking the validity of schema version.
 type SchemaValidator interface {
 	// Update the schema validator, add a new item, delete the expired detalItemInfos.
@@ -27,13 +38,8 @@ type SchemaValidator interface {
 	// Add the changed table IDs to the new schema information,
 	// which is produced when the oldSchemaVer is updated to the newSchemaVer.
 	Update(leaseGrantTime uint64, oldSchemaVer, newSchemaVer int64, changedTableIDs []int64)
-	// Check is it valid for a transaction to use schemaVer, at timestamp txnTS.
-	Check(txnTS uint64, schemaVer int64) bool
-	// Latest returns the latest schema version it knows, but not necessary a valid one.
-	Latest() int64
-	// IsRelatedTablesChanged returns the result whether relatedTableIDs is changed from usedVer to the latest schema version,
-	// and an error.
-	IsRelatedTablesChanged(txnTS uint64, usedVer int64, relatedTableIDs []int64) (bool, error)
+	// Check is it valid for a transaction to use schemaVer and related tables, at timestamp txnTS.
+	Check(txnTS uint64, schemaVer int64, relatedTableIDs []int64) checkResult
 	// Stop stops checking the valid of transaction.
 	Stop()
 	// Restart restarts the schema validator after it is stopped.
@@ -143,19 +149,13 @@ func (s *schemaValidator) isAllExpired(txnTS uint64) bool {
 	return t.After(s.latestSchemaExpire)
 }
 
-func (s *schemaValidator) IsRelatedTablesChanged(txnTS uint64, currVer int64, tableIDs []int64) (bool, error) {
-	s.mux.RLock()
-	defer s.mux.RUnlock()
-
-	if s.isAllExpired(txnTS) {
-		log.Infof("the schema validator's latest schema version %d is expired", s.latestSchemaVer)
-		return false, ErrInfoSchemaExpired
-	}
-
-	_, isExisting := s.itemSchemaVers[currVer]
-	if !isExisting {
-		log.Infof("the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
-		return false, ErrInfoSchemaChanged
+// isRelatedTablesChanged returns the result whether relatedTableIDs is changed
+// from usedVer to the latest schema version.
+// NOTE, this function should be called under lock!
+func (s *schemaValidator) isRelatedTablesChanged(txnTS uint64, currVer int64, tableIDs []int64) bool {
+	if _, ok := s.itemSchemaVers[currVer]; !ok {
+		log.Debugf("the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
+		return true
 	}
 
 	// Find currVer's offset in detaItemInfos.
@@ -169,35 +169,38 @@ func (s *schemaValidator) IsRelatedTablesChanged(txnTS uint64, currVer int64, ta
 	for i := offset + 1; i < len(s.detalItemInfos); i++ {
 		info := s.detalItemInfos[i]
 		if hasRelatedTableID(tableIDs, info.relatedTableIDs) {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
-// Check checks schema validity, returns true if use schemaVer at txnTS is legal.
-func (s *schemaValidator) Check(txnTS uint64, schemaVer int64) bool {
+// Check checks schema validity, returns true if use schemaVer and related tables at txnTS is legal.
+func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs []int64) checkResult {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 	if !s.isStarted {
 		log.Infof("the schema validator stopped before checking")
-		return false
+		return ResultFail
 	}
-
 	if s.lease == 0 {
-		return true
+		return ResultSucc
 	}
 
+	// Schema changed, result decided by whether related tables change.
 	if schemaVer < s.latestSchemaVer {
-		return false
+		if s.isRelatedTablesChanged(txnTS, schemaVer, relatedTableIDs) {
+			return ResultFail
+		}
+		return ResultSucc
 	}
 
+	// Schema unchanged, maybe success or the schema validator is unavailable.
 	t := extractPhysicalTime(txnTS)
 	if t.After(s.latestSchemaExpire) {
-		return false
+		return ResultUnknown
 	}
-
-	return true
+	return ResultSucc
 }
 
 // Latest returns the latest schema version it knows.
