@@ -23,8 +23,9 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 )
 
 const (
@@ -96,10 +97,8 @@ func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val st
 	opts ...clientv3.OpOption) error {
 	var err error
 	for i := 0; i < retryCnt; i++ {
-		select {
-		case <-ctx.Done():
+		if isContextDone(ctx) {
 			return errors.Trace(ctx.Err())
-		default:
 		}
 
 		childCtx, cancel := goctx.WithTimeout(ctx, keyOpDefaultTimeout)
@@ -184,10 +183,19 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 	return errors.Trace(err)
 }
 
-func isContextFinished(err error) bool {
-	if terror.ErrorEqual(err, goctx.Canceled) ||
-		terror.ErrorEqual(err, goctx.DeadlineExceeded) {
+func isCtxFinishedInETCD(err error) bool {
+	errCode := grpc.Code(errors.Cause(err))
+	if errCode == codes.Canceled || errCode == codes.DeadlineExceeded {
 		return true
+	}
+	return false
+}
+
+func isContextDone(ctx goctx.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
 	}
 	return false
 }
@@ -199,14 +207,12 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 	intervalCnt := int(time.Second / checkVersInterval)
 	updatedMap := make(map[string]struct{})
 	for {
-		select {
-		case <-ctx.Done():
+		if isContextDone(ctx) {
 			return errors.Trace(ctx.Err())
-		default:
 		}
 
 		resp, err := s.etcdCli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
-		if isContextFinished(err) {
+		if isCtxFinishedInETCD(err) {
 			return errors.Trace(err)
 		}
 		if err != nil {
