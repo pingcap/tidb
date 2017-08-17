@@ -31,7 +31,6 @@ var (
 // PrintTiDBInfo prints the TiDB version information.
 func PrintTiDBInfo() {
 	log.Infof("Welcome to TiDB.")
-	log.Infof("Version:")
 	log.Infof("Release Version: %s", mysql.TiDBReleaseVersion)
 	log.Infof("Git Commit Hash: %s", TiDBGitHash)
 	log.Infof("Git Branch: %s", TiDBGitBranch)

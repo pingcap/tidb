@@ -27,6 +27,7 @@ const (
 	TiDBReleaseVersion string = "0.8.0"
 )
 
+// ServerVersion is the version information of this tidb-server in MySQL's format.
 var ServerVersion string
 
 // Header information.
