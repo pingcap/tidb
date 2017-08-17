@@ -102,9 +102,9 @@ func (s *testPlanSuite) TestInferType(c *C) {
 
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		p, err := plan.BuildLogicalPlan(ctx, stmt, is)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		tp := p.Schema().Columns[0].RetType
 
 		c.Assert(tp.Tp, Equals, tt.tp, comment)
@@ -995,6 +995,24 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"microsecond(c_set      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 		{"microsecond(c_enum     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 
-		{"curdate(c_int)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"curdate()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"sysdate(4)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+
+		{"yearweek(c_int      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_bigint   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_float    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_double   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_decimal  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_datetime )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_time     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_timestamp)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_char     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_varchar  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_text     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_binary   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_varbinary)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_blob     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_set      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_enum     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 	}
 }

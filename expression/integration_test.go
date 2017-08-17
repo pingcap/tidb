@@ -1033,6 +1033,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
+
+	// for yearweek
+	result = tk.MustQuery(`select yearweek("2014-12-27"), yearweek("2014-29-27"), yearweek("2014-00-27"), yearweek("2014-12-27 12:38:32"), yearweek("2014-12-27 12:38:32.1111111"), yearweek("2014-12-27 12:90:32"), yearweek("2014-12-27 89:38:32.1111111");`)
+	result.Check(testkit.Rows("201451 <nil> <nil> 201451 201451 <nil> <nil>"))
+	result = tk.MustQuery(`select yearweek(12121), yearweek(1.00009), yearweek("aaaaa"), yearweek(""), yearweek(NULL);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {

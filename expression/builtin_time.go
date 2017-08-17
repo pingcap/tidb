@@ -123,11 +123,13 @@ var (
 	_ builtinFunc = &builtinWeekDaySig{}
 	_ builtinFunc = &builtinWeekOfYearSig{}
 	_ builtinFunc = &builtinYearSig{}
-	_ builtinFunc = &builtinYearWeekSig{}
+	_ builtinFunc = &builtinYearWeekWithModeSig{}
+	_ builtinFunc = &builtinYearWeekWithoutModeSig{}
 	_ builtinFunc = &builtinFromUnixTimeSig{}
 	_ builtinFunc = &builtinGetFormatSig{}
 	_ builtinFunc = &builtinStrToDateSig{}
-	_ builtinFunc = &builtinSysDateSig{}
+	_ builtinFunc = &builtinSysDateWithFspSig{}
+	_ builtinFunc = &builtinSysDateWithoutFspSig{}
 	_ builtinFunc = &builtinCurrentDateSig{}
 	_ builtinFunc = &builtinCurrentTimeSig{}
 	_ builtinFunc = &builtinTimeSig{}
@@ -1066,49 +1068,83 @@ func (c *yearWeekFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinYearWeekSig{newBaseBuiltinFunc(args, ctx)}
+	argTps := []evalTp{tpTime}
+	if len(args) == 2 {
+		argTps = append(argTps, tpInt)
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bf.tp.Flen, bf.tp.Decimal = 6, 0
+
+	var sig builtinFunc
+	if len(args) == 2 {
+		sig = &builtinYearWeekWithModeSig{baseIntBuiltinFunc{bf}}
+	} else {
+		sig = &builtinYearWeekWithoutModeSig{baseIntBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinYearWeekSig struct {
-	baseBuiltinFunc
+type builtinYearWeekWithModeSig struct {
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinYearWeekSig.
+// evalInt evals YEARWEEK(date,mode).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
-func (b *builtinYearWeekSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinYearWeekWithModeSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	date, isNull, err := b.args[0].EvalTime(row, sc)
 	if err != nil {
-		return d, errors.Trace(err)
+		sc.AppendWarning(err)
 	}
-	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
-	}
-
-	// No need to check type here.
-	t := d.GetMysqlTime()
-	if t.InvalidZero() {
-		d.SetNull()
-		// TODO: log warning or return error?
-		return
+	if isNull || err != nil {
+		return 0, true, nil
 	}
 
-	var mode int64
-	if len(args) > 1 {
-		v, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		mode = v
+	mode, isNull, err := b.args[1].EvalInt(row, sc)
+	if err != nil {
+		sc.AppendWarning(err)
+	}
+	if isNull || err != nil {
+		return 0, true, nil
 	}
 
-	year, week := t.Time.YearWeek(int(mode))
-	d.SetInt64(int64(week + year*100))
-	if d.GetInt64() < 0 {
-		d.SetInt64(math.MaxUint32)
+	year, week := date.Time.YearWeek(int(mode))
+	result := int64(week + year*100)
+	if result < 0 {
+		return int64(math.MaxUint32), false, nil
 	}
-	return
+	return result, false, nil
+}
+
+type builtinYearWeekWithoutModeSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals YEARWEEK(date).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
+func (b *builtinYearWeekWithoutModeSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	date, isNull, err := b.args[0].EvalTime(row, sc)
+	if err != nil {
+		sc.AppendWarning(err)
+	}
+	if isNull || err != nil || date.InvalidZero() {
+		return 0, true, nil
+	}
+
+	year, week := date.Time.YearWeek(0)
+	result := int64(week + year*100)
+	if result < 0 {
+		return int64(math.MaxUint32), false, nil
+	}
+	return result, false, nil
 }
 
 type fromUnixTimeFunctionClass struct {
@@ -1310,38 +1346,58 @@ func (c *sysDateFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinSysDateSig{newBaseBuiltinFunc(args, ctx)}
+	argTps := []evalTp{}
+	if len(args) == 1 {
+		argTps = append(argTps, tpInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen, bf.tp.Decimal = 19, 0
+
+	var sig builtinFunc
+	if len(args) == 1 {
+		sig = &builtinSysDateWithFspSig{baseTimeBuiltinFunc{bf}}
+	} else {
+		sig = &builtinSysDateWithoutFspSig{baseTimeBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinSysDateSig struct {
-	baseBuiltinFunc
+type builtinSysDateWithFspSig struct {
+	baseTimeBuiltinFunc
 }
 
-// eval evals a builtinSysDateSig.
+// evalTime evals SYSDATE(fsp).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sysdate
-func (b *builtinSysDateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
-	// But here we can just think they are the same because we don't support stored function
-	// and trigger now.
-	fsp := 0
+func (b *builtinSysDateWithFspSig) evalTime(row []types.Datum) (d types.Time, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if len(args) == 1 && !args[0].IsNull() {
-		if fsp, err = checkFsp(sc, args[0]); err != nil {
-			return d, errors.Trace(err)
-		}
+
+	fsp, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, isNull, errors.Trace(err)
 	}
 
-	t, err := convertTimeToMysqlTime(time.Now(), fsp)
+	result, err := convertTimeToMysqlTime(time.Now(), int(fsp))
 	if err != nil {
-		return d, errors.Trace(err)
+		return types.Time{}, true, errors.Trace(err)
 	}
-	d.SetMysqlTime(t)
-	return
+	return result, false, nil
+}
+
+type builtinSysDateWithoutFspSig struct {
+	baseTimeBuiltinFunc
+}
+
+// evalTime evals SYSDATE().
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sysdate
+func (b *builtinSysDateWithoutFspSig) evalTime(row []types.Datum) (d types.Time, isNull bool, err error) {
+	result, err := convertTimeToMysqlTime(time.Now(), 0)
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+	return result, false, nil
 }
 
 type currentDateFunctionClass struct {
