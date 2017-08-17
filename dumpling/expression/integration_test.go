@@ -1515,6 +1515,10 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	// FIXME: MySQL returns `1.0`.
 	result = tk.MustQuery("select if(1, 1, 1.0)")
 	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery("SELECT 79 + + + CASE -87 WHEN -30 THEN COALESCE(COUNT(*), +COALESCE(+15, -33, -12 ) + +72) WHEN +COALESCE(+AVG(DISTINCT(60)), 21) THEN NULL ELSE NULL END AS col0;")
+	result.Check(testkit.Rows("<nil>"))
+
 }
 
 func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
