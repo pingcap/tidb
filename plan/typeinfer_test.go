@@ -70,7 +70,9 @@ func (s *testPlanSuite) TestInferType(c *C) {
 		c_varbinary varbinary(20),
 		c_blob blob,
 		c_set set('a', 'b', 'c'),
-		c_enum enum('a', 'b', 'c'))`
+		c_enum enum('a', 'b', 'c'),
+		c_json JSON
+	)`
 	testKit.MustExec(sql)
 
 	tests := []typeInferTestCase{}
@@ -574,8 +576,9 @@ func (s *testPlanSuite) createTestCase4LogicalFuncs() []typeInferTestCase {
 
 func (s *testPlanSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
-		{"ifnull(c_int, c_int    )", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
+		{"ifnull(c_int, c_int)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
 		{"ifnull(c_int, c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 17, 3},
+		{"ifnull(c_json, c_decimal)", mysql.TypeVarchar, charset.CharsetUTF8, 0, 5, 3},
 		{"if(c_int, c_decimal, c_int)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 3},
 		{"if(c_int, c_char, c_int)", mysql.TypeString, charset.CharsetUTF8, 0, 20, -1},
 		{"if(c_int, c_binary, c_int)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, -1},
@@ -584,6 +587,7 @@ func (s *testPlanSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 		{"if(c_int, c_datetime, c_int)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 19, 2},
 		{"if(c_int, c_int, c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"if(c_int, c_time, c_datetime)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 2},
+		{"if(c_int, c_time, c_json)", mysql.TypeVarchar, charset.CharsetUTF8, 0, 10, 0},
 	}
 }
 

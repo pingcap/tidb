@@ -148,6 +148,7 @@ func (c *ifFunctionClass) inferType(tp1, tp2 *types.FieldType) *types.FieldType 
 		retTp = types.AggFieldType([]*types.FieldType{tp1, tp2})
 		retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
 		types.SetBinChsClnFlag(retTp)
+
 		if types.IsNonBinaryStr(tp1) && !types.IsBinaryStr(tp2) {
 			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
 			if mysql.HasBinaryFlag(tp1.Flag) {
@@ -158,6 +159,8 @@ func (c *ifFunctionClass) inferType(tp1, tp2 *types.FieldType) *types.FieldType 
 			if mysql.HasBinaryFlag(tp2.Flag) {
 				retTp.Flag |= mysql.BinaryFlag
 			}
+		} else if types.IsTypeJSON(tp1.Tp) || types.IsTypeJSON(tp2.Tp) {
+			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
 		}
 		if typeClass == types.ClassDecimal || typeClass == types.ClassInt {
 			unsignedFlag1, unsignedFlag2 := mysql.HasUnsignedFlag(tp1.Flag), mysql.HasUnsignedFlag(tp2.Flag)
