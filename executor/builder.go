@@ -389,13 +389,13 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.Columns
-		us.buildAndSortAddedRows(x.table, x.asName)
+		us.buildAndSortAddedRows(x.table)
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table, x.asName)
+		us.buildAndSortAddedRows(x.table)
 	case *XSelectIndexExec:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -409,7 +409,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table, x.asName)
+		us.buildAndSortAddedRows(x.table)
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -423,7 +423,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table, x.asName)
+		us.buildAndSortAddedRows(x.table)
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -437,7 +437,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table, x.asName)
+		us.buildAndSortAddedRows(x.table)
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return src
@@ -606,7 +606,6 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	ts := &TableScanExec{
 		t:            table,
-		asName:       v.TableAsName,
 		ctx:          b.ctx,
 		columns:      v.Columns,
 		schema:       v.Schema(),
@@ -634,7 +633,6 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		ctx:         b.ctx,
 		startTS:     startTS,
 		supportDesc: supportDesc,
-		asName:      v.TableAsName,
 		table:       table,
 		schema:      v.Schema(),
 		Columns:     v.Columns,
@@ -669,7 +667,6 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		tableInfo:            v.Table,
 		ctx:                  b.ctx,
 		supportDesc:          supportDesc,
-		asName:               v.TableAsName,
 		table:                table,
 		singleReadMode:       !v.DoubleRead,
 		startTS:              startTS,
@@ -1050,7 +1047,6 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		ctx:       b.ctx,
 		schema:    v.Schema(),
 		dagPB:     dagReq,
-		asName:    ts.TableAsName,
 		tableID:   ts.Table.ID,
 		table:     table,
 		keepOrder: ts.KeepOrder,
@@ -1086,7 +1082,6 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		ctx:       b.ctx,
 		schema:    v.Schema(),
 		dagPB:     dagReq,
-		asName:    is.TableAsName,
 		tableID:   is.Table.ID,
 		table:     table,
 		index:     is.Index,
@@ -1138,7 +1133,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		ctx:          b.ctx,
 		schema:       v.Schema(),
 		dagPB:        indexReq,
-		asName:       is.TableAsName,
 		tableID:      is.Table.ID,
 		table:        table,
 		index:        is.Index,

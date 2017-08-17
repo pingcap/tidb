@@ -52,7 +52,6 @@ func handleIsExtra(col *expression.Column) bool {
 
 // TableReaderExecutor sends dag request and reads table data from kv layer.
 type TableReaderExecutor struct {
-	asName    *model.CIStr
 	table     table.Table
 	tableID   int64
 	keepOrder bool
@@ -166,7 +165,6 @@ func (e *TableReaderExecutor) doRequestForDatums(datums [][]types.Datum, goCtx g
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
-	asName    *model.CIStr
 	table     table.Table
 	index     *model.IndexInfo
 	tableID   int64
@@ -278,7 +276,6 @@ func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
-	asName    *model.CIStr
 	table     table.Table
 	index     *model.IndexInfo
 	tableID   int64
@@ -366,7 +363,6 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		schema.Append(handleCol)
 	}
 	tableReader := &TableReaderExecutor{
-		asName:    e.asName,
 		table:     e.table,
 		tableID:   e.tableID,
 		dagPB:     e.tableRequest,
