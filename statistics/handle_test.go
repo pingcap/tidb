@@ -14,6 +14,7 @@
 package statistics_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/juju/errors"
@@ -35,16 +36,42 @@ func TestT(t *testing.T) {
 
 var _ = Suite(&testStatsCacheSuite{})
 
-type testStatsCacheSuite struct{}
+type testStatsCacheSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+}
+
+func (s *testStatsCacheSuite) SetUpSuite(c *C) {
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testStatsCacheSuite) TearDownSuite(c *C) {
+	s.store.Close()
+}
+
+func (s *testStatsCacheSuite) cleanEnv(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+	s.do.StatsHandle().Clear()
+	tk.MustExec("truncate table mysql.stats_meta")
+	tk.MustExec("truncate table mysql.stats_histograms")
+	tk.MustExec("truncate table mysql.stats_buckets")
+}
 
 func (s *testStatsCacheSuite) TestStatsCache(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer s.cleanEnv(c)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1, 2)")
+	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -104,10 +131,8 @@ func assertHistogramEqual(c *C, a, b statistics.Histogram) {
 }
 
 func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer s.cleanEnv(c)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	recordCount := 1000
@@ -115,6 +140,7 @@ func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("create index idx_t on t(c2)")
+	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -133,13 +159,12 @@ func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer s.cleanEnv(c)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int, key cc1(c1), key cc2(c2))")
 	testKit.MustExec("analyze table t")
+	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -152,14 +177,13 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer s.cleanEnv(c)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1, 2)")
 	testKit.MustExec("analyze table t")
+	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -186,13 +210,12 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestVersion(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer s.cleanEnv(c)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 	testKit.MustExec("analyze table t1")
+	do := s.do
 	is := do.InfoSchema()
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
@@ -267,14 +290,13 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestLoadHist(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer s.cleanEnv(c)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
+	do := s.do
 	h := do.StatsHandle()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	rowCount := 10
 	for i := 0; i < rowCount; i++ {

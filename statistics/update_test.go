@@ -14,7 +14,11 @@
 package statistics_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/types"
@@ -22,13 +26,38 @@ import (
 
 var _ = Suite(&testStatsUpdateSuite{})
 
-type testStatsUpdateSuite struct{}
+type testStatsUpdateSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+}
+
+func (s *testStatsUpdateSuite) SetUpSuite(c *C) {
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testStatsUpdateSuite) TearDownSuite(c *C) {
+	s.store.Close()
+}
+
+func (s *testStatsUpdateSuite) cleanEnv(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+	s.do.StatsHandle().Clear()
+	tk.MustExec("truncate table mysql.stats_meta")
+	tk.MustExec("truncate table mysql.stats_histograms")
+	tk.MustExec("truncate table mysql.stats_buckets")
+}
 
 func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer s.cleanEnv(c)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
@@ -42,11 +71,11 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 		testKit.MustExec("insert into t2 values(1, 2)")
 	}
 
-	is := do.InfoSchema()
+	is := s.do.InfoSchema()
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h := do.StatsHandle()
+	h := s.do.StatsHandle()
 
 	h.HandleDDLEvent(<-h.DDLEventCh())
 	h.HandleDDLEvent(<-h.DDLEventCh())
@@ -118,10 +147,8 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 }
 
 func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer s.cleanEnv(c)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 
@@ -130,19 +157,19 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
 
-	testKit1 := testkit.NewTestKit(c, store)
+	testKit1 := testkit.NewTestKit(c, s.store)
 	for i := 0; i < rowCount1; i++ {
 		testKit1.MustExec("insert into test.t1 values(1, 2)")
 	}
-	testKit2 := testkit.NewTestKit(c, store)
+	testKit2 := testkit.NewTestKit(c, s.store)
 	for i := 0; i < rowCount1; i++ {
 		testKit2.MustExec("delete from test.t1 limit 1")
 	}
-	is := do.InfoSchema()
+	is := s.do.InfoSchema()
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h := do.StatsHandle()
+	h := s.do.StatsHandle()
 
 	h.HandleDDLEvent(<-h.DDLEventCh())
 
@@ -177,18 +204,16 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 }
 
 func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer s.cleanEnv(c)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int primary key, c2 int)")
 
-	is := do.InfoSchema()
+	is := s.do.InfoSchema()
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h := do.StatsHandle()
+	h := s.do.StatsHandle()
 
 	h.HandleDDLEvent(<-h.DDLEventCh())
 
@@ -225,13 +250,12 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 }
 
 func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer s.cleanEnv(c)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int)")
 
+	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
