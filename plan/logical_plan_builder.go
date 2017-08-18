@@ -520,6 +520,7 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	return agg
 }
 
+// joinFieldType finds the type which can carry the given types.
 func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
