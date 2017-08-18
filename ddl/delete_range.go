@@ -24,7 +24,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -82,7 +81,7 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
 
-	err = insertBgJobIntoDeleteRangeTable(ctx, job)
+	err = insertJobIntoDeleteRangeTable(ctx, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -206,10 +205,10 @@ func (dr *delRange) doTask(ctx context.Context, r DelRangeTask) error {
 	return nil
 }
 
-// insertBgJobIntoDeleteRangeTable parses the job into delete-range arguments,
+// insertJobIntoDeleteRangeTable parses the job into delete-range arguments,
 // and inserts a new record into gc_delete_range table. The primary key is
 // job ID, so we ignore key conflict error.
-func insertBgJobIntoDeleteRangeTable(ctx context.Context, job *model.Job) error {
+func insertJobIntoDeleteRangeTable(ctx context.Context, job *model.Job) error {
 	now, err := getNowTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -317,26 +316,6 @@ func updateDeleteRange(ctx context.Context, dr DelRangeTask, newStartKey, oldSta
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.jobID, dr.elementID, oldStartKeyHex)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
-	return errors.Trace(err)
-}
-
-// LoadPendingBgJobsIntoDeleteTable loads all pending DDL backgroud jobs
-// into table `gc_delete_range` so that gc worker can process them.
-// NOTE: This function WILL NOT start and run in a new transaction internally.
-func LoadPendingBgJobsIntoDeleteTable(ctx context.Context) (err error) {
-	log.Infof("[ddl] loading pending backgroud DDL jobs")
-	var met = meta.NewMeta(ctx.Txn())
-	for {
-		var job *model.Job
-		job, err = met.DeQueueBgJob()
-		if err != nil || job == nil {
-			break
-		}
-		err = insertBgJobIntoDeleteRangeTable(ctx, job)
-		if err != nil {
-			break
-		}
-	}
 	return errors.Trace(err)
 }
 
