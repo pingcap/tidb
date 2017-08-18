@@ -223,3 +223,50 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 	stats1 = h.GetTableStats(tableInfo1.ID)
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
+
+func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
+	store, do, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int)")
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	h.Update(is)
+	stats := h.GetTableStats(tableInfo.ID)
+	c.Assert(stats.Count, Equals, int64(0))
+
+	_, err = testKit.Exec("insert into t values (1)")
+	c.Assert(err, IsNil)
+	h.DumpStatsDeltaToKV()
+	h.Update(is)
+	err = h.HandleAutoAnalyze(is)
+	c.Assert(err, IsNil)
+	h.Update(is)
+	stats = h.GetTableStats(tableInfo.ID)
+	c.Assert(stats.Count, Equals, int64(1))
+	c.Assert(stats.ModifyCount, Equals, int64(0))
+
+	_, err = testKit.Exec("create index idx on t(a)")
+	c.Assert(err, IsNil)
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+	h.HandleAutoAnalyze(is)
+	h.Update(is)
+	stats = h.GetTableStats(tableInfo.ID)
+	c.Assert(stats.Count, Equals, int64(1))
+	c.Assert(stats.ModifyCount, Equals, int64(0))
+	hg, ok := stats.Indices[tableInfo.Indices[0].ID]
+	c.Assert(ok, IsTrue)
+	c.Assert(hg.NDV, Equals, int64(1))
+	c.Assert(len(hg.Buckets), Equals, 1)
+}
