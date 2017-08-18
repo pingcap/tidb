@@ -15,7 +15,6 @@ package server
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -200,7 +199,7 @@ func (ts *TidbRegionHandlerTestSuite) stopServer(c *C) {
 }
 
 func (ts *TidbRegionHandlerTestSuite) prepareData(c *C) {
-	db, err := sql.Open("mysql", getDSN())
+	db, err := openSQL(getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 	dbt := &DBTest{c, db}
