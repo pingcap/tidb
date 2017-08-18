@@ -525,7 +525,7 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
-	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-a.Decimal) + resultTp.Decimal
+	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
 	return resultTp
 }
 
