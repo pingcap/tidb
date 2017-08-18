@@ -937,6 +937,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`select week("aa"), week(null), week(11), week(12.99);`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a datetime)`)
+	_, err := tk.Exec(`insert into t select week("aa", 1)`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "invalid time format")
+	tk.MustExec(`insert into t select now()`)
+	_, err = tk.Exec(`update t set a = week("aa", 1)`)
+	c.Assert(err.Error(), Matches, "invalid time format")
+	_, err = tk.Exec(`delete from t where a = week("aa", 1)`)
+	c.Assert(err.Error(), Matches, "invalid time format")
 
 	// for weekofyear
 	result = tk.MustQuery(`select weekofyear("2012-12-22"), weekofyear("2008-02-20"), weekofyear("aa"), weekofyear(null), weekofyear(11), weekofyear(12.99);`)

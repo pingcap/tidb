@@ -928,11 +928,10 @@ type builtinWeekWithModeSig struct {
 func (b *builtinWeekWithModeSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	date, isNull, err := b.args[0].EvalTime(row, sc)
-	if err != nil {
-		sc.AppendWarning(err)
-	}
+
+	err = sc.HandleWriteError(err)
 	if isNull || err != nil || date.IsZero() {
-		return 0, true, nil
+		return 0, true, errors.Trace(err)
 	}
 
 	mode, isNull, err := b.args[1].EvalInt(row, sc)
@@ -953,11 +952,10 @@ type builtinWeekWithoutModeSig struct {
 func (b *builtinWeekWithoutModeSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	date, isNull, err := b.args[0].EvalTime(row, sc)
-	if err != nil {
-		sc.AppendWarning(err)
-	}
+
+	err = sc.HandleWriteError(err)
 	if isNull || err != nil || date.IsZero() {
-		return 0, true, nil
+		return 0, true, errors.Trace(err)
 	}
 
 	week := date.Time.Week(0)
@@ -1024,9 +1022,7 @@ func (c *weekOfYearFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	bf.tp.Flen, bf.tp.Decimal = 2, 0
-
 	sig := &builtinWeekOfYearSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -1040,11 +1036,10 @@ type builtinWeekOfYearSig struct {
 func (b *builtinWeekOfYearSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	date, isNull, err := b.args[0].EvalTime(row, sc)
-	if err != nil {
-		sc.AppendWarning(err)
-	}
+
+	err = sc.HandleWriteError(err)
 	if isNull || err != nil || date.IsZero() {
-		return 0, true, nil
+		return 0, true, errors.Trace(err)
 	}
 
 	week := date.Time.Week(3)
