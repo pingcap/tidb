@@ -1183,18 +1183,18 @@ func buildSchema(p PhysicalPlan) {
 
 // rebuildSchema rebuilds the schema for physical plans, because new planner may change indexjoin's schema.
 func rebuildSchema(p PhysicalPlan) bool {
-	need2Rebuild := false
+	needRebuild := false
 	for _, ch := range p.Children() {
-		need2Rebuild = need2Rebuild || rebuildSchema(ch.(PhysicalPlan))
+		needRebuild = needRebuild || rebuildSchema(ch.(PhysicalPlan))
 	}
-	if need2Rebuild {
+	if needRebuild {
 		buildSchema(p)
 	}
 	switch p.(type) {
 	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin:
-		need2Rebuild = true
+		needRebuild = true
 	case *Projection, *PhysicalAggregation:
-		need2Rebuild = false
+		needRebuild = false
 	}
-	return need2Rebuild
+	return needRebuild
 }
