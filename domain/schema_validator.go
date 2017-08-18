@@ -140,19 +140,10 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 	return false
 }
 
-func (s *schemaValidator) isAllExpired(txnTS uint64) bool {
-	if !s.isStarted {
-		log.Infof("the schema validator stopped before judging")
-		return true
-	}
-	t := extractPhysicalTime(txnTS)
-	return t.After(s.latestSchemaExpire)
-}
-
 // isRelatedTablesChanged returns the result whether relatedTableIDs is changed
 // from usedVer to the latest schema version.
 // NOTE, this function should be called under lock!
-func (s *schemaValidator) isRelatedTablesChanged(txnTS uint64, currVer int64, tableIDs []int64) bool {
+func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
 	if _, ok := s.itemSchemaVers[currVer]; !ok {
 		log.Debugf("the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
 		return true
@@ -189,7 +180,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 
 	// Schema changed, result decided by whether related tables change.
 	if schemaVer < s.latestSchemaVer {
-		if s.isRelatedTablesChanged(txnTS, schemaVer, relatedTableIDs) {
+		if s.isRelatedTablesChanged(schemaVer, relatedTableIDs) {
 			return ResultFail
 		}
 		return ResultSucc

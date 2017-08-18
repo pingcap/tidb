@@ -116,8 +116,6 @@ func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
 	nowTS := uint64(time.Now().UnixNano())
 	result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
 	c.Assert(result, Equals, domain.ResultSucc)
-	// err = checker.Check(nowTS)
-	// c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaExpired), IsTrue)
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {

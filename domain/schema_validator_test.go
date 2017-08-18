@@ -52,7 +52,7 @@ func (*testSuite) TestSchemaValidator(c *C) {
 
 	// Stop the validator, validator's items value is nil.
 	validator.Stop()
-	isTablesChanged := validator.isRelatedTablesChanged(item.leaseGrantTS, item.schemaVer, nil)
+	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, nil)
 	c.Assert(isTablesChanged, IsTrue)
 	valid = validator.Check(item.leaseGrantTS, item.schemaVer, nil)
 	c.Assert(valid, Equals, ResultFail)
@@ -77,12 +77,12 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	validator.Update(ts, currVer, newItem.schemaVer, []int64{1, 2, 3})
 	// Make sure the updated table IDs don't be covered with the same schema version.
 	validator.Update(ts, newItem.schemaVer, newItem.schemaVer, nil)
-	isTablesChanged = validator.isRelatedTablesChanged(ts, currVer, nil)
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
 	c.Assert(isTablesChanged, IsFalse)
-	isTablesChanged = validator.isRelatedTablesChanged(ts, currVer, []int64{2})
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
 	c.Assert(isTablesChanged, IsTrue)
 	// The current schema version is older than the oldest schema version.
-	isTablesChanged = validator.isRelatedTablesChanged(ts, -1, nil)
+	isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
 	c.Assert(isTablesChanged, IsTrue)
 
 	// All schema versions is expired.
