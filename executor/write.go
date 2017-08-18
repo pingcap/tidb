@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -706,7 +705,7 @@ func (e *InsertExec) Next() (Row, error) {
 			continue
 		}
 
-		if terror.ErrorEqual(err, kv.ErrKeyExists) {
+		if kv.ErrKeyExists.Equal(err) {
 			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
@@ -1121,7 +1120,7 @@ func (e *ReplaceExec) Next() (Row, error) {
 			idx++
 			continue
 		}
-		if err1 != nil && !terror.ErrorEqual(err1, kv.ErrKeyExists) {
+		if err1 != nil && !kv.ErrKeyExists.Equal(err1) {
 			return nil, errors.Trace(err1)
 		}
 		oldRow, err1 := e.Table.Row(e.ctx, h)

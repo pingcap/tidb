@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -181,7 +180,7 @@ func (dr *delRange) doTask(ctx context.Context, r DelRangeTask) error {
 
 			for _, key := range dr.keys {
 				err := txn.Delete(key)
-				if err != nil && !terror.ErrorEqual(err, kv.ErrNotExist) {
+				if err != nil && !kv.ErrNotExist.Equal(err) {
 					return errors.Trace(err)
 				}
 			}
