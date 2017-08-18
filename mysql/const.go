@@ -28,7 +28,7 @@ const (
 )
 
 // ServerVersion is the version information of this tidb-server in MySQL's format.
-var ServerVersion string = fmt.Sprintf("5.7.1-TiDB-%s", TiDBReleaseVersion)
+var ServerVersion = fmt.Sprintf("5.7.1-TiDB-%s", TiDBReleaseVersion)
 
 // Header information.
 const (
