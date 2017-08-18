@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
@@ -730,7 +729,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNu
 		res, err = to.ToInt()
 	}
 
-	if terror.ErrorEqual(err, types.ErrOverflow) {
+	if types.ErrOverflow.Equal(err) {
 		warnErr := types.ErrTruncatedWrongVal.GenByArgs("DECIMAL", val)
 		err = sc.HandleOverflow(err, warnErr)
 	}
@@ -824,7 +823,7 @@ func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string
 	}
 
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	if sc.InSelectStmt && terror.ErrorEqual(origErr, types.ErrOverflow) {
+	if sc.InSelectStmt && types.ErrOverflow.Equal(origErr) {
 		if isNegative {
 			res = math.MinInt64
 		} else {
@@ -944,7 +943,7 @@ func (b *builtinCastStringAsDurationSig) evalDuration(row []types.Datum) (res ty
 		return res, isNull, errors.Trace(err)
 	}
 	res, err = types.ParseDuration(val, b.tp.Decimal)
-	if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}
 	return res, false, errors.Trace(err)
@@ -1235,7 +1234,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row []types.Datum) (res type
 		return res, false, errors.Trace(err)
 	}
 	res, err = types.ParseDuration(s, b.tp.Decimal)
-	if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}
 	return

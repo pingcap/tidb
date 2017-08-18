@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -151,7 +150,7 @@ type cancelContextClient struct {
 }
 
 func (c *cancelContextClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	childCtx, cancel := util.WithCancel(ctx)
+	childCtx, cancel := goctx.WithCancel(ctx)
 	cancel()
 	return c.Client.SendReq(childCtx, c.redirectAddr, req)
 }

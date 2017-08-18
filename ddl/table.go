@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 )
 
 func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -72,7 +71,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
-		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+		if meta.ErrDBNotExists.Equal(err) {
 			job.State = model.JobCancelled
 			return ver, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
@@ -141,7 +140,7 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 	tableID := job.TableID
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
-		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+		if meta.ErrDBNotExists.Equal(err) {
 			job.State = model.JobCancelled
 			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
@@ -254,7 +253,7 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	// Check this table's database.
 	tables, err := t.ListTables(schemaID)
 	if err != nil {
-		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+		if meta.ErrDBNotExists.Equal(err) {
 			job.State = model.JobCancelled
 			return infoschema.ErrDatabaseNotExists.GenByArgs("")
 		}

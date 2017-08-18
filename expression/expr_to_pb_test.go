@@ -361,8 +361,8 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 			mock.NewContext(),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
-			dg.genColumn(mysql.TypeLonglong, 1),
-			dg.genColumn(mysql.TypeLonglong, 2))
+			dg.genColumn(mysql.TypeDouble, 1),
+			dg.genColumn(mysql.TypeDouble, 2))
 		c.Assert(err, IsNil)
 		arithmeticalFuncs = append(arithmeticalFuncs, fc)
 	}
