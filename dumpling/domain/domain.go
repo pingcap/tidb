@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -531,8 +532,9 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
-// UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It
-// should be called only once in BootstrapSession.
+// UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
+// It will also start a goroutine to analyze tables automatically.
+// It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	statsHandle := statistics.NewHandle(ctx, do.statsLease)
@@ -546,41 +548,70 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	if lease <= 0 {
 		return nil
 	}
-	deltaUpdateDuration := lease * 5
-	go func(do *Domain) {
-		loadTicker := time.NewTicker(lease)
-		defer loadTicker.Stop()
-		deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
-		defer deltaUpdateTicker.Stop()
+	go do.updateStatsWorker(ctx, lease)
+	go do.autoAnalyzeWorker(lease)
+	return nil
+}
 
-		for {
-			select {
-			case <-loadTicker.C:
-				err = statsHandle.Update(do.InfoSchema())
-				if err != nil {
-					log.Error(errors.ErrorStack(err))
-				}
-			case <-do.exit:
-				return
+func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
+	deltaUpdateDuration := lease * 5
+	loadTicker := time.NewTicker(lease)
+	defer loadTicker.Stop()
+	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
+	defer deltaUpdateTicker.Stop()
+	statsHandle := do.StatsHandle()
+	for {
+		select {
+		case <-loadTicker.C:
+			err := statsHandle.Update(do.InfoSchema())
+			if err != nil {
+				log.Error("[stats] update stats info fail: ", errors.ErrorStack(err))
+			}
+		case <-do.exit:
+			return
 			// This channel is sent only by ddl owner or the drop stats executor.
-			case t := <-statsHandle.DDLEventCh():
-				err = statsHandle.HandleDDLEvent(t)
+		case t := <-statsHandle.DDLEventCh():
+			err := statsHandle.HandleDDLEvent(t)
+			if err != nil {
+				log.Error("[stats] handle ddl event fail: ", errors.ErrorStack(err))
+			}
+		case t := <-statsHandle.AnalyzeResultCh():
+			for _, hg := range t.Hist {
+				err := hg.SaveToStorage(ctx, t.TableID, t.Count, t.IsIndex)
 				if err != nil {
-					log.Error(errors.ErrorStack(err))
+					log.Error("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
 				}
-			case t := <-statsHandle.AnalyzeResultCh():
-				for _, hg := range t.Hist {
-					err = hg.SaveToStorage(t.Ctx, t.TableID, t.Count, t.IsIndex)
-					if err != nil {
-						log.Error(errors.ErrorStack(err))
-					}
-				}
-			case <-deltaUpdateTicker.C:
-				statsHandle.DumpStatsDeltaToKV()
+			}
+		case <-deltaUpdateTicker.C:
+			statsHandle.DumpStatsDeltaToKV()
+		}
+	}
+}
+
+func (do *Domain) autoAnalyzeWorker(lease time.Duration) {
+	id := do.ddl.OwnerManager().ID()
+	cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
+	var statsOwner owner.Manager
+	if do.etcdClient == nil {
+		statsOwner = owner.NewMockManager(id, cancelFunc)
+	} else {
+		statsOwner = owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
+	}
+	// TODO: Need to do something when err is not nil.
+	err := statsOwner.CampaignOwner(cancelCtx)
+	if err != nil {
+		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
+	}
+	statsHandle := do.StatsHandle()
+	for {
+		if statsOwner.IsOwner() {
+			err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
+			if err != nil {
+				log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
 			}
 		}
-	}(do)
-	return nil
+		time.Sleep(lease)
+	}
 }
 
 const privilegeKey = "/tidb/privilege"

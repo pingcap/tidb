@@ -207,6 +207,9 @@ func (a *statement) buildExecutor(ctx context.Context) (Executor, error) {
 			}
 		}
 	}
+	if _, ok := a.plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
+		priority = kv.PriorityLow
+	}
 
 	b := newExecutorBuilder(ctx, a.is, priority)
 	e := b.build(a.plan)
