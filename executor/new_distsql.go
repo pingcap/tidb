@@ -323,7 +323,7 @@ func (e *IndexLookUpExecutor) Open() error {
 	// e.taskChan serves as a pipeline, so fetching index and getting table data can
 	// run concurrently.
 	e.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
-	go e.fetchHandlesAndStartWorkers()
+	go e.fetchHandlesAndStartWorkers(e.finished)
 	return nil
 }
 
@@ -340,7 +340,7 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 	}
 	e.result.Fetch(goCtx)
 	e.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
-	go e.fetchHandlesAndStartWorkers()
+	go e.fetchHandlesAndStartWorkers(e.finished)
 	return nil
 }
 
@@ -396,7 +396,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 }
 
-func (e *IndexLookUpExecutor) pickAndExecTask(workCh <-chan *lookupTableTask, txnCtx goctx.Context) {
+func (e *IndexLookUpExecutor) pickAndExecTask(workCh <-chan *lookupTableTask, txnCtx goctx.Context, finished <-chan struct{}) {
 	childCtx, cancel := goctx.WithCancel(txnCtx)
 	defer cancel()
 	for {
@@ -408,7 +408,7 @@ func (e *IndexLookUpExecutor) pickAndExecTask(workCh <-chan *lookupTableTask, tx
 			e.executeTask(task, childCtx)
 		case <-childCtx.Done():
 			return
-		case <-e.finished:
+		case <-finished:
 			return
 		}
 	}
@@ -416,7 +416,7 @@ func (e *IndexLookUpExecutor) pickAndExecTask(workCh <-chan *lookupTableTask, tx
 
 // fetchHandlesAndStartWorkers fetches a batch of handles from index data and builds the index lookup tasks.
 // We initialize some workers to execute this tasks concurrently and put the task to taskCh by order.
-func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
+func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers(finished <-chan struct{}) {
 	// The tasks in workCh will be consumed by workers. When all workers are busy, we should stop to push tasks to channel.
 	// So its length is one.
 	workCh := make(chan *lookupTableTask, 1)
@@ -428,7 +428,7 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	txnCtx := e.ctx.GoCtx()
 	for i := 0; i < lookupConcurrencyLimit; i++ {
-		go e.pickAndExecTask(workCh, txnCtx)
+		go e.pickAndExecTask(workCh, txnCtx, finished)
 	}
 
 	for {
@@ -442,7 +442,7 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 			select {
 			case <-txnCtx.Done():
 				return
-			case <-e.finished:
+			case <-finished:
 				return
 			case workCh <- task:
 			}
