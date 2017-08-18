@@ -597,6 +597,7 @@ func (do *Domain) autoAnalyzeWorker(lease time.Duration) {
 	} else {
 		statsOwner = owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
 	}
+	// TODO: Need to do something when err is not nil.
 	err := statsOwner.CampaignOwner(cancelCtx)
 	if err != nil {
 		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
