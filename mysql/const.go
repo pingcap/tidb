@@ -62,6 +62,9 @@ const (
 	MaxKeyParts           int = 16
 )
 
+// ErrTextLength error text length limit.
+const ErrTextLength = 80
+
 // Command information.
 const (
 	ComSleep byte = iota

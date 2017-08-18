@@ -27,23 +27,30 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// Error instances.
-var (
-	ErrSyntax = terror.ClassParser.New(CodeSyntaxErr, "syntax error")
-)
-
-// Error codes.
 const (
-	CodeSyntaxErr terror.ErrCode = 1
+	codeErrParse  = terror.ErrCode(mysql.ErrParse)
+	codeErrSyntax = terror.ErrCode(mysql.ErrSyntax)
 )
 
 var (
+	// ErrSyntax returns for sql syntax error.
+	ErrSyntax = terror.ClassParser.New(codeErrSyntax, mysql.MySQLErrName[mysql.ErrSyntax])
+	// ErrParse returns for sql parse error.
+	ErrParse = terror.ClassParser.New(codeErrParse, mysql.MySQLErrName[mysql.ErrParse])
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
 	specCodePattern  = regexp.MustCompile(`\/\*!(M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
 	specCodeStart    = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6})?[ \t]*`)
 	specCodeEnd      = regexp.MustCompile(`[ \t]*\*\/$`)
 )
+
+func init() {
+	parserMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeErrSyntax: mysql.ErrSyntax,
+		codeErrParse:  mysql.ErrParse,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassParser] = parserMySQLErrCodes
+}
 
 // TrimComment trim comment for special comment code of MySQL.
 func TrimComment(txt string) string {
@@ -121,6 +128,14 @@ func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode
 // SetSQLMode sets the SQL mode for parser.
 func (parser *Parser) SetSQLMode(mode mysql.SQLMode) {
 	parser.lexer.SetSQLMode(mode)
+}
+
+// ParseErrorWith returns "You have a syntax error near..." error message compatible with mysql.
+func ParseErrorWith(errstr string, lineno int) *terror.Error {
+	if len(errstr) > mysql.ErrTextLength {
+		errstr = errstr[:mysql.ErrTextLength]
+	}
+	return ErrParse.GenByArgs(mysql.MySQLErrName[mysql.ErrSyntax], errstr, lineno)
 }
 
 // The select statement is not at the end of the whole statement, if the last
