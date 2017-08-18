@@ -809,5 +809,5 @@ func (b *builtinTimeIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 func floatEqual(x, y float64) bool {
-	return y > math.Nextafter(x, -math.MaxFloat64) && y < math.Nextafter(x, math.MaxFloat64)
+	return y >= math.Nextafter(x, -math.MaxFloat64) && y <= math.Nextafter(x, math.MaxFloat64)
 }
