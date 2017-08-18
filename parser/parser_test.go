@@ -1551,6 +1551,8 @@ func (s *testParserSuite) TestComment(c *C) {
 		{"START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */", true},
 		// for comment in query
 		{"/*comment*/ /*comment*/ select c /* this is a comment */ from t;", true},
+		// for unclosed comment
+		{"delete from t where a = 7 or 1=1/*' and b = 'p'", false},
 	}
 	s.RunTest(c, table)
 }
