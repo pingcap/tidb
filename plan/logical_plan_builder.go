@@ -520,6 +520,14 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	return agg
 }
 
+func joinFieldType(a, b *types.FieldType) *types.FieldType {
+	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
+	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
+	// `Flen - Decimal` is the fraction before '.'
+	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-a.Decimal) + resultTp.Decimal
+	return resultTp
+}
+
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	u := Union{}.init(b.allocator, b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
@@ -548,26 +556,23 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			sel = proj
 			u.children[i] = proj
 		}
-		for i, col := range sel.Schema().Columns {
-			/*
-			 * The lengths of the columns in the UNION result take into account the values retrieved by all of the SELECT statements
-			 * SELECT REPEAT('a',1) UNION SELECT REPEAT('b',10);
-			 * +---------------+
-			 * | REPEAT('a',1) |
-			 * +---------------+
-			 * | a             |
-			 * | bbbbbbbbbb    |
-			 * +---------------+
-			 */
-			schemaTp := firstSchema.Columns[i].RetType
-			colTp := col.RetType
-			schemaTp.Decimal = mathutil.Max(colTp.Decimal, schemaTp.Decimal)
-			// `Flen - Decimal` is the fraction before '.'
-			schemaTp.Flen = mathutil.Max(colTp.Flen-colTp.Decimal, schemaTp.Flen-schemaTp.Decimal) + schemaTp.Decimal
-			schemaTp.Tp = types.MergeFieldType(schemaTp.Tp, colTp.Tp)
-		}
 		sel.SetParents(u)
 	}
+
+	// infer union type
+	for i, col := range firstSchema.Columns {
+		var resultTp *types.FieldType
+		for j, child := range u.children {
+			childTp := child.Schema().Columns[i].RetType
+			if j == 0 {
+				resultTp = childTp
+			} else {
+				resultTp = joinFieldType(resultTp, childTp)
+			}
+		}
+		col.RetType = resultTp
+	}
+
 	for _, v := range firstSchema.Columns {
 		v.FromID = u.id
 		v.DBName = model.NewCIStr("")
