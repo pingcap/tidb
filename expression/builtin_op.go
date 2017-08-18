@@ -405,7 +405,7 @@ func (b *builtinRealIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
 	if err != nil {
 		return 0, true, errors.Trace(err)
 	}
-	if isNull || input == 0 {
+	if isNull || floatEqual(input, 0) {
 		return 0, false, nil
 	}
 	return 1, false, nil
@@ -450,7 +450,7 @@ func (b *builtinRealIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) 
 	if err != nil {
 		return 0, true, errors.Trace(err)
 	}
-	if isNull || input != 0 {
+	if isNull || !floatEqual(input, 0) {
 		return 0, false, nil
 	}
 	return 1, false, nil
@@ -806,4 +806,8 @@ type builtinTimeIsNullSig struct {
 func (b *builtinTimeIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
 	_, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
 	return evalIsNull(isNull, err)
+}
+
+func floatEqual(x, y float64) bool {
+	return y > math.Nextafter(x, -math.MaxFloat64) && y < math.Nextafter(x, math.MaxFloat64)
 }
