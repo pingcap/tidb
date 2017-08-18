@@ -161,27 +161,6 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestGetBgDDLInfo(c *C) {
-	defer testleak.AfterTest(c)()
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-
-	job := &model.Job{
-		SchemaID: 1,
-		Type:     model.ActionDropTable,
-		RowCount: 0,
-	}
-	err = t.EnQueueBgJob(job)
-	c.Assert(err, IsNil)
-	info, err := GetBgDDLInfo(txn)
-	c.Assert(err, IsNil)
-	c.Assert(info.Job, DeepEquals, job)
-	c.Assert(info.ReorgHandle, Equals, int64(0))
-	err = txn.Commit()
-	c.Assert(err, IsNil)
-}
-
 func (s *testSuite) TestScan(c *C) {
 	defer testleak.AfterTest(c)()
 	alloc := autoid.NewAllocator(s.store, s.dbInfo.ID)
