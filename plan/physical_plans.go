@@ -1190,11 +1190,9 @@ func rebuildSchema(p PhysicalPlan) bool {
 	if need2Rebuild {
 		buildSchema(p)
 	}
-	switch x := p.(type) {
-	case *PhysicalIndexJoin:
-		if x.outerIndex == 1 {
-			need2Rebuild = true
-		}
+	switch p.(type) {
+	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin:
+		need2Rebuild = true
 	case *Projection, *PhysicalAggregation:
 		need2Rebuild = false
 	}
