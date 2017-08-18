@@ -492,18 +492,18 @@ func checkErrorCode(c *C, e error, code uint16) {
 
 func runTestAuth(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
-		dbt.mustExec(`CREATE USER 'test'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`CREATE USER 'authtest'@'%' IDENTIFIED BY '123';`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	runTests(c, func(config *mysql.Config) {
-		config.User = "test"
+		config.User = "authtest"
 		config.Passwd = "123"
 	}, func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
 
 	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
-		config.User = "test"
+		config.User = "authtest"
 		config.Passwd = "456"
 	}))
 	_, err = db.Query("USE mysql;")
@@ -512,12 +512,12 @@ func runTestAuth(c *C) {
 
 	// Test login use IP that not exists in mysql.user.
 	runTests(c, nil, func(dbt *DBTest) {
-		dbt.mustExec(`CREATE USER 'xxx'@'localhost' IDENTIFIED BY 'yyy';`)
+		dbt.mustExec(`CREATE USER 'authtest2'@'localhost' IDENTIFIED BY '123';`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	runTests(c, func(config *mysql.Config) {
-		config.User = "xxx"
-		config.Passwd = "yyy"
+		config.User = "authtest2"
+		config.Passwd = "123"
 	}, func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
@@ -555,17 +555,17 @@ func runTestIssue3680(c *C) {
 
 func runTestIssue3682(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
-		dbt.mustExec(`CREATE USER 'abc'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`CREATE USER 'issue3682'@'%' IDENTIFIED BY '123';`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	runTests(c, func(config *mysql.Config) {
-		config.User = "abc"
+		config.User = "issue3682"
 		config.Passwd = "123"
 	}, func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
 	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
-		config.User = "abc"
+		config.User = "issue3682"
 		config.Passwd = "wrong_password"
 		config.DBName = "non_existing_schema"
 	}))
@@ -573,7 +573,7 @@ func runTestIssue3682(c *C) {
 	defer db.Close()
 	err = db.Ping()
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'abc'@'127.0.0.1' (using password: YES)")
+	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)")
 }
 
 func runTestIssue3713(c *C) {
