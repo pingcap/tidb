@@ -41,15 +41,15 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic, kv.ReqSubTypeTopN:
 			return true
 		default:
-			return supportExpr(tipb.ExprType(subType))
+			return c.supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
-		return true
+		return c.supportExpr(tipb.ExprType(subType))
 	}
 	return false
 }
 
-func supportExpr(exprType tipb.ExprType) bool {
+func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
 		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
