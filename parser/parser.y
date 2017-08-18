@@ -1091,11 +1091,11 @@ LockClause:
 	{
 		$$ = ast.LockTypeDefault
 	}
-|       "LOCK" eq "SHARED"
+|	"LOCK" eq "SHARED"
 	{
 		$$ = ast.LockTypeShared
 	}
-|   	"LOCK" eq "EXCLUSIVE"
+|	"LOCK" eq "EXCLUSIVE"
 	{
 		$$ = ast.LockTypeExclusive
 	}
@@ -1105,7 +1105,7 @@ KeyOrIndex: "KEY" | "INDEX"
 
 KeyOrIndexOpt:
 	{}
-|   	KeyOrIndex
+|	KeyOrIndex
 
 ColumnKeywordOpt:
 	{}
@@ -1373,15 +1373,15 @@ GeneratedAlways: | "GENERATED" "ALWAYS"
 
 VirtualOrStored:
 	{
-	    $$ = false
+		$$ = false
 	}
 |	"VIRTUAL"
 	{
-	    $$ = false
+		$$ = false
 	}
 |	"STORED"
 	{
-	    $$ = true
+		$$ = true
 	}
 
 ColumnOptionList:
@@ -1898,13 +1898,13 @@ DropViewStmt:
 	}
 
 DropUserStmt:
-    "DROP" "USER" UsernameList
+	"DROP" "USER" UsernameList
 	{
-        $$ = &ast.DropUserStmt{IfExists: false, UserList: $3.([]*auth.UserIdentity)}
+		$$ = &ast.DropUserStmt{IfExists: false, UserList: $3.([]*auth.UserIdentity)}
 	}
-|   "DROP" "USER" "IF" "EXISTS" UsernameList
+|	"DROP" "USER" "IF" "EXISTS" UsernameList
 	{
-        $$ = &ast.DropUserStmt{IfExists: true, UserList: $5.([]*auth.UserIdentity)}
+		$$ = &ast.DropUserStmt{IfExists: true, UserList: $5.([]*auth.UserIdentity)}
 	}
 
 DropStatsStmt:
@@ -3090,7 +3090,7 @@ FunctionCallNonKeyword:
 |	"DATEDIFF" '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
-   	}
+	}
 |	"DAY" '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
@@ -3631,7 +3631,7 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-|   "CHAR" '(' ExpressionList ')'
+|	"CHAR" '(' ExpressionList ')'
 	{
 		nilVal := ast.NewValueExpr(nil)
 		args := $3.([]ast.ExprNode)
@@ -4118,11 +4118,9 @@ CastType:
 |	"DATE"
 	{
 		x := types.NewFieldType(mysql.TypeDate)
-		x.Flen = mysql.MaxDateWidth
-		x.Decimal = 0
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
-        x.Flag |= mysql.BinaryFlag
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"DATETIME" OptFieldLen
@@ -4131,11 +4129,11 @@ CastType:
 		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
-		    x.Flen = x.Flen + 1 + x.Decimal
+			x.Flen = x.Flen + 1 + x.Decimal
 		}
 		x.Charset = charset.CharsetBin
-        x.Collate = charset.CollationBin
-        x.Flag |= mysql.BinaryFlag
+		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"DECIMAL" FloatOpt
@@ -4145,8 +4143,8 @@ CastType:
 		x.Flen = fopt.Flen
 		x.Decimal = fopt.Decimal
 		x.Charset = charset.CharsetBin
-        x.Collate = charset.CollationBin
-        x.Flag |= mysql.BinaryFlag
+		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"TIME" OptFieldLen
@@ -4155,39 +4153,32 @@ CastType:
 		x.Flen = mysql.MaxDurationWidthNoFsp
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
-		    x.Flen = x.Flen + 1 + x.Decimal
+			x.Flen = x.Flen + 1 + x.Decimal
 		}
-		x.Charset = charset.CharsetBin
-        x.Collate = charset.CollationBin
-        x.Flag |= mysql.BinaryFlag
-		$$ = x
-	}
-|	"SIGNED" OptInteger
-	{
-		x := types.NewFieldType(mysql.TypeLonglong)
-		x.Flen = mysql.MaxIntWidth
-		x.Decimal = 0
-		x.Charset = charset.CharsetBin
-        x.Collate = charset.CollationBin
-        x.Flag |= mysql.BinaryFlag
-		$$ = x
-	}
-|	"UNSIGNED" OptInteger
-	{
-		x := types.NewFieldType(mysql.TypeLonglong)
-		x.Flen = mysql.MaxIntWidth
-		x.Decimal = 0
-		x.Flag |= mysql.UnsignedFlag
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
 		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
+|	"SIGNED" OptInteger
+	{
+		x := types.NewFieldType(mysql.TypeLonglong)
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
+		$$ = x
+	}
+|	"UNSIGNED" OptInteger
+	{
+		x := types.NewFieldType(mysql.TypeLonglong)
+		x.Flag |= mysql.UnsignedFlag | mysql.BinaryFlag
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
+		$$ = x
+	}
 |	"JSON"
 	{
 		x := types.NewFieldType(mysql.TypeJSON)
-		x.Flen = mysql.MaxBlobWidth
-		x.Decimal = 0
 		x.Flag |= mysql.BinaryFlag
 		x.Charset = charset.CharsetUTF8
 		x.Collate = charset.CollationUTF8
@@ -4752,26 +4743,26 @@ SelectStmtOpts:
 	{
 		opt := &ast.SelectStmtOpts{}
 		if $1 != nil {
-		    opt.TableHints = $1.([]*ast.TableOptimizerHint)
+			opt.TableHints = $1.([]*ast.TableOptimizerHint)
 		}
 		if $2 != nil {
-		    opt.Distinct = $2.(bool)
+			opt.Distinct = $2.(bool)
 		}
 		if $3 != nil {
-		    opt.Priority = $3.(mysql.PriorityEnum)
+			opt.Priority = $3.(mysql.PriorityEnum)
 		}
 		if $4 != nil {
-		    opt.SQLCache = $4.(bool)
+			opt.SQLCache = $4.(bool)
 		}
 		if $5 != nil {
-		    opt.CalcFoundRows = $5.(bool)
+			opt.CalcFoundRows = $5.(bool)
 		}
 
 		$$ = opt
 	}
 
 TableOptimizerHints:
-    /* empty */
+	/* empty */
 	{
 		$$ = nil
 	}
@@ -5031,11 +5022,11 @@ IsolationLevel:
 	}
 
 SetExpr:
-    "ON"
-    {
+	"ON"
+	{
 		$$ = ast.NewValueExpr("ON")
-    }
-|   Expression
+	}
+|	Expression
 
 VariableAssignment:
 	Identifier eq SetExpr
@@ -5172,14 +5163,13 @@ Username:
 	}
 
 UsernameList:
-    Username
+	Username
 	{
-        $$ = []*auth.UserIdentity{$1.(*auth.UserIdentity)}
+		$$ = []*auth.UserIdentity{$1.(*auth.UserIdentity)}
 	}
-|   UsernameList ',' Username
-
+|	UsernameList ',' Username
 	{
-        $$ = append($1.([]*auth.UserIdentity), $3.(*auth.UserIdentity))
+		$$ = append($1.([]*auth.UserIdentity), $3.(*auth.UserIdentity))
 	}
 
 PasswordOpt:
@@ -5423,12 +5413,12 @@ ShowTargetFilterable:
 			Tp: ast.ShowProcedureStatus,
 		}
 	}
-|   "EVENTS" ShowDatabaseNameOpt
+|	"EVENTS" ShowDatabaseNameOpt
 	{
-        $$ = &ast.ShowStmt{
-        	Tp:	ast.ShowEvents,
-        	DBName:	$2.(string),
-       	}
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowEvents,
+			DBName:	$2.(string),
+		}
 	}
 ShowLikeOrWhereOpt:
 	{
@@ -5859,7 +5849,7 @@ NumericType:
 				x.Tp = mysql.TypeDouble
 			}
 		}
-		x.Decimal =fopt.Decimal
+		x.Decimal = fopt.Decimal
 		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
 				x.Flag |= mysql.UnsignedFlag
