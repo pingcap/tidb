@@ -497,35 +497,6 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite) TestDAG(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-	tk.MustExec("use test")
-	tk.MustExec("create table select_dag(id int not null default 1, name varchar(255));")
-
-	tk.MustExec("insert INTO select_dag VALUES (1, \"hello\");")
-	tk.MustExec("insert INTO select_dag VALUES (2, \"hello\");")
-	tk.MustExec("insert INTO select_dag VALUES (3, \"hello\");")
-	tk.CheckExecResult(1, 0)
-
-	r := tk.MustQuery("select * from select_dag;")
-	r.Check(testkit.Rows("1 hello", "2 hello", "3 hello"))
-
-	r = tk.MustQuery("select * from select_dag where id > 1;")
-	r.Check(testkit.Rows("2 hello", "3 hello"))
-
-	// for limit
-	r = tk.MustQuery("select * from select_dag limit 1;")
-	r.Check(testkit.Rows("1 hello"))
-	r = tk.MustQuery("select * from select_dag limit 0;")
-	r.Check(testkit.Rows())
-	r = tk.MustQuery("select * from select_dag limit 5;")
-	r.Check(testkit.Rows("1 hello", "2 hello", "3 hello"))
-}
-
 func (s *testSuite) TestSelectOrderBy(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -1618,6 +1589,12 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustQuery("select * from t where b = 2").Check(testkit.Rows("4 2 3"))
 	tk.MustQuery("select count(*) from t where b = 1").Check(testkit.Rows("3"))
 	tk.MustQuery("select * from t where b = 1 and a > 1 limit 1").Check(testkit.Rows("2 1 1"))
+
+	// Test time push down.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, c1 datetime);")
+	tk.MustExec("insert into t values (1, '2015-06-07 12:12:12')")
+	tk.MustQuery("select id from t where c1 = '2015-06-07 12:12:12'").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestTimestampTimeZone(c *C) {
