@@ -61,7 +61,7 @@ func getDSN(overriders ...configOverrider) string {
 	return config.FormatDSN()
 }
 
-// runTests run tests using the default database `test`.
+// runTests runs tests using the default database `test`.
 func runTests(c *C, overrider configOverrider, tests ...func(dbt *DBTest)) {
 	db, err := sql.Open("mysql", getDSN(overrider))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
@@ -76,7 +76,7 @@ func runTests(c *C, overrider configOverrider, tests ...func(dbt *DBTest)) {
 	}
 }
 
-// runTestsOnNewDB run tests using a specified database which will be created before the test and destroyed after the test.
+// runTestsOnNewDB runs tests using a specified database which will be created before the test and destroyed after the test.
 func runTestsOnNewDB(c *C, overrider configOverrider, dbName string, tests ...func(dbt *DBTest)) {
 	dsn := getDSN(overrider, func(config *mysql.Config) {
 		config.DBName = ""
@@ -576,7 +576,7 @@ func runTestIssue3682(c *C) {
 	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)")
 }
 
-func runTestIssue3713(c *C) {
+func runTestDBNameEscape(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec("CREATE DATABASE `aa-a`;")
 	})

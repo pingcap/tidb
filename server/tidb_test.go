@@ -109,7 +109,11 @@ func (ts *TidbTestSuite) TestIssues(c *C) {
 	runTestIssue3662(c)
 	runTestIssue3680(c)
 	runTestIssue3682(c)
-	runTestIssue3713(c)
+}
+
+func (ts *TidbTestSuite) TestDBNameEscape(c *C) {
+	c.Parallel()
+	runTestDBNameEscape(c)
 }
 
 func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
