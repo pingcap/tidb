@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
 	goctx "golang.org/x/net/context"
 )
 
@@ -66,7 +65,7 @@ func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 		done:        make(chan error),
 	}
 	var ctx goctx.Context
-	ctx, worker.cancel = util.WithCancel(goctx.Background())
+	ctx, worker.cancel = goctx.WithCancel(goctx.Background())
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go worker.start(ctx, &wg)
