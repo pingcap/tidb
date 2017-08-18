@@ -679,12 +679,13 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 	rows := [][]types.Datum{}
 	for i, col := range tbl.Columns {
 		colLen := col.Flen
-		if colLen == types.UnspecifiedLength {
-			colLen = mysql.GetDefaultFieldLength(col.Tp)
-		}
 		decimal := col.Decimal
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
+		if colLen == types.UnspecifiedLength {
+			colLen = defaultFlen
+		}
 		if decimal == types.UnspecifiedLength {
-			decimal = 0
+			decimal = defaultDecimal
 		}
 		columnType := col.FieldType.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))

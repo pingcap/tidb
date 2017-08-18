@@ -13,54 +13,43 @@
 
 package mysql
 
-// GetDefaultFieldLength is used for Interger Types, Flen is the display length.
+var defaultLengthAndDecimal = map[byte]struct {
+	length  int
+	decimal int
+}{
+	TypeBit:        {1, 0},
+	TypeTiny:       {4, 0},
+	TypeShort:      {6, 0},
+	TypeInt24:      {9, 0},
+	TypeLong:       {11, 0},
+	TypeLonglong:   {20, 0},
+	TypeDouble:     {22, 31},
+	TypeFloat:      {12, 31},
+	TypeNewDecimal: {11, 0},
+	TypeDate:       {10, 0},
+	TypeTimestamp:  {19, 0},
+	TypeDatetime:   {19, 0},
+	TypeYear:       {4, 0},
+	TypeString:     {1, 0},
+	TypeVarchar:    {5, 0},
+	TypeVarString:  {5, 0},
+	TypeTinyBlob:   {255, 0},
+	TypeBlob:       {65535, 0},
+	TypeMediumBlob: {16777215, 0},
+	TypeLongBlob:   {4294967295, 0},
+	TypeJSON:       {4294967295, 0},
+	TypeNull:       {0, 0},
+}
+
+// GetDefaultFieldLengthAndDecimal returns the default display length (flen) and decimal length for column.
 // Call this when no Flen assigned in ddl.
 // or column value is calculated from an expression.
 // For example: "select count(*) from t;", the column type is int64 and Flen in ResultField will be 21.
 // See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
-func GetDefaultFieldLength(tp byte) int {
-	switch tp {
-	case TypeTiny:
-		return 4
-	case TypeShort:
-		return 6
-	case TypeInt24:
-		return 9
-	case TypeLong:
-		return 11
-	case TypeLonglong:
-		return 21
-	case TypeFloat:
-		return 12
-	case TypeDouble:
-		return 22
-	case TypeDate, TypeDuration:
-		return 10
-	case TypeDatetime, TypeTimestamp:
-		return 19
-	case TypeString, TypeBit:
-		return 1
-	case TypeNewDecimal:
-		// See https://dev.mysql.com/doc/refman/5.7/en/fixed-point-types.html
-		return 10
-	case TypeBlob:
-		return 65535
-	default:
-		//TODO: Add more types.
-		return -1
+func GetDefaultFieldLengthAndDecimal(tp byte) (flen int, decimal int) {
+	val, ok := defaultLengthAndDecimal[tp]
+	if ok {
+		return val.length, val.decimal
 	}
-}
-
-// GetDefaultDecimal returns the default decimal length for column.
-func GetDefaultDecimal(tp byte) int {
-	switch tp {
-	case TypeNewDecimal:
-		// See https://dev.mysql.com/doc/refman/5.7/en/fixed-point-types.html
-		return 0
-	case TypeDatetime, TypeDuration:
-		return 0
-	default:
-		//TODO: Add more types.
-		return -1
-	}
+	return -1, 0
 }

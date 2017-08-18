@@ -1005,13 +1005,12 @@ func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
 		} else {
 			retType.Tp = ftypes[i]
 		}
-
-		if retType.Tp == mysql.TypeVarchar || retType.Tp == mysql.TypeString {
-			retType.Flen = 256
-		} else if retType.Tp == mysql.TypeDatetime {
-			retType.Flen = 19
-		} else {
-			retType.Flen = mysql.GetDefaultFieldLength(retType.Tp)
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(retType.Tp)
+		if retType.Flen == types.UnspecifiedLength {
+			retType.Flen = defaultFlen
+		}
+		if retType.Decimal == types.UnspecifiedLength {
+			retType.Decimal = defaultDecimal
 		}
 		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
 		col.RetType = &retType

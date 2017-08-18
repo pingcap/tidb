@@ -202,12 +202,13 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 			}
 		}
 	}
-	// If flen is not assigned, assigned it by type.
+	// If flen or decimal is not assigned, assigned it by type.
+	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.Tp)
 	if tp.Flen == types.UnspecifiedLength {
-		tp.Flen = mysql.GetDefaultFieldLength(tp.Tp)
+		tp.Flen = defaultFlen
 	}
 	if tp.Decimal == types.UnspecifiedLength {
-		tp.Decimal = mysql.GetDefaultDecimal(tp.Tp)
+		tp.Decimal = defaultDecimal
 	}
 	return nil
 }
