@@ -1254,12 +1254,6 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	return p
 }
 
-// ApplyConditionChecker checks whether all or any output of apply matches a condition.
-type ApplyConditionChecker struct {
-	Condition expression.Expression
-	All       bool
-}
-
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {

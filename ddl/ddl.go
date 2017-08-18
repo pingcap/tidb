@@ -44,8 +44,6 @@ import (
 const (
 	// currentVersion is for all new DDL jobs.
 	currentVersion = 1
-	// Any background job with version greater or equal this should be processed with delete-range.
-	bgJobMigrateVersion = 1
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey = "/tidb/ddl/fg/owner"
 	ddlPrompt   = "ddl"

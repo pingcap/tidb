@@ -246,6 +246,10 @@ func (e *Error) Equal(err error) bool {
 	if originErr == nil {
 		return false
 	}
+
+	if error(e) == originErr {
+		return true
+	}
 	inErr, ok := originErr.(*Error)
 	return ok && e.class == inErr.class && e.code == inErr.code
 }

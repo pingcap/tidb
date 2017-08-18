@@ -71,6 +71,12 @@ func (s *testTErrorSuite) TestTError(c *C) {
 	sqlErr := e.ToSQLError()
 	c.Assert(sqlErr.Message, Equals, "Duplicate entry '1' for key 'PRIMARY'")
 	c.Assert(sqlErr.Code, Equals, uint16(1062))
+
+	err := errors.Trace(ErrCritical.GenByArgs("test"))
+	c.Assert(ErrCritical.Equal(err), IsTrue)
+
+	err = errors.Trace(ErrCritical)
+	c.Assert(ErrCritical.Equal(err), IsTrue)
 }
 
 func (s *testTErrorSuite) TestJson(c *C) {
