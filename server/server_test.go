@@ -702,7 +702,7 @@ func waitUntilServerOnline(statusAddr string) {
 	retry := 0
 	for ; retry < retryTime; retry++ {
 		time.Sleep(time.Millisecond * 10)
-		db, err := sql.Open("mysql", getDSN(nil))
+		db, err := sql.Open("mysql", getDSN())
 		if err == nil {
 			db.Close()
 			break

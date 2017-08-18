@@ -200,7 +200,7 @@ func (ts *TidbRegionHandlerTestSuite) stopServer(c *C) {
 }
 
 func (ts *TidbRegionHandlerTestSuite) prepareData(c *C) {
-	db, err := sql.Open("mysql", getDSN(nil))
+	db, err := sql.Open("mysql", getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 	dbt := &DBTest{c, db}
