@@ -23,6 +23,7 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/owner"
 	goctx "golang.org/x/net/context"
 )
 
@@ -120,8 +121,8 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.session, err = newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
-		newSessionDefaultRetryCnt, SyncerSessionTTL)
+	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
+	s.session, err = owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionDefaultRetryCnt, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -137,8 +138,8 @@ func (s *schemaVersionSyncer) Done() <-chan struct{} {
 
 // Restart implements SchemaSyncer.Restart interface.
 func (s *schemaVersionSyncer) Restart(ctx goctx.Context) error {
-	session, err := newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
-		newSessionRetryUnlimited, SyncerSessionTTL)
+	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
+	session, err := owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionRetryUnlimited, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}

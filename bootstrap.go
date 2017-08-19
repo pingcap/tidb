@@ -545,18 +545,6 @@ func upgradeToVer15(s Session) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = s.NewTxn()
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = ddl.LoadPendingBgJobsIntoDeleteTable(s)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = s.CommitTxn()
-	if err != nil {
-		log.Fatal(err)
-	}
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
