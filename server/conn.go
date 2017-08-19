@@ -315,12 +315,16 @@ func (cc *clientConn) readHandshakeResponse() error {
 	fmt.Printf("[connection %d] readHandshakeResponse: begin auth\n", cc.connectionID)
 
 	if !cc.server.skipAuth() {
+		fmt.Printf("[connection %d] readHandshakeResponse: auth is not skipped", cc.connectionID)
 		// Do Auth
 		addr := cc.conn.RemoteAddr().String()
 		host, _, err1 := net.SplitHostPort(addr)
+
+		fmt.Printf("[connection %d] readHandshakeResponse: split host: host = %+v, err = %+v", cc.connectionID, host, err1)
 		if err1 != nil {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
 		}
+		fmt.Printf("[connection %d] readHandshakeResponse: begin cc.ctx.Auth{username = %s, hostname = %s}", cc.connectionID, cc.user, host)
 		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, p.Auth, cc.salt) {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
 		}
