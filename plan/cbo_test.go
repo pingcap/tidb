@@ -35,7 +35,7 @@ type testAnalyzeSuite struct {
 }
 
 func constructInsertSQL(i, n int) string {
-	sql := "insert into t values "
+	sql := "insert into t (a,b,c)values "
 	for j := 0; j < n; j++ {
 		sql += fmt.Sprintf("(%d, %d, '%d')", i*n+j, i, i+j)
 		if j != n-1 {
@@ -57,8 +57,9 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a int primary key, b int, c varchar(200))")
+	testKit.MustExec("create table t (a int primary key, b int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP)")
 	testKit.MustExec("create index b on t (b)")
+	testKit.MustExec("create index d on t (d)")
 	for i := 0; i < 100; i++ {
 		testKit.MustExec(constructInsertSQL(i, 100))
 	}
@@ -102,6 +103,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		{
 			sql:  "select * from t use index(b) where b = 1 order by a",
 			best: "IndexLookUp(Index(t.b)[[1,1]], Table(t))->Sort",
+		},
+		// test datetime
+		{
+			sql:  "select * from t where d < cast('1991-09-05' as datetime)",
+			best: "IndexLookUp(Index(t.d)[[-inf,1991-09-05 00:00:00)], Table(t))",
 		},
 	}
 	for _, tt := range tests {
