@@ -248,7 +248,7 @@ func (us *UnionScanExec) compare(a, b Row) (int, error) {
 	return cmp, nil
 }
 
-func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CIStr) error {
+func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([]Row, 0, len(us.dirty.addedRows))
 	for h, data := range us.dirty.addedRows {
 		newData := make([]types.Datum, 0, us.schema.Len())

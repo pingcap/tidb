@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
@@ -43,8 +44,9 @@ import (
 const (
 	// currentVersion is for all new DDL jobs.
 	currentVersion = 1
-	// Any background job with version greater or equal this should be processed with delete-range.
-	bgJobMigrateVersion = 1
+	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
+	DDLOwnerKey = "/tidb/ddl/fg/owner"
+	ddlPrompt   = "ddl"
 )
 
 var (
@@ -159,7 +161,7 @@ type DDL interface {
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager, and it's used for testing.
-	OwnerManager() OwnerManager
+	OwnerManager() owner.Manager
 	// WorkerVars gets the session variables for DDL worker.
 	WorkerVars() *variable.SessionVars
 	// SetHook sets the hook. It's exported for testing.
@@ -197,7 +199,7 @@ type ddl struct {
 	hook         Callback
 	hookMu       sync.RWMutex
 	store        kv.Storage
-	ownerManager OwnerManager
+	ownerManager owner.Manager
 	schemaSyncer SchemaSyncer
 	// lease is schema seconds.
 	lease        time.Duration
@@ -265,15 +267,15 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
-	var manager OwnerManager
+	var manager owner.Manager
 	var syncer SchemaSyncer
 	if etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and mockSchemaSyncer.
-		manager = NewMockOwnerManager(id, cancelFunc)
+		manager = owner.NewMockManager(id, cancelFunc)
 		syncer = NewMockSchemaSyncer()
 	} else {
-		manager = NewOwnerManager(etcdCli, id, cancelFunc)
+		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
 		syncer = NewSchemaSyncer(etcdCli, id)
 	}
 	d := &ddl{
@@ -402,7 +404,7 @@ func (d *ddl) SchemaSyncer() SchemaSyncer {
 }
 
 // OwnerManager implements DDL.OwnerManager interface.
-func (d *ddl) OwnerManager() OwnerManager {
+func (d *ddl) OwnerManager() owner.Manager {
 	return d.ownerManager
 }
 
