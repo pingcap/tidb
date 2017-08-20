@@ -437,9 +437,13 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 	// Literal: Need special processing
 	switch valueExpr.Kind() {
 	case types.KindString:
+		projName := valueExpr.GetString()
+		if len(valueExpr.GetProjectionName()) > 0 {
+			projName = valueExpr.GetProjectionName()
+		}
 		// See #3686, #3994:
 		// For string literals, string content is used as column name. Non-graph initial characters are trimmed.
-		fieldName := strings.TrimLeftFunc(valueExpr.GetString(), func(r rune) bool {
+		fieldName := strings.TrimLeftFunc(projName, func(r rune) bool {
 			return !unicode.IsOneOf(mysql.RangeGraph, r)
 		})
 		return model.NewCIStr(fieldName)

@@ -462,6 +462,77 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "abc   123   ")
+
+	// Issue #4239.
+	sql = `select 'a' ' ' 'string';`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("a string"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "a")
+
+	sql = `select 'a' " " "string";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("a string"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "a")
+
+	sql = `select 'string' 'string';`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("stringstring"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "string")
+
+	sql = `select "ss" "a";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("ssa"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "ss")
+
+	sql = `select "ss" "a" "b";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("ssab"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "ss")
+
+	sql = `select "ss" "a" ' ' "b";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("ssa b"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "ss")
+
+	sql = `select "ss" "a" ' ' "b" ' ' "d";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("ssa b d"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "ss")
 }
 
 func (s *testSuite) TestSelectLimit(c *C) {

@@ -752,6 +752,7 @@ import (
 	StatsPersistentVal	"stats_persistent value"
 	StringName		"string literal or identifier"
 	StringList 		"string list"
+	StringLiteral	"text literal"
 	ExplainableStmt		"explainable statement"
 	SubSelect		"Sub Select"
 	Symbol			"Constraint Symbol"
@@ -890,6 +891,9 @@ import (
 
 %precedence lowerThanIntervalKeyword
 %precedence interval
+
+%precedence lowerThanStringLitToken
+%precedence stringLit
 
 %precedence lowerThanSetKeyword
 %precedence set
@@ -2622,13 +2626,16 @@ Literal:
 |	floatLit
 |	decLit
 |	intLit
-|	stringLit
 	{
 		tp := types.NewFieldType(mysql.TypeString)
 		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($1)
 		expr.SetType(tp)
 		$$ = expr
+	}
+|	StringLiteral %prec lowerThanStringLitToken
+	{
+		$$ = $1
 	}
 |	"UNDERSCORE_CHARSET" stringLit
 	{
@@ -2647,6 +2654,33 @@ Literal:
 	}
 |	hexLit
 |	bitLit
+
+StringLiteral:
+	stringLit
+	{
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.Charset, tp.Collate = parser.charset, parser.collation
+		expr := ast.NewValueExpr($1)
+		expr.SetType(tp)
+		$$ = expr
+	}
+|	StringLiteral stringLit
+	{
+		valExpr := $1.(*ast.ValueExpr)
+		strLit := valExpr.GetString()
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.Charset, tp.Collate = parser.charset, parser.collation
+		expr := ast.NewValueExpr(strLit+$2)
+		// Fix #4239, use first string literal as projection name.
+		if len(valExpr.GetProjectionName()) == 0 {
+			expr.SetProjectionName(strLit)
+		} else {
+			expr.SetProjectionName(valExpr.GetProjectionName())
+		}
+		expr.SetType(tp)
+		$$ = expr
+	}
+
 
 Operand:
 	Literal

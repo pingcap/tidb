@@ -460,13 +460,8 @@ func startString(s *Scanner) (tok int, pos Pos, lit string) {
 	// See http://dev.mysql.com/doc/refman/5.7/en/string-literals.html
 	ch := s.skipWhitespace()
 	if s.sqlMode&mysql.ModeANSIQuotes > 0 &&
-		ch == '"' || s.r.s[pos.Offset] == '"' {
+		(ch == '"' || s.r.s[pos.Offset] == '"') {
 		return
-	}
-	for ch == '\'' || ch == '"' {
-		_, _, lit1 := s.scanString()
-		lit = lit + lit1
-		ch = s.skipWhitespace()
 	}
 	return
 }
