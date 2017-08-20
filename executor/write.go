@@ -671,6 +671,8 @@ func (e *InsertExec) Schema() *expression.Schema {
 // This will be used when tidb_batch_insert is set to ON.
 var BatchInsertSize = 20000
 
+// BatchDeleteSize is the batch size of auto-splitted delete data.
+// This will be used when tidb_batch_delete is set to ON.
 var BatchDeleteSize = 20000
 
 // Next implements the Executor Next interface.
