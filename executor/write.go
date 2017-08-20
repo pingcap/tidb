@@ -257,7 +257,6 @@ func (e *DeleteExec) deleteSingleTable() error {
 				// We should return a special error for batch insert.
 				return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
 			}
-			// txn = e.ctx.Txn()
 			rowCount = 0
 		}
 		row, err := e.SelectExec.Next()
