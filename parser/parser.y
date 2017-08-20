@@ -752,7 +752,7 @@ import (
 	StatsPersistentVal	"stats_persistent value"
 	StringName		"string literal or identifier"
 	StringList 		"string list"
-	StringLiteral	"text literal"
+	StringLiteral		"text literal"
 	ExplainableStmt		"explainable statement"
 	SubSelect		"Sub Select"
 	Symbol			"Constraint Symbol"
