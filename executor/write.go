@@ -276,6 +276,7 @@ func (e *DeleteExec) deleteSingleTable() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		rowCount++
 	}
 	return nil
 }
