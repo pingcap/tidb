@@ -1529,6 +1529,8 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	result = tk.MustQuery("SELECT 79 + + + CASE -87 WHEN -30 THEN COALESCE(COUNT(*), +COALESCE(+15, -33, -12 ) + +72) WHEN +COALESCE(+AVG(DISTINCT(60)), 21) THEN NULL ELSE NULL END AS col0;")
 	result.Check(testkit.Rows("<nil>"))
 
+	result = tk.MustQuery("SELECT -63 + COALESCE ( - 83, - 61 + - + 72 * - CAST( NULL AS SIGNED ) + + 3 );")
+	result.Check(testkit.Rows("-146"))
 }
 
 func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
