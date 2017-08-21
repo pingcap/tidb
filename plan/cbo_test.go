@@ -92,6 +92,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 			sql:  "select * from t where t.b <= 50",
 			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
 		},
+		// test panic
+		{
+			sql:  "select * from t where 1 and t.b <= 50",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
+		},
 		{
 			sql:  "select * from t where t.b <= 100 order by t.a limit 1",
 			best: "TableReader(Table(t)->Sel([le(test.t.b, 100)])->Limit)->Limit",
