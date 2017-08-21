@@ -14,9 +14,11 @@
 package executor_test
 
 import (
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -46,6 +48,10 @@ func (s *testSuite) TestPrepared(c *C) {
 	// Statement not found.
 	_, err = tk.Exec("deallocate prepare stmt_test_5")
 	c.Assert(executor.ErrStmtNotFound.Equal(err), IsTrue)
+
+	// incorrect SQLs in prepare. issue #3738, SQL in prepare stmt is parsed in DoPrepare.
+	_, err = tk.Exec(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`)
+	c.Assert(terror.ErrorEqual(err, errors.New(`[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '/*' and b = 'p'' at line 1`)), IsTrue)
 
 	// The `stmt_test5` should not be found.
 	_, err = tk.Exec(`set @a = 1; execute stmt_test_5 using @a;`)
