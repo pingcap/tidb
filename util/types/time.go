@@ -487,7 +487,7 @@ func (t *Time) Sub(t1 *Time) Duration {
 }
 
 // Add adds d to t, returns the result time value.
-func (t *Time) Add(d Duration) Time {
+func (t *Time) Add(d Duration) (Time, error) {
 	sign, hh, mm, ss, micro := splitDuration(d.Duration)
 	seconds, microseconds, _ := calcTimeDiff(t.Time, FromDate(0, 0, 0, hh, mm, ss, micro), -sign)
 	days := seconds / secondsIn24Hour
@@ -495,12 +495,13 @@ func (t *Time) Add(d Duration) Time {
 	var tm mysqlTime
 	tm.year, tm.month, tm.day = uint16(year), uint8(month), uint8(day)
 	calcTimeFromSec(&tm, seconds%secondsIn24Hour, microseconds)
-	return Time{
+	ret := Time{
 		Time:     tm,
 		Type:     t.Type,
 		Fsp:      t.Fsp,
 		TimeZone: t.TimeZone,
 	}
+	return ret, ret.Check()
 }
 
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.

@@ -899,7 +899,8 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 		c.Assert(err, IsNil)
 		result, err := ParseTime(t.Ret, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
-		v2 := v1.Add(dur)
+		v2, err := v1.Add(dur)
+		c.Assert(err, IsNil)
 		c.Assert(v2.Compare(result), Equals, 0)
 	}
 }
