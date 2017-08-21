@@ -15,7 +15,6 @@ package statistics_test
 
 import (
 	"fmt"
-	"testing"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -29,10 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/types"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 var _ = Suite(&testStatsCacheSuite{})
 
