@@ -137,9 +137,10 @@ import:
 - package: github.com/pingcap/pd
   version: ce8db87a8c3f2560750232e85ad5152a0a1c69df
 - package: github.com/pingcap/tipb
-  version: 27d6520cddb4af5dedc62d742d172c49358e6ed9
+  version: b45b9d4dd493e6f5f674f9303a12139fb28be13e
   subpackages:
   - go-binlog
+  - go-mysqlx
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto
