@@ -314,7 +314,7 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	retTp := c.inferType(args[1].GetType(), args[2].GetType())
+	retTp := inferType(args[1].GetType(), args[2].GetType())
 	evalTps := fieldTp2EvalTp(retTp)
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
 	if err != nil {
@@ -338,7 +338,7 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 	return sig.setSelf(sig), nil
 }
 
-func (c *ifFunctionClass) inferType(tp1, tp2 *types.FieldType) *types.FieldType {
+func inferType(tp1, tp2 *types.FieldType) *types.FieldType {
 	retTp, typeClass := &types.FieldType{}, types.ClassString
 	if tp1.Tp == mysql.TypeNull {
 		*retTp, typeClass = *tp2, tp2.ToClass()
@@ -354,7 +354,10 @@ func (c *ifFunctionClass) inferType(tp1, tp2 *types.FieldType) *types.FieldType 
 		var unsignedFlag uint
 		typeClass = types.AggTypeClass([]*types.FieldType{tp1, tp2}, &unsignedFlag)
 		retTp = types.AggFieldType([]*types.FieldType{tp1, tp2})
-		retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
+		retTp.Decimal = 0
+		if typeClass != types.ClassInt {
+			retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
+		}
 		types.SetBinChsClnFlag(retTp)
 		if types.IsNonBinaryStr(tp1) && !types.IsBinaryStr(tp2) {
 			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
@@ -376,8 +379,14 @@ func (c *ifFunctionClass) inferType(tp1, tp2 *types.FieldType) *types.FieldType 
 			if !unsignedFlag2 {
 				flagLen2 = 1
 			}
-			len1 := tp1.Flen - tp1.Decimal - flagLen1
-			len2 := tp2.Flen - tp2.Decimal - flagLen2
+			len1 := tp1.Flen - flagLen1
+			len2 := tp2.Flen - flagLen2
+			if tp1.Decimal != types.UnspecifiedLength {
+				len1 -= tp1.Decimal
+			}
+			if tp1.Decimal != types.UnspecifiedLength {
+				len2 -= tp2.Decimal
+			}
 			retTp.Flen = mathutil.Max(len1, len2) + retTp.Decimal + 1
 		} else {
 			retTp.Flen = mathutil.Max(tp1.Flen, tp2.Flen)
@@ -556,53 +565,26 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err = errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tp0, tp1 := args[0].GetType(), args[1].GetType()
-	fieldTp := types.AggFieldType([]*types.FieldType{tp0, tp1})
-	classType := types.AggTypeClass4FieldType([]*types.FieldType{tp0, tp1}, fieldTp)
-	fieldTp.Decimal = mathutil.Max(tp0.Decimal, tp1.Decimal)
-	// TODO: make it more accurate when inferring FLEN
-	fieldTp.Flen = tp0.Flen + tp1.Flen
-	fieldTp.Flag |= (tp0.Flag & mysql.NotNullFlag) | (tp1.Flag & mysql.NotNullFlag)
-
-	var evalTps evalTp
-	switch classType {
-	case types.ClassInt:
-		evalTps = tpInt
-		fieldTp.Decimal = 0
-	case types.ClassReal:
-		evalTps = tpReal
-	case types.ClassDecimal:
-		evalTps = tpDecimal
-	case types.ClassString:
-		evalTps = tpString
-		if !types.IsBinaryStr(tp0) && !types.IsBinaryStr(tp1) {
-			fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
-		}
-		if types.IsTypeTime(fieldTp.Tp) {
-			evalTps = tpTime
-		} else if fieldTp.Tp == mysql.TypeDuration {
-			evalTps = tpDuration
-		}
-	}
+	retTp := inferType(args[0].GetType(), args[1].GetType())
+	evalTps := fieldTp2EvalTp(retTp)
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp = fieldTp
-	switch classType {
-	case types.ClassInt:
+	bf.tp = retTp
+	switch evalTps {
+	case tpInt:
 		sig = &builtinIfNullIntSig{baseIntBuiltinFunc{bf}}
-	case types.ClassReal:
+	case tpReal:
 		sig = &builtinIfNullRealSig{baseRealBuiltinFunc{bf}}
-	case types.ClassDecimal:
+	case tpDecimal:
 		sig = &builtinIfNullDecimalSig{baseDecimalBuiltinFunc{bf}}
-	case types.ClassString:
+	case tpString:
 		sig = &builtinIfNullStringSig{baseStringBuiltinFunc{bf}}
-		if types.IsTypeTime(fieldTp.Tp) {
-			sig = &builtinIfNullTimeSig{baseTimeBuiltinFunc{bf}}
-		} else if fieldTp.Tp == mysql.TypeDuration {
-			sig = &builtinIfNullDurationSig{baseDurationBuiltinFunc{bf}}
-		}
+	case tpTime:
+		sig = &builtinIfNullTimeSig{baseTimeBuiltinFunc{bf}}
+	case tpDuration:
+		sig = &builtinIfNullDurationSig{baseDurationBuiltinFunc{bf}}
 	}
 	return sig.setSelf(sig), nil
 }
