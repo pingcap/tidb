@@ -19,7 +19,6 @@ import (
 	"unicode"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
 )
 
 // RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
@@ -70,11 +69,6 @@ func getMaxFloat(flen int, decimal int) float64 {
 // TruncateFloat tries to truncate f.
 // If the result exceeds the max/min float that flen/decimal allowed, returns the max/min float allowed.
 func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
-	// When decimal is unspecified, do not truncate float.
-	if decimal == mysql.NotFixedDec {
-		return f, nil
-	}
-
 	if math.IsNaN(f) {
 		// nan returns 0
 		return 0, ErrOverflow.GenByArgs("DOUBLE", "")

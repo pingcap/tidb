@@ -508,6 +508,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(args []Expression, ctx conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	fmt.Printf("TpA = %#v, TpB = %#v\n", tpA, tpB)
 	c.setType4DivDecimal(bf.tp, tpA, tpB)
 	sig := &builtinArithmeticDivideDecimalSig{baseDecimalBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil

@@ -1312,10 +1312,12 @@ func WrapWithCastAsDecimal(expr Expression, ctx context.Context) (Expression, er
 
 // WrapWithCastAsString wraps `expr` with `cast` if the return type
 // of expr is not type string,
-// otherwise, returns `expr` directly.
+// otherwise, returns `expr` but decimal set to unspecified.
 func WrapWithCastAsString(expr Expression, ctx context.Context) (Expression, error) {
 	if expr.GetTypeClass() == types.ClassString {
-		return expr, nil
+		retExpr := expr
+		retExpr.GetType().Decimal = types.UnspecifiedLength
+		return retExpr, nil
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
