@@ -18,6 +18,8 @@
 package expression
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -320,27 +322,27 @@ func (b *baseIntBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 func (b *baseIntBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseIntBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
 }
 
 func (b *baseIntBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get STRING result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
 }
 
 func (b *baseIntBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseIntBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseIntBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 // baseRealBuiltinFunc represents the functions which return real values.
@@ -364,27 +366,27 @@ func (b *baseRealBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error)
 }
 
 func (b *baseRealBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseRealBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
 }
 
 func (b *baseRealBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get STRING result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
 }
 
 func (b *baseRealBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseRealBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseRealBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 // baseDecimalBuiltinFunc represents the functions which return decimal values.
@@ -408,27 +410,27 @@ func (b *baseDecimalBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecima
 }
 
 func (b *baseDecimalBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseDecimalBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseDecimalBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get REAL result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseDecimalBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseDecimalBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseDecimalBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 // baseStringBuiltinFunc represents the functions which return string values.
@@ -452,27 +454,27 @@ func (b *baseStringBuiltinFunc) evalString(row []types.Datum) (string, bool, err
 }
 
 func (b *baseStringBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from ClassString expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from ClassString expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from ClassString expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from: %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from ClassString expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from ClassString expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from ClassString expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) getRetTp() *types.FieldType {
@@ -507,27 +509,27 @@ func (b *baseTimeBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, err
 }
 
 func (b *baseTimeBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get STRING result from TIME expression")
+	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
 }
 
 func (b *baseTimeBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from TIME expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseTimeBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from TIME expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseTimeBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from TIME expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
 }
 
 func (b *baseTimeBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from TIME expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseTimeBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from TIME expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 type baseDurationBuiltinFunc struct {
@@ -548,27 +550,27 @@ func (b *baseDurationBuiltinFunc) evalDuration(row []types.Datum) (types.Duratio
 }
 
 func (b *baseDurationBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from DURATION expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseDurationBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get STRING result from DURATION expression")
+	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
 }
 
 func (b *baseDurationBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from DURATION expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseDurationBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from DURATION expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseDurationBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from DURATION expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
 }
 
 func (b *baseDurationBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from DURATION expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 type baseJSONBuiltinFunc struct {
@@ -585,27 +587,27 @@ func (b *baseJSONBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error)
 }
 
 func (b *baseJSONBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from JSON expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from JSON expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get STRING result from JSON expression")
+	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from JSON expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from JSON expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from JSON expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
@@ -884,7 +886,7 @@ var funcs = map[string]functionClass{
 	ast.Plus:       &arithmeticPlusFunctionClass{baseFunctionClass{ast.Plus, 2, 2}},
 	ast.Minus:      &arithmeticMinusFunctionClass{baseFunctionClass{ast.Minus, 2, 2}},
 	ast.Mod:        &arithmeticFunctionClass{baseFunctionClass{ast.Mod, 2, 2}, opcode.Mod},
-	ast.Div:        &arithmeticFunctionClass{baseFunctionClass{ast.Div, 2, 2}, opcode.Div},
+	ast.Div:        &arithmeticDivideFunctionClass{baseFunctionClass{ast.Div, 2, 2}},
 	ast.Mul:        &arithmeticMultiplyFunctionClass{baseFunctionClass{ast.Mul, 2, 2}},
 	ast.IntDiv:     &arithmeticFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}, opcode.IntDiv},
 	ast.BitNeg:     &bitNegFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}},

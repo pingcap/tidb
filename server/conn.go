@@ -59,8 +59,8 @@ import (
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts
+	mysql.ClientMultiResults | mysql.ClientLocalFiles |
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
@@ -161,6 +161,9 @@ func (cc *clientConn) writeInitialHandshake() error {
 	// auth-plugin-data-part-2
 	data = append(data, cc.salt[8:]...)
 	// filler [00]
+	data = append(data, 0)
+	// auth-plugin name
+	data = append(data, []byte("mysql_native_password")...)
 	data = append(data, 0)
 	err := cc.writePacket(data)
 	if err != nil {
@@ -362,11 +365,11 @@ func (cc *clientConn) Run() {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				return
-			} else if terror.ErrorEqual(err, terror.ErrResultUndetermined) {
+			} else if terror.ErrResultUndetermined.Equal(err) {
 				log.Errorf("[%d] result undetermined error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
 				return
-			} else if terror.ErrorEqual(err, terror.ErrCritical) {
+			} else if terror.ErrCritical.Equal(err) {
 				log.Errorf("[%d] critical error, stop the server listener %s",
 					cc.connectionID, errors.ErrorStack(err))
 				criticalErrorCounter.Add(1)
@@ -783,7 +786,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 					continue
 				}
 				var valData []byte
-				valData, err = dumpTextValue(columns[i].Type, value)
+				valData, err = dumpTextValue(columns[i], value)
 				if err != nil {
 					return errors.Trace(err)
 				}
