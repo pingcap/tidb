@@ -14,8 +14,6 @@
 package statistics_test
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -41,22 +39,8 @@ func (s *testStatsUpdateSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-func (s *testStatsUpdateSuite) cleanEnv(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-	}
-	s.do.StatsHandle().Clear()
-	tk.MustExec("truncate table mysql.stats_meta")
-	tk.MustExec("truncate table mysql.stats_histograms")
-	tk.MustExec("truncate table mysql.stats_buckets")
-}
-
 func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -147,7 +131,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 }
 
 func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -204,7 +188,7 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 }
 
 func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int primary key, c2 int)")
@@ -250,7 +234,7 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 }
 
 func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int)")

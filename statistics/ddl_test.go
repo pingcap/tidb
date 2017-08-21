@@ -22,7 +22,7 @@ import (
 )
 
 func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -58,7 +58,7 @@ func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestDDLTable(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -103,7 +103,7 @@ func (s *testStatsCacheSuite) TestDDLTable(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")

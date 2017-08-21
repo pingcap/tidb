@@ -51,22 +51,22 @@ func (s *testStatsCacheSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-func (s *testStatsCacheSuite) cleanEnv(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
-	s.do.StatsHandle().Clear()
+	do.StatsHandle().Clear()
 	tk.MustExec("truncate table mysql.stats_meta")
 	tk.MustExec("truncate table mysql.stats_histograms")
 	tk.MustExec("truncate table mysql.stats_buckets")
 }
 
 func (s *testStatsCacheSuite) TestStatsCache(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -131,7 +131,7 @@ func assertHistogramEqual(c *C, a, b statistics.Histogram) {
 }
 
 func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -159,7 +159,7 @@ func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int, key cc1(c1), key cc2(c2))")
@@ -177,7 +177,7 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -210,7 +210,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestVersion(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -290,7 +290,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestLoadHist(c *C) {
-	defer s.cleanEnv(c)
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
