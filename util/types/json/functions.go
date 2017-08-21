@@ -27,24 +27,24 @@ import (
 // Type returns type of JSON as string.
 func (j JSON) Type() string {
 	switch j.typeCode {
-	case typeCodeObject:
+	case TypeCodeObject:
 		return "OBJECT"
-	case typeCodeArray:
+	case TypeCodeArray:
 		return "ARRAY"
-	case typeCodeLiteral:
+	case TypeCodeLiteral:
 		switch byte(j.i64) {
-		case jsonLiteralNil:
+		case LiteralNil:
 			return "NULL"
 		default:
 			return "BOOLEAN"
 		}
-	case typeCodeInt64:
+	case TypeCodeInt64:
 		return "INTEGER"
-	case typeCodeUint64:
+	case TypeCodeUint64:
 		return "UNSIGNED INTEGER"
-	case typeCodeFloat64:
+	case TypeCodeFloat64:
 		return "DOUBLE"
-	case typeCodeString:
+	case TypeCodeString:
 		return "STRING"
 	default:
 		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.typeCode)
@@ -69,7 +69,7 @@ func (j JSON) Extract(pathExprList []PathExpression) (ret JSON, found bool) {
 		ret = elemList[0]
 	} else {
 		found = true
-		ret.typeCode = typeCodeArray
+		ret.typeCode = TypeCodeArray
 		ret.array = append(ret.array, elemList...)
 	}
 	return
@@ -78,7 +78,7 @@ func (j JSON) Extract(pathExprList []PathExpression) (ret JSON, found bool) {
 // Unquote is for JSON_UNQUOTE.
 func (j JSON) Unquote() (string, error) {
 	switch j.typeCode {
-	case typeCodeString:
+	case TypeCodeString:
 		return unquoteString(j.str)
 	default:
 		return j.String(), nil
@@ -156,7 +156,7 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 	currentLeg, subPathExpr := pathExpr.popOneLeg()
 	if currentLeg.typ == pathLegIndex {
 		// If j is not an array, autowrap that into array.
-		if j.typeCode != typeCodeArray {
+		if j.typeCode != TypeCodeArray {
 			j = autoWrapAsArray(j, 1)
 		}
 		if currentLeg.arrayIndex == arrayIndexAsterisk {
@@ -167,7 +167,7 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 			childRet := extract(j.array[currentLeg.arrayIndex], subPathExpr)
 			ret = append(ret, childRet...)
 		}
-	} else if currentLeg.typ == pathLegKey && j.typeCode == typeCodeObject {
+	} else if currentLeg.typ == pathLegKey && j.typeCode == TypeCodeObject {
 		if len(currentLeg.dotKey) == 1 && currentLeg.dotKey[0] == '*' {
 			var sortedKeys = getSortedKeys(j.object) // iterate over sorted keys.
 			for _, child := range sortedKeys {
@@ -179,11 +179,11 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 		}
 	} else if currentLeg.typ == pathLegDoubleAsterisk {
 		ret = append(ret, extract(j, subPathExpr)...)
-		if j.typeCode == typeCodeArray {
+		if j.typeCode == TypeCodeArray {
 			for _, child := range j.array {
 				ret = append(ret, extract(child, pathExpr)...)
 			}
-		} else if j.typeCode == typeCodeObject {
+		} else if j.typeCode == TypeCodeObject {
 			var sortedKeys = getSortedKeys(j.object)
 			for _, child := range sortedKeys {
 				ret = append(ret, extract(j.object[child], pathExpr)...)
@@ -196,7 +196,7 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 // autoWrapAsArray wraps input JSON into an array if needed.
 func autoWrapAsArray(j JSON, hintLength int) JSON {
 	jnew := CreateJSON(nil)
-	jnew.typeCode = typeCodeArray
+	jnew.typeCode = TypeCodeArray
 	jnew.array = make([]JSON, 0, hintLength)
 	jnew.array = append(jnew.array, j)
 	return jnew
@@ -208,22 +208,22 @@ func autoWrapAsArray(j JSON, hintLength int) JSON {
 // 3) a scalar value is autowrapped as an array before merge;
 // 4) an adjacent array and object are merged by autowrapping the object as an array.
 func (j JSON) Merge(suffixes []JSON) JSON {
-	if j.typeCode != typeCodeArray && j.typeCode != typeCodeObject {
+	if j.typeCode != TypeCodeArray && j.typeCode != TypeCodeObject {
 		j = autoWrapAsArray(j, len(suffixes)+1)
 	}
 	for i := 0; i < len(suffixes); i++ {
 		suffix := suffixes[i]
 		switch j.typeCode {
-		case typeCodeArray:
-			if suffix.typeCode == typeCodeArray {
+		case TypeCodeArray:
+			if suffix.typeCode == TypeCodeArray {
 				// rule (1)
 				j.array = append(j.array, suffix.array...)
 			} else {
 				// rule (3), (4)
 				j.array = append(j.array, suffix)
 			}
-		case typeCodeObject:
-			if suffix.typeCode == typeCodeObject {
+		case TypeCodeObject:
+			if suffix.typeCode == TypeCodeObject {
 				// rule (2)
 				for key := range suffix.object {
 					if child, ok := j.object[key]; ok {
@@ -235,7 +235,7 @@ func (j JSON) Merge(suffixes []JSON) JSON {
 			} else {
 				// rule (4)
 				j = autoWrapAsArray(j, len(suffixes)+1-i)
-				if suffix.typeCode == typeCodeArray {
+				if suffix.typeCode == TypeCodeArray {
 					j.array = append(j.array, suffix.array...)
 				} else {
 					j.array = append(j.array, suffix)
@@ -293,7 +293,7 @@ func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
 		// If j is not an array, we should autowrap that as array.
 		// Then if its length equals to 1, we unwrap it back.
 		var shouldUnwrap = false
-		if j.typeCode != typeCodeArray {
+		if j.typeCode != TypeCodeArray {
 			j = autoWrapAsArray(j, 1)
 			shouldUnwrap = true
 		}
@@ -308,7 +308,7 @@ func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
 		if len(j.array) == 1 && shouldUnwrap {
 			j = j.array[0]
 		}
-	} else if currentLeg.typ == pathLegKey && j.typeCode == typeCodeObject {
+	} else if currentLeg.typ == pathLegKey && j.typeCode == TypeCodeObject {
 		var key = currentLeg.dotKey
 		if child, ok := j.object[key]; ok {
 			// e.g. json_replace('{"a": 1}', '$.a', 2) => '{"a": 2}'
@@ -344,7 +344,7 @@ func (j JSON) Remove(pathExprList []PathExpression) (JSON, error) {
 // remove is used in Remove.
 func remove(j JSON, pathExpr PathExpression) JSON {
 	currentLeg, subPathExpr := pathExpr.popOneLeg()
-	if currentLeg.typ == pathLegIndex && j.typeCode == typeCodeArray {
+	if currentLeg.typ == pathLegIndex && j.typeCode == TypeCodeArray {
 		var index = currentLeg.arrayIndex
 		if len(j.array) > index {
 			if len(subPathExpr.legs) == 0 {
@@ -353,7 +353,7 @@ func remove(j JSON, pathExpr PathExpression) JSON {
 				j.array[index] = remove(j.array[index], subPathExpr)
 			}
 		}
-	} else if currentLeg.typ == pathLegKey && j.typeCode == typeCodeObject {
+	} else if currentLeg.typ == pathLegKey && j.typeCode == TypeCodeObject {
 		var key = currentLeg.dotKey
 		if child, ok := j.object[key]; ok {
 			if len(subPathExpr.legs) == 0 {

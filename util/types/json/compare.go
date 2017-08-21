@@ -57,12 +57,12 @@ var jsonTypePrecedences = map[string]int{
 
 func i64AsFloat64(i64 int64, typeCode TypeCode) float64 {
 	switch typeCode {
-	case typeCodeLiteral, typeCodeInt64:
+	case TypeCodeLiteral, TypeCodeInt64:
 		return float64(i64)
-	case typeCodeUint64:
+	case TypeCodeUint64:
 		u64 := *(*uint64)(unsafe.Pointer(&i64))
 		return float64(u64)
-	case typeCodeFloat64:
+	case TypeCodeFloat64:
 		return *(*float64)(unsafe.Pointer(&i64))
 	default:
 		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, typeCode)
@@ -82,20 +82,20 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			cmp = 0
 		}
 		switch j1.typeCode {
-		case typeCodeLiteral:
+		case TypeCodeLiteral:
 			left := j1.i64
 			right := j2.i64
 			// false is less than true.
 			cmp = int(right - left)
-		case typeCodeInt64, typeCodeUint64, typeCodeFloat64:
+		case TypeCodeInt64, TypeCodeUint64, TypeCodeFloat64:
 			left := i64AsFloat64(j1.i64, j1.typeCode)
 			right := i64AsFloat64(j2.i64, j2.typeCode)
 			cmp = compareFloat64PrecisionLoss(left, right)
-		case typeCodeString:
+		case TypeCodeString:
 			left := j1.str
 			right := j2.str
 			cmp = strings.Compare(left, right)
-		case typeCodeArray:
+		case TypeCodeArray:
 			left := j1.array
 			right := j2.array
 			for i := 0; i < len(left) && i < len(right); i++ {
@@ -107,7 +107,7 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 				}
 			}
 			cmp = len(left) - len(right)
-		case typeCodeObject:
+		case TypeCodeObject:
 			// only equal is defined on two json objects.
 			// larger and smaller are not defined.
 			s1 := Serialize(j1)

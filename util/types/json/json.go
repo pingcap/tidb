@@ -29,19 +29,19 @@ import (
 type TypeCode byte
 
 const (
-	typeCodeObject  TypeCode = 0x01
-	typeCodeArray   TypeCode = 0x03
-	typeCodeLiteral TypeCode = 0x04
-	typeCodeInt64   TypeCode = 0x09
-	typeCodeUint64  TypeCode = 0x0a
-	typeCodeFloat64 TypeCode = 0x0b
-	typeCodeString  TypeCode = 0x0c
+	TypeCodeObject  TypeCode = 0x01
+	TypeCodeArray   TypeCode = 0x03
+	TypeCodeLiteral TypeCode = 0x04
+	TypeCodeInt64   TypeCode = 0x09
+	TypeCodeUint64  TypeCode = 0x0a
+	TypeCodeFloat64 TypeCode = 0x0b
+	TypeCodeString  TypeCode = 0x0c
 )
 
 const (
-	jsonLiteralNil   byte = 0x00
-	jsonLiteralTrue  byte = 0x01
-	jsonLiteralFalse byte = 0x02
+	LiteralNil   byte = 0x00
+	LiteralTrue  byte = 0x01
+	LiteralFalse byte = 0x02
 )
 
 const unknownTypeCodeErrorMsg = "unknown type code: %d"
@@ -82,28 +82,28 @@ func ParseFromString(s string) (j JSON, err error) {
 // MarshalJSON implements Marshaler interface.
 func (j JSON) MarshalJSON() ([]byte, error) {
 	switch j.typeCode {
-	case typeCodeObject:
+	case TypeCodeObject:
 		return json.Marshal(j.object)
-	case typeCodeArray:
+	case TypeCodeArray:
 		return json.Marshal(j.array)
-	case typeCodeLiteral:
+	case TypeCodeLiteral:
 		switch byte(j.i64) {
-		case jsonLiteralNil:
+		case LiteralNil:
 			return []byte("null"), nil
-		case jsonLiteralTrue:
+		case LiteralTrue:
 			return []byte("true"), nil
 		default:
 			return []byte("false"), nil
 		}
-	case typeCodeInt64:
+	case TypeCodeInt64:
 		return json.Marshal(j.i64)
-	case typeCodeUint64:
+	case TypeCodeUint64:
 		u64 := *(*uint64)(unsafe.Pointer(&j.i64))
 		return json.Marshal(u64)
-	case typeCodeFloat64:
+	case TypeCodeFloat64:
 		f64 := *(*float64)(unsafe.Pointer(&j.i64))
 		return json.Marshal(f64)
-	case typeCodeString:
+	case TypeCodeString:
 		return json.Marshal(j.str)
 	default:
 		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.typeCode)
