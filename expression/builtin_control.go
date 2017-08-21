@@ -53,6 +53,67 @@ type caseWhenFunctionClass struct {
 	baseFunctionClass
 }
 
+// Infer result type for builtin IF, IFNULL && NULLIF.
+func inferType(tp1, tp2 *types.FieldType) *types.FieldType {
+	retTp, typeClass := &types.FieldType{}, types.ClassString
+	if tp1.Tp == mysql.TypeNull {
+		*retTp, typeClass = *tp2, tp2.ToClass()
+		// If both arguments are NULL, make resulting type BINARY(0).
+		if tp2.Tp == mysql.TypeNull {
+			retTp.Tp, typeClass = mysql.TypeString, types.ClassString
+			retTp.Flen, retTp.Decimal = 0, 0
+			types.SetBinChsClnFlag(retTp)
+		}
+	} else if tp2.Tp == mysql.TypeNull {
+		*retTp, typeClass = *tp1, tp1.ToClass()
+	} else {
+		var unsignedFlag uint
+		typeClass = types.AggTypeClass([]*types.FieldType{tp1, tp2}, &unsignedFlag)
+		retTp = types.AggFieldType([]*types.FieldType{tp1, tp2})
+		retTp.Decimal = 0
+		if typeClass != types.ClassInt {
+			retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
+		}
+		if types.IsNonBinaryStr(tp1) && !types.IsBinaryStr(tp2) {
+			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+			if mysql.HasBinaryFlag(tp1.Flag) {
+				retTp.Flag |= mysql.BinaryFlag
+			}
+		} else if types.IsNonBinaryStr(tp2) && !types.IsBinaryStr(tp1) {
+			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+			if mysql.HasBinaryFlag(tp2.Flag) {
+				retTp.Flag |= mysql.BinaryFlag
+			}
+		} else if types.IsBinaryStr(tp1) || types.IsBinaryStr(tp2) || typeClass != types.ClassString {
+			types.SetBinChsClnFlag(retTp)
+		} else {
+			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+		}
+		if typeClass == types.ClassDecimal || typeClass == types.ClassInt {
+			unsignedFlag1, unsignedFlag2 := mysql.HasUnsignedFlag(tp1.Flag), mysql.HasUnsignedFlag(tp2.Flag)
+			flagLen1, flagLen2 := 0, 0
+			if !unsignedFlag1 {
+				flagLen1 = 1
+			}
+			if !unsignedFlag2 {
+				flagLen2 = 1
+			}
+			len1 := tp1.Flen - flagLen1
+			len2 := tp2.Flen - flagLen2
+			if tp1.Decimal != types.UnspecifiedLength {
+				len1 -= tp1.Decimal
+			}
+			if tp1.Decimal != types.UnspecifiedLength {
+				len2 -= tp2.Decimal
+			}
+			retTp.Flen = mathutil.Max(len1, len2) + retTp.Decimal + 1
+		} else {
+			retTp.Flen = mathutil.Max(tp1.Flen, tp2.Flen)
+		}
+	}
+	return retTp
+}
+
 func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -336,66 +397,6 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 		sig = &builtinIfDurationSig{baseDurationBuiltinFunc{bf}}
 	}
 	return sig.setSelf(sig), nil
-}
-
-func inferType(tp1, tp2 *types.FieldType) *types.FieldType {
-	retTp, typeClass := &types.FieldType{}, types.ClassString
-	if tp1.Tp == mysql.TypeNull {
-		*retTp, typeClass = *tp2, tp2.ToClass()
-		// If both arguments are NULL, make resulting type BINARY(0).
-		if tp2.Tp == mysql.TypeNull {
-			retTp.Tp, typeClass = mysql.TypeString, types.ClassString
-			retTp.Flen, retTp.Decimal = 0, 0
-			types.SetBinChsClnFlag(retTp)
-		}
-	} else if tp2.Tp == mysql.TypeNull {
-		*retTp, typeClass = *tp1, tp1.ToClass()
-	} else {
-		var unsignedFlag uint
-		typeClass = types.AggTypeClass([]*types.FieldType{tp1, tp2}, &unsignedFlag)
-		retTp = types.AggFieldType([]*types.FieldType{tp1, tp2})
-		retTp.Decimal = 0
-		if typeClass != types.ClassInt {
-			retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
-		}
-		if types.IsNonBinaryStr(tp1) && !types.IsBinaryStr(tp2) {
-			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
-			if mysql.HasBinaryFlag(tp1.Flag) {
-				retTp.Flag |= mysql.BinaryFlag
-			}
-		} else if types.IsNonBinaryStr(tp2) && !types.IsBinaryStr(tp1) {
-			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
-			if mysql.HasBinaryFlag(tp2.Flag) {
-				retTp.Flag |= mysql.BinaryFlag
-			}
-		} else if types.IsBinaryStr(tp1) || types.IsBinaryStr(tp2) || typeClass != types.ClassString {
-			types.SetBinChsClnFlag(retTp)
-		} else {
-			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
-		}
-		if typeClass == types.ClassDecimal || typeClass == types.ClassInt {
-			unsignedFlag1, unsignedFlag2 := mysql.HasUnsignedFlag(tp1.Flag), mysql.HasUnsignedFlag(tp2.Flag)
-			flagLen1, flagLen2 := 0, 0
-			if !unsignedFlag1 {
-				flagLen1 = 1
-			}
-			if !unsignedFlag2 {
-				flagLen2 = 1
-			}
-			len1 := tp1.Flen - flagLen1
-			len2 := tp2.Flen - flagLen2
-			if tp1.Decimal != types.UnspecifiedLength {
-				len1 -= tp1.Decimal
-			}
-			if tp1.Decimal != types.UnspecifiedLength {
-				len2 -= tp2.Decimal
-			}
-			retTp.Flen = mathutil.Max(len1, len2) + retTp.Decimal + 1
-		} else {
-			retTp.Flen = mathutil.Max(tp1.Flen, tp2.Flen)
-		}
-	}
-	return retTp
 }
 
 type builtinIfIntSig struct {
