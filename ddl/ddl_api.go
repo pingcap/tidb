@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
@@ -418,7 +417,7 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 
 	if c.DefaultValue != nil {
 		_, err := table.GetColDefaultValue(ctx, c.ToInfo())
-		if terror.ErrorEqual(err, types.ErrTruncated) {
+		if types.ErrTruncated.Equal(err) {
 			return errInvalidDefault.GenByArgs(c.Name)
 		}
 		return errors.Trace(err)

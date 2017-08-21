@@ -123,14 +123,14 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
 			[]string{
-				"TableScan_25   cop table:a, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_26 HashLeftJoin_10  root data:TableScan_25 8000",
-				"TableScan_17 HashAgg_16  cop table:b, range:(-inf,+inf), keep order:false 8000",
-				"HashAgg_16  TableScan_17 cop type:complete, group by:b.c2, funcs:count(b.c2), firstrow(b.c2) 6400",
-				"TableReader_19 HashAgg_18  root data:HashAgg_16 6400",
-				"HashAgg_18 HashLeftJoin_10 TableReader_19 root type:final, group by:, funcs:count(col_0), firstrow(col_1) 6400",
-				"HashLeftJoin_10 Projection_8 TableReader_26,HashAgg_18 root inner join, small:HashAgg_18, equal:[eq(a.c1, b.c2)] 8000",
-				"Projection_8  HashLeftJoin_10 root cast(join_agg_0) 8000",
+				"TableScan_26   cop table:a, range:(-inf,+inf), keep order:false 8000",
+				"TableReader_27 HashLeftJoin_11  root data:TableScan_26 8000",
+				"TableScan_18 HashAgg_17  cop table:b, range:(-inf,+inf), keep order:false 8000",
+				"HashAgg_17  TableScan_18 cop type:complete, group by:b.c2, funcs:count(b.c2), firstrow(b.c2) 6400",
+				"TableReader_20 HashAgg_19  root data:HashAgg_17 6400",
+				"HashAgg_19 HashLeftJoin_11 TableReader_20 root type:final, group by:, funcs:count(col_0), firstrow(col_1) 6400",
+				"HashLeftJoin_11 Projection_9 TableReader_27,HashAgg_19 root inner join, small:HashAgg_19, equal:[eq(a.c1, b.c2)] 8000",
+				"Projection_9  HashLeftJoin_11 root cast(join_agg_0) 8000",
 			},
 		},
 		{
