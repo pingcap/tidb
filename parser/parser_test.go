@@ -206,7 +206,6 @@ func (s *testParserSuite) RunErrMsgTest(c *C, table []testErrMsgCase) {
 	for _, t := range table {
 		_, err := parser.Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
-		fmt.Printf("src:[%v], err:[%v], t.err:[%v]\n", t.src, err, t.err)
 		if t.err != nil {
 			c.Assert(terror.ErrorEqual(err, t.err), IsTrue, comment)
 		} else {
