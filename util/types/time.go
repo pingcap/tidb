@@ -486,12 +486,21 @@ func (t *Time) Sub(t1 *Time) Duration {
 	}
 }
 
-// Add adds d to t, returns a duration value.
-// Note that add should not be done on different time types.
-func (t *Time) Add(d Duration) Duration {
-	d.Duration = gotime.Duration(-int64(d.Duration))
-	t2, _ := d.ConvertToTime(t.Type)
-	return t.Sub(&t2)
+// Add adds d to t, returns the result time value.
+func (t *Time) Add(d Duration) Time {
+	sign, hh, mm, ss, micro := splitDuration(d.Duration)
+	seconds, microseconds, _ := calcTimeDiff(t.Time, FromDate(0, 0, 0, hh, mm, ss, micro), -sign)
+	days := seconds / secondsIn24Hour
+	year, month, day := getDateFromDaynr(uint(days))
+	var tm mysqlTime
+	tm.year, tm.month, tm.day = uint16(year), uint8(month), uint8(day)
+	calcTimeFromSec(&tm, seconds%secondsIn24Hour, microseconds)
+	return Time{
+		Time:     tm,
+		Type:     t.Type,
+		Fsp:      t.Fsp,
+		TimeZone: t.TimeZone,
+	}
 }
 
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
@@ -2067,7 +2076,7 @@ func hour24TwoDigits(t *mysqlTime, input string, ctx map[string]int) (string, bo
 	if !succ || v >= 24 {
 		return input, false
 	}
-	t.hour = uint8(v)
+	t.hour = v
 	return input[2:], true
 }
 
@@ -2114,9 +2123,9 @@ func time12Hour(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	remain := skipWhiteSpace(input[8:])
 	switch {
 	case strings.HasPrefix(remain, "AM"):
-		t.hour = uint8(hour)
+		t.hour = hour
 	case strings.HasPrefix(remain, "PM"):
-		t.hour = uint8(hour + 12)
+		t.hour = hour + 12
 	default:
 		return input, false
 	}
@@ -2149,7 +2158,7 @@ func time24Hour(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 		return input, false
 	}
 
-	t.hour = uint8(hour)
+	t.hour = hour
 	t.minute = uint8(minute)
 	t.second = uint8(second)
 	return input[8:], true
@@ -2216,7 +2225,7 @@ func hour24Numeric(t *mysqlTime, input string, ctx map[string]int) (string, bool
 	if len(remain) == len(input) || v > 23 {
 		return input, false
 	}
-	t.hour = uint8(v)
+	t.hour = v
 	return remain, true
 }
 
@@ -2226,7 +2235,7 @@ func hour12Numeric(t *mysqlTime, input string, ctx map[string]int) (string, bool
 	if len(remain) == len(input) || v > 12 || v == 0 {
 		return input, false
 	}
-	t.hour = uint8(v)
+	t.hour = v
 	return remain, true
 }
 

@@ -1907,12 +1907,11 @@ func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	tmpDuration := arg0.Add(arg1)
-	result, err := tmpDuration.ConvertToTime(arg0.Type)
-	if err != nil {
+	tmp := arg0.Add(arg1)
+	if err = tmp.Check(); err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetMysqlTime(result)
+	d.SetMysqlTime(tmp)
 	return
 }
 
@@ -1946,17 +1945,13 @@ func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, 
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	tmpDuration := arg0.Add(arg1)
-	resultDuration, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
-	if err != nil {
-		return result, errors.Trace(err)
-	}
+	tmp := arg0.Add(arg1)
 	if getFsp(d) != 0 {
-		tmpDuration.Fsp = types.MaxFsp
+		tmp.Fsp = types.MaxFsp
 	} else {
-		tmpDuration.Fsp = types.MinFsp
+		tmp.Fsp = types.MinFsp
 	}
-	result.SetString(resultDuration.String())
+	result.SetString(tmp.String())
 	return
 }
 
@@ -2070,9 +2065,8 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	switch tp := args[0].Kind(); tp {
 	case types.KindMysqlTime:
 		arg0 := args[0].GetMysqlTime()
-		tmpDuration := arg0.Add(arg1)
-		result, err := tmpDuration.ConvertToTime(arg0.Type)
-		if err != nil {
+		result := arg0.Add(arg1)
+		if err = result.Check(); err != nil {
 			return d, errors.Trace(err)
 		}
 		d.SetMysqlTime(result)

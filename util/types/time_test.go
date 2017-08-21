@@ -878,3 +878,28 @@ func (s *testTimeSuite) TestConvertTimeZone(c *C) {
 		c.Assert(compareTime(t.Time, test.expect), Equals, 0)
 	}
 }
+
+func (s *testTimeSuite) TestTimeAdd(c *C) {
+	tbl := []struct {
+		Arg1 string
+		Arg2 string
+		Ret  string
+	}{
+		{"2017-01-18", "12:30:59", "2017-01-18 12:30:59"},
+		{"2017-01-18 01:01:01", "12:30:59", "2017-01-18 13:32:00"},
+		{"2017-01-18 01:01:01.123457", "12:30:59", "2017-01-18 13:32:0.123457"},
+		{"2017-01-18 01:01:01", "838:59:59", "2017-02-22 00:01:00"},
+		{"2017-08-21 15:34:42", "-838:59:59", "2017-07-17 16:34:43"},
+	}
+
+	for _, t := range tbl {
+		v1, err := ParseTime(t.Arg1, mysql.TypeDatetime, MaxFsp)
+		c.Assert(err, IsNil)
+		dur, err := ParseDuration(t.Arg2, MaxFsp)
+		c.Assert(err, IsNil)
+		result, err := ParseTime(t.Ret, mysql.TypeDatetime, MaxFsp)
+		c.Assert(err, IsNil)
+		v2 := v1.Add(dur)
+		c.Assert(v2.Compare(result), Equals, 0)
+	}
+}

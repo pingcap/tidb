@@ -77,6 +77,12 @@ func (s *testMyTimeSuite) TestCalcTimeDiff(c *C) {
 			1,
 			mysqlTime{0, 0, 0, 10, 0, 2, 0},
 		},
+		{
+			mysqlTime{0, 0, 0, 1, 2, 3, 0},
+			mysqlTime{0, 0, 0, 5, 2, 0, 0},
+			-1,
+			mysqlTime{0, 0, 0, 6, 4, 3, 0},
+		},
 	}
 
 	for i, tt := range tests {
