@@ -177,7 +177,15 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 		return res, val.IsNull(), errors.Trace(err)
 	}
 	if expr.GetTypeClass() == types.ClassReal {
-		return val.GetFloat64(), false, nil
+		res, err = val.ToFloat64(sc)
+		return res, false, errors.Trace(err)
+		// TODO: We maintain two sets of type systems, one for Expression, one for Datum.
+		// So there exists some situations that the two types are not corresponded.
+		// For example, `select coalesce(11, c_double) from t`
+		// we infer the result type of the sql as `mysql.TypeDouble` which is consistent with MySQL,
+		// but what we actually get is store as int64 in Datum.
+		// So if we wrap `CastRealAsInt` upon the result, we'll get NaN when call `arg.EvalReal()`.
+		// This will be fixed after all built-in functions be rewrite correctly.
 	} else if IsHybridType(expr) {
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
@@ -200,7 +208,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 		// we infer the result type of the sql as `mysql.TypeNewDecimal` which is consistent with MySQL,
 		// but what we actually get is store as float64 in Datum.
 		// So if we wrap `CastDecimalAsInt` upon the result, we'll get <nil> when call `arg.EvalDecimal()`.
-		// This will be fixed after all built-in functions be rewrite correctlly.
+		// This will be fixed after all built-in functions be rewrite correctly.
 	} else if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
