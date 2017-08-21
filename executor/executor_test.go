@@ -462,6 +462,77 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	c.Check(err, IsNil)
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.O, Equals, "abc   123   ")
+
+	// Issue #4239.
+	sql = `select 'a' ' ' 'string';`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("a string"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "a")
+
+	sql = `select 'a' " " "string";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("a string"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "a")
+
+	sql = `select 'string' 'string';`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("stringstring"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "string")
+
+	sql = `select "ss" "a";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("ssa"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "ss")
+
+	sql = `select "ss" "a" "b";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("ssab"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "ss")
+
+	sql = `select "ss" "a" ' ' "b";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("ssa b"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "ss")
+
+	sql = `select "ss" "a" ' ' "b" ' ' "d";`
+	r = tk.MustQuery(sql)
+	r.Check(testkit.Rows("ssa b d"))
+	rs, err = tk.Exec(sql)
+	c.Check(err, IsNil)
+	fields, err = rs.Fields()
+	c.Check(err, IsNil)
+	c.Check(len(fields), Equals, 1)
+	c.Check(fields[0].Column.Name.O, Equals, "ss")
 }
 
 func (s *testSuite) TestSelectLimit(c *C) {
@@ -785,6 +856,14 @@ func (s *testSuite) TestUnion(c *C) {
 
 	// test race
 	tk.MustQuery("SELECT @x:=0 UNION ALL SELECT @x:=0 UNION ALL SELECT @x")
+
+	// test field tp
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("CREATE TABLE t1 (a date)")
+	tk.MustExec("CREATE TABLE t2 (a date)")
+	tk.MustExec("SELECT a from t1 UNION select a FROM t2")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" + "  `a` date DEFAULT NULL\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
+
 }
 
 func (s *testSuite) TestIn(c *C) {

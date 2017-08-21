@@ -452,24 +452,7 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 }
 
 func startString(s *Scanner) (tok int, pos Pos, lit string) {
-	tok, pos, lit = s.scanString()
-	if tok == unicode.ReplacementChar {
-		return
-	}
-
-	// Quoted strings placed next to each other are concatenated to a single string.
-	// See http://dev.mysql.com/doc/refman/5.7/en/string-literals.html
-	ch := s.skipWhitespace()
-	if s.sqlMode&mysql.ModeANSIQuotes > 0 &&
-		ch == '"' || s.r.s[pos.Offset] == '"' {
-		return
-	}
-	for ch == '\'' || ch == '"' {
-		_, _, lit1 := s.scanString()
-		lit = lit + lit1
-		ch = s.skipWhitespace()
-	}
-	return
+	return s.scanString()
 }
 
 // lazyBuf is used to avoid allocation if possible.
