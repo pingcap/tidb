@@ -78,16 +78,6 @@ func AggFieldType(tps []*FieldType) *FieldType {
 	return &currType
 }
 
-// AggTypeClass4FieldType aggregates arguments' TypeClass of a multi-argument function, and adjust FieldType's
-// Charset, Collate and Flag if needed.
-func AggTypeClass4FieldType(tps []*FieldType, target *FieldType) TypeClass {
-	ret := AggTypeClass(tps, &target.Flag)
-	if (target.Flag & mysql.BinaryFlag) == mysql.BinaryFlag {
-		SetBinChsClnFlag(target)
-	}
-	return ret
-}
-
 // AggTypeClass aggregates arguments' TypeClass of a multi-argument function.
 func AggTypeClass(tps []*FieldType, flag *uint) TypeClass {
 	var (
@@ -101,7 +91,7 @@ func AggTypeClass(tps []*FieldType, flag *uint) TypeClass {
 			continue
 		}
 		argTypeClass := argFieldType.ToClass()
-		if IsBinaryStr(argFieldType) {
+		if argTypeClass == ClassString && mysql.HasBinaryFlag(argFieldType.Flag) {
 			gotBinString = true
 		}
 		if !gotFirst {

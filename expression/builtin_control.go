@@ -358,7 +358,6 @@ func inferType(tp1, tp2 *types.FieldType) *types.FieldType {
 		if typeClass != types.ClassInt {
 			retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
 		}
-		types.SetBinChsClnFlag(retTp)
 		if types.IsNonBinaryStr(tp1) && !types.IsBinaryStr(tp2) {
 			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
 			if mysql.HasBinaryFlag(tp1.Flag) {
@@ -369,6 +368,10 @@ func inferType(tp1, tp2 *types.FieldType) *types.FieldType {
 			if mysql.HasBinaryFlag(tp2.Flag) {
 				retTp.Flag |= mysql.BinaryFlag
 			}
+		} else if types.IsBinaryStr(tp1) || types.IsBinaryStr(tp2) || typeClass != types.ClassString {
+			types.SetBinChsClnFlag(retTp)
+		} else {
+			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
 		}
 		if typeClass == types.ClassDecimal || typeClass == types.ClassInt {
 			unsignedFlag1, unsignedFlag2 := mysql.HasUnsignedFlag(tp1.Flag), mysql.HasUnsignedFlag(tp2.Flag)
@@ -565,7 +568,14 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err = errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, errors.Trace(err)
 	}
-	retTp := inferType(args[0].GetType(), args[1].GetType())
+	tp0, tp1 := args[0].GetType(), args[1].GetType()
+	retTp := inferType(tp0, tp1)
+	retTp.Flag |= (tp0.Flag & mysql.NotNullFlag) | (tp1.Flag & mysql.NotNullFlag)
+	if tp0.Tp == mysql.TypeNull && tp1.Tp == mysql.TypeNull {
+		retTp.Tp = mysql.TypeNull
+		retTp.Flen, retTp.Decimal = 0, -1
+		types.SetBinChsClnFlag(retTp)
+	}
 	evalTps := fieldTp2EvalTp(retTp)
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
 	if err != nil {

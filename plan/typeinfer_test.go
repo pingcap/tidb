@@ -608,14 +608,17 @@ func (s *testPlanSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 		{"ifnull(c_int, c_char)", mysql.TypeString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
 		{"ifnull(c_int, c_binary)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"ifnull(c_char, c_binary)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+		{"ifnull(null, null)", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag, 0, types.UnspecifiedLength},
+		{"ifnull(c_double, c_timestamp)", mysql.TypeVarchar, charset.CharsetUTF8, mysql.NotNullFlag, 22, types.UnspecifiedLength},
 		{"if(c_int, c_decimal, c_int)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 3},
 		{"if(c_int, c_char, c_int)", mysql.TypeString, charset.CharsetUTF8, 0, 20, -1},
 		{"if(c_int, c_binary, c_int)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, -1},
 		{"if(c_int, c_binary_char, c_int)", mysql.TypeString, charset.CharsetUTF8, mysql.BinaryFlag, 20, -1},
 		{"if(c_int, c_char, c_decimal)", mysql.TypeString, charset.CharsetUTF8, 0, 20, 3},
-		{"if(c_int, c_datetime, c_int)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 19, 2},
+		{"if(c_int, c_datetime, c_int)", mysql.TypeVarchar, charset.CharsetUTF8, 0, 19, 2},
 		{"if(c_int, c_int, c_double)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
-		{"if(c_int, c_time, c_datetime)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 2},
+		{"if(c_int, c_time, c_datetime)", mysql.TypeDatetime, charset.CharsetUTF8, 0, 19, 2},
+		{"if(null, null, null)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 0, 0},
 		{"case when c_int then c_char else c_varchar end", mysql.TypeVarchar, charset.CharsetUTF8, 0, 20, -1},
 		{"case when c_int > 1 then c_double else c_binary_char end", mysql.TypeString, charset.CharsetUTF8, mysql.BinaryFlag, 22, -1},
 		{"case when c_int > 2 then c_double when c_int < 1 then c_decimal else c_double end", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, 3},
@@ -794,9 +797,9 @@ func (s *testPlanSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 		{"nullif(c_float    , 123)", mysql.TypeFloat, charset.CharsetBin, mysql.BinaryFlag, 12, types.UnspecifiedLength}, // TODO: tp should be TypeDouble
 		{"nullif(c_double   , 123)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"nullif(c_decimal  , 123)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 9, 3},
-		{"nullif(c_datetime , 123)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 19, 2},  // TODO: tp should be TypeVarString, binary flag
-		{"nullif(c_time     , 123)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 10, 0},  // TODO: tp should be TypeVarString, no binary flag
-		{"nullif(c_timestamp, 123)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 19, -1}, // TODO: tp should be TypeVarString, decimal should be 0, no binary flag
+		{"nullif(c_datetime , 123)", mysql.TypeVarchar, charset.CharsetUTF8, 0, 19, 2},  // TODO: tp should be TypeVarString
+		{"nullif(c_time     , 123)", mysql.TypeVarchar, charset.CharsetUTF8, 0, 10, 0},  // TODO: tp should be TypeVarString
+		{"nullif(c_timestamp, 123)", mysql.TypeVarchar, charset.CharsetUTF8, 0, 19, -1}, // TODO: tp should be TypeVarString, decimal should be 0
 		{"nullif(c_char     , 123)", mysql.TypeString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
 		{"nullif(c_varchar  , 123)", mysql.TypeVarchar, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},               // TODO: tp should be TypeVarString
 		{"nullif(c_text     , 123)", mysql.TypeBlob, charset.CharsetUTF8, 0, 65535, types.UnspecifiedLength},               // TODO: tp should be TypeMediumBlob
