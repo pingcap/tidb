@@ -71,6 +71,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.b limit 1",
 			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->TopN([test.t.b],0,1))->TopN([test.t.b],0,1)",
 		},
+		// Test Null Range
+		{
+			sql:  "select * from t where t.c is null",
+			best: "IndexLookUp(Index(t.c_d_e)[[<nil>,<nil>]], Table(t))",
+		},
 		// Test TopN to index branch in double read.
 		{
 			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.e limit 1",
