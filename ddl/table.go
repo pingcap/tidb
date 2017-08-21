@@ -18,13 +18,11 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 )
 
 func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -73,7 +71,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
-		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+		if meta.ErrDBNotExists.Equal(err) {
 			job.State = model.JobCancelled
 			return ver, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
@@ -129,26 +127,6 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 // Maximum number of keys to delete for each reorg table job run.
 var reorgTableDeleteLimit = 65536
 
-func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
-	var startKey kv.Key
-	if err := job.DecodeArgs(&startKey); err != nil {
-		job.State = model.JobCancelled
-		return errors.Trace(err)
-	}
-
-	limit := reorgTableDeleteLimit
-	delCount, err := d.dropTableData(startKey, job, limit)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Finish this background job.
-	if delCount < limit {
-		job.SchemaState = model.StateNone
-		job.State = model.JobDone
-	}
-	return nil
-}
-
 func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.OldSchemaID != 0 {
 		schemaID = tblInfo.OldSchemaID
@@ -162,7 +140,7 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 	tableID := job.TableID
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
-		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+		if meta.ErrDBNotExists.Equal(err) {
 			job.State = model.JobCancelled
 			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
@@ -183,14 +161,6 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 	}
 
 	return tblInfo, nil
-}
-
-// dropTableData deletes data in a limited number. If limit < 0, deletes all data.
-func (d *ddl) dropTableData(startKey kv.Key, job *model.Job, limit int) (int, error) {
-	prefix := tablecodec.EncodeTablePrefix(job.TableID)
-	delCount, nextStartKey, err := d.delKeysWithStartKey(prefix, startKey, bgJobFlag, job, limit)
-	job.Args = []interface{}{nextStartKey}
-	return delCount, errors.Trace(err)
 }
 
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
@@ -283,7 +253,7 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	// Check this table's database.
 	tables, err := t.ListTables(schemaID)
 	if err != nil {
-		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+		if meta.ErrDBNotExists.Equal(err) {
 			job.State = model.JobCancelled
 			return infoschema.ErrDatabaseNotExists.GenByArgs("")
 		}

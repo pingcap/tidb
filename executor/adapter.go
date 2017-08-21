@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 )
 
@@ -75,7 +76,7 @@ func (a *recordSet) Next() (*ast.Row, error) {
 	if a.stmt != nil {
 		a.stmt.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	}
-	return &ast.Row{Data: row.Data}, nil
+	return &ast.Row{Data: row}, nil
 }
 
 func (a *recordSet) Close() error {
@@ -195,12 +196,19 @@ func (a *statement) buildExecutor(ctx context.Context) (Executor, error) {
 			return nil, errors.Trace(err)
 		}
 
-		switch {
-		case isPointGet:
-			priority = kv.PriorityHigh
-		case a.expensive:
-			priority = kv.PriorityLow
+		if stmtPri := ctx.GetSessionVars().StmtCtx.Priority; stmtPri != mysql.NoPriority {
+			priority = int(stmtPri)
+		} else {
+			switch {
+			case isPointGet:
+				priority = kv.PriorityHigh
+			case a.expensive:
+				priority = kv.PriorityLow
+			}
 		}
+	}
+	if _, ok := a.plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
+		priority = kv.PriorityLow
 	}
 
 	b := newExecutorBuilder(ctx, a.is, priority)

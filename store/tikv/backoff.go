@@ -21,7 +21,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/util"
 	goctx "golang.org/x/net/context"
 )
 
@@ -127,6 +126,7 @@ const (
 	cleanupMaxBackoff       = 20000
 	gcMaxBackoff            = 100000
 	gcResolveLockMaxBackoff = 100000
+	gcDeleteRangeMaxBackoff = 100000
 	rawkvMaxBackoff         = 20000
 )
 
@@ -209,7 +209,7 @@ func (b *Backoffer) Clone() *Backoffer {
 // Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors, and holds
 // a child context of current Backoffer's context.
 func (b *Backoffer) Fork() (*Backoffer, goctx.CancelFunc) {
-	ctx, cancel := util.WithCancel(b.ctx)
+	ctx, cancel := goctx.WithCancel(b.ctx)
 	return &Backoffer{
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,

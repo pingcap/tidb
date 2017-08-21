@@ -14,22 +14,23 @@
 package tikv
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
 )
 
@@ -64,8 +65,11 @@ func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 		done:        make(chan error),
 	}
 	var ctx goctx.Context
-	ctx, worker.cancel = util.WithCancel(goctx.Background())
-	go worker.start(ctx)
+	ctx, worker.cancel = goctx.WithCancel(goctx.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go worker.start(ctx, &wg)
+	wg.Wait() // Wait create session finish in worker, some test code depend on this to avoid race.
 	return worker, nil
 }
 
@@ -103,11 +107,12 @@ var gcVariableComments = map[string]string{
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
 }
 
-func (w *GCWorker) start(ctx goctx.Context) {
+func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 	log.Infof("[gc worker] %s start.", w.uuid)
 
 	w.createSession()
 	w.tick(ctx) // Immediately tick once to initialize configs.
+	wg.Done()
 
 	ticker := time.NewTicker(gcWorkerTickInterval)
 	defer ticker.Stop()
@@ -131,12 +136,6 @@ func (w *GCWorker) start(ctx goctx.Context) {
 
 func (w *GCWorker) createSession() {
 	for {
-		time.Sleep(time.Second)
-
-		if !w.storeIsBootstrapped() {
-			log.Warnf("[gc worker] wait for store bootstrapping")
-			continue
-		}
 		var err error
 		w.session, err = tidb.CreateSession(w.store)
 		if err != nil {
@@ -145,6 +144,7 @@ func (w *GCWorker) createSession() {
 		}
 		// Disable privilege check for gc worker session.
 		privilege.BindPrivilegeManager(w.session, nil)
+		w.session.GetSessionVars().InRestrictedSQL = true
 		return
 	}
 }
@@ -296,12 +296,99 @@ func RunGCJob(ctx goctx.Context, store kv.Storage, safePoint uint64, identifier 
 
 func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
-	err := RunGCJob(ctx, w.store, safePoint, w.uuid)
+	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
+	if err != nil {
+		w.done <- errors.Trace(err)
+		return
+	}
+	err = w.deleteRanges(ctx, safePoint)
+	if err != nil {
+		w.done <- errors.Trace(err)
+		return
+	}
+	err = doGC(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
 		w.done <- errors.Trace(err)
 		return
 	}
 	w.done <- nil
+}
+
+func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
+	gcWorkerCounter.WithLabelValues("delete_range").Inc()
+
+	ranges, err := ddl.LoadDeleteRanges(w.session, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	bo := NewBackoffer(gcDeleteRangeMaxBackoff, goctx.Background())
+	log.Infof("[gc worker] %s start delete %v ranges", w.uuid, len(ranges))
+	startTime := time.Now()
+	regions := 0
+	for _, r := range ranges {
+		startKey, rangeEndKey := r.Range()
+		for {
+			select {
+			case <-ctx.Done():
+				return errors.New("[gc worker] gc job canceled")
+			default:
+			}
+
+			loc, err := w.store.regionCache.LocateKey(bo, startKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			endKey := loc.EndKey
+			if loc.Contains(rangeEndKey) {
+				endKey = rangeEndKey
+			}
+
+			req := &tikvrpc.Request{
+				Type: tikvrpc.CmdDeleteRange,
+				DeleteRange: &kvrpcpb.DeleteRangeRequest{
+					StartKey: startKey,
+					EndKey:   endKey,
+				},
+			}
+
+			resp, err := w.store.SendReq(bo, req, loc.Region, readTimeoutMedium)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			regionErr, err := resp.GetRegionError()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if regionErr != nil {
+				err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return errors.Trace(err)
+				}
+				continue
+			}
+			deleteRangeResp := resp.DeleteRange
+			if deleteRangeResp == nil {
+				return errors.Trace(errBodyMissing)
+			}
+			if err := deleteRangeResp.GetError(); err != "" {
+				return errors.Errorf("unexpected delete range err: %v", err)
+			}
+			regions++
+			if bytes.Equal(endKey, rangeEndKey) {
+				break
+			}
+			startKey = endKey
+		}
+		err := ddl.CompleteDeleteRange(w.session, r)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	log.Infof("[gc worker] %s finish delete %v ranges, regions: %v, cost time: %s", w.uuid, len(ranges), regions, time.Since(startTime))
+	gcHistogram.WithLabelValues("delete_ranges").Observe(time.Since(startTime).Seconds())
+	return nil
 }
 
 func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier string) error {
@@ -555,7 +642,7 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 
 func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
+	rs, err := w.session.Execute(stmt)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -577,7 +664,46 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
 		key, value, gcVariableComments[key])
-	_, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
+	_, err := w.session.Execute(stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
+}
+
+// MockGCWorker is for test.
+type MockGCWorker struct {
+	worker GCWorker
+}
+
+// NewMockGCWorker creates a MockGCWorker instance ONLY for test.
+func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
+	ver, err := store.CurrentVersion()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	hostName, err := os.Hostname()
+	if err != nil {
+		hostName = "unknown"
+	}
+	worker := GCWorker{
+		uuid:        strconv.FormatUint(ver.Ver, 16),
+		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		store:       store.(*tikvStore),
+		gcIsRunning: false,
+		lastFinish:  time.Now(),
+		done:        make(chan error),
+	}
+	worker.session, err = tidb.CreateSession(worker.store)
+	if err != nil {
+		log.Errorf("initialize MockGCWorker session fail: %s", err)
+		return nil, errors.Trace(err)
+	}
+	privilege.BindPrivilegeManager(worker.session, nil)
+	worker.session.GetSessionVars().InRestrictedSQL = true
+	return &MockGCWorker{worker: worker}, nil
+}
+
+// DeleteRanges call deleteRanges internally, just for test.
+func (w *MockGCWorker) DeleteRanges(ctx goctx.Context, safePoint uint64) error {
+	log.Errorf("deleteRanges is called")
+	return w.worker.deleteRanges(ctx, safePoint)
 }

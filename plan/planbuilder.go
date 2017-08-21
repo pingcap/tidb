@@ -33,7 +33,8 @@ import (
 var (
 	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
 	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
-	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
+	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
+	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadTable])
 	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
 	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
 	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
@@ -44,18 +45,20 @@ var (
 // Error codes.
 const (
 	CodeUnsupportedType    terror.ErrCode = 1
-	SystemInternalError    terror.ErrCode = 2
-	CodeAlterAutoID        terror.ErrCode = 3
-	CodeAnalyzeMissIndex   terror.ErrCode = 4
-	CodeAmbiguous          terror.ErrCode = 1052
-	CodeUnknownColumn      terror.ErrCode = 1054
-	CodeWrongArguments     terror.ErrCode = 1210
-	CodeBadGeneratedColumn terror.ErrCode = mysql.ErrBadGeneratedColumn
+	SystemInternalError                   = 2
+	CodeAlterAutoID                       = 3
+	CodeAnalyzeMissIndex                  = 4
+	CodeAmbiguous                         = 1052
+	CodeUnknownColumn                     = mysql.ErrBadField
+	CodeUnknownTable                      = mysql.ErrBadTable
+	CodeWrongArguments                    = 1210
+	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
 )
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeUnknownColumn:      mysql.ErrBadField,
+		CodeUnknownTable:       mysql.ErrBadTable,
 		CodeAmbiguous:          mysql.ErrNonUniq,
 		CodeWrongArguments:     mysql.ErrWrongArguments,
 		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
@@ -452,9 +455,6 @@ func buildShowDDLFields() *expression.Schema {
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "JOB", mysql.TypeVarchar, 128))
-	schema.Append(buildColumn("", "BG_SCHEMA_VER", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn("", "BG_OWNER", mysql.TypeVarchar, 64))
-	schema.Append(buildColumn("", "BG_JOB", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn("", "SELF_ID", mysql.TypeVarchar, 64))
 
 	return schema
@@ -727,6 +727,8 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 
+	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+	mockTablePlan.SetSchema(expression.NewSchema())
 	for _, assign := range insert.Setlist {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -744,7 +746,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		// Here we keep different behaviours with MySQL. MySQL allow set a = b, b = a and the result is NULL, NULL.
 		// It's unreasonable.
-		expr, _, err := b.rewrite(assign.Expr, nil, nil, true)
+		expr, _, err := b.rewrite(assign.Expr, mockTablePlan, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
@@ -755,7 +757,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		})
 	}
 
-	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 	mockTablePlan.SetSchema(schema)
 	for _, assign := range insert.OnDuplicate {
 		col, err := schema.FindColumn(assign.Column)

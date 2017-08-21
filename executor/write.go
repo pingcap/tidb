@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -163,7 +162,7 @@ func (e *DeleteExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeleteExec) Next() (*Row, error) {
+func (e *DeleteExec) Next() (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -211,8 +210,8 @@ func (e *DeleteExec) deleteMultiTables() error {
 				}
 				offset := getTableOffset(e.SelectExec.Schema(), col)
 				end := offset + len(tbl.Cols())
-				data := joinedRow.Data[offset:end]
-				handle := joinedRow.Data[col.Index].GetInt64()
+				data := joinedRow[offset:end]
+				handle := joinedRow[col.Index].GetInt64()
 				tblRowMap[id][handle] = data
 			}
 		}
@@ -243,13 +242,23 @@ func (e *DeleteExec) deleteSingleTable() error {
 		id        int64
 		tbl       table.Table
 		handleCol *expression.Column
+		rowCount  int
 	)
 	for i, t := range e.tblID2Table {
 		id, tbl = i, t
 		handleCol = e.SelectExec.Schema().TblID2Handle[id][0]
 		break
 	}
+	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
+	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
 	for {
+		if batchDelete && rowCount >= BatchDeleteSize {
+			if err := e.ctx.NewTxn(); err != nil {
+				// We should return a special error for batch insert.
+				return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
+			}
+			rowCount = 0
+		}
 		row, err := e.SelectExec.Next()
 		if err != nil {
 			return errors.Trace(err)
@@ -257,15 +266,16 @@ func (e *DeleteExec) deleteSingleTable() error {
 		if row == nil {
 			break
 		}
-		end := len(row.Data)
+		end := len(row)
 		if handleIsExtra(handleCol) {
 			end--
 		}
-		handle := row.Data[handleCol.Index].GetInt64()
-		err = e.removeRow(e.ctx, tbl, handle, row.Data[:end])
+		handle := row[handleCol.Index].GetInt64()
+		err = e.removeRow(e.ctx, tbl, handle, row[:end])
 		if err != nil {
 			return errors.Trace(err)
 		}
+		rowCount++
 	}
 	return nil
 }
@@ -586,7 +596,7 @@ func (k loadDataVarKeyType) String() string {
 const LoadDataVarKey loadDataVarKeyType = 0
 
 // Next implements the Executor Next interface.
-func (e *LoadData) Next() (*Row, error) {
+func (e *LoadData) Next() (Row, error) {
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return nil, errors.New("Load Data: don't support load data without local field")
@@ -661,8 +671,12 @@ func (e *InsertExec) Schema() *expression.Schema {
 // This will be used when tidb_batch_insert is set to ON.
 var BatchInsertSize = 20000
 
+// BatchDeleteSize is the batch size of auto-splitted delete data.
+// This will be used when tidb_batch_delete is set to ON.
+var BatchDeleteSize = 20000
+
 // Next implements the Executor Next interface.
-func (e *InsertExec) Next() (*Row, error) {
+func (e *InsertExec) Next() (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -706,7 +720,7 @@ func (e *InsertExec) Next() (*Row, error) {
 			continue
 		}
 
-		if terror.ErrorEqual(err, kv.ErrKeyExists) {
+		if kv.ErrKeyExists.Equal(err) {
 			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
@@ -879,7 +893,7 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 			break
 		}
 		e.currRow = int64(len(rows))
-		row, err := e.fillRowData(cols, innerRow.Data, false)
+		row, err := e.fillRowData(cols, innerRow, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1076,7 +1090,7 @@ func (e *ReplaceExec) Open() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ReplaceExec) Next() (*Row, error) {
+func (e *ReplaceExec) Next() (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -1121,7 +1135,7 @@ func (e *ReplaceExec) Next() (*Row, error) {
 			idx++
 			continue
 		}
-		if err1 != nil && !terror.ErrorEqual(err1, kv.ErrKeyExists) {
+		if err1 != nil && !kv.ErrKeyExists.Equal(err1) {
 			return nil, errors.Trace(err1)
 		}
 		oldRow, err1 := e.Table.Row(e.ctx, h)
@@ -1165,14 +1179,14 @@ type UpdateExec struct {
 	updatedRowKeys map[int64]map[int64]struct{}
 	tblID2table    map[int64]table.Table
 
-	rows        []*Row          // The rows fetched from TableExec.
+	rows        []Row           // The rows fetched from TableExec.
 	newRowsData [][]types.Datum // The new values to be set.
 	fetched     bool
 	cursor      int
 }
 
 // Next implements the Executor Next interface.
-func (e *UpdateExec) Next() (*Row, error) {
+func (e *UpdateExec) Next() (Row, error) {
 	if !e.fetched {
 		err := e.fetchRows()
 		if err != nil {
@@ -1201,8 +1215,8 @@ func (e *UpdateExec) Next() (*Row, error) {
 		for _, col := range cols {
 			offset := getTableOffset(e.SelectExec.Schema(), col)
 			end := offset + len(tbl.WritableCols())
-			handle := row.Data[col.Index].GetInt64()
-			oldData := row.Data[offset:end]
+			handle := row[col.Index].GetInt64()
+			oldData := row[offset:end]
 			newTableData := newData[offset:end]
 			flags := assignFlag[offset:end]
 			_, ok := e.updatedRowKeys[id][handle]
@@ -1221,7 +1235,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		}
 	}
 	e.cursor++
-	return &Row{}, nil
+	return Row{}, nil
 }
 
 func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
@@ -1244,8 +1258,8 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		newRowData := make([]types.Datum, len(row.Data))
-		copy(newRowData, row.Data)
+		newRowData := make([]types.Datum, len(row))
+		copy(newRowData, row)
 		for _, assign := range e.OrderedList {
 			val, err := assign.Expr.Eval(newRowData)
 			if err != nil {

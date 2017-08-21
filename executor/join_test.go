@@ -31,21 +31,21 @@ import (
 )
 
 func (s *testSuite) TestNestedLoopJoin(c *C) {
-	bigExec := &MockExec{Rows: []*executor.Row{
-		{Data: types.MakeDatums(1)},
-		{Data: types.MakeDatums(2)},
-		{Data: types.MakeDatums(3)},
-		{Data: types.MakeDatums(4)},
-		{Data: types.MakeDatums(5)},
-		{Data: types.MakeDatums(6)},
+	bigExec := &MockExec{Rows: []executor.Row{
+		types.MakeDatums(1),
+		types.MakeDatums(2),
+		types.MakeDatums(3),
+		types.MakeDatums(4),
+		types.MakeDatums(5),
+		types.MakeDatums(6),
 	}}
-	smallExec := &MockExec{Rows: []*executor.Row{
-		{Data: types.MakeDatums(1)},
-		{Data: types.MakeDatums(2)},
-		{Data: types.MakeDatums(3)},
-		{Data: types.MakeDatums(4)},
-		{Data: types.MakeDatums(5)},
-		{Data: types.MakeDatums(6)},
+	smallExec := &MockExec{Rows: []executor.Row{
+		types.MakeDatums(1),
+		types.MakeDatums(2),
+		types.MakeDatums(3),
+		types.MakeDatums(4),
+		types.MakeDatums(5),
+		types.MakeDatums(6),
 	}}
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
@@ -64,23 +64,23 @@ func (s *testSuite) TestNestedLoopJoin(c *C) {
 	row, err := join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "1 1")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "1 1")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "2 2")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "2 2")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "3 3")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "3 3")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "4 4")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "4 4")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "5 5")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "5 5")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, IsNil)
@@ -230,6 +230,13 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t.a, t.b from t join t1 on t.a=t1.a where t1.b = 4 limit 1").Check(testkit.Rows("3 1"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("<nil> <nil> 0 0", "3 1 3 4", "1 3 1 2", "1 3 1 3"))
 
+	// join reorder will disorganize the resulting schema
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t values(1,2)")
+	tk.MustExec("insert into t1 values(3,4)")
+	tk.MustQuery("select (select t1.a from t1 , t where t.a = s.a limit 2) from t as s").Check(testkit.Rows("3"))
 }
 
 func (s *testSuite) TestJoinCast(c *C) {

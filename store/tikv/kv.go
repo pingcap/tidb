@@ -102,11 +102,13 @@ type tikvStore struct {
 	uuid         string
 	oracle       oracle.Oracle
 	client       Client
+	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
 	gcWorker     *GCWorker
 	etcdAddrs    []string
 	mock         bool
+	enableGC     bool
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
@@ -120,21 +122,31 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		uuid:        uuid,
 		oracle:      oracle,
 		client:      client,
+		pdClient:    pdClient,
 		regionCache: NewRegionCache(pdClient),
 		mock:        mock,
 	}
 	store.lockResolver = newLockResolver(store)
-	if enableGC {
-		store.gcWorker, err = NewGCWorker(store)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
+	store.enableGC = enableGC
 	return store, nil
 }
 
 func (s *tikvStore) EtcdAddrs() []string {
 	return s.etcdAddrs
+}
+
+// StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
+func (s *tikvStore) StartGCWorker() error {
+	if !s.enableGC {
+		return nil
+	}
+
+	gcWorker, err := NewGCWorker(s)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.gcWorker = gcWorker
+	return nil
 }
 
 type mockOptions struct {
@@ -243,6 +255,7 @@ func (s *tikvStore) Close() error {
 
 	delete(mc.cache, s.uuid)
 	s.oracle.Close()
+	s.pdClient.Close()
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
 	}
@@ -288,6 +301,13 @@ func (s *tikvStore) GetClient() kv.Client {
 
 func (s *tikvStore) GetOracle() oracle.Oracle {
 	return s.oracle
+}
+
+func (s *tikvStore) SupportDeleteRange() (supported bool) {
+	if s.mock {
+		return false
+	}
+	return true
 }
 
 func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {

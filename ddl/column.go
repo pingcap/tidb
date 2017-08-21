@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -144,20 +143,9 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// write only -> reorganization
 		job.SchemaState = model.StateWriteReorganization
 		columnInfo.State = model.StateWriteReorganization
-		// Initialize SnapshotVer to 0 for later reorganization check.
-		job.SnapshotVer = 0
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteReorganization:
 		// reorganization -> public
-		// Get the current version for reorganization if we don't have it.
-		var reorgInfo *reorgInfo
-		reorgInfo, err = d.getReorgInfo(t, job)
-		if err != nil || reorgInfo.first {
-			// If we run reorg firstly, we should update the job snapshot version
-			// and then run the reorg next time.
-			return ver, errors.Trace(err)
-		}
-
 		// Adjust column offset.
 		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
 		columnInfo.State = model.StatePublic
@@ -170,7 +158,6 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-
 		d.asyncNotifyEvent(&Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
 	default:
 		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
@@ -198,17 +185,9 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobCancelled
 		return ver, ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
-
-	if len(tblInfo.Columns) == 1 {
+	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobCancelled
-		return ver, ErrCantRemoveAllFields.Gen("can't drop only column %s in table %s",
-			colName, tblInfo.Name)
-	}
-
-	// We don't support dropping column with index covered now.
-	if isColumnWithIndex(colName.L, tblInfo.Indices) {
-		job.State = model.JobCancelled
-		return ver, errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
+		return ver, errors.Trace(err)
 	}
 
 	originalState := colInfo.State
@@ -229,19 +208,9 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		colInfo.State = model.StateDeleteReorganization
-		// Initialize SnapshotVer to 0 for later reorganization check.
-		job.SnapshotVer = 0
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		var reorgInfo *reorgInfo
-		reorgInfo, err = d.getReorgInfo(t, job)
-		if err != nil || reorgInfo.first {
-			// If we run reorg firstly, we should update the job snapshot version
-			// and then run the reorg next time.
-			return ver, errors.Trace(err)
-		}
-
 		// All reorganization jobs are done, drop this column.
 		newColumns := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
 		for _, col := range tblInfo.Columns {
@@ -259,7 +228,6 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-
 		d.asyncNotifyEvent(&Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
@@ -342,7 +310,7 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []
 		rowKey := t.RecordKey(handle)
 		rowVal, err := txn.Get(rowKey)
 		if err != nil {
-			if terror.ErrorEqual(err, kv.ErrNotExist) {
+			if kv.ErrNotExist.Equal(err) {
 				// If row doesn't exist, skip it.
 				continue
 			}
@@ -395,7 +363,7 @@ func (d *ddl) backfillColumn(ctx context.Context, t table.Table, colMeta *column
 		}
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isReorgRunnable(txn, ddlJobFlag); err != nil {
+			if err := d.isReorgRunnable(txn); err != nil {
 				return errors.Trace(err)
 			}
 

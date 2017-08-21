@@ -73,7 +73,7 @@ func (e *AnalyzeExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next() (*Row, error) {
+func (e *AnalyzeExec) Next() (Row, error) {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -98,7 +98,6 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 				log.Error(errors.ErrorStack(err))
 				continue
 			}
-			result.Ctx = e.ctx
 			dom.StatsHandle().AnalyzeResultCh() <- &result
 		}
 		// We sleep two lease to make sure other tidb node has updated this node.

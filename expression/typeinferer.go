@@ -55,8 +55,6 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		types.SetBinChsClnFlag(&x.Type)
 	case *ast.BinaryOperationExpr:
 		v.binaryOperation(x)
-	case *ast.CaseExpr:
-		v.handleCaseExpr(x)
 	case *ast.ColumnNameExpr:
 		x.SetType(&x.Refer.Column.FieldType)
 	case *ast.CompareSubqueryExpr:
@@ -371,7 +369,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
 		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
-	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime, ast.UTCTime:
+	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime, ast.UTCTime, ast.Time:
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
 	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate:
@@ -417,7 +415,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.JSONType, ast.JSONUnquote:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
-	case ast.JSONExtract, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONMerge:
+	case ast.JSONExtract, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONMerge,
+		ast.JSONObject, ast.JSONArray:
 		tp = types.NewFieldType(mysql.TypeJSON)
 		chs = v.defaultCharset
 	case ast.AnyValue:

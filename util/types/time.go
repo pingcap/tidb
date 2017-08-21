@@ -333,7 +333,7 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 		return t, nil
 	}
 
-	fsp, err := checkFsp(fsp)
+	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return t, errors.Trace(err)
 	}
@@ -379,7 +379,7 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 // so 2011:11:11 10:10:10.888888 round 0 -> 2011:11:11 10:10:11
 // and 2011:11:11 10:10:10.111111 round 0 -> 2011:11:11 10:10:10
 func RoundFrac(t gotime.Time, fsp int) (gotime.Time, error) {
-	_, err := checkFsp(fsp)
+	_, err := CheckFsp(fsp)
 	if err != nil {
 		return t, errors.Trace(err)
 	}
@@ -804,7 +804,7 @@ func (d Duration) ConvertToTime(tp uint8) (Time, error) {
 // so 10:10:10.999999 round 0 -> 10:10:11
 // and 10:10:10.000000 round 0 -> 10:10:10
 func (d Duration) RoundFrac(fsp int) (Duration, error) {
-	fsp, err := checkFsp(fsp)
+	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -887,7 +887,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		origStr   = str
 	)
 
-	fsp, err = checkFsp(fsp)
+	fsp, err = CheckFsp(fsp)
 	if err != nil {
 		return ZeroDuration, errors.Trace(err)
 	}
@@ -982,14 +982,23 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		d = -d
 	}
 
-	if d > MaxTime {
-		d = MaxTime
-		err = ErrTruncatedWrongVal.GenByArgs("time", origStr)
-	} else if d < MinTime {
-		d = MinTime
+	d, truncated := TruncateOverflowMySQLTime(d)
+	if truncated {
 		err = ErrTruncatedWrongVal.GenByArgs("time", origStr)
 	}
+
 	return Duration{Duration: d, Fsp: fsp}, errors.Trace(err)
+}
+
+// TruncateOverflowMySQLTime truncates d when it overflows, and return truncated duration.
+func TruncateOverflowMySQLTime(d gotime.Duration) (gotime.Duration, bool) {
+	if d > MaxTime {
+		return MaxTime, true
+	} else if d < MinTime {
+		return MinTime, true
+	}
+
+	return d, false
 }
 
 func splitDuration(t gotime.Duration) (int, int, int, int, int) {
@@ -1128,7 +1137,7 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
 func ParseTime(str string, tp byte, fsp int) (Time, error) {
-	fsp, err := checkFsp(fsp)
+	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
@@ -1164,7 +1173,7 @@ func ParseDate(str string) (Time, error) {
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
 func ParseTimeFromNum(num int64, tp byte, fsp int) (Time, error) {
-	fsp, err := checkFsp(fsp)
+	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
@@ -1776,7 +1785,8 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'i':
 		fmt.Fprintf(buf, "%02d", t.Time.Minute())
 	case 'p':
-		if t.Time.Hour() < 12 {
+		hour := t.Time.Hour()
+		if hour/12%2 == 0 {
 			buf.WriteString("AM")
 		} else {
 			buf.WriteString("PM")

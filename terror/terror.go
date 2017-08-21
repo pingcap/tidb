@@ -86,26 +86,27 @@ const (
 )
 
 var errClz2Str = map[ErrClass]string{
-	ClassAutoid:     "autoid",
-	ClassDDL:        "ddl",
-	ClassDomain:     "domain",
-	ClassExecutor:   "executor",
-	ClassExpression: "expression",
-	ClassInspectkv:  "inspectkv",
-	ClassMeta:       "meta",
-	ClassKV:         "kv",
-	ClassOptimizer:  "optimizer",
-	ClassParser:     "parser",
-	ClassPerfSchema: "perfschema",
-	ClassPrivilege:  "privilege",
-	ClassSchema:     "schema",
-	ClassServer:     "server",
-	ClassStructure:  "structure",
-	ClassVariable:   "variable",
-	ClassTable:      "table",
-	ClassTypes:      "types",
-	ClassGlobal:     "global",
-	ClassMockTikv:   "mocktikv",
+	ClassAutoid:        "autoid",
+	ClassDDL:           "ddl",
+	ClassDomain:        "domain",
+	ClassExecutor:      "executor",
+	ClassExpression:    "expression",
+	ClassInspectkv:     "inspectkv",
+	ClassMeta:          "meta",
+	ClassKV:            "kv",
+	ClassOptimizer:     "optimizer",
+	ClassOptimizerPlan: "plan",
+	ClassParser:        "parser",
+	ClassPerfSchema:    "perfschema",
+	ClassPrivilege:     "privilege",
+	ClassSchema:        "schema",
+	ClassServer:        "server",
+	ClassStructure:     "structure",
+	ClassVariable:      "variable",
+	ClassTable:         "table",
+	ClassTypes:         "types",
+	ClassGlobal:        "global",
+	ClassMockTikv:      "mocktikv",
 }
 
 // String implements fmt.Stringer interface.
@@ -244,6 +245,10 @@ func (e *Error) Equal(err error) bool {
 	originErr := errors.Cause(err)
 	if originErr == nil {
 		return false
+	}
+
+	if error(e) == originErr {
+		return true
 	}
 	inErr, ok := originErr.(*Error)
 	return ok && e.class == inErr.class && e.code == inErr.code

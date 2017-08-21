@@ -46,7 +46,7 @@ import (
 )
 
 var (
-	version             = flag.Bool("V", false, "print version information and exit")
+	version             = flagBoolean("V", false, "print version information and exit")
 	store               = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]")
 	storePath           = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel            = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
@@ -59,21 +59,21 @@ var (
 	statsLease          = flag.String("statsLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
 	socket              = flag.String("socket", "", "The socket file to use for connection.")
 	xsocket             = flag.String("xsocket", "", "The socket file to use for x protocol connection.")
-	enablePS            = flag.Bool("perfschema", false, "If enable performance schema.")
-	enablePrivilege     = flag.Bool("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
-	reportStatus        = flag.Bool("report-status", true, "If enable status report HTTP service.")
+	enablePS            = flagBoolean("perfschema", false, "If enable performance schema.")
+	enablePrivilege     = flagBoolean("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
+	reportStatus        = flagBoolean("report-status", true, "If enable status report HTTP service.")
 	logFile             = flag.String("log-file", "", "log file path")
 	joinCon             = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
-	crossJoin           = flag.Bool("cross-join", true, "whether support cartesian product or not.")
+	crossJoin           = flagBoolean("cross-join", true, "whether support cartesian product or not.")
 	metricsAddr         = flag.String("metrics-addr", "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval     = flag.Int("metrics-interval", 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 	binlogSocket        = flag.String("binlog-socket", "", "socket file to write binlog")
-	runDDL              = flag.Bool("run-ddl", true, "run ddl worker on this tidb-server")
+	runDDL              = flagBoolean("run-ddl", true, "run ddl worker on this tidb-server")
 	retryLimit          = flag.Int("retry-limit", 10, "the maximum number of retries when commit a transaction")
-	skipGrantTable      = flag.Bool("skip-grant-table", false, "This option causes the server to start without using the privilege system at all.")
+	skipGrantTable      = flagBoolean("skip-grant-table", false, "This option causes the server to start without using the privilege system at all.")
 	slowThreshold       = flag.Int("slow-threshold", 300, "Queries with execution time greater than this value will be logged. (Milliseconds)")
 	queryLogMaxlen      = flag.Int("query-log-max-len", 2048, "Maximum query length recorded in log")
-	tcpKeepAlive        = flag.Bool("tcp-keep-alive", false, "set keep alive option for tcp connection.")
+	tcpKeepAlive        = flagBoolean("tcp-keep-alive", false, "set keep alive option for tcp connection.")
 	timeJumpBackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -278,4 +278,13 @@ func parseLease(lease string) time.Duration {
 
 func hasRootPrivilege() bool {
 	return os.Geteuid() == 0
+}
+
+func flagBoolean(name string, defaultVal bool, usage string) *bool {
+	if defaultVal == false {
+		// Fix #4125, golang do not print default false value in usage, so we append it.
+		usage = fmt.Sprintf("%s (default false)", usage)
+		return flag.Bool(name, defaultVal, usage)
+	}
+	return flag.Bool(name, defaultVal, usage)
 }

@@ -244,7 +244,7 @@ func JSONMerge(args []types.Datum, sc *variable.StatementContext) (d types.Datum
 // JSONObject creates a json from an ordered key-value slice. It retrieves 2 arguments at least.
 func JSONObject(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
 	if len(args)&1 == 1 {
-		err = errIncorrectParameterCount.GenByArgs(ast.JSONObject)
+		err = ErrIncorrectParameterCount.GenByArgs(ast.JSONObject)
 		return
 	}
 	var jsonMap = make(map[string]json.JSON, len(args)>>1)
@@ -289,7 +289,11 @@ type builtinJSONTypeSig struct {
 }
 
 func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinJSONTypeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinJSONTypeSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), nil
 }
 
 func (b *builtinJSONTypeSig) eval(row []types.Datum) (d types.Datum, err error) {
@@ -309,7 +313,11 @@ type builtinJSONExtractSig struct {
 }
 
 func (c *jsonExtractFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinJSONExtractSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinJSONExtractSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), nil
 }
 
 func (b *builtinJSONExtractSig) eval(row []types.Datum) (d types.Datum, err error) {
@@ -329,7 +337,11 @@ type builtinJSONUnquoteSig struct {
 }
 
 func (c *jsonUnquoteFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinJSONUnquoteSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinJSONUnquoteSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), nil
 }
 
 func (b *builtinJSONUnquoteSig) eval(row []types.Datum) (d types.Datum, err error) {
@@ -349,7 +361,11 @@ type builtinJSONSetSig struct {
 }
 
 func (c *jsonSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinJSONSetSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinJSONSetSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), nil
 }
 
 func (b *builtinJSONSetSig) eval(row []types.Datum) (d types.Datum, err error) {
@@ -369,7 +385,11 @@ type builtinJSONInsertSig struct {
 }
 
 func (c *jsonInsertFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinJSONInsertSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinJSONInsertSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), nil
 }
 
 func (b *builtinJSONInsertSig) eval(row []types.Datum) (d types.Datum, err error) {
@@ -389,7 +409,11 @@ type builtinJSONReplaceSig struct {
 }
 
 func (c *jsonReplaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinJSONReplaceSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinJSONReplaceSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), nil
 }
 
 func (b *builtinJSONReplaceSig) eval(row []types.Datum) (d types.Datum, err error) {
@@ -409,7 +433,11 @@ type builtinJSONRemoveSig struct {
 }
 
 func (c *jsonRemoveFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinJSONRemoveSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinJSONRemoveSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), nil
 }
 
 func (b *builtinJSONRemoveSig) eval(row []types.Datum) (d types.Datum, err error) {
@@ -429,7 +457,11 @@ type builtinJSONMergeSig struct {
 }
 
 func (c *jsonMergeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinJSONMergeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinJSONMergeSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), nil
 }
 
 func (b *builtinJSONMergeSig) eval(row []types.Datum) (d types.Datum, err error) {
@@ -449,7 +481,11 @@ type builtinJSONObjectSig struct {
 }
 
 func (c *jsonObjectFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinJSONObjectSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinJSONObjectSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), nil
 }
 
 func (b *builtinJSONObjectSig) eval(row []types.Datum) (d types.Datum, err error) {
@@ -469,7 +505,11 @@ type builtinJSONArraySig struct {
 }
 
 func (c *jsonArrayFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinJSONArraySig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinJSONArraySig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), nil
 }
 
 func (b *builtinJSONArraySig) eval(row []types.Datum) (d types.Datum, err error) {

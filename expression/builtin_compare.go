@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 var (
@@ -86,8 +87,11 @@ type coalesceFunctionClass struct {
 }
 
 func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinCoalesceSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinCoalesceSig struct {
@@ -119,8 +123,11 @@ type greatestFunctionClass struct {
 }
 
 func (c *greatestFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinGreatestSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinGreatestSig struct {
@@ -162,8 +169,11 @@ type leastFunctionClass struct {
 }
 
 func (c *leastFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinLeastSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinLeastSig struct {
@@ -205,8 +215,11 @@ type intervalFunctionClass struct {
 }
 
 func (c *intervalFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinIntervalSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinIntervalSig struct {
@@ -283,18 +296,16 @@ func isTemporalColumn(expr Expression) bool {
 
 // getFunction sets compare built-in function signatures for various types.
 func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	// TODO: we do not support JSON in new expression evaluation architecture now.
-	if args[0].GetType().Tp == mysql.TypeJSON || args[1].GetType().Tp == mysql.TypeJSON {
-		bf := newBaseBuiltinFunc(args, ctx)
-		bf.tp = &types.FieldType{Tp: mysql.TypeLonglong, Flen: 1, Decimal: 0}
-		types.SetBinChsClnFlag(bf.tp)
-		sig = &builtinCompareSig{bf, c.op}
-		return sig.setSelf(sig), c.verifyArgs(args)
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
 	}
 	ft0, ft1 := args[0].GetType(), args[1].GetType()
 	tc0, tc1 := ft0.ToClass(), ft1.ToClass()
 	cmpType := getCmpType(tc0, tc1)
-	if cmpType == types.ClassString && (types.IsTypeTime(ft0.Tp) || types.IsTypeTime(ft1.Tp)) {
+	if (tc0 == types.ClassString && ft1.Tp == mysql.TypeJSON) ||
+		(ft0.Tp == mysql.TypeJSON && tc1 == types.ClassString) {
+		sig, err = c.generateCmpSigs(args, tpJSON, ctx)
+	} else if cmpType == types.ClassString && (types.IsTypeTime(ft0.Tp) || types.IsTypeTime(ft1.Tp)) {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
 		// compare as time
@@ -354,7 +365,7 @@ func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Contex
 			return nil, errors.Trace(err)
 		}
 	}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 // genCmpSigs generates compare function signatures.
@@ -468,6 +479,23 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 		case opcode.NullEQ:
 			sig = &builtinNullEQTimeSig{intBf}
 		}
+	case tpJSON:
+		switch c.op {
+		case opcode.LT:
+			sig = &builtinLTJSONSig{intBf}
+		case opcode.LE:
+			sig = &builtinLEJSONSig{intBf}
+		case opcode.GT:
+			sig = &builtinGTJSONSig{intBf}
+		case opcode.GE:
+			sig = &builtinGEJSONSig{intBf}
+		case opcode.EQ:
+			sig = &builtinEQJSONSig{intBf}
+		case opcode.NE:
+			sig = &builtinNEJSONSig{intBf}
+		case opcode.NullEQ:
+			sig = &builtinNullEQJSONSig{intBf}
+		}
 	}
 	return
 }
@@ -520,6 +548,14 @@ func (s *builtinLTTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 	return resOfLT(compareTime(s.args, row, s.ctx))
 }
 
+type builtinLTJSONSig struct {
+	baseIntBuiltinFunc
+}
+
+func (s *builtinLTJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+	return resOfLT(compareJSON(s.args, row, s.ctx))
+}
+
 type builtinLEIntSig struct {
 	baseIntBuiltinFunc
 }
@@ -566,6 +602,14 @@ type builtinLETimeSig struct {
 
 func (s *builtinLETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfLE(compareTime(s.args, row, s.ctx))
+}
+
+type builtinLEJSONSig struct {
+	baseIntBuiltinFunc
+}
+
+func (s *builtinLEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+	return resOfLE(compareJSON(s.args, row, s.ctx))
 }
 
 type builtinGTIntSig struct {
@@ -616,6 +660,14 @@ func (s *builtinGTTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 	return resOfGT(compareTime(s.args, row, s.ctx))
 }
 
+type builtinGTJSONSig struct {
+	baseIntBuiltinFunc
+}
+
+func (s *builtinGTJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+	return resOfGT(compareJSON(s.args, row, s.ctx))
+}
+
 type builtinGEIntSig struct {
 	baseIntBuiltinFunc
 }
@@ -662,6 +714,14 @@ type builtinGETimeSig struct {
 
 func (s *builtinGETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfGE(compareTime(s.args, row, s.ctx))
+}
+
+type builtinGEJSONSig struct {
+	baseIntBuiltinFunc
+}
+
+func (s *builtinGEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+	return resOfGE(compareJSON(s.args, row, s.ctx))
 }
 
 type builtinEQIntSig struct {
@@ -712,6 +772,14 @@ func (s *builtinEQTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 	return resOfEQ(compareTime(s.args, row, s.ctx))
 }
 
+type builtinEQJSONSig struct {
+	baseIntBuiltinFunc
+}
+
+func (s *builtinEQJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+	return resOfEQ(compareJSON(s.args, row, s.ctx))
+}
+
 type builtinNEIntSig struct {
 	baseIntBuiltinFunc
 }
@@ -758,6 +826,14 @@ type builtinNETimeSig struct {
 
 func (s *builtinNETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfNE(compareTime(s.args, row, s.ctx))
+}
+
+type builtinNEJSONSig struct {
+	baseIntBuiltinFunc
+}
+
+func (s *builtinNEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+	return resOfNE(compareJSON(s.args, row, s.ctx))
 }
 
 type builtinNullEQIntSig struct {
@@ -933,70 +1009,36 @@ func (s *builtinNullEQTimeSig) evalInt(row []types.Datum) (val int64, isNull boo
 	return res, false, nil
 }
 
-type builtinCompareSig struct {
-	baseBuiltinFunc
-
-	op opcode.Op
+type builtinNullEQJSONSig struct {
+	baseIntBuiltinFunc
 }
 
-func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := s.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-
+func (s *builtinNullEQJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	var a, b = args[0], args[1]
-
-	if a.IsNull() || b.IsNull() {
-		// For <=>, if a and b are both nil, return true.
-		// If a or b is nil, return false.
-		if s.op == opcode.NullEQ {
-			if a.IsNull() && b.IsNull() {
-				d.SetInt64(oneI64)
-			} else {
-				d.SetInt64(zeroI64)
-			}
-		}
-		return
-	}
-
-	if s.op != opcode.NullEQ {
-		var aa, bb types.Datum
-		if aa, bb, err = types.CoerceDatum(sc, a, b); err == nil {
-			a = aa
-			b = bb
-		}
-	}
-
-	n, err := a.CompareDatum(sc, b)
+	arg0, isNull0, err := s.args[0].EvalJSON(row, sc)
 	if err != nil {
-		// TODO: should deal with error here.
-		return d, errors.Trace(err)
+		return zeroI64, false, errors.Trace(err)
 	}
-	var result bool
-	switch s.op {
-	case opcode.LT:
-		result = n < 0
-	case opcode.LE:
-		result = n <= 0
-	case opcode.EQ, opcode.NullEQ:
-		result = n == 0
-	case opcode.GT:
-		result = n > 0
-	case opcode.GE:
-		result = n >= 0
-	case opcode.NE:
-		result = n != 0
+	arg1, isNull1, err := s.args[1].EvalJSON(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	var res int64
+	switch {
+	case isNull0 && isNull1:
+		res = 1
+	case isNull0 != isNull1:
+		break
 	default:
-		return d, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+		cmpRes, err := json.CompareJSON(arg0, arg1)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		if cmpRes == 0 {
+			res = 1
+		}
 	}
-	if result {
-		d.SetInt64(oneI64)
-	} else {
-		d.SetInt64(zeroI64)
-	}
-	return
+	return res, false, nil
 }
 
 func resOfLT(val int64, isNull bool, err error) (int64, bool, error) {
@@ -1170,4 +1212,18 @@ func compareDuration(args []Expression, row []types.Datum, ctx context.Context) 
 		return zeroI64, isNull1, errors.Trace(err)
 	}
 	return int64(arg0.Compare(arg1)), false, nil
+}
+
+func compareJSON(args []Expression, row []types.Datum, ctx context.Context) (int64, bool, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	arg0, isNull0, err := args[0].EvalJSON(row, sc)
+	if isNull0 || err != nil {
+		return zeroI64, isNull0, errors.Trace(err)
+	}
+	arg1, isNull1, err := args[1].EvalJSON(row, sc)
+	if isNull1 || err != nil {
+		return zeroI64, isNull1, errors.Trace(err)
+	}
+	res, err := json.CompareJSON(arg0, arg1)
+	return int64(res), false, errors.Trace(err)
 }

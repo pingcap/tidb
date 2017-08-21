@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -43,13 +44,13 @@ const (
 )
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
-var LookupTableTaskChannelSize = 50
+var LookupTableTaskChannelSize int32 = 50
 
 // lookupTableTask is created from a partial result of an index request which
 // contains the handles in those index keys.
 type lookupTableTask struct {
 	handles []int64
-	rows    []*Row
+	rows    []Row
 	cursor  int
 	done    bool
 	doneCh  chan error
@@ -61,7 +62,7 @@ type lookupTableTask struct {
 	indexOrder map[int64]int
 }
 
-func (task *lookupTableTask) getRow() (*Row, error) {
+func (task *lookupTableTask) getRow() (Row, error) {
 	if !task.done {
 		err := <-task.doneCh
 		if err != nil {
@@ -82,13 +83,13 @@ func (task *lookupTableTask) getRow() (*Row, error) {
 // rowsSorter sorts the rows by its index order.
 type rowsSorter struct {
 	order     map[int64]int
-	rows      []*Row
+	rows      []Row
 	handleIdx int
 }
 
 func (s *rowsSorter) Less(i, j int) bool {
-	x := s.order[s.rows[i].Data[s.handleIdx].GetInt64()]
-	y := s.order[s.rows[j].Data[s.handleIdx].GetInt64()]
+	x := s.order[s.rows[i][s.handleIdx].GetInt64()]
+	y := s.order[s.rows[j][s.handleIdx].GetInt64()]
 	return x < y
 }
 
@@ -337,7 +338,6 @@ func closeAll(objs ...Closeable) error {
 type XSelectIndexExec struct {
 	tableInfo      *model.TableInfo
 	table          table.Table
-	asName         *model.CIStr
 	ctx            context.Context
 	supportDesc    bool
 	isMemDB        bool
@@ -422,7 +422,7 @@ func (e *XSelectIndexExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *XSelectIndexExec) Next() (*Row, error) {
+func (e *XSelectIndexExec) Next() (Row, error) {
 	if e.limitCount != nil && len(e.sortItemsPB) == 0 && e.returnedRows >= uint64(*e.limitCount) {
 		return nil, nil
 	}
@@ -433,7 +433,7 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 	return e.nextForDoubleRead()
 }
 
-func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
+func (e *XSelectIndexExec) nextForSingleRead() (Row, error) {
 	if e.result == nil {
 		e.execStart = time.Now()
 		var err error
@@ -493,13 +493,13 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if e.aggregate {
-			return &Row{Data: values}, nil
+			return values, nil
 		}
 		values = e.indexRowToTableRow(h, values)
 		if handleIsExtra(e.handleCol) {
 			values[len(values)-1].SetInt64(h)
 		}
-		return &Row{Data: values}, nil
+		return values, nil
 	}
 }
 
@@ -537,7 +537,7 @@ func (e *XSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Dat
 	return tableRow
 }
 
-func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
+func (e *XSelectIndexExec) nextForDoubleRead() (Row, error) {
 	if e.taskChan == nil {
 		e.execStart = time.Now()
 		idxResult, err := e.doIndexRequest()
@@ -549,7 +549,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		// Use a background goroutine to fetch index and put the result in e.taskChan.
 		// e.taskChan serves as a pipeline, so fetching index and getting table data can
 		// run concurrently.
-		e.taskChan = make(chan *lookupTableTask, LookupTableTaskChannelSize)
+		e.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 		go e.fetchHandles(idxResult, e.taskChan)
 	}
 
@@ -752,17 +752,17 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 		}
 		// If this executor don't need handle, we should cut it off.
 		if e.handleCol == nil {
-			for _, row := range task.rows {
-				row.Data = row.Data[:len(row.Data)-1]
+			for i, row := range task.rows {
+				task.rows[i] = row[:len(row)-1]
 			}
 		}
 	}
 	return nil
 }
 
-func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult distsql.SelectResult) ([]*Row, error) {
+func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult distsql.SelectResult) ([]Row, error) {
 	defer tblResult.Close()
-	var rows []*Row
+	var rows []Row
 	for {
 		partialResult, err := tblResult.Next()
 		if err != nil {
@@ -780,9 +780,9 @@ func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult d
 	return rows, nil
 }
 
-func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult distsql.PartialResult) ([]*Row, error) {
+func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult distsql.PartialResult) ([]Row, error) {
 	defer partialResult.Close()
-	var rows []*Row
+	var rows []Row
 	for {
 		h, rowData, err := partialResult.Next()
 		if err != nil {
@@ -811,8 +811,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row := &Row{Data: values}
-		rows = append(rows, row)
+		rows = append(rows, values)
 	}
 	return rows, nil
 }
@@ -855,7 +854,6 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 type XSelectTableExec struct {
 	tableInfo   *model.TableInfo
 	table       table.Table
-	asName      *model.CIStr
 	ctx         context.Context
 	supportDesc bool
 	isMemDB     bool
@@ -955,7 +953,7 @@ func (e *XSelectTableExec) Open() error {
 }
 
 // Next implements the Executor interface.
-func (e *XSelectTableExec) Next() (*Row, error) {
+func (e *XSelectTableExec) Next() (Row, error) {
 	if e.limitCount != nil && e.returnedRows >= uint64(*e.limitCount) {
 		return nil, nil
 	}
@@ -1013,9 +1011,9 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		if e.aggregate {
 			// compose aggregate row
-			return &Row{Data: values}, nil
+			return values, nil
 		}
-		return &Row{Data: values}, nil
+		return values, nil
 	}
 }
 

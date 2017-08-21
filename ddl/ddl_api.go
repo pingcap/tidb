@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
@@ -417,7 +416,7 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 
 	if c.DefaultValue != nil {
 		_, err := table.GetColDefaultValue(ctx, c.ToInfo())
-		if terror.ErrorEqual(err, types.ErrTruncated) {
+		if types.ErrTruncated.Equal(err) {
 			return errInvalidDefault.GenByArgs(c.Name)
 		}
 		return errors.Trace(err)
@@ -955,20 +954,9 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
 
-	// Check whether there are other columns depend on this column or not.
-	for _, col := range t.Cols() {
-		for dep := range col.Dependences {
-			if dep == colName.L {
-				return errDependentByGeneratedColumn.GenByArgs(dep)
-			}
-		}
-	}
-
 	tblInfo := t.Meta()
-	// We don't support dropping column with index covered now.
-	// We must drop the index first, then drop the column.
-	if isColumnWithIndex(colName.L, tblInfo.Indices) {
-		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
+	if err = isDroppableColumn(tblInfo, colName); err != nil {
+		return errors.Trace(err)
 	}
 	// We don't support dropping column with PK handle covered now.
 	if col.IsPKHandleColumn(tblInfo) {
@@ -1534,5 +1522,26 @@ func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
 		}
 	}
 
+	return nil
+}
+
+func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
+	// Check whether there are other columns depend on this column or not.
+	for _, col := range tblInfo.Columns {
+		for dep := range col.Dependences {
+			if dep == colName.L {
+				return errDependentByGeneratedColumn.GenByArgs(dep)
+			}
+		}
+	}
+	if len(tblInfo.Columns) == 1 {
+		return ErrCantRemoveAllFields.Gen("can't drop only column %s in table %s",
+			colName, tblInfo.Name)
+	}
+	// We don't support dropping column with index covered now.
+	// We must drop the index first, then drop the column.
+	if isColumnWithIndex(colName.L, tblInfo.Indices) {
+		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
+	}
 	return nil
 }
