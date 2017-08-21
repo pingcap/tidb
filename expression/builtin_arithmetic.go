@@ -39,7 +39,6 @@ var (
 	_ builtinFunc = &builtinArithmeticPlusIntSig{}
 	_ builtinFunc = &builtinArithmeticMinusRealSig{}
 	_ builtinFunc = &builtinArithmeticMinusDecimalSig{}
-	_ builtinFunc = &builtinArithmeticMinusIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMinusIntSig{}
 	_ builtinFunc = &builtinArithmeticDivideRealSig{}
 	_ builtinFunc = &builtinArithmeticDivideDecimalSig{}
@@ -281,22 +280,22 @@ func (c *arithmeticMinusFunctionClass) getFunction(args []Expression, ctx contex
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
-			bf.tp.Flag |= mysql.UnsignedFlag
-			setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
-			sig := &builtinArithmeticMinusIntUnsignedSig{baseIntBuiltinFunc{bf}}
-			return sig.setSelf(sig), nil
-		}
+
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
-		sig := &builtinArithmeticMinusIntSig{baseIntBuiltinFunc{bf}}
+		sig := &builtinArithmeticMinusIntSig{
+			baseIntBuiltinFunc: baseIntBuiltinFunc{bf},
+			isLHSUnsigned:      mysql.HasUnsignedFlag(tpA.Flag),
+			isRHSUnsigned:      mysql.HasUnsignedFlag(tpB.Flag),
+		}
+		sig.isLHSUnsigned = mysql.HasUnsignedFlag(tpA.Flag)
+		sig.isRHSUnsigned = mysql.HasUnsignedFlag(tpB.Flag)
 		return sig.setSelf(sig), nil
 	}
 }
 
-type builtinArithmeticMinusRealSig struct{ baseRealBuiltinFunc }
-type builtinArithmeticMinusDecimalSig struct{ baseDecimalBuiltinFunc }
-type builtinArithmeticMinusIntUnsignedSig struct{ baseIntBuiltinFunc }
-type builtinArithmeticMinusIntSig struct{ baseIntBuiltinFunc }
+type builtinArithmeticMinusRealSig struct {
+	baseRealBuiltinFunc
+}
 
 func (s *builtinArithmeticMinusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
@@ -312,6 +311,10 @@ func (s *builtinArithmeticMinusRealSig) evalReal(row []types.Datum) (float64, bo
 		return 0, true, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return a - b, false, nil
+}
+
+type builtinArithmeticMinusDecimalSig struct {
+	baseDecimalBuiltinFunc
 }
 
 func (s *builtinArithmeticMinusDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
@@ -332,37 +335,47 @@ func (s *builtinArithmeticMinusDecimalSig) evalDecimal(row []types.Datum) (*type
 	return c, false, nil
 }
 
-func (s *builtinArithmeticMinusIntUnsignedSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	sc := s.ctx.GetSessionVars().StmtCtx
-	a, isNull, err := s.args[0].EvalInt(row, sc)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-	unsignedA := uint64(a)
-	b, isNull, err := s.args[1].EvalInt(row, sc)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-	unsignedB := uint64(b)
-	if unsignedA < unsignedB {
-		return 0, true, types.ErrOverflow.GenByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-	return a - b, false, nil
+type builtinArithmeticMinusIntSig struct {
+	baseIntBuiltinFunc
+	isLHSUnsigned bool
+	isRHSUnsigned bool
 }
 
 func (s *builtinArithmeticMinusIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
+
 	a, isNull, err := s.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
+
 	b, isNull, err := s.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	if (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
-		return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+
+	switch {
+	case s.isLHSUnsigned && s.isRHSUnsigned:
+		if uint64(a) < uint64(b) {
+			return 0, true, types.ErrOverflow.GenByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		}
+	case s.isLHSUnsigned && !s.isRHSUnsigned:
+		if b >= 0 && uint64(a) < uint64(b) {
+			return 0, true, types.ErrOverflow.GenByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		}
+		if b < 0 && uint64(a) > math.MaxUint64-uint64(-b) {
+			return 0, true, types.ErrOverflow.GenByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		}
+	case !s.isLHSUnsigned && s.isRHSUnsigned:
+		if uint64(a-math.MinInt64) < uint64(b) {
+			return 0, true, types.ErrOverflow.GenByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		}
+	case !s.isLHSUnsigned && !s.isRHSUnsigned:
+		if (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
+			return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		}
 	}
+
 	return a - b, false, nil
 }
 
