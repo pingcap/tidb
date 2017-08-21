@@ -177,15 +177,9 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 		return res, val.IsNull(), errors.Trace(err)
 	}
 	if expr.GetTypeClass() == types.ClassReal {
+		// TODO: fix this to val.GetFloat64() after all built-in functions been rewritten.
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
-		// TODO: We maintain two sets of type systems, one for Expression, one for Datum.
-		// So there exists some situations that the two types are not corresponded.
-		// For example, `select coalesce(11, c_double) from t`
-		// we infer the result type of the sql as `mysql.TypeDouble` which is consistent with MySQL,
-		// but what we actually get is store as int64 in Datum.
-		// So if we wrap `CastRealAsInt` upon the result, we'll get NaN when call `arg.EvalReal()`.
-		// This will be fixed after all built-in functions be rewrite correctly.
 	} else if IsHybridType(expr) {
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
