@@ -289,8 +289,6 @@ func (c *arithmeticMinusFunctionClass) getFunction(args []Expression, ctx contex
 			isLHSUnsigned:      mysql.HasUnsignedFlag(tpA.Flag),
 			isRHSUnsigned:      mysql.HasUnsignedFlag(tpB.Flag),
 		}
-		sig.isLHSUnsigned = mysql.HasUnsignedFlag(tpA.Flag)
-		sig.isRHSUnsigned = mysql.HasUnsignedFlag(tpB.Flag)
 		return sig.setSelf(sig), nil
 	}
 }
