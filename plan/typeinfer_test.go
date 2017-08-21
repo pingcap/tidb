@@ -328,6 +328,23 @@ func (s *testPlanSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"oct(c_blob     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 64, types.UnspecifiedLength},
 		{"oct(c_set      )", mysql.TypeVarString, charset.CharsetUTF8, 0, 64, types.UnspecifiedLength},
 		{"oct(c_enum     )", mysql.TypeVarString, charset.CharsetUTF8, 0, 64, types.UnspecifiedLength},
+
+		{"find_in_set(c_int      , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_bigint   , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_float    , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_double   , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_decimal  , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_datetime , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_time     , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_timestamp, c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_char     , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_varchar  , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_text     , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_binary   , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_varbinary, c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_blob     , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_set      , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+		{"find_in_set(c_enum     , c_text)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
 	}
 }
 

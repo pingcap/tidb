@@ -22,13 +22,12 @@ import (
 )
 
 func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("analyze table t")
+	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -59,12 +58,11 @@ func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestDDLTable(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
+	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -105,19 +103,18 @@ func (s *testStatsCacheSuite) TestDDLTable(c *C) {
 }
 
 func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1,2),(3,4)")
 	testKit.MustExec("analyze table t")
+	do := s.do
 	h := do.StatsHandle()
 
 	testKit.MustExec("alter table t add column c_null int")
 	<-h.DDLEventCh()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	is := do.InfoSchema()
 	h.Update(is)
