@@ -61,7 +61,7 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	// compare operators.
 	case tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
 		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
-		tipb.ExprType_In, tipb.ExprType_ValueList,
+		tipb.ExprType_In, tipb.ExprType_ValueList, tipb.ExprType_IsNull,
 		tipb.ExprType_Like:
 		return true
 	// arithmetic operators.
