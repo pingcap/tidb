@@ -1999,49 +1999,46 @@ func (c *findInSetFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinFindInSetSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 3
+	sig := &builtinFindInSetSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinFindInSetSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinFindInSetSig.
+// evalInt evals FIND_IN_SET(str,strlist).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_find-in-set
 // TODO: This function can be optimized by using bit arithmetic when the first argument is
 // a constant string and the second is a column of type SET.
-func (b *builtinFindInSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// args[0] -> Str
-	// args[1] -> StrList
-	if args[0].IsNull() || args[1].IsNull() {
-		return
+func (b *builtinFindInSetSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	strlst, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	strlist, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	d.SetInt64(0)
-	if len(strlst) == 0 {
-		return
+	if len(strlist) == 0 {
+		return 0, false, nil
 	}
-	for i, s := range strings.Split(strlst, ",") {
-		if s == str {
-			d.SetInt64(int64(i + 1))
-			return
+
+	for i, strInSet := range strings.Split(strlist, ",") {
+		if str == strInSet {
+			return int64(i + 1), false, nil
 		}
 	}
-	return
+	return 0, false, nil
 }
 
 type fieldFunctionClass struct {
