@@ -141,6 +141,15 @@ import:
   subpackages:
   - go-binlog
   - go-mysqlx
+  - go-mysqlx/Connection
+  - go-mysqlx/Crud
+  - go-mysqlx/Datatypes
+  - go-mysqlx/Expect
+  - go-mysqlx/Expr
+  - go-mysqlx/Notice
+  - go-mysqlx/Resultset
+  - go-mysqlx/Session
+  - go-mysqlx/Sql
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto
