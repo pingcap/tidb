@@ -1043,6 +1043,9 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
+	tk.MustExec("SET time_zone = 'US/Pacific';")
+	result = tk.MustQuery("select addtime('2017-01-01 01:01:01.11', '0');")
+	result.Check(testkit.Rows("2017-01-01 01:01:01.11"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
