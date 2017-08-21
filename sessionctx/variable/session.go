@@ -449,16 +449,6 @@ func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
 	return err
 }
 
-// HandleWriteError returns the original error during the execution of
-// INSERT/UPDATE/DELETE statements.
-func (sc *StatementContext) HandleWriteError(err error) error {
-	if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
-		return err
-	}
-	sc.AppendWarning(err)
-	return nil
-}
-
 // ResetForRetry resets the changed states during execution.
 func (sc *StatementContext) ResetForRetry() {
 	sc.mu.Lock()
