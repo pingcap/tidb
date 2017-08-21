@@ -1,5 +1,5 @@
-hash: c3242a1e76470e04949308c1d80ad12771658a0bb7c6b1fe3faba67e63acb07f
-updated: 2017-08-21T15:20:00.194011347+08:00
+hash: 27c5506d07670b678390a2a4957ae5a4e946234dbfe9216b429dbec86f403d7c
+updated: 2017-08-21T15:40:30.311704667+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -203,7 +203,7 @@ imports:
   subpackages:
   - rate
 - name: google.golang.org/genproto
-  version: ee236bd376b077c7a89f260c026c4735b195e459
+  version: 6b7d9516179cd47f4714cfeb0103ad1dede756c4
   subpackages:
   - googleapis/rpc/status
 - name: google.golang.org/grpc
