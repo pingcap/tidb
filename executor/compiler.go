@@ -42,7 +42,12 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	isExpensive := stmtCount(node, p)
+
+	var isExpensive bool
+	if !ctx.GetSessionVars().InRestrictedSQL {
+		// Don't take restricted SQL into account for metrics.
+		isExpensive = stmtCount(node, p)
+	}
 	sa := &statement{
 		is:        is,
 		plan:      p,

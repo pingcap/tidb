@@ -172,7 +172,7 @@ const (
 	maxNumberOfDiffsToLoad = 100
 )
 
-func shouldUpdateAllSchema(newVersion, usedVersion int64) bool {
+func isTooOldSchema(usedVersion, newVersion int64) bool {
 	if usedVersion == initialVersion || newVersion-usedVersion > maxNumberOfDiffsToLoad {
 		return true
 	}
@@ -185,7 +185,7 @@ func shouldUpdateAllSchema(newVersion, usedVersion int64) bool {
 // The second returned value is the delta updated table IDs.
 func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, []int64, error) {
 	// If there isn't any used version, or used version is too old, we do full load.
-	if shouldUpdateAllSchema(newVersion, usedVersion) {
+	if isTooOldSchema(usedVersion, newVersion) {
 		return false, nil, nil
 	}
 	if usedVersion > newVersion {
@@ -397,7 +397,7 @@ type etcdBackend interface {
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory) (d *Domain, err error) {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory, sysFactory func(*Domain) (pools.Resource, error)) (d *Domain, err error) {
 	capacity := 200                // capacity of the sysSessionPool size
 	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
 	d = &Domain{
@@ -428,7 +428,19 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 	ctx := goctx.Background()
 	callback := &ddlCallback{do: d}
-	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease)
+
+	// TODO: Here we create new sessions with sysFac in DDL,
+	// which will use `d` as Domain instead of call `domap.Get`.
+	// That's because `domap.Get` requires a lock, but before
+	// we initialize Domain finish, we can't require that again.
+	// After we remove the lazy logic of creating Domain, we
+	// can simplify code here.
+	sysFac := func() (pools.Resource, error) {
+		return sysFactory(d)
+	}
+	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, idleTimeout)
+	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease, sysCtxPool)
+
 	if err = d.ddl.SchemaSyncer().Init(ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -454,6 +466,7 @@ func (do *Domain) SysSessionPool() *pools.ResourcePool {
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
+	ctx.GetSessionVars().InRestrictedSQL = true
 	do.privHandle = privileges.NewHandle()
 	err := do.privHandle.Update(ctx)
 	if err != nil {
@@ -517,6 +530,7 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It
 // should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
+	ctx.GetSessionVars().InRestrictedSQL = true
 	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
 	do.ddl.RegisterEventCh(do.statsHandle.DDLEventCh())
 	err := do.statsHandle.Update(do.InfoSchema())
