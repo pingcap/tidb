@@ -54,7 +54,7 @@ type caseWhenFunctionClass struct {
 }
 
 // Infer result type for builtin IF, IFNULL && NULLIF.
-func inferType(tp1, tp2 *types.FieldType) *types.FieldType {
+func inferType4ControlFuncs(tp1, tp2 *types.FieldType) *types.FieldType {
 	retTp, typeClass := &types.FieldType{}, types.ClassString
 	if tp1.Tp == mysql.TypeNull {
 		*retTp, typeClass = *tp2, tp2.ToClass()
@@ -375,7 +375,7 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	retTp := inferType(args[1].GetType(), args[2].GetType())
+	retTp := inferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := fieldTp2EvalTp(retTp)
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
 	if err != nil {
@@ -570,7 +570,7 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 		return nil, errors.Trace(err)
 	}
 	tp0, tp1 := args[0].GetType(), args[1].GetType()
-	retTp := inferType(tp0, tp1)
+	retTp := inferType4ControlFuncs(tp0, tp1)
 	retTp.Flag |= (tp0.Flag & mysql.NotNullFlag) | (tp1.Flag & mysql.NotNullFlag)
 	if tp0.Tp == mysql.TypeNull && tp1.Tp == mysql.TypeNull {
 		retTp.Tp = mysql.TypeNull
