@@ -188,12 +188,13 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx goctx.Context) (int64, error) {
 	for {
 		if isContextDone(ctx) {
-			return errors.Trace(ctx.Err())
+			return 0, errors.Trace(ctx.Err())
 		}
 
 		resp, err := s.etcdCli.Get(ctx, DDLGlobalSchemaVersion)
-		if isContextFinished(err) {
-			return 0, errors.Trace(err)
+		if err != nil {
+			log.Infof("[syncer] get global version failed %v", err)
+			continue
 		}
 		if err == nil && len(resp.Kvs) > 0 {
 			var ver int
