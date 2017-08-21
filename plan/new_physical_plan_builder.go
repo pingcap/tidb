@@ -105,7 +105,7 @@ func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int
 	return matchOffsets
 }
 
-func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int) []PhysicalPlan {
+func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int, innerPlan PhysicalPlan) []PhysicalPlan {
 	var rightConds, leftConds expression.CNFExprs
 	if outerIdx == 0 {
 		rightConds = p.RightConditions.Clone()
@@ -124,6 +124,7 @@ func (p *LogicalJoin) constructIndexJoin(innerJoinKeys, outerJoinKeys []*express
 		InnerJoinKeys:   innerJoinKeys,
 		DefaultValues:   p.DefaultValues,
 		outerSchema:     p.children[outerIdx].Schema(),
+		innerPlan:       innerPlan,
 	}.init(p.allocator, p.ctx, p.children[outerIdx], p.children[1-outerIdx])
 	join.SetSchema(expression.MergeSchema(p.children[outerIdx].Schema(), p.children[1-outerIdx].Schema()))
 	join.profile = p.profile
@@ -151,14 +152,15 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
 		outerJoinKeys = p.RightJoinKeys
 	}
 	x, ok := innerChild.(*DataSource)
-	if !ok {
+	if !ok || x.unionScanSchema != nil {
 		return nil
 	}
 	indices, includeTableScan := availableIndices(x.indexHints, x.tableInfo)
 	if includeTableScan && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
-			return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx)
+			innerPlan := x.forceToTableScan()
+			return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
 		}
 	}
 	for _, indexInfo := range indices {
@@ -178,7 +180,8 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(outerIdx int) []PhysicalPlan {
 		break
 	}
 	if usedIndexInfo != nil {
-		return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx)
+		innerPlan := x.forceToIndexScan(usedIndexInfo)
+		return p.constructIndexJoin(innerJoinKeys, outerJoinKeys, outerIdx, innerPlan)
 	}
 	return nil
 }
@@ -198,11 +201,7 @@ func (p *PhysicalIndexJoin) getChildrenPossibleProps(prop *requiredProp) [][]*re
 	}
 	requiredProps1 := make([]*requiredProp, 2)
 	requiredProps1[p.outerIndex] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
-	requiredProps1[1-p.outerIndex] = &requiredProp{taskTp: copSingleReadTaskType, cols: p.InnerJoinKeys, expectedCnt: math.MaxFloat64}
-	requiredProps2 := make([]*requiredProp, 2)
-	requiredProps2[p.outerIndex] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
-	requiredProps2[1-p.outerIndex] = &requiredProp{taskTp: copDoubleReadTaskType, cols: p.InnerJoinKeys, expectedCnt: math.MaxFloat64}
-	return [][]*requiredProp{requiredProps1, requiredProps2}
+	return [][]*requiredProp{requiredProps1}
 }
 
 func (p *PhysicalMergeJoin) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
@@ -621,6 +620,9 @@ func (p *DataSource) tryToGetDualTask() (task, error) {
 // convert2NewPhysicalPlan implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+	if prop == nil {
+		return nil, nil
+	}
 	t, err := p.getTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -663,6 +665,45 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		}
 	}
 	return t, p.storeTask(prop, t)
+}
+
+func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
+	is := PhysicalIndexScan{
+		Table:               p.tableInfo,
+		TableAsName:         p.TableAsName,
+		DBName:              p.DBName,
+		Columns:             p.Columns,
+		Index:               idx,
+		dataSourceSchema:    p.schema,
+		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle},
+		Ranges:              ranger.FullIndexRange(),
+	}.init(p.allocator, p.ctx)
+	is.filterCondition = p.pushedDownConds
+	is.profile = p.profile
+	cop := &copTask{
+		indexPlan: is,
+	}
+	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
+		// On this way, it's double read case.
+		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
+		cop.tablePlan.SetSchema(is.dataSourceSchema)
+	}
+	var indexCols []*expression.Column
+	for _, col := range idx.Columns {
+		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
+	}
+	if is.Table.PKIsHandle {
+		for _, col := range is.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
+				break
+			}
+		}
+	}
+	is.SetSchema(expression.NewSchema(indexCols...))
+	is.addPushedDownSelection(cop, p, math.MaxFloat64)
+	t := finishCopTask(cop, p.ctx, p.allocator)
+	return t.plan()
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
@@ -827,6 +868,27 @@ func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Colum
 		}
 	}
 	return true
+}
+
+func (p *DataSource) forceToTableScan() PhysicalPlan {
+	ts := PhysicalTableScan{
+		Table:               p.tableInfo,
+		Columns:             p.Columns,
+		TableAsName:         p.TableAsName,
+		DBName:              p.DBName,
+		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle},
+		Ranges:              ranger.FullIntRange(),
+	}.init(p.allocator, p.ctx)
+	ts.SetSchema(p.schema)
+	ts.profile = p.profile
+	ts.filterCondition = p.pushedDownConds
+	copTask := &copTask{
+		tablePlan:         ts,
+		indexPlanFinished: true,
+	}
+	ts.addPushedDownSelection(copTask, p.profile, math.MaxFloat64)
+	t := finishCopTask(copTask, p.ctx, p.allocator)
+	return t.plan()
 }
 
 // convertToTableScan converts the DataSource to table scan.
