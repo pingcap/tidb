@@ -561,6 +561,7 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		err error
 	)
 
+	var hhmmss bool
 	seps, fracStr := splitDateTime(str)
 	switch len(seps) {
 	case 1:
@@ -569,10 +570,17 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		if len(sep) == 14 {
 			// YYYYMMDDHHMMSS
 			_, err = fmt.Sscanf(sep, "%4d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
+			hhmmss = true
 		} else if len(sep) == 12 {
 			// YYMMDDHHMMSS
 			_, err = fmt.Sscanf(sep, "%2d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
 			year = adjustYear(year)
+			hhmmss = true
+		} else if len(sep) == 11 {
+			// YYMMDDHHMMS
+			_, err = fmt.Sscanf(sep, "%2d%2d%2d%2d%2d%1d", &year, &month, &day, &hour, &minute, &second)
+			year = adjustYear(year)
+			hhmmss = true
 		} else if len(sep) == 8 {
 			// YYYYMMDD
 			_, err = fmt.Sscanf(sep, "%4d%2d%2d", &year, &month, &day)
@@ -593,6 +601,7 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		// We don't have fractional seconds part.
 		// YYYY-MM-DD HH-MM-SS
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
+		hhmmss = true
 	default:
 		return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
 	}
@@ -611,9 +620,14 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		}
 	}
 
-	microsecond, overflow, err := parseFrac(fracStr, fsp)
-	if err != nil {
-		return ZeroDatetime, errors.Trace(err)
+	var microsecond int
+	var overflow bool
+	if hhmmss {
+		// If input string is "20170118.999", without hhmmss, fsp is meanless.
+		microsecond, overflow, err = parseFrac(fracStr, fsp)
+		if err != nil {
+			return ZeroDatetime, errors.Trace(err)
+		}
 	}
 
 	tmp := FromDate(year, month, day, hour, minute, second, microsecond)
