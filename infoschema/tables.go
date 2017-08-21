@@ -678,8 +678,7 @@ func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
 	rows := [][]types.Datum{}
 	for i, col := range tbl.Columns {
-		colLen := col.Flen
-		decimal := col.Decimal
+		colLen, decimal := col.Flen, col.Decimal
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
 		if colLen == types.UnspecifiedLength {
 			colLen = defaultFlen

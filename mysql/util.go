@@ -22,7 +22,7 @@ var defaultLengthAndDecimal = map[byte]struct {
 	TypeShort:      {6, 0},
 	TypeInt24:      {9, 0},
 	TypeLong:       {11, 0},
-	TypeLonglong:   {20, 0},
+	TypeLonglong:   {21, 0},
 	TypeDouble:     {22, NotFixedDec},
 	TypeFloat:      {12, NotFixedDec},
 	TypeNewDecimal: {11, 0},
