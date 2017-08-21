@@ -298,11 +298,10 @@ func ConvertJSONToInt(sc *variable.StatementContext, j json.JSON, unsigned bool)
 			lBound := SignedLowerBound[mysql.TypeLonglong]
 			uBound := SignedUpperBound[mysql.TypeLonglong]
 			return ConvertFloatToInt(sc, f, lBound, uBound, mysql.TypeDouble)
-		} else {
-			bound := UnsignedUpperBound[mysql.TypeLonglong]
-			u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
-			return int64(u), errors.Trace(err)
 		}
+		bound := UnsignedUpperBound[mysql.TypeLonglong]
+		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
+		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
 		val, err := strconv.Atoi(j.Str)
 		if err != nil {
