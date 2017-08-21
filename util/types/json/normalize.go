@@ -25,62 +25,62 @@ import (
 func normalize(in interface{}) (j JSON, err error) {
 	switch t := in.(type) {
 	case nil:
-		j.typeCode = TypeCodeLiteral
-		j.i64 = int64(LiteralNil)
+		j.TypeCode = TypeCodeLiteral
+		j.I64 = int64(LiteralNil)
 	case bool:
-		j.typeCode = TypeCodeLiteral
+		j.TypeCode = TypeCodeLiteral
 		if t {
-			j.i64 = int64(LiteralTrue)
+			j.I64 = int64(LiteralTrue)
 		} else {
-			j.i64 = int64(LiteralFalse)
+			j.I64 = int64(LiteralFalse)
 		}
 	case int64:
-		j.typeCode = TypeCodeInt64
-		j.i64 = t
+		j.TypeCode = TypeCodeInt64
+		j.I64 = t
 	case uint64:
-		j.typeCode = TypeCodeUint64
-		j.i64 = *(*int64)(unsafe.Pointer(&t))
+		j.TypeCode = TypeCodeUint64
+		j.I64 = *(*int64)(unsafe.Pointer(&t))
 	case float64:
-		j.typeCode = TypeCodeFloat64
-		*(*float64)(unsafe.Pointer(&j.i64)) = t
+		j.TypeCode = TypeCodeFloat64
+		*(*float64)(unsafe.Pointer(&j.I64)) = t
 	case json.Number:
 		if i64, errTp := t.Int64(); errTp == nil {
-			j.typeCode = TypeCodeInt64
-			j.i64 = i64
+			j.TypeCode = TypeCodeInt64
+			j.I64 = i64
 		} else {
 			f64, _ := t.Float64()
-			j.typeCode = TypeCodeFloat64
-			*(*float64)(unsafe.Pointer(&j.i64)) = f64
+			j.TypeCode = TypeCodeFloat64
+			*(*float64)(unsafe.Pointer(&j.I64)) = f64
 		}
 	case string:
-		j.typeCode = TypeCodeString
-		j.str = t
+		j.TypeCode = TypeCodeString
+		j.Str = t
 	case JSON:
 		j = t
 	case map[string]JSON:
-		j.typeCode = TypeCodeObject
-		j.object = t
+		j.TypeCode = TypeCodeObject
+		j.Object = t
 	case map[string]interface{}:
-		j.typeCode = TypeCodeObject
-		j.object = make(map[string]JSON, len(t))
+		j.TypeCode = TypeCodeObject
+		j.Object = make(map[string]JSON, len(t))
 		for key, value := range t {
-			if j.object[key], err = normalize(value); err != nil {
+			if j.Object[key], err = normalize(value); err != nil {
 				return
 			}
 		}
 	case []JSON:
-		j.typeCode = TypeCodeArray
-		j.array = t
+		j.TypeCode = TypeCodeArray
+		j.Array = t
 	case []interface{}:
-		j.typeCode = TypeCodeArray
-		j.array = make([]JSON, 0, len(t))
+		j.TypeCode = TypeCodeArray
+		j.Array = make([]JSON, 0, len(t))
 		for _, elem := range t {
 			var elem1 JSON
 			elem1, err = normalize(elem)
 			if err != nil {
 				return j, err
 			}
-			j.array = append(j.array, elem1)
+			j.Array = append(j.Array, elem1)
 		}
 	default:
 		msg := fmt.Sprintf(unknownTypeErrorMsg, reflect.TypeOf(in))

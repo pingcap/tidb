@@ -21,10 +21,12 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 func truncateStr(str string, flen int) string {
@@ -274,6 +276,71 @@ func StrToFloat(sc *variable.StatementContext, str string) (float64, error) {
 		return f, errors.Trace(err1)
 	}
 	return f, errors.Trace(err)
+}
+
+// ConvertJSONToInt casts JSON into int64.
+func ConvertJSONToInt(sc *variable.StatementContext, j json.JSON, unsigned bool) (int64, error) {
+	switch j.TypeCode {
+	case json.TypeCodeObject, json.TypeCodeArray:
+		return 0, nil
+	case json.TypeCodeLiteral:
+		switch byte(j.I64) {
+		case json.LiteralNil, json.LiteralFalse:
+			return 0, nil
+		default:
+			return 1, nil
+		}
+	case json.TypeCodeInt64, json.TypeCodeUint64:
+		return j.I64, nil
+	case json.TypeCodeFloat64:
+		f := *(*float64)(unsafe.Pointer(&j.I64))
+		if !unsigned {
+			lBound := SignedLowerBound[mysql.TypeLonglong]
+			uBound := SignedUpperBound[mysql.TypeLonglong]
+			return ConvertFloatToInt(sc, f, lBound, uBound, mysql.TypeDouble)
+		} else {
+			bound := UnsignedUpperBound[mysql.TypeLonglong]
+			u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
+			return int64(u), errors.Trace(err)
+		}
+	case json.TypeCodeString:
+		val, err := strconv.Atoi(j.Str)
+		if err != nil {
+			val = 0
+		}
+		return int64(val), nil
+	}
+	return 0, errors.New("Unknown type code in JSON")
+}
+
+// ConvertJSONToFloat casts JSON into float64.
+func ConvertJSONToFloat(sc *variable.StatementContext, j json.JSON) (float64, error) {
+	switch j.TypeCode {
+	case json.TypeCodeObject, json.TypeCodeArray:
+		return 0, nil
+	case json.TypeCodeLiteral:
+		switch byte(j.I64) {
+		case json.LiteralNil, json.LiteralFalse:
+			return 0, nil
+		default:
+			return 1, nil
+		}
+	case json.TypeCodeInt64:
+		return float64(j.I64), nil
+	case json.TypeCodeUint64:
+		u, err := ConvertIntToUint(j.I64, UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		return float64(u), errors.Trace(err)
+	case json.TypeCodeFloat64:
+		f := *(*float64)(unsafe.Pointer(&j.I64))
+		return f, nil
+	case json.TypeCodeString:
+		val, err := strconv.ParseFloat(j.Str, 64)
+		if err != nil {
+			val = 0
+		}
+		return val, nil
+	}
+	return 0, errors.New("Unknown type code in JSON")
 }
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.

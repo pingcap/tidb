@@ -81,23 +81,23 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			// for JSON null.
 			cmp = 0
 		}
-		switch j1.typeCode {
+		switch j1.TypeCode {
 		case TypeCodeLiteral:
-			left := j1.i64
-			right := j2.i64
+			left := j1.I64
+			right := j2.I64
 			// false is less than true.
 			cmp = int(right - left)
 		case TypeCodeInt64, TypeCodeUint64, TypeCodeFloat64:
-			left := i64AsFloat64(j1.i64, j1.typeCode)
-			right := i64AsFloat64(j2.i64, j2.typeCode)
+			left := i64AsFloat64(j1.I64, j1.TypeCode)
+			right := i64AsFloat64(j2.I64, j2.TypeCode)
 			cmp = compareFloat64PrecisionLoss(left, right)
 		case TypeCodeString:
-			left := j1.str
-			right := j2.str
+			left := j1.Str
+			right := j2.Str
 			cmp = strings.Compare(left, right)
 		case TypeCodeArray:
-			left := j1.array
-			right := j2.array
+			left := j1.Array
+			right := j2.Array
 			for i := 0; i < len(left) && i < len(right); i++ {
 				elem1 := left[i]
 				elem2 := right[i]
@@ -114,15 +114,15 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			s2 := Serialize(j2)
 			cmp = bytes.Compare(s1, s2)
 		default:
-			err = errors.Errorf(unknownTypeCodeErrorMsg, j1.typeCode)
+			err = errors.Errorf(unknownTypeCodeErrorMsg, j1.TypeCode)
 			return
 		}
 	} else if (precedence1 == jsonTypePrecedences["BOOLEAN"] && precedence2 == jsonTypePrecedences["INTEGER"]) ||
 		(precedence1 == jsonTypePrecedences["INTEGER"] && precedence2 == jsonTypePrecedences["BOOLEAN"]) {
 		// tidb treat boolean as integer, but boolean is different from integer in JSON.
 		// so we need convert them to same type and then compare.
-		left := i64AsFloat64(j1.i64, j1.typeCode)
-		right := i64AsFloat64(j2.i64, j2.typeCode)
+		left := i64AsFloat64(j1.I64, j1.TypeCode)
+		right := i64AsFloat64(j2.I64, j2.TypeCode)
 		cmp = compareFloat64PrecisionLoss(left, right)
 	} else {
 		cmp = precedence1 - precedence2

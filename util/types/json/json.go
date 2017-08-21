@@ -49,11 +49,11 @@ const unknownTypeErrorMsg = "unknown type: %s"
 
 // JSON is for MySQL JSON type.
 type JSON struct {
-	typeCode TypeCode
-	i64      int64
-	str      string
-	object   map[string]JSON
-	array    []JSON
+	TypeCode TypeCode
+	I64      int64
+	Str      string
+	Object   map[string]JSON
+	Array    []JSON
 }
 
 // CreateJSON creates a JSON from in. Panic if any error occurs.
@@ -81,13 +81,13 @@ func ParseFromString(s string) (j JSON, err error) {
 
 // MarshalJSON implements Marshaler interface.
 func (j JSON) MarshalJSON() ([]byte, error) {
-	switch j.typeCode {
+	switch j.TypeCode {
 	case TypeCodeObject:
-		return json.Marshal(j.object)
+		return json.Marshal(j.Object)
 	case TypeCodeArray:
-		return json.Marshal(j.array)
+		return json.Marshal(j.Array)
 	case TypeCodeLiteral:
-		switch byte(j.i64) {
+		switch byte(j.I64) {
 		case LiteralNil:
 			return []byte("null"), nil
 		case LiteralTrue:
@@ -96,17 +96,17 @@ func (j JSON) MarshalJSON() ([]byte, error) {
 			return []byte("false"), nil
 		}
 	case TypeCodeInt64:
-		return json.Marshal(j.i64)
+		return json.Marshal(j.I64)
 	case TypeCodeUint64:
-		u64 := *(*uint64)(unsafe.Pointer(&j.i64))
+		u64 := *(*uint64)(unsafe.Pointer(&j.I64))
 		return json.Marshal(u64)
 	case TypeCodeFloat64:
-		f64 := *(*float64)(unsafe.Pointer(&j.i64))
+		f64 := *(*float64)(unsafe.Pointer(&j.I64))
 		return json.Marshal(f64)
 	case TypeCodeString:
-		return json.Marshal(j.str)
+		return json.Marshal(j.Str)
 	default:
-		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.typeCode)
+		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.TypeCode)
 		panic(msg)
 	}
 }
