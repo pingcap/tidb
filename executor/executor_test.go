@@ -17,7 +17,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -498,35 +497,6 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite) TestDAG(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-	tk.MustExec("use test")
-	tk.MustExec("create table select_dag(id int not null default 1, name varchar(255));")
-
-	tk.MustExec("insert INTO select_dag VALUES (1, \"hello\");")
-	tk.MustExec("insert INTO select_dag VALUES (2, \"hello\");")
-	tk.MustExec("insert INTO select_dag VALUES (3, \"hello\");")
-	tk.CheckExecResult(1, 0)
-
-	r := tk.MustQuery("select * from select_dag;")
-	r.Check(testkit.Rows("1 hello", "2 hello", "3 hello"))
-
-	r = tk.MustQuery("select * from select_dag where id > 1;")
-	r.Check(testkit.Rows("2 hello", "3 hello"))
-
-	// for limit
-	r = tk.MustQuery("select * from select_dag limit 1;")
-	r.Check(testkit.Rows("1 hello"))
-	r = tk.MustQuery("select * from select_dag limit 0;")
-	r.Check(testkit.Rows())
-	r = tk.MustQuery("select * from select_dag limit 5;")
-	r.Check(testkit.Rows("1 hello", "2 hello", "3 hello"))
-}
-
 func (s *testSuite) TestSelectOrderBy(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -815,6 +785,14 @@ func (s *testSuite) TestUnion(c *C) {
 
 	// test race
 	tk.MustQuery("SELECT @x:=0 UNION ALL SELECT @x:=0 UNION ALL SELECT @x")
+
+	// test field tp
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("CREATE TABLE t1 (a date)")
+	tk.MustExec("CREATE TABLE t2 (a date)")
+	tk.MustExec("SELECT a from t1 UNION select a FROM t2")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" + "  `a` date DEFAULT NULL\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
+
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -1619,6 +1597,12 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustQuery("select * from t where b = 2").Check(testkit.Rows("4 2 3"))
 	tk.MustQuery("select count(*) from t where b = 1").Check(testkit.Rows("3"))
 	tk.MustQuery("select * from t where b = 1 and a > 1 limit 1").Check(testkit.Rows("2 1 1"))
+
+	// Test time push down.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, c1 datetime);")
+	tk.MustExec("insert into t values (1, '2015-06-07 12:12:12')")
+	tk.MustQuery("select id from t where c1 = '2015-06-07 12:12:12'").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestTimestampTimeZone(c *C) {
@@ -1825,39 +1809,6 @@ func (s *testSuite) TestIssue4024(c *C) {
 	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
 }
 
-func (s *testSuite) TestMiscellaneousBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	// for uuid
-	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
-	for _, it := range r.Rows() {
-		for _, item := range it {
-			uuid, ok := item.(string)
-			c.Assert(ok, Equals, true)
-			list := strings.Split(uuid, "-")
-			c.Assert(len(list), Equals, 5)
-			c.Assert(len(list[0]), Equals, 8)
-			c.Assert(len(list[1]), Equals, 4)
-			c.Assert(len(list[2]), Equals, 4)
-			c.Assert(len(list[3]), Equals, 4)
-			c.Assert(len(list[4]), Equals, 12)
-		}
-	}
-	tk.MustQuery("select sleep(1);").Check(testkit.Rows("0"))
-	tk.MustQuery("select sleep(0);").Check(testkit.Rows("0"))
-	tk.MustQuery("select sleep('a');").Check(testkit.Rows("0"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1265 Data Truncated"))
-	rs, err := tk.Exec("select sleep(-1);")
-	c.Assert(err, IsNil)
-	c.Assert(rs, NotNil)
-	_, err = tidb.GetRows(rs)
-	c.Assert(err, NotNil)
-}
 func (s *testSuite) TestSchemaCheckerSQL(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := tikv.NewMockTikvStore()

@@ -23,7 +23,7 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/owner"
 	goctx "golang.org/x/net/context"
 )
 
@@ -98,10 +98,8 @@ func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val st
 	opts ...clientv3.OpOption) error {
 	var err error
 	for i := 0; i < retryCnt; i++ {
-		select {
-		case <-ctx.Done():
+		if isContextDone(ctx) {
 			return errors.Trace(ctx.Err())
-		default:
 		}
 
 		childCtx, cancel := goctx.WithTimeout(ctx, keyOpDefaultTimeout)
@@ -125,8 +123,8 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.session, err = newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
-		newSessionDefaultRetryCnt, SyncerSessionTTL)
+	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
+	s.session, err = owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionDefaultRetryCnt, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -142,8 +140,8 @@ func (s *schemaVersionSyncer) Done() <-chan struct{} {
 
 // Restart implements SchemaSyncer.Restart interface.
 func (s *schemaVersionSyncer) Restart(ctx goctx.Context) error {
-	session, err := newSession(ctx, s.selfSchemaVerPath, s.etcdCli,
-		newSessionRetryUnlimited, SyncerSessionTTL)
+	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
+	session, err := owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionRetryUnlimited, SyncerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -189,10 +187,8 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 // MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
 func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx goctx.Context) (int64, error) {
 	for {
-		select {
-		case <-ctx.Done():
-			return 0, errors.Trace(ctx.Err())
-		default:
+		if isContextDone(ctx) {
+			return errors.Trace(ctx.Err())
 		}
 
 		resp, err := s.etcdCli.Get(ctx, DDLGlobalSchemaVersion)
@@ -211,10 +207,11 @@ func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx goctx.Context) (int64, er
 	}
 }
 
-func isContextFinished(err error) bool {
-	if terror.ErrorEqual(err, goctx.Canceled) ||
-		terror.ErrorEqual(err, goctx.DeadlineExceeded) {
+func isContextDone(ctx goctx.Context) bool {
+	select {
+	case <-ctx.Done():
 		return true
+	default:
 	}
 	return false
 }
@@ -226,16 +223,11 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 	intervalCnt := int(time.Second / checkVersInterval)
 	updatedMap := make(map[string]struct{})
 	for {
-		select {
-		case <-ctx.Done():
+		if isContextDone(ctx) {
 			return errors.Trace(ctx.Err())
-		default:
 		}
 
 		resp, err := s.etcdCli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
-		if isContextFinished(err) {
-			return errors.Trace(err)
-		}
 		if err != nil {
 			log.Infof("[syncer] check all versions failed %v", err)
 			continue

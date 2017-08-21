@@ -1,5 +1,5 @@
-hash: 4ff8f14860bbc326efc0549a48c2b37d3058a41bb6f03ad658127f65894ff0e2
-updated: 2017-07-25T12:22:31.695259691+08:00
+hash: e7138b459686bbcdecd0005a1a7e785686171ae6229c4b44855e7e4d1422064d
+updated: 2017-08-16T14:52:37.068717494+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -49,7 +49,7 @@ imports:
 - name: github.com/ghodss/yaml
   version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
 - name: github.com/go-sql-driver/mysql
-  version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
+  version: 3955978caca48c1658a4bb7a9c6a0f084e326af3
 - name: github.com/gogo/protobuf
   version: 100ba4e885062801d56799d78530b73b178a78f3
   subpackages:
@@ -129,7 +129,7 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: 5e4b9cf7c32d2b09ba71aa9ab6675ec135f9fbda
+  version: 27d6520cddb4af5dedc62d742d172c49358e6ed9
   subpackages:
   - go-binlog
   - go-tipb
@@ -193,7 +193,7 @@ imports:
   subpackages:
   - rate
 - name: google.golang.org/genproto
-  version: aa2eb687b4d3e17154372564ad8d6bf11c3cf21f
+  version: 6b7d9516179cd47f4714cfeb0103ad1dede756c4
   subpackages:
   - googleapis/rpc/status
 - name: google.golang.org/grpc

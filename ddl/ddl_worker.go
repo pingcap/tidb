@@ -111,19 +111,7 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	switch job.Type {
 	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex:
 		if job.Version <= currentVersion {
-			if job.Version < bgJobMigrateVersion {
-				// TODO: remove this logic in future.
-				log.Infof("[ddl] deal with old job %d (version %d)", job.ID, job.Version)
-				err = t.EnQueueBgJob(&model.Job{
-					ID:       job.ID,
-					SchemaID: job.SchemaID,
-					TableID:  job.TableID,
-					Type:     job.Type,
-					RawArgs:  job.RawArgs,
-				})
-			} else {
-				err = d.delRangeManager.addDelRangeJob(job)
-			}
+			err = d.delRangeManager.addDelRangeJob(job)
 		} else {
 			err = errInvalidJobVersion.GenByArgs(job.Version, currentVersion)
 		}

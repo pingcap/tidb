@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 )
 
 const (
@@ -130,8 +131,8 @@ type SessionVars struct {
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
-	// User is the username with which the session login.
-	User string
+	// User is the user identity with which the session login.
+	User *auth.UserIdentity
 
 	// CurrentDB is the default database of this session.
 	CurrentDB string
@@ -208,6 +209,9 @@ type SessionVars struct {
 
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
+
+	// BatchDelete indicates if we should split delete data into multiple batches.
+	BatchDelete bool
 
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
