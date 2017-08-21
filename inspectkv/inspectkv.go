@@ -64,24 +64,6 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-// GetBgDDLInfo returns background DDL information.
-func GetBgDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
-	var err error
-	info := &DDLInfo{}
-	t := meta.NewMeta(txn)
-
-	info.Job, err = t.GetBgJob(0)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	info.SchemaVer, err = t.GetSchemaVersion()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return info, nil
-}
-
 func nextIndexVals(data []types.Datum) []types.Datum {
 	// Add 0x0 to the end of data.
 	return append(data, types.Datum{})

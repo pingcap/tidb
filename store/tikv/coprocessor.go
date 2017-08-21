@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -42,15 +41,15 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic, kv.ReqSubTypeTopN:
 			return true
 		default:
-			return supportExpr(tipb.ExprType(subType))
+			return c.supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
-		return true
+		return c.supportExpr(tipb.ExprType(subType))
 	}
 	return false
 }
 
-func supportExpr(exprType tipb.ExprType) bool {
+func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
 		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
@@ -62,7 +61,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 	// compare operators.
 	case tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
 		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
-		tipb.ExprType_In, tipb.ExprType_ValueList,
+		tipb.ExprType_In, tipb.ExprType_ValueList, tipb.ExprType_IsNull,
 		tipb.ExprType_Like:
 		return true
 	// arithmetic operators.
@@ -361,7 +360,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		go func() {
-			childCtx, cancel := util.WithCancel(ctx)
+			childCtx, cancel := goctx.WithCancel(ctx)
 			defer cancel()
 			it.work(childCtx, it.taskCh)
 		}()
@@ -369,7 +368,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 
 	go func() {
 		// Send tasks to feed the worker goroutines.
-		childCtx, cancel := util.WithCancel(ctx)
+		childCtx, cancel := goctx.WithCancel(ctx)
 		defer cancel()
 		for _, t := range it.tasks {
 			finished, canceled := it.sendToTaskCh(childCtx, t)
