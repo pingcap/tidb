@@ -92,6 +92,10 @@ const (
 	// insert data into multiple batches and use a single txn for each batch. This will be helpful when inserting large data.
 	TiDBBatchInsert = "tidb_batch_insert"
 
+	// tidb_batch_delete is used to enable/disable auto-split delete data. If set this option on, delete executor will automatically
+	// split data into multiple batches and use a single txn for each batch. This will be helpful when deleting large data.
+	TiDBBatchDelete = "tidb_batch_delete"
+
 	// tidb_max_row_count_for_inlj is used when do index nested loop join.
 	// It controls the max row count of outer table when do index nested loop join without hint.
 	// After the row count of the inner table is accurate, this variable will be removed.
@@ -114,5 +118,6 @@ const (
 	DefOptAggPushDown             = true
 	DefOptInSubqUnfolding         = false
 	DefBatchInsert                = false
+	DefBatchDelete                = false
 	DefCurretTS                   = 0
 )

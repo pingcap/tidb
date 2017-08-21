@@ -215,28 +215,6 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 	}
 }
 
-// DecodeValues decodes a byte slice into datums with column types.
-func DecodeValues(data []byte, fts []*types.FieldType, loc *time.Location) ([]types.Datum, error) {
-	if len(data) == 0 {
-		return nil, nil
-	}
-	values, err := codec.Decode(data, len(fts))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(values) > len(fts) {
-		return nil, errInvalidColumnCount.Gen("invalid column count %d is less than value count %d", len(fts), len(values))
-	}
-
-	for i := range values {
-		values[i], err = unflatten(values[i], fts[i], loc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return values, nil
-}
-
 // DecodeColumnValue decodes data to a Datum according to the column info.
 func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
 	_, d, err := codec.DecodeOne(data)

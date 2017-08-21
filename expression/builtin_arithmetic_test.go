@@ -205,3 +205,66 @@ func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
 	}
 }
+
+func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
+	defer testleak.AfterTest(c)()
+	testCases := []struct {
+		args   []interface{}
+		expect interface{}
+	}{
+		{
+			args:   []interface{}{float64(11.1111111), float64(11.1)},
+			expect: float64(1.001001),
+		},
+		{
+			args:   []interface{}{float64(11.1111111), float64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{int64(11), int64(11)},
+			expect: float64(1),
+		},
+		{
+			args:   []interface{}{int64(11), int64(2)},
+			expect: float64(5.5),
+		},
+		{
+			args:   []interface{}{int64(11), int64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{uint64(11), uint64(11)},
+			expect: float64(1),
+		},
+		{
+			args:   []interface{}{uint64(11), uint64(2)},
+			expect: float64(5.5),
+		},
+		{
+			args:   []interface{}{uint64(11), uint64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{nil, float64(-0.11101)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{float64(1.01), nil},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{nil, nil},
+			expect: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		sig, err := funcs[ast.Div].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(sig, NotNil)
+		c.Assert(sig.isDeterministic(), Equals, true)
+		val, err := sig.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
+	}
+}

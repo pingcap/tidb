@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -418,7 +417,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 		_, err := txn.Get(recordKey)
 		if err == nil {
 			return recordID, errors.Trace(e)
-		} else if !terror.ErrorEqual(err, kv.ErrNotExist) {
+		} else if !kv.ErrNotExist.Equal(err) {
 			return 0, errors.Trace(err)
 		}
 		txn.DelOption(kv.PresumeKeyNotExistsError)
@@ -439,7 +438,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
 		if dupHandle, err := v.Create(bs, colVals, recordID); err != nil {
-			if terror.ErrorEqual(err, kv.ErrKeyExists) {
+			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, errors.Trace(dupKeyErr)
 			}
 			return 0, errors.Trace(err)
@@ -589,7 +588,7 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 			continue
 		}
 		if err = v.Delete(ctx.Txn(), vals, h); err != nil {
-			if v.Meta().State != model.StatePublic && terror.ErrorEqual(err, kv.ErrNotExist) {
+			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
 				continue

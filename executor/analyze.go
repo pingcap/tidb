@@ -98,7 +98,6 @@ func (e *AnalyzeExec) Next() (Row, error) {
 				log.Error(errors.ErrorStack(err))
 				continue
 			}
-			result.Ctx = e.ctx
 			dom.StatsHandle().AnalyzeResultCh() <- &result
 		}
 		// We sleep two lease to make sure other tidb node has updated this node.

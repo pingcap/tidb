@@ -210,6 +210,9 @@ type SessionVars struct {
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
 
+	// BatchDelete indicates if we should split delete data into multiple batches.
+	BatchDelete bool
+
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
 
