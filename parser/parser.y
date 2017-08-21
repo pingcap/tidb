@@ -2672,10 +2672,10 @@ StringLiteral:
 		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr(strLit+$2)
 		// Fix #4239, use first string literal as projection name.
-		if len(valExpr.GetProjectionName()) == 0 {
-			expr.SetProjectionName(strLit)
+		if valExpr.GetProjectionOffset() >= 0 {
+			expr.SetProjectionOffset(valExpr.GetProjectionOffset())
 		} else {
-			expr.SetProjectionName(valExpr.GetProjectionName())
+			expr.SetProjectionOffset(len(strLit))
 		}
 		expr.SetType(tp)
 		$$ = expr

@@ -52,7 +52,7 @@ var (
 // ValueExpr is the simple value expression.
 type ValueExpr struct {
 	exprNode
-	projectionName string
+	projectionOffset int
 }
 
 // NewValueExpr creates a ValueExpr with value, and sets default field type.
@@ -63,17 +63,18 @@ func NewValueExpr(value interface{}) *ValueExpr {
 	ve := &ValueExpr{}
 	ve.SetValue(value)
 	types.DefaultTypeForValue(value, &ve.Type)
+	ve.projectionOffset = -1
 	return ve
 }
 
-// SetProjectionName sets ValueExpr.projectionName for logical plan builder.
-func (n *ValueExpr) SetProjectionName(name string) {
-	n.projectionName = name
+// SetProjectionOffset sets ValueExpr.projectionOffset for logical plan builder.
+func (n *ValueExpr) SetProjectionOffset(offset int) {
+	n.projectionOffset = offset
 }
 
-// GetProjectionName returns ValueExpr.projectionName.
-func (n *ValueExpr) GetProjectionName() string {
-	return n.projectionName
+// GetProjectionOffset returns ValueExpr.projectionOffset.
+func (n *ValueExpr) GetProjectionOffset() int {
+	return n.projectionOffset
 }
 
 // Accept implements Node interface.

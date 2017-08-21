@@ -438,8 +438,9 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 	switch valueExpr.Kind() {
 	case types.KindString:
 		projName := valueExpr.GetString()
-		if len(valueExpr.GetProjectionName()) > 0 {
-			projName = valueExpr.GetProjectionName()
+		projOffset := valueExpr.GetProjectionOffset()
+		if projOffset >= 0 {
+			projName = projName[:projOffset]
 		}
 		// See #3686, #3994:
 		// For string literals, string content is used as column name. Non-graph initial characters are trimmed.
