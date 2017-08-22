@@ -1569,25 +1569,6 @@ type nowFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *nowFunctionClass) getFlenAndDecimal(sc *variable.StatementContext, arg Expression) (flen, decimal int) {
-	if constant, ok := arg.(*Constant); ok {
-		fsp, isNull, err := constant.EvalInt(nil, sc)
-		if isNull || err != nil || fsp > int64(types.MaxFsp) {
-			decimal = types.MaxFsp
-		} else if fsp < int64(types.MinFsp) {
-			decimal = types.MinFsp
-		} else {
-			decimal = int(fsp)
-		}
-	}
-	if decimal > 0 {
-		flen = 19 + 1 + decimal
-	} else {
-		flen = 19
-	}
-	return flen, decimal
-}
-
 func (c *nowFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
