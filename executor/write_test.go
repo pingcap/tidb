@@ -963,18 +963,22 @@ func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context
 	return
 }
 
-func (s *testSuite) TestBatchInsert(c *C) {
+func (s *testSuite) TestBatchInsertDelete(c *C) {
 	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	originBatch := executor.BatchInsertSize
+	originDeleteBatch := executor.BatchDeleteSize
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
 		executor.BatchInsertSize = originBatch
+		executor.BatchDeleteSize = originDeleteBatch
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
 	atomic.StoreUint64(&kv.TxnEntryCountLimit, 100)
 	executor.BatchInsertSize = 50
+	executor.BatchDeleteSize = 50
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists batch_insert")
@@ -1021,6 +1025,20 @@ func (s *testSuite) TestBatchInsert(c *C) {
 	tk.MustExec("rollback;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+
+	// Test case for batch delete.
+	// This will meet txn too large error.
+	_, err = tk.Exec("delete from batch_insert;")
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("320"))
+	// Enable batch delete.
+	tk.MustExec("set @@session.tidb_batch_delete=on;")
+	tk.MustExec("delete from batch_insert;")
+	// Make sure that all rows are gone.
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestNullDefault(c *C) {

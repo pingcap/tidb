@@ -379,6 +379,7 @@ var tokenMap = map[string]int{
 	"POSITION":                   position,
 	"POW":                        pow,
 	"POWER":                      power,
+	"PLUGINS":                    plugins,
 	"PREPARE":                    prepare,
 	"PRIMARY":                    primary,
 	"PRIVILEGES":                 privileges,

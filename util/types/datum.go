@@ -24,7 +24,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types/json"
@@ -1101,9 +1100,9 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 	case KindMysqlSet:
 		dec.FromFloat64(d.GetMysqlSet().ToNumber())
 	case KindMysqlJSON:
-		f, err := d.GetMysqlJSON().CastToReal()
-		if err != nil {
-			return ret, errors.Trace(err)
+		f, err1 := d.GetMysqlJSON().CastToReal()
+		if err1 != nil {
+			return ret, errors.Trace(err1)
 		}
 		dec.FromFloat64(f)
 	default:
@@ -1138,7 +1137,7 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.State
 		}
 	}
 
-	if terror.ErrorEqual(err, ErrOverflow) {
+	if ErrOverflow.Equal(err) {
 		// TODO: warnErr need to be ErrWarnDataOutOfRange
 		err = sc.HandleOverflow(err, err)
 	}
@@ -1361,9 +1360,9 @@ func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, 
 	case KindMysqlSet:
 		dec.FromUint(d.GetMysqlSet().Value)
 	case KindMysqlJSON:
-		f, err := d.GetMysqlJSON().CastToReal()
-		if err != nil {
-			return nil, errors.Trace(err)
+		f, err1 := d.GetMysqlJSON().CastToReal()
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		dec.FromFloat64(f)
 	default:

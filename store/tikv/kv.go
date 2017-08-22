@@ -102,6 +102,7 @@ type tikvStore struct {
 	uuid         string
 	oracle       oracle.Oracle
 	client       Client
+	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
 	gcWorker     *GCWorker
@@ -121,6 +122,7 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		uuid:        uuid,
 		oracle:      o,
 		client:      client,
+		pdClient:    pdClient,
 		regionCache: NewRegionCache(pdClient),
 		mock:        mock,
 	}
@@ -265,6 +267,7 @@ func (s *tikvStore) Close() error {
 
 	delete(mc.cache, s.uuid)
 	s.oracle.Close()
+	s.pdClient.Close()
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
 	}

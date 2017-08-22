@@ -141,6 +141,7 @@ func (p *PhysicalTableReader) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexReader) ResolveIndices() {
+	p.basePlan.ResolveIndices()
 	p.indexPlan.ResolveIndices()
 	for _, col := range p.OutputColumns {
 		if col.ID != model.ExtraHandleID {

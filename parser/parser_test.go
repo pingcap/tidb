@@ -403,6 +403,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW INDEXES IN t where true;`, true},
 		{`SHOW KEYS FROM t FROM test where true;`, true},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
+		{`SHOW PLUGINS`, true},
 		// for show character set
 		{"show character set;", true},
 		{"show charset", true},
