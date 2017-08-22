@@ -607,7 +607,7 @@ func (c *monthFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -746,7 +746,7 @@ func (c *dayOfMonthFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -780,7 +780,7 @@ func (c *dayOfWeekFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -816,7 +816,7 @@ func (c *dayOfYearFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -852,7 +852,7 @@ func (c *weekFunctionClass) getFunction(args []Expression, ctx context.Context) 
 		return nil, errors.Trace(err)
 	}
 
-	argTps := []evalTp{tpTime}
+	argTps := []evalTp{tpDatetime}
 	if len(args) == 2 {
 		argTps = append(argTps, tpInt)
 	}
@@ -978,7 +978,7 @@ func (c *weekOfYearFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1017,7 +1017,7 @@ func (c *yearFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1448,7 +1448,7 @@ func (c *utcDateFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1503,7 +1503,7 @@ func (c *utcTimestampFunctionClass) getFunction(args []Expression, ctx context.C
 	if len(args) == 1 {
 		argTps = append(argTps, tpInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, argTps...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1577,7 +1577,7 @@ func (c *nowFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	if len(args) == 1 {
 		argTps = append(argTps, tpInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, argTps...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1866,7 +1866,7 @@ func (c *timestampDiffFunctionClass) getFunction(args []Expression, ctx context.
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpTime, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpDatetime, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2319,7 +2319,7 @@ func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpInt, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpInt, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2886,7 +2886,7 @@ func (c *timestampAddFunctionClass) getFunction(args []Expression, ctx context.C
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpDatetime)
 	bf.tp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxDatetimeWidthNoFsp, Decimal: types.UnspecifiedLength}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2960,7 +2960,7 @@ func (c *toDaysFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2999,7 +2999,7 @@ func (c *toSecondsFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -206,7 +206,7 @@ func (c *anyValueFunctionClass) getFunction(args []Expression, ctx context.Conte
 		sig = &builtinRealAnyValueSig{baseRealBuiltinFunc{bf}}
 	case tpString:
 		sig = &builtinStringAnyValueSig{baseStringBuiltinFunc{bf}}
-	case tpTime:
+	case tpDatetime, tpDate, tpTimestamp:
 		sig = &builtinTimeAnyValueSig{baseTimeBuiltinFunc{bf}}
 	default:
 		panic("unexpected evalTp of builtin function ANY_VALUE")

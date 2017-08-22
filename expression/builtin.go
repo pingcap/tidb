@@ -38,7 +38,9 @@ const (
 	tpReal
 	tpDecimal
 	tpString
-	tpTime
+	tpDatetime
+	tpDate
+	tpTimestamp
 	tpDuration
 	tpJSON
 )
@@ -52,10 +54,14 @@ func fieldTp2EvalTp(tp *types.FieldType) evalTp {
 	case types.ClassDecimal:
 		return tpDecimal
 	case types.ClassString:
-		switch {
-		case types.IsTypeTime(tp.Tp):
-			return tpTime
-		case tp.Tp == mysql.TypeDuration:
+		switch tp.Tp {
+		case mysql.TypeDate:
+			return tpDate
+		case mysql.TypeDatetime:
+			return tpDatetime
+		case mysql.TypeTimestamp:
+			return tpTimestamp
+		case mysql.TypeDuration:
 			return tpDuration
 		}
 	}
@@ -101,8 +107,12 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			args[i], err = WrapWithCastAsDecimal(args[i], ctx)
 		case tpString:
 			args[i], err = WrapWithCastAsString(args[i], ctx)
-		case tpTime:
+		case tpDatetime:
 			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
+		case tpDate:
+			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDate), ctx)
+		case tpTimestamp:
+			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
 		case tpDuration:
 			args[i], err = WrapWithCastAsDuration(args[i], ctx)
 		case tpJSON:
@@ -141,13 +151,28 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			Flen:    0,
 			Decimal: types.UnspecifiedLength,
 		}
-	case tpTime:
+	case tpDatetime:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDatetime,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
+	case tpDate:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeDate,
+			Flen:    mysql.MaxDateWidth,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpTimestamp:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeTimestamp,
+			Flen:    mysql.MaxDatetimeWidthWithFsp,
+			Decimal: types.MaxFsp,
+			Flag:    mysql.BinaryFlag,
+		}
+
 	case tpDuration:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDuration,
