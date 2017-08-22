@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -155,7 +156,7 @@ var (
 
 // handleInvalidTimeError reports error or warning depend on the context.
 func handleInvalidTimeError(ctx context.Context, err error) error {
-	if err == nil || err.Error() != types.ErrInvalidTimeFormat.Error() {
+	if err == nil || !terror.ErrorEqual(err, types.ErrInvalidTimeFormat) {
 		return err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
@@ -925,8 +926,12 @@ func (b *builtinWeekWithModeSig) evalInt(row []types.Datum) (int64, bool, error)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	date, isNull, err := b.args[0].EvalTime(row, sc)
 
-	if isNull || err != nil || date.IsZero() {
+	if isNull || err != nil {
 		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	}
+
+	if date.IsZero() {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 
 	mode, isNull, err := b.args[1].EvalInt(row, sc)
@@ -948,8 +953,12 @@ func (b *builtinWeekWithoutModeSig) evalInt(row []types.Datum) (int64, bool, err
 	sc := b.ctx.GetSessionVars().StmtCtx
 	date, isNull, err := b.args[0].EvalTime(row, sc)
 
-	if isNull || err != nil || date.IsZero() {
+	if isNull || err != nil {
 		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	}
+
+	if date.IsZero() {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 
 	week := date.Time.Week(0)
@@ -1031,8 +1040,12 @@ func (b *builtinWeekOfYearSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	date, isNull, err := b.args[0].EvalTime(row, sc)
 
-	if isNull || err != nil || date.IsZero() {
+	if isNull || err != nil {
 		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	}
+
+	if date.IsZero() {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 
 	week := date.Time.Week(3)
