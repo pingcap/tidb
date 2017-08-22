@@ -33,34 +33,51 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft.Decimal = 5
 	c.Assert(ft.String(), Equals, "time(5)")
 
-	ft.Tp = mysql.TypeLong
-	ft.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
+	ft = NewFieldType(mysql.TypeLong)
+	ft.Flen = 5
+	ft.Flag = mysql.UnsignedFlag | mysql.ZerofillFlag
 	c.Assert(ft.String(), Equals, "int(5) UNSIGNED ZEROFILL")
 	c.Assert(ft.InfoSchemaStr(), Equals, "int(5) unsigned")
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.Flen = 10
-	ft.Decimal = 3
-	c.Assert(ft.String(), Equals, "float(10,3)")
+	ft.Flen = 12   // Default
+	ft.Decimal = 3 // Not Default
+	c.Assert(ft.String(), Equals, "float(12,3)")
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.Flen = 10
-	ft.Decimal = -1
+	ft.Flen = 12    // Default
+	ft.Decimal = -1 // Default
 	c.Assert(ft.String(), Equals, "float")
+	ft = NewFieldType(mysql.TypeFloat)
+	ft.Flen = 5     // Not Default
+	ft.Decimal = -1 // Default
+	c.Assert(ft.String(), Equals, "float")
+	ft = NewFieldType(mysql.TypeFloat)
+	ft.Flen = 7    // Not Default
+	ft.Decimal = 3 // Not Default
+	c.Assert(ft.String(), Equals, "float(7,3)")
 
 	ft = NewFieldType(mysql.TypeDouble)
-	ft.Flen = 10
-	ft.Decimal = 3
-	c.Assert(ft.String(), Equals, "double(10,3)")
+	ft.Flen = 22   // Default
+	ft.Decimal = 3 // Not Default
+	c.Assert(ft.String(), Equals, "double(22,3)")
 	ft = NewFieldType(mysql.TypeDouble)
-	ft.Flen = 10
-	ft.Decimal = -1
+	ft.Flen = 22    // Default
+	ft.Decimal = -1 // Default
 	c.Assert(ft.String(), Equals, "double")
+	ft = NewFieldType(mysql.TypeDouble)
+	ft.Flen = 5     // Not Default
+	ft.Decimal = -1 // Default
+	c.Assert(ft.String(), Equals, "double")
+	ft = NewFieldType(mysql.TypeDouble)
+	ft.Flen = 7    // Not Default
+	ft.Decimal = 3 // Not Default
+	c.Assert(ft.String(), Equals, "double(7,3)")
 
 	ft = NewFieldType(mysql.TypeBlob)
 	ft.Flen = 10
 	ft.Charset = "UTF8"
 	ft.Collate = "UTF8_UNICODE_GI"
-	c.Assert(ft.String(), Equals, "text(10) CHARACTER SET UTF8 COLLATE UTF8_UNICODE_GI")
+	c.Assert(ft.String(), Equals, "text CHARACTER SET UTF8 COLLATE UTF8_UNICODE_GI")
 
 	ft = NewFieldType(mysql.TypeVarchar)
 	ft.Flen = 10
@@ -100,14 +117,24 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft.Flen = 8
 	ft.Decimal = 0
 	c.Assert(ft.String(), Equals, "datetime")
+
 	ft = NewFieldType(mysql.TypeDate)
 	ft.Flen = 8
 	ft.Decimal = 2
-	c.Assert(ft.String(), Equals, "date(2)")
+	c.Assert(ft.String(), Equals, "date")
 	ft = NewFieldType(mysql.TypeDate)
 	ft.Flen = 8
 	ft.Decimal = 0
 	c.Assert(ft.String(), Equals, "date")
+
+	ft = NewFieldType(mysql.TypeYear)
+	ft.Flen = 4
+	ft.Decimal = 0
+	c.Assert(ft.String(), Equals, "year")
+	ft = NewFieldType(mysql.TypeYear)
+	ft.Flen = 2
+	ft.Decimal = 2
+	c.Assert(ft.String(), Equals, "year") // Note: Invalid year.
 }
 
 func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {

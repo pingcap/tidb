@@ -13,10 +13,12 @@
 
 package mysql
 
-var defaultLengthAndDecimal = map[byte]struct {
+type lengthAndDecimal struct {
 	length  int
 	decimal int
-}{
+}
+
+var defaultLengthAndDecimal = map[byte]lengthAndDecimal{
 	TypeBit:        {1, 0},
 	TypeTiny:       {4, 0},
 	TypeShort:      {6, 0},
@@ -26,6 +28,7 @@ var defaultLengthAndDecimal = map[byte]struct {
 	TypeDouble:     {22, -1},
 	TypeFloat:      {12, -1},
 	TypeNewDecimal: {11, 0},
+	TypeDuration:   {10, 0},
 	TypeDate:       {10, 0},
 	TypeTimestamp:  {19, 0},
 	TypeDatetime:   {19, 0},
@@ -39,6 +42,8 @@ var defaultLengthAndDecimal = map[byte]struct {
 	TypeLongBlob:   {4294967295, 0},
 	TypeJSON:       {4294967295, 0},
 	TypeNull:       {0, 0},
+	TypeSet:        {-1, 0},
+	TypeEnum:       {-1, 0},
 }
 
 // GetDefaultFieldLengthAndDecimal returns the default display length (flen) and decimal length for column.
@@ -48,6 +53,26 @@ var defaultLengthAndDecimal = map[byte]struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
 func GetDefaultFieldLengthAndDecimal(tp byte) (flen int, decimal int) {
 	val, ok := defaultLengthAndDecimal[tp]
+	if ok {
+		return val.length, val.decimal
+	}
+	return -1, -1
+}
+
+var defaultLengthAndDecimalForCast = map[byte]lengthAndDecimal{
+	TypeString:     {0, -1}, // Flen & Decimal differs.
+	TypeDate:       {10, 0},
+	TypeDatetime:   {19, 0},
+	TypeNewDecimal: {11, 0},
+	TypeDuration:   {10, 0},
+	TypeLonglong:   {22, 0},
+	TypeJSON:       {4194304, 0}, // Flen differs.
+}
+
+// GetDefaultFieldLengthAndDecimalForCast returns the default display length (flen) and decimal length for casted column
+// when flen or decimal is not specified.
+func GetDefaultFieldLengthAndDecimalForCast(tp byte) (flen int, decimal int) {
+	val, ok := defaultLengthAndDecimalForCast[tp]
 	if ok {
 		return val.length, val.decimal
 	}

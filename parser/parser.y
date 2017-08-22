@@ -2928,9 +2928,17 @@ FunctionCallKeyword:
 	"CAST" '(' Expression "AS" CastType ')'
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
+		tp := $5.(*types.FieldType)
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
+		if tp.Flen == -1 {
+			tp.Flen = defaultFlen
+		}
+		if tp.Decimal == -1 {
+			tp.Decimal = defaultDecimal
+		}
 		$$ = &ast.FuncCastExpr{
 			Expr: $3.(ast.ExprNode),
-			Tp: $5.(*types.FieldType),
+			Tp: tp,
 			FunctionType: ast.CastFunction,
 		}
 	}
@@ -2965,9 +2973,17 @@ FunctionCallKeyword:
 |	"CONVERT" '(' Expression ',' CastType ')'
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
+		tp := $5.(*types.FieldType)
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
+		if tp.Flen == -1 {
+			tp.Flen = defaultFlen
+		}
+		if tp.Decimal == -1 {
+			tp.Decimal = defaultDecimal
+		}
 		$$ = &ast.FuncCastExpr{
 			Expr: $3.(ast.ExprNode),
-			Tp: $5.(*types.FieldType),
+			Tp: tp,
 			FunctionType: ast.CastConvertFunction,
 		}
 	}
@@ -4129,8 +4145,8 @@ ElseOpt:
 CastType:
 	"BINARY" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int)
+		x := types.NewFieldType(mysql.TypeVarString)
+		x.Flen = $2.(int)  // TODO: Flen should be the flen of expression
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
 		x.Flag |= mysql.BinaryFlag
@@ -4138,8 +4154,8 @@ CastType:
 	}
 |	"CHAR" OptFieldLen OptBinary OptCharset
 	{
-		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int)
+		x := types.NewFieldType(mysql.TypeVarString)
+		x.Flen = $2.(int)  // TODO: Flen should be the flen of expression
 		x.Charset = $4.(string)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
@@ -4161,7 +4177,7 @@ CastType:
 |	"DATETIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDatetime)
-		x.Flen = mysql.MaxDatetimeWidthNoFsp
+		x.Flen, _ = mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDatetime)
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
 			x.Flen = x.Flen + 1 + x.Decimal
@@ -4185,7 +4201,7 @@ CastType:
 |	"TIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDuration)
-		x.Flen = mysql.MaxDurationWidthNoFsp
+		x.Flen, _ = mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDuration)
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
 			x.Flen = x.Flen + 1 + x.Decimal

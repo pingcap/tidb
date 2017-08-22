@@ -82,6 +82,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 
 	tests := []typeInferTestCase{}
 	tests = append(tests, s.createTestCase4Constants()...)
+	tests = append(tests, s.createTestCase4Cast()...)
 	tests = append(tests, s.createTestCase4Columns()...)
 	tests = append(tests, s.createTestCase4StrFuncs()...)
 	tests = append(tests, s.createTestCase4MathFuncs()...)
@@ -127,6 +128,26 @@ func (s *testPlanSuite) createTestCase4Constants() []typeInferTestCase {
 		{"1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"1.23", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 4, 2},
 		{"'1234'", mysql.TypeVarString, charset.CharsetUTF8, 0, 4, types.UnspecifiedLength},
+	}
+}
+
+func (s *testPlanSuite) createTestCase4Cast() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"CAST(c_int_d AS BINARY)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, -1, -1}, // TODO: Flen should be 11.
+		{"CAST(c_int_d AS BINARY(5))", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 5, -1},
+		{"CAST(c_int_d AS CHAR)", mysql.TypeVarString, charset.CharsetUTF8, 0, -1, -1}, // TODO: Flen should be 11.
+		{"CAST(c_int_d AS CHAR(5))", mysql.TypeVarString, charset.CharsetUTF8, 0, 5, -1},
+		{"CAST(c_int_d AS DATE)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_int_d AS DATETIME)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"CAST(c_int_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"CAST(c_int_d AS DECIMAL(10))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},   // TODO: Flen should be 11
+		{"CAST(c_int_d AS DECIMAL(10,3))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 3}, // TODO: Flen should be 12
+		{"CAST(c_int_d AS JSON)", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, 12582912 / 3, 0},
+		{"CAST(c_int_d AS SIGNED)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 22, 0},         // TODO: Flen should be 11.
+		{"CAST(c_int_d AS SIGNED INTEGER)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 22, 0}, // TODO: Flen should be 11.
+		{"CAST(c_int_d AS TIME)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_int_d AS UNSIGNED)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 22, 0},         // TODO: Flen should be 11.
+		{"CAST(c_int_d AS UNSIGNED INTEGER)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 22, 0}, // TODO: Flen should be 11.
 	}
 }
 

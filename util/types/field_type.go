@@ -185,6 +185,21 @@ func (ft *FieldType) Init(tp byte) {
 func (ft *FieldType) CompactStr() string {
 	ts := TypeToStr(ft.Tp, ft.Charset)
 	suffix := ""
+
+	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.Tp)
+	isFlenNotDefault := ft.Flen != defaultFlen && ft.Flen != 0 && ft.Flen != UnspecifiedLength
+	isDecimalNotDefault := ft.Decimal != defaultDecimal && ft.Decimal != 0 && ft.Decimal != UnspecifiedLength
+
+	// displayFlen and displayDecimal are flen and decimal values with `-1` substituted with default value.
+	displayFlen := ft.Flen
+	displayDecimal := ft.Decimal
+	if displayFlen == 0 || displayFlen == UnspecifiedLength {
+		displayFlen = defaultFlen
+	}
+	if displayDecimal == 0 || displayDecimal == UnspecifiedLength {
+		displayDecimal = defaultDecimal
+	}
+
 	switch ft.Tp {
 	case mysql.TypeEnum, mysql.TypeSet:
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
@@ -194,22 +209,29 @@ func (ft *FieldType) CompactStr() string {
 			es = append(es, e)
 		}
 		suffix = fmt.Sprintf("('%s')", strings.Join(es, "','"))
-	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeDuration:
-		if ft.Decimal != UnspecifiedLength && ft.Decimal != 0 {
-			suffix = fmt.Sprintf("(%d)", ft.Decimal)
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
+		if isDecimalNotDefault {
+			suffix = fmt.Sprintf("(%d)", displayDecimal)
 		}
-	default:
-		if ft.Flen != UnspecifiedLength {
-			if ft.Decimal == UnspecifiedLength {
-				if ft.Tp != mysql.TypeFloat && ft.Tp != mysql.TypeDouble {
-					suffix = fmt.Sprintf("(%d)", ft.Flen)
-				}
-			} else {
-				suffix = fmt.Sprintf("(%d,%d)", ft.Flen, ft.Decimal)
+	case mysql.TypeDouble, mysql.TypeFloat:
+		// 1. Flen Not Default, Decimal Not Default -> Valid
+		// 2. Flen Not Default, Decimal Default (-1) -> Invalid
+		// 3. Flen Default, Decimal Not Default -> Valid
+		// 4. Flen Default, Decimal Default -> Valid (hide)
+		if isDecimalNotDefault {
+			suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
+		}
+	case mysql.TypeNewDecimal:
+		if isFlenNotDefault || isDecimalNotDefault {
+			suffix = fmt.Sprintf("(%d", displayFlen)
+			if isDecimalNotDefault {
+				suffix += fmt.Sprintf(",%d", displayDecimal)
 			}
-		} else if ft.Decimal != UnspecifiedLength {
-			suffix = fmt.Sprintf("(%d)", ft.Decimal)
+			suffix += ")"
 		}
+	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+		// Flen is always shown.
+		suffix = fmt.Sprintf("(%d)", displayFlen)
 	}
 	return ts + suffix
 }
@@ -224,8 +246,8 @@ func (ft *FieldType) InfoSchemaStr() string {
 	return ft.CompactStr() + suffix
 }
 
-// String joins the information of FieldType and
-// returns a string.
+// String joins the information of FieldType and returns a string.
+// Note: when flen or decimal is unspecified, this function will use the default value instead of -1.
 func (ft *FieldType) String() string {
 	strs := []string{ft.CompactStr()}
 	if mysql.HasUnsignedFlag(ft.Flag) {
