@@ -303,11 +303,7 @@ func ConvertJSONToInt(sc *variable.StatementContext, j json.JSON, unsigned bool)
 		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
-		val, err := strconv.Atoi(j.Str)
-		if err != nil {
-			val = 0
-		}
-		return int64(val), nil
+		return StrToInt(sc, j.Str)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
@@ -333,11 +329,7 @@ func ConvertJSONToFloat(sc *variable.StatementContext, j json.JSON) (float64, er
 		f := *(*float64)(unsafe.Pointer(&j.I64))
 		return f, nil
 	case json.TypeCodeString:
-		val, err := strconv.ParseFloat(j.Str, 64)
-		if err != nil {
-			val = 0
-		}
-		return val, nil
+		return StrToFloat(sc, j.Str)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
