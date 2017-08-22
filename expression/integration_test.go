@@ -946,6 +946,8 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for year
 	result = tk.MustQuery(`select year("2013-01-09"), year("2013-00-09"), year("000-01-09"), year("1-01-09"), year("20131-01-09"), year(null);`)
 	result.Check(testkit.Rows("2013 2013 0 1 <nil> <nil>"))
+	result = tk.MustQuery(`select year("2013-00-00"), year("2013-00-00 00:00:00"), year("0000-00-00 12:12:12"), year("2017-00-00 12:12:12");`)
+	result.Check(testkit.Rows("2013 2013 0 2017"))
 	result = tk.MustQuery(`select year("aa"), year(2013), year(2012.09), year("1-01"), year("-09");`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
 	tk.MustExec(`drop table if exists t`)
@@ -965,6 +967,8 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for month
 	result = tk.MustQuery(`select month("2013-01-09"), month("2013-00-09"), month("000-01-09"), month("1-01-09"), month("20131-01-09"), month(null);`)
 	result.Check(testkit.Rows("1 0 1 1 <nil> <nil>"))
+	result = tk.MustQuery(`select month("2013-00-00"), month("2013-00-00 00:00:00"), month("0000-00-00 12:12:12"), month("2017-00-00 12:12:12");`)
+	result.Check(testkit.Rows("0 0 0 0"))
 	result = tk.MustQuery(`select month("aa"), month(2013), month(2012.09), month("1-01"), month("-09");`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`select month("2013-012-09"), month("2013-0000000012-09"), month("2013-30-09"), month("000-41-09");`)
