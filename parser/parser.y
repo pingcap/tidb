@@ -2964,10 +2964,10 @@ FunctionCallKeyword:
 |	"CONVERT" '(' Expression "USING" StringName ')'
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-		charset := ast.NewValueExpr($5)
+		charset1 := ast.NewValueExpr($5)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), charset},
+			Args: []ast.ExprNode{$3.(ast.ExprNode), charset1},
 		}
 	}
 |	"CONVERT" '(' Expression ',' CastType ')'
@@ -3693,11 +3693,11 @@ FunctionCallNonKeyword:
 	}
 |   "CHAR" '(' ExpressionList "USING" StringName ')'
 	{
-		charset := ast.NewValueExpr($5)
+		charset1 := ast.NewValueExpr($5)
 		args := $3.([]ast.ExprNode)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr(ast.CharFunc),
-			Args: append(args, charset),
+			Args: append(args, charset1),
 		}
 	}
 |	"CHAR_LENGTH" '(' ExpressionListOpt ')'

@@ -986,8 +986,8 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	finishBootstrap(store)
 	s.ClearValue(context.Initing)
 
-	domain := sessionctx.GetDomain(s)
-	domain.Close()
+	dom := sessionctx.GetDomain(s)
+	dom.Close()
 	domap.Delete(store)
 }
 

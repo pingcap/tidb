@@ -91,7 +91,8 @@ func AggTypeClass(tps []*FieldType, flag *uint) TypeClass {
 			continue
 		}
 		argTypeClass := argFieldType.ToClass()
-		if argTypeClass == ClassString && mysql.HasBinaryFlag(argFieldType.Flag) {
+		if (IsTypeBlob(argFieldType.Tp) || IsTypeVarchar(argFieldType.Tp) || IsTypeChar(argFieldType.Tp)) &&
+			mysql.HasBinaryFlag(argFieldType.Flag) {
 			gotBinString = true
 		}
 		if !gotFirst {
