@@ -21,9 +21,11 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -34,6 +36,7 @@ var _ = Suite(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
 	store kv.Storage
+	ctx   context.Context
 }
 
 func (s *testIntegrationSuite) cleanEnv(c *C) {
@@ -48,6 +51,7 @@ func (s *testIntegrationSuite) cleanEnv(c *C) {
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	s.store, _ = newStoreWithBootstrap()
+	s.ctx = mock.NewContext()
 }
 
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
@@ -922,7 +926,10 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
+	originSQLMode := s.ctx.GetSessionVars().StrictSQLMode
+	s.ctx.GetSessionVars().StrictSQLMode = true
 	defer func() {
+		s.ctx.GetSessionVars().StrictSQLMode = originSQLMode
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
@@ -951,12 +958,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec(`create table t(a datetime)`)
 	_, err := tk.Exec(`insert into t select week("aa", 1)`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, "invalid time format")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	tk.MustExec(`insert into t select now()`)
 	_, err = tk.Exec(`update t set a = week("aa", 1)`)
-	c.Assert(err.Error(), Matches, "invalid time format")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	_, err = tk.Exec(`delete from t where a = week("aa", 1)`)
-	c.Assert(err.Error(), Matches, "invalid time format")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
 	// for weekofyear
 	result = tk.MustQuery(`select weekofyear("2012-12-22"), weekofyear("2008-02-20"), weekofyear("aa"), weekofyear(null), weekofyear(11), weekofyear(12.99);`)
@@ -965,12 +972,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec(`create table t(a bigint)`)
 	_, err = tk.Exec(`insert into t select weekofyear("aa")`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, "invalid time format")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	tk.MustExec(`insert into t select 1`)
 	_, err = tk.Exec(`update t set a = weekofyear("aa")`)
-	c.Assert(err.Error(), Matches, "invalid time format")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	_, err = tk.Exec(`delete from t where a = weekofyear("aa")`)
-	c.Assert(err.Error(), Matches, "invalid time format")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
 	// Fix issue #3923
 	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:00' as time), '12:00:00');")

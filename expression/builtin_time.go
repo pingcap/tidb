@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -155,7 +156,7 @@ var (
 
 // handleInvalidTimeError reports error or warning depend on the context.
 func handleInvalidTimeError(ctx context.Context, err error) error {
-	if err == nil || err.Error() != types.ErrInvalidTimeFormat.Error() {
+	if err == nil || !terror.ErrorEqual(err, types.ErrInvalidTimeFormat) {
 		return err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
