@@ -491,6 +491,10 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("SELECT SQRT(-10), SQRT(144), SQRT(4.84), SQRT(0.04), SQRT(0);")
 	result.Check(testkit.Rows("<nil> 12 2.2 0.2 0"))
 
+	// for crc32
+	result = tk.MustQuery("SELECT crc32(0), crc32(-0), crc32('0'), crc32('abc'), crc32('ABC'), crc32(NULL), crc32(''), crc32('hello world!')")
+	result.Check(testkit.Rows("4108050209 4108050209 4108050209 891568578 2743272264 <nil> 0 62177901"))
+
 	// for radians
 	result = tk.MustQuery("SELECT radians(1.0), radians(pi()), radians(pi()/2), radians(180), radians(1.009);")
 	result.Check(testkit.Rows("0.017453292519943295 0.05483113556160754 0.02741556778080377 3.141592653589793 0.01761037215262278"))
@@ -788,6 +792,12 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("0 1777777777777777777777 1777777777777777777777 1777777777777777777777"))
 	result = tk.MustQuery(`select oct(-1.9), oct(1.9), oct(-1), oct(1), oct(-9999999999999999999999999), oct(9999999999999999999999999);`)
 	result.Check(testkit.Rows("1777777777777777777777 1 1777777777777777777777 1 1777777777777777777777 1777777777777777777777"))
+
+	// for find_in_set
+	result = tk.MustQuery(`select find_in_set("", ""), find_in_set("", ","), find_in_set("中文", "字符串,中文"), find_in_set("b,", "a,b,c,d");`)
+	result.Check(testkit.Rows("0 1 2 0"))
+	result = tk.MustQuery(`select find_in_set(NULL, ""), find_in_set("", NULL), find_in_set(1, "2,3,1");`)
+	result.Check(testkit.Rows("<nil> <nil> 3"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
@@ -925,6 +935,42 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
 	result := tk.MustQuery("select makedate(a,a), makedate(b,b), makedate(c,c), makedate(d,d), makedate(e,e), makedate(f,f), makedate(null,null), makedate(a,b) from t")
 	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
+
+	// for week
+	result = tk.MustQuery(`select week("2012-12-22"), week("2012-12-22", -2), week("2012-12-22", 0), week("2012-12-22", 1), week("2012-12-22", 2), week("2012-12-22", 200);`)
+	result.Check(testkit.Rows("51 51 51 51 51 51"))
+	result = tk.MustQuery(`select week("2008-02-20"), week("2008-02-20", 0), week("2008-02-20", 1), week("2009-02-20", 2), week("2008-02-20", 3), week("2008-02-20", 4);`)
+	result.Check(testkit.Rows("7 7 8 7 8 8"))
+	result = tk.MustQuery(`select week("2008-02-20", 5), week("2008-02-20", 6), week("2009-02-20", 7), week("2008-02-20", 8), week("2008-02-20", 9);`)
+	result.Check(testkit.Rows("7 8 7 7 8"))
+	result = tk.MustQuery(`select week("aa", 1), week(null, 2), week(11, 2), week(12.99, 2);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select week("aa"), week(null), week(11), week(12.99);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a datetime)`)
+	_, err := tk.Exec(`insert into t select week("aa", 1)`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "invalid time format")
+	tk.MustExec(`insert into t select now()`)
+	_, err = tk.Exec(`update t set a = week("aa", 1)`)
+	c.Assert(err.Error(), Matches, "invalid time format")
+	_, err = tk.Exec(`delete from t where a = week("aa", 1)`)
+	c.Assert(err.Error(), Matches, "invalid time format")
+
+	// for weekofyear
+	result = tk.MustQuery(`select weekofyear("2012-12-22"), weekofyear("2008-02-20"), weekofyear("aa"), weekofyear(null), weekofyear(11), weekofyear(12.99);`)
+	result.Check(testkit.Rows("51 8 <nil> <nil> <nil> <nil>"))
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a bigint)`)
+	_, err = tk.Exec(`insert into t select weekofyear("aa")`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "invalid time format")
+	tk.MustExec(`insert into t select 1`)
+	_, err = tk.Exec(`update t set a = weekofyear("aa")`)
+	c.Assert(err.Error(), Matches, "invalid time format")
+	_, err = tk.Exec(`delete from t where a = weekofyear("aa")`)
+	c.Assert(err.Error(), Matches, "invalid time format")
 
 	// Fix issue #3923
 	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:00' as time), '12:00:00');")
@@ -1341,6 +1387,13 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("str2 0"))
 	result = tk.MustQuery("select * from t where a = case null when b then 'str3' when 10 then 'str1' else 'str2' end")
 	result.Check(testkit.Rows("str2 0"))
+	tk.MustExec("insert t values (null, 4)")
+	result = tk.MustQuery("select * from t where b < case a when null then 0 when 'str2' then 0 else 9 end")
+	result.Check(testkit.Rows("<nil> 4"))
+	result = tk.MustQuery("select * from t where b = case when a is null then 4 when  a = 'str5' then 7 else 9 end")
+	result.Check(testkit.Rows("<nil> 4"))
+
+	// for cast
 	result = tk.MustQuery("select cast(1234 as char(3))")
 	result.Check(testkit.Rows("123"))
 	result = tk.MustQuery("select cast(1234 as char(0))")
@@ -1535,6 +1588,12 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	// FIXME: MySQL returns `1.0`.
 	result = tk.MustQuery("select if(1, 1, 1.0)")
 	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery("SELECT 79 + + + CASE -87 WHEN -30 THEN COALESCE(COUNT(*), +COALESCE(+15, -33, -12 ) + +72) WHEN +COALESCE(+AVG(DISTINCT(60)), 21) THEN NULL ELSE NULL END AS col0;")
+	result.Check(testkit.Rows("<nil>"))
+
+	result = tk.MustQuery("SELECT -63 + COALESCE ( - 83, - 61 + - + 72 * - CAST( NULL AS SIGNED ) + + 3 );")
+	result.Check(testkit.Rows("-146"))
 }
 
 func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
@@ -1586,6 +1645,20 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
+	rs, err = tk.Exec("select cast(-1 as signed) - cast(-1 as unsigned);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = tidb.GetRows(rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-1 - 18446744073709551615)'")
+	rs, err = tk.Exec("select cast(-1 as unsigned) - cast(-1 as signed);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = tidb.GetRows(rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(18446744073709551615 - -1)'")
 
 	tk.MustQuery("select 1234567890 * 1234567890").Check(testkit.Rows("1524157875019052100"))
 	rs, err = tk.Exec("select 1234567890 * 12345671890")
@@ -1606,6 +1679,18 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	_, err = tidb.GetRows(rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
 	rs, err = tk.Exec("select 1.797693134862315708145274237317043567981e+308 * -1.1")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	result = tk.MustQuery(`select cast(-3 as unsigned) - cast(-1 as signed);`)
+	result.Check(testkit.Rows("18446744073709551614"))
+
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));")
+	tk.MustExec("INSERT INTO t(a, b) VALUES(-1.09, 1.999);")
+	result = tk.MustQuery("SELECT a/b, a/12, a/-0.01, b/12, b/-0.01, b/0.000, NULL/b, b/NULL, NULL/NULL FROM t;")
+	result.Check(testkit.Rows("-0.545273 -0.090833 109.000000 0.1665833 -199.9000000 <nil> <nil> <nil> <nil>"))
+	rs, err = tk.Exec("select 1e200/1e-200")
 	c.Assert(err, IsNil)
 	_, err = tidb.GetRows(rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
