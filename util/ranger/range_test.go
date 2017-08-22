@@ -189,9 +189,9 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		var selection *plan.Selection
 		for _, child := range p.Children() {
-			plan, ok := child.(*plan.Selection)
+			p, ok := child.(*plan.Selection)
 			if ok {
-				selection = plan
+				selection = p
 				break
 			}
 		}
@@ -290,9 +290,9 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		var selection *plan.Selection
 		for _, child := range p.Children() {
-			plan, ok := child.(*plan.Selection)
+			p, ok := child.(*plan.Selection)
 			if ok {
-				selection = plan
+				selection = p
 				break
 			}
 		}
