@@ -372,7 +372,7 @@ import (
 	toBase64			"TO_BASE64"
 	toDays				"TO_DAYS"
 	toSeconds			"TO_SECONDS"
-	lastDay			"LAST_DAY"
+	lastDay			    "LAST_DAY"
 	getLock				"GET_LOCK"
 	releaseLock			"RELEASE_LOCK"
 	rpad				"RPAD"

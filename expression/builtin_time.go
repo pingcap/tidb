@@ -3071,10 +3071,10 @@ func (c *lastDayFunctionClass) getFunction(args []Expression, ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpTime)
-	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, types.DefaultFsp
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, types.DefaultFsp
 	sig := &builtinLastDaySig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
