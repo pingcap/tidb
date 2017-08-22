@@ -1033,6 +1033,37 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
+
+	// for dayOfWeek, dayOfMonth, dayOfYear
+	result = tk.MustQuery(`select dayOfWeek(null), dayOfWeek("2017-08-12"), dayOfWeek("0000-00-00"), dayOfWeek("2017-00-00"), dayOfWeek("0000-00-00 12:12:12"), dayOfWeek("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 7 <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select dayOfYear(null), dayOfYear("2017-08-12"), dayOfYear("0000-00-00"), dayOfYear("2017-00-00"), dayOfYear("0000-00-00 12:12:12"), dayOfYear("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 224 <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select dayOfMonth(null), dayOfMonth("2017-08-12"), dayOfMonth("0000-00-00"), dayOfMonth("2017-00-00"), dayOfMonth("0000-00-00 12:12:12"), dayOfMonth("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 12 <nil> 0 0 0"))
+
+	//rs, err := tk.Exec("insert into t value(dayOfWeek(0000-00-00))")
+	//c.Assert(err, IsNil)
+	//_, err = rs.Next()
+	//c.Assert(err, NotNil)
+	//c.Assert(err.Error(), Equals, "")
+	//
+	//rs, err = tk.Exec("insert into t value(dayOfMonth(0000-00-00))")
+	//c.Assert(err, IsNil)
+	//_, err = rs.Next()
+	//c.Assert(err, NotNil)
+	//c.Assert(err.Error(), Equals, "")
+	//
+	//rs, err = tk.Exec("insert into t value(dayOfMonth(2017-00-00))")
+	//c.Assert(err, IsNil)
+	//_, err = rs.Next()
+	//c.Assert(err, IsNil)
+	//
+	//rs, err = tk.Exec("insert into t value(dayOfYear(0000-00-00))")
+	//c.Assert(err, IsNil)
+	//_, err = rs.Next()
+	//c.Assert(err, NotNil)
+	//c.Assert(err.Error(), Equals, "")
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
