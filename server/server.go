@@ -128,7 +128,7 @@ func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
 		log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	}
 
-	cc.salt = util.randomBuf(20)
+	cc.salt = util.RandomBuf(20)
 	return cc, nil
 }
 
