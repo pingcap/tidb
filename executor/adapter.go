@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 type processinfoSetter interface {
@@ -209,6 +210,10 @@ func (a *statement) buildExecutor(ctx context.Context) (Executor, error) {
 	}
 	if _, ok := a.plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
 		priority = kv.PriorityLow
+		ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency] = "1"
+		ctx.GetSessionVars().DistSQLScanConcurrency = 1
+		ctx.GetSessionVars().IndexSerialScanConcurrency = 1
+		ctx.GetSessionVars().Systems[variable.TxnIsolation] = ast.ReadCommitted
 	}
 
 	b := newExecutorBuilder(ctx, a.is, priority)
