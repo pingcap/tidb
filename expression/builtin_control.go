@@ -116,6 +116,15 @@ func inferType4ControlFuncs(tp1, tp2 *types.FieldType) *types.FieldType {
 			retTp.Flen = mathutil.Max(tp1.Flen, tp2.Flen)
 		}
 	}
+	// Fix decimal for int and string.
+	fieldTp := fieldTp2EvalTp(retTp)
+	if fieldTp == tpInt {
+		retTp.Decimal = 0
+	} else if fieldTp == tpString {
+		if tp1.Tp != mysql.TypeNull || tp2.Tp != mysql.TypeNull {
+			retTp.Decimal = types.UnspecifiedLength
+		}
+	}
 	return retTp
 }
 
@@ -391,14 +400,12 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 	bf.tp = retTp
 	switch evalTps {
 	case tpInt:
-		bf.tp.Decimal = 0
 		sig = &builtinIfIntSig{baseIntBuiltinFunc{bf}}
 	case tpReal:
 		sig = &builtinIfRealSig{baseRealBuiltinFunc{bf}}
 	case tpDecimal:
 		sig = &builtinIfDecimalSig{baseDecimalBuiltinFunc{bf}}
 	case tpString:
-		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinIfStringSig{baseStringBuiltinFunc{bf}}
 	case tpTime:
 		sig = &builtinIfTimeSig{baseTimeBuiltinFunc{bf}}
