@@ -1,7 +1,7 @@
 #!groovy
 
 node {
-    def TIDB_TEST_BRANCH = "master"
+    def TIDB_TEST_BRANCH = "rc4"
     def TIKV_BRANCH = "rc4"
     def PD_BRANCH = "rc4"
 
