@@ -25,11 +25,39 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
+// testMockTiKVSuite tests MVCCStore interface.
+// SetUpTest should set specific MVCCStore implementation.
 type testMockTiKVSuite struct {
 	store MVCCStore
 }
 
-var _ = Suite(&testMockTiKVSuite{})
+type testMarshal struct{}
+
+var (
+	_ = Suite(&testMvccStore{})
+	_ = Suite(&testMVCCLevelDB{})
+	_ = Suite(testMarshal{})
+)
+
+// testMvccStore is used to test MvccStore implementation.
+type testMvccStore struct {
+	testMockTiKVSuite
+}
+
+func (s *testMvccStore) SetUpTest(c *C) {
+	s.store = NewMvccStore()
+}
+
+// testMVCCLevelDB is used to test MVCCLevelDB implementation.
+type testMVCCLevelDB struct {
+	testMockTiKVSuite
+}
+
+func (s *testMockTiKVSuite) SetUpTest(c *C) {
+	var err error
+	s.store, err = NewMVCCLevelDB("")
+	c.Assert(err, IsNil)
+}
 
 func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
 	var mutations []*kvrpcpb.Mutation
@@ -49,10 +77,6 @@ func lock(key, primary string, ts uint64) *kvrpcpb.LockInfo {
 		PrimaryLock: []byte(primary),
 		LockVersion: ts,
 	}
-}
-
-func (s *testMockTiKVSuite) SetUpTest(c *C) {
-	s.store = NewMvccStore()
 }
 
 func (s *testMockTiKVSuite) mustGetNone(c *C, key string, ts uint64) {
@@ -326,4 +350,46 @@ func (s *testMockTiKVSuite) TestRC(c *C) {
 	s.mustGetErr(c, "key", 20)
 	s.mustGetRC(c, "key", 12, "v1")
 	s.mustGetRC(c, "key", 20, "v1")
+}
+
+func (s testMarshal) TestMarshalmvccLock(c *C) {
+	l := mvccLock{
+		startTS: 47,
+		primary: []byte{'a', 'b', 'c'},
+		value:   []byte{'d', 'e'},
+		op:      kvrpcpb.Op_Put,
+		ttl:     444,
+	}
+	bin, err := l.MarshalBinary()
+	c.Assert(err, IsNil)
+
+	var l1 mvccLock
+	err = l1.UnmarshalBinary(bin)
+	c.Assert(err, IsNil)
+
+	c.Assert(l.startTS, Equals, l1.startTS)
+	c.Assert(l.op, Equals, l1.op)
+	c.Assert(l.ttl, Equals, l1.ttl)
+	c.Assert(string(l.primary), Equals, string(l1.primary))
+	c.Assert(string(l.value), Equals, string(l1.value))
+}
+
+func (s testMarshal) TestMarshalmvccValue(c *C) {
+	v := mvccValue{
+		valueType: typePut,
+		startTS:   42,
+		commitTS:  55,
+		value:     []byte{'d', 'e'},
+	}
+	bin, err := v.MarshalBinary()
+	c.Assert(err, IsNil)
+
+	var v1 mvccValue
+	err = v1.UnmarshalBinary(bin)
+	c.Assert(err, IsNil)
+
+	c.Assert(v.valueType, Equals, v1.valueType)
+	c.Assert(v.startTS, Equals, v1.startTS)
+	c.Assert(v.commitTS, Equals, v1.commitTS)
+	c.Assert(string(v.value), Equals, string(v.value))
 }

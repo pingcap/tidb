@@ -76,6 +76,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc := funcs[ast.Year]
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Year"][0])
@@ -83,6 +84,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.Month]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Month"][0])
@@ -90,6 +92,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.MonthName]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MonthName"][0])
@@ -139,6 +142,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.WeekOfYear]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["WeekOfYear"][0])
@@ -167,7 +171,8 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		YearWeek   interface{}
 	}{
 		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
-		{"0000-00-00", int64(0), int64(0), nil, int64(0), nil, nil, nil, nil, nil, nil, nil},
+		{"0000-00-00 00:00:00", nil, nil, nil, int64(0), nil, nil, nil, nil, nil, nil, nil},
+		{"0000-00-00", nil, nil, nil, int64(0), nil, nil, nil, nil, nil, nil, nil},
 	}
 
 	dtblNil := tblToDtbl(tblNil)
@@ -175,6 +180,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc := funcs[ast.Year]
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Year"][0])
@@ -182,6 +188,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.Month]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Month"][0])
@@ -189,6 +196,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.MonthName]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MonthName"][0])
@@ -1064,6 +1072,7 @@ func (s *testEvaluatorSuite) TestWeek(c *C) {
 		arg2 := types.NewIntDatum(test.mode)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg1, arg2}), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(result.GetInt64(), Equals, test.expect)
