@@ -125,7 +125,7 @@ imports:
   - pkg/raft_serverpb
   - pkg/tikvpb
 - name: github.com/pingcap/pd
-  version: ce8db87a8c3f2560750232e85ad5152a0a1c69df
+  version: d152a9c48278dc94c205a255ef05b39dbb87b455
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
