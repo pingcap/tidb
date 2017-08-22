@@ -170,9 +170,8 @@ func (ts *TidbRegionHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 }
 
 func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	store, err := tikv.NewMockTikvStore(tikv.WithCluster(cluster))
+	mvccStore := mocktikv.NewMvccStore()
+	store, err := tikv.NewMockTikvStore(tikv.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)

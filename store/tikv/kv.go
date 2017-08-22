@@ -91,7 +91,7 @@ func (d MockDriver) Open(path string) (kv.Storage, error) {
 	if !strings.EqualFold(u.Scheme, "mocktikv") {
 		return nil, errors.Errorf("Uri scheme expected(mocktikv) but found (%s)", u.Scheme)
 	}
-	return NewMockTikvStore()
+	return NewMockTikvStore(WithPath(u.Path))
 }
 
 // update oracle's lastTS every 2000ms.
@@ -112,7 +112,7 @@ type tikvStore struct {
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
-	oracle, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
+	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -120,7 +120,7 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 	store := &tikvStore{
 		clusterID:   pdClient.GetClusterID(goctx.TODO()),
 		uuid:        uuid,
-		oracle:      oracle,
+		oracle:      o,
 		client:      client,
 		pdClient:    pdClient,
 		regionCache: NewRegionCache(pdClient),
@@ -154,6 +154,7 @@ type mockOptions struct {
 	mvccStore      mocktikv.MVCCStore
 	clientHijack   func(Client) Client
 	pdClientHijack func(pd.Client) pd.Client
+	path           string
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -189,6 +190,13 @@ func WithMVCCStore(store mocktikv.MVCCStore) MockTiKVStoreOption {
 	}
 }
 
+// WithPath specifies the mocktikv path.
+func WithPath(path string) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.path = path
+	}
+}
+
 // NewMockTikvStore creates a mocked tikv store, the path is the file path to store the data.
 // If path is an empty string, a memory storage will be created.
 func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
@@ -205,7 +213,11 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 
 	mvccStore := opt.mvccStore
 	if mvccStore == nil {
-		mvccStore = mocktikv.NewMvccStore()
+		store, err := mocktikv.NewMVCCLevelDB(opt.path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		mvccStore = store
 	}
 
 	client := Client(mocktikv.NewRPCClient(cluster, mvccStore))
