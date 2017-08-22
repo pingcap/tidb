@@ -1088,19 +1088,19 @@ func (b *builtinYearWeekWithModeSig) evalInt(row []types.Datum) (int64, bool, er
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	date, isNull, err := b.args[0].EvalTime(row, sc)
-	if err != nil {
-		sc.AppendWarning(err)
-	}
 	if isNull || err != nil {
-		return 0, true, nil
+		return 0, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	}
+	if date.IsZero() {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 
 	mode, isNull, err := b.args[1].EvalInt(row, sc)
 	if err != nil {
-		sc.AppendWarning(err)
+		return 0, true, errors.Trace(err)
 	}
-	if isNull || err != nil {
-		return 0, true, nil
+	if isNull {
+		mode = 0
 	}
 
 	year, week := date.Time.YearWeek(int(mode))
