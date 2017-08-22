@@ -104,12 +104,14 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 
 	switch tp {
 	case tpInt:
+		bf.tp.Decimal = 0
 		sig = &builtinCaseWhenIntSig{baseIntBuiltinFunc{bf}}
 	case tpReal:
 		sig = &builtinCaseWhenRealSig{baseRealBuiltinFunc{bf}}
 	case tpDecimal:
 		sig = &builtinCaseWhenDecimalSig{baseDecimalBuiltinFunc{bf}}
 	case tpString:
+		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinCaseWhenStringSig{baseStringBuiltinFunc{bf}}
 	case tpTime:
 		sig = &builtinCaseWhenTimeSig{baseTimeBuiltinFunc{bf}}
@@ -323,12 +325,14 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 	bf.tp = retTp
 	switch evalTps {
 	case tpInt:
+		bf.tp.Decimal = 0
 		sig = &builtinIfIntSig{baseIntBuiltinFunc{bf}}
 	case tpReal:
 		sig = &builtinIfRealSig{baseRealBuiltinFunc{bf}}
 	case tpDecimal:
 		sig = &builtinIfDecimalSig{baseDecimalBuiltinFunc{bf}}
 	case tpString:
+		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinIfStringSig{baseStringBuiltinFunc{bf}}
 	case tpTime:
 		sig = &builtinIfTimeSig{baseTimeBuiltinFunc{bf}}
@@ -354,7 +358,11 @@ func (c *ifFunctionClass) inferType(tp1, tp2 *types.FieldType) *types.FieldType 
 		var unsignedFlag uint
 		typeClass = types.AggTypeClass([]*types.FieldType{tp1, tp2}, &unsignedFlag)
 		retTp = types.AggFieldType([]*types.FieldType{tp1, tp2})
-		retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
+		if tp1.Decimal == types.UnspecifiedLength || tp2.Decimal == types.UnspecifiedLength {
+			retTp.Decimal = types.UnspecifiedLength
+		} else {
+			retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
+		}
 		types.SetBinChsClnFlag(retTp)
 		if types.IsNonBinaryStr(tp1) && !types.IsBinaryStr(tp2) {
 			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
