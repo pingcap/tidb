@@ -613,7 +613,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	} {
 		f, err := x.fc.getFunction(datumsToConstants(nil), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.isDeterministic(), IsFalse)
 		v, err := f.eval(nil)
 		ts := x.now()
 		c.Assert(err, IsNil)
@@ -828,7 +828,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 		varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", timezone)
 		f, err := fc.getFunction(datumsToConstants(nil), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.isDeterministic(), IsFalse)
 		v, err := f.eval(nil)
 		last := time.Now()
 		c.Assert(err, IsNil)
@@ -918,7 +918,7 @@ func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
 	fc := funcs[ast.CurrentDate]
 	f, err := fc.getFunction(datumsToConstants(nil), mock.NewContext())
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.isDeterministic(), IsFalse)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
@@ -1280,7 +1280,6 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	c.Assert(err, IsNil)
 	d, err = f.eval(nil)
 	c.Assert(err, IsNil)
-	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
 	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
 
 	// Test case for https://github.com/pingcap/tidb/issues/2852

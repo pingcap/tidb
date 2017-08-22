@@ -1344,6 +1344,7 @@ func (c *sysDateFunctionClass) getFunction(args []Expression, ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen, bf.tp.Decimal = 19, 0
+	bf.deterministic = false
 
 	var sig builtinFunc
 	if len(args) == 1 {
@@ -1402,6 +1403,7 @@ func (c *currentDateFunctionClass) getFunction(args []Expression, ctx context.Co
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen, bf.tp.Decimal = 10, 0
+	bf.deterministic = false
 	sig := &builtinCurrentDateSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -1514,6 +1516,7 @@ func (c *utcDateFunctionClass) getFunction(args []Expression, ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen, bf.tp.Decimal = 10, 0
+	bf.deterministic = false
 	sig := &builtinUTCDateSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -1574,6 +1577,7 @@ func (c *utcTimestampFunctionClass) getFunction(args []Expression, ctx context.C
 	} else {
 		bf.tp.Flen, bf.tp.Decimal = 19, 0
 	}
+	bf.deterministic = false
 
 	var sig builtinFunc
 	if len(args) == 1 {
@@ -1648,6 +1652,7 @@ func (c *nowFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	} else {
 		bf.tp.Flen, bf.tp.Decimal = 19, 0
 	}
+	bf.deterministic = false
 
 	var sig builtinFunc
 	if len(args) == 1 {
