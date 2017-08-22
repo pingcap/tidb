@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
@@ -296,6 +297,16 @@ var oppositeOp = map[string]string{
 	ast.LE: ast.GT,
 	ast.EQ: ast.NE,
 	ast.NE: ast.EQ,
+}
+
+var revertOp = map[opcode.Op]opcode.Op{
+	opcode.LT:     opcode.GT,
+	opcode.GE:     opcode.LE,
+	opcode.GT:     opcode.LT,
+	opcode.LE:     opcode.GE,
+	opcode.EQ:     opcode.EQ,
+	opcode.NE:     opcode.NE,
+	opcode.NullEQ: opcode.NullEQ,
 }
 
 // PushDownNot pushes the `not` function down to the expression's arguments.

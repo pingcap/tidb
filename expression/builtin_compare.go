@@ -18,6 +18,8 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -294,11 +296,81 @@ func isTemporalColumn(expr Expression) bool {
 	return true
 }
 
+func tryToConvertConstantInt(con *Constant, ctx context.Context) *Constant {
+	if con.GetTypeClass() == types.ClassInt {
+		return con
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+	i64, err := con.Value.ToInt64(sc)
+	if err != nil {
+		return con
+	}
+	return &Constant{
+		Value:   types.NewIntDatum(i64),
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+}
+
+func refineTwoArgs(con *Constant, op opcode.Op, ctx context.Context) *Constant {
+	sc := ctx.GetSessionVars().StmtCtx
+	i64, err := con.Value.ToInt64(sc)
+	if err != nil {
+		log.Warnf("failed to refine this expression, the constant argument is %s", con)
+		return con
+	}
+	datumInt := types.NewIntDatum(i64)
+	c, err := datumInt.CompareDatum(sc, con.Value)
+	if err != nil {
+		log.Warnf("failed to refine this expression, the constant argument is %s", con)
+		return con
+	}
+	if c == 0 {
+		return &Constant{
+			Value:   datumInt,
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+	}
+	switch op {
+	case opcode.LT, opcode.GE:
+		resultExpr, _ := NewFunction(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
+		if resultCon, ok := resultExpr.(*Constant); ok {
+			return tryToConvertConstantInt(resultCon, ctx)
+		}
+	case opcode.LE, opcode.GT:
+		resultExpr, _ := NewFunction(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
+		if resultCon, ok := resultExpr.(*Constant); ok {
+			return tryToConvertConstantInt(resultCon, ctx)
+		}
+	}
+	// TODO: argInt = 1.1 should be false forever.
+	return con
+}
+
+func (c *compareFunctionClass) refineArgs(args []Expression, ctx context.Context) []Expression {
+	arg0IsInt := args[0].GetTypeClass() == types.ClassInt
+	arg1IsInt := args[1].GetTypeClass() == types.ClassInt
+	if (arg0IsInt && arg1IsInt) || (!arg0IsInt && !arg1IsInt) {
+		return args
+	}
+	arg0, arg0IsCon := args[0].(*Constant)
+	arg1, arg1IsCon := args[1].(*Constant)
+	if (!arg0IsInt && !arg0IsCon) || (!arg1IsInt && !arg1IsCon) || (arg0IsCon && arg1IsCon) {
+		return args
+	}
+	if arg0IsInt {
+		arg1 = refineTwoArgs(arg1, c.op, ctx)
+		return []Expression{args[0], arg1}
+	}
+	arg0 = refineTwoArgs(arg0, revertOp[c.op], ctx)
+	return []Expression{arg0, args[1]}
+}
+
 // getFunction sets compare built-in function signatures for various types.
-func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	if err = c.verifyArgs(args); err != nil {
+func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, errors.Trace(err)
 	}
+	args := c.refineArgs(rawArgs, ctx)
 	ft0, ft1 := args[0].GetType(), args[1].GetType()
 	tc0, tc1 := ft0.ToClass(), ft1.ToClass()
 	cmpType := getCmpType(tc0, tc1)
