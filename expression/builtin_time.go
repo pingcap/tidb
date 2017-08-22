@@ -807,7 +807,7 @@ type builtinDayOfMonthSig struct {
 func (b *builtinDayOfMonthSig) evalInt(row []types.Datum) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	if arg.IsZero() {
 		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
@@ -842,7 +842,7 @@ func (b *builtinDayOfWeekSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg, isNull, err := b.args[0].EvalTime(row, sc)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	if arg.InvalidZero() {
 		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
