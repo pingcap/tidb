@@ -623,16 +623,13 @@ type builtinMonthSig struct {
 func (b *builtinMonthSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	date, isNull, err := b.args[0].EvalTime(row, sc)
-	if err != nil {
-		sc.AppendWarning(err)
-	}
 
 	if isNull || err != nil {
-		return 0, true, nil
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 
 	if date.IsZero() {
-		return 0, false, nil
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 
 	return int64(date.Time.Month()), false, nil
@@ -1111,15 +1108,13 @@ type builtinYearSig struct {
 func (b *builtinYearSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	date, isNull, err := b.args[0].EvalTime(row, sc)
-	if err != nil {
-		sc.AppendWarning(err)
-	}
+
 	if isNull || err != nil {
-		return 0, true, nil
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 
 	if date.IsZero() {
-		return 0, false, nil
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 
 	return int64(date.Time.Year()), false, nil
