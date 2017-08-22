@@ -3089,12 +3089,12 @@ func (b *builtinLastDaySig) evalTime(row []types.Datum) (types.Time, bool, error
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg, isNull, err := b.args[0].EvalTime(row, sc)
 	if isNull || err != nil {
-		return types.Time{}, true, errorOrWarning(err, b.ctx)
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	tm := arg.Time
 	year, month, day := tm.Year(), tm.Month(), 30
 	if year == 0 && month == 0 && tm.Day() == 0 {
-		return types.Time{}, true, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 	if month == 1 || month == 3 || month == 5 ||
 		month == 7 || month == 8 || month == 10 || month == 12 {
