@@ -36,7 +36,6 @@ import (
 
 var (
 	_ Executor = &CheckTableExec{}
-	_ Executor = &DummyScanExec{}
 	_ Executor = &ExistsExec{}
 	_ Executor = &HashAggExec{}
 	_ Executor = &LimitExec{}
@@ -797,17 +796,6 @@ func (e *UnionExec) Close() error {
 	<-e.closedCh
 	e.rows = nil
 	return errors.Trace(e.baseExecutor.Close())
-}
-
-// DummyScanExec returns zero results, when some where condition never match, there won't be any
-// rows to return, so DummyScan is used to avoid real scan on KV.
-type DummyScanExec struct {
-	baseExecutor
-}
-
-// Next implements the Executor Next interface.
-func (e *DummyScanExec) Next() (Row, error) {
-	return nil, nil
 }
 
 // CacheExec represents Cache executor.

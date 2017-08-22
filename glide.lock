@@ -1,5 +1,5 @@
-hash: 582c0481477c24b4fb6721162771f5155de55d651396416e1022283e471599b3
-updated: 2017-08-14T18:36:50.774799322+08:00
+hash: 27c5506d07670b678390a2a4957ae5a4e946234dbfe9216b429dbec86f403d7c
+updated: 2017-08-21T15:40:30.311704667+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -49,7 +49,7 @@ imports:
 - name: github.com/ghodss/yaml
   version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
 - name: github.com/go-sql-driver/mysql
-  version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
+  version: 3955978caca48c1658a4bb7a9c6a0f084e326af3
 - name: github.com/gogo/protobuf
   version: 100ba4e885062801d56799d78530b73b178a78f3
   subpackages:
@@ -129,9 +129,19 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: 27d6520cddb4af5dedc62d742d172c49358e6ed9
+  version: b45b9d4dd493e6f5f674f9303a12139fb28be13e
   subpackages:
   - go-binlog
+  - go-mysqlx
+  - go-mysqlx/Connection
+  - go-mysqlx/Crud
+  - go-mysqlx/Datatypes
+  - go-mysqlx/Expect
+  - go-mysqlx/Expr
+  - go-mysqlx/Notice
+  - go-mysqlx/Resultset
+  - go-mysqlx/Session
+  - go-mysqlx/Sql
   - go-tipb
   - sharedbytes
 - name: github.com/prometheus/client_golang
@@ -193,7 +203,7 @@ imports:
   subpackages:
   - rate
 - name: google.golang.org/genproto
-  version: 09f6ed296fc66555a25fe4ce95173148778dfa85
+  version: 6b7d9516179cd47f4714cfeb0103ad1dede756c4
   subpackages:
   - googleapis/rpc/status
 - name: google.golang.org/grpc

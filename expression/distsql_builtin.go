@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
@@ -93,45 +92,7 @@ func newDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, a
 	// TODO: Too ugly...
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = sc
-	tp, err := reinferFuncType(sc, name, args)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return NewFunction(ctx, name, tp, args...)
-}
-
-// reinferFuncType re-infer FieldType of ScalarFunction because FieldType information will be lost after ScalarFunction be converted to pb.
-// reinferFuncType is only used by mock-tikv, the real TiKV do not need to re-infer field type.
-// This is a temporary solution to make the new type inferer works normally, and will be replaced by passing function signature in the future.
-func reinferFuncType(sc *variable.StatementContext, funcName string, args []Expression) (*types.FieldType, error) {
-	newArgs := make([]ast.ExprNode, len(args))
-	for i, arg := range args {
-		switch x := arg.(type) {
-		case *Constant:
-			newArgs[i] = &ast.ValueExpr{}
-			newArgs[i].SetValue(x.Value.GetValue())
-		case *Column:
-			newArgs[i] = &ast.ColumnNameExpr{
-				Refer: &ast.ResultField{
-					Column: &model.ColumnInfo{
-						FieldType: *x.GetType(),
-					},
-				},
-			}
-		case *ScalarFunction:
-			newArgs[i] = &ast.FuncCallExpr{FnName: x.FuncName}
-			_, err := reinferFuncType(sc, x.FuncName.O, x.GetArgs())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-	}
-	funcNode := &ast.FuncCallExpr{FnName: model.NewCIStr(funcName), Args: newArgs}
-	err := InferType(sc, funcNode)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return funcNode.GetType(), nil
+	return NewFunction(ctx, name, types.NewFieldType(mysql.TypeUnspecified), args...)
 }
 
 // PBToExpr converts pb structure to expression.
@@ -161,6 +122,8 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *variable.StatementCon
 		return convertDecimal(expr.Val)
 	case tipb.ExprType_MysqlDuration:
 		return convertDuration(expr.Val)
+	case tipb.ExprType_MysqlTime:
+		return convertTime(expr.Val, expr.FieldType, sc.TimeZone)
 	}
 	// Then it must be a scalar function.
 	args := make([]Expression, 0, len(expr.Children))
@@ -183,6 +146,35 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *variable.StatementCon
 		args = append(args, arg)
 	}
 	return newDistSQLFunction(sc, expr.Tp, args)
+}
+
+func fieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
+	return &types.FieldType{
+		Tp:      byte(ft.GetTp()),
+		Flag:    uint(ft.GetFlag()),
+		Flen:    int(ft.GetFlen()),
+		Decimal: int(ft.GetDecimal()),
+		Collate: mysql.Collations[uint8(ft.GetCollate())],
+	}
+}
+
+func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constant, error) {
+	ft := fieldTypeFromPB(ftPB)
+	_, v, err := codec.DecodeUint(data)
+	if err != nil {
+		return nil, errors.Trace(nil)
+	}
+	var t types.Time
+	t.Type = ft.Tp
+	t.Fsp = ft.Decimal
+	err = t.FromPackedUint(v)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
+		t.ConvertTimeZone(time.UTC, tz)
+	}
+	return &Constant{Value: types.NewTimeDatum(t), RetType: ft}, nil
 }
 
 func decodeValueList(data []byte) ([]Expression, error) {

@@ -25,7 +25,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 )
 
 func truncateStr(str string, flen int) string {
@@ -188,7 +187,7 @@ func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, 
 	}
 
 	duration, err := ParseDuration(str, fsp)
-	if terror.ErrorEqual(err, ErrTruncatedWrongVal) {
+	if ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}
 	if err != nil {
