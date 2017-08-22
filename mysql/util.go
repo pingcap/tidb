@@ -51,5 +51,5 @@ func GetDefaultFieldLengthAndDecimal(tp byte) (flen int, decimal int) {
 	if ok {
 		return val.length, val.decimal
 	}
-	return -1, 0
+	return -1, -1
 }
