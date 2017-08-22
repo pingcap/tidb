@@ -117,6 +117,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowStatsHistogram()
 	case ast.ShowStatsBuckets:
 		return e.fetchShowStatsBuckets()
+	case ast.ShowPlugins:
+		return e.fetchShowPlugins()
 	}
 	return nil
 }
@@ -594,6 +596,10 @@ func (e *ShowExec) fetchShowTriggers() error {
 }
 
 func (e *ShowExec) fetchShowProcedureStatus() error {
+	return nil
+}
+
+func (e *ShowExec) fetchShowPlugins() error {
 	return nil
 }
 
