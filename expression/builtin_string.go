@@ -606,11 +606,9 @@ func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	argTp := args[0].GetType()
-	bf.tp.Flag = argTp.Flag
-	bf.tp.Flen = argTp.Flen
-	bf.tp.Charset = argTp.Charset
-	// Decimal is kept to default
+	retTp := *args[0].GetType()
+	retTp.Decimal = types.UnspecifiedLength
+	bf.tp = &retTp
 	var sig builtinFunc
 	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinReverseBinarySig{baseStringBuiltinFunc{bf}}
