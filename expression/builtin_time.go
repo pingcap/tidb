@@ -803,36 +803,30 @@ func (c *dayOfMonthFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinDayOfMonthSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 2
+	sig := &builtinDayOfMonthSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinDayOfMonthSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinDayOfMonthSig.
+// evalInt evals a builtinDayOfMonthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofmonth
-func (b *builtinDayOfMonthSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinDayOfMonthSig) evalInt(row []types.Datum) (int64, bool, error) {
+	arg, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	// TODO: some invalid format like 2000-00-00 will return 0 too.
-	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
+	if arg.IsZero() {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
-
-	// No need to check type here.
-	t := d.GetMysqlTime()
-	if t.IsZero() {
-		d.SetInt64(int64(0))
-		return
-	}
-
-	d.SetInt64(int64(t.Time.Day()))
-	return
+	return int64(arg.Time.Day()), false, nil
 }
 
 type dayOfWeekFunctionClass struct {
@@ -843,37 +837,32 @@ func (c *dayOfWeekFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinDayOfWeekSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 1
+	sig := &builtinDayOfWeekSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinDayOfWeekSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinDayOfWeekSig.
+// evalInt evals a builtinDayOfWeekSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofweek
-func (b *builtinDayOfWeekSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinDayOfWeekSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg, isNull, err := b.args[0].EvalTime(row, sc)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
+	if arg.InvalidZero() {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
-
-	// No need to check type here.
-	t := d.GetMysqlTime()
-	if t.IsZero() {
-		d.SetNull()
-		// TODO: log warning or return error?
-		return
-	}
-
 	// 1 is Sunday, 2 is Monday, .... 7 is Saturday
-	d.SetInt64(int64(t.Time.Weekday() + 1))
-	return
+	return int64(arg.Time.Weekday() + 1), false, nil
 }
 
 type dayOfYearFunctionClass struct {
@@ -884,36 +873,31 @@ func (c *dayOfYearFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinDayOfYearSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 3
+	sig := &builtinDayOfYearSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinDayOfYearSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinDayOfYearSig.
+// evalInt evals a builtinDayOfYearSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofyear
-func (b *builtinDayOfYearSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinDayOfYearSig) evalInt(row []types.Datum) (int64, bool, error) {
+	arg, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
-	}
-
-	t := d.GetMysqlTime()
-	if t.InvalidZero() {
-		// TODO: log warning or return error?
-		d.SetNull()
-		return
+	if arg.InvalidZero() {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 
-	yd := int64(t.Time.YearDay())
-	d.SetInt64(yd)
-	return
+	return int64(arg.Time.YearDay()), false, nil
 }
 
 type weekFunctionClass struct {
