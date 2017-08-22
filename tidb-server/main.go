@@ -186,7 +186,9 @@ func main() {
 	go func() {
 		sig := <-sc
 		log.Infof("Got signal [%d] to exit.", sig)
-		xsvr.Close() // Should close xserver before server.
+		if *startXServer {
+			xsvr.Close() // Should close xserver before server.
+		}
 		svr.Close()
 	}()
 
