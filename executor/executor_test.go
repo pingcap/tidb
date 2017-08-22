@@ -1579,9 +1579,9 @@ func (s *testSuite) TestPointGet(c *C) {
 		// Validate should be after NameResolve.
 		err = plan.Validate(stmtNode, false)
 		c.Check(err, IsNil)
-		plan, err := plan.Optimize(ctx, stmtNode, infoSchema)
+		p, err := plan.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
-		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, plan)
+		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(ret, Equals, result)
 	}
 }
