@@ -311,7 +311,8 @@ func tryToConvertConstantInt(con *Constant, ctx context.Context) *Constant {
 	}
 }
 
-func refineTwoArgs(con *Constant, op opcode.Op, ctx context.Context) *Constant {
+// refineConstantArg change the constant argument to it's ceiling or flooring result by the given op.
+func refineConstantArg(con *Constant, op opcode.Op, ctx context.Context) *Constant {
 	sc := ctx.GetSessionVars().StmtCtx
 	i64, err := con.Value.ToInt64(sc)
 	if err != nil {
@@ -346,6 +347,8 @@ func refineTwoArgs(con *Constant, op opcode.Op, ctx context.Context) *Constant {
 	return con
 }
 
+// refineArgs rewrite the arguments if one of them is int expression and another one is non-int constant.
+// Like a < 1.1 will be changed to a < 2.
 func (c *compareFunctionClass) refineArgs(args []Expression, ctx context.Context) []Expression {
 	arg0IsInt := args[0].GetTypeClass() == types.ClassInt
 	arg1IsInt := args[1].GetTypeClass() == types.ClassInt
@@ -358,10 +361,10 @@ func (c *compareFunctionClass) refineArgs(args []Expression, ctx context.Context
 		return args
 	}
 	if arg0IsInt {
-		arg1 = refineTwoArgs(arg1, c.op, ctx)
+		arg1 = refineConstantArg(arg1, c.op, ctx)
 		return []Expression{args[0], arg1}
 	}
-	arg0 = refineTwoArgs(arg0, revertOp[c.op], ctx)
+	arg0 = refineConstantArg(arg0, revertOp[c.op], ctx)
 	return []Expression{arg0, args[1]}
 }
 

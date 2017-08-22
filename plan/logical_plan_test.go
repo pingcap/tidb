@@ -866,7 +866,6 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 	}
 }
 
-
 func (s *testPlanSuite) TestColumnPruning(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {

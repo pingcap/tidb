@@ -858,12 +858,12 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		{
 			sql:  "select a from t where c_str like 'abc%af'",
 			best: "TableReader(Table(t))->Sel([like(test.t.c_str, abc%af, 92)])->Projection",
-//			best: "Index(t.c_d_e_str)[[abc <nil>,abd <nil>)]->Selection->Projection",
+			//			best: "Index(t.c_d_e_str)[[abc <nil>,abd <nil>)]->Selection->Projection",
 		},
 		{
 			sql:  `select a from t where c_str like 'abc\\_' escape ''`,
 			best: "TableReader(Table(t))->Sel([like(test.t.c_str, abc\\_, 92)])->Projection",
-//			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
+			//			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
 		},
 		//{
 		//	sql:  `select a from t where c_str like 'abc\\_'`,
