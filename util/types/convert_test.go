@@ -758,6 +758,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		{`false`, 0},
 		{`null`, 0},
 		{`"hello"`, 0},
+		{`"123hello"`, 123},
 		{`"1234"`, 1234},
 	}
 	for _, tt := range tests {
@@ -783,6 +784,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 		{`false`, 0},
 		{`null`, 0},
 		{`"hello"`, 0},
+		{`"123.456hello"`, 123.456},
 		{`"1234"`, 1234},
 	}
 	for _, tt := range tests {
