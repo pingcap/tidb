@@ -153,15 +153,16 @@ var (
 	_ builtinFunc = &builtinTimestampSig{}
 )
 
-// handleError4TimeFuncs reports error or warning depend on the context.
-func handleError4TimeFuncs(ctx context.Context, err error) error {
+// handleInvalidTimeError reports error or warning depend on the context.
+func handleInvalidTimeError(ctx context.Context, err error) error {
+	if err == nil || err.Error() != types.ErrInvalidTimeFormat.Error() {
+		return err
+	}
 	sc := ctx.GetSessionVars().StmtCtx
 	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateOrDeleteStmt) {
 		return err
 	}
-	if err != nil {
-		sc.AppendWarning(err)
-	}
+	sc.AppendWarning(err)
 	return nil
 }
 
@@ -941,7 +942,7 @@ func (b *builtinWeekWithModeSig) evalInt(row []types.Datum) (int64, bool, error)
 	date, isNull, err := b.args[0].EvalTime(row, sc)
 
 	if isNull || err != nil || date.IsZero() {
-		return 0, true, errors.Trace(handleError4TimeFuncs(b.ctx, err))
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 
 	mode, isNull, err := b.args[1].EvalInt(row, sc)
@@ -964,7 +965,7 @@ func (b *builtinWeekWithoutModeSig) evalInt(row []types.Datum) (int64, bool, err
 	date, isNull, err := b.args[0].EvalTime(row, sc)
 
 	if isNull || err != nil || date.IsZero() {
-		return 0, true, errors.Trace(handleError4TimeFuncs(b.ctx, err))
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 
 	week := date.Time.Week(0)
@@ -1047,7 +1048,7 @@ func (b *builtinWeekOfYearSig) evalInt(row []types.Datum) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(row, sc)
 
 	if isNull || err != nil || date.IsZero() {
-		return 0, true, errors.Trace(handleError4TimeFuncs(b.ctx, err))
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 
 	week := date.Time.Week(3)
@@ -1789,14 +1790,14 @@ func (b *builtinTimestampDiffSig) eval(row []types.Datum) (d types.Datum, err er
 	sc := b.ctx.GetSessionVars().StmtCtx
 	t1, err := convertDatumToTime(sc, args[1])
 	if err != nil {
-		return d, errors.Trace(handleError4TimeFuncs(b.ctx, err))
+		return d, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	t2, err := convertDatumToTime(sc, args[2])
 	if err != nil {
-		return d, errors.Trace(handleError4TimeFuncs(b.ctx, err))
+		return d, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	if t1.InvalidZero() || t2.InvalidZero() {
-		return d, errors.Trace(handleError4TimeFuncs(b.ctx, err))
+		return d, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 
 	v := types.TimestampDiff(args[0].GetString(), t1, t2)
@@ -2266,7 +2267,7 @@ func (b *builtinMakeDateSig) evalTime(row []types.Datum) (d types.Time, isNull b
 	}
 	retTimestamp := types.TimestampDiff("DAY", types.ZeroDate, startTime)
 	if retTimestamp == 0 {
-		return d, true, errors.Trace(handleError4TimeFuncs(b.ctx, types.ErrInvalidTimeFormat))
+		return d, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 	ret := types.TimeFromDays(retTimestamp + dayOfYear - 1)
 	if ret.IsZero() || ret.Time.Year() > 9999 {
@@ -2851,7 +2852,7 @@ func (b *builtinTimestampAddSig) evalString(row []types.Datum) (string, bool, er
 	}
 	r := types.Time{Time: types.FromGoTime(tb), Type: mysql.TypeDatetime, Fsp: fsp}
 	if err = r.Check(); err != nil {
-		return "", true, errors.Trace(handleError4TimeFuncs(b.ctx, err))
+		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	return r.String(), false, nil
 }
@@ -2883,14 +2884,14 @@ func (b *builtinToDaysSig) evalInt(row []types.Datum) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(row, sc)
 
 	if isNull || err != nil {
-		return 0, true, errors.Trace(handleError4TimeFuncs(b.ctx, err))
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	if err != nil {
-		return 0, true, errors.Trace(handleError4TimeFuncs(b.ctx, err))
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	ret := types.TimestampDiff("DAY", types.ZeroDate, arg)
 	if ret == 0 {
-		return 0, true, errors.Trace(handleError4TimeFuncs(b.ctx, types.ErrInvalidTimeFormat))
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 	return ret, false, nil
 }
@@ -2920,14 +2921,14 @@ type builtinToSecondsSig struct {
 func (b *builtinToSecondsSig) evalInt(row []types.Datum) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, true, errors.Trace(handleError4TimeFuncs(b.ctx, err))
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	if err != nil {
-		return 0, true, errors.Trace(handleError4TimeFuncs(b.ctx, err))
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	ret := types.TimestampDiff("SECOND", types.ZeroDate, arg)
 	if ret == 0 {
-		return 0, true, errors.Trace(handleError4TimeFuncs(b.ctx, types.ErrInvalidTimeFormat))
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 	return ret, false, nil
 }

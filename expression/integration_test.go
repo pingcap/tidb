@@ -961,6 +961,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for weekofyear
 	result = tk.MustQuery(`select weekofyear("2012-12-22"), weekofyear("2008-02-20"), weekofyear("aa"), weekofyear(null), weekofyear(11), weekofyear(12.99);`)
 	result.Check(testkit.Rows("51 8 <nil> <nil> <nil> <nil>"))
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a bigint)`)
+	_, err = tk.Exec(`insert into t select weekofyear("aa")`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "invalid time format")
+	tk.MustExec(`insert into t select 1`)
+	_, err = tk.Exec(`update t set a = weekofyear("aa")`)
+	c.Assert(err.Error(), Matches, "invalid time format")
+	_, err = tk.Exec(`delete from t where a = weekofyear("aa")`)
+	c.Assert(err.Error(), Matches, "invalid time format")
 
 	// Fix issue #3923
 	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:00' as time), '12:00:00');")
