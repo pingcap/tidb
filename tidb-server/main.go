@@ -77,7 +77,7 @@ var (
 	tcpKeepAlive               = flagBoolean("tcp-keep-alive", false, "set keep alive option for tcp connection.")
 	proxyProtocolNetworks      = flag.String("proxy-protocol-networks", "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Int("proxy-protocol-header-timeout", 5, "proxy protocol header read timeout, unit is second.")
-	timeJumpBackCounter = prometheus.NewCounter(
+	timeJumpBackCounter        = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "monitor",
