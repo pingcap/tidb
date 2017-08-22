@@ -488,6 +488,7 @@ import (
 	offset		"OFFSET"
 	only		"ONLY"
 	password	"PASSWORD"
+	plugins		"PLUGINS"
 	prepare		"PREPARE"
 	privileges	"PRIVILEGES"
 	processlist	"PROCESSLIST"
@@ -752,6 +753,7 @@ import (
 	StatsPersistentVal		"stats_persistent value"
 	StringName			"string literal or identifier"
 	StringList 			"string list"
+	StringLiteral			"text literal"
 	ExplainableStmt			"explainable statement"
 	SubSelect			"Sub Select"
 	Symbol				"Constraint Symbol"
@@ -890,6 +892,9 @@ import (
 
 %precedence lowerThanIntervalKeyword
 %precedence interval
+
+%precedence lowerThanStringLitToken
+%precedence stringLit
 
 %precedence lowerThanSetKeyword
 %precedence set
@@ -2622,13 +2627,16 @@ Literal:
 |	floatLit
 |	decLit
 |	intLit
-|	stringLit
 	{
 		tp := types.NewFieldType(mysql.TypeString)
 		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($1)
 		expr.SetType(tp)
 		$$ = expr
+	}
+|	StringLiteral %prec lowerThanStringLitToken
+	{
+		$$ = $1
 	}
 |	"UNDERSCORE_CHARSET" stringLit
 	{
@@ -2647,6 +2655,33 @@ Literal:
 	}
 |	hexLit
 |	bitLit
+
+StringLiteral:
+	stringLit
+	{
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.Charset, tp.Collate = parser.charset, parser.collation
+		expr := ast.NewValueExpr($1)
+		expr.SetType(tp)
+		$$ = expr
+	}
+|	StringLiteral stringLit
+	{
+		valExpr := $1.(*ast.ValueExpr)
+		strLit := valExpr.GetString()
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.Charset, tp.Collate = parser.charset, parser.collation
+		expr := ast.NewValueExpr(strLit+$2)
+		// Fix #4239, use first string literal as projection name.
+		if valExpr.GetProjectionOffset() >= 0 {
+			expr.SetProjectionOffset(valExpr.GetProjectionOffset())
+		} else {
+			expr.SetProjectionOffset(len(strLit))
+		}
+		expr.SetType(tp)
+		$$ = expr
+	}
+
 
 Operand:
 	Literal
@@ -2921,10 +2956,10 @@ FunctionCallKeyword:
 |	"CONVERT" '(' Expression "USING" StringName ')'
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-		charset := ast.NewValueExpr($5)
+		charset1 := ast.NewValueExpr($5)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), charset},
+			Args: []ast.ExprNode{$3.(ast.ExprNode), charset1},
 		}
 	}
 |	"CONVERT" '(' Expression ',' CastType ')'
@@ -3642,11 +3677,11 @@ FunctionCallNonKeyword:
 	}
 |   "CHAR" '(' ExpressionList "USING" StringName ')'
 	{
-		charset := ast.NewValueExpr($5)
+		charset1 := ast.NewValueExpr($5)
 		args := $3.([]ast.ExprNode)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr(ast.CharFunc),
-			Args: append(args, charset),
+			Args: append(args, charset1),
 		}
 	}
 |	"CHAR_LENGTH" '(' ExpressionListOpt ')'
@@ -4122,7 +4157,7 @@ CastType:
 		x.Decimal = 0
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
-        x.Flag |= mysql.BinaryFlag
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"DATETIME" OptFieldLen
@@ -4131,11 +4166,11 @@ CastType:
 		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
-		    x.Flen = x.Flen + 1 + x.Decimal
+			x.Flen = x.Flen + 1 + x.Decimal
 		}
 		x.Charset = charset.CharsetBin
-        x.Collate = charset.CollationBin
-        x.Flag |= mysql.BinaryFlag
+		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"DECIMAL" FloatOpt
@@ -4161,11 +4196,11 @@ CastType:
 		x.Flen = mysql.MaxDurationWidthNoFsp
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
-		    x.Flen = x.Flen + 1 + x.Decimal
+			x.Flen = x.Flen + 1 + x.Decimal
 		}
 		x.Charset = charset.CharsetBin
-        x.Collate = charset.CollationBin
-        x.Flag |= mysql.BinaryFlag
+		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"SIGNED" OptInteger
@@ -4174,8 +4209,8 @@ CastType:
 		x.Flen = mysql.MaxIntWidth
 		x.Decimal = 0
 		x.Charset = charset.CharsetBin
-        x.Collate = charset.CollationBin
-        x.Flag |= mysql.BinaryFlag
+		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"UNSIGNED" OptInteger
@@ -5429,12 +5464,18 @@ ShowTargetFilterable:
 			Tp: ast.ShowProcedureStatus,
 		}
 	}
-|   "EVENTS" ShowDatabaseNameOpt
+|	"EVENTS" ShowDatabaseNameOpt
 	{
-        $$ = &ast.ShowStmt{
-        	Tp:	ast.ShowEvents,
-        	DBName:	$2.(string),
-       	}
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowEvents,
+			DBName:	$2.(string),
+		}
+	}
+|	"PLUGINS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: 	ast.ShowPlugins,
+		}
 	}
 ShowLikeOrWhereOpt:
 	{
@@ -6113,25 +6154,41 @@ DateAndTimeType:
 |	"DATETIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDatetime)
+		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
+		if x.Decimal > 0 {
+			x.Flen = x.Flen + 1 + x.Decimal
+		}
 		$$ = x
 	}
 |	"TIMESTAMP" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeTimestamp)
+		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
+		if x.Decimal > 0 {
+			x.Flen = x.Flen + 1 + x.Decimal
+		}
 		$$ = x
 	}
 |	"TIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDuration)
+		x.Flen = mysql.MaxDurationWidthNoFsp
 		x.Decimal = $2.(int)
+		if x.Decimal > 0 {
+			x.Flen = x.Flen + 1 + x.Decimal
+		}
 		$$ = x
 	}
 |	"YEAR" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		x.Flen = $2.(int)
+		if x.Flen != -1 && x.Flen != 4 {
+			yylex.Errorf("Supports only YEAR or YEAR(4) column.")
+			return -1
+		}
 		$$ = x
 	}
 

@@ -19,11 +19,14 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -34,6 +37,7 @@ var _ = Suite(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
 	store kv.Storage
+	ctx   context.Context
 }
 
 func (s *testIntegrationSuite) cleanEnv(c *C) {
@@ -48,6 +52,7 @@ func (s *testIntegrationSuite) cleanEnv(c *C) {
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	s.store, _ = newStoreWithBootstrap()
+	s.ctx = mock.NewContext()
 }
 
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
@@ -792,6 +797,12 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("0 1777777777777777777777 1777777777777777777777 1777777777777777777777"))
 	result = tk.MustQuery(`select oct(-1.9), oct(1.9), oct(-1), oct(1), oct(-9999999999999999999999999), oct(9999999999999999999999999);`)
 	result.Check(testkit.Rows("1777777777777777777777 1 1777777777777777777777 1 1777777777777777777777 1777777777777777777777"))
+
+	// for find_in_set
+	result = tk.MustQuery(`select find_in_set("", ""), find_in_set("", ","), find_in_set("中文", "字符串,中文"), find_in_set("b,", "a,b,c,d");`)
+	result.Check(testkit.Rows("0 1 2 0"))
+	result = tk.MustQuery(`select find_in_set(NULL, ""), find_in_set("", NULL), find_in_set(1, "2,3,1");`)
+	result.Check(testkit.Rows("<nil> <nil> 3"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
@@ -916,7 +927,10 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
+	originSQLMode := s.ctx.GetSessionVars().StrictSQLMode
+	s.ctx.GetSessionVars().StrictSQLMode = true
 	defer func() {
+		s.ctx.GetSessionVars().StrictSQLMode = originSQLMode
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
@@ -929,6 +943,86 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
 	result := tk.MustQuery("select makedate(a,a), makedate(b,b), makedate(c,c), makedate(d,d), makedate(e,e), makedate(f,f), makedate(null,null), makedate(a,b) from t")
 	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
+
+	// for year
+	result = tk.MustQuery(`select year("2013-01-09"), year("2013-00-09"), year("000-01-09"), year("1-01-09"), year("20131-01-09"), year(null);`)
+	result.Check(testkit.Rows("2013 2013 0 1 <nil> <nil>"))
+	result = tk.MustQuery(`select year("2013-00-00"), year("2013-00-00 00:00:00"), year("0000-00-00 12:12:12"), year("2017-00-00 12:12:12");`)
+	result.Check(testkit.Rows("2013 2013 0 2017"))
+	result = tk.MustQuery(`select year("aa"), year(2013), year(2012.09), year("1-01"), year("-09");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a bigint)`)
+	_, err := tk.Exec(`insert into t select year("aa")`)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`insert into t select year("0000-00-00 00:00:00")`)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	tk.MustExec(`insert into t select 1`)
+	_, err = tk.Exec(`update t set a = year("aa")`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = year("aa")`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	// for month
+	result = tk.MustQuery(`select month("2013-01-09"), month("2013-00-09"), month("000-01-09"), month("1-01-09"), month("20131-01-09"), month(null);`)
+	result.Check(testkit.Rows("1 0 1 1 <nil> <nil>"))
+	result = tk.MustQuery(`select month("2013-00-00"), month("2013-00-00 00:00:00"), month("0000-00-00 12:12:12"), month("2017-00-00 12:12:12");`)
+	result.Check(testkit.Rows("0 0 0 0"))
+	result = tk.MustQuery(`select month("aa"), month(2013), month(2012.09), month("1-01"), month("-09");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select month("2013-012-09"), month("2013-0000000012-09"), month("2013-30-09"), month("000-41-09");`)
+	result.Check(testkit.Rows("12 12 <nil> <nil>"))
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a bigint)`)
+	_, err = tk.Exec(`insert into t select month("aa")`)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`insert into t select month("0000-00-00 00:00:00")`)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	tk.MustExec(`insert into t select 1`)
+	_, err = tk.Exec(`update t set a = month("aa")`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = month("aa")`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	// for week
+	result = tk.MustQuery(`select week("2012-12-22"), week("2012-12-22", -2), week("2012-12-22", 0), week("2012-12-22", 1), week("2012-12-22", 2), week("2012-12-22", 200);`)
+	result.Check(testkit.Rows("51 51 51 51 51 51"))
+	result = tk.MustQuery(`select week("2008-02-20"), week("2008-02-20", 0), week("2008-02-20", 1), week("2009-02-20", 2), week("2008-02-20", 3), week("2008-02-20", 4);`)
+	result.Check(testkit.Rows("7 7 8 7 8 8"))
+	result = tk.MustQuery(`select week("2008-02-20", 5), week("2008-02-20", 6), week("2009-02-20", 7), week("2008-02-20", 8), week("2008-02-20", 9);`)
+	result.Check(testkit.Rows("7 8 7 7 8"))
+	result = tk.MustQuery(`select week("aa", 1), week(null, 2), week(11, 2), week(12.99, 2);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select week("aa"), week(null), week(11), week(12.99);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a datetime)`)
+	_, err = tk.Exec(`insert into t select week("aa", 1)`)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	tk.MustExec(`insert into t select now()`)
+	_, err = tk.Exec(`update t set a = week("aa", 1)`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = week("aa", 1)`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	// for weekofyear
+	result = tk.MustQuery(`select weekofyear("2012-12-22"), weekofyear("2008-02-20"), weekofyear("aa"), weekofyear(null), weekofyear(11), weekofyear(12.99);`)
+	result.Check(testkit.Rows("51 8 <nil> <nil> <nil> <nil>"))
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a bigint)`)
+	_, err = tk.Exec(`insert into t select weekofyear("aa")`)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	tk.MustExec(`insert into t select 1`)
+	_, err = tk.Exec(`update t set a = weekofyear("aa")`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = weekofyear("aa")`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
 	// Fix issue #3923
 	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:00' as time), '12:00:00');")
@@ -1043,6 +1137,46 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("201451 <nil> <nil> 201451 201451 <nil> <nil>"))
 	result = tk.MustQuery(`select yearweek(12121), yearweek(1.00009), yearweek("aaaaa"), yearweek(""), yearweek(NULL);`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+
+	// for dayOfWeek, dayOfMonth, dayOfYear
+	result = tk.MustQuery(`select dayOfWeek(null), dayOfWeek("2017-08-12"), dayOfWeek("0000-00-00"), dayOfWeek("2017-00-00"), dayOfWeek("0000-00-00 12:12:12"), dayOfWeek("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 7 <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select dayOfYear(null), dayOfYear("2017-08-12"), dayOfYear("0000-00-00"), dayOfYear("2017-00-00"), dayOfYear("0000-00-00 12:12:12"), dayOfYear("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 224 <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select dayOfMonth(null), dayOfMonth("2017-08-12"), dayOfMonth("0000-00-00"), dayOfMonth("2017-00-00"), dayOfMonth("0000-00-00 12:12:12"), dayOfMonth("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 12 <nil> 0 0 0"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a bigint)`)
+	tk.MustExec(`insert into t value(1)`)
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+
+	_, err = tk.Exec("insert into t value(dayOfWeek('0000-00-00'))")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`update t set a = dayOfWeek("0000-00-00")`)
+	log.Warning(err, IsNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = dayOfWeek(123)`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`update t set a = dayOfMonth("0000-00-00")`)
+	log.Warning(err, IsNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = dayOfMonth(123)`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	_, err = tk.Exec("insert into t value(dayOfYear('0000-00-00'))")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`update t set a = dayOfYear("0000-00-00")`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = dayOfYear(123)`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	tk.MustExec("set sql_mode = ''")
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
@@ -1525,6 +1659,8 @@ func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
 	result = tk.MustQuery("SELECT 79 + + + CASE -87 WHEN -30 THEN COALESCE(COUNT(*), +COALESCE(+15, -33, -12 ) + +72) WHEN +COALESCE(+AVG(DISTINCT(60)), 21) THEN NULL ELSE NULL END AS col0;")
 	result.Check(testkit.Rows("<nil>"))
 
+	result = tk.MustQuery("SELECT -63 + COALESCE ( - 83, - 61 + - + 72 * - CAST( NULL AS SIGNED ) + + 3 );")
+	result.Check(testkit.Rows("-146"))
 }
 
 func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
@@ -1555,6 +1691,20 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a + test.t.b)'")
+	rs, err = tk.Exec("select cast(-3 as signed) + cast(2 as unsigned);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = tidb.GetRows(rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-3 + 2)'")
+	rs, err = tk.Exec("select cast(2 as unsigned) + cast(-3 as signed);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = tidb.GetRows(rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(2 + -3)'")
 
 	// for minus
 	tk.MustExec("DROP TABLE IF EXISTS t;")
@@ -1576,6 +1726,20 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
+	rs, err = tk.Exec("select cast(-1 as signed) - cast(-1 as unsigned);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = tidb.GetRows(rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-1 - 18446744073709551615)'")
+	rs, err = tk.Exec("select cast(-1 as unsigned) - cast(-1 as signed);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = tidb.GetRows(rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(18446744073709551615 - -1)'")
 
 	tk.MustQuery("select 1234567890 * 1234567890").Check(testkit.Rows("1524157875019052100"))
 	rs, err = tk.Exec("select 1234567890 * 12345671890")
@@ -1599,6 +1763,8 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tidb.GetRows(rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	result = tk.MustQuery(`select cast(-3 as unsigned) - cast(-1 as signed);`)
+	result.Check(testkit.Rows("18446744073709551614"))
 
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));")
@@ -1702,6 +1868,17 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"26 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
 		"27 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
 		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
+
+	// for coalesce
+	result = tk.MustQuery("select coalesce(NULL), coalesce(NULL, NULL), coalesce(NULL, NULL, NULL);")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b double, c datetime, d time, e char(20), f bit(10))")
+	tk.MustExec(`insert into t2 values(1, 1.1, "2017-08-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
+
+	result = tk.MustQuery("select coalesce(NULL, a), coalesce(NULL, b, a), coalesce(c, NULL, a, b), coalesce(d, NULL), coalesce(d, c), coalesce(NULL, NULL, e, 1), coalesce(f), coalesce(1, a, b, c, d, e, f) from t2")
+	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef 21 1", time.Now().Format("2006-01-02"))))
 
 	// nullif
 	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
