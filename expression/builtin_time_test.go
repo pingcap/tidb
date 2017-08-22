@@ -171,6 +171,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 	}{
 		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		{"0000-00-00 00:00:00", nil, nil, nil, int64(0), nil, nil, nil, nil, nil, nil, nil},
+		{"0000-00-00", nil, nil, nil, int64(0), nil, nil, nil, nil, nil, nil, nil},
 	}
 
 	dtblNil := tblToDtbl(tblNil)
