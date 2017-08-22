@@ -702,110 +702,6 @@ func builtinMonthName(args []types.Datum, ctx context.Context) (d types.Datum, e
 	return
 }
 
-type nowFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *nowFunctionClass) getFlenAndDecimal(sc *variable.StatementContext, arg Expression) (flen, decimal int) {
-	if constant, ok := arg.(*Constant); ok {
-		fsp, isNull, err := constant.EvalInt(nil, sc)
-		if isNull || err != nil || fsp > int64(types.MaxFsp) {
-			decimal = types.MaxFsp
-		} else if fsp < int64(types.MinFsp) {
-			decimal = types.MinFsp
-		} else {
-			decimal = int(fsp)
-		}
-	}
-	if decimal > 0 {
-		flen = 19 + 1 + decimal
-	} else {
-		flen = 19
-	}
-	return flen, decimal
-}
-
-func (c *nowFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	argTps := make([]evalTp, 0, 1)
-	if len(args) == 1 {
-		argTps = append(argTps, tpInt)
-	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, argTps...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if len(args) == 1 {
-		bf.tp.Flen, bf.tp.Decimal = c.getFlenAndDecimal(bf.ctx.GetSessionVars().StmtCtx, args[0])
-	} else {
-		bf.tp.Flen, bf.tp.Decimal = 19, 0
-	}
-
-	var sig builtinFunc
-	if len(args) == 1 {
-		sig = &builtinNowWithArgSig{baseTimeBuiltinFunc{bf}}
-	} else {
-		sig = &builtinNowWithoutArgSig{baseTimeBuiltinFunc{bf}}
-	}
-	return sig.setSelf(sig), nil
-}
-
-func evalNowWithFsp(ctx context.Context, fsp int) (types.Time, bool, error) {
-	sysTs, err := getSystemTimestamp(ctx)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-
-	result, err := convertTimeToMysqlTime(sysTs, fsp)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-
-	err = result.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-
-	return result, false, nil
-}
-
-type builtinNowWithArgSig struct {
-	baseTimeBuiltinFunc
-}
-
-// evalTime evals NOW(fsp)
-// see: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_now
-func (b *builtinNowWithArgSig) evalTime(row []types.Datum) (types.Time, bool, error) {
-	num, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-	if !isNull && num > int64(types.MaxFsp) {
-		return types.Time{}, true, errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v.", num, types.MaxFsp)
-	}
-	if !isNull && num < int64(types.MinFsp) {
-		return types.Time{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", num)
-	}
-	if isNull {
-		num = 0
-	}
-
-	result, isNull, err := evalNowWithFsp(b.ctx, int(num))
-	return result, isNull, errors.Trace(err)
-}
-
-type builtinNowWithoutArgSig struct {
-	baseTimeBuiltinFunc
-}
-
-func (b *builtinNowWithoutArgSig) evalTime(row []types.Datum) (types.Time, bool, error) {
-	result, isNull, err := evalNowWithFsp(b.ctx, 0)
-	return result, isNull, errors.Trace(err)
-}
-
 type dayNameFunctionClass struct {
 	baseFunctionClass
 }
@@ -1580,7 +1476,7 @@ type utcTimestampFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *utcTimestampFunctionClass) getFlenAndDecimal(sc *variable.StatementContext, arg Expression) (flen, decimal int) {
+func getFlenAndDecimal4UTCTimestampAndNow(sc *variable.StatementContext, arg Expression) (flen, decimal int) {
 	if constant, ok := arg.(*Constant); ok {
 		fsp, isNull, err := constant.EvalInt(nil, sc)
 		if isNull || err != nil || fsp > int64(types.MaxFsp) {
@@ -1613,7 +1509,7 @@ func (c *utcTimestampFunctionClass) getFunction(args []Expression, ctx context.C
 	}
 
 	if len(args) == 1 {
-		bf.tp.Flen, bf.tp.Decimal = c.getFlenAndDecimal(bf.ctx.GetSessionVars().StmtCtx, args[0])
+		bf.tp.Flen, bf.tp.Decimal = getFlenAndDecimal4UTCTimestampAndNow(bf.ctx.GetSessionVars().StmtCtx, args[0])
 	} else {
 		bf.tp.Flen, bf.tp.Decimal = 19, 0
 	}
@@ -1666,6 +1562,112 @@ type builtinUTCTimestampWithoutArgSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-timestamp
 func (b *builtinUTCTimestampWithoutArgSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	result, isNull, err := evalUTCTimestampWithFsp(0)
+	return result, isNull, errors.Trace(err)
+}
+
+type nowFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *nowFunctionClass) getFlenAndDecimal(sc *variable.StatementContext, arg Expression) (flen, decimal int) {
+	if constant, ok := arg.(*Constant); ok {
+		fsp, isNull, err := constant.EvalInt(nil, sc)
+		if isNull || err != nil || fsp > int64(types.MaxFsp) {
+			decimal = types.MaxFsp
+		} else if fsp < int64(types.MinFsp) {
+			decimal = types.MinFsp
+		} else {
+			decimal = int(fsp)
+		}
+	}
+	if decimal > 0 {
+		flen = 19 + 1 + decimal
+	} else {
+		flen = 19
+	}
+	return flen, decimal
+}
+
+func (c *nowFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := make([]evalTp, 0, 1)
+	if len(args) == 1 {
+		argTps = append(argTps, tpInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(args) == 1 {
+		bf.tp.Flen, bf.tp.Decimal = getFlenAndDecimal4UTCTimestampAndNow(bf.ctx.GetSessionVars().StmtCtx, args[0])
+	} else {
+		bf.tp.Flen, bf.tp.Decimal = 19, 0
+	}
+
+	var sig builtinFunc
+	if len(args) == 1 {
+		sig = &builtinNowWithArgSig{baseTimeBuiltinFunc{bf}}
+	} else {
+		sig = &builtinNowWithoutArgSig{baseTimeBuiltinFunc{bf}}
+	}
+	return sig.setSelf(sig), nil
+}
+
+func evalNowWithFsp(ctx context.Context, fsp int) (types.Time, bool, error) {
+	sysTs, err := getSystemTimestamp(ctx)
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	result, err := convertTimeToMysqlTime(sysTs, fsp)
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	err = result.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	return result, false, nil
+}
+
+type builtinNowWithArgSig struct {
+	baseTimeBuiltinFunc
+}
+
+// evalTime evals NOW(fsp)
+// see: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_now
+func (b *builtinNowWithArgSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	fsp, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	if isNull {
+		fsp = 0
+	} else if fsp > int64(types.MaxFsp) {
+		return types.Time{}, true, errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v.", fsp, types.MaxFsp)
+	} else if fsp < int64(types.MinFsp) {
+		return types.Time{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+	}
+
+	result, isNull, err := evalNowWithFsp(b.ctx, int(fsp))
+	return result, isNull, errors.Trace(err)
+}
+
+type builtinNowWithoutArgSig struct {
+	baseTimeBuiltinFunc
+}
+
+// evalTime evals NOW()
+// see: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_now
+func (b *builtinNowWithoutArgSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	result, isNull, err := evalNowWithFsp(b.ctx, 0)
 	return result, isNull, errors.Trace(err)
 }
 
