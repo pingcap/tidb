@@ -45,6 +45,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc := funcs[ast.Date]
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Expect"][0])
@@ -610,6 +611,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	} {
 		f, err := x.fc.getFunction(datumsToConstants(nil), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err := f.eval(nil)
 		ts := x.now()
 		c.Assert(err, IsNil)
@@ -1266,8 +1268,11 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 
 	// Test case for https://github.com/pingcap/tidb/issues/2496
 	// select unix_timestamp(now());
-	n, err := builtinNow(nil, s.ctx)
+	now, isNull, err := evalNowWithFsp(s.ctx, 0)
 	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	n := types.Datum{}
+	n.SetMysqlTime(now)
 	args := []types.Datum{n}
 	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
 	c.Assert(err, IsNil)

@@ -1276,5 +1276,27 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"month(c_blob_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 		{"month(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 		{"month(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+
+		{"now()  ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"now(0) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"now(1) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 21, 1},
+		{"now(2) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"now(3) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"now(4) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 24, 4},
+		{"now(5) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 25, 5},
+		{"now(6) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+		{"now(7) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+
+		{"utc_timestamp()  ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"utc_timestamp(0) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"utc_timestamp(1) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 21, 1},
+		{"utc_timestamp(2) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"utc_timestamp(3) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"utc_timestamp(4) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 24, 4},
+		{"utc_timestamp(5) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 25, 5},
+		{"utc_timestamp(6) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+		{"utc_timestamp(7) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
+
+		{"utc_date()  ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 	}
 }
