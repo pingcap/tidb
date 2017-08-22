@@ -488,6 +488,7 @@ import (
 	offset		"OFFSET"
 	only		"ONLY"
 	password	"PASSWORD"
+	plugins		"PLUGINS"
 	prepare		"PREPARE"
 	privileges	"PRIVILEGES"
 	processlist	"PROCESSLIST"
@@ -5452,6 +5453,12 @@ ShowTargetFilterable:
 		$$ = &ast.ShowStmt{
 			Tp:	ast.ShowEvents,
 			DBName:	$2.(string),
+		}
+	}
+|	"PLUGINS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: 	ast.ShowPlugins,
 		}
 	}
 ShowLikeOrWhereOpt:
