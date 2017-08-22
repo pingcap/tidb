@@ -805,6 +805,11 @@ func (s *testPlanSuite) createTestCase4EncryptionFuncs() []typeInferTestCase {
 
 func (s *testPlanSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
+		{"coalesce(c_int_d, 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"coalesce(NULL, c_int_d)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"coalesce(c_int_d, c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 3},
+		{"coalesce(c_int_d, c_datetime)", mysql.TypeVarString, charset.CharsetUTF8, 0, 22, types.UnspecifiedLength},
+
 		{"isnull(c_int_d      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"isnull(c_bigint_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"isnull(c_float_d    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
