@@ -53,7 +53,7 @@ var (
 	host                = flag.String("host", "0.0.0.0", "tidb server host")
 	port                = flag.String("P", "4000", "tidb server port")
 	xhost               = flag.String("xhost", "0.0.0.0", "tidb x protocol server host")
-	xport               = flag.String("xP", "4001", "tidb x protocol server port")
+	xport               = flag.String("xP", "14000", "tidb x protocol server port")
 	statusPort          = flag.String("status", "10080", "tidb server status port")
 	ddlLease            = flag.String("lease", "10s", "schema lease duration, very dangerous to change only if you know what you do")
 	statsLease          = flag.String("statsLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
@@ -73,6 +73,7 @@ var (
 	skipGrantTable      = flagBoolean("skip-grant-table", false, "This option causes the server to start without using the privilege system at all.")
 	slowThreshold       = flag.Int("slow-threshold", 300, "Queries with execution time greater than this value will be logged. (Milliseconds)")
 	queryLogMaxlen      = flag.Int("query-log-max-len", 2048, "Maximum query length recorded in log")
+	startXServer        = flagBoolean("xserver", false, "start tidb x protocol server")
 	tcpKeepAlive        = flagBoolean("tcp-keep-alive", false, "set keep alive option for tcp connection.")
 	timeJumpBackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -168,9 +169,11 @@ func main() {
 		log.Fatal(errors.ErrorStack(err))
 	}
 	var xsvr *xserver.Server
-	xsvr, err = xserver.NewServer(xcfg)
-	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
+	if *startXServer {
+		xsvr, err = xserver.NewServer(xcfg)
+		if err != nil {
+			log.Fatal(errors.ErrorStack(err))
+		}
 	}
 
 	sc := make(chan os.Signal, 1)
@@ -197,8 +200,10 @@ func main() {
 	if err := svr.Run(); err != nil {
 		log.Error(err)
 	}
-	if err := xsvr.Run(); err != nil {
-		log.Error(err)
+	if *startXServer {
+		if err := xsvr.Run(); err != nil {
+			log.Error(err)
+		}
 	}
 	domain.Close()
 	os.Exit(0)
