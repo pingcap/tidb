@@ -607,6 +607,7 @@ func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	retTp := *args[0].GetType()
+	retTp.Tp = mysql.TypeVarString
 	retTp.Decimal = types.UnspecifiedLength
 	bf.tp = &retTp
 	var sig builtinFunc
