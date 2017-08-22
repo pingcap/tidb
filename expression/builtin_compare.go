@@ -352,20 +352,19 @@ func refineConstantArg(con *Constant, op opcode.Op, ctx context.Context) *Consta
 func (c *compareFunctionClass) refineArgs(args []Expression, ctx context.Context) []Expression {
 	arg0IsInt := args[0].GetTypeClass() == types.ClassInt
 	arg1IsInt := args[1].GetTypeClass() == types.ClassInt
-	if (arg0IsInt && arg1IsInt) || (!arg0IsInt && !arg1IsInt) {
-		return args
-	}
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
-	if (!arg0IsInt && !arg0IsCon) || (!arg1IsInt && !arg1IsCon) || (arg0IsCon && arg1IsCon) {
-		return args
-	}
-	if arg0IsInt {
+	// int non-constant [cmp] non-int constant]
+	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1 = refineConstantArg(arg1, c.op, ctx)
 		return []Expression{args[0], arg1}
 	}
-	arg0 = refineConstantArg(arg0, revertOp[c.op], ctx)
-	return []Expression{arg0, args[1]}
+	// non-int constant [cmp] int non-constant
+	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
+		arg0 = refineConstantArg(arg0, symmetricOp[c.op], ctx)
+		return []Expression{arg0, args[1]}
+	}
+	return args
 }
 
 // getFunction sets compare built-in function signatures for various types.

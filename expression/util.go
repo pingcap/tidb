@@ -299,7 +299,8 @@ var oppositeOp = map[string]string{
 	ast.NE: ast.EQ,
 }
 
-var revertOp = map[opcode.Op]opcode.Op{
+// a op b is equal to b symmetricOp a
+var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.LT:     opcode.GT,
 	opcode.GE:     opcode.LE,
 	opcode.GT:     opcode.LT,
