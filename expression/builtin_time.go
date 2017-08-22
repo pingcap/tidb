@@ -809,8 +809,7 @@ func (b *builtinDayOfMonthSig) evalInt(row []types.Datum) (int64, bool, error) {
 		return 0, isNull, errors.Trace(err)
 	}
 	if arg.IsZero() {
-		// TODO: raise error in data-change statement(such as INSERT, UPDATE), raise warning in SELECT.
-		return 0, true, nil
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 	return int64(arg.Time.Day()), false, nil
 }
@@ -845,8 +844,7 @@ func (b *builtinDayOfWeekSig) evalInt(row []types.Datum) (int64, bool, error) {
 		return 0, isNull, errors.Trace(err)
 	}
 	if arg.InvalidZero() {
-		// TODO: raise error in data-change statement(such as INSERT, UPDATE), raise warning in SELECT.
-		return 0, true, nil
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 	// 1 is Sunday, 2 is Monday, .... 7 is Saturday
 	return int64(arg.Time.Weekday() + 1), false, nil
@@ -878,12 +876,10 @@ type builtinDayOfYearSig struct {
 func (b *builtinDayOfYearSig) evalInt(row []types.Datum) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-
 	if arg.InvalidZero() {
-		// TODO: raise error in data-change statement(such as INSERT, UPDATE), raise warning in SELECT.
-		return 0, true, nil
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 
 	return int64(arg.Time.YearDay()), false, nil
