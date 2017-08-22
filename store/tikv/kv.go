@@ -211,7 +211,6 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 
 	mvccStore := opt.mvccStore
 	if mvccStore == nil {
-		// mvccStore = mocktikv.NewMvccStore()
 		store, err := mocktikv.NewMVCCLevelDB(opt.path)
 		if err != nil {
 			return nil, errors.Trace(err)

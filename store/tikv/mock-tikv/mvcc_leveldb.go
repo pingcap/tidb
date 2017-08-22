@@ -41,13 +41,14 @@ type MVCCLevelDB struct {
 	// Key_ver-1       -- (4)
 	// ...
 	// Key_0           -- (5)
-	// NextKey_verMax  -- (6)
+	// NextKey_lock    -- (6)
+	// NextKey_verMax  -- (7)
 	// ...
-	// NextKey_ver+1   -- (7)
-	// NextKey_ver     -- (8)
-	// NextKey_ver-1   -- (9)
+	// NextKey_ver+1   -- (8)
+	// NextKey_ver     -- (9)
+	// NextKey_ver-1   -- (10)
 	// ...
-	// NextKey_0       -- (10)
+	// NextKey_0       -- (11)
 	// ...
 	// EOF
 	db *leveldb.DB
@@ -103,7 +104,7 @@ func NewMVCCLevelDB(path string) (*MVCCLevelDB, error) {
 		d, err = leveldb.OpenFile(path, &opt.Options{BlockCacheCapacity: 600 * 1024 * 1024})
 	}
 
-	return &MVCCLevelDB{db: d}, err
+	return &MVCCLevelDB{db: d}, errors.Trace(err)
 }
 
 // Iterator wraps iterator.Iterator to provide Valid() method.
@@ -504,11 +505,14 @@ func commitKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, commit
 		return errors.Trace(err)
 	}
 	if !ok || dec.lock.startTS != startTS {
+		// If the lock of this transaction is not found, or the lock is replaced by
+		// another transaction, check commit information of this transaction.
 		c, ok, err1 := getTxnCommitInfo(iter, key, startTS)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
 		if ok && c.valueType != typeRollback {
+			// c.valueType != typeRollback means the transaction is already committed, do nothing.
 			return nil
 		}
 		return ErrRetryable("txn not found")
