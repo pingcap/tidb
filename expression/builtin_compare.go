@@ -311,7 +311,7 @@ func tryToConvertConstantInt(con *Constant, ctx context.Context) *Constant {
 	}
 }
 
-// refineConstantArg change the constant argument to it's ceiling or flooring result by the given op.
+// refineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
 func refineConstantArg(con *Constant, op opcode.Op, ctx context.Context) *Constant {
 	sc := ctx.GetSessionVars().StmtCtx
 	i64, err := con.Value.ToInt64(sc)
@@ -354,7 +354,7 @@ func (c *compareFunctionClass) refineArgs(args []Expression, ctx context.Context
 	arg1IsInt := args[1].GetTypeClass() == types.ClassInt
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
-	// int non-constant [cmp] non-int constant]
+	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1 = refineConstantArg(arg1, c.op, ctx)
 		return []Expression{args[0], arg1}
