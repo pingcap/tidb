@@ -998,12 +998,18 @@ func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
 		col := &expression.Column{
 			ColName: model.NewCIStr(name),
 		}
-		var retType types.FieldType
+		var retTp byte
 		if len(ftypes) == 0 || ftypes[i] == 0 {
 			// Use varchar as the default return column type.
-			retType.Tp = mysql.TypeVarchar
+			retTp = mysql.TypeVarchar
 		} else {
-			retType.Tp = ftypes[i]
+			retTp = ftypes[i]
+		}
+		retType := types.NewFieldType(retTp)
+		if retTp == mysql.TypeVarchar || retTp == mysql.TypeString {
+			retType.Flen = 256
+		} else if retTp == mysql.TypeDatetime {
+			retType.Flen = 19
 		}
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(retType.Tp)
 		if retType.Flen == types.UnspecifiedLength {
@@ -1013,7 +1019,7 @@ func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
 			retType.Decimal = defaultDecimal
 		}
 		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
-		col.RetType = &retType
+		col.RetType = retType
 		schema.Append(col)
 	}
 	return schema

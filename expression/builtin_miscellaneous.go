@@ -199,12 +199,14 @@ func (c *anyValueFunctionClass) getFunction(args []Expression, ctx context.Conte
 	case tpDuration:
 		sig = &builtinDurationAnyValueSig{baseDurationBuiltinFunc{bf}}
 	case tpInt:
+		bf.tp.Decimal = 0
 		sig = &builtinIntAnyValueSig{baseIntBuiltinFunc{bf}}
 	case tpJSON:
 		sig = &builtinJSONAnyValueSig{baseJSONBuiltinFunc{bf}}
 	case tpReal:
 		sig = &builtinRealAnyValueSig{baseRealBuiltinFunc{bf}}
 	case tpString:
+		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinStringAnyValueSig{baseStringBuiltinFunc{bf}}
 	case tpTime:
 		sig = &builtinTimeAnyValueSig{baseTimeBuiltinFunc{bf}}
