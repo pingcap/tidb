@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
@@ -1130,6 +1131,46 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
+
+	// for dayOfWeek, dayOfMonth, dayOfYear
+	result = tk.MustQuery(`select dayOfWeek(null), dayOfWeek("2017-08-12"), dayOfWeek("0000-00-00"), dayOfWeek("2017-00-00"), dayOfWeek("0000-00-00 12:12:12"), dayOfWeek("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 7 <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select dayOfYear(null), dayOfYear("2017-08-12"), dayOfYear("0000-00-00"), dayOfYear("2017-00-00"), dayOfYear("0000-00-00 12:12:12"), dayOfYear("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 224 <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select dayOfMonth(null), dayOfMonth("2017-08-12"), dayOfMonth("0000-00-00"), dayOfMonth("2017-00-00"), dayOfMonth("0000-00-00 12:12:12"), dayOfMonth("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 12 <nil> 0 0 0"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a bigint)`)
+	tk.MustExec(`insert into t value(1)`)
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+
+	_, err = tk.Exec("insert into t value(dayOfWeek('0000-00-00'))")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`update t set a = dayOfWeek("0000-00-00")`)
+	log.Warning(err, IsNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = dayOfWeek(123)`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`update t set a = dayOfMonth("0000-00-00")`)
+	log.Warning(err, IsNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = dayOfMonth(123)`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	_, err = tk.Exec("insert into t value(dayOfYear('0000-00-00'))")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`update t set a = dayOfYear("0000-00-00")`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = dayOfYear(123)`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	tk.MustExec("set sql_mode = ''")
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
