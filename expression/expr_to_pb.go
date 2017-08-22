@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"time"
+
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
@@ -64,7 +66,7 @@ type pbConverter struct {
 func (pc pbConverter) exprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
 	case *Constant:
-		return pc.datumToPBExpr(x.Value)
+		return pc.constantToPBExpr(x)
 	case *Column:
 		return pc.columnToPBExpr(x)
 	case *ScalarFunction:
@@ -73,9 +75,14 @@ func (pc pbConverter) exprToPB(expr Expression) *tipb.Expr {
 	return nil
 }
 
-func (pc pbConverter) datumToPBExpr(d types.Datum) *tipb.Expr {
-	var tp tipb.ExprType
-	var val []byte
+func (pc pbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
+	var (
+		tp  tipb.ExprType
+		val []byte
+		d   = con.Value
+		ft  = con.GetType()
+	)
+
 	switch d.Kind() {
 	case types.KindNull:
 		tp = tipb.ExprType_Null
@@ -103,6 +110,23 @@ func (pc pbConverter) datumToPBExpr(d types.Datum) *tipb.Expr {
 	case types.KindMysqlDecimal:
 		tp = tipb.ExprType_MysqlDecimal
 		val = codec.EncodeDecimal(nil, d)
+	case types.KindMysqlTime:
+		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
+			tp = tipb.ExprType_MysqlTime
+			loc := pc.sc.TimeZone
+			t := d.GetMysqlTime()
+			if t.Type == mysql.TypeTimestamp && loc != time.UTC {
+				t.ConvertTimeZone(loc, time.UTC)
+			}
+			v, err := t.ToPackedUint()
+			if err != nil {
+				log.Errorf("Fail to encode value, err: %s", err.Error())
+				return nil
+			}
+			val = codec.EncodeUint(nil, v)
+			return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+		}
+		return nil
 	default:
 		return nil
 	}
@@ -110,6 +134,24 @@ func (pc pbConverter) datumToPBExpr(d types.Datum) *tipb.Expr {
 		return nil
 	}
 	return &tipb.Expr{Tp: tp, Val: val}
+}
+
+func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
+	return &tipb.FieldType{
+		Tp:      int32(ft.Tp),
+		Flag:    uint32(ft.Flag),
+		Flen:    int32(ft.Flen),
+		Decimal: int32(ft.Decimal),
+		Collate: collationToProto(ft.Collate),
+	}
+}
+
+func collationToProto(c string) int32 {
+	v, ok := mysql.CollationNames[c]
+	if ok {
+		return int32(v)
+	}
+	return int32(mysql.DefaultCollationID)
 }
 
 func (pc pbConverter) columnToPBExpr(column *Column) *tipb.Expr {
@@ -309,7 +351,7 @@ func (pc pbConverter) constListToPB(list []Expression) *tipb.Expr {
 		if !ok {
 			return nil
 		}
-		d := pc.datumToPBExpr(v.Value)
+		d := pc.constantToPBExpr(v)
 		if d == nil {
 			return nil
 		}

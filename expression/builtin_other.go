@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -201,7 +200,7 @@ func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) 
 	sc.IgnoreTruncate = true
 	bin, err := arg.ToInt64(sc)
 	if err != nil {
-		if terror.ErrorEqual(err, types.ErrOverflow) {
+		if types.ErrOverflow.Equal(err) {
 			d.SetInt64(64)
 			return d, nil
 

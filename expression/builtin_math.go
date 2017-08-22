@@ -29,6 +29,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -104,7 +105,9 @@ var (
 	_ builtinFunc = &builtinRadiansSig{}
 	_ builtinFunc = &builtinSinSig{}
 	_ builtinFunc = &builtinTanSig{}
-	_ builtinFunc = &builtinTruncateSig{}
+	_ builtinFunc = &builtinTruncateIntSig{}
+	_ builtinFunc = &builtinTruncateRealSig{}
+	_ builtinFunc = &builtinTruncateDecimalSig{}
 )
 
 type absFunctionClass struct {
@@ -994,31 +997,29 @@ func (c *crc32FunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinCRC32Sig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 10
+	bf.tp.Flag |= mysql.UnsignedFlag
+	sig := &builtinCRC32Sig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCRC32Sig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinCRC32Sig.
+// evalInt evals a CRC32(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
-func (b *builtinCRC32Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return d, nil
-	}
-	x, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinCRC32Sig) evalInt(row []types.Datum) (int64, bool, error) {
+	x, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 	r := crc32.ChecksumIEEE([]byte(x))
-	d.SetUint64(uint64(r))
-	return d, nil
+	return int64(r), false, nil
 }
 
 type signFunctionClass struct {
@@ -1495,68 +1496,125 @@ type truncateFunctionClass struct {
 	baseFunctionClass
 }
 
+// getDecimal returns the `Decimal` value of return type for function `TRUNCATE`.
+func (c *truncateFunctionClass) getDecimal(sc *variable.StatementContext, arg Expression) int {
+	if constant, ok := arg.(*Constant); ok {
+		decimal, isNull, err := constant.EvalInt(nil, sc)
+		if isNull || err != nil {
+			return 0
+		} else if decimal > 30 {
+			return 30
+		} else if decimal < 0 {
+			return 0
+		}
+		return int(decimal)
+	}
+	return 3
+}
+
 func (c *truncateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinTruncateSig{newBaseBuiltinFunc(args, ctx)}
+
+	argTp := fieldTp2EvalTp(args[0].GetType())
+	if argTp == tpTime || argTp == tpDuration || argTp == tpString {
+		argTp = tpReal
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, argTp, argTp, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if argTp == tpInt {
+		bf.tp.Decimal = 0
+	} else {
+		bf.tp.Decimal = c.getDecimal(bf.ctx.GetSessionVars().StmtCtx, args[1])
+	}
+	bf.tp.Flen = args[0].GetType().Flen - args[0].GetType().Decimal + bf.tp.Decimal
+	bf.tp.Flag |= args[0].GetType().Flag
+
+	var sig builtinFunc
+	switch argTp {
+	case tpInt:
+		sig = &builtinTruncateIntSig{baseIntBuiltinFunc{bf}}
+	case tpReal:
+		sig = &builtinTruncateRealSig{baseRealBuiltinFunc{bf}}
+	case tpDecimal:
+		sig = &builtinTruncateDecimalSig{baseDecimalBuiltinFunc{bf}}
+	}
+
 	return sig.setSelf(sig), nil
 }
 
-type builtinTruncateSig struct {
-	baseBuiltinFunc
+type builtinTruncateDecimalSig struct {
+	baseDecimalBuiltinFunc
 }
 
-// eval evals a builtinTruncateSig.
+// evalDecimal evals a TRUNCATE(X,D).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
-func (b *builtinTruncateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if len(args) != 2 || args[0].IsNull() || args[1].IsNull() {
-		return
-	}
+func (b *builtinTruncateDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
-	// Get the fraction as Int.
-	frac64, err1 := args[1].ToInt64(sc)
-	if err1 != nil {
-		return d, errors.Trace(err1)
-	}
-	frac := int(frac64)
-
-	// The number is a decimal, run decimal.Round(number, fraction, 9).
-	if args[0].Kind() == types.KindMysqlDecimal {
-		var dec types.MyDecimal
-		err = args[0].GetMysqlDecimal().Round(&dec, frac, types.ModeTruncate)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetMysqlDecimal(&dec)
-		return d, nil
+	x, isNull, err := b.args[0].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
 	}
 
-	// The number is a float, run math.Trunc.
-	x, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	d, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
 	}
 
-	// Get the truncate.
-	val := types.Truncate(x, frac)
-
-	// Return result as Round does.
-	switch args[0].Kind() {
-	case types.KindInt64:
-		d.SetInt64(int64(val))
-	case types.KindUint64:
-		d.SetUint64(uint64(val))
-	default:
-		d.SetFloat64(val)
-		if frac > 0 {
-			d.SetFrac(frac)
-		}
+	result := new(types.MyDecimal)
+	if err := x.Round(result, int(d), types.ModeTruncate); err != nil {
+		return nil, true, errors.Trace(err)
 	}
-	return d, nil
+	return result, false, nil
+}
+
+type builtinTruncateRealSig struct {
+	baseRealBuiltinFunc
+}
+
+// evalReal evals a TRUNCATE(X,D).
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
+func (b *builtinTruncateRealSig) evalReal(row []types.Datum) (float64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	x, isNull, err := b.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	d, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	return types.Truncate(x, int(d)), false, nil
+}
+
+type builtinTruncateIntSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals a TRUNCATE(X,D).
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
+func (b *builtinTruncateIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	x, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	d, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	floatX := float64(x)
+	return int64(types.Truncate(floatX, int(d))), false, nil
 }

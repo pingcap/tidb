@@ -58,6 +58,14 @@ func (h *Handle) Clear() {
 	h.statsCache.Store(statsCache{})
 	h.LastVersion = 0
 	h.PrevLastVersion = 0
+	for len(h.ddlEventCh) > 0 {
+		<-h.ddlEventCh
+	}
+	for len(h.analyzeResultCh) > 0 {
+		<-h.analyzeResultCh
+	}
+	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap)}
+	h.globalMap = make(tableDeltaMap)
 }
 
 // NewHandle creates a Handle for update stats.

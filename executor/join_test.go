@@ -230,6 +230,21 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t.a, t.b from t join t1 on t.a=t1.a where t1.b = 4 limit 1").Check(testkit.Rows("3 1"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("<nil> <nil> 0 0", "3 1 3 4", "1 3 1 2", "1 3 1 3"))
 
+	// join reorder will disorganize the resulting schema
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t values(1,2)")
+	tk.MustExec("insert into t1 values(3,4)")
+	tk.MustQuery("select (select t1.a from t1 , t where t.a = s.a limit 2) from t as s").Check(testkit.Rows("3"))
+
+	// test index join bug
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int, b int, key s1(a,b), key s2(b))")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t values(1,2), (5,3), (6,4)")
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t1.a from t1, t where t.a = 5 and t.b = t1.a").Check(testkit.Rows("3"))
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
