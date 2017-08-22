@@ -805,6 +805,11 @@ func (s *testPlanSuite) createTestCase4EncryptionFuncs() []typeInferTestCase {
 
 func (s *testPlanSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
+		{"coalesce(c_int_d, 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"coalesce(NULL, c_int_d)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"coalesce(c_int_d, c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 3},
+		{"coalesce(c_int_d, c_datetime)", mysql.TypeVarString, charset.CharsetUTF8, 0, 22, types.UnspecifiedLength},
+
 		{"isnull(c_int_d      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"isnull(c_bigint_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"isnull(c_float_d    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
@@ -1233,5 +1238,39 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"weekofyear(c_blob_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 		{"weekofyear(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 		{"weekofyear(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+
+		{"year(c_int_d      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_bigint_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_float_d    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_double_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_decimal    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_datetime   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_time_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_timestamp_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_char       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_varchar    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_text_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_binary     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_varbinary  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_blob_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+		{"year(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
+
+		{"month(c_int_d      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_bigint_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_float_d    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_double_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_decimal    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_datetime   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_time_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_timestamp_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_char       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_varchar    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_text_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_binary     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_varbinary  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_blob_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"month(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 	}
 }
