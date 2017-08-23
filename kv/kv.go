@@ -148,16 +148,18 @@ const (
 	ReqTypeIndex  = 102
 	ReqTypeDAG    = 103
 
-	ReqSubTypeBasic   = 0
-	ReqSubTypeDesc    = 10000
-	ReqSubTypeGroupBy = 10001
-	ReqSubTypeTopN    = 10002
+	ReqSubTypeBasic     = 0
+	ReqSubTypeDesc      = 10000
+	ReqSubTypeGroupBy   = 10001
+	ReqSubTypeTopN      = 10002
+	ReqSubTypeSignature = 10003
 )
 
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
 	Tp        int64
+	StartTs	  uint64
 	Data      []byte
 	KeyRanges []KeyRange
 	// KeepOrder is true, if the response should be returned in order.
@@ -219,7 +221,7 @@ type Storage interface {
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
-	SupportDeleteRange() (supported bool)
+	SupportDeleteRange() (supported bool)	
 }
 
 // FnKeyCmp is the function for iterator the keys

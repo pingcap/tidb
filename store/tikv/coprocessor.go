@@ -80,6 +80,8 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
+	case kv.ReqSubTypeSignature:
+		return c.store.mock
 	default:
 		return false
 	}
@@ -329,6 +331,7 @@ func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 		if costTime > minLogCopTaskTime {
 			log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
 		}
+
 		coprocessorHistogram.Observe(costTime.Seconds())
 		if bo.totalSleep > 0 {
 			backoffHistogram.Observe(float64(bo.totalSleep) / 1000)
@@ -435,6 +438,16 @@ func (it *copIterator) Next() ([]byte, error) {
 	if resp.Data == nil {
 		return []byte{}, nil
 	}
+
+	safePoint, err := it.store.CheckVisibility()
+	if err != nil {
+		return nil, err
+	}
+
+	if it.req.StartTs < safePoint {
+		return nil, errors.New("start timestamp falls behind safepoint\n")
+	} 
+
 	return resp.Data, nil
 }
 

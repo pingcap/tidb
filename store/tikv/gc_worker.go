@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"math"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -95,6 +96,7 @@ const (
 	gcLifeTimeKey     = "tikv_gc_life_time"
 	gcDefaultLifeTime = time.Minute * 10
 	gcSafePointKey    = "tikv_gc_safe_point"
+	gcSavedSafePoint  = "tikv_gc_saved_safe_point"
 )
 
 var gcVariableComments = map[string]string{
@@ -105,6 +107,7 @@ var gcVariableComments = map[string]string{
 	gcRunIntervalKey: "GC run interval, at least 10m, in Go format.",
 	gcLifeTimeKey:    "All versions within life time will not be collected by GC, at least 10m, in Go format.",
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
+	gcSavedSafePoint: "Saved SafePoint",
 }
 
 func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
@@ -186,6 +189,7 @@ func (w *GCWorker) storeIsBootstrapped() bool {
 
 // Leader of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx goctx.Context) error {
+	
 	if w.gcIsRunning {
 		return nil
 	}
@@ -295,6 +299,7 @@ func RunGCJob(ctx goctx.Context, store kv.Storage, safePoint uint64, identifier 
 }
 
 func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
+	log.Error("[gc worker] enter runGCJob")
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
 	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
@@ -470,6 +475,10 @@ func resolveLocks(ctx goctx.Context, store *tikvStore, safePoint uint64, identif
 func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier string) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
+	store.gcWorker.saveUint64(gcSavedSafePoint, safePoint)
+	log.Error("[gc worker] %s start gc, safePoint: %v.", identifier, safePoint)
+	time.Sleep(100 * time.Second)
+	
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
 		GC: &kvrpcpb.GCRequest{
@@ -588,6 +597,27 @@ func (w *GCWorker) checkLeader() (bool, error) {
 func (w *GCWorker) saveTime(key string, t time.Time) error {
 	err := w.saveValueToSysTable(key, t.Format(gcTimeFormat))
 	return errors.Trace(err)
+}
+
+func (w *GCWorker) saveUint64(key string, t uint64) error {
+	s := fmt.Sprintf("%v", t)
+	err := w.saveValueToSysTable(key, s)
+	return errors.Trace(err)
+}
+
+func (w *GCWorker) loadUint64(key string) (uint64, error) {
+	str, err := w.loadValueFromSysTable(key)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if str == "" {
+		return math.MaxUint64, nil
+	}
+	t, err := strconv.ParseUint(str, 10, 64)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return t, nil
 }
 
 func (w *GCWorker) loadTime(key string) (*time.Time, error) {

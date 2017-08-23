@@ -242,6 +242,7 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 
 	kvReq := &kv.Request{
 		Tp:             kv.ReqTypeDAG,
+		StartTs:		dag.StartTs,
 		Concurrency:    concurrency,
 		KeepOrder:      keepOrder,
 		KeyRanges:      keyRanges,
@@ -271,6 +272,7 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 // Convert tipb.Request to kv.Request.
 func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, isolationLevel kv.IsoLevel, priority int) (*kv.Request, error) {
 	kvReq := &kv.Request{
+		StartTs: 		req.StartTs,
 		Concurrency:    concurrency,
 		KeepOrder:      keepOrder,
 		KeyRanges:      keyRanges,
