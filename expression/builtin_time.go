@@ -101,6 +101,7 @@ var (
 	_ functionClass = &toSecondsFunctionClass{}
 	_ functionClass = &utcTimeFunctionClass{}
 	_ functionClass = &timestampFunctionClass{}
+	_ functionClass = &lastDayFunctionClass{}
 )
 
 var (
@@ -154,6 +155,7 @@ var (
 	_ builtinFunc = &builtinToSecondsSig{}
 	_ builtinFunc = &builtinUTCTimeSig{}
 	_ builtinFunc = &builtinTimestampSig{}
+	_ builtinFunc = &builtinLastDaySig{}
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.
@@ -663,6 +665,7 @@ func builtinMonth(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	return
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
 type monthNameFunctionClass struct {
 	baseFunctionClass
 }
@@ -671,41 +674,32 @@ func (c *monthNameFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinMonthNameSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 10
+	sig := &builtinMonthNameSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinMonthNameSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-func (b *builtinMonthNameSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinMonthNameSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg, isNull, err := b.args[0].EvalTime(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	return builtinMonthName(args, b.ctx)
-}
-
-// builtinMonthName ...
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
-func builtinMonthName(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	d, err = builtinMonth(args, ctx)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
+	mon := arg.Time.Month()
+	if arg.IsZero() || mon < 0 || mon > len(types.MonthNames) {
+		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
+	} else if mon == 0 {
+		return "", true, nil
 	}
-
-	mon := int(d.GetInt64())
-	if mon <= 0 || mon > len(types.MonthNames) {
-		d.SetNull()
-		if mon == 0 {
-			return
-		}
-		return d, errors.Errorf("no name for invalid month: %d.", mon)
-	}
-	d.SetString(types.MonthNames[mon-1])
-
-	return
+	return types.MonthNames[mon-1], false, nil
 }
 
 type dayNameFunctionClass struct {
@@ -2994,9 +2988,6 @@ func (b *builtinToDaysSig) evalInt(row []types.Datum) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	if err != nil {
-		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
-	}
 	ret := types.TimestampDiff("DAY", types.ZeroDate, arg)
 	if ret == 0 {
 		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
@@ -3029,9 +3020,6 @@ type builtinToSecondsSig struct {
 func (b *builtinToSecondsSig) evalInt(row []types.Datum) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
-	}
-	if err != nil {
 		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	ret := types.TimestampDiff("SECOND", types.ZeroDate, arg)
@@ -3075,4 +3063,55 @@ func (b *builtinUTCTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	d.SetString(time.Now().UTC().Format(utctimeFormat))
 	return convertToDuration(b.ctx.GetSessionVars().StmtCtx, d, fsp)
+}
+
+type lastDayFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *lastDayFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, types.DefaultFsp
+	sig := &builtinLastDaySig{baseTimeBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinLastDaySig struct {
+	baseTimeBuiltinFunc
+}
+
+// evalTime evals a builtinLastDaySig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_last-day
+func (b *builtinLastDaySig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg, isNull, err := b.args[0].EvalTime(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	}
+	tm := arg.Time
+	year, month, day := tm.Year(), tm.Month(), 30
+	if year == 0 && month == 0 && tm.Day() == 0 {
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
+	}
+	if month == 1 || month == 3 || month == 5 ||
+		month == 7 || month == 8 || month == 10 || month == 12 {
+		day = 31
+	} else if month == 2 {
+		day = 28
+		if tm.IsLeapYear() {
+			day = 29
+		}
+	}
+	ret := types.Time{
+		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+		Fsp:  types.DefaultFsp,
+	}
+	return ret, false, nil
 }

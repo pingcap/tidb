@@ -465,6 +465,7 @@ var tokenMap = map[string]int{
 	"TO_BASE64":                  toBase64,
 	"TO_DAYS":                    toDays,
 	"TO_SECONDS":                 toSeconds,
+	"LAST_DAY":                   lastDay,
 	"TRAILING":                   trailing,
 	"TRANSACTION":                transaction,
 	"TRIGGER":                    trigger,
