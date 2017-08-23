@@ -1948,6 +1948,7 @@ func (c *unixTimestampFunctionClass) getFunction(args []Expression, ctx context.
 		return nil, errors.Trace(err)
 	}
 
+	bf.deterministic = false
 	bf.tp.Flen = retFLen
 	bf.tp.Decimal = retDecimal
 
