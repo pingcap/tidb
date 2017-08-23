@@ -1060,6 +1060,17 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("62966505600 63426672000 63426721412 63426721412"))
 	result = tk.MustQuery("select to_days(950501), to_days('2007-10-07'), to_days('2007-10-07 00:00:59'), to_days('0000-01-01')")
 	result.Check(testkit.Rows("728779 733321 733321 1"))
+	result = tk.MustQuery("select last_day('2003-02-05'), last_day('2004-02-05'), last_day('2004-01-01 01:01:01'), last_day(950501);")
+	result.Check(testkit.Rows("2003-02-28 2004-02-29 2004-01-31 1995-05-31"))
+
+	tk.MustExec("SET SQL_MODE='';")
+	result = tk.MustQuery("select last_day('0000-00-00');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select to_days('0000-00-00');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select to_seconds('0000-00-00');")
+	result.Check(testkit.Rows("<nil>"))
+
 	result = tk.MustQuery("select TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01'), TIMESTAMPDIFF(yEaR,'2002-05-01', " +
 		"'2001-01-01'), TIMESTAMPDIFF(minute,binary('2003-02-01'),'2003-05-01 12:05:55'), TIMESTAMPDIFF(day," +
 		"'1995-05-02', 950501);")
