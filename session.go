@@ -860,8 +860,6 @@ func (s *session) getPassword(name, host string) (string, error) {
 }
 
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
-	log.Debugf("Authenticating user %s", user.String())
-
 	pm := privilege.GetPrivilegeManager(s)
 
 	// Check IP.

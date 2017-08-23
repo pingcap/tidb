@@ -61,15 +61,9 @@ func getDSN(overriders ...configOverrider) string {
 	return config.FormatDSN()
 }
 
-// openSQL opens a SQL connection.
-func openSQL(dsn string) (*sql.DB, error) {
-	log.Debugf("Opening connection %s", dsn)
-	return sql.Open("mysql", dsn)
-}
-
 // runTests runs tests using the default database `test`.
 func runTests(c *C, overrider configOverrider, tests ...func(dbt *DBTest)) {
-	db, err := openSQL(getDSN(overrider))
+	db, err := sql.Open("mysql", getDSN(overrider))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 
@@ -87,7 +81,7 @@ func runTestsOnNewDB(c *C, overrider configOverrider, dbName string, tests ...fu
 	dsn := getDSN(overrider, func(config *mysql.Config) {
 		config.DBName = ""
 	})
-	db, err := openSQL(dsn)
+	db, err := sql.Open("mysql", dsn)
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 
@@ -508,7 +502,7 @@ func runTestAuth(c *C) {
 		dbt.mustExec(`USE mysql;`)
 	})
 
-	db, err := openSQL(getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
 		config.User = "authtest"
 		config.Passwd = "456"
 	}))
@@ -530,7 +524,7 @@ func runTestAuth(c *C) {
 }
 
 func runTestIssue3662(c *C) {
-	db, err := openSQL(getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
 		config.DBName = "non_existing_schema"
 	}))
 	c.Assert(err, IsNil)
@@ -545,7 +539,7 @@ func runTestIssue3662(c *C) {
 }
 
 func runTestIssue3680(c *C) {
-	db, err := openSQL(getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
 		config.User = "non_existing_user"
 	}))
 	c.Assert(err, IsNil)
@@ -570,7 +564,7 @@ func runTestIssue3682(c *C) {
 	}, func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})
-	db, err := openSQL(getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
 		config.User = "issue3682"
 		config.Passwd = "wrong_password"
 		config.DBName = "non_existing_schema"
@@ -708,7 +702,7 @@ func waitUntilServerOnline(statusAddr string) {
 	retry := 0
 	for ; retry < retryTime; retry++ {
 		time.Sleep(time.Millisecond * 10)
-		db, err := openSQL(getDSN())
+		db, err := sql.Open("mysql", getDSN())
 		if err == nil {
 			db.Close()
 			break
