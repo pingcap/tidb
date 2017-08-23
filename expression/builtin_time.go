@@ -657,6 +657,7 @@ func builtinMonth(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	return
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
 type monthNameFunctionClass struct {
 	baseFunctionClass
 }
@@ -678,17 +679,17 @@ type builtinMonthNameSig struct {
 	baseStringBuiltinFunc
 }
 
-func (b *builtinMonthNameSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+func (b *builtinMonthNameSig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg, isNull, err := b.args[0].EvalTime(row, sc)
 	if isNull || err != nil {
-		return d, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	mon := arg.Time.Month()
 	if arg.IsZero() || mon < 0 || mon > len(types.MonthNames) {
-		return d, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
+		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	} else if mon == 0 {
-		return d, true, nil
+		return "", true, nil
 	}
 	return types.MonthNames[mon-1], false, nil
 }
