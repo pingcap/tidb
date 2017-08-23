@@ -304,16 +304,11 @@ func (cc *clientConn) readHandshakeResponse() error {
 	cc.collation = p.Collation
 	cc.attrs = p.Attrs
 
-	fmt.Printf("[connection %d] readHandshakeResponse: begin OpenCtx\n", cc.connectionID)
-
 	// Open session and do auth
 	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	fmt.Printf("[connection %d] readHandshakeResponse: begin auth\n", cc.connectionID)
-
 	if !cc.server.skipAuth() {
 		// Do Auth
 		addr := cc.conn.RemoteAddr().String()
@@ -325,9 +320,6 @@ func (cc *clientConn) readHandshakeResponse() error {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
 		}
 	}
-
-	fmt.Printf("[connection %d] readHandshakeResponse: begin useDB %s\n", cc.connectionID, cc.dbname)
-
 	if cc.dbname != "" {
 		err = cc.useDB(cc.dbname)
 		if err != nil {

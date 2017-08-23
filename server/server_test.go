@@ -63,7 +63,7 @@ func getDSN(overriders ...configOverrider) string {
 
 // openSQL opens a SQL connection.
 func openSQL(dsn string) (*sql.DB, error) {
-	fmt.Printf("Opening connection %s\n", dsn)
+	log.Debugf("Opening connection %s", dsn)
 	return sql.Open("mysql", dsn)
 }
 

@@ -860,7 +860,7 @@ func (s *session) getPassword(name, host string) (string, error) {
 }
 
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
-	fmt.Printf("Authenticating user %s\n", user.String())
+	log.Debugf("Authenticating user %s", user.String())
 
 	pm := privilege.GetPrivilegeManager(s)
 
