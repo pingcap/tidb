@@ -235,7 +235,7 @@ func (ft *FieldType) String() string {
 	if mysql.HasZerofillFlag(ft.Flag) {
 		strs = append(strs, "ZEROFILL")
 	}
-	if mysql.HasBinaryFlag(ft.Flag) {
+	if mysql.HasBinaryFlag(ft.Flag) && ft.Tp != mysql.TypeString {
 		strs = append(strs, "BINARY")
 	}
 
