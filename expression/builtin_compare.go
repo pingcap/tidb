@@ -461,6 +461,7 @@ func isTemporalColumn(expr Expression) bool {
 	return true
 }
 
+// tryToConvertConstantInt tries to convert a constant with other type to a int constant.
 func tryToConvertConstantInt(con *Constant, ctx context.Context) *Constant {
 	if con.GetTypeClass() == types.ClassInt {
 		return con
