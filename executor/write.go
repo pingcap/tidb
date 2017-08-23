@@ -831,7 +831,7 @@ func (e *InsertValues) fillValueList() error {
 	return nil
 }
 
-func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCount int, num int, cols []*table.Column) error {
+func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCount, num int, cols []*table.Column) error {
 	// TODO: This check should be done in plan builder.
 	if insertValueCount != valueCount {
 		// "insert into t values (), ()" is valid.
@@ -929,9 +929,6 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
-		return nil, errors.Trace(err)
-	}
 	for i, expr := range e.GenExprs {
 		var val types.Datum
 		val, err = expr.Eval(row)
@@ -940,6 +937,9 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 		}
 		offset := cols[len(vals)+i].Offset
 		row[offset] = val
+	}
+	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
+		return nil, errors.Trace(err)
 	}
 	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
 		return nil, errors.Trace(err)
