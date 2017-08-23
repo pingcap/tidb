@@ -1857,40 +1857,38 @@ func (c *timestampDiffFunctionClass) getFunction(args []Expression, ctx context.
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinTimestampDiffSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpTime, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinTimestampDiffSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinTimestampDiffSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinTimestampDiffSig.
+// evalInt evals a builtinTimestampDiffSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampdiff
-func (b *builtinTimestampDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinTimestampDiffSig) evalInt(row []types.Datum) (int64, bool, error) {
+	ctx := b.getCtx().GetSessionVars().StmtCtx
+	unit, isNull, err := b.args[0].EvalString(row, ctx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	if args[1].IsNull() || args[2].IsNull() {
-		return
+	t1, isNull, err := b.args[1].EvalTime(row, ctx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(handleInvalidTimeError(b.getCtx(), err))
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	t1, err := convertDatumToTime(sc, args[1])
-	if err != nil {
-		return d, errors.Trace(handleInvalidTimeError(b.ctx, err))
-	}
-	t2, err := convertDatumToTime(sc, args[2])
-	if err != nil {
-		return d, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	t2, isNull, err := b.args[2].EvalTime(row, ctx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(handleInvalidTimeError(b.getCtx(), err))
 	}
 	if t1.InvalidZero() || t2.InvalidZero() {
-		return d, errors.Trace(handleInvalidTimeError(b.ctx, err))
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
-
-	v := types.TimestampDiff(args[0].GetString(), t1, t2)
-	d.SetInt64(v)
-	return
+	return types.TimestampDiff(unit, t1, t2), false, nil
 }
 
 type unixTimestampFunctionClass struct {
