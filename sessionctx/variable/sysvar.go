@@ -611,6 +611,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBCBO, "ON"},
 	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
 	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
+	{ScopeSession, TiDBBatchDelete, boolToIntStr(DefBatchDelete)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 }
 

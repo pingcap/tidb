@@ -270,10 +270,12 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	ivs := &InsertValues{
-		ctx:     b.ctx,
-		Columns: v.Columns,
-		Lists:   v.Lists,
-		Setlist: v.Setlist,
+		ctx:        b.ctx,
+		Columns:    v.Columns,
+		Lists:      v.Lists,
+		Setlist:    v.Setlist,
+		GenColumns: v.GenCols.Columns,
+		GenExprs:   v.GenCols.Exprs,
 	}
 	if len(v.Children()) > 0 {
 		ivs.SelectExec = b.build(v.Children()[0])
@@ -284,7 +286,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	}
 	insert := &InsertExec{
 		InsertValues: ivs,
-		OnDuplicate:  v.OnDuplicate,
+		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 		Priority:     v.Priority,
 		Ignore:       v.Ignore,
 	}
@@ -297,7 +299,13 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
-	insertVal := &InsertValues{ctx: b.ctx, Table: tbl, Columns: v.Columns}
+	insertVal := &InsertValues{
+		ctx:        b.ctx,
+		Table:      tbl,
+		Columns:    v.Columns,
+		GenColumns: v.GenCols.Columns,
+		GenExprs:   v.GenCols.Exprs,
+	}
 	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {

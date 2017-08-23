@@ -986,8 +986,8 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	finishBootstrap(store)
 	s.ClearValue(context.Initing)
 
-	domain := sessionctx.GetDomain(s)
-	domain.Close()
+	dom := sessionctx.GetDomain(s)
+	dom.Close()
 	domap.Delete(store)
 }
 
@@ -1147,7 +1147,7 @@ func (s *session) PrepareTxnCtx() {
 		return
 	}
 
-	s.goCtx, s.cancelFunc = util.WithCancel(goctx.Background())
+	s.goCtx, s.cancelFunc = goctx.WithCancel(goctx.Background())
 	s.txnFuture = s.getTxnFuture()
 	is := sessionctx.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{

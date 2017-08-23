@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -62,14 +61,14 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	// compare operators.
 	case tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
 		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
-		tipb.ExprType_In, tipb.ExprType_ValueList,
+		tipb.ExprType_In, tipb.ExprType_ValueList, tipb.ExprType_IsNull,
 		tipb.ExprType_Like:
 		return true
 	// arithmetic operators.
 	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus, tipb.ExprType_Mul:
 		return true
 	// control functions
-	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull:
+	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull, tipb.ExprType_Coalesce:
 		return true
 	// aggregate functions.
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
@@ -361,7 +360,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		go func() {
-			childCtx, cancel := util.WithCancel(ctx)
+			childCtx, cancel := goctx.WithCancel(ctx)
 			defer cancel()
 			it.work(childCtx, it.taskCh)
 		}()
@@ -369,7 +368,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 
 	go func() {
 		// Send tasks to feed the worker goroutines.
-		childCtx, cancel := util.WithCancel(ctx)
+		childCtx, cancel := goctx.WithCancel(ctx)
 		defer cancel()
 		for _, t := range it.tasks {
 			finished, canceled := it.sendToTaskCh(childCtx, t)
