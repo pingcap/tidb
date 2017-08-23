@@ -410,7 +410,7 @@ func (b *builtinIfIntSig) evalInt(row []types.Datum) (ret int64, isNull bool, er
 		return 0, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalInt(row, sc)
-	if !isNull0 && arg0 != 0 || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalInt(row, sc)
@@ -428,7 +428,7 @@ func (b *builtinIfRealSig) evalReal(row []types.Datum) (ret float64, isNull bool
 		return 0, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalReal(row, sc)
-	if !isNull0 && arg0 != 0 || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalReal(row, sc)
@@ -446,7 +446,7 @@ func (b *builtinIfDecimalSig) evalDecimal(row []types.Datum) (ret *types.MyDecim
 		return nil, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalDecimal(row, sc)
-	if !isNull0 && arg0 != 0 || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalDecimal(row, sc)
@@ -464,7 +464,7 @@ func (b *builtinIfStringSig) evalString(row []types.Datum) (ret string, isNull b
 		return "", false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalString(row, sc)
-	if !isNull0 && arg0 != 0 || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalString(row, sc)
@@ -482,7 +482,7 @@ func (b *builtinIfTimeSig) evalTime(row []types.Datum) (ret types.Time, isNull b
 		return ret, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalTime(row, sc)
-	if !isNull0 && arg0 != 0 || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalTime(row, sc)
@@ -500,7 +500,7 @@ func (b *builtinIfDurationSig) evalDuration(row []types.Datum) (ret types.Durati
 		return ret, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalDuration(row, sc)
-	if !isNull0 && arg0 != 0 || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalDuration(row, sc)
