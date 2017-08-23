@@ -488,6 +488,7 @@ import (
 	offset		"OFFSET"
 	only		"ONLY"
 	password	"PASSWORD"
+	plugins		"PLUGINS"
 	prepare		"PREPARE"
 	privileges	"PRIVILEGES"
 	processlist	"PROCESSLIST"
@@ -2955,10 +2956,10 @@ FunctionCallKeyword:
 |	"CONVERT" '(' Expression "USING" StringName ')'
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-		charset := ast.NewValueExpr($5)
+		charset1 := ast.NewValueExpr($5)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), charset},
+			Args: []ast.ExprNode{$3.(ast.ExprNode), charset1},
 		}
 	}
 |	"CONVERT" '(' Expression ',' CastType ')'
@@ -3676,11 +3677,11 @@ FunctionCallNonKeyword:
 	}
 |   "CHAR" '(' ExpressionList "USING" StringName ')'
 	{
-		charset := ast.NewValueExpr($5)
+		charset1 := ast.NewValueExpr($5)
 		args := $3.([]ast.ExprNode)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr(ast.CharFunc),
-			Args: append(args, charset),
+			Args: append(args, charset1),
 		}
 	}
 |	"CHAR_LENGTH" '(' ExpressionListOpt ')'
@@ -5463,12 +5464,18 @@ ShowTargetFilterable:
 			Tp: ast.ShowProcedureStatus,
 		}
 	}
-|   "EVENTS" ShowDatabaseNameOpt
+|	"EVENTS" ShowDatabaseNameOpt
 	{
-        $$ = &ast.ShowStmt{
-        	Tp:	ast.ShowEvents,
-        	DBName:	$2.(string),
-       	}
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowEvents,
+			DBName:	$2.(string),
+		}
+	}
+|	"PLUGINS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: 	ast.ShowPlugins,
+		}
 	}
 ShowLikeOrWhereOpt:
 	{
