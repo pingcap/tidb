@@ -1233,6 +1233,7 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 			types.NewStringDatum(test.t2),
 		}
 		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1243,12 +1244,14 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 		types.NewStringDatum("2017-01-00"),
 		types.NewStringDatum("2017-01-01")}), s.ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 	d, err := f.eval(nil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 
 	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
 		{}, types.NewStringDatum("2017-01-01")}), s.ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 	d, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.IsNull(), IsTrue)
