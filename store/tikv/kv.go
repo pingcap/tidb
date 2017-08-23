@@ -91,7 +91,7 @@ func (d MockDriver) Open(path string) (kv.Storage, error) {
 	if !strings.EqualFold(u.Scheme, "mocktikv") {
 		return nil, errors.Errorf("Uri scheme expected(mocktikv) but found (%s)", u.Scheme)
 	}
-	return NewMockTikvStore()
+	return NewMockTikvStore(WithPath(u.Path))
 }
 
 // update oracle's lastTS every 2000ms.
@@ -102,6 +102,7 @@ type tikvStore struct {
 	uuid         string
 	oracle       oracle.Oracle
 	client       Client
+	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
 	gcWorker     *GCWorker
@@ -111,7 +112,7 @@ type tikvStore struct {
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
-	oracle, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
+	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -119,8 +120,9 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 	store := &tikvStore{
 		clusterID:   pdClient.GetClusterID(goctx.TODO()),
 		uuid:        uuid,
-		oracle:      oracle,
+		oracle:      o,
 		client:      client,
+		pdClient:    pdClient,
 		regionCache: NewRegionCache(pdClient),
 		mock:        mock,
 	}
@@ -152,6 +154,7 @@ type mockOptions struct {
 	mvccStore      mocktikv.MVCCStore
 	clientHijack   func(Client) Client
 	pdClientHijack func(pd.Client) pd.Client
+	path           string
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -184,6 +187,13 @@ func WithCluster(cluster *mocktikv.Cluster) MockTiKVStoreOption {
 func WithMVCCStore(store mocktikv.MVCCStore) MockTiKVStoreOption {
 	return func(c *mockOptions) {
 		c.mvccStore = store
+	}
+}
+
+// WithPath specifies the mocktikv path.
+func WithPath(path string) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.path = path
 	}
 }
 
@@ -253,6 +263,7 @@ func (s *tikvStore) Close() error {
 
 	delete(mc.cache, s.uuid)
 	s.oracle.Close()
+	s.pdClient.Close()
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
 	}

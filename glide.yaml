@@ -24,7 +24,7 @@ import:
 - package: github.com/ghodss/yaml
   version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
 - package: github.com/go-sql-driver/mysql
-  version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
+  version: 3955978caca48c1658a4bb7a9c6a0f084e326af3
 - package: github.com/golang/protobuf
   version: 8ee79997227bf9b34611aee7946ae64735e6fd93
   subpackages:
@@ -75,6 +75,10 @@ import:
   - http2/hpack
   - internal/timeseries
   - trace
+- package: google.golang.org/genproto
+  version: 6b7d9516179cd47f4714cfeb0103ad1dede756c4
+  subpackages:
+  - googleapis/rpc/status
 - package: google.golang.org/grpc
   version: 3419b42955675df23457629c75f58eb8dcd56954
   subpackages:
@@ -135,11 +139,21 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: ce8db87a8c3f2560750232e85ad5152a0a1c69df
+  version: d152a9c48278dc94c205a255ef05b39dbb87b455
 - package: github.com/pingcap/tipb
-  version: 27d6520cddb4af5dedc62d742d172c49358e6ed9
+  version: b45b9d4dd493e6f5f674f9303a12139fb28be13e
   subpackages:
   - go-binlog
+  - go-mysqlx
+  - go-mysqlx/Connection
+  - go-mysqlx/Crud
+  - go-mysqlx/Datatypes
+  - go-mysqlx/Expect
+  - go-mysqlx/Expr
+  - go-mysqlx/Notice
+  - go-mysqlx/Resultset
+  - go-mysqlx/Session
+  - go-mysqlx/Sql
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto

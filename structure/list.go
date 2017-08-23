@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/terror"
 )
 
 type listMeta struct {
@@ -195,7 +194,7 @@ func (t *TxStructure) LClear(key []byte) error {
 
 func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
 	v, err := t.reader.Get(metaKey)
-	if terror.ErrorEqual(err, kv.ErrNotExist) {
+	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	} else if err != nil {
 		return listMeta{}, errors.Trace(err)

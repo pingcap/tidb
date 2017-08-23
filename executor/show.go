@@ -117,6 +117,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowStatsHistogram()
 	case ast.ShowStatsBuckets:
 		return e.fetchShowStatsBuckets()
+	case ast.ShowPlugins:
+		return e.fetchShowPlugins()
 	}
 	return nil
 }
@@ -397,7 +399,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var pkCol *table.Column
 	for i, col := range tb.Cols() {
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
-		if len(col.GeneratedExprString) != 0 {
+		if col.IsGenerated() {
 			// It's a generated column.
 			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s)", col.GeneratedExprString))
 			if col.GeneratedStored {
@@ -594,6 +596,10 @@ func (e *ShowExec) fetchShowTriggers() error {
 }
 
 func (e *ShowExec) fetchShowProcedureStatus() error {
+	return nil
+}
+
+func (e *ShowExec) fetchShowPlugins() error {
 	return nil
 }
 
