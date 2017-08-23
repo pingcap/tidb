@@ -144,14 +144,11 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
 
-	originalDSNConfig := defaultDSNConfig
-	defaultDSNConfig = mysql.Config{
-		User:   "root",
-		Net:    "unix",
-		Addr:   "/tmp/tidbtest.sock",
-		DBName: "test",
-		Strict: true,
-	}
-	runTestRegression(c, nil, "SocketRegression")
-	defaultDSNConfig = originalDSNConfig
+	runTestRegression(c, func(config *mysql.Config) {
+		config.User = "root"
+		config.Net = "unix"
+		config.Addr = "/tmp/tidbtest.sock"
+		config.DBName = "test"
+		config.Strict = true
+	}, "SocketRegression")
 }
