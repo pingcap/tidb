@@ -1192,6 +1192,16 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"microsecond(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 		{"microsecond(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 
+		{"last_day(c_datetime)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
+		{"last_day(c_datetime_d)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
+		{"last_day(c_timestamp)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
+		{"last_day(c_timestamp_d)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
+		{"last_day(c_char)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
+		{"last_day(c_varchar)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
+		{"last_day(c_varchar)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
+		{"last_day(c_text_d)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
+		{"last_day(c_blob_d)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDateWidth, 0},
+
 		{"week(c_int_d      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 		{"week(c_bigint_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 		{"week(c_float_d    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},

@@ -1943,3 +1943,42 @@ func (s *testEvaluatorSuite) TestPeriodDiff(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
+
+func (s *testEvaluatorSuite) TestLastDay(c *C) {
+	tests := []struct {
+		param  interface{}
+		expect string
+	}{
+		{"2003-02-05", "2003-02-28"},
+		{"2004-02-05", "2004-02-29"},
+		{"2004-01-01 01:01:01", "2004-01-31"},
+		{950501, "1995-05-31"},
+	}
+
+	fc := funcs[ast.LastDay]
+	for _, test := range tests {
+		t := []types.Datum{types.NewDatum(test.param)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+
+	testsNull := []interface{}{
+		"0000-00-00",
+		"1992-13-00",
+		"2007-10-07 23:59:61",
+		123456789}
+
+	for _, i := range testsNull {
+		t := []types.Datum{types.NewDatum(i)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(d.IsNull(), IsTrue)
+	}
+}
