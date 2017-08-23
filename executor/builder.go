@@ -21,7 +21,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -153,7 +152,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	var err error
 	ownerManager := sessionctx.GetDomain(e.ctx).DDL().OwnerManager()
 	ctx, cancel := goctx.WithTimeout(goctx.Background(), 3*time.Second)
-	e.ddlOwnerID, err = ownerManager.GetOwnerID(ctx, ddl.DDLOwnerKey)
+	e.ddlOwnerID, err = ownerManager.GetOwnerID(ctx)
 	cancel()
 	if err != nil {
 		b.err = errors.Trace(err)
@@ -389,13 +388,13 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.Columns
-		us.buildAndSortAddedRows(x.table, x.asName)
+		us.buildAndSortAddedRows(x.table)
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table, x.asName)
+		us.buildAndSortAddedRows(x.table)
 	case *XSelectIndexExec:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -409,7 +408,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table, x.asName)
+		us.buildAndSortAddedRows(x.table)
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -423,7 +422,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table, x.asName)
+		us.buildAndSortAddedRows(x.table)
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -437,7 +436,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		us.buildAndSortAddedRows(x.table, x.asName)
+		us.buildAndSortAddedRows(x.table)
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return src
@@ -606,7 +605,6 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	ts := &TableScanExec{
 		t:            table,
-		asName:       v.TableAsName,
 		ctx:          b.ctx,
 		columns:      v.Columns,
 		schema:       v.Schema(),
@@ -634,7 +632,6 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		ctx:         b.ctx,
 		startTS:     startTS,
 		supportDesc: supportDesc,
-		asName:      v.TableAsName,
 		table:       table,
 		schema:      v.Schema(),
 		Columns:     v.Columns,
@@ -669,7 +666,6 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		tableInfo:            v.Table,
 		ctx:                  b.ctx,
 		supportDesc:          supportDesc,
-		asName:               v.TableAsName,
 		table:                table,
 		singleReadMode:       !v.DoubleRead,
 		startTS:              startTS,
@@ -1050,7 +1046,6 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		ctx:       b.ctx,
 		schema:    v.Schema(),
 		dagPB:     dagReq,
-		asName:    ts.TableAsName,
 		tableID:   ts.Table.ID,
 		table:     table,
 		keepOrder: ts.KeepOrder,
@@ -1086,7 +1081,6 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		ctx:       b.ctx,
 		schema:    v.Schema(),
 		dagPB:     dagReq,
-		asName:    is.TableAsName,
 		tableID:   is.Table.ID,
 		table:     table,
 		index:     is.Index,
@@ -1138,7 +1132,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		ctx:          b.ctx,
 		schema:       v.Schema(),
 		dagPB:        indexReq,
-		asName:       is.TableAsName,
 		tableID:      is.Table.ID,
 		table:        table,
 		index:        is.Index,
@@ -1149,7 +1142,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		columns:      is.Columns,
 		handleCol:    handleCol,
 		priority:     b.priority,
-		finished:     make(chan struct{}),
 	}
 	return e
 }
