@@ -732,7 +732,7 @@ func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context
 		sig = &builtinDecimalIsNullSig{baseIntBuiltinFunc{bf}}
 	case tpReal:
 		sig = &builtinRealIsNullSig{baseIntBuiltinFunc{bf}}
-	case tpDatetime, tpDate, tpTimestamp:
+	case tpDatetime:
 		sig = &builtinTimeIsNullSig{baseIntBuiltinFunc{bf}}
 	case tpDuration:
 		sig = &builtinDurationIsNullSig{baseIntBuiltinFunc{bf}}

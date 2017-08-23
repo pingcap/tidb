@@ -208,7 +208,7 @@ func (c *anyValueFunctionClass) getFunction(args []Expression, ctx context.Conte
 	case tpString:
 		sig = &builtinStringAnyValueSig{baseStringBuiltinFunc{bf}}
 	case tpDatetime, tpDate, tpTimestamp:
-		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = charset.CharsetUTF8, charset.CollationUTF8, mysql.NotNullFlag
+		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
 		sig = &builtinTimeAnyValueSig{baseTimeBuiltinFunc{bf}}
 	default:
 		panic("unexpected evalTp of builtin function ANY_VALUE")
