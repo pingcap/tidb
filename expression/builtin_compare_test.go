@@ -14,14 +14,77 @@
 package expression
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
-	"time"
 )
+
+func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
+	defer testleak.AfterTest(c)()
+
+	colInt := &Column{
+		ColName: model.NewCIStr("a"),
+		RetType: types.NewFieldType(mysql.TypeLong),
+	}
+
+	conOne := &Constant{
+		Value:   types.NewFloat64Datum(1.0),
+		RetType: types.NewFieldType(mysql.TypeDouble),
+	}
+
+	conOnePointOne := &Constant{
+		Value:   types.NewFloat64Datum(1.1),
+		RetType: types.NewFieldType(mysql.TypeDouble),
+	}
+
+	tests := []struct {
+		arg0     Expression
+		arg1     Expression
+		funcName string
+		result   string
+	}{
+		{colInt, conOne, ast.LT, "lt(a, 1)"},
+		{colInt, conOne, ast.LE, "le(a, 1)"},
+		{colInt, conOne, ast.GT, "gt(a, 1)"},
+		{colInt, conOne, ast.GE, "ge(a, 1)"},
+		{colInt, conOne, ast.EQ, "eq(a, 1)"},
+		{colInt, conOne, ast.NullEQ, "nulleq(a, 1)"},
+		{colInt, conOne, ast.NE, "ne(a, 1)"},
+		{colInt, conOnePointOne, ast.LT, "lt(a, 2)"},
+		{colInt, conOnePointOne, ast.LE, "le(a, 1)"},
+		{colInt, conOnePointOne, ast.GT, "gt(a, 1)"},
+		{colInt, conOnePointOne, ast.GE, "ge(a, 2)"},
+		{colInt, conOnePointOne, ast.EQ, "eq(cast(a), 1.1)"},
+		{colInt, conOnePointOne, ast.NullEQ, "nulleq(cast(a), 1.1)"},
+		{colInt, conOnePointOne, ast.NE, "ne(cast(a), 1.1)"},
+		{conOne, colInt, ast.LT, "lt(1, a)"},
+		{conOne, colInt, ast.LE, "le(1, a)"},
+		{conOne, colInt, ast.GT, "gt(1, a)"},
+		{conOne, colInt, ast.GE, "ge(1, a)"},
+		{conOne, colInt, ast.EQ, "eq(1, a)"},
+		{conOne, colInt, ast.NullEQ, "nulleq(1, a)"},
+		{conOne, colInt, ast.NE, "ne(1, a)"},
+		{conOnePointOne, colInt, ast.LT, "lt(1, a)"},
+		{conOnePointOne, colInt, ast.LE, "le(2, a)"},
+		{conOnePointOne, colInt, ast.GT, "gt(2, a)"},
+		{conOnePointOne, colInt, ast.GE, "ge(1, a)"},
+		{conOnePointOne, colInt, ast.EQ, "eq(1.1, cast(a))"},
+		{conOnePointOne, colInt, ast.NullEQ, "nulleq(1.1, cast(a))"},
+		{conOnePointOne, colInt, ast.NE, "ne(1.1, cast(a))"},
+	}
+
+	for _, t := range tests {
+		f, err := NewFunction(s.ctx, t.funcName, types.NewFieldType(mysql.TypeUnspecified), t.arg0, t.arg1)
+		c.Assert(err, IsNil)
+		c.Assert(f.String(), Equals, t.result)
+	}
+}
 
 func (s *testEvaluatorSuite) TestCompare(c *C) {
 	defer testleak.AfterTest(c)()
@@ -111,20 +174,45 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	defer testleak.AfterTest(c)()
 
-	tests := []struct {
+	cases := []struct {
 		args     []interface{}
 		expected interface{}
+		isNil    bool
+		getErr   bool
 	}{
-		{[]interface{}{1, nil, 1.2}, int64(1)},
-		{[]interface{}{nil, 1, 1, 2}, int64(1)},
-		{[]interface{}{nil, nil, 1}, int64(1)},
+		{[]interface{}{nil}, nil, true, false},
+		{[]interface{}{nil, nil}, nil, true, false},
+		{[]interface{}{nil, nil, nil}, nil, true, false},
+		{[]interface{}{nil, 1}, int64(1), false, false},
+		{[]interface{}{nil, 1.1}, float64(1.1), false, false},
+		{[]interface{}{1, 1.1}, float64(1), false, false},
+		{[]interface{}{nil, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromFloatForTest(123.456), false, false},
+		{[]interface{}{1, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromInt(1), false, false},
+		{[]interface{}{nil, duration}, duration, false, false},
+		{[]interface{}{nil, tm, nil}, tm, false, false},
+		{[]interface{}{nil, dt, nil}, dt, false, false},
+		{[]interface{}{tm, dt}, tm, false, false},
 	}
 
-	for _, t := range tests {
-		bf, err := funcs[ast.Coalesce].getFunction(primitiveValsToConstants(t.args), s.ctx)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Coalesce, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		result, err := bf.eval(nil)
-		c.Assert(result.GetValue(), Equals, t.expected)
-		c.Assert(err, IsNil)
+
+		d, err := f.Eval(nil)
+
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetValue(), DeepEquals, t.expected)
+			}
+		}
 	}
+
+	f, err := funcs[ast.Length].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
 }

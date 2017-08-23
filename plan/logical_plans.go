@@ -158,6 +158,10 @@ type Projection struct {
 	basePhysicalPlan
 
 	Exprs []expression.Expression
+
+	// calculateGenCols indicates the projection is for calculating generated columns.
+	// In *UPDATE*, we should know this to tell different projections.
+	calculateGenCols bool
 }
 
 func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
