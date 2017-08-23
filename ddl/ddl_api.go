@@ -594,7 +594,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 					return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
 				}
 				// Virtual columns cannot be used in primary key.
-				if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+				if col.IsGenerated() && !col.GeneratedStored {
 					return nil, errUnsupportedOnGeneratedColumn.GenByArgs("Defining a virtual generated column as primary key")
 				}
 			}

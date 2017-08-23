@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 var _ = Suite(&testTypeConvertSuite{})
@@ -740,5 +741,56 @@ func testConvertTimeTimeZone(c *C, sc *variable.StatementContext) {
 		if test.expect.Type == mysql.TypeTimestamp {
 			c.Assert(t.TimeZone, Equals, test.expect.TimeZone)
 		}
+	}
+}
+
+func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
+	var tests = []struct {
+		In  string
+		Out int64
+	}{
+		{`{}`, 0},
+		{`[]`, 0},
+		{`3`, 3},
+		{`-3`, -3},
+		{`4.5`, 5},
+		{`true`, 1},
+		{`false`, 0},
+		{`null`, 0},
+		{`"hello"`, 0},
+		{`"123hello"`, 123},
+		{`"1234"`, 1234},
+	}
+	for _, tt := range tests {
+		j, err := json.ParseFromString(tt.In)
+		c.Assert(err, IsNil)
+
+		casted, _ := ConvertJSONToInt(new(variable.StatementContext), j, false)
+		c.Assert(casted, Equals, tt.Out)
+	}
+}
+
+func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
+	var tests = []struct {
+		In  string
+		Out float64
+	}{
+		{`{}`, 0},
+		{`[]`, 0},
+		{`3`, 3},
+		{`-3`, -3},
+		{`4.5`, 4.5},
+		{`true`, 1},
+		{`false`, 0},
+		{`null`, 0},
+		{`"hello"`, 0},
+		{`"123.456hello"`, 123.456},
+		{`"1234"`, 1234},
+	}
+	for _, tt := range tests {
+		j, err := json.ParseFromString(tt.In)
+		c.Assert(err, IsNil)
+		casted, _ := ConvertJSONToFloat(new(variable.StatementContext), j)
+		c.Assert(casted, Equals, tt.Out)
 	}
 }
