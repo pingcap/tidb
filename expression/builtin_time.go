@@ -1915,22 +1915,24 @@ func (c *unixTimestampFunctionClass) getFunction(args []Expression, ctx context.
 	var retFLen, retDecimal int
 
 	if len(args) == 0 {
-		retTp = tpInt
+		retTp, retDecimal = tpInt, 0
 	} else {
 		argTps = []evalTp{tpTime}
 		fieldType := args[0].GetType()
 		tp := fieldTp2EvalTp(fieldType)
 		if tp == tpString {
-			retTp = tpDecimal
+			// Treat tpString as unspecified decimal.
+			retDecimal = types.UnspecifiedLength
+		} else {
+			retDecimal = fieldType.Decimal
+		}
+		if retDecimal > 6 || retDecimal == types.UnspecifiedLength {
 			retDecimal = 6
-		} else if fieldType.Decimal == 0 {
+		}
+		if retDecimal == 0 {
 			retTp = tpInt
 		} else {
 			retTp = tpDecimal
-			retDecimal = fieldType.Decimal
-			if retDecimal > 6 {
-				retDecimal = 6
-			}
 		}
 	}
 	if retTp == tpInt {
