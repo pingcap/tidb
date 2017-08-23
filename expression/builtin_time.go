@@ -2004,11 +2004,11 @@ func (b *builtinUnixTimestampIntSig) evalInt(row []types.Datum) (int64, bool, er
 		// Return 0 for invalid date time.
 		return 0, isNull, nil
 	}
-	time, err := val.Time.GoTime(getTimeZone(b.getCtx()))
+	t, err := val.Time.GoTime(getTimeZone(b.getCtx()))
 	if err != nil {
 		return 0, false, nil
 	}
-	dec := goTimeToMysqlUnixTimestamp(time, 1)
+	dec := goTimeToMysqlUnixTimestamp(t, 1)
 	intVal, _ := dec.ToInt() // Ignore truncate errors.
 	return intVal, false, nil
 }
@@ -2025,11 +2025,11 @@ func (b *builtinUnixTimestampDecSig) evalDecimal(row []types.Datum) (*types.MyDe
 		// Return 0 for invalid date time.
 		return new(types.MyDecimal), isNull, nil
 	}
-	time, err := val.Time.GoTime(getTimeZone(b.getCtx()))
+	t, err := val.Time.GoTime(getTimeZone(b.getCtx()))
 	if err != nil {
 		return new(types.MyDecimal), false, nil
 	}
-	return goTimeToMysqlUnixTimestamp(time, b.tp.Decimal), false, nil
+	return goTimeToMysqlUnixTimestamp(t, b.tp.Decimal), false, nil
 }
 
 type timestampFunctionClass struct {
