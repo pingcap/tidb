@@ -659,6 +659,7 @@ func builtinMonth(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	return
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
 type monthNameFunctionClass struct {
 	baseFunctionClass
 }
@@ -667,41 +668,32 @@ func (c *monthNameFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinMonthNameSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 10
+	sig := &builtinMonthNameSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinMonthNameSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-func (b *builtinMonthNameSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinMonthNameSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg, isNull, err := b.args[0].EvalTime(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	return builtinMonthName(args, b.ctx)
-}
-
-// builtinMonthName ...
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
-func builtinMonthName(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	d, err = builtinMonth(args, ctx)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
+	mon := arg.Time.Month()
+	if arg.IsZero() || mon < 0 || mon > len(types.MonthNames) {
+		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
+	} else if mon == 0 {
+		return "", true, nil
 	}
-
-	mon := int(d.GetInt64())
-	if mon <= 0 || mon > len(types.MonthNames) {
-		d.SetNull()
-		if mon == 0 {
-			return
-		}
-		return d, errors.Errorf("no name for invalid month: %d.", mon)
-	}
-	d.SetString(types.MonthNames[mon-1])
-
-	return
+	return types.MonthNames[mon-1], false, nil
 }
 
 type dayNameFunctionClass struct {
