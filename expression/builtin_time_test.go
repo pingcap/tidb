@@ -259,6 +259,41 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestMonthName(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		args     interface{}
+		expected string
+		isNil    bool
+		getErr   bool
+	}{
+		{"2017-12-01", "December", false, false},
+		{"2017-00-01", "", true, false},
+		{"0000-00-00", "", true, false},
+		{"0000-00-00 00:00:00.000000", "", true, false},
+		{"0000-00-00 00:00:11.000000", "", true, false},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.MonthName, primitiveValsToConstants([]interface{}{t.args})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.expected)
+			}
+		}
+	}
+
+	f, err := funcs[ast.MonthName].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestDayOfWeek(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
