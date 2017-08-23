@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
@@ -1061,6 +1060,17 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("62966505600 63426672000 63426721412 63426721412"))
 	result = tk.MustQuery("select to_days(950501), to_days('2007-10-07'), to_days('2007-10-07 00:00:59'), to_days('0000-01-01')")
 	result.Check(testkit.Rows("728779 733321 733321 1"))
+	result = tk.MustQuery("select last_day('2003-02-05'), last_day('2004-02-05'), last_day('2004-01-01 01:01:01'), last_day(950501);")
+	result.Check(testkit.Rows("2003-02-28 2004-02-29 2004-01-31 1995-05-31"))
+
+	tk.MustExec("SET SQL_MODE='';")
+	result = tk.MustQuery("select last_day('0000-00-00');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select to_days('0000-00-00');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select to_seconds('0000-00-00');")
+	result.Check(testkit.Rows("<nil>"))
+
 	result = tk.MustQuery("select TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01'), TIMESTAMPDIFF(yEaR,'2002-05-01', " +
 		"'2001-01-01'), TIMESTAMPDIFF(minute,binary('2003-02-01'),'2003-05-01 12:05:55'), TIMESTAMPDIFF(day," +
 		"'1995-05-02', 950501);")
@@ -1152,7 +1162,6 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec("insert into t value(dayOfWeek('0000-00-00'))")
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	_, err = tk.Exec(`update t set a = dayOfWeek("0000-00-00")`)
-	log.Warning(err, IsNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfWeek(123)`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
@@ -1162,7 +1171,6 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	_, err = tk.Exec(`update t set a = dayOfMonth("0000-00-00")`)
-	log.Warning(err, IsNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfMonth(123)`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
@@ -1174,7 +1182,21 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`delete from t where a = dayOfYear(123)`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
-	tk.MustExec("set sql_mode = ''")
+	// for monthname
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a varchar(10))`)
+	tk.MustExec(`insert into t value("abc")`)
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+
+	_, err = tk.Exec("insert into t value(monthname('0000-00-00'))")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`update t set a = monthname("0000-00-00")`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = monthname(123)`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	result = tk.MustQuery(`select monthname("2017-12-01"), monthname("0000-00-00"), monthname("0000-01-00"), monthname("0000-01-00 00:00:00")`)
+	result.Check(testkit.Rows("December <nil> January January"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
