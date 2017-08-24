@@ -1164,6 +1164,14 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
 
+	// for yearweek
+	result = tk.MustQuery(`select yearweek("2014-12-27"), yearweek("2014-29-27"), yearweek("2014-00-27"), yearweek("2014-12-27 12:38:32"), yearweek("2014-12-27 12:38:32.1111111"), yearweek("2014-12-27 12:90:32"), yearweek("2014-12-27 89:38:32.1111111");`)
+	result.Check(testkit.Rows("201451 <nil> <nil> 201451 201451 <nil> <nil>"))
+	result = tk.MustQuery(`select yearweek(12121), yearweek(1.00009), yearweek("aaaaa"), yearweek(""), yearweek(NULL);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select yearweek("0000-00-00"), yearweek("2019-01-29", "aa"), yearweek("2011-01-01", null);`)
+	result.Check(testkit.Rows("<nil> 201904 201052"))
+
 	// for dayOfWeek, dayOfMonth, dayOfYear
 	result = tk.MustQuery(`select dayOfWeek(null), dayOfWeek("2017-08-12"), dayOfWeek("0000-00-00"), dayOfWeek("2017-00-00"), dayOfWeek("0000-00-00 12:12:12"), dayOfWeek("2017-00-00 12:12:12")`)
 	result.Check(testkit.Rows("<nil> 7 <nil> <nil> <nil> <nil>"))

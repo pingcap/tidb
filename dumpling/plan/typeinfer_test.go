@@ -109,9 +109,9 @@ func (s *testPlanSuite) TestInferType(c *C) {
 
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		p, err := plan.BuildLogicalPlan(ctx, stmt, is)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		tp := p.Schema().Columns[0].RetType
 
 		c.Assert(tp.Tp, Equals, tt.tp, comment)
@@ -1253,6 +1253,23 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"weekofyear(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 		{"weekofyear(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 
+		{"yearweek(c_int_d      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_bigint_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_float_d    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_double_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_decimal    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_datetime   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_time_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_timestamp_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_char       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_varchar    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_text_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_binary     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_varbinary  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_blob_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+		{"yearweek(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
+
 		{"year(c_int_d      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
 		{"year(c_bigint_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
 		{"year(c_float_d    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 4, 0},
@@ -1325,6 +1342,8 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"utc_timestamp(7) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
 
 		{"utc_date()  ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"curdate()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"sysdate(4)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
 
 		{"from_days(c_int_d      )", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"from_days(c_bigint_d   )", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
