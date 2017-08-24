@@ -943,6 +943,14 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result := tk.MustQuery("select makedate(a,a), makedate(b,b), makedate(c,c), makedate(d,d), makedate(e,e), makedate(f,f), makedate(null,null), makedate(a,b) from t")
 	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
 
+	// for date
+	result = tk.MustQuery(`select date("2019-09-12"), date("2019-09-12 12:12:09"), date("2019-09-12 12:12:09.121212");`)
+	result.Check(testkit.Rows("2019-09-12 2019-09-12 2019-09-12"))
+	result = tk.MustQuery(`select date("0000-00-00"), date("0000-00-00 12:12:09"), date("0000-00-00 00:00:00.121212"), date("0000-00-00 00:00:00.000000");`)
+	result.Check(testkit.Rows("<nil> 0000-00-00 0000-00-00 <nil>"))
+	result = tk.MustQuery(`select date("aa"), date(12.1), date("");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+
 	// for year
 	result = tk.MustQuery(`select year("2013-01-09"), year("2013-00-09"), year("000-01-09"), year("1-01-09"), year("20131-01-09"), year(null);`)
 	result.Check(testkit.Rows("2013 2013 0 1 <nil> <nil>"))
@@ -1023,6 +1031,24 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`delete from t where a = weekofyear("aa")`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
+	// for weekday
+	result = tk.MustQuery(`select weekday("2012-12-20"), weekday("2012-12-21"), weekday("2012-12-22"), weekday("2012-12-23"), weekday("2012-12-24"), weekday("2012-12-25"), weekday("2012-12-26"), weekday("2012-12-27");`)
+	result.Check(testkit.Rows("3 4 5 6 0 1 2 3"))
+	result = tk.MustQuery(`select weekday("2012-12-90"), weekday("0000-00-00"), weekday("aa"), weekday(null), weekday(11), weekday(12.99);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+
+	// for quarter
+	result = tk.MustQuery(`select quarter("2012-00-20"), quarter("2012-01-21"), quarter("2012-03-22"), quarter("2012-05-23"), quarter("2012-08-24"), quarter("2012-09-25"), quarter("2012-11-26"), quarter("2012-12-27");`)
+	result.Check(testkit.Rows("0 1 1 2 3 3 4 4"))
+	result = tk.MustQuery(`select quarter("2012-14-20"), quarter("0000-00-00"), quarter("aa"), quarter(null), quarter(11), quarter(12.99);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+
+	// for from_days
+	result = tk.MustQuery(`select from_days(0), from_days(-199), from_days(1111), from_days(120), from_days(1), from_days(1111111), from_days(9999999), from_days(22222);`)
+	result.Check(testkit.Rows("0000-00-00 0000-00-00 0003-01-16 0000-00-00 0000-00-00 3042-02-13 0000-00-00 0060-11-03"))
+	result = tk.MustQuery(`select from_days("2012-14-20"), from_days("111a"), from_days("aa"), from_days(null), from_days("123asf"), from_days(12.99);`)
+	result.Check(testkit.Rows("0005-07-05 0000-00-00 0000-00-00 <nil> 0000-00-00 0000-00-00"))
+
 	// Fix issue #3923
 	result = tk.MustQuery("select timediff(cast('2004-12-30 12:00:00' as time), '12:00:00');")
 	result.Check(testkit.Rows("00:00:00"))
@@ -1060,6 +1086,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("62966505600 63426672000 63426721412 63426721412"))
 	result = tk.MustQuery("select to_days(950501), to_days('2007-10-07'), to_days('2007-10-07 00:00:59'), to_days('0000-01-01')")
 	result.Check(testkit.Rows("728779 733321 733321 1"))
+
 	result = tk.MustQuery("select last_day('2003-02-05'), last_day('2004-02-05'), last_day('2004-01-01 01:01:01'), last_day(950501);")
 	result.Check(testkit.Rows("2003-02-28 2004-02-29 2004-01-31 1995-05-31"))
 
@@ -1075,6 +1102,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 		"'2001-01-01'), TIMESTAMPDIFF(minute,binary('2003-02-01'),'2003-05-01 12:05:55'), TIMESTAMPDIFF(day," +
 		"'1995-05-02', 950501);")
 	result.Check(testkit.Rows("3 -1 128885 -1"))
+
+	result = tk.MustQuery("select datediff('2007-12-31 23:59:59','2007-12-30'), datediff('2010-11-30 23:59:59', " +
+		"'2010-12-31'), datediff(950501,'2016-01-13'), datediff(950501.9,'2016-01-13'), datediff(binary(950501), '2016-01-13');")
+	result.Check(testkit.Rows("1 -31 -7562 -7562 -7562"))
+	result = tk.MustQuery("select datediff('0000-01-01','0001-01-01'), datediff('0001-00-01', '0001-00-01'), datediff('0001-01-00','0001-01-00'), datediff('2017-01-01','2017-01-01');")
+	result.Check(testkit.Rows("-365 <nil> <nil> 0"))
 
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
@@ -1146,6 +1179,14 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
 
+	// for yearweek
+	result = tk.MustQuery(`select yearweek("2014-12-27"), yearweek("2014-29-27"), yearweek("2014-00-27"), yearweek("2014-12-27 12:38:32"), yearweek("2014-12-27 12:38:32.1111111"), yearweek("2014-12-27 12:90:32"), yearweek("2014-12-27 89:38:32.1111111");`)
+	result.Check(testkit.Rows("201451 <nil> <nil> 201451 201451 <nil> <nil>"))
+	result = tk.MustQuery(`select yearweek(12121), yearweek(1.00009), yearweek("aaaaa"), yearweek(""), yearweek(NULL);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select yearweek("0000-00-00"), yearweek("2019-01-29", "aa"), yearweek("2011-01-01", null);`)
+	result.Check(testkit.Rows("<nil> 201904 201052"))
+
 	// for dayOfWeek, dayOfMonth, dayOfYear
 	result = tk.MustQuery(`select dayOfWeek(null), dayOfWeek("2017-08-12"), dayOfWeek("0000-00-00"), dayOfWeek("2017-00-00"), dayOfWeek("0000-00-00 12:12:12"), dayOfWeek("2017-00-00 12:12:12")`)
 	result.Check(testkit.Rows("<nil> 7 <nil> <nil> <nil> <nil>"))
@@ -1197,6 +1238,22 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`select monthname("2017-12-01"), monthname("0000-00-00"), monthname("0000-01-00"), monthname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("December <nil> January January"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format"))
+
+	// for dayname
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a varchar(10))`)
+	tk.MustExec(`insert into t value("abc")`)
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+
+	_, err = tk.Exec("insert into t value(dayname('0000-00-00'))")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`update t set a = dayname("0000-00-00")`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = dayname(123)`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	result = tk.MustQuery(`select dayname("2017-12-01"), dayname("0000-00-00"), dayname("0000-01-00"), dayname("0000-01-00 00:00:00")`)
+	result.Check(testkit.Rows("Friday <nil> <nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format", "Warning|1105|invalid time format", "Warning|1105|invalid time format"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
@@ -1938,6 +1995,11 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 
 	result = tk.MustQuery(`SELECT HEX(NULLIF("abc", 1));`)
 	result.Check(testkit.Rows("616263"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a date)")
+	result = tk.MustQuery("desc select a = a from t")
+	result.Check(testkit.Rows("TableScan_3   cop table:t, range:(-inf,+inf), keep order:false 8000", "TableReader_4 Projection_2  root data:TableScan_3 8000", "Projection_2  TableReader_4 root eq(test.t.a, test.t.a) 8000"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
