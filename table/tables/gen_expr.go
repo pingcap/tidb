@@ -18,8 +18,10 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 // getDefaultCharsetAndCollate is copyed from ddl/ddl_api.go.
@@ -77,6 +79,10 @@ func simpleResolveName(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNod
 	nr := nameResolver{tblInfo, nil}
 	if _, ok := node.Accept(&nr); !ok {
 		return nil, errors.Trace(nr.err)
+	}
+	sc := variable.MostRestrictStateContext()
+	if err := expression.InferType(sc, node); err != nil {
+		return nil, errors.Trace(err)
 	}
 	return node, nil
 }
