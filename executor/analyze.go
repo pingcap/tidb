@@ -159,12 +159,12 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 }
 
 func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) statistics.AnalyzeResult {
-	if err := task.src.Open(); err != nil {
-		return statistics.AnalyzeResult{Err: err}
+	if e := task.src.Open(); e != nil {
+		return statistics.AnalyzeResult{Err: e}
 	}
 	collectors, pkBuilder, err := CollectSamplesAndEstimateNDVs(e.ctx, &recordSet{executor: task.src}, len(task.Columns), task.PKInfo)
-	if err := task.src.Close(); err != nil {
-		return statistics.AnalyzeResult{Err: err}
+	if e := task.src.Close(); e != nil {
+		return statistics.AnalyzeResult{Err: e}
 	}
 	if err != nil {
 		return statistics.AnalyzeResult{Err: err}
@@ -187,12 +187,12 @@ func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) statistics.AnalyzeResult
 }
 
 func (e *AnalyzeExec) analyzeIndex(task *analyzeTask) statistics.AnalyzeResult {
-	if err := task.src.Open(); err != nil {
-		return statistics.AnalyzeResult{Err: err}
+	if e := task.src.Open(); e != nil {
+		return statistics.AnalyzeResult{Err: e}
 	}
 	count, hg, err := statistics.BuildIndex(e.ctx, defaultBucketCount, task.indexInfo.ID, &recordSet{executor: task.src})
-	if err := task.src.Close(); err != nil {
-		return statistics.AnalyzeResult{Err: err}
+	if e := task.src.Close(); e != nil {
+		return statistics.AnalyzeResult{Err: e}
 	}
 	return statistics.AnalyzeResult{TableID: task.tableInfo.ID, Hist: []*statistics.Histogram{hg}, Count: count, IsIndex: 1, Err: err}
 }
