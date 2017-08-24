@@ -704,32 +704,34 @@ func (c *dayNameFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinDayNameSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 10
+	sig := &builtinDayNameSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinDayNameSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinDayNameSig.
+// evalString evals a builtinDayNameSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
-func (b *builtinDayNameSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinDayNameSig) evalString(row []types.Datum) (string, bool, error) {
+	arg, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	d, err = builtinWeekDay(args, b.ctx)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
+	if arg.InvalidZero() {
+		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
-	weekday := d.GetInt64()
-	if (weekday < 0) || (weekday >= int64(len(types.WeekdayNames))) {
-		d.SetNull()
-		return d, errors.Errorf("no name for invalid weekday: %d.", weekday)
-	}
-	d.SetString(types.WeekdayNames[weekday])
-	return
+	// Monday is 0, ... Sunday = 6 in MySQL
+	// but in go, Sunday is 0, ... Saturday is 6
+	// w will do a conversion.
+	res := (int64(arg.Time.Weekday()) + 6) % 7
+	return types.WeekdayNames[res], false, nil
 }
 
 type dayOfMonthFunctionClass struct {
