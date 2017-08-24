@@ -256,7 +256,7 @@ import (
 	concatWs			"CONCAT_WS"
 	connectionID			"CONNECTION_ID"
 	convertTz			"CONVERT_TZ"
-	curTime             "CURTIME"
+	curTime                         "CURTIME"
 	cos				"COS"
 	cot				"COT"
 	count				"COUNT"
