@@ -426,20 +426,11 @@ func (b *builtinIfIntSig) evalInt(row []types.Datum) (ret int64, isNull bool, er
 		return 0, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalInt(row, sc)
-	if err != nil {
-		return 0, false, errors.Trace(err)
+	if (!isNull0 && arg0 != 0) || err != nil {
+		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalInt(row, sc)
-	if err != nil {
-		return 0, false, errors.Trace(err)
-	}
-	switch {
-	case isNull0 || arg0 == 0:
-		ret, isNull = arg2, isNull2
-	case arg0 != 0:
-		ret, isNull = arg1, isNull1
-	}
-	return
+	return arg2, isNull2, errors.Trace(err)
 }
 
 type builtinIfRealSig struct {
@@ -453,20 +444,11 @@ func (b *builtinIfRealSig) evalReal(row []types.Datum) (ret float64, isNull bool
 		return 0, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalReal(row, sc)
-	if err != nil {
-		return 0, false, errors.Trace(err)
+	if (!isNull0 && arg0 != 0) || err != nil {
+		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalReal(row, sc)
-	if err != nil {
-		return 0, false, errors.Trace(err)
-	}
-	switch {
-	case isNull0 || arg0 == 0:
-		ret, isNull = arg2, isNull2
-	case arg0 != 0:
-		ret, isNull = arg1, isNull1
-	}
-	return
+	return arg2, isNull2, errors.Trace(err)
 }
 
 type builtinIfDecimalSig struct {
@@ -480,20 +462,11 @@ func (b *builtinIfDecimalSig) evalDecimal(row []types.Datum) (ret *types.MyDecim
 		return nil, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalDecimal(row, sc)
-	if err != nil {
-		return nil, false, errors.Trace(err)
+	if (!isNull0 && arg0 != 0) || err != nil {
+		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalDecimal(row, sc)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	switch {
-	case isNull0 || arg0 == 0:
-		ret, isNull = arg2, isNull2
-	case arg0 != 0:
-		ret, isNull = arg1, isNull1
-	}
-	return
+	return arg2, isNull2, errors.Trace(err)
 }
 
 type builtinIfStringSig struct {
@@ -507,20 +480,11 @@ func (b *builtinIfStringSig) evalString(row []types.Datum) (ret string, isNull b
 		return "", false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalString(row, sc)
-	if err != nil {
-		return "", false, errors.Trace(err)
+	if (!isNull0 && arg0 != 0) || err != nil {
+		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalString(row, sc)
-	if err != nil {
-		return "", false, errors.Trace(err)
-	}
-	switch {
-	case isNull0 || arg0 == 0:
-		ret, isNull = arg2, isNull2
-	case arg0 != 0:
-		ret, isNull = arg1, isNull1
-	}
-	return
+	return arg2, isNull2, errors.Trace(err)
 }
 
 type builtinIfTimeSig struct {
@@ -534,20 +498,11 @@ func (b *builtinIfTimeSig) evalTime(row []types.Datum) (ret types.Time, isNull b
 		return ret, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalTime(row, sc)
-	if err != nil {
-		return ret, false, errors.Trace(err)
+	if (!isNull0 && arg0 != 0) || err != nil {
+		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalTime(row, sc)
-	if err != nil {
-		return ret, false, errors.Trace(err)
-	}
-	switch {
-	case isNull0 || arg0 == 0:
-		ret, isNull = arg2, isNull2
-	case arg0 != 0:
-		ret, isNull = arg1, isNull1
-	}
-	return
+	return arg2, isNull2, errors.Trace(err)
 }
 
 type builtinIfDurationSig struct {
@@ -561,20 +516,11 @@ func (b *builtinIfDurationSig) evalDuration(row []types.Datum) (ret types.Durati
 		return ret, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalDuration(row, sc)
-	if err != nil {
-		return ret, false, errors.Trace(err)
+	if (!isNull0 && arg0 != 0) || err != nil {
+		return arg1, isNull1, errors.Trace(err)
 	}
 	arg2, isNull2, err := b.args[2].EvalDuration(row, sc)
-	if err != nil {
-		return ret, false, errors.Trace(err)
-	}
-	switch {
-	case isNull0 || arg0 == 0:
-		ret, isNull = arg2, isNull2
-	case arg0 != 0:
-		ret, isNull = arg1, isNull1
-	}
-	return
+	return arg2, isNull2, errors.Trace(err)
 }
 
 type ifNullFunctionClass struct {
@@ -623,7 +569,7 @@ type builtinIfNullIntSig struct {
 func (b *builtinIfNullIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalInt(row, sc)
-	if !isNull {
+	if !isNull || err != nil {
 		return arg0, false, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalInt(row, sc)
@@ -637,7 +583,7 @@ type builtinIfNullRealSig struct {
 func (b *builtinIfNullRealSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalReal(row, sc)
-	if !isNull {
+	if !isNull || err != nil {
 		return arg0, false, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalReal(row, sc)
@@ -651,7 +597,7 @@ type builtinIfNullDecimalSig struct {
 func (b *builtinIfNullDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalDecimal(row, sc)
-	if !isNull {
+	if !isNull || err != nil {
 		return arg0, false, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalDecimal(row, sc)
@@ -665,7 +611,7 @@ type builtinIfNullStringSig struct {
 func (b *builtinIfNullStringSig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalString(row, sc)
-	if !isNull {
+	if !isNull || err != nil {
 		return arg0, false, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalString(row, sc)
@@ -679,7 +625,7 @@ type builtinIfNullTimeSig struct {
 func (b *builtinIfNullTimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalTime(row, sc)
-	if !isNull {
+	if !isNull || err != nil {
 		return arg0, false, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalTime(row, sc)
@@ -693,7 +639,7 @@ type builtinIfNullDurationSig struct {
 func (b *builtinIfNullDurationSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalDuration(row, sc)
-	if !isNull {
+	if !isNull || err != nil {
 		return arg0, false, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalDuration(row, sc)

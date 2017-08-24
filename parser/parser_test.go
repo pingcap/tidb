@@ -792,6 +792,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT TO_DAYS('2007-10-07')", true},
 		{"SELECT TO_SECONDS('2009-11-29')", true},
 
+		// for LAST_DAY
+		{"SELECT LAST_DAY('2003-02-05');", true},
+
 		// for UTC_TIME
 		{"SELECT UTC_TIME(), UTC_TIME(1)", true},
 
