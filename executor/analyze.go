@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -51,34 +52,22 @@ func (e *AnalyzeExec) Schema() *expression.Schema {
 
 // Open implements the Executor Open interface.
 func (e *AnalyzeExec) Open() error {
-	for _, task := range e.tasks {
-		err := task.src.Open()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *AnalyzeExec) Close() error {
-	for _, task := range e.tasks {
-		err := task.src.Close()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	return nil
 }
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next() (*Row, error) {
+func (e *AnalyzeExec) Next() (Row, error) {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	taskCh := make(chan *analyzeTask, len(e.tasks))
-	resultCh := make(chan analyzeResult, len(e.tasks))
+	resultCh := make(chan statistics.AnalyzeResult, len(e.tasks))
 	for i := 0; i < concurrency; i++ {
 		go e.analyzeWorker(taskCh, resultCh)
 	}
@@ -86,32 +75,48 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		taskCh <- task
 	}
 	close(taskCh)
-	results := make([]analyzeResult, 0, len(e.tasks))
+	dom := sessionctx.GetDomain(e.ctx)
+	lease := dom.StatsHandle().Lease
+	if lease > 0 {
+		var err1 error
+		for i := 0; i < len(e.tasks); i++ {
+			result := <-resultCh
+			if result.Err != nil {
+				err1 = err
+				log.Error(errors.ErrorStack(err))
+				continue
+			}
+			dom.StatsHandle().AnalyzeResultCh() <- &result
+		}
+		// We sleep two lease to make sure other tidb node has updated this node.
+		time.Sleep(lease * 2)
+		return nil, errors.Trace(err1)
+	}
+	results := make([]statistics.AnalyzeResult, 0, len(e.tasks))
+	var err1 error
 	for i := 0; i < len(e.tasks); i++ {
 		result := <-resultCh
-		results = append(results, result)
-		if result.err != nil {
-			return nil, errors.Trace(err)
+		if result.Err != nil {
+			err1 = err
+			log.Error(errors.ErrorStack(err))
+			continue
 		}
+		results = append(results, result)
+	}
+	if err1 != nil {
+		return nil, errors.Trace(err1)
 	}
 	for _, result := range results {
-		for _, hg := range result.hist {
-			err = hg.SaveToStorage(e.ctx, result.tableID, result.count, result.isIndex)
+		for _, hg := range result.Hist {
+			err = hg.SaveToStorage(e.ctx, result.TableID, result.Count, result.IsIndex)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
 	}
-	dom := sessionctx.GetDomain(e.ctx)
-	lease := dom.StatsHandle().Lease
-	if lease > 0 {
-		// We sleep two lease to make sure other tidb node has updated this node.
-		time.Sleep(lease * 2)
-	} else {
-		err := dom.StatsHandle().Update(GetInfoSchema(e.ctx))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	return nil, nil
 }
@@ -142,15 +147,7 @@ type analyzeTask struct {
 	src       Executor
 }
 
-type analyzeResult struct {
-	tableID int64
-	hist    []*statistics.Histogram
-	count   int64
-	isIndex int
-	err     error
-}
-
-func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- analyzeResult) {
+func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
 	for task := range taskCh {
 		switch task.taskType {
 		case colTask:
@@ -161,31 +158,43 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 	}
 }
 
-func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) analyzeResult {
-	collectors, pkBuilder, err := CollectSamplesAndEstimateNDVs(e.ctx, &recordSet{executor: task.src}, len(task.Columns), task.PKInfo)
-	if err != nil {
-		return analyzeResult{err: err}
+func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) statistics.AnalyzeResult {
+	if e := task.src.Open(); e != nil {
+		return statistics.AnalyzeResult{Err: e}
 	}
-	result := analyzeResult{tableID: task.tableInfo.ID, isIndex: 0}
+	collectors, pkBuilder, err := CollectSamplesAndEstimateNDVs(e.ctx, &recordSet{executor: task.src}, len(task.Columns), task.PKInfo)
+	if e := task.src.Close(); e != nil {
+		return statistics.AnalyzeResult{Err: e}
+	}
+	if err != nil {
+		return statistics.AnalyzeResult{Err: err}
+	}
+	result := statistics.AnalyzeResult{TableID: task.tableInfo.ID, IsIndex: 0}
 	if task.PKInfo != nil {
-		result.count = pkBuilder.Count
-		result.hist = []*statistics.Histogram{pkBuilder.Hist}
+		result.Count = pkBuilder.Count
+		result.Hist = []*statistics.Histogram{pkBuilder.Hist}
 	} else {
-		result.count = collectors[0].Count + collectors[0].NullCount
+		result.Count = collectors[0].Count + collectors[0].NullCount
 	}
 	for i, col := range task.Columns {
 		hg, err := statistics.BuildColumn(e.ctx, defaultBucketCount, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].samples)
-		result.hist = append(result.hist, hg)
-		if err != nil && result.err == nil {
-			result.err = err
+		result.Hist = append(result.Hist, hg)
+		if err != nil && result.Err == nil {
+			result.Err = err
 		}
 	}
 	return result
 }
 
-func (e *AnalyzeExec) analyzeIndex(task *analyzeTask) analyzeResult {
+func (e *AnalyzeExec) analyzeIndex(task *analyzeTask) statistics.AnalyzeResult {
+	if e := task.src.Open(); e != nil {
+		return statistics.AnalyzeResult{Err: e}
+	}
 	count, hg, err := statistics.BuildIndex(e.ctx, defaultBucketCount, task.indexInfo.ID, &recordSet{executor: task.src})
-	return analyzeResult{tableID: task.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 1, err: err}
+	if e := task.src.Close(); e != nil {
+		return statistics.AnalyzeResult{Err: e}
+	}
+	return statistics.AnalyzeResult{TableID: task.tableInfo.ID, Hist: []*statistics.Histogram{hg}, Count: count, IsIndex: 1, Err: err}
 }
 
 // SampleCollector will collect samples and calculate the count and ndv of an attribute.
@@ -240,7 +249,7 @@ func CollectSamplesAndEstimateNDVs(ctx context.Context, e ast.RecordSet, numCols
 			return collectors, pkBuilder, nil
 		}
 		if pkInfo != nil {
-			err := pkBuilder.Iterate(row.Data)
+			err = pkBuilder.Iterate(row.Data)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

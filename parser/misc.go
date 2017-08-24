@@ -119,6 +119,7 @@ func init() {
 	initTokenString("<>", neqSynonym)
 	initTokenString("<<", lsh)
 	initTokenString(">>", rsh)
+	initTokenString("\\N", null)
 
 	initTokenFunc("@", startWithAt)
 	initTokenFunc("/", startWithSlash)
@@ -230,6 +231,7 @@ var tokenMap = map[string]int{
 	"DESCRIBE":                   describe,
 	"DISABLE":                    disable,
 	"DISTINCT":                   distinct,
+	"DISTINCTROW":                distinctRow,
 	"TIDB_SMJ":                   tidbSMJ,
 	"TIDB_INLJ":                  tidbINLJ,
 	"TIDB_VERSION":               tidbVersion,
@@ -377,6 +379,7 @@ var tokenMap = map[string]int{
 	"POSITION":                   position,
 	"POW":                        pow,
 	"POWER":                      power,
+	"PLUGINS":                    plugins,
 	"PREPARE":                    prepare,
 	"PRIMARY":                    primary,
 	"PRIVILEGES":                 privileges,
@@ -462,6 +465,7 @@ var tokenMap = map[string]int{
 	"TO_BASE64":                  toBase64,
 	"TO_DAYS":                    toDays,
 	"TO_SECONDS":                 toSeconds,
+	"LAST_DAY":                   lastDay,
 	"TRAILING":                   trailing,
 	"TRANSACTION":                transaction,
 	"TRIGGER":                    trigger,
@@ -614,6 +618,7 @@ var tokenMap = map[string]int{
 	"UUID":                       uuid,
 	"UUID_SHORT":                 uuidShort,
 	"KILL":                       kill,
+	"NATURAL":                    natural,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {

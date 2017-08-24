@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
@@ -298,6 +299,17 @@ var oppositeOp = map[string]string{
 	ast.NE: ast.EQ,
 }
 
+// a op b is equal to b symmetricOp a
+var symmetricOp = map[opcode.Op]opcode.Op{
+	opcode.LT:     opcode.GT,
+	opcode.GE:     opcode.LE,
+	opcode.GT:     opcode.LT,
+	opcode.LE:     opcode.GE,
+	opcode.EQ:     opcode.EQ,
+	opcode.NE:     opcode.NE,
+	opcode.NullEQ: opcode.NullEQ,
+}
+
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 	if f, ok := expr.(*ScalarFunction); ok {
@@ -313,26 +325,26 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
 			}
 			return f
-		case ast.AndAnd:
+		case ast.LogicAnd:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.OrOr, f.GetType(), args...)
+				nf, _ := NewFunction(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
 			}
 			return f
-		case ast.OrOr:
+		case ast.LogicOr:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.AndAnd, f.GetType(), args...)
+				nf, _ := NewFunction(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {

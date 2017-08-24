@@ -27,19 +27,27 @@ type statsProfile struct {
 }
 
 // collapse receives a selectivity and multiple it with count and cardinality.
-func (s *statsProfile) collapse(selectivity float64) *statsProfile {
+func (s *statsProfile) collapse(factor float64) *statsProfile {
 	profile := &statsProfile{
-		count:       s.count * selectivity,
+		count:       s.count * factor,
 		cardinality: make([]float64, len(s.cardinality)),
 	}
 	for i := range profile.cardinality {
-		profile.cardinality[i] = s.cardinality[i] * selectivity
+		profile.cardinality[i] = s.cardinality[i] * factor
 	}
 	return profile
 }
 
 func (p *basePhysicalPlan) statsProfile() *statsProfile {
-	return p.basePlan.profile
+	profile := p.basePlan.profile
+	if p.expectedCnt > 0 && p.expectedCnt < profile.count {
+		factor := p.expectedCnt / profile.count
+		profile.count = p.expectedCnt
+		for i := range profile.cardinality {
+			profile.cardinality[i] = profile.cardinality[i] * factor
+		}
+	}
+	return profile
 }
 
 func (p *baseLogicalPlan) prepareStatsProfile() *statsProfile {
@@ -148,7 +156,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 		log.Errorf("Cannot find column %s indices from schema %s", cols, schema)
 		return 0
 	}
-	var cardinality float64
+	var cardinality = 1.0
 	for _, idx := range indices {
 		if cardinality < profile.cardinality[idx] {
 			// It is a very elementary estimation.
@@ -247,6 +255,24 @@ func (p *LogicalJoin) prepareStatsProfile() *statsProfile {
 	p.profile = &statsProfile{
 		count:       count,
 		cardinality: cardinality,
+	}
+	return p.profile
+}
+
+func (p *LogicalApply) prepareStatsProfile() *statsProfile {
+	leftProfile := p.children[0].(LogicalPlan).prepareStatsProfile()
+	_ = p.children[1].(LogicalPlan).prepareStatsProfile()
+	p.profile = &statsProfile{
+		count:       leftProfile.count,
+		cardinality: make([]float64, p.schema.Len()),
+	}
+	copy(p.profile.cardinality, leftProfile.cardinality)
+	if p.JoinType == LeftOuterSemiJoin {
+		p.profile.cardinality[len(p.profile.cardinality)-1] = 2.0
+	} else {
+		for i := p.children[0].Schema().Len(); i < p.schema.Len(); i++ {
+			p.profile.cardinality[i] = leftProfile.count
+		}
 	}
 	return p.profile
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -72,6 +73,49 @@ func (s *testSessionSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
+	defer testleak.AfterTest(c)()
+	lease := 5 * time.Millisecond
+	validator := domain.NewSchemaValidator(lease)
+	checker := &schemaLeaseChecker{SchemaValidator: validator}
+
+	// Add some schema versions and delta table IDs.
+	ts := uint64(time.Now().UnixNano())
+	validator.Update(ts, 0, 2, []int64{1})
+	validator.Update(ts, 2, 4, []int64{2})
+
+	// checker's schema version is the same as the current schema version.
+	checker.schemaVer = 4
+	err := checker.checkOnce(ts)
+	c.Assert(err, IsNil)
+
+	// checker's schema version is less than the current schema version, and it doesn't exist in validator's items.
+	// checker's related table ID isn't in validator's changed table IDs.
+	checker.schemaVer = 2
+	checker.relatedTableIDs = []int64{3}
+	err = checker.checkOnce(ts)
+	c.Assert(err, IsNil)
+	// The checker's schema version isn't in validator's items.
+	checker.schemaVer = 1
+	checker.relatedTableIDs = []int64{3}
+	err = checker.checkOnce(ts)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
+	// checker's related table ID is in validator's changed table IDs.
+	checker.relatedTableIDs = []int64{2}
+	err = checker.checkOnce(ts)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
+
+	// validator's latest schema version is expired.
+	time.Sleep(lease + time.Microsecond)
+	checker.schemaVer = 2
+	checker.relatedTableIDs = []int64{3}
+	err = checker.checkOnce(ts)
+	c.Assert(err, IsNil)
+	nowTS := uint64(time.Now().UnixNano())
+	err = checker.checkOnce(nowTS)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaExpired), IsTrue)
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
@@ -2022,7 +2066,7 @@ func (s *testSessionSuite) TestSessionAuth(c *C) {
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
 	se := newSession(c, s.store, dbName)
 	defer se.Close()
-	c.Assert(se.Auth("Any not exist username with zero password! @anyhost", []byte(""), []byte("")), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")), IsFalse)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -2038,11 +2082,11 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 
 	privileges.Enable = true
 	privileges.SkipWithGrant = false
-	c.Assert(se.Auth("user_not_exist", []byte("yyy"), []byte("zzz")), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")), IsFalse)
 
 	privileges.SkipWithGrant = true
-	c.Assert(se.Auth(`xxx@%`, []byte("yyy"), []byte("zzz")), IsTrue)
-	c.Assert(se.Auth(`root@%`, []byte(""), []byte("")), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "%"}, []byte("yyy"), []byte("zzz")), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "create table t (id int)")
 
 	privileges.Enable = save1
@@ -2120,7 +2164,7 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	//mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
 	sql = "select c1 from t where c1 in (1.1) and c2 > 3"
-	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[]->Projection")
+	checkPlan(c, se, sql, "Table(t)->Selection->Projection")
 	mustExecMatch(c, se, sql, [][]interface{}{})
 
 	// Test varchar type.

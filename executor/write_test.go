@@ -171,6 +171,22 @@ func (s *testSuite) TestInsert(c *C) {
 	r.Check(testkit.Rows("1035651600"))
 	tk.MustExec("set @@time_zone = @origin_time_zone")
 
+	// issue 3832
+	tk.MustExec("create table t1 (b char(0));")
+	_, err = tk.Exec(`insert into t1 values ("");`)
+	c.Assert(err, IsNil)
+
+	// issue 3895
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
+	tk.MustExec("INSERT INTO t VALUES (1.000001);")
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	tk.MustExec("INSERT INTO t VALUES (1.000000);")
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
@@ -947,18 +963,22 @@ func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context
 	return
 }
 
-func (s *testSuite) TestBatchInsert(c *C) {
+func (s *testSuite) TestBatchInsertDelete(c *C) {
 	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	originBatch := executor.BatchInsertSize
+	originDeleteBatch := executor.BatchDeleteSize
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
 		executor.BatchInsertSize = originBatch
+		executor.BatchDeleteSize = originDeleteBatch
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
 	atomic.StoreUint64(&kv.TxnEntryCountLimit, 100)
 	executor.BatchInsertSize = 50
+	executor.BatchDeleteSize = 50
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists batch_insert")
@@ -1005,6 +1025,20 @@ func (s *testSuite) TestBatchInsert(c *C) {
 	tk.MustExec("rollback;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+
+	// Test case for batch delete.
+	// This will meet txn too large error.
+	_, err = tk.Exec("delete from batch_insert;")
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("320"))
+	// Enable batch delete.
+	tk.MustExec("set @@session.tidb_batch_delete=on;")
+	tk.MustExec("delete from batch_insert;")
+	// Make sure that all rows are gone.
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestNullDefault(c *C) {
@@ -1021,4 +1055,72 @@ func (s *testSuite) TestNullDefault(c *C) {
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>"))
 	tk.MustExec("insert into test_null_default values ()")
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
+}
+
+func (s *testSuite) TestGetFieldsFromLine(c *C) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{
+			`"1","a string","100.20"`,
+			[]string{"1", "a string", "100.20"},
+		},
+		{
+			`"2","a string containing a , comma","102.20"`,
+			[]string{"2", "a string containing a , comma", "102.20"},
+		},
+		{
+			`"3","a string containing a \" quote","102.20"`,
+			[]string{"3", "a string containing a \" quote", "102.20"},
+		},
+		{
+			`"4","a string containing a \", quote and comma","102.20"`,
+			[]string{"4", "a string containing a \", quote and comma", "102.20"},
+		},
+		// Test some escape char.
+		{
+			`"\0\b\n\r\t\Z\\\  \c\'\""`,
+			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
+		},
+	}
+	fieldsInfo := &ast.FieldsClause{
+		Enclosed:   '"',
+		Terminated: ",",
+	}
+
+	for _, test := range tests {
+		got, err := executor.GetFieldsFromLine([]byte(test.input), fieldsInfo)
+		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
+		assertEqualStrings(c, got, test.expected)
+	}
+
+	_, err := executor.GetFieldsFromLine([]byte(`1,a string,100.20`), fieldsInfo)
+	c.Assert(err, NotNil)
+}
+
+func assertEqualStrings(c *C, got []string, expect []string) {
+	c.Assert(len(got), Equals, len(expect))
+	for i := 0; i < len(got); i++ {
+		c.Assert(got[i], Equals, expect[i])
+	}
+}
+
+// Test issue https://github.com/pingcap/tidb/issues/4067
+func (s *testSuite) TestIssue4067(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t2(id int)")
+	tk.MustExec("insert into t1 values(123)")
+	tk.MustExec("insert into t2 values(123)")
+	tk.MustExec("delete from t1 where id not in (select id from t2)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("123"))
+	tk.MustExec("delete from t1 where id in (select id from t2)")
+	tk.MustQuery("select * from t1").Check(nil)
 }

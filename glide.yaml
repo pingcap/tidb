@@ -15,6 +15,7 @@ import:
   - mvcc/mvccpb
   - pkg/tlsutil
   - pkg/monotime
+  - contrib/recipes
 - package: github.com/gengo/grpc-gateway
   version: f52d055dc48aec25854ed7d31862f78913cf17d1
   subpackages:
@@ -24,7 +25,7 @@ import:
 - package: github.com/ghodss/yaml
   version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
 - package: github.com/go-sql-driver/mysql
-  version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
+  version: 3955978caca48c1658a4bb7a9c6a0f084e326af3
 - package: github.com/golang/protobuf
   version: 8ee79997227bf9b34611aee7946ae64735e6fd93
   subpackages:
@@ -75,6 +76,10 @@ import:
   - http2/hpack
   - internal/timeseries
   - trace
+- package: google.golang.org/genproto
+  version: 6b7d9516179cd47f4714cfeb0103ad1dede756c4
+  subpackages:
+  - googleapis/rpc/status
 - package: google.golang.org/grpc
   version: 3419b42955675df23457629c75f58eb8dcd56954
   subpackages:
@@ -135,15 +140,25 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: ce8db87a8c3f2560750232e85ad5152a0a1c69df
+  version: 38eb8a2e70dd39668a62d24a79f30596f204df14
 - package: github.com/pingcap/tipb
-  version: 5e4b9cf7c32d2b09ba71aa9ab6675ec135f9fbd
+  version: b45b9d4dd493e6f5f674f9303a12139fb28be13e
   subpackages:
   - go-binlog
+  - go-mysqlx
+  - go-mysqlx/Connection
+  - go-mysqlx/Crud
+  - go-mysqlx/Datatypes
+  - go-mysqlx/Expect
+  - go-mysqlx/Expr
+  - go-mysqlx/Notice
+  - go-mysqlx/Resultset
+  - go-mysqlx/Session
+  - go-mysqlx/Sql
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: f29189ecf47c65d8945b1e272929554b31346286
+  version: bef5d90e19c200dff99effb226a5bc336ee6b258
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:

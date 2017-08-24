@@ -46,7 +46,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"column", "constraint", "convert", "create", "cross", "current_date", "current_time",
 		"current_timestamp", "current_user", "database", "databases", "day_hour", "day_microsecond",
 		"day_minute", "day_second", "decimal", "default", "delete", "desc", "describe",
-		"distinct", "div", "double", "drop", "dual", "else", "enclosed", "escaped",
+		"distinct", "distinctRow", "div", "double", "drop", "dual", "else", "enclosed", "escaped",
 		"exists", "explain", "false", "float", "for", "force", "foreign", "from",
 		"fulltext", "grant", "group", "having", "hour_microsecond", "hour_minute",
 		"hour_second", "if", "ignore", "in", "index", "infile", "inner", "insert", "int", "into", "integer",
@@ -218,6 +218,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// 30
 		{"SELECT DISTINCTS * FROM t", false},
 		{"SELECT DISTINCT * FROM t", true},
+		{"SELECT DISTINCTROW * FROM t", true},
+		{"SELECT ALL * FROM t", true},
+		{"SELECT DISTINCT ALL * FROM t", false},
+		{"SELECT DISTINCTROW ALL * FROM t", false},
 		{"INSERT INTO foo (a) VALUES (42)", true},
 		{"INSERT INTO foo (a,) VALUES (42,)", false},
 		// 35
@@ -312,6 +316,11 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 join t2 left join t3 using (id)", true},
 		{"select * from t1 right join t2 using (id) left join t3 using (id)", true},
 		{"select * from t1 right join t2 using (id) left join t3", false},
+		{"select * from t1 natural join t2", true},
+		{"select * from t1 natural right join t2", true},
+		{"select * from t1 natural left outer join t2", true},
+		{"select * from t1 natural inner join t2", false},
+		{"select * from t1 natural cross join t2", false},
 
 		// for admin
 		{"admin show ddl;", true},
@@ -394,6 +403,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW INDEXES IN t where true;`, true},
 		{`SHOW KEYS FROM t FROM test where true;`, true},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
+		{`SHOW PLUGINS`, true},
 		// for show character set
 		{"show character set;", true},
 		{"show charset", true},
@@ -657,6 +667,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for cast as JSON
 		{"SELECT *, CAST(data AS JSON) FROM t;", true},
 
+		// for cast as signed int, fix issue #3691.
+		{"select cast(1 as signed int);", true},
+
 		// for last_insert_id
 		{"SELECT last_insert_id();", true},
 		{"SELECT last_insert_id(1);", true},
@@ -744,6 +757,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT GET_FORMAT(DATE, 'USA');", true},
 		{"SELECT GET_FORMAT(DATETIME, 'USA');", true},
 		{"SELECT GET_FORMAT(TIME, 'USA');", true},
+		{"SELECT GET_FORMAT(TIMESTAMP, 'USA');", true},
 
 		// for LOCALTIME, LOCALTIMESTAMP
 		{"SELECT LOCALTIME(), LOCALTIME(1)", true},
@@ -777,6 +791,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for TO_DAYS, TO_SECONDS
 		{"SELECT TO_DAYS('2007-10-07')", true},
 		{"SELECT TO_SECONDS('2009-11-29')", true},
+
+		// for LAST_DAY
+		{"SELECT LAST_DAY('2003-02-05');", true},
 
 		// for UTC_TIME
 		{"SELECT UTC_TIME(), UTC_TIME(1)", true},
@@ -1005,26 +1022,45 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for aggregate functions
 		{`select avg(), avg(c1,c2) from t;`, false},
 		{`select avg(distinct c1) from t;`, true},
+		{`select avg(distinctrow c1) from t;`, true},
+		{`select avg(distinct all c1) from t;`, true},
+		{`select avg(distinctrow all c1) from t;`, true},
 		{`select avg(c2) from t;`, true},
 		{`select bit_xor(c1) from t;`, true},
 		{`select bit_xor(), bit_xor(distinct c1) from t;`, false},
+		{`select bit_xor(), bit_xor(distinctrow c1) from t;`, false},
+		{`select bit_xor(), bit_xor(all c1) from t;`, false},
 		{`select max(c1,c2) from t;`, false},
 		{`select max(distinct c1) from t;`, true},
+		{`select max(distinctrow c1) from t;`, true},
+		{`select max(distinct all c1) from t;`, true},
+		{`select max(distinctrow all c1) from t;`, true},
 		{`select max(c2) from t;`, true},
 		{`select min(c1,c2) from t;`, false},
 		{`select min(distinct c1) from t;`, true},
+		{`select min(distinctrow c1) from t;`, true},
+		{`select min(distinct all c1) from t;`, true},
+		{`select min(distinctrow all c1) from t;`, true},
 		{`select min(c2) from t;`, true},
 		{`select sum(c1,c2) from t;`, false},
 		{`select sum(distinct c1) from t;`, true},
+		{`select sum(distinctrow c1) from t;`, true},
+		{`select sum(distinct all c1) from t;`, true},
+		{`select sum(distinctrow all c1) from t;`, true},
 		{`select sum(c2) from t;`, true},
 		{`select count(c1) from t;`, true},
 		{`select count(distinct *) from t;`, false},
+		{`select count(distinctrow *) from t;`, false},
 		{`select count(*) from t;`, true},
 		{`select count(distinct c1, c2) from t;`, true},
+		{`select count(distinctrow c1, c2) from t;`, true},
 		{`select count(c1, c2) from t;`, false},
 		{`select count(all c1) from t;`, true},
+		{`select count(distinct all c1) from t;`, false},
+		{`select count(distinctrow all c1) from t;`, false},
 		{`select group_concat(c2,c1) from t group by c1;`, true},
 		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
+		{`select group_concat(distinctrow c2,c1) from t group by c1;`, true},
 
 		// for encryption and compression functions
 		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},
@@ -1052,6 +1088,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT JSON_UNQUOTE();`, true},
 		{`SELECT JSON_TYPE('[123]');`, true},
 		{`SELECT JSON_TYPE();`, true},
+
+		// For two json grammar sugar.
+		{`SELECT a->'$.a' FROM t`, true},
+		{`SELECT a->>'$.a' FROM t`, true},
+		{`SELECT '{}'->'$.a' FROM t`, false},
+		{`SELECT '{}'->>'$.a' FROM t`, false},
+		{`SELECT a->3 FROM t`, false},
+		{`SELECT a->>3 FROM t`, false},
 	}
 	s.RunTest(c, table)
 }
@@ -1084,6 +1128,27 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{"create table `123` (123a1 int)", true},
 		{"create table 123 (123a1 int)", false},
 		{fmt.Sprintf("select * from t%cble", 0), false},
+		{"select 1 full, 1 row, 1 abs", true},
+		{"select * from t full, t1 row, t2 abs", true},
+		// for issue 3954, should NOT be recognized as identifiers.
+		{`select .78+123`, true},
+		{`select .78+.21`, true},
+		{`select .78-123`, true},
+		{`select .78-.21`, true},
+		{`select .78--123`, true},
+		{`select .78*123`, true},
+		{`select .78*.21`, true},
+		{`select .78/123`, true},
+		{`select .78/.21`, true},
+		{`select .78,123`, true},
+		{`select .78,.21`, true},
+		{`select .78 , 123`, true},
+		{`select .78.123`, false},
+		{`select .78#123`, true}, // select .78
+		{`insert float_test values(.67, 'string');`, true},
+		{`select .78'123'`, true}, // select .78 as '123'
+		{"select .78`123`", true}, // select .78 as `123`
+		{`select .78"123"`, true}, // select .78 as "123"
 	}
 	s.RunTest(c, table)
 }
@@ -1314,10 +1379,19 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD UNIQUE KEY (a) COMMENT 'a'", true},
 		{"ALTER TABLE t ADD UNIQUE INDEX (a) COMMENT 'a'", true},
 
+		// For create index statement
+		{"CREATE INDEX idx ON t (a)", true},
+		{"CREATE INDEX idx ON t (a) USING HASH", true},
+		{"CREATE INDEX idx ON t (a) COMMENT 'foo'", true},
+		{"CREATE INDEX idx ON t (a) USING HASH COMMENT 'foo'", true},
+		{"CREATE INDEX idx USING BTREE ON t (a) USING HASH COMMENT 'foo'", true},
+		{"CREATE INDEX idx USING BTREE ON t (a)", true},
+
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
 		{"RENAME TABLE t t1", false},
 		{"RENAME TABLE d.t TO d1.t1", true},
+		{"RENAME TABLE t1 TO t2, t3 TO t4", true},
 
 		// for truncate statement
 		{"TRUNCATE TABLE t1", true},
@@ -1398,10 +1472,6 @@ func (s *testParserSuite) TestType(c *C) {
 
 		// for national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},
-
-		// for https://github.com/pingcap/tidb/issues/312
-		{`create table t (c float(53));`, true},
-		{`create table t (c float(54));`, false},
 
 		// for json type
 		{`create table t (a JSON);`, true},
@@ -1519,7 +1589,10 @@ func (s *testParserSuite) TestUnion(c *C) {
 		{"select c1 from t1 union (select c2 from t2) limit 1, 1", true},
 		{"select c1 from t1 union (select c2 from t2) order by c1 limit 1", true},
 		{"(select c1 from t1) union distinct select c2 from t2", true},
+		{"(select c1 from t1) union distinctrow select c2 from t2", true},
 		{"(select c1 from t1) union all select c2 from t2", true},
+		{"(select c1 from t1) union distinct all select c2 from t2", false},
+		{"(select c1 from t1) union distinctrow all select c2 from t2", false},
 		{"(select c1 from t1) union (select c2 from t2) order by c1 union select c3 from t3", false},
 		{"(select c1 from t1) union (select c2 from t2) limit 1 union select c3 from t3", false},
 		{"(select c1 from t1) union select c2 from t2 union (select c3 from t3) order by c1 limit 1", true},
@@ -1726,7 +1799,8 @@ func (s *testParserSuite) TestDDLStatements(c *C) {
 	stmts, err := parser.Parse(createTableStr, "", "")
 	c.Assert(err, IsNil)
 	stmt := stmts[0].(*ast.CreateTableStmt)
-	for _, colDef := range stmt.Cols {
+	c.Assert(mysql.HasBinaryFlag(stmt.Cols[0].Tp.Flag), IsTrue)
+	for _, colDef := range stmt.Cols[1:] {
 		c.Assert(mysql.HasBinaryFlag(colDef.Tp.Flag), IsFalse)
 	}
 	for _, tblOpt := range stmt.Options {

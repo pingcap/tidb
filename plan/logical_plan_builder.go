@@ -15,12 +15,14 @@ package plan
 
 import (
 	"fmt"
-	"sort"
+	"strings"
+	"unicode"
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -257,7 +259,12 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 	}
 
-	if join.Using != nil {
+	if join.NaturalJoin {
+		if err := b.buildNaturalJoin(joinPlan, leftPlan, rightPlan, join); err != nil {
+			b.err = err
+			return nil
+		}
+	} else if join.Using != nil {
 		if err := b.buildUsingClause(joinPlan, leftPlan, rightPlan, join); err != nil {
 			b.err = err
 			return nil
@@ -295,71 +302,86 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 // Second, columns unique to the first table, in order in which they occur in that table.
 // Third, columns unique to the second table, in order in which they occur in that table.
 func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
+	filter := make(map[string]bool, len(join.Using))
+	for _, col := range join.Using {
+		filter[col.Name.L] = true
+	}
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, filter)
+}
+
+// buildNaturalJoin build natural join output schema. It find out all the common columns
+// then using the same mechanism as buildUsingClause to eliminate redundant columns and build join conditions.
+// According to standard SQL, producing this display order:
+// 	All the common columns
+// 	Every column in the first (left) table that is not a common column
+// 	Every column in the second (right) table that is not a common column
+func (b *planBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, nil)
+}
+
+// coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
+func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, rightJoin bool, filter map[string]bool) error {
 	lsc := leftPlan.Schema().Clone()
 	rsc := rightPlan.Schema().Clone()
+	lColumns, rColumns := lsc.Columns, rsc.Columns
+	if rightJoin {
+		lColumns, rColumns = rsc.Columns, lsc.Columns
+	}
 
-	schemaCols := make([]*expression.Column, 0, len(lsc.Columns)+len(rsc.Columns)-len(join.Using))
-	redundantCols := make([]*expression.Column, 0, len(join.Using))
-	conds := make([]*expression.ScalarFunction, 0, len(join.Using))
+	// Find out all the common columns and put them ahead.
+	commonLen := 0
+	for i, lCol := range lColumns {
+		for j := commonLen; j < len(rColumns); j++ {
+			if lCol.ColName.L != rColumns[j].ColName.L {
+				continue
+			}
 
-	redundant := make(map[string]bool, len(join.Using))
-	for _, col := range join.Using {
-		var (
-			err    error
-			lc, rc *expression.Column
-			cond   expression.Expression
-		)
+			if len(filter) > 0 {
+				if !filter[lCol.ColName.L] {
+					break
+				}
+				// Mark this column exist.
+				filter[lCol.ColName.L] = false
+			}
 
-		if lc, err = lsc.FindColumn(col); err != nil {
-			return errors.Trace(err)
+			col := rColumns[i]
+			copy(rColumns[commonLen+1:i+1], rColumns[commonLen:i])
+			rColumns[commonLen] = col
+
+			col = lColumns[j]
+			copy(lColumns[commonLen+1:j+1], lColumns[commonLen:j])
+			lColumns[commonLen] = col
+
+			commonLen++
+			break
 		}
-		if rc, err = rsc.FindColumn(col); err != nil {
-			return errors.Trace(err)
-		}
-		redundant[col.Name.L] = true
-		if lc == nil || rc == nil {
-			// Same as MySQL.
-			return ErrUnknownColumn.GenByArgs(col.Name, "from clause")
-		}
+	}
 
-		if cond, err = expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc); err != nil {
+	if len(filter) > 0 && len(filter) != commonLen {
+		for col, notExist := range filter {
+			if notExist {
+				return ErrUnknownColumn.GenByArgs(col, "from clause")
+			}
+		}
+	}
+
+	schemaCols := make([]*expression.Column, len(lColumns)+len(rColumns)-commonLen)
+	copy(schemaCols[:len(lColumns)], lColumns)
+	copy(schemaCols[len(lColumns):], rColumns[commonLen:])
+
+	conds := make([]*expression.ScalarFunction, 0, commonLen)
+	for i := 0; i < commonLen; i++ {
+		lc, rc := lsc.Columns[i], rsc.Columns[i]
+		cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
+		if err != nil {
 			return errors.Trace(err)
 		}
 		conds = append(conds, cond.(*expression.ScalarFunction))
-
-		if join.Tp == ast.RightJoin {
-			schemaCols = append(schemaCols, rc)
-			redundantCols = append(redundantCols, lc)
-		} else {
-			schemaCols = append(schemaCols, lc)
-			redundantCols = append(redundantCols, rc)
-		}
-	}
-
-	// Columns in using clause may not ordered in the order in which they occur in the first table, so reorder them.
-	sort.Slice(schemaCols, func(i, j int) bool {
-		return schemaCols[i].Position < schemaCols[j].Position
-	})
-
-	if join.Tp == ast.RightJoin {
-		lsc, rsc = rsc, lsc
-	}
-	for _, col := range lsc.Columns {
-		if !redundant[col.ColName.L] {
-			schemaCols = append(schemaCols, col)
-		}
-	}
-	for _, col := range rsc.Columns {
-		if !redundant[col.ColName.L] {
-			schemaCols = append(schemaCols, col)
-		}
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
+	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rColumns[:commonLen]...))
 	p.EqualConditions = append(conds, p.EqualConditions...)
-
-	// p.redundantSchema may contains columns which are merged from sub join, so merge it with redundantCols.
-	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(redundantCols...))
 
 	return nil
 }
@@ -390,6 +412,77 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	return selection
 }
 
+// buildProjectionFieldNameFromColumns builds the field name and the table name when field expression is a column reference.
+func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (model.CIStr, model.CIStr) {
+	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
+		return astCol.Name.Name, astCol.Name.Table
+	}
+	return c.ColName, c.TblName
+}
+
+// buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
+func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectField) model.CIStr {
+	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
+		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
+		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name
+	}
+
+	innerExpr := getInnerFromParentheses(field.Expr)
+	valueExpr, isValueExpr := innerExpr.(*ast.ValueExpr)
+
+	// Non-literal: Output as inputed, except that comments need to be removed.
+	if !isValueExpr {
+		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
+	}
+
+	// Literal: Need special processing
+	switch valueExpr.Kind() {
+	case types.KindString:
+		projName := valueExpr.GetString()
+		projOffset := valueExpr.GetProjectionOffset()
+		if projOffset >= 0 {
+			projName = projName[:projOffset]
+		}
+		// See #3686, #3994:
+		// For string literals, string content is used as column name. Non-graph initial characters are trimmed.
+		fieldName := strings.TrimLeftFunc(projName, func(r rune) bool {
+			return !unicode.IsOneOf(mysql.RangeGraph, r)
+		})
+		return model.NewCIStr(fieldName)
+	case types.KindNull:
+		// See #4053, #3685
+		return model.NewCIStr("NULL")
+	default:
+		// Keep as it is.
+		if innerExpr.Text() != "" {
+			return model.NewCIStr(innerExpr.Text())
+		}
+		return model.NewCIStr(field.Text())
+	}
+}
+
+// buildProjectionField builds the field object according to SelectField in projection.
+func (b *planBuilder) buildProjectionField(id string, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
+	var tblName, colName model.CIStr
+	if field.AsName.L != "" {
+		// Field has alias.
+		colName = field.AsName
+	} else if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
+		// Field is a column reference.
+		colName, tblName = b.buildProjectionFieldNameFromColumns(field, c)
+	} else {
+		// Other: field is an expression.
+		colName = b.buildProjectionFieldNameFromExpressions(field)
+	}
+	return &expression.Column{
+		FromID:   id,
+		Position: position,
+		TblName:  tblName,
+		ColName:  colName,
+		RetType:  expr.GetType(),
+	}
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	b.optFlag |= flagEliminateProjection
@@ -404,44 +497,13 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		}
 		p = np
 		proj.Exprs = append(proj.Exprs, newExpr)
-		var tblName, colName model.CIStr
-		if field.AsName.L != "" {
-			colName = field.AsName
-		} else if c, ok := newExpr.(*expression.Column); ok && !c.IsAggOrSubq {
-			if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
-				colName = astCol.Name.Name
-				tblName = astCol.Name.Table
-			} else {
-				colName = c.ColName
-				tblName = c.TblName
-			}
-		} else {
-			// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
-			if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
-				if col, ok := agg.Args[0].(*ast.ColumnNameExpr); ok {
-					colName = col.Name.Name
-				}
-			} else {
-				innerExpr := getInnerFromParentheses(field.Expr)
-				if _, ok := innerExpr.(*ast.ValueExpr); ok && innerExpr.Text() != "" {
-					colName = model.NewCIStr(innerExpr.Text())
-				} else {
-					// Remove special comment code for field part, see issue #3739 for detail.
-					colName = model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
-				}
-			}
-		}
-		col := &expression.Column{
-			FromID:  proj.id,
-			TblName: tblName,
-			ColName: colName,
-			RetType: newExpr.GetType(),
-		}
+
+		col := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
+		schema.Append(col)
+
 		if !field.Auxiliary {
 			oldLen++
 		}
-		schema.Append(col)
-		col.Position = schema.Len()
 	}
 	proj.SetSchema(schema)
 	addChild(proj, p)
@@ -464,11 +526,23 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	return agg
 }
 
+// joinFieldType finds the type which can carry the given types.
+func joinFieldType(a, b *types.FieldType) *types.FieldType {
+	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
+	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
+	// `Flen - Decimal` is the fraction before '.'
+	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
+	return resultTp
+}
+
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	u := Union{}.init(b.allocator, b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
 		u.children[i] = b.buildSelect(sel)
+		if b.err != nil {
+			return nil
+		}
 	}
 	firstSchema := u.children[0].Schema().Clone()
 	for i, sel := range u.children {
@@ -489,26 +563,23 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			sel = proj
 			u.children[i] = proj
 		}
-		for i, col := range sel.Schema().Columns {
-			/*
-			 * The lengths of the columns in the UNION result take into account the values retrieved by all of the SELECT statements
-			 * SELECT REPEAT('a',1) UNION SELECT REPEAT('b',10);
-			 * +---------------+
-			 * | REPEAT('a',1) |
-			 * +---------------+
-			 * | a             |
-			 * | bbbbbbbbbb    |
-			 * +---------------+
-			 */
-			schemaTp := firstSchema.Columns[i].RetType
-			colTp := col.RetType
-			schemaTp.Decimal = mathutil.Max(colTp.Decimal, schemaTp.Decimal)
-			// `Flen - Decimal` is the fraction before '.'
-			schemaTp.Flen = mathutil.Max(colTp.Flen-colTp.Decimal, schemaTp.Flen-schemaTp.Decimal) + schemaTp.Decimal
-			schemaTp.Tp = types.MergeFieldType(schemaTp.Tp, colTp.Tp)
-		}
 		sel.SetParents(u)
 	}
+
+	// infer union type
+	for i, col := range firstSchema.Columns {
+		var resultTp *types.FieldType
+		for j, child := range u.children {
+			childTp := child.Schema().Columns[i].RetType
+			if j == 0 {
+				resultTp = childTp
+			} else {
+				resultTp = joinFieldType(resultTp, childTp)
+			}
+		}
+		col.RetType = resultTp
+	}
+
 	for _, v := range firstSchema.Columns {
 		v.FromID = u.id
 		v.DBName = model.NewCIStr("")
@@ -929,7 +1000,8 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		tblName := field.WildCard.Table
 		for _, col := range p.Schema().Columns {
 			if (dbName.L == "" || dbName.L == col.DBName.L) &&
-				(tblName.L == "" || tblName.L == col.TblName.L) {
+				(tblName.L == "" || tblName.L == col.TblName.L) &&
+				col.ID != model.ExtraHandleID {
 				colName := &ast.ColumnNameExpr{
 					Name: &ast.ColumnName{
 						Schema: col.DBName,
@@ -986,6 +1058,10 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.pushTableHints(sel.TableHints) {
 			defer b.popTableHints()
 		}
+	}
+
+	if sel.LockTp == ast.SelectLockForUpdate {
+		b.needColHandle++
 	}
 
 	hasAgg := b.detectSelectAgg(sel)
@@ -1071,6 +1147,9 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 	sel.Fields.Fields = originalFields
+	if sel.LockTp == ast.SelectLockForUpdate {
+		b.needColHandle--
+	}
 	if oldLen != p.Schema().Len() {
 		proj := Projection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.init(b.allocator, b.ctx)
 		addChild(proj, p)
@@ -1100,9 +1179,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		statisticTable = handle.GetTableStats(tn.TableInfo.ID)
 	}
-	if b.err != nil {
-		return nil
-	}
+
 	schemaName := tn.Schema
 	if schemaName.L == "" {
 		schemaName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -1120,19 +1197,21 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		statisticTable: statisticTable,
 		DBName:         schemaName,
 		Columns:        make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
+		NeedColHandle:  b.needColHandle > 0,
 	}.init(b.allocator, b.ctx)
-
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	var columns []*table.Column
 	if b.inUpdateStmt {
 		columns = tbl.WritableCols()
 	} else {
 		columns = tbl.Cols()
 	}
+	var pkCol *expression.Column
+	p.Columns = make([]*model.ColumnInfo, 0, len(columns))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
-		p.Columns = append(p.Columns, col.ColumnInfo)
+		p.Columns = append(p.Columns, col.ToInfo())
 		schema.Append(&expression.Column{
 			FromID:   p.id,
 			ColName:  col.Name,
@@ -1141,15 +1220,94 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			RetType:  &col.FieldType,
 			Position: i,
 			ID:       col.ID})
+		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			pkCol = schema.Columns[schema.Len()-1]
+		}
+	}
+	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
+	if b.needColHandle == 0 && !needUnionScan {
+		p.SetSchema(schema)
+		return b.projectVirtualColumns(p, columns)
+	}
+	if needUnionScan {
+		p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+		for _, col := range schema.Columns {
+			p.unionScanSchema.Append(col)
+		}
+	}
+	if pkCol == nil {
+		idCol := &expression.Column{
+			FromID:   p.id,
+			DBName:   schemaName,
+			TblName:  tableInfo.Name,
+			ColName:  model.NewCIStr("_rowid"),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Position: schema.Len(),
+			Index:    schema.Len(),
+			ID:       model.ExtraHandleID,
+		}
+		if needUnionScan && b.needColHandle > 0 {
+			p.unionScanSchema.Columns = append(p.unionScanSchema.Columns, idCol)
+			p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+		}
+		p.Columns = append(p.Columns, &model.ColumnInfo{
+			ID:   model.ExtraHandleID,
+			Name: model.NewCIStr("_rowid"),
+		})
+		schema.Append(idCol)
+		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{idCol}
+	} else {
+		if needUnionScan && b.needColHandle > 0 {
+			p.unionScanSchema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
+		}
+		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
 	}
 	p.SetSchema(schema)
-	return p
+	return b.projectVirtualColumns(p, columns)
 }
 
-// ApplyConditionChecker checks whether all or any output of apply matches a condition.
-type ApplyConditionChecker struct {
-	Condition expression.Expression
-	All       bool
+// projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
+// we add a projection on the original DataSource, and calculate those columns in the projection
+// so that plans above it can reference generated columns by their name.
+func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) LogicalPlan {
+	var hasVirtualGeneratedColumn = false
+	for _, column := range columns {
+		if column.IsGenerated() && !column.GeneratedStored {
+			hasVirtualGeneratedColumn = true
+			break
+		}
+	}
+	if !hasVirtualGeneratedColumn {
+		return ds
+	}
+	var proj = Projection{
+		Exprs:            make([]expression.Expression, 0, len(columns)),
+		calculateGenCols: true,
+	}.init(b.allocator, b.ctx)
+	for i, colExpr := range ds.Schema().Columns {
+		var exprIsGen = false
+		var expr expression.Expression
+		if i < len(columns) {
+			var column = columns[i]
+			if column.IsGenerated() && !column.GeneratedStored {
+				var err error
+				expr, _, err = b.rewrite(column.GeneratedExpr, ds, nil, true)
+				if err != nil {
+					b.err = errors.Trace(err)
+					return nil
+				}
+				exprIsGen = true
+			}
+		}
+		if !exprIsGen {
+			expr = colExpr.Clone()
+		}
+		proj.Exprs = append(proj.Exprs, expr)
+	}
+	proj.SetSchema(ds.Schema().Clone())
+	proj.SetChildren(ds)
+	ds.SetParents(proj)
+	return proj
 }
 
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
@@ -1252,6 +1410,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	b.inUpdateStmt = true
+	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
@@ -1305,14 +1464,25 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			b.err = errors.Trace(err)
 			return nil, nil
 		}
-		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
+		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName.L)
 		modifyColumns[columnFullName] = struct{}{}
 	}
-	// If columnes in set list contains generated columns, raise error.
+
+	// If columns in set list contains generated columns, raise error.
+	// And, fill virtualAssignments here; that's for generated columns.
+	virtualAssignments := make([]*ast.Assignment, 0)
+	tableAsName := make(map[*model.TableInfo][]*model.CIStr)
+	extractTableAsNameForUpdate(p, tableAsName)
+
 	for _, tn := range tableList {
 		tableInfo := tn.TableInfo
-		for _, colInfo := range tableInfo.Columns {
-			if len(colInfo.GeneratedExprString) == 0 {
+		table, found := b.is.TableByID(tableInfo.ID)
+		if !found {
+			b.err = infoschema.ErrTableNotExists.GenByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
+			return nil, nil
+		}
+		for i, colInfo := range tableInfo.Columns {
+			if !colInfo.IsGenerated() {
 				continue
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
@@ -1320,11 +1490,18 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
 				return nil, nil
 			}
+			for _, asName := range tableAsName[tableInfo] {
+				virtualAssignments = append(virtualAssignments, &ast.Assignment{
+					Column: &ast.ColumnName{Table: *asName, Name: colInfo.Name},
+					Expr:   table.Cols()[i].GeneratedExpr,
+				})
+			}
 		}
 	}
 
 	newList := make([]*expression.Assignment, 0, p.Schema().Len())
-	for _, assign := range list {
+	allAssignments := append(list, virtualAssignments...)
+	for i, assign := range allAssignments {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -1332,7 +1509,23 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		}
 		var newExpr expression.Expression
 		var np LogicalPlan
-		newExpr, np, err = b.rewrite(assign.Expr, p, nil, false)
+		if i < len(list) {
+			newExpr, np, err = b.rewrite(assign.Expr, p, nil, false)
+		} else {
+			// rewrite with generation expression
+			rewritePreprocess := func(expr ast.Node) ast.Node {
+				switch x := expr.(type) {
+				case *ast.ColumnName:
+					return &ast.ColumnName{
+						Schema: assign.Column.Schema,
+						Table:  assign.Column.Table,
+						Name:   x.Name,
+					}
+				}
+				return expr
+			}
+			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
+		}
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil
@@ -1343,7 +1536,37 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	return newList, p
 }
 
+// extractTableAsNameForUpdate extracts tables' alias names for update.
+func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.CIStr) {
+	switch x := p.(type) {
+	case *DataSource:
+		alias := extractTableAlias(p.(LogicalPlan))
+		if alias != nil {
+			if _, ok := asNames[x.tableInfo]; !ok {
+				asNames[x.tableInfo] = make([]*model.CIStr, 0, 1)
+			}
+			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
+		}
+	case *Projection:
+		if x.calculateGenCols {
+			ds := x.Children()[0].(*DataSource)
+			alias := extractTableAlias(x)
+			if alias != nil {
+				if _, ok := asNames[ds.tableInfo]; !ok {
+					asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
+				}
+				asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
+			}
+		}
+	default:
+		for _, child := range p.Children() {
+			extractTableAsNameForUpdate(child, asNames)
+		}
+	}
+}
+
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
+	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {

@@ -215,28 +215,6 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 	}
 }
 
-// DecodeValues decodes a byte slice into datums with column types.
-func DecodeValues(data []byte, fts []*types.FieldType, loc *time.Location) ([]types.Datum, error) {
-	if len(data) == 0 {
-		return nil, nil
-	}
-	values, err := codec.Decode(data, len(fts))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(values) > len(fts) {
-		return nil, errInvalidColumnCount.Gen("invalid column count %d is less than value count %d", len(fts), len(values))
-	}
-
-	for i := range values {
-		values[i], err = unflatten(values[i], fts[i], loc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return values, nil
-}
-
 // DecodeColumnValue decodes data to a Datum according to the column info.
 func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
 	_, d, err := codec.DecodeOne(data)
@@ -538,19 +516,15 @@ func TruncateToRowKeyLen(key kv.Key) kv.Key {
 
 // GetTableHandleKeyRange returns table handle's key range with tableID.
 func GetTableHandleKeyRange(tableID int64) (startKey, endKey []byte) {
-	tableStartKey := EncodeRowKeyWithHandle(tableID, math.MinInt64)
-	tableEndKey := EncodeRowKeyWithHandle(tableID, math.MaxInt64)
-	startKey = codec.EncodeBytes(nil, tableStartKey)
-	endKey = codec.EncodeBytes(nil, tableEndKey)
+	startKey = EncodeRowKeyWithHandle(tableID, math.MinInt64)
+	endKey = EncodeRowKeyWithHandle(tableID, math.MaxInt64)
 	return
 }
 
 // GetTableIndexKeyRange returns table index's key range with tableID and indexID.
 func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
-	start := EncodeIndexSeekKey(tableID, indexID, nil)
-	end := EncodeIndexSeekKey(tableID, indexID, []byte{255})
-	startKey = codec.EncodeBytes(nil, start)
-	endKey = codec.EncodeBytes(nil, end)
+	startKey = EncodeIndexSeekKey(tableID, indexID, nil)
+	endKey = EncodeIndexSeekKey(tableID, indexID, []byte{255})
 	return
 }
 

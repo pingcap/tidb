@@ -41,35 +41,43 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic, kv.ReqSubTypeTopN:
 			return true
 		default:
-			return supportExpr(tipb.ExprType(subType))
+			return c.supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
-		return c.store.mock
+		return c.supportExpr(tipb.ExprType(subType))
 	}
 	return false
 }
 
-func supportExpr(exprType tipb.ExprType) bool {
+func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
 		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
-		tipb.ExprType_ColumnRef,
-		tipb.ExprType_And, tipb.ExprType_Or,
-		tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
+		tipb.ExprType_ColumnRef:
+		return true
+	// logic operators.
+	case tipb.ExprType_And, tipb.ExprType_Or, tipb.ExprType_Not:
+		return true
+	// compare operators.
+	case tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
 		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
-		tipb.ExprType_In, tipb.ExprType_ValueList,
-		tipb.ExprType_Like, tipb.ExprType_Not:
+		tipb.ExprType_In, tipb.ExprType_ValueList, tipb.ExprType_IsNull,
+		tipb.ExprType_Like:
 		return true
-	case tipb.ExprType_Plus, tipb.ExprType_Div:
+	// arithmetic operators.
+	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus, tipb.ExprType_Mul:
 		return true
-	case tipb.ExprType_Case, tipb.ExprType_If:
+	// control functions
+	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull, tipb.ExprType_Coalesce:
 		return true
+	// aggregate functions.
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
 		return true
-	case tipb.ExprType_JsonType, tipb.ExprType_JsonExtract, tipb.ExprType_JsonUnquote, tipb.ExprType_JsonValid,
-		tipb.ExprType_JsonObject, tipb.ExprType_JsonArray, tipb.ExprType_JsonMerge, tipb.ExprType_JsonSet,
-		tipb.ExprType_JsonInsert, tipb.ExprType_JsonReplace, tipb.ExprType_JsonRemove, tipb.ExprType_JsonContains:
-		return false
+	// json functions.
+	case tipb.ExprType_JsonType, tipb.ExprType_JsonExtract, tipb.ExprType_JsonUnquote,
+		tipb.ExprType_JsonObject, tipb.ExprType_JsonArray, tipb.ExprType_JsonMerge,
+		tipb.ExprType_JsonSet, tipb.ExprType_JsonInsert, tipb.ExprType_JsonReplace, tipb.ExprType_JsonRemove:
+		return true
 	case kv.ReqSubTypeDesc:
 		return true
 	default:
@@ -442,7 +450,8 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 		}
 
 		req := &tikvrpc.Request{
-			Type: tikvrpc.CmdCop,
+			Type:     tikvrpc.CmdCop,
+			Priority: kvPriorityToCommandPri(it.req.Priority),
 			Cop: &coprocessor.Request{
 				Tp:     it.req.Tp,
 				Data:   it.req.Data,

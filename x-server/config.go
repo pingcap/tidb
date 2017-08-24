@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,16 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package xserver
 
 // Config contains configuration options.
 type Config struct {
-	Addr         string `json:"addr" toml:"addr"`
-	LogLevel     string `json:"log_level" toml:"log_level"`
-	SkipAuth     bool   `json:"skip_auth" toml:"skip_auth"`
-	StatusAddr   string `json:"status_addr" toml:"status_addr"`
-	Socket       string `json:"socket" toml:"socket"`
-	ReportStatus bool   `json:"report_status" toml:"report_status"`
-	StorePath    string `json:"store_path" toml:"store_path"`
-	Store        string `json:"store" toml:"store"`
+	Addr     string `json:"addr" toml:"addr"`
+	Socket   string `json:"socket" toml:"socket"`
+	LogLevel string `json:"log_level" toml:"log_level"`
+	SkipAuth bool   `json:"skip_auth" toml:"skip_auth"`
 }

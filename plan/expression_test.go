@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -40,11 +41,11 @@ type testExpressionSuite struct {
 func (s *testExpressionSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
-	expression.TurnOnNewExprEval = true
+	atomic.StoreInt32(&expression.TurnOnNewExprEval, 1)
 }
 
 func (s *testExpressionSuite) TearDownSuite(c *C) {
-	expression.TurnOnNewExprEval = false
+	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 }
 
 func (s *testExpressionSuite) parseExpr(c *C, expr string) ast.ExprNode {

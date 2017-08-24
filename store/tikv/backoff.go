@@ -123,12 +123,14 @@ const (
 	copNextMaxBackoff       = 20000
 	getMaxBackoff           = 20000
 	prewriteMaxBackoff      = 20000
-	commitMaxBackoff        = 20000
 	cleanupMaxBackoff       = 20000
 	gcMaxBackoff            = 100000
 	gcResolveLockMaxBackoff = 100000
+	gcDeleteRangeMaxBackoff = 100000
 	rawkvMaxBackoff         = 20000
 )
+
+var commitMaxBackoff = 20000
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {

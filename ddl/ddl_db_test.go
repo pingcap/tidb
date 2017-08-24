@@ -181,6 +181,16 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 	s.tk.MustExec("insert into test_add_index_with_pk values(2, 2)")
 	s.tk.MustExec("alter table test_add_index_with_pk add index idx1 (a, b)")
 	s.tk.MustQuery("select * from test_add_index_with_pk").Check(testkit.Rows("1 2", "2 2"))
+	s.tk.MustExec("create table test_add_index_with_pk1(a int not null, b int not null default '0', c int, d int, primary key(c))")
+	s.tk.MustExec("insert into test_add_index_with_pk1 values(1, 1, 1, 1)")
+	s.tk.MustExec("alter table test_add_index_with_pk1 add index idx (c)")
+	s.tk.MustExec("insert into test_add_index_with_pk1 values(2, 2, 2, 2)")
+	s.tk.MustQuery("select * from test_add_index_with_pk1").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
+	s.tk.MustExec("create table test_add_index_with_pk2(a int not null, b int not null default '0', c int unsigned, d int, primary key(c))")
+	s.tk.MustExec("insert into test_add_index_with_pk2 values(1, 1, 1, 1)")
+	s.tk.MustExec("alter table test_add_index_with_pk2 add index idx (c)")
+	s.tk.MustExec("insert into test_add_index_with_pk2 values(2, 2, 2, 2)")
+	s.tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 }
 
 func (s *testDBSuite) TestIndex(c *C) {
@@ -313,6 +323,18 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 	s.mustExec(c, "alter table t_anonymous_index drop index c3")
 	s.mustExec(c, "alter table t_anonymous_index add index c3 (C3)")
 	s.mustExec(c, "alter table t_anonymous_index drop index C3")
+	// for anonymous index with column name `primary`
+	s.mustExec(c, "create table t_primary (`primary` int, key (`primary`))")
+	t = s.testGetTable(c, "t_primary")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	s.mustExec(c, "create table t_primary_2 (`primary` int, key primary_2 (`primary`), key (`primary`))")
+	t = s.testGetTable(c, "t_primary_2")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
+	s.mustExec(c, "create table t_primary_3 (`primary_2` int, key(`primary_2`), `primary` int, key(`primary`));")
+	t = s.testGetTable(c, "t_primary_3")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
 }
 
 func (s *testDBSuite) testAlterLock(c *C) {
@@ -489,8 +511,7 @@ LOOP:
 	// check in index, must no index in kv
 	ctx := s.s.(context.Context)
 
-	handles := make(map[int64]struct{})
-
+	// Make sure there is no index with name c3_index.
 	t = s.testGetTable(c, "t1")
 	var nidx table.Index
 	for _, tidx := range t.Indices() {
@@ -499,26 +520,40 @@ LOOP:
 			break
 		}
 	}
-	// Make sure there is no index with name c3_index.
 	c.Assert(nidx, IsNil)
+
 	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
-	c.Assert(ctx.NewTxn(), IsNil)
-	defer ctx.Txn().Rollback()
+	f := func() map[int64]struct{} {
+		handles := make(map[int64]struct{})
 
-	it, err := idx.SeekFirst(ctx.Txn())
-	c.Assert(err, IsNil)
-	defer it.Close()
+		c.Assert(ctx.NewTxn(), IsNil)
+		defer ctx.Txn().Rollback()
 
-	for {
-		_, h, err := it.Next()
-		if terror.ErrorEqual(err, io.EOF) {
-			break
-		}
-
+		it, err := idx.SeekFirst(ctx.Txn())
 		c.Assert(err, IsNil)
-		handles[h] = struct{}{}
+		defer it.Close()
+
+		for {
+			_, h, err := it.Next()
+			if terror.ErrorEqual(err, io.EOF) {
+				break
+			}
+
+			c.Assert(err, IsNil)
+			handles[h] = struct{}{}
+		}
+		return handles
 	}
 
+	var handles map[int64]struct{}
+	for i := 0; i < 30; i++ {
+		handles = f()
+		if len(handles) != 0 {
+			time.Sleep(time.Millisecond * 100)
+		} else {
+			break
+		}
+	}
 	c.Assert(handles, HasLen, 0)
 }
 
@@ -571,6 +606,16 @@ func (s *testDBSuite) TestCreateIndexType(c *C) {
 		petsyes enum('Y','N') DEFAULT 'Y' NOT NULL,
 		KEY price (price,area,type,transityes,shopsyes,schoolsyes,petsyes));`
 	s.tk.MustExec(sql)
+}
+
+func (s *testDBSuite) TestIssue3833(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table issue3833 (b char(0))")
+	s.testErrorCode(c, "create index idx on issue3833 (b)", tmysql.ErrWrongKeyColumn)
+	s.testErrorCode(c, "alter table issue3833 add index idx (b)", tmysql.ErrWrongKeyColumn)
+	s.testErrorCode(c, "create table issue3833_2 (b char(0), index (b))", tmysql.ErrWrongKeyColumn)
 }
 
 func (s *testDBSuite) TestColumn(c *C) {
@@ -678,7 +723,7 @@ LOOP:
 	matchRows(c, rows, [][]interface{}{{count - int64(step)}})
 
 	for i := num; i < num+step; i++ {
-		rows := s.mustQuery(c, "select c4 from t2 where c4 = ?", i)
+		rows = s.mustQuery(c, "select c4 from t2 where c4 = ?", i)
 		matchRows(c, rows, [][]interface{}{{i}})
 	}
 
@@ -991,12 +1036,13 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 
 	// Add a new column in write only state.
 	newColumn := &model.ColumnInfo{
-		ID:           100,
-		Name:         model.NewCIStr("c3"),
-		Offset:       2,
-		DefaultValue: 9,
-		FieldType:    *types.NewFieldType(tmysql.TypeLonglong),
-		State:        model.StateWriteOnly,
+		ID:                 100,
+		Name:               model.NewCIStr("c3"),
+		Offset:             2,
+		DefaultValue:       9,
+		OriginDefaultValue: 9,
+		FieldType:          *types.NewFieldType(tmysql.TypeLonglong),
+		State:              model.StateWriteOnly,
 	}
 	t1Info.Columns = append(t1Info.Columns, newColumn)
 
@@ -1187,6 +1233,24 @@ func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
 	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+}
+
+func (s *testDBSuite) TestRenameMultiTables(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://rename_multi_tables")
+	c.Assert(err, IsNil)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	s.tk = testkit.NewTestKit(c, store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t1(id int)")
+	s.tk.MustExec("create table t2(id int)")
+	// Currently it will fail only.
+	sql := fmt.Sprintf("rename table t1 to t3, t2 to t4")
+	_, err = s.tk.Exec(sql)
+	c.Assert(err, NotNil)
+	originErr := errors.Cause(err)
+	c.Assert(originErr.Error(), Equals, "can't run multi schema change")
 }
 
 func (s *testDBSuite) TestAddNotNullColumn(c *C) {

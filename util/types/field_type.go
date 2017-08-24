@@ -62,6 +62,72 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
+// whose return type is determined by the arguments' FieldTypes.
+// Aggregation is performed by MergeFieldType function.
+func AggFieldType(tps []*FieldType) *FieldType {
+	var currType FieldType
+	for i, t := range tps {
+		if i == 0 && currType.Tp == mysql.TypeUnspecified {
+			currType = *t
+			continue
+		}
+		mtp := MergeFieldType(currType.Tp, t.Tp)
+		currType.Tp = mtp
+	}
+	return &currType
+}
+
+// AggTypeClass aggregates arguments' TypeClass of a multi-argument function.
+func AggTypeClass(tps []*FieldType, flag *uint) TypeClass {
+	var (
+		tpClass      = ClassString
+		unsigned     bool
+		gotFirst     bool
+		gotBinString bool
+	)
+	for _, argFieldType := range tps {
+		if argFieldType.Tp == mysql.TypeNull {
+			continue
+		}
+		argTypeClass := argFieldType.ToClass()
+		if (IsTypeBlob(argFieldType.Tp) || IsTypeVarchar(argFieldType.Tp) || IsTypeChar(argFieldType.Tp)) &&
+			mysql.HasBinaryFlag(argFieldType.Flag) {
+			gotBinString = true
+		}
+		if !gotFirst {
+			gotFirst = true
+			tpClass = argTypeClass
+			unsigned = mysql.HasUnsignedFlag(argFieldType.Flag)
+		} else {
+			tpClass = mergeTypeClass(tpClass, argTypeClass, unsigned, mysql.HasUnsignedFlag(argFieldType.Flag))
+			unsigned = unsigned && mysql.HasUnsignedFlag(argFieldType.Flag)
+		}
+	}
+	setTypeFlag(flag, uint(mysql.UnsignedFlag), unsigned)
+	setTypeFlag(flag, uint(mysql.BinaryFlag), tpClass != ClassString || gotBinString)
+	return tpClass
+}
+
+func mergeTypeClass(a, b TypeClass, aUnsigned, bUnsigned bool) TypeClass {
+	if a == ClassString || b == ClassString {
+		return ClassString
+	} else if a == ClassReal || b == ClassReal {
+		return ClassReal
+	} else if a == ClassDecimal || b == ClassDecimal || aUnsigned != bUnsigned {
+		return ClassDecimal
+	}
+	return ClassInt
+}
+
+func setTypeFlag(flag *uint, flagItem uint, on bool) {
+	if on {
+		*flag |= flagItem
+	} else {
+		*flag &= ^flagItem
+	}
+}
+
 // ToClass maps the field type to a type class.
 func (ft *FieldType) ToClass() TypeClass {
 	switch ft.Tp {
@@ -169,7 +235,7 @@ func (ft *FieldType) String() string {
 	if mysql.HasZerofillFlag(ft.Flag) {
 		strs = append(strs, "ZEROFILL")
 	}
-	if mysql.HasBinaryFlag(ft.Flag) {
+	if mysql.HasBinaryFlag(ft.Flag) && ft.Tp != mysql.TypeString {
 		strs = append(strs, "BINARY")
 	}
 
@@ -319,7 +385,7 @@ func getFieldTypeIndex(tp byte) int {
 
 const (
 	fieldTypeTearFrom = int(mysql.TypeBit) + 1
-	fieldTypeTearTo   = int(mysql.TypeNewDecimal) - 1
+	fieldTypeTearTo   = int(mysql.TypeJSON) - 1
 	fieldTypeNum      = fieldTypeTearFrom + (255 - fieldTypeTearTo)
 )
 
@@ -342,7 +408,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -373,7 +441,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeTiny,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -404,7 +474,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeShort,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -435,7 +507,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeLong,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -466,7 +540,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeFloat,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeDouble, mysql.TypeVarchar,
@@ -497,7 +573,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeDouble,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeDouble, mysql.TypeVarchar,
@@ -528,8 +606,10 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeDatetime, mysql.TypeYear,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
 		mysql.TypeBit,
+		//mysql.TypeJSON
+		mysql.TypeJSON,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeEnum,
 		//mysql.TypeSet          mysql.TypeTinyBlob
@@ -559,7 +639,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeDatetime, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
@@ -590,7 +672,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeLonglong,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -621,7 +705,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeInt24,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal    mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -652,7 +738,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeDatetime, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
@@ -683,7 +771,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeDatetime, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
@@ -714,7 +804,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeDatetime, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
@@ -745,7 +837,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeYear,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -776,7 +870,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeDatetime, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
@@ -807,7 +903,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
@@ -838,8 +936,10 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
 		mysql.TypeBit,
+		//mysql.TypeJSON
+		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeSet          mysql.TypeTinyBlob
@@ -849,6 +949,39 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		//mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
 		//mysql.TypeString       mysql.TypeGeometry
+		mysql.TypeString, mysql.TypeVarchar,
+	},
+	/* mysql.TypeJSON -> */
+	{
+		//mysql.TypeDecimal      mysql.TypeTiny
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeShort        mysql.TypeLong
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeNewFloat     mysql.TypeDouble
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeNull         mysql.TypeTimestamp
+		mysql.TypeJSON, mysql.TypeVarchar,
+		//mysql.TypeLongLONG     mysql.TypeInt24
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeDate         MYSQL_TYPE_TIME
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeDatetime     MYSQL_TYPE_YEAR
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeNewDate      mysql.TypeVarchar
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
+		mysql.TypeJSON,
+		//mysql.TypeNewDecimal   MYSQL_TYPE_ENUM
+		mysql.TypeVarchar, mysql.TypeVarchar,
+		//mysql.TypeSet          mysql.TypeTinyBlob
+		mysql.TypeVarchar, mysql.TypeLongBlob,
+		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		mysql.TypeLongBlob, mysql.TypeLongBlob,
+		//mysql.TypeBlob         mysql.TypeVarString
+		mysql.TypeLongBlob, mysql.TypeVarchar,
+		//mysql.TypeString       MYSQL_TYPE_GEOMETRY
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeNewDecimal -> */
@@ -869,7 +1002,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeNewDecimal,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
@@ -900,7 +1035,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
@@ -931,7 +1068,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
@@ -962,8 +1101,10 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
 		mysql.TypeTinyBlob,
+		//mysql.TypeJSON
+		mysql.TypeLongBlob,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
 		//mysql.TypeSet          mysql.TypeTinyBlob
@@ -993,8 +1134,10 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
 		mysql.TypeMediumBlob,
+		//mysql.TypeJSON
+		mysql.TypeLongBlob,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
 		//mysql.TypeSet          mysql.TypeTinyBlob
@@ -1024,7 +1167,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeLongBlob,
+		//mysql.TypeJSON
 		mysql.TypeLongBlob,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
@@ -1055,8 +1200,10 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeBlob, mysql.TypeBlob,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
 		mysql.TypeBlob,
+		//mysql.TypeJSON
+		mysql.TypeLongBlob,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeBlob, mysql.TypeBlob,
 		//mysql.TypeSet          mysql.TypeTinyBlob
@@ -1086,7 +1233,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
@@ -1117,7 +1266,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeString, mysql.TypeString,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeString, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeString,
+		//mysql.TypeJSON
 		mysql.TypeString,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeString, mysql.TypeString,
@@ -1148,7 +1299,9 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<245>
+		//mysql.TypeBit          <16>-<244>
+		mysql.TypeVarchar,
+		//mysql.TypeJSON
 		mysql.TypeVarchar,
 		//mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,

@@ -78,6 +78,15 @@ func (c *ColumnInfo) Clone() *ColumnInfo {
 	return &nc
 }
 
+// IsGenerated returns true if the column is generated column.
+func (c *ColumnInfo) IsGenerated() bool {
+	return len(c.GeneratedExprString) != 0
+}
+
+// ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
+// for use of execution phase.
+const ExtraHandleID = -1
+
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
 	ID      int64  `json:"id"`
@@ -184,13 +193,15 @@ func (t IndexType) String() string {
 		return "BTREE"
 	case IndexTypeHash:
 		return "HASH"
+	default:
+		return ""
 	}
-	return ""
 }
 
 // IndexTypes
 const (
-	IndexTypeBtree IndexType = iota + 1
+	IndexTypeInvalid IndexType = iota
+	IndexTypeBtree
 	IndexTypeHash
 )
 

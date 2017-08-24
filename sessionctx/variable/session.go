@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 )
 
 const (
@@ -100,6 +101,8 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
+	// UsersLock is a lock for user defined variables.
+	UsersLock sync.RWMutex
 	// Users are user defined variables.
 	Users map[string]string
 	// Systems are system variables.
@@ -128,8 +131,8 @@ type SessionVars struct {
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
-	// User is the username with which the session login.
-	User string
+	// User is the user identity with which the session login.
+	User *auth.UserIdentity
 
 	// CurrentDB is the default database of this session.
 	CurrentDB string
@@ -189,6 +192,9 @@ type SessionVars struct {
 	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
 	BuildStatsConcurrencyVar int
 
+	// IndexJoinBatchSize is the batch size of a index lookup join.
+	IndexJoinBatchSize int
+
 	// IndexLookupSize is the number of handles for an index lookup task in index double read executor.
 	IndexLookupSize int
 
@@ -204,8 +210,14 @@ type SessionVars struct {
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
 
+	// BatchDelete indicates if we should split delete data into multiple batches.
+	BatchDelete bool
+
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
+
+	// CBO indicates if we use new planner with cbo.
+	CBO bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -222,11 +234,13 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                    new(StatementContext),
 		AllowAggPushDown:           true,
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
+		IndexJoinBatchSize:         DefIndexJoinBatchSize,
 		IndexLookupSize:            DefIndexLookupSize,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
+		CBO:                        true,
 	}
 }
 
@@ -318,9 +332,12 @@ type TableDelta struct {
 type StatementContext struct {
 	// Set the following variables before execution
 
+	InInsertStmt         bool
 	InUpdateOrDeleteStmt bool
+	InSelectStmt         bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
+	OverflowAsWarning    bool
 	InShowWarning        bool
 
 	// mu struct holds variables that change during execution.
@@ -333,6 +350,7 @@ type StatementContext struct {
 
 	// Copied from SessionVars.TimeZone.
 	TimeZone *time.Location
+	Priority mysql.PriorityEnum
 }
 
 // AddAffectedRows adds affected rows.
@@ -403,6 +421,8 @@ func (sc *StatementContext) AppendWarning(warn error) {
 
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
+	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
+	// We will do that later, and then append WarnDataTruncated instead of the error itself.
 	if err == nil {
 		return nil
 	}
@@ -416,6 +436,19 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	return err
 }
 
+// HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
+func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
+	if err == nil {
+		return nil
+	}
+
+	if sc.OverflowAsWarning {
+		sc.AppendWarning(warnErr)
+		return nil
+	}
+	return err
+}
+
 // ResetForRetry resets the changed states during execution.
 func (sc *StatementContext) ResetForRetry() {
 	sc.mu.Lock()
@@ -423,4 +456,14 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.foundRows = 0
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
+}
+
+// MostRestrictStateContext gets a most restrict StatementContext.
+func MostRestrictStateContext() *StatementContext {
+	return &StatementContext{
+		IgnoreTruncate:    false,
+		OverflowAsWarning: false,
+		TruncateAsWarning: false,
+		TimeZone:          time.UTC,
+	}
 }

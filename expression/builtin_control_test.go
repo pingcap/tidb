@@ -15,6 +15,7 @@ package expression
 
 import (
 	"errors"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -40,6 +41,7 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	fc := funcs[ast.Case]
 	for _, t := range tbl {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg...)), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -53,6 +55,12 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 
 func (s *testEvaluatorSuite) TestIf(c *C) {
 	defer testleak.AfterTest(c)()
+	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+	origin := stmtCtx.IgnoreTruncate
+	stmtCtx.IgnoreTruncate = true
+	defer func() {
+		stmtCtx.IgnoreTruncate = origin
+	}()
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}
@@ -62,12 +70,19 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 		{1, 1, 2, 1},
 		{nil, 1, 2, 2},
 		{0, 1, 2, 2},
+		{"abc", 1, 2, 2},
+		{"1abc", 1, 2, 1},
+		{tm, 1, 2, 1},
+		{duration, 1, 2, 1},
+		{types.Duration{Duration: time.Duration(0)}, 1, 2, 2},
+		{types.NewDecFromStringForTest("1.2"), 1, 2, 1},
 	}
 
 	fc := funcs[ast.If]
 	for _, t := range tbl {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
@@ -76,49 +91,52 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
+	_, err = fc.getFunction(datumsToConstants(types.MakeDatums(1, 2)), s.ctx)
+	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestIfNull(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		Arg1 interface{}
-		Arg2 interface{}
-		Ret  interface{}
+		arg1     interface{}
+		arg2     interface{}
+		expected interface{}
+		isNil    bool
+		getErr   bool
 	}{
-		{1, 2, 1},
-		{nil, 2, 2},
-		{nil, nil, nil},
+		{1, 2, int64(1), false, false},
+		{nil, 2, int64(2), false, false},
+		{nil, nil, nil, true, false},
+		{tm, nil, tm, false, false},
+		{nil, duration, duration, false, false},
+		{nil, types.NewDecFromFloatForTest(123.123), types.NewDecFromFloatForTest(123.123), false, false},
+		{nil, types.Bit{Value: 1, Width: 8}, "\x01", false, false},
+		{nil, types.Hex{Value: 1}, "\x01", false, false},
+		{nil, types.Set{Value: 1, Name: "abc"}, "abc", false, false},
+		{"abc", nil, "abc", false, false},
+		{errors.New(""), nil, "", true, true},
 	}
 
 	for _, t := range tbl {
-		fc := funcs[ast.Ifnull]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2)), s.ctx)
+		f, err := newFunctionForTest(s.ctx, ast.Ifnull, primitiveValsToConstants([]interface{}{t.arg1, t.arg2})...)
 		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
-	}
-}
-
-func (s *testEvaluatorSuite) TestNullIf(c *C) {
-	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg1 interface{}
-		Arg2 interface{}
-		Ret  interface{}
-	}{
-		{1, 1, nil},
-		{nil, 2, nil},
-		{1, nil, 1},
-		{1, 2, 1},
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetValue(), DeepEquals, t.expected)
+			}
+		}
 	}
 
-	for _, t := range tbl {
-		fc := funcs[ast.Nullif]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2)), s.ctx)
-		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
-	}
+	f, err := funcs[ast.Ifnull].getFunction([]Expression{Zero, Zero}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+
+	f, err = funcs[ast.Ifnull].getFunction([]Expression{Zero}, s.ctx)
+	c.Assert(err, NotNil)
 }

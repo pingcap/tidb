@@ -20,10 +20,10 @@ type Op int
 
 // List operators.
 const (
-	AndAnd Op = iota + 1
+	LogicAnd Op = iota + 1
 	LeftShift
 	RightShift
-	OrOr
+	LogicOr
 	GE
 	LE
 	EQ
@@ -54,10 +54,11 @@ const (
 
 // Ops maps opcode to string.
 var Ops = map[Op]string{
-	AndAnd:     "and",
+	LogicAnd:   "and",
+	LogicOr:    "or",
+	LogicXor:   "xor",
 	LeftShift:  "leftshift",
 	RightShift: "rightshift",
-	OrOr:       "or",
 	GE:         "ge",
 	LE:         "le",
 	EQ:         "eq",
@@ -75,7 +76,6 @@ var Ops = map[Op]string{
 	Not:        "not",
 	BitNeg:     "bitneg",
 	IntDiv:     "intdiv",
-	LogicXor:   "xor",
 	NullEQ:     "nulleq",
 	In:         "in",
 	Like:       "like",

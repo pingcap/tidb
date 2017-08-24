@@ -52,14 +52,15 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/hack"
 )
 
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts
+	mysql.ClientMultiResults | mysql.ClientLocalFiles |
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
@@ -160,6 +161,9 @@ func (cc *clientConn) writeInitialHandshake() error {
 	// auth-plugin-data-part-2
 	data = append(data, cc.salt[8:]...)
 	// filler [00]
+	data = append(data, 0)
+	// auth-plugin name
+	data = append(data, []byte("mysql_native_password")...)
 	data = append(data, 0)
 	err := cc.writePacket(data)
 	if err != nil {
@@ -312,8 +316,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 		if err1 != nil {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
 		}
-		user := fmt.Sprintf("%s@%s", cc.user, host)
-		if !cc.ctx.Auth(user, p.Auth, cc.salt) {
+		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, p.Auth, cc.salt) {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
 		}
 	}
@@ -346,10 +349,13 @@ func (cc *clientConn) Run() {
 	for !cc.killed {
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
-		if err != nil {
+		if err != nil || cc.killed {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				log.Errorf("[%d] read packet error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
+			}
+			if cc.killed {
+				log.Warnf("[%d] session is killed.", cc.connectionID)
 			}
 			return
 		}
@@ -359,11 +365,11 @@ func (cc *clientConn) Run() {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				return
-			} else if terror.ErrorEqual(err, terror.ErrResultUndetermined) {
+			} else if terror.ErrResultUndetermined.Equal(err) {
 				log.Errorf("[%d] result undetermined error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
 				return
-			} else if terror.ErrorEqual(err, terror.ErrCritical) {
+			} else if terror.ErrCritical.Equal(err) {
 				log.Errorf("[%d] critical error, stop the server listener %s",
 					cc.connectionID, errors.ErrorStack(err))
 				criticalErrorCounter.Add(1)
@@ -534,7 +540,7 @@ func (cc *clientConn) writeError(e error) error {
 	if te, ok = originErr.(*terror.Error); ok {
 		m = te.ToSQLError()
 	} else {
-		m = mysql.NewErrf(mysql.ErrUnknown, e.Error())
+		m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
 	}
 
 	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))
@@ -780,7 +786,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 					continue
 				}
 				var valData []byte
-				valData, err = dumpTextValue(columns[i].Type, value)
+				valData, err = dumpTextValue(columns[i], value)
 				if err != nil {
 					return errors.Trace(err)
 				}

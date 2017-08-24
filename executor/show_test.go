@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -78,10 +79,24 @@ func (s *testSuite) TestShow(c *C) {
 
 	// Test case for index type and comment
 	tk.MustExec(`create table show_index (id int, c int, primary key (id), index cIdx using hash (c) comment "index_comment_for_cIdx");`)
+	tk.MustExec(`create index idx1 on show_index (id) using hash;`)
+	tk.MustExec(`create index idx2 on show_index (id) comment 'idx';`)
+	tk.MustExec(`create index idx3 on show_index (id) using hash comment 'idx';`)
+	tk.MustExec(`alter table show_index add index idx4 (id) using btree comment 'idx';`)
+	tk.MustExec(`create index idx5 using hash on show_index (id) using btree comment 'idx';`)
+	tk.MustExec(`create index idx6 using hash on show_index (id);`)
+	tk.MustExec(`create index idx7 on show_index (id);`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
 		"show_index|0|PRIMARY|1|id|utf8_bin|0|<nil>|<nil>||BTREE||",
 		"show_index|1|cIdx|1|c|utf8_bin|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx",
+		"show_index|1|idx1|1|id|utf8_bin|0|<nil>|<nil>|YES|HASH||",
+		"show_index|1|idx2|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||idx",
+		"show_index|1|idx3|1|id|utf8_bin|0|<nil>|<nil>|YES|HASH||idx",
+		"show_index|1|idx4|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||idx",
+		"show_index|1|idx5|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||idx",
+		"show_index|1|idx6|1|id|utf8_bin|0|<nil>|<nil>|YES|HASH||",
+		"show_index|1|idx7|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||",
 	))
 
 	// For show like with escape
@@ -99,8 +114,9 @@ func (s *testSuite) TestShow(c *C) {
 
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE `Trigger` ='test'").Check(testkit.Rows())
-	tk.MustQuery("SHOW processlist;").Check(testkit.Rows())
+	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows())
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
+	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 
 	// Test show create database
 	testSQL = `create database show_test_DB`
@@ -129,7 +145,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
-	c.Assert(se.Auth(`show@%`, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
 	tk1.Se = se
 
 	// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA.
@@ -163,9 +179,9 @@ func (s *testSuite) TestShowVisibility(c *C) {
 type stats struct {
 }
 
-func (s stats) GetScope(status string) variable.ScopeFlag { return variable.DefaultScopeFlag }
+func (s stats) GetScope(status string) variable.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
 
-func (s stats) Stats() (map[string]interface{}, error) {
+func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	var a, b interface{}
 	b = "123"

@@ -185,60 +185,70 @@ func MockTable() *model.TableInfo {
 	}
 	pkColumn := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    0,
 		Name:      model.NewCIStr("a"),
 		FieldType: newLongType(),
 		ID:        1,
 	}
 	col0 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    1,
 		Name:      model.NewCIStr("b"),
 		FieldType: newLongType(),
 		ID:        2,
 	}
 	col1 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    2,
 		Name:      model.NewCIStr("c"),
 		FieldType: newLongType(),
 		ID:        3,
 	}
 	col2 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    3,
 		Name:      model.NewCIStr("d"),
 		FieldType: newLongType(),
 		ID:        4,
 	}
 	col3 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    4,
 		Name:      model.NewCIStr("e"),
 		FieldType: newLongType(),
 		ID:        5,
 	}
 	colStr1 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    5,
 		Name:      model.NewCIStr("c_str"),
 		FieldType: newStringType(),
 		ID:        6,
 	}
 	colStr2 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    6,
 		Name:      model.NewCIStr("d_str"),
 		FieldType: newStringType(),
 		ID:        7,
 	}
 	colStr3 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    7,
 		Name:      model.NewCIStr("e_str"),
 		FieldType: newStringType(),
 		ID:        8,
 	}
 	col4 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    8,
 		Name:      model.NewCIStr("f"),
 		FieldType: newLongType(),
 		ID:        9,
 	}
 	col5 := &model.ColumnInfo{
 		State:     model.StatePublic,
+		Offset:    9,
 		Name:      model.NewCIStr("g"),
 		FieldType: newLongType(),
 		ID:        10,
@@ -365,6 +375,10 @@ func (m *mockStore) UUID() string {
 
 func (m *mockStore) CurrentVersion() (kv.Version, error) {
 	return kv.Version{}, nil
+}
+
+func (m *mockStore) SupportDeleteRange() bool {
+	return false
 }
 
 func mockContext() context.Context {
@@ -540,6 +554,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			sql:  "select a, count(a) cnt from t group by a having cnt < 1",
 			best: "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Selection->Projection",
 		},
+		// issue #3873
+		{
+			sql:  "select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0",
+			best: "Join{DataScan(t1)->Selection->DataScan(t2)}(t1.a,t2.a)->Projection",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
@@ -617,16 +636,15 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
 			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection->Selection->Projection",
 		},
-		// FIXME: sum(s.a) is NewDecimal, so a will be added cast to decimal.
-		/*{
+		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}->Projection",
 		},
 		{
 			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
-		},*/
+			plan: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}->Projection",
+		},
 		{
 			sql:  "select * from t for update",
 			plan: "DataScan(t)->Lock->Projection",
@@ -641,7 +659,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "explain select * from t union all select * from t limit 1, 1",
-			plan: "UnionAll{Table(t)->Table(t)->Limit}->*plan.Explain",
+			plan: "*plan.Explain",
 		},
 		{
 			sql:  "insert into t select * from t",
@@ -845,222 +863,6 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		lp.ResolveIndices()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
-	}
-}
-
-func (s *testPlanSuite) TestRefine(c *C) {
-	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql  string
-		best string
-	}{
-		{
-			sql:  "select a from t where c is not null",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where c >= 4",
-			best: "Index(t.c_d_e)[[4,+inf]]->Projection",
-		},
-		{
-			sql:  "select a from t where c <= 4",
-			best: "Index(t.c_d_e)[[-inf,4]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 4 and d = 5 and e = 6",
-			best: "Index(t.c_d_e)[[4 5 6,4 5 6]]->Projection",
-		},
-		{
-			sql:  "select a from t where d = 4 and c = 5",
-			best: "Index(t.c_d_e)[[5 4,5 4]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 4 and e < 5",
-			best: "Index(t.c_d_e)[[4,4]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 4 and d <= 5 and d > 3",
-			best: "Index(t.c_d_e)[(4 3 +inf,4 5 +inf]]->Projection",
-		},
-		{
-			sql:  "select a from t where d <= 5 and d > 3",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where c between 1 and 2",
-			best: "Index(t.c_d_e)[[1,2]]->Projection",
-		},
-		{
-			sql:  "select a from t where c not between 1 and 2",
-			best: "Index(t.c_d_e)[[-inf <nil>,1 <nil>) (2 +inf,+inf +inf]]->Projection",
-		},
-		{
-			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
-			best: "Index(t.c_d_e)[[3,5]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 1 or c = 2 or c = 3",
-			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3]]->Projection",
-		},
-		{
-			sql:  "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
-			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3] [4,4] [5,5]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 5",
-			best: "Index(t.c_d_e)[[5,5]]->Projection",
-		},
-		{
-			sql:  "select a from t where c = 5 and b = 1",
-			best: "Index(t.c_d_e)[[5,5]]->Projection",
-		},
-		{
-			sql:  "select a from t where not a",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where c in (1)",
-			best: "Index(t.c_d_e)[[1,1]]->Projection",
-		},
-		{
-			sql:  "select a from t where c in (1) and d > 3",
-			best: "Index(t.c_d_e)[(1 3 +inf,1 +inf +inf]]->Projection",
-		},
-		{
-			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
-			best: "Index(t.c_d_e)[(1 3 +inf,1 4 <nil>) (1 5 +inf,1 6 <nil>) (2 3 +inf,2 4 <nil>) (2 5 +inf,2 6 <nil>) (3 3 +inf,3 4 <nil>) (3 5 +inf,3 6 <nil>)]->Projection",
-		},
-		{
-			sql:  "select a from t where c in (1, 2, 3)",
-			best: "Index(t.c_d_e)[[1,1] [2,2] [3,3]]->Projection",
-		},
-		{
-			sql:  "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
-			best: "Index(t.c_d_e)[[1 1 1,1 1 1] [1 2 1,1 2 1] [2 1 1,2 1 1] [2 2 1,2 2 1] [3 1 1,3 1 1] [3 2 1,3 2 1]]->Projection",
-		},
-		{
-			sql:  "select a from t where d in (1, 2, 3)",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where c not in (1)",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t use index(c_d_e) where c != 1",
-			best: "Index(t.c_d_e)[[-inf <nil>,1 <nil>) (1 +inf,+inf +inf]]->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like ''",
-			best: "Index(t.c_d_e_str)[[,]]->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like 'abc'",
-			best: "Index(t.c_d_e_str)[[abc,abc]]->Projection",
-		},
-		{
-			sql:  "select a from t where c_str not like 'abc'",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where not (c_str like 'abc' or c_str like 'abd')",
-			best: "Table(t)->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like '_abc'",
-			best: "Table(t)->Selection->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like 'abc%'",
-			best: "Index(t.c_d_e_str)[[abc <nil>,abd <nil>)]->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like 'abc_'",
-			best: "Index(t.c_d_e_str)[(abc +inf,abd <nil>)]->Selection->Projection",
-		},
-		{
-			sql:  "select a from t where c_str like 'abc%af'",
-			best: "Index(t.c_d_e_str)[[abc <nil>,abd <nil>)]->Selection->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc\\_' escape ''`,
-			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc\\_'`,
-			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc\\\\_'`,
-			best: "Index(t.c_d_e_str)[(abc\\ +inf,abc] <nil>)]->Selection->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc\\_%'`,
-			best: "Index(t.c_d_e_str)[[abc_ <nil>,abc` <nil>)]->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc=_%' escape '='`,
-			best: "Index(t.c_d_e_str)[[abc_ <nil>,abc` <nil>)]->Projection",
-		},
-		{
-			sql:  `select a from t where c_str like 'abc\\__'`,
-			best: "Index(t.c_d_e_str)[(abc_ +inf,abc` <nil>)]->Selection->Projection",
-		},
-		{
-			// Check that 123 is converted to string '123'. index can be used.
-			sql:  `select a from t where c_str like 123`,
-			best: "Index(t.c_d_e_str)[[123,123]]->Projection",
-		},
-		// c is type int which will be added cast to specified type when building function signature, no index can be used.
-		//{
-		//	sql:  `select a from t where c like '1'`,
-		//	best: "Table(t)->Selection->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c = 1.1 and d > 3`,
-		//	best: "Index(t.c_d_e)[]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c = 1.9 and d > 3`,
-		//	best: "Index(t.c_d_e)[]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c < 1.1`,
-		//	best: "Index(t.c_d_e)[[-inf,1]]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c <= 1.9`,
-		//	best: "Index(t.c_d_e)[[-inf <nil>,2 <nil>)]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c >= 1.1`,
-		//	best: "Index(t.c_d_e)[(1 +inf,+inf +inf]]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c > 1.9`,
-		//	best: "Index(t.c_d_e)[[2,+inf]]->Projection",
-		//},
-	}
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
-
-		is, err := MockResolve(stmt)
-		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			is:        is,
-		}
-		p := builder.build(stmt).(LogicalPlan)
-		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), builder.ctx, builder.allocator)
-		info, err := p.convert2PhysicalPlan(&requiredProperty{})
-		c.Assert(err, IsNil)
-		jsonPlan, _ := info.p.MarshalJSON()
-		c.Assert(ToString(info.p), Equals, tt.best, Commentf("for %s, %s", tt.sql, string(jsonPlan)))
 	}
 }
 
@@ -1307,6 +1109,18 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select 1, t.* from t",
+			err: nil,
+		},
+		{
+			sql: "select 1 from t t1, t t2 where t1.a > all((select a) union (select a))",
+			err: ErrAmbiguous,
+		},
+		{
+			sql: "insert into t set a = 1, b = a + 1",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "insert into t set a = 1, b = values(a) + 1",
 			err: nil,
 		},
 	}
