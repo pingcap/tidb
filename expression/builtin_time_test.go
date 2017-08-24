@@ -1045,18 +1045,19 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	defer testleak.AfterTest(c)()
 
-	tfStr := "15:04:05"
 	last := time.Now().UTC()
+	tfStr := "00:00:00"
 	fc := funcs[ast.UTCTime]
 
 	tests := []struct {
 		param  interface{}
 		expect int
-	}{{nil, 8}, {0, 8}, {3, 12}, {6, 15}, {-1, 0}, {7, 0}}
+	}{{0, 8}, {3, 12}, {6, 15}, {-1, 0}, {7, 0}}
 
 	for _, test := range tests {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.param)), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err := f.eval(nil)
 		if test.expect > 0 {
 			c.Assert(err, IsNil)
@@ -1067,6 +1068,14 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 			c.Assert(err, NotNil)
 		}
 	}
+
+	f, err := fc.getFunction(make([]Expression, 0, 0), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+	v, err := f.eval(nil)
+	n := v.GetMysqlDuration()
+	c.Assert(n.String(), HasLen, 8)
+	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
 }
 
 func (s *testEvaluatorSuite) TestUTCDate(c *C) {

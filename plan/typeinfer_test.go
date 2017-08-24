@@ -1365,6 +1365,16 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"utc_timestamp(6) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
 		{"utc_timestamp(7) ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
 
+		{"utc_time()  ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 8, 0},
+		{"utc_time(0) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 8, 0},
+		{"utc_time(1) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 1},
+		{"utc_time(2) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 11, 2},
+		{"utc_time(3) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 12, 3},
+		{"utc_time(4) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 13, 4},
+		{"utc_time(5) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 5},
+		{"utc_time(6) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 15, 6},
+		{"utc_time(7) ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 15, 6},
+
 		{"utc_date()  ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"curdate()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"sysdate(4)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},

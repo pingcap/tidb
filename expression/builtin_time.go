@@ -155,7 +155,8 @@ var (
 	_ builtinFunc = &builtinTimestampAddSig{}
 	_ builtinFunc = &builtinToDaysSig{}
 	_ builtinFunc = &builtinToSecondsSig{}
-	_ builtinFunc = &builtinUTCTimeSig{}
+	_ builtinFunc = &builtinUTCTimeWithArgSig{}
+	_ builtinFunc = &builtinUTCTimeWithoutArgSig{}
 	_ builtinFunc = &builtinTimestampSig{}
 	_ builtinFunc = &builtinLastDaySig{}
 )
@@ -3083,36 +3084,84 @@ type utcTimeFunctionClass struct {
 	baseFunctionClass
 }
 
+func (c *utcTimeFunctionClass) getFlenAndDecimal4UTCTime(sc *variable.StatementContext, args []Expression) (flen, decimal int) {
+	if len(args) == 0 {
+		flen, decimal = 8, 0
+		return
+	}
+	if constant, ok := args[0].(*Constant); ok {
+		fsp, isNull, err := constant.EvalInt(nil, sc)
+		if isNull || err != nil || fsp > int64(types.MaxFsp) {
+			decimal = types.MaxFsp
+		} else if fsp < int64(types.MinFsp) {
+			decimal = types.MinFsp
+		} else {
+			decimal = int(fsp)
+		}
+	}
+	if decimal > 0 {
+		flen = 8 + 1 + decimal
+	} else {
+		flen = 8
+	}
+	return flen, decimal
+}
+
 func (c *utcTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinUTCTimeSig{newBaseBuiltinFunc(args, ctx)}
+	argTps := make([]evalTp, 0, 1)
+	if len(args) == 1 {
+		argTps = append(argTps, tpInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen, bf.tp.Decimal = c.getFlenAndDecimal4UTCTime(bf.ctx.GetSessionVars().StmtCtx, args)
+
+	var sig builtinFunc
+	if len(args) == 1 {
+		sig = &builtinUTCTimeWithArgSig{baseDurationBuiltinFunc{bf}}
+	} else {
+		sig = &builtinUTCTimeWithoutArgSig{baseDurationBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinUTCTimeSig struct {
-	baseBuiltinFunc
+type builtinUTCTimeWithoutArgSig struct {
+	baseDurationBuiltinFunc
 }
 
-// eval evals a builtinUTCTimeSig.
+// evalDuration evals a builtinUTCTimeWithoutArgSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
-func (b *builtinUTCTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	const utctimeFormat = "15:04:05.000000"
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinUTCTimeWithoutArgSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	// the types.ParseDuration here would never fail, so the err returned can be ignored.
+	v, _ := types.ParseDuration(time.Now().UTC().Format("00:00:00"), 0)
+	return v, false, nil
+}
+
+type builtinUTCTimeWithArgSig struct {
+	baseDurationBuiltinFunc
+}
+
+// evalDuration evals a builtinUTCTimeWithArgSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
+func (b *builtinUTCTimeWithArgSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	fsp, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return types.Duration{}, isNull, errors.Trace(err)
 	}
-	fsp := 0
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if len(args) == 1 && !args[0].IsNull() {
-		if fsp, err = checkFsp(sc, args[0]); err != nil {
-			d.SetNull()
-			return d, errors.Trace(err)
-		}
+	if fsp > int64(types.MaxFsp) {
+		return types.Duration{}, true, errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v.", fsp, types.MaxFsp)
 	}
-	d.SetString(time.Now().UTC().Format(utctimeFormat))
-	return convertToDuration(b.ctx.GetSessionVars().StmtCtx, d, fsp)
+	if fsp < int64(types.MinFsp) {
+		return types.Duration{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+	}
+	// the types.ParseDuration here would never fail, so the err returned can be ignored.
+	v, _ := types.ParseDuration(time.Now().UTC().Format("00:00:00.000000"), int(fsp))
+	return v, false, nil
 }
 
 type lastDayFunctionClass struct {
