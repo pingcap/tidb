@@ -1100,7 +1100,7 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 	case KindMysqlSet:
 		dec.FromFloat64(d.GetMysqlSet().ToNumber())
 	case KindMysqlJSON:
-		f, err1 := d.GetMysqlJSON().CastToReal()
+		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
 		if err1 != nil {
 			return ret, errors.Trace(err1)
 		}
@@ -1360,7 +1360,7 @@ func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, 
 	case KindMysqlSet:
 		dec.FromUint(d.GetMysqlSet().Value)
 	case KindMysqlJSON:
-		f, err1 := d.GetMysqlJSON().CastToReal()
+		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -1454,7 +1454,7 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		fval := d.GetMysqlSet().ToNumber()
 		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
 	case KindMysqlJSON:
-		return d.GetMysqlJSON().CastToInt()
+		return ConvertJSONToInt(sc, d.GetMysqlJSON(), true)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", d.GetValue(), d.GetValue())
 	}
