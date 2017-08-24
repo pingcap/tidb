@@ -218,7 +218,13 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 			IsGlobal: vars.IsGlobal,
 			IsSystem: vars.IsSystem,
 		}
-		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
+		if expr, ok := vars.Value.(*ast.SubqueryExpr); ok {
+			p := b.buildResultSetNode(expr.Query)
+			assign.Expr, _, b.err = b.rewrite(vars.Value, p, nil, true)
+			if b.err != nil {
+				return nil
+			}
+		} else if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
 			assign.Expr, _, b.err = b.rewrite(vars.Value, nil, nil, true)
 			if b.err != nil {
 				return nil
