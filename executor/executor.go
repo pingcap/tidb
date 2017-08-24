@@ -182,6 +182,7 @@ func (e *ShowDDLExec) Next() (Row, error) {
 }
 
 // ShowDDLJobsExec represent a show DDL jobs executor.
+// TODO: Split it into two executors, one is DDL current jobs, another is DDL history jobs.
 type ShowDDLJobsExec struct {
 	baseExecutor
 
