@@ -2137,51 +2137,54 @@ func (c *makeSetFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinMakeSetSig{newBaseBuiltinFunc(args, ctx)}
+	argTps := make([]evalTp, len(args))
+	argTps[0] = tpInt
+	for i, length := 1, len(args); i < length; i++ {
+		argTps[i] = tpString
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	totalLen := 0
+	for i, length := 0, len(args); i < length; i++ {
+		setBinFlagOrBinStr(args[i].GetType(), bf.tp)
+		totalLen += args[i].GetType().Flen
+	}
+	bf.tp.Flen = totalLen + len(args) - 2
+	if bf.tp.Flen > mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
+	}
+	sig := &builtinMakeSetSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinMakeSetSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinMakeSetSig.
+// evalString evals MAKE_SET(bits,str1,str2,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_make-set
-func (b *builtinMakeSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		d.SetNull()
-		return
-	}
-	var (
-		arg0 int64
-		sets []string
-	)
-
+func (b *builtinMakeSetSig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	arg0, err = args[0].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+
+	bits, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
 
-	for i := 1; i < len(args); i++ {
-		if args[i].IsNull() {
-			continue
+	sets := make([]string, 0, len(b.args)-1)
+	for i, length := 1, len(b.args); i < length; i++ {
+		str, isNull, err := b.args[i].EvalString(row, sc)
+		if err != nil {
+			return "", true, errors.Trace(err)
 		}
-		if arg0&(1<<uint(i-1)) > 0 {
-			str, err1 := args[i].ToString()
-			if err1 != nil {
-				return d, errors.Trace(err1)
-			}
+		if !isNull && (bits&(1<<(uint)(i-1))) != 0 {
 			sets = append(sets, str)
 		}
 	}
 
-	d.SetString(strings.Join(sets, ","))
-	return d, errors.Trace(err)
+	return strings.Join(sets, ","), false, nil
 }
 
 type octFunctionClass struct {
@@ -2287,35 +2290,37 @@ func (c *quoteFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinQuoteSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	setBinFlagOrBinStr(args[0].GetType(), bf.tp)
+	bf.tp.Flen = 2*args[0].GetType().Flen + 2
+	if bf.tp.Flen > mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
+	}
+	sig := &builtinQuoteSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinQuoteSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinQuoteSig.
+// evalString evals QUOTE(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_quote
-func (b *builtinQuoteSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinQuoteSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		return
-	}
-	var (
-		str    string
-		buffer bytes.Buffer
-	)
-	str, err = args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
+
 	runes := []rune(str)
+	buffer := bytes.NewBufferString("")
 	buffer.WriteRune('\'')
-	for i := 0; i < len(runes); i++ {
+	for i, runeLength := 0, len(runes); i < runeLength; i++ {
 		switch runes[i] {
 		case '\\', '\'':
 			buffer.WriteRune('\\')
@@ -2331,8 +2336,8 @@ func (b *builtinQuoteSig) eval(row []types.Datum) (d types.Datum, err error) {
 		}
 	}
 	buffer.WriteRune('\'')
-	d.SetString(buffer.String())
-	return d, errors.Trace(err)
+
+	return buffer.String(), false, nil
 }
 
 type binFunctionClass struct {
