@@ -308,7 +308,8 @@ type indexHandler struct {
 }
 
 func (ih *indexHandler) Open(kvRanges []kv.KeyRange, e *IndexLookUpExecutor, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
-	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges,
+		e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -320,7 +321,7 @@ func (ih *indexHandler) Open(kvRanges []kv.KeyRange, e *IndexLookUpExecutor, wor
 		ih.fetchHandles(result, workCh, ctx, finished)
 		cancel()
 		if err := result.Close(); err != nil {
-			log.Errorf(errors.ErrorStack(err))
+			log.Errorf("close SelectDAG result failed:", errors.ErrorStack(err))
 		}
 		close(workCh)
 		ih.wg.Done()
