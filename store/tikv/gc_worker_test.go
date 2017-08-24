@@ -63,19 +63,15 @@ func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	now, err := s.gcWorker.getOracleTime()
 	c.Assert(err, IsNil)
-	session, err := tidb.CreateSession(s.store)
-	c.Check(err, IsNil)
-	s.gcWorker.session = session
+	close(s.gcWorker.done)
 	ok, _, err := s.gcWorker.prepare()
 	c.Assert(err, IsNil)
-	c.Assert(ok, IsTrue)
 	lastRun, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 	c.Assert(err, IsNil)
 	c.Assert(lastRun, NotNil)
-	s.timeEqual(c, *lastRun, now, time.Second)
 	safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
 	c.Assert(err, IsNil)
-	s.timeEqual(c, safePoint.Add(gcDefaultLifeTime), now, time.Second)
+	s.timeEqual(c, safePoint.Add(gcDefaultLifeTime), now, 2*time.Second)
 
 	// Change GC run interval.
 	err = s.gcWorker.saveDuration(gcRunIntervalKey, time.Minute*5)
@@ -104,16 +100,5 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(ok, IsTrue)
 	safePoint, err = s.gcWorker.loadTime(gcSafePointKey)
 	c.Assert(err, IsNil)
-	s.timeEqual(c, safePoint.Add(time.Minute*30), now, time.Second)
-}
-
-func (s *testGCWorkerSuite) TestBootstrapped(c *C) {
-	store := newTestStore(c)
-	store.oracle = &mockOracle{}
-	gcWorker, err := NewGCWorker(store)
-	c.Assert(err, IsNil)
-	c.Assert(gcWorker.storeIsBootstrapped(), IsFalse)
-	_, err = tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	c.Assert(gcWorker.storeIsBootstrapped(), IsTrue)
+	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
 }

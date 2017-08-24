@@ -1999,49 +1999,46 @@ func (c *findInSetFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinFindInSetSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 3
+	sig := &builtinFindInSetSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinFindInSetSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinFindInSetSig.
+// evalInt evals FIND_IN_SET(str,strlist).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_find-in-set
 // TODO: This function can be optimized by using bit arithmetic when the first argument is
 // a constant string and the second is a column of type SET.
-func (b *builtinFindInSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// args[0] -> Str
-	// args[1] -> StrList
-	if args[0].IsNull() || args[1].IsNull() {
-		return
+func (b *builtinFindInSetSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	strlst, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	strlist, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	d.SetInt64(0)
-	if len(strlst) == 0 {
-		return
+	if len(strlist) == 0 {
+		return 0, false, nil
 	}
-	for i, s := range strings.Split(strlst, ",") {
-		if s == str {
-			d.SetInt64(int64(i + 1))
-			return
+
+	for i, strInSet := range strings.Split(strlist, ",") {
+		if str == strInSet {
+			return int64(i + 1), false, nil
 		}
 	}
-	return
+	return 0, false, nil
 }
 
 type fieldFunctionClass struct {
@@ -2195,61 +2192,47 @@ func (c *octFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinOctSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinOctSig{baseStringBuiltinFunc{bf}}
+	bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
 	return sig.setSelf(sig), nil
 }
 
 type builtinOctSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinOctSig.
+// evalString evals OCT(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
-func (b *builtinOctSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinOctSig) evalString(row []types.Datum) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	var (
-		negative bool
-		overflow bool
-	)
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-	n, err := arg.ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	n = getValidPrefix(strings.TrimSpace(n), 10)
-	if len(n) == 0 {
-		d.SetString("0")
-		return d, nil
-	}
-	if n[0] == '-' {
-		negative = true
-		n = n[1:]
-	}
-	val, err := strconv.ParseUint(n, 10, 64)
-	if err != nil {
-		if numError, ok := err.(*strconv.NumError); ok {
-			if numError.Err == strconv.ErrRange {
-				overflow = true
-			} else {
-				return d, errors.Trace(err)
-			}
-		} else {
-			return d, errors.Trace(err)
-		}
+	negative, overflow := false, false
+	val = getValidPrefix(strings.TrimSpace(val), 10)
+	if len(val) == 0 {
+		return "0", false, nil
 	}
 
-	if negative && !overflow {
-		val = -val
+	if val[0] == '-' {
+		negative, val = true, val[1:]
 	}
-	str := strconv.FormatUint(val, 8)
-	d.SetString(str)
-	return d, nil
+	numVal, err := strconv.ParseUint(val, 10, 64)
+	if err != nil {
+		numError, ok := err.(*strconv.NumError)
+		if !ok || numError.Err != strconv.ErrRange {
+			return "", true, errors.Trace(err)
+		}
+		overflow = true
+	}
+	if negative && !overflow {
+		numVal = -numVal
+	}
+	return strconv.FormatUint(numVal, 8), false, nil
 }
 
 type ordFunctionClass struct {

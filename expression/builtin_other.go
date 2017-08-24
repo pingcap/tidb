@@ -19,12 +19,10 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
-	_ functionClass = &inFunctionClass{}
 	_ functionClass = &rowFunctionClass{}
 	_ functionClass = &castFunctionClass{}
 	_ functionClass = &setVarFunctionClass{}
@@ -37,7 +35,6 @@ var (
 
 var (
 	_ builtinFunc = &builtinSleepSig{}
-	_ builtinFunc = &builtinInSig{}
 	_ builtinFunc = &builtinRowSig{}
 	_ builtinFunc = &builtinCastSig{}
 	_ builtinFunc = &builtinSetVarSig{}
@@ -47,63 +44,6 @@ var (
 	_ builtinFunc = &builtinValuesSig{}
 	_ builtinFunc = &builtinBitCountSig{}
 )
-
-type inFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *inFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinInSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinInSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinInSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
-func (b *builtinInSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	var hasNull bool
-	for _, v := range args[1:] {
-		if v.IsNull() {
-			hasNull = true
-			continue
-		}
-
-		a, b, err := types.CoerceDatum(sc, args[0], v)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		ret, err := a.CompareDatum(sc, b)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		if ret == 0 {
-			d.SetInt64(1)
-			return d, nil
-		}
-	}
-
-	if hasNull {
-		// If it's no matched but we get null in In, returns null.
-		// e.g 1 in (null, 2, 3) returns null.
-		return
-	}
-	d.SetInt64(0)
-	return
-}
 
 type rowFunctionClass struct {
 	baseFunctionClass
@@ -260,7 +200,7 @@ func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) 
 	sc.IgnoreTruncate = true
 	bin, err := arg.ToInt64(sc)
 	if err != nil {
-		if terror.ErrorEqual(err, types.ErrOverflow) {
+		if types.ErrOverflow.Equal(err) {
 			d.SetInt64(64)
 			return d, nil
 

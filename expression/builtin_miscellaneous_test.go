@@ -289,7 +289,7 @@ func (s *testEvaluatorSuite) TestIsIPv4Mapped(c *C) {
 	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
 	r, err := f.eval(nil)
 	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
+	c.Assert(r, testutil.DatumEquals, types.NewDatum(int64(0)))
 }
 
 func (s *testEvaluatorSuite) TestIsIPv4Compat(c *C) {
