@@ -39,7 +39,6 @@ const (
 	tpDecimal
 	tpString
 	tpDatetime
-	tpDate
 	tpTimestamp
 	tpDuration
 	tpJSON
@@ -55,9 +54,7 @@ func fieldTp2EvalTp(tp *types.FieldType) evalTp {
 		return tpDecimal
 	case types.ClassString:
 		switch tp.Tp {
-		case mysql.TypeDate:
-			return tpDate
-		case mysql.TypeDatetime:
+		case mysql.TypeDate, mysql.TypeDatetime:
 			return tpDatetime
 		case mysql.TypeTimestamp:
 			return tpTimestamp
@@ -109,8 +106,6 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			args[i], err = WrapWithCastAsString(args[i], ctx)
 		case tpDatetime:
 			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
-		case tpDate:
-			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDate), ctx)
 		case tpTimestamp:
 			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
 		case tpDuration:
@@ -158,13 +153,6 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpDate:
-		fieldType = &types.FieldType{
-			Tp:      mysql.TypeDate,
-			Flen:    mysql.MaxDateWidth,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-		}
 	case tpTimestamp:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeTimestamp,
@@ -172,7 +160,6 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
-
 	case tpDuration:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDuration,

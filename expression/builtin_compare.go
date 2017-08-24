@@ -178,7 +178,7 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 		sig = &builtinCoalesceDecimalSig{baseDecimalBuiltinFunc{bf}}
 	case tpString:
 		sig = &builtinCoalesceStringSig{baseStringBuiltinFunc{bf}}
-	case tpDatetime, tpDate, tpTimestamp:
+	case tpDatetime, tpTimestamp:
 		sig = &builtinCoalesceTimeSig{baseTimeBuiltinFunc{bf}}
 	case tpDuration:
 		sig = &builtinCoalesceDurationSig{baseDurationBuiltinFunc{bf}}
@@ -631,7 +631,7 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 		case opcode.NullEQ:
 			sig = &builtinNullEQDurationSig{intBf}
 		}
-	case tpDatetime, tpDate, tpTimestamp:
+	case tpDatetime, tpTimestamp:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTTimeSig{intBf}
