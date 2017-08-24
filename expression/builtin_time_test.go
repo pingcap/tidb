@@ -1330,6 +1330,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	c.Assert(err, IsNil)
 	d, err = f.eval(nil)
 	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
 	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
 
 	// Test case for https://github.com/pingcap/tidb/issues/2852

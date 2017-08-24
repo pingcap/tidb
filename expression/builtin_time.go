@@ -1137,11 +1137,12 @@ func (b *builtinYearWeekWithoutModeSig) evalInt(row []types.Datum) (int64, bool,
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	date, isNull, err := b.args[0].EvalTime(row, sc)
-	if err != nil {
-		sc.AppendWarning(err)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	if isNull || err != nil || date.InvalidZero() {
-		return 0, true, nil
+
+	if date.InvalidZero() {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 
 	year, week := date.Time.YearWeek(0)
