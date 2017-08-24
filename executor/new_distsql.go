@@ -373,8 +373,8 @@ func (th *tableHandler) Open(e *IndexLookUpExecutor, workCh <-chan *lookupTableT
 	var wg sync.WaitGroup
 	wg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
+		ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
 		go func() {
-			ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
 			th.pickAndExecTask(workCh, ctx, finished)
 			cancel()
 			wg.Done()
