@@ -270,10 +270,6 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		os.Remove("/tmp/server-cert.pem")
 		os.Remove("/tmp/client-key.pem")
 		os.Remove("/tmp/client-cert.pem")
-		os.Remove("/tmp/ca-key-fake.pem")
-		os.Remove("/tmp/ca-cert-fake.pem")
-		os.Remove("/tmp/client-key-fake.pem")
-		os.Remove("/tmp/client-cert-fake.pem")
 	}()
 
 	// Start the server without TLS.
