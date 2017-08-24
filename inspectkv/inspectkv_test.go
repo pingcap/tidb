@@ -177,8 +177,8 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 		}
 		err = t.EnQueueDDLJob(jobs[i])
 		c.Assert(err, IsNil)
-		currJobs, err := GetDDLJobs(txn)
-		c.Assert(err, IsNil)
+		currJobs, err1 := GetDDLJobs(txn)
+		c.Assert(err1, IsNil)
 		c.Assert(currJobs, HasLen, i+1)
 	}
 
@@ -210,8 +210,8 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 		}
 		err = t.AddHistoryDDLJob(jobs[i])
 		c.Assert(err, IsNil)
-		historyJobs, err := GetHistoryDDLJobs(txn)
-		c.Assert(err, IsNil)
+		historyJobs, err1 := GetHistoryDDLJobs(txn)
+		c.Assert(err1, IsNil)
 		if i+1 > maxHistoryJobs {
 			c.Assert(historyJobs, HasLen, maxHistoryJobs)
 		} else {
