@@ -169,7 +169,7 @@ func (d *ddl) handleDDLJobQueue() error {
 			}
 
 			if once {
-				d.handleException(job, waitTime)
+				d.waitSchemaSynced(job, waitTime)
 				once = false
 				return nil
 			}
@@ -340,13 +340,13 @@ func (d *ddl) waitSchemaChanged(ctx goctx.Context, waitTime time.Duration, lates
 	return
 }
 
-// handleException handles the following situation:
+// waitSchemaSynced handles the following situation:
 // If the job enters a new state, and the worker crashs when it's in the process of waiting for 2 * lease time,
 // Then the worker restarts quickly, we may run the job immediately again,
 // but in this case we don't wait enough 2 * lease time to let other servers update the schema.
 // So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
 // in a cluster, or to wait for 2 * lease time.
-func (d *ddl) handleException(job *model.Job, waitTime time.Duration) {
+func (d *ddl) waitSchemaSynced(job *model.Job, waitTime time.Duration) {
 	if !job.IsRunning() && !job.IsDone() {
 		return
 	}
