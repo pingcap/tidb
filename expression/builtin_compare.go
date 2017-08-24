@@ -180,7 +180,7 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 		sig = &builtinCoalesceDecimalSig{baseDecimalBuiltinFunc{bf}}
 	case tpString:
 		sig = &builtinCoalesceStringSig{baseStringBuiltinFunc{bf}}
-	case tpTime:
+	case tpDatetime, tpTimestamp:
 		sig = &builtinCoalesceTimeSig{baseTimeBuiltinFunc{bf}}
 	case tpDuration:
 		sig = &builtinCoalesceDurationSig{baseDurationBuiltinFunc{bf}}
@@ -549,7 +549,11 @@ func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Con
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
 		// compare as time
-		sig, err = c.generateCmpSigs(args, tpTime, ctx)
+		if ft0.Tp == ft1.Tp {
+			sig, err = c.generateCmpSigs(args, fieldTp2EvalTp(ft0), ctx)
+		} else {
+			sig, err = c.generateCmpSigs(args, tpDatetime, ctx)
+		}
 	} else if ft0.Tp == mysql.TypeDuration && ft1.Tp == mysql.TypeDuration {
 		// duration <cmp> duration
 		// compare as duration
@@ -583,7 +587,7 @@ func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Con
 			if col.GetType().Tp == mysql.TypeDuration {
 				sig, err = c.generateCmpSigs(args, tpDuration, ctx)
 			} else {
-				sig, err = c.generateCmpSigs(args, tpTime, ctx)
+				sig, err = c.generateCmpSigs(args, tpDatetime, ctx)
 			}
 		}
 	}
@@ -702,7 +706,7 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 		case opcode.NullEQ:
 			sig = &builtinNullEQDurationSig{intBf}
 		}
-	case tpTime:
+	case tpDatetime, tpTimestamp:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTTimeSig{intBf}
