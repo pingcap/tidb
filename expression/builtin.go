@@ -38,7 +38,8 @@ const (
 	tpReal
 	tpDecimal
 	tpString
-	tpTime
+	tpDatetime
+	tpTimestamp
 	tpDuration
 	tpJSON
 )
@@ -52,10 +53,12 @@ func fieldTp2EvalTp(tp *types.FieldType) evalTp {
 	case types.ClassDecimal:
 		return tpDecimal
 	case types.ClassString:
-		switch {
-		case types.IsTypeTime(tp.Tp):
-			return tpTime
-		case tp.Tp == mysql.TypeDuration:
+		switch tp.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime:
+			return tpDatetime
+		case mysql.TypeTimestamp:
+			return tpTimestamp
+		case mysql.TypeDuration:
 			return tpDuration
 		}
 	}
@@ -101,8 +104,10 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			args[i], err = WrapWithCastAsDecimal(args[i], ctx)
 		case tpString:
 			args[i], err = WrapWithCastAsString(args[i], ctx)
-		case tpTime:
+		case tpDatetime:
 			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
+		case tpTimestamp:
+			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
 		case tpDuration:
 			args[i], err = WrapWithCastAsDuration(args[i], ctx)
 		case tpJSON:
@@ -141,9 +146,16 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			Flen:    0,
 			Decimal: types.UnspecifiedLength,
 		}
-	case tpTime:
+	case tpDatetime:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDatetime,
+			Flen:    mysql.MaxDatetimeWidthWithFsp,
+			Decimal: types.MaxFsp,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpTimestamp:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeTimestamp,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
@@ -772,6 +784,7 @@ var funcs = map[string]functionClass{
 	ast.WeekOfYear:       &weekOfYearFunctionClass{baseFunctionClass{ast.WeekOfYear, 1, 1}},
 	ast.Year:             &yearFunctionClass{baseFunctionClass{ast.Year, 1, 1}},
 	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
+	ast.LastDay:          &lastDayFunctionClass{baseFunctionClass{ast.LastDay, 1, 1}},
 
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
