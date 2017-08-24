@@ -712,7 +712,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDesc.Key,                    // COLUMN_KEY
 			columnDesc.Extra,                  // EXTRA
 			"select,insert,update,references", // PRIVILEGES
-			col.Comment,                       // COLUMN_COMMENT
+			columnDesc.Comment,                // COLUMN_COMMENT
 		)
 		rows = append(rows, record)
 	}
