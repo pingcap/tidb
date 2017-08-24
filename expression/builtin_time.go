@@ -712,7 +712,7 @@ func (c *dayNameFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -963,31 +963,6 @@ func (b *builtinWeekDaySig) evalInt(row []types.Datum) (int64, bool, error) {
 	}
 
 	return int64(date.Time.Weekday()+6) % 7, false, nil
-}
-
-// builtinWeekDay ...
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekday
-// TODO: remove me after `builtinDayNameSig` rewrited.
-func builtinWeekDay(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	d, err = convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
-	}
-
-	// No need to check type here.
-	t := d.GetMysqlTime()
-	if t.IsZero() {
-		// TODO: log warning or return error?
-		d.SetNull()
-		return
-	}
-
-	// Monday is 0, ... Sunday = 6 in MySQL
-	// but in go, Sunday is 0, ... Saturday is 6
-	// w will do a conversion.
-	w := (int64(t.Time.Weekday()) + 6) % 7
-	d.SetInt64(w)
-	return
 }
 
 type weekOfYearFunctionClass struct {
