@@ -49,7 +49,8 @@ var LookupTableTaskChannelSize int32 = 50
 // lookupTableTask is created from a partial result of an index request which
 // contains the handles in those index keys.
 type lookupTableTask struct {
-	// if tasksErr is not nil, this is a invalid lookupTableTask.
+	// If tasksErr is not nil, this is a invalid lookupTableTask, it would
+	// bypass the pickAndExecTask() function and make tableHandler halt.
 	tasksErr error
 	handles  []int64
 	rows     []Row

@@ -301,6 +301,7 @@ type IndexLookUpExecutor struct {
 	finished chan struct{}
 }
 
+// indexHandler is used by IndexLookUpExecutor to maintain index lookup background goroutines.
 type indexHandler struct {
 	buildTableTasks func(handles []int64) []*lookupTableTask
 	wg              sync.WaitGroup
@@ -357,6 +358,7 @@ func (ih *indexHandler) Close() {
 	ih.wg.Wait()
 }
 
+// indexHandler is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableHandler struct {
 	taskChan    chan *lookupTableTask
 	taskCurr    *lookupTableTask
