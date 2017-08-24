@@ -455,24 +455,30 @@ func (c *fromDaysFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinFromDaysSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen, bf.tp.Decimal = 10, 0
+	sig := &builtinFromDaysSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinFromDaysSig struct {
-	baseBuiltinFunc
+	baseTimeBuiltinFunc
 }
 
-// eval evals a builtinFromDaysSig.
+// evalTime evals FROM_DAYS(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-days
-func (b *builtinFromDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinFromDaysSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+
+	n, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
 	}
-	days, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	d.SetMysqlTime(types.TimeFromDays(days))
-	return d, nil
+
+	return types.TimeFromDays(n), false, nil
 }
 
 type hourFunctionClass struct {
@@ -926,24 +932,40 @@ func (c *weekDayFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinWeekDaySig{newBaseBuiltinFunc(args, ctx)}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 1
+
+	sig := &builtinWeekDaySig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinWeekDaySig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-func (b *builtinWeekDaySig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+// evalInt evals WEEKDAY(date).
+func (b *builtinWeekDaySig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	date, isNull, err := b.args[0].EvalTime(row, sc)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	return builtinWeekDay(args, b.ctx)
+
+	if date.IsZero() {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
+	}
+
+	return int64(date.Time.Weekday()+6) % 7, false, nil
 }
 
 // builtinWeekDay ...
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekday
+// TODO: remove me after `builtinDayNameSig` rewrited.
 func builtinWeekDay(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	d, err = convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
@@ -2646,45 +2668,36 @@ func (c *quarterFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinQuarterSig{newBaseBuiltinFunc(args, ctx)}
+
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 1
+
+	sig := &builtinQuarterSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinQuarterSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinQuarterSig.
+// evalInt evals QUARTER(date).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
-func (b *builtinQuarterSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinQuarterSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	date, isNull, err := b.args[0].EvalTime(row, sc)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 
-	d, err = builtinMonth(args, b.ctx)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
+	if date.IsZero() {
+		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
 	}
 
-	mon := int(d.GetInt64())
-	switch mon {
-	case 0:
-		// An undocumented behavior of the mysql implementation
-		d.SetInt64(0)
-	case 1, 2, 3:
-		d.SetInt64(1)
-	case 4, 5, 6:
-		d.SetInt64(2)
-	case 7, 8, 9:
-		d.SetInt64(3)
-	case 10, 11, 12:
-		d.SetInt64(4)
-	default:
-		d.SetNull()
-		return d, errors.Errorf("no quarter for invalid month: %d.", mon)
-	}
-	return
+	return int64((date.Time.Month() + 2) / 3), false, nil
 }
 
 type secToTimeFunctionClass struct {
