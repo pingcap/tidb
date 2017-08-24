@@ -280,7 +280,7 @@ func (c *dateDiffFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDatetime, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
