@@ -1,5 +1,5 @@
-hash: e7138b459686bbcdecd0005a1a7e785686171ae6229c4b44855e7e4d1422064d
-updated: 2017-08-16T14:52:37.068717494+08:00
+hash: 5827fd356f794c5efcb861bee86f3ffb920d4f0551e4dde785df01ac167f12e1
+updated: 2017-08-24T19:30:59.387970823+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -17,6 +17,7 @@ imports:
   - auth/authpb
   - clientv3
   - clientv3/concurrency
+  - contrib/recipes
   - etcdserver/api/v3rpc/rpctypes
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
