@@ -121,6 +121,8 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.Weekday]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["WeekDay"][0])
@@ -225,6 +227,8 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.Weekday]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["WeekDay"][0])
@@ -1070,6 +1074,12 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestFromDays(c *C) {
+	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+	origin := stmtCtx.IgnoreTruncate
+	stmtCtx.IgnoreTruncate = true
+	defer func() {
+		stmtCtx.IgnoreTruncate = origin
+	}()
 	tests := []struct {
 		day    int64
 		expect string
@@ -1095,6 +1105,8 @@ func (s *testEvaluatorSuite) TestFromDays(c *C) {
 
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{t1}), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		result, err := f.eval(nil)
 
 		c.Assert(err, IsNil)
@@ -1585,6 +1597,8 @@ func (s *testEvaluatorSuite) TestQuarter(c *C) {
 		arg := types.NewStringDatum(test.t)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(result.GetInt64(), Equals, test.expect)
@@ -1595,7 +1609,7 @@ func (s *testEvaluatorSuite) TestQuarter(c *C) {
 	f, err := fc.getFunction(datumsToConstants([]types.Datum{argInvalid}), s.ctx)
 	c.Assert(err, IsNil)
 	result, err := f.eval(nil)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 	c.Assert(result.IsNull(), IsTrue)
 }
 
