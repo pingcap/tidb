@@ -3074,8 +3074,9 @@ type builtinUTCTimeWithoutArgSig struct {
 // evalDuration evals a builtinUTCTimeWithoutArgSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeWithoutArgSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	v, err := types.ParseDuration(time.Now().UTC().Format("00:00:00"), 0)
-	return v, false, errors.Trace(err)
+	// the types.ParseDuration here would never fail, so the err returned can be ignored.
+	v, _ := types.ParseDuration(time.Now().UTC().Format("00:00:00"), 0)
+	return v, false, nil
 }
 
 type builtinUTCTimeWithArgSig struct {
@@ -3095,8 +3096,9 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(row []types.Datum) (types.Durati
 	if fsp < int64(types.MinFsp) {
 		return types.Duration{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 	}
-	v, err := types.ParseDuration(time.Now().UTC().Format("00:00:00.000000"), int(fsp))
-	return v, false, errors.Trace(err)
+	// the types.ParseDuration here would never fail, so the err returned can be ignored.
+	v, _ := types.ParseDuration(time.Now().UTC().Format("00:00:00.000000"), int(fsp))
+	return v, false, nil
 }
 
 type lastDayFunctionClass struct {
