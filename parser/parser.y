@@ -2930,10 +2930,10 @@ FunctionCallKeyword:
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		tp := $5.(*types.FieldType)
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
-		if tp.Flen == -1 {
+		if tp.Flen == types.UnspecifiedLength {
 			tp.Flen = defaultFlen
 		}
-		if tp.Decimal == -1 {
+		if tp.Decimal == types.UnspecifiedLength {
 			tp.Decimal = defaultDecimal
 		}
 		$$ = &ast.FuncCastExpr{
@@ -2975,10 +2975,10 @@ FunctionCallKeyword:
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 		tp := $5.(*types.FieldType)
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
-		if tp.Flen == -1 {
+		if tp.Flen == types.UnspecifiedLength {
 			tp.Flen = defaultFlen
 		}
-		if tp.Decimal == -1 {
+		if tp.Decimal == types.UnspecifiedLength {
 			tp.Decimal = defaultDecimal
 		}
 		$$ = &ast.FuncCastExpr{
@@ -5921,7 +5921,7 @@ NumericType:
 	{
 		x := types.NewFieldType($1.(byte))
 		x.Flen = $2.(int)
-		if x.Flen == -1 || x.Flen == 0 {
+		if x.Flen == types.UnspecifiedLength || x.Flen == 0 {
 			x.Flen = 1
 		} else if x.Flen > 64 {
 			yylex.Errorf("invalid field length %d for bit type, must in [1, 64]", x.Flen)
@@ -6185,7 +6185,7 @@ DateAndTimeType:
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		x.Flen = $2.(int)
-		if x.Flen != -1 && x.Flen != 4 {
+		if x.Flen != types.UnspecifiedLength && x.Flen != 4 {
 			yylex.Errorf("Supports only YEAR or YEAR(4) column.")
 			return -1
 		}
@@ -6200,7 +6200,6 @@ FieldLen:
 
 OptFieldLen:
 	{
-		/* -1 means unspecified field length*/
 		$$ = types.UnspecifiedLength
 	}
 |	FieldLen

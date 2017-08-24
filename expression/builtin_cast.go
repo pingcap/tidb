@@ -1312,7 +1312,7 @@ func WrapWithCastAsDecimal(expr Expression, ctx context.Context) (Expression, er
 
 // WrapWithCastAsString wraps `expr` with `cast` if the return type
 // of expr is not type string,
-// otherwise, returns `expr` but decimal set to unspecified.
+// otherwise, returns `expr` directly.
 func WrapWithCastAsString(expr Expression, ctx context.Context) (Expression, error) {
 	if expr.GetTypeClass() == types.ClassString {
 		return expr, nil
