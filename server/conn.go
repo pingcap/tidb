@@ -863,7 +863,8 @@ func (cc *clientConn) BuildPacketIO(initialSeq uint8) {
 }
 
 func (cc *clientConn) UpgradeToTLS(tlsConfig *tls.Config) error {
-	tlsConn := tls.Server(cc.conn, tlsConfig)
+	// Important: read from buffered reader because it may contain data we need.
+	tlsConn := tls.Server(cc.pkt.ConnReadFromBuffer, tlsConfig)
 	if err := tlsConn.Handshake(); err != nil {
 		return errors.Trace(err)
 	}

@@ -63,6 +63,14 @@ var (
 	errAccessDenied      = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
+// DefaultCapability is the capability of the server when it is created using the default configuration.
+// When server is configured with SSL, the server will have extra capabilities compared to DefaultCapability.
+const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
+	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
+	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
+	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth
+
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
@@ -138,11 +146,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 	s.loadTLSCertificates()
 
-	s.capability = mysql.ClientLongPassword | mysql.ClientLongFlag |
-		mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
-		mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-		mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-		mysql.ClientConnectAtts | mysql.ClientPluginAuth
+	s.capability = defaultCapability
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
@@ -167,7 +171,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 func (s *Server) loadTLSCertificates() {
 	defer func() {
 		if s.tlsConfig != nil {
-			log.Info("Secure connection is enabled")
+			log.Infof("Secure connection is enabled (client verification enabled = %v)", len(variable.SysVars["ssl_ca"].Value) > 0)
 			variable.SysVars["have_openssl"].Value = "YES"
 			variable.SysVars["have_ssl"].Value = "YES"
 			variable.SysVars["ssl_cert"].Value = s.cfg.SSLCertPath

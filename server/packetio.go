@@ -48,10 +48,22 @@ const (
 	defaultWriterSize = 16 * 1024
 )
 
+// connBufferReader is a net.Conn compatible structure that reads from bufio.Reader
+// instead of the original net.Conn. It is used to support TLS.
+type connBufferReader struct {
+	net.Conn
+	rb *bufio.Reader
+}
+
+func (conn connBufferReader) Read(b []byte) (n int, err error) {
+	return conn.rb.Read(b)
+}
+
 // packetIO is a helper to read and write data in packet format.
 type packetIO struct {
-	rb *bufio.Reader
-	wb *bufio.Writer
+	rb                 *bufio.Reader
+	wb                 *bufio.Writer
+	ConnReadFromBuffer connBufferReader // ConnReadFromBuffer is a net.Conn that reads from the the buffered reader.
 
 	sequence uint8
 }
@@ -62,6 +74,7 @@ func newPacketIO(conn net.Conn, sequence uint8) *packetIO {
 		wb:       bufio.NewWriterSize(conn, defaultWriterSize),
 		sequence: sequence,
 	}
+	p.ConnReadFromBuffer = connBufferReader{conn, p.rb}
 
 	return p
 }
