@@ -162,6 +162,7 @@ const (
 	WeekOfYear       = "weekofyear"
 	Year             = "year"
 	YearWeek         = "yearweek"
+	LastDay          = "last_day"
 
 	// string functions
 	ASCII           = "ascii"
