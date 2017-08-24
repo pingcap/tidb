@@ -67,6 +67,11 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft.Flag |= mysql.BinaryFlag
 	c.Assert(ft.String(), Equals, "varchar(10) BINARY")
 
+	ft = NewFieldType(mysql.TypeString)
+	ft.Charset = charset.CollationBin
+	ft.Flag |= mysql.BinaryFlag
+	c.Assert(ft.String(), Equals, "binary")
+
 	ft = NewFieldType(mysql.TypeEnum)
 	ft.Elems = []string{"a", "b"}
 	c.Assert(ft.String(), Equals, "enum('a','b')")

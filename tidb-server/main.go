@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/x-server"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -51,10 +52,13 @@ var (
 	logLevel            = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
 	host                = flag.String("host", "0.0.0.0", "tidb server host")
 	port                = flag.String("P", "4000", "tidb server port")
+	xhost               = flag.String("xhost", "0.0.0.0", "tidb x protocol server host")
+	xport               = flag.String("xP", "14000", "tidb x protocol server port")
 	statusPort          = flag.String("status", "10080", "tidb server status port")
 	ddlLease            = flag.String("lease", "10s", "schema lease duration, very dangerous to change only if you know what you do")
 	statsLease          = flag.String("statsLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
 	socket              = flag.String("socket", "", "The socket file to use for connection.")
+	xsocket             = flag.String("xsocket", "", "The socket file to use for x protocol connection.")
 	enablePS            = flagBoolean("perfschema", false, "If enable performance schema.")
 	enablePrivilege     = flagBoolean("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
 	reportStatus        = flagBoolean("report-status", true, "If enable status report HTTP service.")
@@ -69,6 +73,7 @@ var (
 	skipGrantTable      = flagBoolean("skip-grant-table", false, "This option causes the server to start without using the privilege system at all.")
 	slowThreshold       = flag.Int("slow-threshold", 300, "Queries with execution time greater than this value will be logged. (Milliseconds)")
 	queryLogMaxlen      = flag.Int("query-log-max-len", 2048, "Maximum query length recorded in log")
+	startXServer        = flagBoolean("xserver", false, "start tidb x protocol server")
 	tcpKeepAlive        = flagBoolean("tcp-keep-alive", false, "set keep alive option for tcp connection.")
 	timeJumpBackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -115,6 +120,12 @@ func main() {
 	cfg.QueryLogMaxlen = *queryLogMaxlen
 	cfg.TCPKeepAlive = *tcpKeepAlive
 
+	xcfg := &xserver.Config{
+		Addr:     fmt.Sprintf("%s:%s", *xhost, *xport),
+		Socket:   *socket,
+		LogLevel: *logLevel,
+	}
+
 	// set log options
 	if len(*logFile) > 0 {
 		err := log.SetOutputByName(*logFile)
@@ -157,6 +168,13 @@ func main() {
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
+	var xsvr *xserver.Server
+	if *startXServer {
+		xsvr, err = xserver.NewServer(xcfg)
+		if err != nil {
+			log.Fatal(errors.ErrorStack(err))
+		}
+	}
 
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc,
@@ -168,6 +186,9 @@ func main() {
 	go func() {
 		sig := <-sc
 		log.Infof("Got signal [%d] to exit.", sig)
+		if *startXServer {
+			xsvr.Close() // Should close xserver before server.
+		}
 		svr.Close()
 	}()
 
@@ -180,6 +201,11 @@ func main() {
 
 	if err := svr.Run(); err != nil {
 		log.Error(err)
+	}
+	if *startXServer {
+		if err := xsvr.Run(); err != nil {
+			log.Error(err)
+		}
 	}
 	domain.Close()
 	os.Exit(0)
