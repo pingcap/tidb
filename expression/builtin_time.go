@@ -455,7 +455,7 @@ func (c *fromDaysFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpInt)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpInt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -676,7 +676,7 @@ func (c *monthNameFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -933,7 +933,7 @@ func (c *weekDayFunctionClass) getFunction(args []Expression, ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1073,7 +1073,7 @@ func (c *yearWeekFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	argTps := []evalTp{tpTime}
+	argTps := []evalTp{tpDatetime}
 	if len(args) == 2 {
 		argTps = append(argTps, tpInt)
 	}
@@ -1356,7 +1356,7 @@ func (c *sysDateFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if len(args) == 1 {
 		argTps = append(argTps, tpInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, argTps...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1415,7 +1415,7 @@ func (c *currentDateFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2670,7 +2670,7 @@ func (c *quarterFunctionClass) getFunction(args []Expression, ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3140,7 +3140,7 @@ func (c *lastDayFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
