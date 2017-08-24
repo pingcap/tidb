@@ -596,7 +596,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(args []Expression, ctx co
 			sig := &builtinArithmeticIntDivideIntUnsignedSig{baseIntBuiltinFunc{bf}}
 			return sig.setSelf(sig), nil
 		}
-		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
+		setFlenDecimal4Int(bf.tp, tpA, tpB)
 		sig := &builtinArithmeticIntDivideIntSig{baseIntBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
@@ -604,7 +604,10 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(args []Expression, ctx co
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
+	if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
+		bf.tp.Flag |= mysql.UnsignedFlag
+	}
+	setFlenDecimal4Int(bf.tp, tpA, tpB)
 	sig := &builtinArithmeticIntDivideDecimalSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
