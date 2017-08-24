@@ -409,22 +409,40 @@ func (c *dateFormatFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinDateFormatSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpTime, tpString)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters
+	bf.tp.Flen = (args[1].GetType().Flen + 1) / 2 * 11
+	sig := &builtinDateFormatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
+
 }
 
 type builtinDateFormatSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinDateFormatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
-func (b *builtinDateFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinDateFormatSig) evalString(row []types.Datum) (string, bool, error) {
+	t, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
+
+	if err != nil || isNull {
+		return "", isNull, errors.Trace(err)
 	}
-	return builtinDateFormat(args, b.ctx)
+	formatMask, isNull, err := b.args[1].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return "", isNull, errors.Trace(err)
+	}
+	res, err := b.formatDate(t, formatMask, b.ctx)
+	return res, isNull, errors.Trace(err)
+}
+
+func (b *builtinDateFormatSig) formatDate(t types.Time, formatMask string, ctx context.Context) (res string, err error) {
+	str, err := t.DateFormat(formatMask)
+	return str, errors.Trace(err)
 }
 
 // builtinDateFormat ...
