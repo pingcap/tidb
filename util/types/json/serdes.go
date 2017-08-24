@@ -110,7 +110,7 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 		return
 	}
 	switch c := TypeCode(b[0]); c {
-	case typeCodeObject, typeCodeArray:
+	case TypeCodeObject, TypeCodeArray:
 		if len(b) >= typeCodeLen+compoundCountLen+compoundSizeLen {
 			var size uint32
 			start := typeCodeLen + compoundCountLen
@@ -119,7 +119,7 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 			n = int(size) + typeCodeLen
 			return
 		}
-	case typeCodeString:
+	case TypeCodeString:
 		var size uint64
 		reader := bytes.NewReader(b[typeCodeLen:])
 		size, err = binary.ReadUvarint(reader)
@@ -127,7 +127,7 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 			n = int(size) + int(reader.Size()) - int(reader.Len()) + typeCodeLen
 			return
 		}
-	case typeCodeInt64, typeCodeUint64, typeCodeFloat64, typeCodeLiteral:
+	case TypeCodeInt64, TypeCodeUint64, TypeCodeFloat64, TypeCodeLiteral:
 		n = jsonTypeCodeLength[TypeCode(c)] + typeCodeLen
 		return
 	}
@@ -138,28 +138,28 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 // Serialize means serialize itself into bytes.
 func Serialize(j JSON) []byte {
 	var buffer = new(bytes.Buffer)
-	buffer.WriteByte(byte(j.typeCode))
+	buffer.WriteByte(byte(j.TypeCode))
 	encode(j, buffer)
 	return buffer.Bytes()
 }
 
 func encode(j JSON, buffer *bytes.Buffer) {
-	switch j.typeCode {
-	case typeCodeObject:
-		encodeJSONObject(j.object, buffer)
-	case typeCodeArray:
-		encodeJSONArray(j.array, buffer)
-	case typeCodeLiteral:
-		encodeJSONLiteral(byte(j.i64), buffer)
-	case typeCodeInt64, typeCodeUint64:
-		encodeJSONInt64(j.i64, buffer)
-	case typeCodeFloat64:
-		f64 := *(*float64)(unsafe.Pointer(&j.i64))
+	switch j.TypeCode {
+	case TypeCodeObject:
+		encodeJSONObject(j.Object, buffer)
+	case TypeCodeArray:
+		encodeJSONArray(j.Array, buffer)
+	case TypeCodeLiteral:
+		encodeJSONLiteral(byte(j.I64), buffer)
+	case TypeCodeInt64, TypeCodeUint64:
+		encodeJSONInt64(j.I64, buffer)
+	case TypeCodeFloat64:
+		f64 := *(*float64)(unsafe.Pointer(&j.I64))
 		encodeJSONFloat64(f64, buffer)
-	case typeCodeString:
-		encodeJSONString(j.str, buffer)
+	case TypeCodeString:
+		encodeJSONString(j.Str, buffer)
 	default:
-		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.typeCode)
+		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.TypeCode)
 		panic(msg)
 	}
 }
@@ -170,22 +170,22 @@ func Deserialize(data []byte) (j JSON, err error) {
 }
 
 func decode(typeCode byte, data []byte) (j JSON, err error) {
-	j.typeCode = TypeCode(typeCode)
-	switch j.typeCode {
-	case typeCodeObject:
-		err = decodeJSONObject(&j.object, data)
-	case typeCodeArray:
-		err = decodeJSONArray(&j.array, data)
-	case typeCodeLiteral:
-		pbyte := (*byte)(unsafe.Pointer(&j.i64))
+	j.TypeCode = TypeCode(typeCode)
+	switch j.TypeCode {
+	case TypeCodeObject:
+		err = decodeJSONObject(&j.Object, data)
+	case TypeCodeArray:
+		err = decodeJSONArray(&j.Array, data)
+	case TypeCodeLiteral:
+		pbyte := (*byte)(unsafe.Pointer(&j.I64))
 		err = decodeJSONLiteral(pbyte, data)
-	case typeCodeInt64, typeCodeUint64:
-		err = decodeJSONInt64(&j.i64, data)
-	case typeCodeFloat64:
-		pfloat := (*float64)(unsafe.Pointer(&j.i64))
+	case TypeCodeInt64, TypeCodeUint64:
+		err = decodeJSONInt64(&j.I64, data)
+	case TypeCodeFloat64:
+		pfloat := (*float64)(unsafe.Pointer(&j.I64))
 		err = decodeJSONFloat64(pfloat, data)
-	case typeCodeString:
-		err = decodeJSONString(&j.str, data)
+	case TypeCodeString:
+		err = decodeJSONString(&j.Str, data)
 	default:
 		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, typeCode)
 		panic(msg)
@@ -386,13 +386,13 @@ func decodeJSONArray(a *[]JSON, data []byte) (err error) {
 // Every json type has a length which is useful for inline the value
 // in value-entry. -1 means the length is variable.
 var jsonTypeCodeLength = map[TypeCode]int{
-	typeCodeObject:  -1,
-	typeCodeArray:   -1,
-	typeCodeLiteral: 1,
-	typeCodeInt64:   8,
-	typeCodeUint64:  8,
-	typeCodeFloat64: 8,
-	typeCodeString:  -1,
+	TypeCodeObject:  -1,
+	TypeCodeArray:   -1,
+	TypeCodeLiteral: 1,
+	TypeCodeInt64:   8,
+	TypeCodeUint64:  8,
+	TypeCodeFloat64: 8,
+	TypeCodeString:  -1,
 }
 
 // getSortedKeys returns sorted keys of a map.
@@ -406,7 +406,7 @@ func getSortedKeys(m map[string]JSON) []string {
 }
 
 func pushValueEntry(value JSON, valueEntrys *bytes.Buffer, values *bytes.Buffer, prefixLen int) {
-	var typeCode = value.typeCode
+	var typeCode = value.TypeCode
 	valueEntrys.WriteByte(byte(typeCode))
 
 	typeLen, _ := jsonTypeCodeLength[typeCode]
@@ -426,12 +426,12 @@ func pushValueEntry(value JSON, valueEntrys *bytes.Buffer, values *bytes.Buffer,
 // length < 4, pads 0x00 until there are 4 bytes written into buffer.
 func pushInlineValue(buffer *bytes.Buffer, value JSON) {
 	var oldLen = buffer.Len()
-	switch value.typeCode {
-	case typeCodeLiteral:
-		var v = byte(value.i64)
+	switch value.TypeCode {
+	case TypeCodeLiteral:
+		var v = byte(value.I64)
 		binary.Write(buffer, binary.LittleEndian, v)
 	default:
-		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, value.typeCode)
+		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, value.TypeCode)
 		panic(msg)
 	}
 	var newLen = buffer.Len()
