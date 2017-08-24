@@ -302,7 +302,6 @@ type IndexLookUpExecutor struct {
 }
 
 type indexHandler struct {
-	result          distsql.SelectResult
 	buildTableTasks func(handles []int64) []*lookupTableTask
 	wg              sync.WaitGroup
 }
@@ -313,13 +312,15 @@ func (ih *indexHandler) Open(kvRanges []kv.KeyRange, e *IndexLookUpExecutor, wor
 		return errors.Trace(err)
 	}
 	result.Fetch(e.ctx.GoCtx())
-	ih.result = result
 	ih.buildTableTasks = e.buildTableTasks
 	ih.wg.Add(1)
 	go func() {
 		ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
-		ih.fetchHandles(workCh, ctx, finished)
+		ih.fetchHandles(result, workCh, ctx, finished)
 		cancel()
+		if err := result.Close(); err != nil {
+			log.Errorf(errors.ErrorStack(err))
+		}
 		close(workCh)
 		ih.wg.Done()
 	}()
@@ -327,9 +328,9 @@ func (ih *indexHandler) Open(kvRanges []kv.KeyRange, e *IndexLookUpExecutor, wor
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
-func (ih *indexHandler) fetchHandles(workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
+func (ih *indexHandler) fetchHandles(result distsql.SelectResult, workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
 	for {
-		handles, finish, err := extractHandlesFromIndexResult(ih.result)
+		handles, finish, err := extractHandlesFromIndexResult(result)
 		if err != nil {
 			workCh <- &lookupTableTask{
 				tasksErr: errors.Trace(err),
@@ -353,10 +354,6 @@ func (ih *indexHandler) fetchHandles(workCh chan<- *lookupTableTask, ctx goctx.C
 }
 
 func (ih *indexHandler) Close() {
-	err := ih.result.Close()
-	if err != nil {
-		log.Errorf(errors.ErrorStack(err))
-	}
 	ih.wg.Wait()
 }
 
@@ -364,24 +361,24 @@ type tableHandler struct {
 	taskChan    chan *lookupTableTask
 	taskCurr    *lookupTableTask
 	executeTask func(task *lookupTableTask, goCtx goctx.Context)
-	wg          sync.WaitGroup
 }
 
 func (th *tableHandler) Open(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, finished <-chan struct{}) {
 	th.executeTask = e.executeTask
 	th.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
-	th.wg.Add(lookupConcurrencyLimit)
+	var wg sync.WaitGroup
+	wg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		go func() {
 			ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
 			th.pickAndExecTask(workCh, ctx, finished)
 			cancel()
-			th.wg.Done()
+			wg.Done()
 		}()
 	}
 	go func() {
-		th.wg.Wait()
+		wg.Wait()
 		close(th.taskChan)
 	}()
 }
@@ -395,8 +392,11 @@ func (th *tableHandler) pickAndExecTask(workCh <-chan *lookupTableTask, ctx goct
 			}
 			if task.tasksErr == nil {
 				th.executeTask(task, ctx)
+				th.taskChan <- task
+			} else {
+				th.taskChan <- task
+				return
 			}
-			th.taskChan <- task
 		case <-ctx.Done():
 			return
 		case <-finished:
@@ -507,6 +507,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	if err != nil {
 		return
 	}
+	defer tableReader.Close()
 	for {
 		var row Row
 		row, err = tableReader.Next()
