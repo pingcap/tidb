@@ -67,6 +67,11 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft.Flag |= mysql.BinaryFlag
 	c.Assert(ft.String(), Equals, "varchar(10) BINARY")
 
+	ft = NewFieldType(mysql.TypeString)
+	ft.Charset = charset.CollationBin
+	ft.Flag |= mysql.BinaryFlag
+	c.Assert(ft.String(), Equals, "binary")
+
 	ft = NewFieldType(mysql.TypeEnum)
 	ft.Elems = []string{"a", "b"}
 	c.Assert(ft.String(), Equals, "enum('a','b')")
@@ -184,16 +189,18 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 		case mysql.TypeDate:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeNewDate)
 		case mysql.TypeJSON:
-			c.Assert(aggTp.Tp, Equals, mysql.TypeBit)
+			c.Assert(aggTp.Tp, Equals, mysql.TypeJSON)
 		case mysql.TypeEnum, mysql.TypeSet, mysql.TypeVarString:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeVarchar)
+		case mysql.TypeDecimal:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeNewDecimal)
 		default:
 			c.Assert(aggTp.Tp, Equals, fts[i].Tp)
 		}
 
 		aggTp = AggFieldType([]*FieldType{fts[i], NewFieldType(mysql.TypeLong)})
 		switch fts[i].Tp {
-		case mysql.TypeDecimal, mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeYear, mysql.TypeInt24, mysql.TypeNull:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeLong)
 		case mysql.TypeLonglong:
@@ -207,7 +214,7 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 			c.Assert(aggTp.Tp, Equals, mysql.TypeVarchar)
 		case mysql.TypeString:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeString)
-		case mysql.TypeNewDecimal:
+		case mysql.TypeDecimal, mysql.TypeNewDecimal:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeNewDecimal)
 		case mysql.TypeTinyBlob:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeTinyBlob)
@@ -217,6 +224,18 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 			c.Assert(aggTp.Tp, Equals, mysql.TypeMediumBlob)
 		case mysql.TypeLongBlob:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeLongBlob)
+		}
+
+		aggTp = AggFieldType([]*FieldType{fts[i], NewFieldType(mysql.TypeJSON)})
+		switch fts[i].Tp {
+		case mysql.TypeJSON, mysql.TypeNull:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeJSON)
+		case mysql.TypeLongBlob, mysql.TypeMediumBlob, mysql.TypeTinyBlob, mysql.TypeBlob:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeLongBlob)
+		case mysql.TypeString:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeString)
+		default:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeVarchar)
 		}
 	}
 }
