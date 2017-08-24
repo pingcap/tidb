@@ -248,7 +248,7 @@ func (c *dateFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf.tp.Flen, bf.tp.Decimal = 10, 0
+	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, 10, 0
 	sig := &builtinDateSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -257,32 +257,23 @@ type builtinDateSig struct {
 	baseTimeBuiltinFunc
 }
 
-// eval evals DATE(expr).
+// evalTime evals DATE(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date
 func (b *builtinDateSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
+
 	expr, isNull, err := b.args[0].EvalTime(row, sc)
 	if isNull || err != nil {
-		return types.Time{}, true, errors.Trace(handle)
-	}
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 
-	//	retType := types.NewFieldType(mysql.TypeDate)
-	//	retType.Decimal = fsp
-	//
-	//	d, err = args[0].ConvertTo(b.ctx.GetSessionVars().StmtCtx, retType)
-	//	if err != nil {
-	//		d.SetNull()
-	//		return d, errors.Trace(err)
-	//	}
-	//
-	//	if d.IsNull() {
-	//		return
-	//	}
-	//	return
+	if expr.IsZero() {
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
+	}
+
+	expr.Time = types.FromDate(expr.Time.Year(), expr.Time.Month(), expr.Time.Day(), 0, 0, 0, 0)
+	expr.Type = mysql.TypeDate
+	return expr, false, nil
 }
 
 func convertDatumToTime(sc *variable.StatementContext, d types.Datum) (t types.Time, err error) {

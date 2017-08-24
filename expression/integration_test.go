@@ -943,6 +943,14 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result := tk.MustQuery("select makedate(a,a), makedate(b,b), makedate(c,c), makedate(d,d), makedate(e,e), makedate(f,f), makedate(null,null), makedate(a,b) from t")
 	result.Check(testkit.Rows("2001-01-01 2001-01-01 <nil> <nil> <nil> 2021-01-21 <nil> 2001-01-01"))
 
+	// for date
+	result = tk.MustQuery(`select date("2019-09-12"), date("2019-09-12 12:12:09"), date("2019-09-12 12:12:09.121212");`)
+	result.Check(testkit.Rows("2019-09-12 2019-09-12 2019-09-12"))
+	result = tk.MustQuery(`select date("0000-00-00"), date("0000-00-00 12:12:09"), date("0000-00-00 00:00:00.121212"), date("0000-00-00 00:00:00.000000");`)
+	result.Check(testkit.Rows("<nil> 0000-00-00 0000-00-00 <nil>"))
+	result = tk.MustQuery(`select date("aa"), date(12.1), date("");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+
 	// for year
 	result = tk.MustQuery(`select year("2013-01-09"), year("2013-00-09"), year("000-01-09"), year("1-01-09"), year("20131-01-09"), year(null);`)
 	result.Check(testkit.Rows("2013 2013 0 1 <nil> <nil>"))
