@@ -1230,7 +1230,7 @@ func (s *session) ShowProcess() util.ProcessInfo {
 	return pi
 }
 
-// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD etc.
+// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD DDL etc.
 func logCrucialStmt(node ast.StmtNode) {
 	switch stmt := node.(type) {
 	case *ast.CreateUserStmt:
@@ -1254,6 +1254,9 @@ func logCrucialStmt(node ast.StmtNode) {
 		}
 		log.Infof("[CRUCIAL OPERATION] %s.", text)
 	case *ast.RevokeStmt:
+		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
+	case *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
+		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
 	}
 }
