@@ -139,7 +139,7 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: d152a9c48278dc94c205a255ef05b39dbb87b455
+  version: 38eb8a2e70dd39668a62d24a79f30596f204df14
 - package: github.com/pingcap/tipb
   version: b45b9d4dd493e6f5f674f9303a12139fb28be13e
   subpackages:
