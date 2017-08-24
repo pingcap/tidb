@@ -1947,6 +1947,11 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 
 	result = tk.MustQuery(`SELECT HEX(NULLIF("abc", 1));`)
 	result.Check(testkit.Rows("616263"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a date)")
+	result = tk.MustQuery("desc select a = a from t")
+	result.Check(testkit.Rows("TableScan_3   cop table:t, range:(-inf,+inf), keep order:false 8000", "TableReader_4 Projection_2  root data:TableScan_3 8000", "Projection_2  TableReader_4 root eq(test.t.a, test.t.a) 8000"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
