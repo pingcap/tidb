@@ -84,7 +84,7 @@ import (
 	cross 			"CROSS"
 	currentDate 		"CURRENT_DATE"
 	currentTime 		"CURRENT_TIME"
-	curTime				"CUR_TIME"
+	curTime			"CUR_TIME"
 	currentTs		"CURRENT_TIMESTAMP"
 	currentUser		"CURRENT_USER"
 	database		"DATABASE"
