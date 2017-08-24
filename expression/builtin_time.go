@@ -244,7 +244,7 @@ func (c *dateFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpTime, tpTime)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpDatetime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
