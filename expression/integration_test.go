@@ -1231,6 +1231,22 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`select monthname("2017-12-01"), monthname("0000-00-00"), monthname("0000-01-00"), monthname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("December <nil> January January"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format"))
+
+	// for dayname
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a varchar(10))`)
+	tk.MustExec(`insert into t value("abc")`)
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+
+	_, err = tk.Exec("insert into t value(dayname('0000-00-00'))")
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`update t set a = dayname("0000-00-00")`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	_, err = tk.Exec(`delete from t where a = dayname(123)`)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	result = tk.MustQuery(`select dayname("2017-12-01"), dayname("0000-00-00"), dayname("0000-01-00"), dayname("0000-01-00 00:00:00")`)
+	result.Check(testkit.Rows("Friday <nil> <nil> <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format", "Warning|1105|invalid time format", "Warning|1105|invalid time format"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
