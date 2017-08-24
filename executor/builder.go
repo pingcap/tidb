@@ -81,6 +81,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSelectLock(v)
 	case *plan.ShowDDL:
 		return b.buildShowDDL(v)
+	case *plan.ShowDDLJobs:
+		return b.buildShowDDLJobs(v)
 	case *plan.Show:
 		return b.buildShow(v)
 	case *plan.Simple:
@@ -166,6 +168,29 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	}
 	e.ddlInfo = ddlInfo
 	e.selfID = ownerManager.ID()
+	return e
+}
+
+func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
+	e := &ShowDDLJobsExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+	}
+
+	var err error
+	e.jobs, err = inspectkv.GetDDLJobs(e.ctx.Txn())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	e.cnt = len(e.jobs)
+	e.historyJobs, err = inspectkv.GetHistoryDDLJobs(e.ctx.Txn())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	if e.cnt < len(e.historyJobs) {
+		e.cnt = len(e.historyJobs)
+	}
 	return e
 }
 

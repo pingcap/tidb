@@ -157,7 +157,79 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(info.Job, DeepEquals, job)
 	c.Assert(info.ReorgHandle, Equals, int64(0))
-	err = txn.Commit()
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestGetDDLJobs(c *C) {
+	defer testleak.AfterTest(c)()
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+	cnt := 10
+	jobs := make([]*model.Job, cnt)
+	for i := 0; i < cnt; i++ {
+		jobs[i] = &model.Job{
+			ID:       int64(i),
+			SchemaID: 1,
+			Type:     model.ActionCreateTable,
+		}
+		err = t.EnQueueDDLJob(jobs[i])
+		c.Assert(err, IsNil)
+		currJobs, err := GetDDLJobs(txn)
+		c.Assert(err, IsNil)
+		c.Assert(currJobs, HasLen, i+1)
+	}
+
+	currJobs, err := GetDDLJobs(txn)
+	c.Assert(err, IsNil)
+	for i, job := range jobs {
+		c.Assert(job.ID, Equals, currJobs[i].ID)
+		c.Assert(job.SchemaID, Equals, int64(1))
+		c.Assert(job.Type, Equals, model.ActionCreateTable)
+	}
+
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
+	defer testleak.AfterTest(c)()
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+	cnt := 11
+	jobs := make([]*model.Job, cnt)
+	for i := 0; i < cnt; i++ {
+		jobs[i] = &model.Job{
+			ID:       int64(i),
+			SchemaID: 1,
+			Type:     model.ActionCreateTable,
+		}
+		err = t.AddHistoryDDLJob(jobs[i])
+		c.Assert(err, IsNil)
+		historyJobs, err := GetHistoryDDLJobs(txn)
+		c.Assert(err, IsNil)
+		if i+1 > maxHistoryJobs {
+			c.Assert(historyJobs, HasLen, maxHistoryJobs)
+		} else {
+			c.Assert(historyJobs, HasLen, i+1)
+		}
+	}
+
+	delta := cnt - maxHistoryJobs
+	historyJobs, err := GetHistoryDDLJobs(txn)
+	c.Assert(err, IsNil)
+	c.Assert(historyJobs, HasLen, maxHistoryJobs)
+	for i, job := range historyJobs {
+		c.Assert(job.ID, Equals, jobs[delta+i].ID)
+		c.Assert(job.SchemaID, Equals, int64(1))
+		c.Assert(job.Type, Equals, model.ActionCreateTable)
+	}
+
+	err = txn.Rollback()
 	c.Assert(err, IsNil)
 }
 

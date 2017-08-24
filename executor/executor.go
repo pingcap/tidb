@@ -44,6 +44,7 @@ var (
 	_ Executor = &SelectionExec{}
 	_ Executor = &SelectLockExec{}
 	_ Executor = &ShowDDLExec{}
+	_ Executor = &ShowDDLJobsExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
@@ -176,6 +177,35 @@ func (e *ShowDDLExec) Next() (Row, error) {
 		e.selfID,
 	)
 	e.done = true
+
+	return row, nil
+}
+
+// ShowDDLJobsExec represent a show DDL jobs executor.
+type ShowDDLJobsExec struct {
+	baseExecutor
+
+	cursor      int
+	cnt         int
+	jobs        []*model.Job
+	historyJobs []*model.Job
+}
+
+// Next implements the Executor Next interface.
+func (e *ShowDDLJobsExec) Next() (Row, error) {
+	if e.cursor >= e.cnt {
+		return nil, nil
+	}
+
+	var job, historyJob string
+	if len(e.jobs) > e.cursor {
+		job = e.jobs[e.cursor].String()
+	}
+	if len(e.historyJobs) > e.cursor {
+		historyJob = e.historyJobs[e.cursor].String()
+	}
+	row := types.MakeDatums(job, historyJob)
+	e.cursor++
 
 	return row, nil
 }
