@@ -437,7 +437,7 @@ func (b *builtinDateFormatSig) evalString(row []types.Datum) (string, bool, erro
 	sc := b.ctx.GetSessionVars().StmtCtx
 	t, isNull, err := b.args[0].EvalTime(row, sc)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return "", isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	if t.InvalidZero() {
 		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
