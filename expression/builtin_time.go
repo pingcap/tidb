@@ -24,9 +24,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/_vendor/src/github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -2041,8 +2041,9 @@ type timestampFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *timestampFunctionClass) getDefaultFsp4Type(tp *types.FieldType) int {
-	if tp.Tp == mysql.TypeDatetime || tp.Tp == mysql.TypeDate || tp.Tp == mysql.TypeDuration || tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeNewDate {
+func (c *timestampFunctionClass) getDefaultFsp(tp *types.FieldType) int {
+	if tp.Tp == mysql.TypeDatetime || tp.Tp == mysql.TypeDate || tp.Tp == mysql.TypeDuration ||
+		tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeNewDate {
 		return tp.Decimal
 	}
 	switch cls := tp.ToClass(); cls {
@@ -2067,18 +2068,17 @@ func (c *timestampFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if argLen == 2 {
 		evalTps = append(evalTps, tpString)
 	}
-	fsp := c.getDefaultFsp4Type(args[0].GetType())
+	fsp := c.getDefaultFsp(args[0].GetType())
 	if argLen == 2 {
-		fsp = mathutil.Max(fsp, c.getDefaultFsp4Type(args[1].GetType()))
+		fsp = mathutil.Max(fsp, c.getDefaultFsp(args[1].GetType()))
 	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, evalTps...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf.tp.Decimal, bf.tp.Flen = fsp, 19
 	if fsp != 0 {
 		bf.tp.Flen += 1 + fsp
-	}
-
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	var sig builtinFunc
 	if argLen == 2 {
@@ -2114,8 +2114,8 @@ type builtinTimestamp2ArgsSig struct {
 // evalTime evals a builtinTimestamp2ArgsSig.
 // See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_timestamp
 func (b *builtinTimestamp2ArgsSig) evalTime(row []types.Datum) (types.Time, bool, error) {
-	ctx := b.ctx.GetSessionVars().StmtCtx
-	arg0, isNull, err := b.args[0].EvalString(row, ctx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return types.Time{}, isNull, errors.Trace(err)
 	}
@@ -2123,14 +2123,17 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row []types.Datum) (types.Time, bool
 	if err != nil {
 		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	arg1, isNull, err := b.args[1].EvalString(row, ctx)
+	arg1, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
 		return types.Time{}, isNull, errors.Trace(err)
+	}
+	duration, err := types.ParseDuration(arg1, getFsp(arg1))
+	if err != nil {
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	if !isDuration(arg1) {
 		return types.Time{}, true, nil
 	}
-	duration, err := types.ParseDuration(arg1, getFsp(arg1))
 	tmpDuration := tm.Add(duration)
 	result, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
 	if err != nil {
