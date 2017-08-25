@@ -505,6 +505,7 @@ type PhysicalIndexJoin struct {
 	outerIndex      int
 	KeepOrder       bool
 	outerSchema     *expression.Schema
+	innerPlan       PhysicalPlan
 
 	DefaultValues []types.Datum
 }
