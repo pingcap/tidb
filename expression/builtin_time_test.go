@@ -1204,6 +1204,7 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 		t2 := types.NewStringDatum(test.t2)
 
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{t1, t2}), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
 		c.Assert(err, IsNil)
 		result, err := f.eval(nil)
 
@@ -1211,22 +1212,29 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 		c.Assert(result.GetInt64(), Equals, test.expect)
 	}
 
-	// Check if month is 0.
-	t1 := types.NewStringDatum("2016-00-01")
-	t2 := types.NewStringDatum("2016-01-13")
+	// Test invalid time format.
+	tests2 := []struct {
+		t1 string
+		t2 string
+	}{
+		{"2004-05-21", "abcdefg"},
+		{"2007-12-31 23:59:59", "23:59:59"},
+		{"2007-00-31 23:59:59", "2016-01-13"},
+		{"2007-10-31 23:59:59", "2016-01-00"},
+		{"2007-10-31 23:59:59", "99999999-01-00"},
+	}
 
-	f, err := fc.getFunction(datumsToConstants([]types.Datum{t1, t2}), s.ctx)
-	c.Assert(err, IsNil)
-	result, err := f.eval(nil)
+	fc = funcs[ast.DateDiff]
+	for _, test := range tests2 {
+		t1 := types.NewStringDatum(test.t1)
+		t2 := types.NewStringDatum(test.t2)
 
-	c.Assert(err, IsNil)
-	c.Assert(result.IsNull(), Equals, true)
-
-	f, err = fc.getFunction(datumsToConstants([]types.Datum{{}, types.NewStringDatum("2017-01-01")}), s.ctx)
-	c.Assert(err, IsNil)
-	d, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.IsNull(), IsTrue)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{t1, t2}), s.ctx)
+		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(d.IsNull(), IsTrue)
+	}
 }
 
 func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
