@@ -529,6 +529,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 		// for date literal
 		{"select date'1989-09-10'", true},
+		{"select date 19890910", false},
 	}
 	s.RunTest(c, table)
 }
