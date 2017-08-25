@@ -1131,6 +1131,9 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select datediff('0000-01-01','0001-01-01'), datediff('0001-00-01', '0001-00-01'), datediff('0001-01-00','0001-01-00'), datediff('2017-01-01','2017-01-01');")
 	result.Check(testkit.Rows("-365 <nil> <nil> 0"))
 
+	result = tk.MustQuery("select addtime('01:01:11', '0:0:1.013'), addtime('01:01:11.00', '0:0:1'), addtime('2017-01-01 01:01:11.12', '0:0:1');")
+	result.Check(testkit.Rows("01:01:12.013000 01:01:12 2017-01-01 01:01:12.120000"))
+
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
 	tk.MustExec("SET TIME_ZONE='+03:00';")
