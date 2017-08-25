@@ -137,7 +137,7 @@ func (s *testPlanSuite) createTestCase4Columns() []typeInferTestCase {
 		{"c_time", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
 		{"c_time_d", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"c_timestamp", mysql.TypeTimestamp, charset.CharsetBin, mysql.NotNullFlag | mysql.BinaryFlag | mysql.TimestampFlag, 24, 4},
-		{"c_timestamp_d", mysql.TypeTimestamp, charset.CharsetBin, mysql.NotNullFlag | mysql.BinaryFlag | mysql.TimestampFlag, 19, -1}, // TODO: Decimal should be 0.
+		{"c_timestamp_d", mysql.TypeTimestamp, charset.CharsetBin, mysql.NotNullFlag | mysql.BinaryFlag | mysql .TimestampFlag, 19, 0},
 		{"c_int_d", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, types.UnspecifiedLength},
 		{"c_char", mysql.TypeString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
 		{"c_enum", mysql.TypeEnum, charset.CharsetUTF8, 0, types.UnspecifiedLength, types.UnspecifiedLength},
