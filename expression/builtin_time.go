@@ -26,13 +26,13 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/_vendor/src/github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/_vendor/src/github.com/cznic/mathutil"
 )
 
 const ( // GET_FORMAT first argument.
@@ -2047,16 +2047,16 @@ func (c *timestampFunctionClass) getDefaultFsp4Type(tp *types.FieldType) int {
 	}
 	switch cls := tp.ToClass(); cls {
 	case types.ClassInt:
-        return 0
+		return 0
 	case types.ClassReal, types.ClassString:
 		return types.MaxFsp
 	case types.ClassDecimal:
-        if tp.Decimal < types.MaxFsp {
+		if tp.Decimal < types.MaxFsp {
 			return tp.Decimal
 		}
 		return 6
 	}
-    return types.MaxFsp
+	return types.MaxFsp
 }
 
 func (c *timestampFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
@@ -2068,11 +2068,11 @@ func (c *timestampFunctionClass) getFunction(args []Expression, ctx context.Cont
 		evalTps = append(evalTps, tpString)
 	}
 	fsp := c.getDefaultFsp4Type(args[0].GetType())
-    if argLen == 2 {
+	if argLen == 2 {
 		fsp = mathutil.Max(fsp, c.getDefaultFsp4Type(args[1].GetType()))
 	}
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, evalTps...)
-    bf.tp.Decimal, bf.tp.Flen = fsp, 19
+	bf.tp.Decimal, bf.tp.Flen = fsp, 19
 	if fsp != 0 {
 		bf.tp.Flen += 1 + fsp
 	}
@@ -2130,7 +2130,7 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row []types.Datum) (types.Time, bool
 	if !isDuration(arg1) {
 		return types.Time{}, true, nil
 	}
-    duration, err := types.ParseDuration(arg1, getFsp(arg1))
+	duration, err := types.ParseDuration(arg1, getFsp(arg1))
 	tmpDuration := tm.Add(duration)
 	result, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
 	if err != nil {
