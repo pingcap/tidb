@@ -114,6 +114,7 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 		{nil, types.Hex{Value: 1}, "\x01", false, false},
 		{nil, types.Set{Value: 1, Name: "abc"}, "abc", false, false},
 		{"abc", nil, "abc", false, false},
+		{errors.New(""), nil, "", true, true},
 	}
 
 	for _, t := range tbl {
