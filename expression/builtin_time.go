@@ -416,7 +416,7 @@ func (c *dateFormatFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpTime, tpString)
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpDatetime, tpString)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -434,22 +434,21 @@ type builtinDateFormatSig struct {
 // eval evals a builtinDateFormatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
 func (b *builtinDateFormatSig) evalString(row []types.Datum) (string, bool, error) {
-	t, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	t, isNull, err := b.args[0].EvalTime(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	if t.InvalidZero() {
+		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat))
+	}
+	formatMask, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
 
-	if err != nil || isNull {
-		return "", isNull, errors.Trace(err)
-	}
-	formatMask, isNull, err := b.args[1].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
-	if err != nil || isNull {
-		return "", isNull, errors.Trace(err)
-	}
-	res, err := b.formatDate(t, formatMask, b.ctx)
+	res, err := t.DateFormat(formatMask)
 	return res, isNull, errors.Trace(err)
-}
-
-func (b *builtinDateFormatSig) formatDate(t types.Time, formatMask string, ctx context.Context) (res string, err error) {
-	str, err := t.DateFormat(formatMask)
-	return str, errors.Trace(err)
 }
 
 // builtinDateFormat ...
