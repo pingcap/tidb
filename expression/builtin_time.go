@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -2116,12 +2115,15 @@ func isDuration(str string) bool {
 
 // strDatetimeAddDuration adds duration to datetime string, returns a datum value.
 func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
-	fsp := mathutil.Max(getFsp4TimeAddSub(d), arg1.Fsp)
-	arg0, err := types.ParseTime(d, mysql.TypeDatetime, fsp)
+	arg0, err := types.ParseTime(d, mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
 	tmpDuration := arg0.Add(arg1)
+	fsp := types.MaxFsp
+	if tmpDuration.MicroSecond() == 0 {
+		fsp = types.MinFsp
+	}
 	resultDuration, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
 	if err != nil {
 		return result, errors.Trace(err)
@@ -2133,8 +2135,7 @@ func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, 
 
 // strDurationAddDuration adds duration to duration string, returns a datum value.
 func strDurationAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
-	fsp := mathutil.Max(getFsp4TimeAddSub(d), arg1.Fsp)
-	arg0, err := types.ParseDuration(d, fsp)
+	arg0, err := types.ParseDuration(d, types.MaxFsp)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
@@ -2142,15 +2143,17 @@ func strDurationAddDuration(d string, arg1 types.Duration) (result types.Datum, 
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	tmpDuration.Fsp = fsp
+	tmpDuration.Fsp = types.MaxFsp
+	if tmpDuration.MicroSecond() == 0 {
+		tmpDuration.Fsp = types.MinFsp
+	}
 	result.SetString(tmpDuration.String())
 	return
 }
 
 // strDatetimeSubDuration subtracts duration from datetime string, returns a datum value.
 func strDatetimeSubDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
-	fsp := mathutil.Max(getFsp4TimeAddSub(d), arg1.Fsp)
-	arg0, err := types.ParseTime(d, mysql.TypeDatetime, fsp)
+	arg0, err := types.ParseTime(d, mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
@@ -2159,6 +2162,10 @@ func strDatetimeSubDuration(d string, arg1 types.Duration) (result types.Datum, 
 		return result, errors.Trace(err)
 	}
 	tmpDuration := arg0.Sub(&arg1time)
+	fsp := types.MaxFsp
+	if tmpDuration.MicroSecond() == 0 {
+		fsp = types.MinFsp
+	}
 	resultDuration, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
 	if err != nil {
 		return result, errors.Trace(err)
@@ -2170,8 +2177,7 @@ func strDatetimeSubDuration(d string, arg1 types.Duration) (result types.Datum, 
 
 // strDurationSubDuration subtracts duration from duration string, returns a datum value.
 func strDurationSubDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
-	fsp := mathutil.Max(getFsp4TimeAddSub(d), arg1.Fsp)
-	arg0, err := types.ParseDuration(d, fsp)
+	arg0, err := types.ParseDuration(d, types.MaxFsp)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
@@ -2179,7 +2185,10 @@ func strDurationSubDuration(d string, arg1 types.Duration) (result types.Datum, 
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	tmpDuration.Fsp = fsp
+	tmpDuration.Fsp = types.MaxFsp
+	if tmpDuration.MicroSecond() == 0 {
+		tmpDuration.Fsp = types.MinFsp
+	}
 	result.SetString(tmpDuration.String())
 	return
 }
