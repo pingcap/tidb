@@ -6171,6 +6171,9 @@ DateAndTimeType:
 		x := types.NewFieldType(mysql.TypeTimestamp)
 		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
+		if x.Decimal == types.UnspecifiedLength {
+		    x.Decimal = 0
+		}
 		if x.Decimal > 0 {
 			x.Flen = x.Flen + 1 + x.Decimal
 		}
