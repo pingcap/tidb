@@ -712,7 +712,7 @@ func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context
 	default:
 		tp := args[0].GetType().Tp
 		if types.IsTypeTime(tp) {
-			argTp = tpTime
+			argTp = tpDatetime
 		} else if tp == mysql.TypeDuration {
 			argTp = tpDuration
 		} else {
@@ -732,7 +732,7 @@ func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context
 		sig = &builtinDecimalIsNullSig{baseIntBuiltinFunc{bf}}
 	case tpReal:
 		sig = &builtinRealIsNullSig{baseIntBuiltinFunc{bf}}
-	case tpTime:
+	case tpDatetime:
 		sig = &builtinTimeIsNullSig{baseIntBuiltinFunc{bf}}
 	case tpDuration:
 		sig = &builtinDurationIsNullSig{baseIntBuiltinFunc{bf}}
