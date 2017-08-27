@@ -142,7 +142,6 @@ var (
 	_ builtinFunc = &builtinExtractSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 	_ builtinFunc = &builtinUnixTimestampSig{}
-
 	_ builtinFunc = &builtinAddDatetimeAndDurationSig{}
 	_ builtinFunc = &builtinAddDatetimeAndStringSig{}
 	_ builtinFunc = &builtinAddTimeDateTimeNullSig{}
@@ -154,7 +153,6 @@ var (
 	_ builtinFunc = &builtinAddTimeDurationNullSig{}
 	_ builtinFunc = &builtinAddDateAndDurationSig{}
 	_ builtinFunc = &builtinAddDateAndStringSig{}
-
 	_ builtinFunc = &builtinSubDatetimeAndDurationSig{}
 	_ builtinFunc = &builtinSubDatetimeAndStringSig{}
 	_ builtinFunc = &builtinSubTimeDateTimeNullSig{}
@@ -166,7 +164,6 @@ var (
 	_ builtinFunc = &builtinSubTimeDurationNullSig{}
 	_ builtinFunc = &builtinSubDateAndDurationSig{}
 	_ builtinFunc = &builtinSubDateAndStringSig{}
-
 	_ builtinFunc = &builtinConvertTzSig{}
 	_ builtinFunc = &builtinMakeDateSig{}
 	_ builtinFunc = &builtinMakeTimeSig{}
@@ -3157,7 +3154,6 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(row []types.Datum) (types.Ti
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, errors.Trace(err)
 	}
-	//arg1time, err := arg1.ConvertToTime(uint8(getFsp(arg1.String())))
 	arg1time, err := arg1.ConvertToTime(mysql.TypeDatetime)
 	if err != nil {
 		return arg1time, true, errors.Trace(err)
@@ -3196,7 +3192,6 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row []types.Datum) (types.Time
 	if !isDuration(s) {
 		return types.ZeroDatetime, true, nil
 	}
-	//arg1time, err := arg1.ConvertToTime(uint8(getFsp(arg1.String())))
 	arg1time, err := arg1.ConvertToTime(mysql.TypeDatetime)
 	if err != nil {
 		return types.ZeroDatetime, true, errors.Trace(err)
@@ -3416,70 +3411,6 @@ func (b *builtinSubDateAndStringSig) evalString(row []types.Datum) (string, bool
 	}
 	return result.String(), false, nil
 }
-
-/*
-type builtinSubTimeSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinSubTimeSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
-func (b *builtinSubTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if args[0].IsNull() || args[1].IsNull() {
-		return
-	}
-	var arg1 types.Duration
-	switch args[1].Kind() {
-	case types.KindMysqlDuration:
-		arg1 = args[1].GetMysqlDuration()
-	default:
-		s, err := args[1].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		arg1, err = types.ParseDuration(s, getFsp4TimeAddSub(s))
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-	}
-	switch args[0].Kind() {
-	case types.KindMysqlTime:
-		arg0 := args[0].GetMysqlTime()
-		arg1time, err := arg1.ConvertToTime(uint8(getFsp(arg1.String())))
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		tmpDuration := arg0.Sub(&arg1time)
-		result, err := tmpDuration.ConvertToTime(arg0.Type)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetMysqlTime(result)
-	case types.KindMysqlDuration:
-		arg0 := args[0].GetMysqlDuration()
-		result, err := arg0.Sub(arg1)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetMysqlDuration(result)
-	default:
-		ss, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		if isDuration(ss) {
-			return strDurationSubDuration(ss, arg1)
-		}
-		return strDatetimeSubDuration(ss, arg1)
-	}
-	return
-}
-*/
 
 type timeFormatFunctionClass struct {
 	baseFunctionClass
