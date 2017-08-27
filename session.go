@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/types"
@@ -291,7 +290,7 @@ func (s *session) doCommitWithRetry() error {
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int(float64(commitRetryLimit-1)*txnSizeRate)
-			err = s.retry(maxRetryCount, terror.ErrorEqual(err, domain.ErrInfoSchemaChanged))
+			err = s.retry(maxRetryCount, domain.ErrInfoSchemaChanged.Equal(err))
 		}
 	}
 	s.cleanRetryInfo()
@@ -364,7 +363,7 @@ func (s *session) isRetryableError(err error) bool {
 	if SchemaChangedWithoutRetry {
 		return kv.IsRetryableError(err)
 	}
-	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
+	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
 func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
@@ -420,7 +419,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 			return errors.Trace(err)
 		}
 		retryCnt++
-		infoSchemaChanged = terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
+		infoSchemaChanged = domain.ErrInfoSchemaChanged.Equal(err)
 		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
 			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
@@ -653,7 +652,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		r, err := runStmt(s, st)
 		ph.EndStatement(s.stmtState)
 		if err != nil {
-			if !terror.ErrorEqual(err, kv.ErrKeyExists) {
+			if !kv.ErrKeyExists.Equal(err) {
 				log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
 			}
 			return nil, errors.Trace(err)
@@ -987,8 +986,8 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	finishBootstrap(store)
 	s.ClearValue(context.Initing)
 
-	domain := sessionctx.GetDomain(s)
-	domain.Close()
+	dom := sessionctx.GetDomain(s)
+	dom.Close()
 	domap.Delete(store)
 }
 
@@ -1148,7 +1147,7 @@ func (s *session) PrepareTxnCtx() {
 		return
 	}
 
-	s.goCtx, s.cancelFunc = util.WithCancel(goctx.Background())
+	s.goCtx, s.cancelFunc = goctx.WithCancel(goctx.Background())
 	s.txnFuture = s.getTxnFuture()
 	is := sessionctx.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
@@ -1231,7 +1230,7 @@ func (s *session) ShowProcess() util.ProcessInfo {
 	return pi
 }
 
-// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD etc.
+// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc.
 func logCrucialStmt(node ast.StmtNode) {
 	switch stmt := node.(type) {
 	case *ast.CreateUserStmt:
@@ -1255,6 +1254,9 @@ func logCrucialStmt(node ast.StmtNode) {
 		}
 		log.Infof("[CRUCIAL OPERATION] %s.", text)
 	case *ast.RevokeStmt:
+		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
+	case *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
+		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
 	}
 }

@@ -55,8 +55,6 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		types.SetBinChsClnFlag(&x.Type)
 	case *ast.BinaryOperationExpr:
 		v.binaryOperation(x)
-	case *ast.CaseExpr:
-		v.handleCaseExpr(x)
 	case *ast.ColumnNameExpr:
 		x.SetType(&x.Refer.Column.FieldType)
 	case *ast.CompareSubqueryExpr:
@@ -374,7 +372,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime, ast.UTCTime, ast.Time:
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
-	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate:
+	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate, ast.LastDay:
 		tp = types.NewFieldType(mysql.TypeDate)
 	case ast.DateAdd, ast.DateSub, ast.AddDate, ast.SubDate, ast.Timestamp, ast.TimestampAdd, ast.StrToDate, ast.ConvertTz:
 		tp = types.NewFieldType(mysql.TypeDatetime)
