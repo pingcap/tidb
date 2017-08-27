@@ -2020,3 +2020,44 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	result = tk.MustQuery(`select bit_count(121), bit_count(-1), bit_count(null), bit_count("1231aaa");`)
 	result.Check(testkit.Rows("5 64 <nil> 7"))
 }
+
+func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("create table t (d date);")
+	tk.MustExec("insert into t values ('1997-01-02')")
+	tk.MustExec("insert into t values ('1998-01-02')")
+	r := tk.MustQuery("select * from t where d < date '1998-01-01';")
+	r.Check(testkit.Rows("1997-01-02"))
+
+	r = tk.MustQuery("select date'20171212'")
+	r.Check(testkit.Rows("2017-12-12"))
+
+	r = tk.MustQuery("select date'2017/12/12'")
+	r.Check(testkit.Rows("2017-12-12"))
+
+	r = tk.MustQuery("select date'2017/12-12'")
+	r.Check(testkit.Rows("2017-12-12"))
+
+	r = tk.MustQuery("select date'0000-00-00'")
+	r.Check(testkit.Rows("<nil>"))
+
+	r = tk.MustQuery("select date'0000-00-00 00:00:00'")
+	r.Check(testkit.Rows("<nil>"))
+
+	r = tk.MustQuery("select date'2017-99-99';")
+	r.Check(testkit.Rows("<nil>"))
+
+	r = tk.MustQuery("select date'2017-2-31';")
+	r.Check(testkit.Rows("<nil>"))
+
+	r = tk.MustQuery("select date'201712-31';")
+	r.Check(testkit.Rows("<nil>"))
+
+}
