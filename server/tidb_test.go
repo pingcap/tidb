@@ -293,8 +293,12 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	server.Close()
 
 	// Start the server with TLS but without CA, in this case the server will not verify client's certificate.
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+		config.Addr = "localhost:4003"
+	}
 	cfg = &config.Config{
-		Addr:         ":4002",
+		Addr:         ":4003",
 		LogLevel:     "debug",
 		StatusAddr:   ":10091",
 		ReportStatus: true,
@@ -311,7 +315,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	// Perform server verification.
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate"
-		config.Addr = "localhost:4002"
+		config.Addr = "localhost:4003"
 	}
 	err = runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
 	c.Assert(err, IsNil)
@@ -319,8 +323,12 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	server.Close()
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate"
+		config.Addr = "localhost:4004"
+	}
 	cfg = &config.Config{
-		Addr:         ":4002",
+		Addr:         ":4004",
 		LogLevel:     "debug",
 		StatusAddr:   ":10091",
 		ReportStatus: true,
@@ -334,7 +342,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	// The client does not provide a certificate, the connection should succeed.
 	connOverrider = func(config *mysql.Config) {
-		config.Addr = "localhost:4002"
+		config.Addr = "localhost:4004"
 	}
 	err = runTestTLSConnection(c, connOverrider)
 	c.Assert(err, IsNil)
@@ -342,7 +350,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	// The client provides a valid certificate.
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate"
-		config.Addr = "localhost:4002"
+		config.Addr = "localhost:4004"
 	}
 	err = runTestTLSConnection(c, connOverrider)
 	c.Assert(err, IsNil)
