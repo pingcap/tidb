@@ -2358,7 +2358,7 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(row []types.Datum) (types.Time
 	if err != nil {
 		return types.ZeroDatetime, true, errors.Trace(err)
 	}
-	arg1, err := types.ParseDuration(s, getFsp4TimeAddSub(s))
+	arg1, err := types.ParseDuration(s, getFsp(s))
 	if err != nil {
 		return types.ZeroDatetime, true, errors.Trace(err)
 	}
@@ -2422,7 +2422,7 @@ func (b *builtinAddDurationAndStringSig) evalDuration(row []types.Datum) (types.
 	if isNull || err != nil {
 		return types.ZeroDuration, isNull, errors.Trace(err)
 	}
-	arg1, err := types.ParseDuration(s, getFsp4TimeAddSub(s))
+	arg1, err := types.ParseDuration(s, getFsp(s))
 	if err != nil {
 		return types.ZeroDuration, true, errors.Trace(err)
 	}
@@ -2524,7 +2524,7 @@ type builtinAddDateAndDurationSig struct {
 
 // eval evalString a builtinAddDurationAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
-func (b *builtinAddDurationAndDurationSig) evalString(row []types.Datum) (string, bool, error) {
+func (b *builtinAddDateAndDurationSig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	arg0, isNull, err := b.args[0].EvalDuration(row, sc)
 	if isNull || err != nil {
