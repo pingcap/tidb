@@ -65,6 +65,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 		c_datetime_d datetime,
 		c_time time(3),
 		c_time_d time,
+		c_date date,
 		c_timestamp timestamp(4) DEFAULT CURRENT_TIMESTAMP(4),
 		c_timestamp_d timestamp DEFAULT CURRENT_TIMESTAMP,
 		c_char char(20),
@@ -1005,6 +1006,20 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"timestampdiff(QuarteR, c_char, c_varchar)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
 		{"timestampdiff(second, c_int_d, c_bchar)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
 		{"timestampdiff(YEAR, c_blob_d, c_bigint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+
+		{"addtime(c_int_d, c_time_d)", mysql.TypeString, charset.CharsetUTF8, 0, 26, types.UnspecifiedLength},
+		{"addtime(c_datetime_d, c_time_d)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 0},
+		{"addtime(c_datetime, c_time_d)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 2},
+		{"addtime(c_timestamp, c_time_d)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 4},
+		{"addtime(c_timestamp_d, c_time_d)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, types.UnspecifiedLength}, //TODO: decimal should be 0
+		{"addtime(c_time, c_time)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 15, 3},
+		{"addtime(c_time_d, c_time)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 15, 0},
+		{"addtime(c_char, c_time_d)", mysql.TypeString, charset.CharsetUTF8, 0, 26, types.UnspecifiedLength},
+		{"addtime(c_char, c_datetime)", mysql.TypeString, charset.CharsetUTF8, 0, 26, types.UnspecifiedLength},
+		{"addtime(c_char, c_int_d)", mysql.TypeString, charset.CharsetUTF8, 0, 26, types.UnspecifiedLength},
+		{"addtime(c_date, c_datetime)", mysql.TypeString, charset.CharsetUTF8, 0, 26, types.UnspecifiedLength},
+		{"addtime(c_date, c_timestamp)", mysql.TypeString, charset.CharsetUTF8, 0, 26, types.UnspecifiedLength},
+		{"addtime(c_date, c_time)", mysql.TypeString, charset.CharsetUTF8, 0, 26, types.UnspecifiedLength},
 
 		{"hour(c_int_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
 		{"hour(c_bigint_d  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
