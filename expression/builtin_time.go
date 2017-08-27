@@ -2048,14 +2048,14 @@ func (c *timestampFunctionClass) getDefaultFsp(tp *types.FieldType) int {
 	}
 	switch cls := tp.ToClass(); cls {
 	case types.ClassInt:
-		return 0
+		return types.MinFsp
 	case types.ClassReal, types.ClassString:
 		return types.MaxFsp
 	case types.ClassDecimal:
 		if tp.Decimal < types.MaxFsp {
 			return tp.Decimal
 		}
-		return 6
+		return types.MaxFsp
 	}
 	return types.MaxFsp
 }
