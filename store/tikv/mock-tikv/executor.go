@@ -21,13 +21,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pingcap/tidb/model"
 )
 
 type executor interface {
@@ -146,6 +146,12 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	return handle, row, nil
 }
 
+const (
+	pkColNotExists = iota
+	pkColIsSigned
+	pkColIsUnsigned
+)
+
 type indexScanExec struct {
 	*tipb.IndexScan
 	colsLen        int
@@ -155,7 +161,7 @@ type indexScanExec struct {
 	mvccStore      MVCCStore
 	cursor         int
 	seekKey        []byte
-	pkCol          *tipb.ColumnInfo
+	pkStatus       int
 
 	src executor
 }
@@ -228,7 +234,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 			return 0, nil, errors.Trace(err)
 		}
 		handle = handleDatum.GetInt64()
-		if e.pkCol != nil {
+		if e.pkStatus != pkColNotExists {
 			values = append(values, b)
 		}
 	} else {
@@ -236,9 +242,9 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if e.pkCol != nil {
+		if e.pkStatus != pkColNotExists {
 			var handleDatum types.Datum
-			if mysql.HasUnsignedFlag(uint(e.pkCol.GetFlag())) {
+			if e.pkStatus == pkColIsUnsigned {
 				handleDatum = types.NewUintDatum(uint64(handle))
 			} else {
 				handleDatum = types.NewIntDatum(handle)

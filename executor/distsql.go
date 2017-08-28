@@ -286,6 +286,44 @@ func extractHandlesFromIndexSubResult(subResult distsql.PartialResult) ([]int64,
 	return handles, nil
 }
 
+func extractHandlesFromNewIndexResult(idxResult distsql.NewSelectResult) (handles []int64, finish bool, err error) {
+	subResult, e0 := idxResult.Next()
+	if e0 != nil {
+		err = errors.Trace(e0)
+		return
+	}
+	if subResult == nil {
+		finish = true
+		return
+	}
+	handles, err = extractHandlesFromNewIndexSubResult(subResult)
+	if err != nil {
+		err = errors.Trace(err)
+	}
+	return
+}
+
+func extractHandlesFromNewIndexSubResult(subResult distsql.NewPartialResult) ([]int64, error) {
+	defer subResult.Close()
+	var handles []int64
+	for {
+		data, err := subResult.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if data == nil {
+			break
+		}
+		l := len(data)
+		handleDatum, err := tablecodec.DecodeColumnValue(data[l-1].GetRaw(), types.NewFieldType(mysql.TypeLonglong), nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		handles = append(handles, handleDatum.GetInt64())
+	}
+	return handles, nil
+}
+
 type int64Slice []int64
 
 func (p int64Slice) Len() int           { return len(p) }

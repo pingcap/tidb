@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
@@ -419,7 +420,7 @@ func (h *rpcHandler) handleRowData(ctx *selectContext, handle int64, value []byt
 	}
 	// Fill the handle and null columns.
 	for _, col := range columns {
-		if col.GetPkHandle() {
+		if col.GetPkHandle() || col.ColumnId == model.ExtraHandleID {
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
 				// PK column is Unsigned.
@@ -631,6 +632,18 @@ func appendRow(chunks []tipb.Chunk, handle int64, data []byte) []tipb.Chunk {
 	cur.RowsMeta = append(cur.RowsMeta, tipb.RowMeta{Handle: handle, Length: int64(len(data))})
 	cur.RowsData = append(cur.RowsData, data...)
 	return chunks
+}
+
+func newAppendRow(chunks []tipb.Chunk, handle int64, data []byte, rowCnt int) ([]tipb.Chunk, int) {
+	if rowCnt == 0 {
+		chunks = append(chunks, tipb.Chunk{})
+	}
+	cur := &chunks[len(chunks)-1]
+	cur.RowsData = append(cur.RowsData, data...)
+	if rowCnt++; rowCnt == rowsPerChunk {
+		rowCnt = 0
+	}
+	return chunks, rowCnt
 }
 
 func maxStartKey(rangeStartKey kv.Key, regionStartKey []byte) []byte {

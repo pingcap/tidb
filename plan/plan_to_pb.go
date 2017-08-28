@@ -88,7 +88,14 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
 	for _, col := range p.schema.Columns {
-		columns = append(columns, p.Table.Columns[col.Position])
+		if col.ID == model.ExtraHandleID {
+			columns = append(columns, &model.ColumnInfo{
+				ID:   model.ExtraHandleID,
+				Name: model.NewCIStr("_rowid"),
+			})
+		} else {
+			columns = append(columns, p.Table.Columns[col.Position])
+		}
 	}
 	idxExec := &tipb.IndexScan{
 		TableId: p.Table.ID,

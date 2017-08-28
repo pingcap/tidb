@@ -721,13 +721,18 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	for _, col := range idx.Columns {
 		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
 	}
+	hasPk := false
 	if is.Table.PKIsHandle {
 		for _, col := range is.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
+				hasPk = true
 				break
 			}
 		}
+	}
+	if !hasPk {
+		indexCols = append(indexCols, &expression.Column{FromID: p.id, ID: model.ExtraHandleID, Position: -1})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 	// Check if this plan matches the property.

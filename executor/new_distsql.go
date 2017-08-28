@@ -21,13 +21,14 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
-	"github.com/pingcap/tidb/mysql"
 )
 
 var (
@@ -68,9 +69,11 @@ type TableReaderExecutor struct {
 	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result        distsql.SelectResult
-	partialResult distsql.PartialResult
-	priority      int
+	result           distsql.SelectResult
+	partialResult    distsql.PartialResult
+	newResult        distsql.NewSelectResult
+	newPartialResult distsql.NewPartialResult
+	priority         int
 }
 
 // Schema implements the Executor Schema interface.
@@ -80,130 +83,61 @@ func (e *TableReaderExecutor) Schema() *expression.Schema {
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	err := closeAll(e.result, e.partialResult)
-	e.result = nil
-	e.partialResult = nil
+	var err error
+	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		err = closeAll(e.newResult, e.newPartialResult)
+		e.newResult = nil
+		e.newPartialResult = nil
+	} else {
+		err = closeAll(e.result, e.partialResult)
+		e.result = nil
+		e.partialResult = nil
+	}
 	return errors.Trace(err)
 }
 
 // Next implements the Executor Next interface.
 func (e *TableReaderExecutor) Next() (Row, error) {
+	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		return e.newNext()
+	}
+	return e.oldNext()
+}
+
+func (e *TableReaderExecutor) newNext() (Row, error) {
 	for {
 		// Get partial result.
-		if e.partialResult == nil {
+		if e.newPartialResult == nil {
 			var err error
-			e.partialResult, err = e.result.Next()
+			e.newPartialResult, err = e.newResult.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if e.partialResult == nil {
+			if e.newPartialResult == nil {
 				// Finished.
 				return nil, nil
 			}
 		}
 		// Get a row from partial result.
-		_, rowData, err := e.partialResult.Next()
+		rowData, err := e.newPartialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
 			// Finish the current partial result and get the next one.
-			e.partialResult.Close()
-			e.partialResult = nil
+			e.newPartialResult.Close()
+			e.newPartialResult = nil
 			continue
 		}
-		values := make([]types.Datum, e.schema.Len())
-		if handleIsExtra(e.handleCol) {
-			// err = codec.SetRawValues(rowData, values[:len(values)-1])
-			// values[len(values)-1].SetInt64(h)
-			err = codec.SetRawValues(rowData, values)
-		} else {
-			err = codec.SetRawValues(rowData, values)
-		}
+		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return values, nil
+		return rowData, nil
 	}
 }
 
-// Open implements the Executor Open interface.
-func (e *TableReaderExecutor) Open() error {
-	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
-	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.result.Fetch(e.ctx.GoCtx())
-	return nil
-}
-
-// doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
-func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.Context) error {
-	sort.Sort(int64Slice(handles))
-	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
-	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.result.Fetch(goCtx)
-	return nil
-}
-
-// doRequestForDatums constructs kv ranges by Datums. It is used by index look up executor.
-// Every lens for `datums` will always be one and must be type of int64.
-func (e *TableReaderExecutor) doRequestForDatums(datums [][]types.Datum, goCtx goctx.Context) error {
-	handles := make([]int64, 0, len(datums))
-	for _, datum := range datums {
-		handles = append(handles, datum[0].GetInt64())
-	}
-	return errors.Trace(e.doRequestForHandles(handles, goCtx))
-}
-
-// IndexReaderExecutor sends dag request and reads index data from kv layer.
-type IndexReaderExecutor struct {
-	asName    *model.CIStr
-	table     table.Table
-	index     *model.IndexInfo
-	tableID   int64
-	keepOrder bool
-	desc      bool
-	ranges    []*types.IndexRange
-	dagPB     *tipb.DAGRequest
-	ctx       context.Context
-	schema    *expression.Schema
-	// This is the column that represent the handle, we can use handleCol.Index to know its position.
-	handleCol *expression.Column
-
-	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result        distsql.SelectResult
-	partialResult distsql.PartialResult
-	// columns are only required by union scan.
-	columns  []*model.ColumnInfo
-	priority int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *IndexReaderExecutor) Schema() *expression.Schema {
-	return e.schema
-}
-
-// Close implements the Executor Close interface.
-func (e *IndexReaderExecutor) Close() error {
-	err := closeAll(e.result, e.partialResult)
-	e.result = nil
-	e.partialResult = nil
-	return errors.Trace(err)
-}
-
-// Next implements the Executor Next interface.
-func (e *IndexReaderExecutor) Next() (Row, error) {
+func (e *TableReaderExecutor) oldNext() (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -247,6 +181,186 @@ func (e *IndexReaderExecutor) Next() (Row, error) {
 }
 
 // Open implements the Executor Open interface.
+func (e *TableReaderExecutor) Open() error {
+	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
+	var err error
+	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		e.newResult, err = distsql.NewSelectDAG(e.ctx, goctx.Background(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.newResult.Fetch(e.ctx.GoCtx())
+	} else {
+		e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.result.Fetch(e.ctx.GoCtx())
+	}
+	return nil
+}
+
+// doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
+func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.Context) error {
+	sort.Sort(int64Slice(handles))
+	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
+	var err error
+	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		e.newResult, err = distsql.NewSelectDAG(e.ctx, goCtx, e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.newResult.Fetch(goCtx)
+	} else {
+		e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.result.Fetch(goCtx)
+	}
+	return nil
+}
+
+// doRequestForDatums constructs kv ranges by Datums. It is used by index look up executor.
+// Every lens for `datums` will always be one and must be type of int64.
+func (e *TableReaderExecutor) doRequestForDatums(datums [][]types.Datum, goCtx goctx.Context) error {
+	handles := make([]int64, 0, len(datums))
+	for _, datum := range datums {
+		handles = append(handles, datum[0].GetInt64())
+	}
+	return errors.Trace(e.doRequestForHandles(handles, goCtx))
+}
+
+// IndexReaderExecutor sends dag request and reads index data from kv layer.
+type IndexReaderExecutor struct {
+	asName    *model.CIStr
+	table     table.Table
+	index     *model.IndexInfo
+	tableID   int64
+	keepOrder bool
+	desc      bool
+	ranges    []*types.IndexRange
+	dagPB     *tipb.DAGRequest
+	ctx       context.Context
+	schema    *expression.Schema
+	// This is the column that represent the handle, we can use handleCol.Index to know its position.
+	handleCol *expression.Column
+
+	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
+	result           distsql.SelectResult
+	partialResult    distsql.PartialResult
+	newResult        distsql.NewSelectResult
+	newPartialResult distsql.NewPartialResult
+	// columns are only required by union scan.
+	columns  []*model.ColumnInfo
+	priority int
+}
+
+// Schema implements the Executor Schema interface.
+func (e *IndexReaderExecutor) Schema() *expression.Schema {
+	return e.schema
+}
+
+// Close implements the Executor Close interface.
+func (e *IndexReaderExecutor) Close() error {
+	var err error
+	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		err = closeAll(e.newResult, e.newPartialResult)
+		e.newResult = nil
+		e.newPartialResult = nil
+	} else {
+		err = closeAll(e.result, e.partialResult)
+		e.result = nil
+		e.partialResult = nil
+	}
+	return errors.Trace(err)
+}
+
+// Next implements the Executor Next interface.
+func (e *IndexReaderExecutor) Next() (Row, error) {
+	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		return e.newNext()
+	}
+	return e.oldNext()
+}
+
+func (e *IndexReaderExecutor) oldNext() (Row, error) {
+	for {
+		// Get partial result.
+		if e.partialResult == nil {
+			var err error
+			e.partialResult, err = e.result.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if e.partialResult == nil {
+				// Finished.
+				return nil, nil
+			}
+		}
+		// Get a row from partial result.
+		h, rowData, err := e.partialResult.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if rowData == nil {
+			// Finish the current partial result and get the next one.
+			e.partialResult.Close()
+			e.partialResult = nil
+			continue
+		}
+		values := make([]types.Datum, e.schema.Len())
+		if handleIsExtra(e.handleCol) {
+			err = codec.SetRawValues(rowData, values[:len(values)-1])
+			values[len(values)-1].SetInt64(h)
+		} else {
+			err = codec.SetRawValues(rowData, values)
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return values, nil
+	}
+}
+
+func (e *IndexReaderExecutor) newNext() (Row, error) {
+	for {
+		// Get partial result.
+		if e.newPartialResult == nil {
+			var err error
+			e.newPartialResult, err = e.newResult.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if e.newPartialResult == nil {
+				// Finished.
+				return nil, nil
+			}
+		}
+		// Get a row from partial result.
+		rowData, err := e.newPartialResult.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if rowData == nil {
+			// Finish the current partial result and get the next one.
+			e.newPartialResult.Close()
+			e.newPartialResult = nil
+			continue
+		}
+		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return rowData, nil
+	}
+}
+
+// Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open() error {
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
@@ -256,11 +370,19 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
-	if err != nil {
-		return errors.Trace(err)
+	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		e.newResult, err = distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.newResult.Fetch(e.ctx.GoCtx())
+	} else {
+		e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.result.Fetch(e.ctx.GoCtx())
 	}
-	e.result.Fetch(e.ctx.GoCtx())
 	return nil
 }
 
@@ -270,11 +392,19 @@ func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
-	if err != nil {
-		return errors.Trace(err)
+	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		e.newResult, err = distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.newResult.Fetch(goCtx)
+	} else {
+		e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.result.Fetch(goCtx)
 	}
-	e.result.Fetch(goCtx)
 	return nil
 }
 
@@ -294,7 +424,8 @@ type IndexLookUpExecutor struct {
 	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult.
-	result distsql.SelectResult
+	result    distsql.SelectResult
+	newResult distsql.NewSelectResult
 
 	taskChan chan *lookupTableTask
 	tasksErr error
@@ -316,11 +447,19 @@ func (e *IndexLookUpExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
-	if err != nil {
-		return errors.Trace(err)
+	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		e.newResult, err = distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, 1)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.newResult.Fetch(e.ctx.GoCtx())
+	} else {
+		e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.result.Fetch(e.ctx.GoCtx())
 	}
-	e.result.Fetch(e.ctx.GoCtx())
 
 	// Use a background goroutine to fetch index and put the result in e.taskChan.
 	// e.taskChan serves as a pipeline, so fetching index and getting table data can
@@ -336,11 +475,19 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
-	if err != nil {
-		return errors.Trace(err)
+	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		e.newResult, err = distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, 1)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.newResult.Fetch(goCtx)
+	} else {
+		e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.result.Fetch(goCtx)
 	}
-	e.result.Fetch(goCtx)
 	e.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 	go e.fetchHandlesAndStartWorkers()
 	return nil
@@ -361,9 +508,9 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		handleCol = e.handleCol
 	} else if e.keepOrder {
 		handleCol = &expression.Column{
-			ID:    model.ExtraHandleID,
-			Index: e.schema.Len(),
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:      model.ExtraHandleID,
+			Index:   e.schema.Len(),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
 		}
 		schema.Append(handleCol)
 		e.tableRequest.OutputOffsets = append(e.tableRequest.OutputOffsets, uint32(e.Schema().Len()))
@@ -435,10 +582,23 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 	}
 
 	for {
-		handles, finish, err := extractHandlesFromIndexResult(e.result)
-		if err != nil || finish {
-			e.tasksErr = errors.Trace(err)
-			return
+		var (
+			handles []int64
+			finish  bool
+			err     error
+		)
+		if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+			handles, finish, err = extractHandlesFromNewIndexResult(e.newResult)
+			if err != nil || finish {
+				e.tasksErr = errors.Trace(err)
+				return
+			}
+		} else {
+			handles, finish, err = extractHandlesFromIndexResult(e.result)
+			if err != nil || finish {
+				e.tasksErr = errors.Trace(err)
+				return
+			}
 		}
 		tasks := e.buildTableTasks(handles)
 		for _, task := range tasks {
@@ -503,8 +663,14 @@ func (e *IndexLookUpExecutor) Close() error {
 	for range e.taskChan {
 	}
 	e.taskChan = nil
-	err := e.result.Close()
-	e.result = nil
+	var err error
+	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		err = e.newResult.Close()
+		e.newResult = nil
+	} else {
+		err = e.result.Close()
+		e.result = nil
+	}
 	return errors.Trace(err)
 }
 
