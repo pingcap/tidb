@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -166,9 +167,43 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 	return true
 }
 
-// HandleAutoAnalyze analyzes the newly created table or index.
-func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
+func encode(dbName, tblName, idxName string) string {
+	return dbName + "`" + tblName + "`" + idxName
+}
+
+func decode(str string) (string, string, string) {
+	strs := strings.Split(str, "`")
+	return strs[0], strs[1], strs[2]
+}
+
+func (h *Handle) needAnalyze(is infoschema.InfoSchema, dbName, tblName, idxName string) bool {
+	tbl, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	if tbl == nil || err != nil {
+		return false
+	}
+	tblInfo := tbl.Meta()
+	statsTbl := h.GetTableStats(tblInfo.ID)
+	if statsTbl.Pseudo || statsTbl.Count == 0 {
+		return false
+	}
+	if idxName == "" {
+		return needAnalyzeTable(statsTbl, 20*h.Lease)
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.Name.O == idxName {
+			if _, ok := statsTbl.Indices[idx.ID]; !ok {
+				return true
+			}
+			return false
+		}
+	}
+	return false
+}
+
+// GetAnalyzeJobs returns all the tables and indices that need to be analyzed.
+func (h *Handle) GetAutoAnalyzeJobs(is infoschema.InfoSchema) []string {
 	dbs := is.AllSchemaNames()
+	var jobs []string
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
@@ -177,22 +212,16 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 			if statsTbl.Pseudo || statsTbl.Count == 0 {
 				continue
 			}
-			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
 			if needAnalyzeTable(statsTbl, 20*h.Lease) {
-				sql := fmt.Sprintf("analyze table %s", tblName)
-				log.Infof("[stats] auto analyze table %s now", tblName)
-				_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
-				return errors.Trace(err)
+				jobs = append(jobs, encode(db, tblInfo.Name.O, ""))
+				continue
 			}
 			for _, idx := range tblInfo.Indices {
 				if _, ok := statsTbl.Indices[idx.ID]; !ok {
-					sql := fmt.Sprintf("analyze table %s index `%s`", tblName, idx.Name.O)
-					log.Infof("[stats] auto analyze index `%s` for table %s now", idx.Name.O, tblName)
-					_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
-					return errors.Trace(err)
+					jobs = append(jobs, encode(db, tblInfo.Name.O, idx.Name.O))
 				}
 			}
 		}
 	}
-	return nil
+	return jobs
 }

@@ -19,7 +19,6 @@ import (
 	"github.com/coreos/etcd/contrib/recipes"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/_vendor/src/github.com/coreos/etcd/contrib/recipes"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/owner"
@@ -85,9 +84,6 @@ func (m *jobManager) PendingSize() (int, error) {
 
 // Enqueue implements JobManager.Enqueue interface.
 func (m *jobManager) Enqueue(jobs []string) error {
-	if !m.IsOwner() {
-		return nil
-	}
 	workingJob, err := m.getWorkingJob()
 	if err != nil {
 		return errors.Trace(err)
@@ -126,6 +122,10 @@ func (m *jobManager) DequeueAndAnalyze(ctx context.Context, h *Handle, is infosc
 		return errors.Trace(err)
 	}
 	mutex := NewMutex(m.session, StatsWorkingPrefix+job)
+	// Why use TryToLock but not Lock? Suppose that there are two worker A, B, the owner pushes a table `t` into the queue,
+	// A gets the job, but before A locks the job, the owner finds that the queue is empty, and the table `t` is not
+	// analyzed, so it pushes table `t` into queue again, this time B also gets the job. So if we use `Lock` here,
+	// one of the worker will be forced to wait another one finish.
 	ok, err := mutex.TryToLock(goctx.TODO())
 	if err != nil {
 		return errors.Trace(err)
@@ -139,6 +139,7 @@ func (m *jobManager) DequeueAndAnalyze(ctx context.Context, h *Handle, is infosc
 		}
 	}()
 	dbName, tblName, idxName := decode(job)
+	// We need to check again here in case that the table or index has been dropped.
 	if !h.needAnalyze(is, dbName, tblName, idxName) {
 		return nil
 	}
@@ -179,7 +180,7 @@ func (m *mockManager) PendingSize() (int, error) {
 
 // Enqueue implements JobManager.Enqueue interface.
 func (m *mockManager) Enqueue(jobs []string) error {
-	if len(jobs) == 0 {
+	if len(m.jobs) == 0 {
 		m.jobs = jobs
 	}
 	return nil

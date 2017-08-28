@@ -15,9 +15,11 @@ package statistics_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -255,7 +257,12 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV()
 	h.Update(is)
-	err = h.HandleAutoAnalyze(is)
+	jobManager := statistics.NewMockJobManager()
+	err = jobManager.Enqueue(h.GetAutoAnalyzeJobs(do.InfoSchema()))
+	c.Assert(err, IsNil)
+	session, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	err = jobManager.DequeueAndAnalyze(session, h, do.InfoSchema())
 	c.Assert(err, IsNil)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo.ID)
@@ -268,7 +275,10 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	h.HandleAutoAnalyze(is)
+	err = jobManager.Enqueue(h.GetAutoAnalyzeJobs(do.InfoSchema()))
+	c.Assert(err, IsNil)
+	err = jobManager.DequeueAndAnalyze(session, h, do.InfoSchema())
+	c.Assert(err, IsNil)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo.ID)
 	c.Assert(stats.Count, Equals, int64(1))

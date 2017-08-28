@@ -19,11 +19,13 @@ import (
 	"golang.org/x/net/context"
 )
 
+// Mutex is a mutex built on etcd.
 type Mutex struct {
 	s   *concurrency.Session
 	key string
 }
 
+// NewMutex creates a new Mutex.
 func NewMutex(s *concurrency.Session, key string) *Mutex {
 	return &Mutex{s, key}
 }
@@ -45,6 +47,7 @@ func (m *Mutex) TryToLock(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+// Unlock unlocks the mutex.
 func (m *Mutex) Unlock(ctx context.Context) error {
 	client := m.s.Client()
 	if _, err := client.Delete(ctx, m.key); err != nil {
