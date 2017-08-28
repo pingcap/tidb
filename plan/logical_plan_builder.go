@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -437,9 +438,14 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 	// Literal: Need special processing
 	switch valueExpr.Kind() {
 	case types.KindString:
+		projName := valueExpr.GetString()
+		projOffset := valueExpr.GetProjectionOffset()
+		if projOffset >= 0 {
+			projName = projName[:projOffset]
+		}
 		// See #3686, #3994:
 		// For string literals, string content is used as column name. Non-graph initial characters are trimmed.
-		fieldName := strings.TrimLeftFunc(valueExpr.GetString(), func(r rune) bool {
+		fieldName := strings.TrimLeftFunc(projName, func(r rune) bool {
 			return !unicode.IsOneOf(mysql.RangeGraph, r)
 		})
 		return model.NewCIStr(fieldName)
@@ -520,6 +526,18 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	return agg
 }
 
+// joinFieldType finds the type which can carry the given types.
+func joinFieldType(a, b *types.FieldType) *types.FieldType {
+	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
+	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
+	// `Flen - Decimal` is the fraction before '.'
+	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
+	resultTp.Charset = a.Charset
+	resultTp.Collate = a.Collate
+	expression.SetBinFlagOrBinStr(b, resultTp)
+	return resultTp
+}
+
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	u := Union{}.init(b.allocator, b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
@@ -548,26 +566,23 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			sel = proj
 			u.children[i] = proj
 		}
-		for i, col := range sel.Schema().Columns {
-			/*
-			 * The lengths of the columns in the UNION result take into account the values retrieved by all of the SELECT statements
-			 * SELECT REPEAT('a',1) UNION SELECT REPEAT('b',10);
-			 * +---------------+
-			 * | REPEAT('a',1) |
-			 * +---------------+
-			 * | a             |
-			 * | bbbbbbbbbb    |
-			 * +---------------+
-			 */
-			schemaTp := firstSchema.Columns[i].RetType
-			colTp := col.RetType
-			schemaTp.Decimal = mathutil.Max(colTp.Decimal, schemaTp.Decimal)
-			// `Flen - Decimal` is the fraction before '.'
-			schemaTp.Flen = mathutil.Max(colTp.Flen-colTp.Decimal, schemaTp.Flen-schemaTp.Decimal) + schemaTp.Decimal
-			schemaTp.Tp = types.MergeFieldType(schemaTp.Tp, colTp.Tp)
-		}
 		sel.SetParents(u)
 	}
+
+	// infer union type
+	for i, col := range firstSchema.Columns {
+		var resultTp *types.FieldType
+		for j, child := range u.children {
+			childTp := child.Schema().Columns[i].RetType
+			if j == 0 {
+				resultTp = childTp
+			} else {
+				resultTp = joinFieldType(resultTp, childTp)
+			}
+		}
+		col.RetType = resultTp
+	}
+
 	for _, v := range firstSchema.Columns {
 		v.FromID = u.id
 		v.DBName = model.NewCIStr("")
@@ -1215,7 +1230,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	needUnionScan := b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly()
 	if b.needColHandle == 0 && !needUnionScan {
 		p.SetSchema(schema)
-		return p
+		return b.projectVirtualColumns(p, columns)
 	}
 	if needUnionScan {
 		p.unionScanSchema = expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
@@ -1251,13 +1266,51 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{pkCol}
 	}
 	p.SetSchema(schema)
-	return p
+	return b.projectVirtualColumns(p, columns)
 }
 
-// ApplyConditionChecker checks whether all or any output of apply matches a condition.
-type ApplyConditionChecker struct {
-	Condition expression.Expression
-	All       bool
+// projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
+// we add a projection on the original DataSource, and calculate those columns in the projection
+// so that plans above it can reference generated columns by their name.
+func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Column) LogicalPlan {
+	var hasVirtualGeneratedColumn = false
+	for _, column := range columns {
+		if column.IsGenerated() && !column.GeneratedStored {
+			hasVirtualGeneratedColumn = true
+			break
+		}
+	}
+	if !hasVirtualGeneratedColumn {
+		return ds
+	}
+	var proj = Projection{
+		Exprs:            make([]expression.Expression, 0, len(columns)),
+		calculateGenCols: true,
+	}.init(b.allocator, b.ctx)
+	for i, colExpr := range ds.Schema().Columns {
+		var exprIsGen = false
+		var expr expression.Expression
+		if i < len(columns) {
+			var column = columns[i]
+			if column.IsGenerated() && !column.GeneratedStored {
+				var err error
+				expr, _, err = b.rewrite(column.GeneratedExpr, ds, nil, true)
+				if err != nil {
+					b.err = errors.Trace(err)
+					return nil
+				}
+				exprIsGen = true
+			}
+		}
+		if !exprIsGen {
+			expr = colExpr.Clone()
+		}
+		proj.Exprs = append(proj.Exprs, expr)
+	}
+	proj.SetSchema(ds.Schema().Clone())
+	proj.SetChildren(ds)
+	ds.SetParents(proj)
+	return proj
 }
 
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
@@ -1414,14 +1467,25 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			b.err = errors.Trace(err)
 			return nil, nil
 		}
-		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
+		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName.L)
 		modifyColumns[columnFullName] = struct{}{}
 	}
-	// If columnes in set list contains generated columns, raise error.
+
+	// If columns in set list contains generated columns, raise error.
+	// And, fill virtualAssignments here; that's for generated columns.
+	virtualAssignments := make([]*ast.Assignment, 0)
+	tableAsName := make(map[*model.TableInfo][]*model.CIStr)
+	extractTableAsNameForUpdate(p, tableAsName)
+
 	for _, tn := range tableList {
 		tableInfo := tn.TableInfo
-		for _, colInfo := range tableInfo.Columns {
-			if len(colInfo.GeneratedExprString) == 0 {
+		table, found := b.is.TableByID(tableInfo.ID)
+		if !found {
+			b.err = infoschema.ErrTableNotExists.GenByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
+			return nil, nil
+		}
+		for i, colInfo := range tableInfo.Columns {
+			if !colInfo.IsGenerated() {
 				continue
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
@@ -1429,11 +1493,18 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
 				return nil, nil
 			}
+			for _, asName := range tableAsName[tableInfo] {
+				virtualAssignments = append(virtualAssignments, &ast.Assignment{
+					Column: &ast.ColumnName{Table: *asName, Name: colInfo.Name},
+					Expr:   table.Cols()[i].GeneratedExpr,
+				})
+			}
 		}
 	}
 
 	newList := make([]*expression.Assignment, 0, p.Schema().Len())
-	for _, assign := range list {
+	allAssignments := append(list, virtualAssignments...)
+	for i, assign := range allAssignments {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -1441,7 +1512,23 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		}
 		var newExpr expression.Expression
 		var np LogicalPlan
-		newExpr, np, err = b.rewrite(assign.Expr, p, nil, false)
+		if i < len(list) {
+			newExpr, np, err = b.rewrite(assign.Expr, p, nil, false)
+		} else {
+			// rewrite with generation expression
+			rewritePreprocess := func(expr ast.Node) ast.Node {
+				switch x := expr.(type) {
+				case *ast.ColumnName:
+					return &ast.ColumnName{
+						Schema: assign.Column.Schema,
+						Table:  assign.Column.Table,
+						Name:   x.Name,
+					}
+				}
+				return expr
+			}
+			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
+		}
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil, nil
@@ -1450,6 +1537,35 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
 	}
 	return newList, p
+}
+
+// extractTableAsNameForUpdate extracts tables' alias names for update.
+func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.CIStr) {
+	switch x := p.(type) {
+	case *DataSource:
+		alias := extractTableAlias(p.(LogicalPlan))
+		if alias != nil {
+			if _, ok := asNames[x.tableInfo]; !ok {
+				asNames[x.tableInfo] = make([]*model.CIStr, 0, 1)
+			}
+			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
+		}
+	case *Projection:
+		if x.calculateGenCols {
+			ds := x.Children()[0].(*DataSource)
+			alias := extractTableAlias(x)
+			if alias != nil {
+				if _, ok := asNames[ds.tableInfo]; !ok {
+					asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
+				}
+				asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
+			}
+		}
+	default:
+		for _, child := range p.Children() {
+			extractTableAsNameForUpdate(child, asNames)
+		}
+	}
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {

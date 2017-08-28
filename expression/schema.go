@@ -74,7 +74,17 @@ func (s *Schema) Clone() *Schema {
 	for id, cols := range s.TblID2Handle {
 		schema.TblID2Handle[id] = make([]*Column, 0, len(cols))
 		for _, col := range cols {
-			schema.TblID2Handle[id] = append(schema.TblID2Handle[id], col.Clone().(*Column))
+			var inColumns = false
+			for i, colInColumns := range s.Columns {
+				if col == colInColumns {
+					schema.TblID2Handle[id] = append(schema.TblID2Handle[id], schema.Columns[i])
+					inColumns = true
+					break
+				}
+			}
+			if !inColumns {
+				schema.TblID2Handle[id] = append(schema.TblID2Handle[id], col.Clone().(*Column))
+			}
 		}
 	}
 	return schema

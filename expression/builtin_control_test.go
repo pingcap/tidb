@@ -116,6 +116,7 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 		{nil, types.Set{Value: 1, Name: "abc"}, "abc", false, false},
 		{nil, jsonInt.GetMysqlJSON(), jsonInt.GetMysqlJSON(), false, false},
 		{"abc", nil, "abc", false, false},
+		{errors.New(""), nil, "", true, true},
 	}
 
 	for _, t := range tbl {

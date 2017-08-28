@@ -135,6 +135,7 @@ type TimeInternal interface {
 	Week(mode int) int
 	Microsecond() int
 	GoTime(*gotime.Location) (gotime.Time, error)
+	IsLeapYear() bool
 }
 
 // FromGoTime translates time.Time to mysql time internal representation.
