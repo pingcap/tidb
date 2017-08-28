@@ -49,8 +49,8 @@ type jobManager struct {
 }
 
 const (
-	StatsPendingPrefix = "/tidb/stats/pending/"
-	StatsWorkingPrefix = "/tidb/stats/working/"
+	statsPendingPrefix = "/tidb/stats/pending/"
+	statsWorkingPrefix = "/tidb/stats/working/"
 )
 
 // NewJobManager creates a new JobManager.
@@ -58,7 +58,7 @@ func NewJobManager(owner owner.Manager, etcdCli *clientv3.Client, session *concu
 	return &jobManager{
 		owner:        owner,
 		etcdCli:      etcdCli,
-		pendingQueue: recipe.NewQueue(etcdCli, StatsPendingPrefix),
+		pendingQueue: recipe.NewQueue(etcdCli, statsPendingPrefix),
 		session:      session,
 	}
 }
@@ -75,7 +75,7 @@ func (m *jobManager) IsOwner() bool {
 
 // PendingSize implements JobManager.PendingSize interface.
 func (m *jobManager) PendingSize() (int, error) {
-	resp, err := m.etcdCli.Get(goctx.TODO(), StatsPendingPrefix, clientv3.WithPrefix())
+	resp, err := m.etcdCli.Get(goctx.TODO(), statsPendingPrefix, clientv3.WithPrefix())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -100,13 +100,13 @@ func (m *jobManager) Enqueue(jobs []string) error {
 }
 
 func (m *jobManager) getWorkingJob() (map[string]bool, error) {
-	resp, err := m.etcdCli.Get(goctx.TODO(), StatsWorkingPrefix, clientv3.WithPrefix())
+	resp, err := m.etcdCli.Get(goctx.TODO(), statsWorkingPrefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	jobs := make(map[string]bool)
 	for _, kv := range resp.Kvs {
-		job := kv.Key[len(StatsWorkingPrefix):]
+		job := kv.Key[len(statsWorkingPrefix):]
 		jobs[string(job)] = true
 	}
 	return jobs, nil
@@ -121,7 +121,7 @@ func (m *jobManager) DequeueAndAnalyze(ctx context.Context, h *Handle, is infosc
 	if err != nil {
 		return errors.Trace(err)
 	}
-	mutex := NewMutex(m.session, StatsWorkingPrefix+job)
+	mutex := NewMutex(m.session, statsWorkingPrefix+job)
 	// Why use TryToLock but not Lock? Suppose that there are two worker A, B, the owner pushes a table `t` into the queue,
 	// A gets the job, but before A locks the job, the owner finds that the queue is empty, and the table `t` is not
 	// analyzed, so it pushes table `t` into queue again, this time B also gets the job. So if we use `Lock` here,

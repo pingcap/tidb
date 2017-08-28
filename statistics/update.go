@@ -200,7 +200,7 @@ func (h *Handle) needAnalyze(is infoschema.InfoSchema, dbName, tblName, idxName 
 	return false
 }
 
-// GetAnalyzeJobs returns all the tables and indices that need to be analyzed.
+// GetAutoAnalyzeJobs returns all the tables and indices that need to be analyzed.
 func (h *Handle) GetAutoAnalyzeJobs(is infoschema.InfoSchema) []string {
 	dbs := is.AllSchemaNames()
 	var jobs []string
