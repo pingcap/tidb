@@ -27,6 +27,12 @@ import (
 
 func (s *testEvaluatorSuite) TestBitCount(c *C) {
 	defer testleak.AfterTest(c)()
+	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+	origin := stmtCtx.IgnoreTruncate
+	stmtCtx.IgnoreTruncate = true
+	defer func() {
+		stmtCtx.IgnoreTruncate = origin
+	}()
 	fc := funcs[ast.BitCount]
 	var bitCountCases = []struct {
 		origin interface{}
@@ -48,7 +54,10 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 	}
 	for _, test := range bitCountCases {
 		in := types.NewDatum(test.origin)
-		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		count, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if count.IsNull() {

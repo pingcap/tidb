@@ -160,9 +160,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	if cfg.Socket != "" {
 		cfg.SkipAuth = true
-		s.listener, err = net.Listen("unix", cfg.Socket)
+		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
+			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
+		}
 	} else {
-		s.listener, err = net.Listen("tcp", s.cfg.Addr)
+		if s.listener, err = net.Listen("tcp", s.cfg.Addr); err == nil {
+			log.Infof("Server is running MySQL Protocol at [%s]", s.cfg.Addr)
+		}
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

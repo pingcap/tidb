@@ -103,6 +103,10 @@ func (t mysqlTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	return tm, nil
 }
 
+func (t mysqlTime) IsLeapYear() bool {
+	return (t.year%4 == 0 && t.year%100 != 0) || t.year%400 == 0
+}
+
 func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysqlTime {
 	return mysqlTime{
 		uint16(year),
