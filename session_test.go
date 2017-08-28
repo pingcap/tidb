@@ -1590,7 +1590,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	c.Assert(row.Data[0].GetValue(), IsNil)
 	fs, err := rs.Fields()
 	c.Assert(err, IsNil)
-	c.Assert(fs[0].Column.FieldType.Tp, Equals, mysql.TypeString)
+	c.Assert(fs[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
