@@ -934,6 +934,9 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			} else if len(str) == 6 {
 				// HHMMSS
 				_, err = fmt.Sscanf(str, "%2d%2d%2d", &hour, &minute, &second)
+			} else if len(str) == 5 {
+				// HMMSS
+				_, err = fmt.Sscanf(str, "%1d%2d%2d", &hour, &minute, &second)
 			} else if len(str) == 4 {
 				// MMSS
 				_, err = fmt.Sscanf(str, "%2d%2d", &minute, &second)
