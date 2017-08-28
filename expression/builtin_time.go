@@ -2243,7 +2243,7 @@ func (c *addTimeFunctionClass) getFunction(args []Expression, ctx context.Contex
 	}
 	bf.tp.Decimal = tp1.Decimal
 	if retTp == tpString {
-		bf.tp.Tp, bf.tp.Flen = mysql.TypeString, mysql.MaxDatetimeWidthWithFsp
+		bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeString, mysql.MaxDatetimeWidthWithFsp, types.UnspecifiedLength
 	}
 	switch tp1.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
@@ -3062,7 +3062,7 @@ func (c *subTimeFunctionClass) getFunction(args []Expression, ctx context.Contex
 	}
 	bf.tp.Decimal = tp1.Decimal
 	if retTp == tpString {
-		bf.tp.Tp, bf.tp.Flen = mysql.TypeString, mysql.MaxDatetimeWidthWithFsp
+		bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeString, mysql.MaxDatetimeWidthWithFsp, types.UnspecifiedLength
 	}
 	switch tp1.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
