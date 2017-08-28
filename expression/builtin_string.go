@@ -2196,11 +2196,14 @@ func (b *builtinMakeSetSig) evalString(row []types.Datum) (string, bool, error) 
 
 	sets := make([]string, 0, len(b.args)-1)
 	for i, length := 1, len(b.args); i < length; i++ {
+		if (bits & (1 << uint(i-1))) == 0 {
+			continue
+		}
 		str, isNull, err := b.args[i].EvalString(row, sc)
 		if err != nil {
 			return "", true, errors.Trace(err)
 		}
-		if !isNull && (bits&(1<<uint(i-1))) != 0 {
+		if !isNull {
 			sets = append(sets, str)
 		}
 	}
