@@ -219,7 +219,9 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 			IsSystem: vars.IsSystem,
 		}
 		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
-			assign.Expr, _, b.err = b.rewrite(vars.Value, nil, nil, true)
+			mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+			mockTablePlan.SetSchema(expression.NewSchema())
+			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
 			if b.err != nil {
 				return nil
 			}
@@ -1051,23 +1053,28 @@ func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
 		col := &expression.Column{
 			ColName: model.NewCIStr(name),
 		}
-		var retType types.FieldType
+		var retTp byte
 		if len(ftypes) == 0 || ftypes[i] == 0 {
 			// Use varchar as the default return column type.
-			retType.Tp = mysql.TypeVarchar
+			retTp = mysql.TypeVarchar
 		} else {
-			retType.Tp = ftypes[i]
+			retTp = ftypes[i]
 		}
-
-		if retType.Tp == mysql.TypeVarchar || retType.Tp == mysql.TypeString {
+		retType := types.NewFieldType(retTp)
+		if retTp == mysql.TypeVarchar || retTp == mysql.TypeString {
 			retType.Flen = 256
-		} else if retType.Tp == mysql.TypeDatetime {
+		} else if retTp == mysql.TypeDatetime {
 			retType.Flen = 19
-		} else {
-			retType.Flen = mysql.GetDefaultFieldLength(retType.Tp)
+		}
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(retType.Tp)
+		if retType.Flen == types.UnspecifiedLength {
+			retType.Flen = defaultFlen
+		}
+		if retType.Decimal == types.UnspecifiedLength {
+			retType.Decimal = defaultDecimal
 		}
 		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
-		col.RetType = &retType
+		col.RetType = retType
 		schema.Append(col)
 	}
 	return schema
