@@ -1918,13 +1918,13 @@ func (c *unixTimestampFunctionClass) getFunction(args []Expression, ctx context.
 		retTp, retDecimal = tpInt, 0
 	} else {
 		argTps = []evalTp{tpTime}
-		fieldType := args[0].GetType()
-		tp := fieldTp2EvalTp(fieldType)
-		if tp == tpString {
+		argType := args[0].GetType()
+		argEvaltp := fieldTp2EvalTp(argType)
+		if argEvaltp == tpString {
 			// Treat tpString as unspecified decimal.
 			retDecimal = types.UnspecifiedLength
 		} else {
-			retDecimal = fieldType.Decimal
+			retDecimal = argType.Decimal
 		}
 		if retDecimal > 6 || retDecimal == types.UnspecifiedLength {
 			retDecimal = 6
@@ -1940,7 +1940,7 @@ func (c *unixTimestampFunctionClass) getFunction(args []Expression, ctx context.
 	} else if retTp == tpDecimal {
 		retFLen = 12 + retDecimal
 	} else {
-		panic("Unexpected retTp")
+		return nil, errors.Trace(errors.New("Internal error: Unexpected retTp"))
 	}
 
 	bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTps...)
@@ -1960,7 +1960,7 @@ func (c *unixTimestampFunctionClass) getFunction(args []Expression, ctx context.
 	} else if retTp == tpDecimal {
 		sig = &builtinUnixTimestampDecSig{baseDecimalBuiltinFunc{bf}}
 	} else {
-		panic("Unexpected retTp")
+		return nil, errors.Trace(errors.New("Internal error: Unexpected retTp"))
 	}
 
 	return sig.setSelf(sig), nil
