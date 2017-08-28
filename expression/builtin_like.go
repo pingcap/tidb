@@ -29,6 +29,7 @@ var (
 
 var (
 	_ builtinFunc = &builtinLikeSig{}
+	_ builtinFunc = &builtinRegexpBinarySig{}
 	_ builtinFunc = &builtinRegexpSig{}
 )
 
@@ -99,8 +100,38 @@ func (c *regexpFunctionClass) getFunction(args []Expression, ctx context.Context
 		return nil, errors.Trace(err)
 	}
 	bf.tp.Flen = 1
-	sig := &builtinRegexpSig{baseIntBuiltinFunc{bf}}
+	var sig builtinFunc
+	if types.IsBinaryStr(args[0].GetType()) {
+		sig = &builtinRegexpBinarySig{baseIntBuiltinFunc{bf}}
+	} else {
+		sig = &builtinRegexpSig{baseIntBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
+}
+
+type builtinRegexpBinarySig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinRegexpBinarySig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	expr, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	pat, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	// TODO: We don't need to compile pattern if it has been compiled or it is static.
+	re, err := regexp.Compile(pat)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	return boolToInt64(re.MatchString(expr)), false, nil
 }
 
 type builtinRegexpSig struct {
@@ -123,10 +154,9 @@ func (b *builtinRegexpSig) evalInt(row []types.Datum) (int64, bool, error) {
 	}
 
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
-	re, err := regexp.Compile(pat)
+	re, err := regexp.Compile("(?i)" + pat)
 	if err != nil {
 		return 0, true, errors.Trace(err)
 	}
-
 	return boolToInt64(re.MatchString(expr)), false, nil
 }
