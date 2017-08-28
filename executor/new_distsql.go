@@ -66,6 +66,9 @@ type TableReaderExecutor struct {
 	columns []*model.ColumnInfo
 	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol *expression.Column
+	// There is some cases that we don't need the data of the row, just need the number of the row, e.g. select NULL from t;
+	// Currently we force to transfer one row from tikv, and remove it when do Next().
+	zeroData bool
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result           distsql.SelectResult
@@ -128,6 +131,9 @@ func (e *TableReaderExecutor) newNext() (Row, error) {
 			e.newPartialResult = nil
 			continue
 		}
+		if e.zeroData {
+			return Row{}, nil
+		}
 		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -184,7 +190,11 @@ func (e *TableReaderExecutor) Open() error {
 	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
 	var err error
 	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
-		e.newResult, err = distsql.NewSelectDAG(e.ctx, goctx.Background(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+		colLen := e.schema.Len()
+		if colLen == 0 {
+			colLen = 1
+		}
+		e.newResult, err = distsql.NewSelectDAG(e.ctx, goctx.Background(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, colLen)
 		if err != nil {
 			return errors.Trace(err)
 		}

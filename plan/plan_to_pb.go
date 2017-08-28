@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -75,9 +76,13 @@ func (p *Limit) ToPB(ctx context.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
+	columns := p.Columns
+	if p.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) && len(p.Columns) == 0 {
+		columns = []*model.ColumnInfo{{ID: model.ExtraHandleID, Name: model.NewCIStr("_rowid")}}
+	}
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
-		Columns: distsql.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
+		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
 	err := setPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)

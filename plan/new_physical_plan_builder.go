@@ -677,6 +677,7 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 		dataSourceSchema:    p.schema,
 		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle},
 		Ranges:              ranger.FullIndexRange(),
+		OutOfOrder:          true,
 	}.init(p.allocator, p.ctx)
 	is.filterCondition = p.pushedDownConds
 	is.profile = p.profile
@@ -692,13 +693,18 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 	for _, col := range idx.Columns {
 		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
 	}
+	hasPk := false
 	if is.Table.PKIsHandle {
 		for _, col := range is.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
+				hasPk = true
 				break
 			}
 		}
+	}
+	if !hasPk {
+		indexCols = append(indexCols, &expression.Column{FromID: p.id, ID: model.ExtraHandleID, Position: -1})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 	is.addPushedDownSelection(cop, p, math.MaxFloat64)
@@ -749,7 +755,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
 		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
-		cop.tablePlan.SetSchema(is.dataSourceSchema)
+		cop.tablePlan.SetSchema(is.dataSourceSchema.Clone())
 		// If it's parent requires single read task, return max cost.
 		if prop.taskTp == copSingleReadTaskType {
 			return &copTask{cst: math.MaxFloat64}, nil
