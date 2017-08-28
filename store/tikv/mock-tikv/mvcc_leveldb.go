@@ -417,8 +417,7 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 		currKey:  currKey,
 	}
 
-	var pairs []Pair
-	for succ && len(pairs) < limit {
+	for succ && len(helper.pairs) < limit {
 		key, ver, err := mvccDecode(iter.Key())
 		if err != nil {
 			break
@@ -438,6 +437,9 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 		}
 		succ = iter.Prev()
 	}
+	if len(helper.pairs) < limit {
+		helper.finishEntry(nil)
+	}
 	return helper.pairs
 }
 
@@ -451,23 +453,23 @@ type reverseScanHelper struct {
 
 func (helper *reverseScanHelper) addLock(key []byte, lock *mvccLock) {
 	if bytes.Compare(key, helper.currKey) != 0 {
-		helper.finishEntry()
+		helper.finishEntry(key)
 	}
 	helper.entry.lock = lock
 }
 
 func (helper *reverseScanHelper) addKV(key []byte, ver uint64, value mvccValue) {
 	if bytes.Compare(key, helper.currKey) != 0 {
-		helper.finishEntry()
+		helper.finishEntry(key)
 	}
 	helper.entry.values = append(helper.entry.values, value)
 }
 
-func (helper *reverseScanHelper) finishEntry() {
+func (helper *reverseScanHelper) finishEntry(key []byte) {
 	reverse(helper.entry.values)
 	helper.entry.key = NewMvccKey(helper.currKey)
 	val, err := helper.entry.Get(helper.startTS, helper.isoLevel)
-	if val != nil || err != nil {
+	if len(val) != 0 || err != nil {
 		helper.pairs = append(helper.pairs, Pair{
 			Key:   helper.currKey,
 			Value: val,
@@ -475,6 +477,7 @@ func (helper *reverseScanHelper) finishEntry() {
 		})
 	}
 	helper.entry = mvccEntry{}
+	helper.currKey = key
 }
 
 func reverse(values []mvccValue) {
