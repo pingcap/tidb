@@ -1736,7 +1736,6 @@ func MakeDatums(args ...interface{}) []Datum {
 	return datums
 }
 
-
 // MinNotNullDatum returns a datum represents minimum not null value.
 func MinNotNullDatum() Datum {
 	return Datum{k: KindMinNotNull}
