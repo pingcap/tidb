@@ -1591,7 +1591,6 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t SET c1 = '2000-04-01', c2 = '2000-04-01', c3 = '2000-04-01 12:12:12', c4 = '-1 13:12:12', c5 = 2000;")
 	result = tk.MustQuery("SELECT c4 FROM t where c4 < '-13:12:12';")
 	result.Check(testkit.Rows("-37:12:12"))
-
 	result = tk.MustQuery(`SELECT 1 DIV - - 28 + ( - SUM( - + 25 ) ) * - CASE - 18 WHEN 44 THEN NULL ELSE - 41 + 32 + + - 70 - + COUNT( - 95 ) * 15 END + 92`)
 	result.Check(testkit.Rows("2442"))
 
@@ -2059,6 +2058,9 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	result.Check(testkit.Rows("1 1 0 0"))
 	result = tk.MustQuery("select (0,1) in ((0,1), (0,2)), (0,1) in ((0,0), (0,2))")
 	result.Check(testkit.Rows("1 0"))
+
+	result = tk.MustQuery(`select bit_count(121), bit_count(-1), bit_count(null), bit_count("1231aaa");`)
+	result.Check(testkit.Rows("5 64 <nil> 7"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
