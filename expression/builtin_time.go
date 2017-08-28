@@ -2758,6 +2758,8 @@ func (c *secToTimeFunctionClass) getFunction(args []Expression, ctx context.Cont
 	}
 	if retFsp > types.MaxFsp || retFsp == types.UnspecifiedLength {
 		retFsp = types.MaxFsp
+	} else if retFsp < types.MinFsp {
+		retFsp = types.MinFsp
 	}
 	retFlen = 10
 	if retFsp > 0 {
@@ -2974,7 +2976,6 @@ type builtinTimeToSecSig struct {
 func (b *builtinTimeToSecSig) evalInt(row []types.Datum) (int64, bool, error) {
 	ctx := b.getCtx().GetSessionVars().StmtCtx
 	duration, isNull, err := b.args[0].EvalDuration(row, ctx)
-	fmt.Printf("Hour, Minute, Second = %d, %d, %d\n", duration.Hour(), duration.Minute(), duration.Second())
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
