@@ -359,7 +359,7 @@ func (ih *indexHandler) Close() {
 	ih.wg.Wait()
 }
 
-// indexHandler is used by IndexLookUpExecutor to maintain table lookup background goroutines.
+// tableHandler is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableHandler struct {
 	taskChan    chan *lookupTableTask
 	taskCurr    *lookupTableTask
