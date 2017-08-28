@@ -18,6 +18,8 @@ type lengthAndDecimal struct {
 	decimal int
 }
 
+// defaultLengthAndDecimal provides default Flen and Decimal for fields
+// from CREATE TABLE when they are unspecified.
 var defaultLengthAndDecimal = map[byte]lengthAndDecimal{
 	TypeBit:        {1, 0},
 	TypeTiny:       {4, 0},
@@ -59,6 +61,8 @@ func GetDefaultFieldLengthAndDecimal(tp byte) (flen int, decimal int) {
 	return -1, -1
 }
 
+// defaultLengthAndDecimal provides default Flen and Decimal for fields
+// from CAST when they are unspecified.
 var defaultLengthAndDecimalForCast = map[byte]lengthAndDecimal{
 	TypeString:     {0, -1}, // Flen & Decimal differs.
 	TypeDate:       {10, 0},
