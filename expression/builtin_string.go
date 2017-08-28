@@ -2170,7 +2170,7 @@ func (c *makeSetFunctionClass) getFunction(args []Expression, ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	for i, length := 0, len(args); i < length; i++ {
-		setBinFlagOrBinStr(args[i].GetType(), bf.tp)
+		SetBinFlagOrBinStr(args[i].GetType(), bf.tp)
 	}
 	bf.tp.Flen = c.getFlen(bf.ctx.GetSessionVars().StmtCtx, args)
 	if bf.tp.Flen > mysql.MaxBlobWidth {
@@ -2315,7 +2315,7 @@ func (c *quoteFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	setBinFlagOrBinStr(args[0].GetType(), bf.tp)
+	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	bf.tp.Flen = 2*args[0].GetType().Flen + 2
 	if bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
