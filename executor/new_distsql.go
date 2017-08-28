@@ -307,7 +307,7 @@ type indexHandler struct {
 	wg              sync.WaitGroup
 }
 
-func (ih *indexHandler) Open(kvRanges []kv.KeyRange, e *IndexLookUpExecutor, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
+func (ih *indexHandler) open(kvRanges []kv.KeyRange, e *IndexLookUpExecutor, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
 	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges,
 		e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
 	if err != nil {
@@ -355,7 +355,7 @@ func (ih *indexHandler) fetchHandles(result distsql.SelectResult, workCh chan<- 
 	}
 }
 
-func (ih *indexHandler) Close() {
+func (ih *indexHandler) close() {
 	ih.wg.Wait()
 }
 
@@ -366,7 +366,7 @@ type tableHandler struct {
 	executeTask func(task *lookupTableTask, goCtx goctx.Context)
 }
 
-func (th *tableHandler) Open(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, finished <-chan struct{}) {
+func (th *tableHandler) open(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, finished <-chan struct{}) {
 	th.executeTask = e.executeTask
 	th.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
@@ -408,7 +408,7 @@ func (th *tableHandler) pickAndExecTask(workCh <-chan *lookupTableTask, ctx goct
 	}
 }
 
-func (th *tableHandler) Next() (Row, error) {
+func (th *tableHandler) next() (Row, error) {
 	for {
 		if th.taskCurr == nil {
 			taskCurr, ok := <-th.taskChan
@@ -431,7 +431,7 @@ func (th *tableHandler) Next() (Row, error) {
 	}
 }
 
-func (th *tableHandler) Close() {
+func (th *tableHandler) close() {
 	for range th.taskChan {
 	}
 }
@@ -453,11 +453,11 @@ func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
 	// workCh serves as a pipeline, indexHandler will write to workCh and tableHandler
 	// will read from workCh, so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	err := e.indexHandler.Open(kvRanges, e, workCh, e.finished)
+	err := e.indexHandler.open(kvRanges, e, workCh, e.finished)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.tableHandler.Open(e, workCh, e.finished)
+	e.tableHandler.open(e, workCh, e.finished)
 	return nil
 }
 
@@ -575,8 +575,8 @@ func (e *IndexLookUpExecutor) Schema() *expression.Schema {
 func (e *IndexLookUpExecutor) Close() error {
 	if e.finished != nil {
 		close(e.finished)
-		e.indexHandler.Close()
-		e.tableHandler.Close()
+		e.indexHandler.close()
+		e.tableHandler.close()
 		e.finished = nil
 	}
 	return nil
@@ -584,5 +584,5 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next() (Row, error) {
-	return e.tableHandler.Next()
+	return e.tableHandler.next()
 }
