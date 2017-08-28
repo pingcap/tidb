@@ -1108,6 +1108,18 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select to_seconds('0000-00-00');")
 	result.Check(testkit.Rows("<nil>"))
 
+	result = tk.MustQuery("select timestamp('2003-12-31'), timestamp('2003-12-31 12:00:00','12:00:00');")
+	result.Check(testkit.Rows("2003-12-31 00:00:00 2004-01-01 00:00:00"))
+	result = tk.MustQuery("select timestamp(20170118123950.123), timestamp(20170118123950.999);")
+	result.Check(testkit.Rows("2017-01-18 12:39:50.123 2017-01-18 12:39:50.999"))
+	result = tk.MustQuery("select timestamp('2003-12-31', '01:01:01.01'), timestamp('2003-12-31.1234', '01:01:01.01')," +
+		" timestamp('2008-12-31','00:00:00.0'), timestamp('2008-12-31 00:00:00.000');")
+	result.Check(testkit.Rows("2003-12-31 01:01:01.01 2003-12-31 01:01:01.1334 2008-12-31 00:00:00.0 2008-12-31 00:00:00.000"))
+	result = tk.MustQuery("select timestamp('2003-12-31', 1), timestamp('2003-12-31', -1);")
+	result.Check(testkit.Rows("2003-12-31 00:00:01 2003-12-30 23:59:59"))
+	result = tk.MustQuery("select timestamp('2003-12-31', '2000-12-12 01:01:01.01'), timestamp('2003-14-31','01:01:01.01');")
+	result.Check(testkit.Rows("<nil> <nil>"))
+
 	result = tk.MustQuery("select TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01'), TIMESTAMPDIFF(yEaR,'2002-05-01', " +
 		"'2001-01-01'), TIMESTAMPDIFF(minute,binary('2003-02-01'),'2003-05-01 12:05:55'), TIMESTAMPDIFF(day," +
 		"'1995-05-02', 950501);")
@@ -1188,6 +1200,14 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("00:01:23 AM"))
+
+	// for date_format
+	result = tk.MustQuery("SELECT DATE_FORMAT('2017-06-15', '%W %M %e %Y %r %y');")
+	result.Check(testkit.Rows("Thursday June 15 2017 12:00:00 AM 17"))
+	result = tk.MustQuery("SELECT DATE_FORMAT(151113102019.12, '%W %M %e %Y %r %y');")
+	result.Check(testkit.Rows("Friday November 13 2015 10:20:19 AM 15"))
+	result = tk.MustQuery("SELECT DATE_FORMAT('0000-00-00', '%W %M %e %Y %r %y');")
+	result.Check(testkit.Rows("<nil>"))
 
 	// for yearweek
 	result = tk.MustQuery(`select yearweek("2014-12-27"), yearweek("2014-29-27"), yearweek("2014-00-27"), yearweek("2014-12-27 12:38:32"), yearweek("2014-12-27 12:38:32.1111111"), yearweek("2014-12-27 12:90:32"), yearweek("2014-12-27 89:38:32.1111111");`)
@@ -2027,4 +2047,45 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	result.Check(testkit.Rows("1 1 0 0"))
 	result = tk.MustQuery("select (0,1) in ((0,1), (0,2)), (0,1) in ((0,0), (0,2))")
 	result.Check(testkit.Rows("1 0"))
+}
+
+func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("create table t (d date);")
+	tk.MustExec("insert into t values ('1997-01-02')")
+	tk.MustExec("insert into t values ('1998-01-02')")
+	r := tk.MustQuery("select * from t where d < date '1998-01-01';")
+	r.Check(testkit.Rows("1997-01-02"))
+
+	r = tk.MustQuery("select date'20171212'")
+	r.Check(testkit.Rows("2017-12-12"))
+
+	r = tk.MustQuery("select date'2017/12/12'")
+	r.Check(testkit.Rows("2017-12-12"))
+
+	r = tk.MustQuery("select date'2017/12-12'")
+	r.Check(testkit.Rows("2017-12-12"))
+
+	r = tk.MustQuery("select date'0000-00-00'")
+	r.Check(testkit.Rows("<nil>"))
+
+	r = tk.MustQuery("select date'0000-00-00 00:00:00'")
+	r.Check(testkit.Rows("<nil>"))
+
+	r = tk.MustQuery("select date'2017-99-99';")
+	r.Check(testkit.Rows("<nil>"))
+
+	r = tk.MustQuery("select date'2017-2-31';")
+	r.Check(testkit.Rows("<nil>"))
+
+	r = tk.MustQuery("select date'201712-31';")
+	r.Check(testkit.Rows("<nil>"))
+
 }

@@ -300,6 +300,17 @@ func (s *testSuite) TestJoinCast(c *C) {
 	tk.MustExec("insert into t1 values(0), (9)")
 	result = tk.MustQuery("select /*+ TIDB_INLJ(t) */ * from t left join t1 on t1.c1 = t.c1")
 	result.Sort().Check(testkit.Rows("0.0 0.00", "2.0 <nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 char(10))")
+	tk.MustExec("create table t1(c1 char(10))")
+	tk.MustExec("create table t2(c1 char(10))")
+	tk.MustExec("insert into t values('abd')")
+	tk.MustExec("insert into t1 values('abc')")
+	tk.MustExec("insert into t2 values('abc')")
+	result = tk.MustQuery("select * from (select * from t union all select * from t1) t1 join t2 on t1.c1 = t2.c1")
+	result.Sort().Check(testkit.Rows("abc abc"))
 }
 
 func (s *testSuite) TestUsing(c *C) {
