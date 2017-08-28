@@ -195,14 +195,11 @@ func (b *builtinBitCountSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	n, isNull, err := b.args[0].EvalInt(row, sc)
-	if err != nil {
-		if types.ErrOverflow.Equal(err) {
+	if err != nil || isNull {
+		if err != nil && types.ErrOverflow.Equal(err) {
 			return 64, false, nil
 		}
 		return 0, true, errors.Trace(err)
-	}
-	if isNull {
-		return 0, true, nil
 	}
 
 	var count int64
