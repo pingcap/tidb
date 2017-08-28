@@ -2133,6 +2133,29 @@ type makeSetFunctionClass struct {
 	baseFunctionClass
 }
 
+func (c *makeSetFunctionClass) getFlen(sc *variable.StatementContext, args []Expression) int {
+	flen, count := 0, 0
+	if constant, ok := args[0].(*Constant); ok {
+		bits, isNull, err := constant.EvalInt(nil, sc)
+		if err == nil && !isNull {
+			for i, length := 1, len(args); i < length; i++ {
+				if (bits & (1 << uint(i-1))) != 0 {
+					flen += args[i].GetType().Flen
+					count++
+				}
+			}
+			if count > 0 {
+				flen += count - 1
+			}
+			return flen
+		}
+	}
+	for i, length := 1, len(args); i < length; i++ {
+		flen += args[i].GetType().Flen
+	}
+	return flen + len(args) - 1 - 1
+}
+
 func (c *makeSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -2146,12 +2169,10 @@ func (c *makeSetFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	totalLen := 0
 	for i, length := 0, len(args); i < length; i++ {
 		setBinFlagOrBinStr(args[i].GetType(), bf.tp)
-		totalLen += args[i].GetType().Flen
 	}
-	bf.tp.Flen = totalLen + len(args) - 2
+	bf.tp.Flen = c.getFlen(bf.ctx.GetSessionVars().StmtCtx, args)
 	if bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
@@ -2179,7 +2200,7 @@ func (b *builtinMakeSetSig) evalString(row []types.Datum) (string, bool, error) 
 		if err != nil {
 			return "", true, errors.Trace(err)
 		}
-		if !isNull && (bits&(1<<(uint)(i-1))) != 0 {
+		if !isNull && (bits&(1<<uint(i-1))) != 0 {
 			sets = append(sets, str)
 		}
 	}
