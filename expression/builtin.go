@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // evalTp indicates the specified types that arguments and result of a built-in function should be.
@@ -72,6 +73,7 @@ type baseBuiltinFunc struct {
 	ctx           context.Context
 	deterministic bool
 	tp            *types.FieldType
+	pbCode        tipb.ScalarFuncSig
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
 	self builtinFunc

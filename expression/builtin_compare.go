@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -614,131 +615,125 @@ func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Con
 
 // genCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx context.Context) (sig builtinFunc, err error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
-	if err != nil {
-		return sig, errors.Trace(err)
-	}
-	bf.tp.Flen = 1
-	intBf := baseIntBuiltinFunc{bf}
 	switch tp {
 	case tpInt:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTIntSig{intBf}
+			sig = builtinLTIntSig{}.new(args, ctx)
 		case opcode.LE:
-			sig = &builtinLEIntSig{intBf}
+			sig = builtinLEIntSig{}.new(args, ctx)
 		case opcode.GT:
-			sig = &builtinGTIntSig{intBf}
+			sig = builtinGTIntSig{}.new(args, ctx)
 		case opcode.EQ:
-			sig = &builtinEQIntSig{intBf}
+			sig = builtinEQIntSig{}.new(args, ctx)
 		case opcode.GE:
-			sig = &builtinGEIntSig{intBf}
+			sig = builtinGEIntSig{}.new(args, ctx)
 		case opcode.NE:
-			sig = &builtinNEIntSig{intBf}
+			sig = builtinNEIntSig{}.new(args, ctx)
 		case opcode.NullEQ:
-			sig = &builtinNullEQIntSig{intBf}
+			sig = builtinNullEQIntSig{}.new(args, ctx)
 		}
 	case tpReal:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTRealSig{intBf}
+			sig = builtinLTRealSig{}.new(args, ctx)
 		case opcode.LE:
-			sig = &builtinLERealSig{intBf}
+			sig = builtinLERealSig{}.new(args, ctx)
 		case opcode.GT:
-			sig = &builtinGTRealSig{intBf}
+			sig = builtinGTRealSig{}.new(args, ctx)
 		case opcode.GE:
-			sig = &builtinGERealSig{intBf}
+			sig = builtinGERealSig{}.new(args, ctx)
 		case opcode.EQ:
-			sig = &builtinEQRealSig{intBf}
+			sig = builtinEQRealSig{}.new(args, ctx)
 		case opcode.NE:
-			sig = &builtinNERealSig{intBf}
+			sig = builtinNERealSig{}.new(args, ctx)
 		case opcode.NullEQ:
-			sig = &builtinNullEQRealSig{intBf}
+			sig = builtinNullEQRealSig{}.new(args, ctx)
 		}
 	case tpDecimal:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTDecimalSig{intBf}
+			sig = builtinLTDecimalSig{}.new(args, ctx)
 		case opcode.LE:
-			sig = &builtinLEDecimalSig{intBf}
+			sig = builtinLEDecimalSig{}.new(args, ctx)
 		case opcode.GT:
-			sig = &builtinGTDecimalSig{intBf}
+			sig = builtinGTDecimalSig{}.new(args, ctx)
 		case opcode.GE:
-			sig = &builtinGEDecimalSig{intBf}
+			sig = builtinGEDecimalSig{}.new(args, ctx)
 		case opcode.EQ:
-			sig = &builtinEQDecimalSig{intBf}
+			sig = builtinEQDecimalSig{}.new(args, ctx)
 		case opcode.NE:
-			sig = &builtinNEDecimalSig{intBf}
+			sig = builtinNEDecimalSig{}.new(args, ctx)
 		case opcode.NullEQ:
-			sig = &builtinNullEQDecimalSig{intBf}
+			sig = builtinNullEQDecimalSig{}.new(args, ctx)
 		}
 	case tpString:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTStringSig{intBf}
+			sig = builtinLTStringSig{}.new(args, ctx)
 		case opcode.LE:
-			sig = &builtinLEStringSig{intBf}
+			sig = builtinLEStringSig{}.new(args, ctx)
 		case opcode.GT:
-			sig = &builtinGTStringSig{intBf}
+			sig = builtinGTStringSig{}.new(args, ctx)
 		case opcode.GE:
-			sig = &builtinGEStringSig{intBf}
+			sig = builtinGEStringSig{}.new(args, ctx)
 		case opcode.EQ:
-			sig = &builtinEQStringSig{intBf}
+			sig = builtinEQStringSig{}.new(args, ctx)
 		case opcode.NE:
-			sig = &builtinNEStringSig{intBf}
+			sig = builtinNEStringSig{}.new(args, ctx)
 		case opcode.NullEQ:
-			sig = &builtinNullEQStringSig{intBf}
+			sig = builtinNullEQStringSig{}.new(args, ctx)
 		}
 	case tpDuration:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTDurationSig{intBf}
+			sig = builtinLTDurationSig{}.new(args, ctx)
 		case opcode.LE:
-			sig = &builtinLEDurationSig{intBf}
+			sig = builtinLEDurationSig{}.new(args, ctx)
 		case opcode.GT:
-			sig = &builtinGTDurationSig{intBf}
+			sig = builtinGTDurationSig{}.new(args, ctx)
 		case opcode.GE:
-			sig = &builtinGEDurationSig{intBf}
+			sig = builtinGEDurationSig{}.new(args, ctx)
 		case opcode.EQ:
-			sig = &builtinEQDurationSig{intBf}
+			sig = builtinEQDurationSig{}.new(args, ctx)
 		case opcode.NE:
-			sig = &builtinNEDurationSig{intBf}
+			sig = builtinNEDurationSig{}.new(args, ctx)
 		case opcode.NullEQ:
-			sig = &builtinNullEQDurationSig{intBf}
+			sig = builtinNullEQDurationSig{}.new(args, ctx)
 		}
 	case tpDatetime, tpTimestamp:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTTimeSig{intBf}
+			sig = builtinLTTimeSig{}.new(args, ctx, tp)
 		case opcode.LE:
-			sig = &builtinLETimeSig{intBf}
+			sig = builtinLETimeSig{}.new(args, ctx, tp)
 		case opcode.GT:
-			sig = &builtinGTTimeSig{intBf}
+			sig = builtinGTTimeSig{}.new(args, ctx, tp)
 		case opcode.GE:
-			sig = &builtinGETimeSig{intBf}
+			sig = builtinGETimeSig{}.new(args, ctx, tp)
 		case opcode.EQ:
-			sig = &builtinEQTimeSig{intBf}
+			sig = builtinEQTimeSig{}.new(args, ctx, tp)
 		case opcode.NE:
-			sig = &builtinNETimeSig{intBf}
+			sig = builtinNETimeSig{}.new(args, ctx, tp)
 		case opcode.NullEQ:
-			sig = &builtinNullEQTimeSig{intBf}
+			sig = builtinNullEQTimeSig{}.new(args, ctx, tp)
 		}
 	case tpJSON:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTJSONSig{intBf}
+			sig = builtinLTJSONSig{}.new(args, ctx)
 		case opcode.LE:
-			sig = &builtinLEJSONSig{intBf}
+			sig = builtinLEJSONSig{}.new(args, ctx)
 		case opcode.GT:
-			sig = &builtinGTJSONSig{intBf}
+			sig = builtinGTJSONSig{}.new(args, ctx)
 		case opcode.GE:
-			sig = &builtinGEJSONSig{intBf}
+			sig = builtinGEJSONSig{}.new(args, ctx)
 		case opcode.EQ:
-			sig = &builtinEQJSONSig{intBf}
+			sig = builtinEQJSONSig{}.new(args, ctx)
 		case opcode.NE:
-			sig = &builtinNEJSONSig{intBf}
+			sig = builtinNEJSONSig{}.new(args, ctx)
 		case opcode.NullEQ:
-			sig = &builtinNullEQJSONSig{intBf}
+			sig = builtinNullEQJSONSig{}.new(args, ctx)
 		}
 	}
 	return
@@ -746,6 +741,13 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 
 type builtinLTIntSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinLTIntSig) new(args []Expression, ctx context.Context) *builtinLTIntSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LTInt
+	return &s
 }
 
 func (s *builtinLTIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -756,12 +758,26 @@ type builtinLTRealSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinLTRealSig) new(args []Expression, ctx context.Context) *builtinLTRealSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpReal, tpReal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LTReal
+	return &s
+}
+
 func (s *builtinLTRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfLT(compareReal(s.args, row, s.ctx))
 }
 
 type builtinLTDecimalSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinLTDecimalSig) new(args []Expression, ctx context.Context) *builtinLTDecimalSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LTDecimal
+	return &s
 }
 
 func (s *builtinLTDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -772,12 +788,26 @@ type builtinLTStringSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinLTStringSig) new(args []Expression, ctx context.Context) *builtinLTStringSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LTString
+	return &s
+}
+
 func (s *builtinLTStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfLT(compareString(s.args, row, s.ctx))
 }
 
 type builtinLTDurationSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinLTDurationSig) new(args []Expression, ctx context.Context) *builtinLTDurationSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration, tpDuration)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LTDuration
+	return &s
 }
 
 func (s *builtinLTDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -788,12 +818,26 @@ type builtinLTTimeSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinLTTimeSig) new(args []Expression, ctx context.Context, tp evalTp) *builtinLTTimeSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LTTime
+	return &s
+}
+
 func (s *builtinLTTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfLT(compareTime(s.args, row, s.ctx))
 }
 
 type builtinLTJSONSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinLTJSONSig) new(args []Expression, ctx context.Context) *builtinLTJSONSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpJSON, tpJSON)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LTJson
+	return &s
 }
 
 func (s *builtinLTJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -804,12 +848,26 @@ type builtinLEIntSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinLEIntSig) new(args []Expression, ctx context.Context) *builtinLEIntSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LEInt
+	return &s
+}
+
 func (s *builtinLEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfLE(compareInt(s.args, row, s.ctx))
 }
 
 type builtinLERealSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinLERealSig) new(args []Expression, ctx context.Context) *builtinLERealSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpReal, tpReal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LEInt
+	return &s
 }
 
 func (s *builtinLERealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -820,12 +878,26 @@ type builtinLEDecimalSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinLEDecimalSig) new(args []Expression, ctx context.Context) *builtinLEDecimalSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LEDecimal
+	return &s
+}
+
 func (s *builtinLEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfLE(compareDecimal(s.args, row, s.ctx))
 }
 
 type builtinLEStringSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinLEStringSig) new(args []Expression, ctx context.Context) *builtinLEStringSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LEString
+	return &s
 }
 
 func (s *builtinLEStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -836,12 +908,26 @@ type builtinLEDurationSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinLEDurationSig) new(args []Expression, ctx context.Context) *builtinLEDurationSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration, tpDuration)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LEDuration
+	return &s
+}
+
 func (s *builtinLEDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfLE(compareDuration(s.args, row, s.ctx))
 }
 
 type builtinLETimeSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinLETimeSig) new(args []Expression, ctx context.Context, tp evalTp) *builtinLETimeSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LETime
+	return &s
 }
 
 func (s *builtinLETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -852,12 +938,26 @@ type builtinLEJSONSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinLEJSONSig) new(args []Expression, ctx context.Context) *builtinLEJSONSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpJSON, tpJSON)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_LEJson
+	return &s
+}
+
 func (s *builtinLEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfLE(compareJSON(s.args, row, s.ctx))
 }
 
 type builtinGTIntSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinGTIntSig) new(args []Expression, ctx context.Context) *builtinGTIntSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GTInt
+	return &s
 }
 
 func (s *builtinGTIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -868,12 +968,26 @@ type builtinGTRealSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinGTRealSig) new(args []Expression, ctx context.Context) *builtinGTRealSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpReal, tpReal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GTReal
+	return &s
+}
+
 func (s *builtinGTRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfGT(compareReal(s.args, row, s.ctx))
 }
 
 type builtinGTDecimalSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinGTDecimalSig) new(args []Expression, ctx context.Context) *builtinGTDecimalSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GTDecimal
+	return &s
 }
 
 func (s *builtinGTDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -884,12 +998,26 @@ type builtinGTStringSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinGTStringSig) new(args []Expression, ctx context.Context) *builtinGTStringSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GTString
+	return &s
+}
+
 func (s *builtinGTStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfGT(compareString(s.args, row, s.ctx))
 }
 
 type builtinGTDurationSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinGTDurationSig) new(args []Expression, ctx context.Context) *builtinGTDurationSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration, tpDuration)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GTDuration
+	return &s
 }
 
 func (s *builtinGTDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -900,12 +1028,26 @@ type builtinGTTimeSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinGTTimeSig) new(args []Expression, ctx context.Context, tp evalTp) *builtinGTTimeSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GTTime
+	return &s
+}
+
 func (s *builtinGTTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfGT(compareTime(s.args, row, s.ctx))
 }
 
 type builtinGTJSONSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinGTJSONSig) new(args []Expression, ctx context.Context) *builtinGTJSONSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpJSON, tpJSON)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GTTime
+	return &s
 }
 
 func (s *builtinGTJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -916,12 +1058,26 @@ type builtinGEIntSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinGEIntSig) new(args []Expression, ctx context.Context) *builtinGEIntSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GEInt
+	return &s
+}
+
 func (s *builtinGEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfGE(compareInt(s.args, row, s.ctx))
 }
 
 type builtinGERealSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinGERealSig) new(args []Expression, ctx context.Context) *builtinGERealSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpReal, tpReal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GEReal
+	return &s
 }
 
 func (s *builtinGERealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -932,12 +1088,26 @@ type builtinGEDecimalSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinGEDecimalSig) new(args []Expression, ctx context.Context) *builtinGEDecimalSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GEDecimal
+	return &s
+}
+
 func (s *builtinGEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfGE(compareDecimal(s.args, row, s.ctx))
 }
 
 type builtinGEStringSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinGEStringSig) new(args []Expression, ctx context.Context) *builtinGEStringSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GEString
+	return &s
 }
 
 func (s *builtinGEStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -948,12 +1118,26 @@ type builtinGEDurationSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinGEDurationSig) new(args []Expression, ctx context.Context) *builtinGEDurationSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration, tpDuration)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GEDuration
+	return &s
+}
+
 func (s *builtinGEDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfGE(compareDuration(s.args, row, s.ctx))
 }
 
 type builtinGETimeSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinGETimeSig) new(args []Expression, ctx context.Context, tp evalTp) *builtinGETimeSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GETime
+	return &s
 }
 
 func (s *builtinGETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -964,12 +1148,26 @@ type builtinGEJSONSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinGEJSONSig) new(args []Expression, ctx context.Context) *builtinGEJSONSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpJSON, tpJSON)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_GEJson
+	return &s
+}
+
 func (s *builtinGEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfGE(compareJSON(s.args, row, s.ctx))
 }
 
 type builtinEQIntSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinEQIntSig) new(args []Expression, ctx context.Context) *builtinEQIntSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_EQInt
+	return &s
 }
 
 func (s *builtinEQIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -980,12 +1178,26 @@ type builtinEQRealSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinEQRealSig) new(args []Expression, ctx context.Context) *builtinEQRealSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpReal, tpReal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_EQReal
+	return &s
+}
+
 func (s *builtinEQRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfEQ(compareReal(s.args, row, s.ctx))
 }
 
 type builtinEQDecimalSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinEQDecimalSig) new(args []Expression, ctx context.Context) *builtinEQDecimalSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_EQDecimal
+	return &s
 }
 
 func (s *builtinEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -996,12 +1208,26 @@ type builtinEQStringSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinEQStringSig) new(args []Expression, ctx context.Context) *builtinEQStringSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_EQString
+	return &s
+}
+
 func (s *builtinEQStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfEQ(compareString(s.args, row, s.ctx))
 }
 
 type builtinEQDurationSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinEQDurationSig) new(args []Expression, ctx context.Context) *builtinEQDurationSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration, tpDuration)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_EQDuration
+	return &s
 }
 
 func (s *builtinEQDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1012,12 +1238,26 @@ type builtinEQTimeSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinEQTimeSig) new(args []Expression, ctx context.Context, tp evalTp) *builtinEQTimeSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_EQTime
+	return &s
+}
+
 func (s *builtinEQTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfEQ(compareTime(s.args, row, s.ctx))
 }
 
 type builtinEQJSONSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinEQJSONSig) new(args []Expression, ctx context.Context) *builtinEQJSONSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpJSON, tpJSON)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_EQJson
+	return &s
 }
 
 func (s *builtinEQJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1028,12 +1268,26 @@ type builtinNEIntSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinNEIntSig) new(args []Expression, ctx context.Context) *builtinNEIntSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NEInt
+	return &s
+}
+
 func (s *builtinNEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfNE(compareInt(s.args, row, s.ctx))
 }
 
 type builtinNERealSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinNERealSig) new(args []Expression, ctx context.Context) *builtinNERealSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpReal, tpReal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NEReal
+	return &s
 }
 
 func (s *builtinNERealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1044,12 +1298,26 @@ type builtinNEDecimalSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinNEDecimalSig) new(args []Expression, ctx context.Context) *builtinNEDecimalSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NEDecimal
+	return &s
+}
+
 func (s *builtinNEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfNE(compareDecimal(s.args, row, s.ctx))
 }
 
 type builtinNEStringSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinNEStringSig) new(args []Expression, ctx context.Context) *builtinNEStringSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NEString
+	return &s
 }
 
 func (s *builtinNEStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1060,12 +1328,26 @@ type builtinNEDurationSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinNEDurationSig) new(args []Expression, ctx context.Context) *builtinNEDurationSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration, tpDuration)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NEDuration
+	return &s
+}
+
 func (s *builtinNEDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfNE(compareDuration(s.args, row, s.ctx))
 }
 
 type builtinNETimeSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinNETimeSig) new(args []Expression, ctx context.Context, tp evalTp) *builtinNETimeSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NETime
+	return &s
 }
 
 func (s *builtinNETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1076,12 +1358,26 @@ type builtinNEJSONSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinNEJSONSig) new(args []Expression, ctx context.Context) *builtinNEJSONSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpJSON, tpJSON)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NEJson
+	return &s
+}
+
 func (s *builtinNEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	return resOfNE(compareJSON(s.args, row, s.ctx))
 }
 
 type builtinNullEQIntSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinNullEQIntSig) new(args []Expression, ctx context.Context) *builtinNullEQIntSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NullEQInt
+	return &s
 }
 
 func (s *builtinNullEQIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1127,6 +1423,13 @@ type builtinNullEQRealSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinNullEQRealSig) new(args []Expression, ctx context.Context) *builtinNullEQRealSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpReal, tpReal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NullEQReal
+	return &s
+}
+
 func (s *builtinNullEQRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalReal(row, sc)
@@ -1153,6 +1456,13 @@ type builtinNullEQDecimalSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinNullEQDecimalSig) new(args []Expression, ctx context.Context) *builtinNullEQDecimalSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NullEQDecimal
+	return &s
+}
+
 func (s *builtinNullEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalDecimal(row, sc)
@@ -1173,6 +1483,13 @@ func (s *builtinNullEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull 
 		res = 1
 	}
 	return res, false, nil
+}
+
+func (s builtinNullEQStringSig) new(args []Expression, ctx context.Context) *builtinNullEQStringSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NullEQString
+	return &s
 }
 
 type builtinNullEQStringSig struct {
@@ -1205,6 +1522,13 @@ type builtinNullEQDurationSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinNullEQDurationSig) new(args []Expression, ctx context.Context) *builtinNullEQDurationSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration, tpDuration)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NullEQDuration
+	return &s
+}
+
 func (s *builtinNullEQDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalDuration(row, sc)
@@ -1231,6 +1555,13 @@ type builtinNullEQTimeSig struct {
 	baseIntBuiltinFunc
 }
 
+func (s builtinNullEQTimeSig) new(args []Expression, ctx context.Context, tp evalTp) *builtinNullEQTimeSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NullEQTime
+	return &s
+}
+
 func (s *builtinNullEQTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalTime(row, sc)
@@ -1255,6 +1586,13 @@ func (s *builtinNullEQTimeSig) evalInt(row []types.Datum) (val int64, isNull boo
 
 type builtinNullEQJSONSig struct {
 	baseIntBuiltinFunc
+}
+
+func (s builtinNullEQJSONSig) new(args []Expression, ctx context.Context) *builtinNullEQJSONSig {
+	s.baseBuiltinFunc, _ = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpJSON, tpJSON)
+	s.tp.Flen = 1
+	s.pbCode = tipb.ScalarFuncSig_NullEQJson
+	return &s
 }
 
 func (s *builtinNullEQJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
