@@ -983,6 +983,8 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists batch_insert")
 	tk.MustExec("create table batch_insert (c int)")
+	tk.MustExec("drop table if exists batch_insert_on_duplicate")
+	tk.MustExec("create table batch_insert_on_duplicate (id int primary key, c int)")
 	// Insert 10 rows.
 	tk.MustExec("insert into batch_insert values (1),(1),(1),(1),(1),(1),(1),(1),(1),(1)")
 	r := tk.MustQuery("select count(*) from batch_insert;")
@@ -1003,11 +1005,24 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("160"))
+	// for on duplicate key
+	for i := 0; i < 160; i++ {
+		tk.MustExec(fmt.Sprintf("insert into batch_insert_on_duplicate values(%d, %d);", i, i))
+	}
+	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
+	r.Check(testkit.Rows("160"))
 
 	// This will meet txn too large error.
 	_, err := tk.Exec("insert into batch_insert (c) select * from batch_insert;")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("160"))
+	// for on duplicate key
+	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue, Commentf("%v", err))
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("160"))
 
@@ -1016,6 +1031,12 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+	// for on duplicate key
+	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
+	r.Check(testkit.Rows("160"))
 
 	// Disable BachInsert mode in transition.
 	tk.MustExec("begin;")
