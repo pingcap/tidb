@@ -1287,6 +1287,17 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("24:00:01.54321 24:00:01.543212"))
 	result = tk.MustQuery("select sec_to_time('123.4'), sec_to_time('123.4567891'), sec_to_time('123')")
 	result.Check(testkit.Rows("00:02:03.400000 00:02:03.456789 00:02:03.000000"))
+
+	// for time_to_sec
+	result = tk.MustQuery("select time_to_sec(NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select time_to_sec('22:23:00'), time_to_sec('00:39:38'), time_to_sec('23:00'), time_to_sec('00:00'), time_to_sec('00:00:00'), time_to_sec('23:59:59')")
+	result.Check(testkit.Rows("80580 2378 82800 0 0 86399"))
+	result = tk.MustQuery("select time_to_sec('1:0'), time_to_sec('1:00'), time_to_sec('1:0:0'), time_to_sec('-02:00'), time_to_sec('-02:00:05'), time_to_sec('020005')")
+	result.Check(testkit.Rows("3600 3600 3600 -7200 -7205 7205"))
+	// TODO: Some test cases are commented out due to #4340, #4341.
+	// result = tk.MustQuery("select time_to_sec('20171222020005'), time_to_sec(020005), time_to_sec(20171222020005), time_to_sec(171222020005)")
+	// result.Check(testkit.Rows("7205 7205 7205 7205"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {

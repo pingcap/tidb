@@ -2956,35 +2956,35 @@ func (c *timeToSecFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinTimeToSecSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 10
+	sig := &builtinTimeToSecSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinTimeToSecSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinTimeToSecSig.
+// evalInt evals TIME_TO_SEC(time).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-to-sec
-func (b *builtinTimeToSecSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinTimeToSecSig) evalInt(row []types.Datum) (int64, bool, error) {
+	ctx := b.getCtx().GetSessionVars().StmtCtx
+	duration, isNull, err := b.args[0].EvalDuration(row, ctx)
+	fmt.Printf("Hour, Minute, Second = %d, %d, %d\n", duration.Hour(), duration.Minute(), duration.Second())
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-
-	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], 0)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
-	}
-
-	t := d.GetMysqlDuration()
-	// TODO: select TIME_TO_SEC('-2:-2:-2') not handle well.
-	if t.Compare(types.ZeroDuration) < 0 {
-		d.SetInt64(int64(-1 * (t.Hour()*3600 + t.Minute()*60 + t.Second())))
+	var sign int
+	if duration.Duration >= 0 {
+		sign = 1
 	} else {
-		d.SetInt64(int64(t.Hour()*3600 + t.Minute()*60 + t.Second()))
+		sign = -1
 	}
-	return
+	return int64(sign * (duration.Hour()*3600 + duration.Minute()*60 + duration.Second())), false, nil
 }
 
 type timestampAddFunctionClass struct {

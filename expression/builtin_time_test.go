@@ -1892,29 +1892,47 @@ func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestTimeToSec(c *C) {
+	fc := funcs[ast.TimeToSec]
+
+	// test nil
+	nilDatum := types.NewDatum(nil)
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{nilDatum}), s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsTrue)
+	d, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
+
+	// TODO: Some test cases are commented out due to #4340, #4341.
 	tests := []struct {
-		t      string
+		input  types.Datum
 		expect int64
 	}{
-		{"22:23:00", 80580},
-		{"00:39:38", 2378},
-		{"23:00", 82800},
-		{"00:00", 0},
-		{"00:00:00", 0},
-		{"23:59:59", 86399},
-		{"1:0", 3600},
-		{"1:00", 3600},
-		{"1:0:0", 3600},
-		{"-02:00", -7200},
+		{types.NewStringDatum("22:23:00"), 80580},
+		{types.NewStringDatum("00:39:38"), 2378},
+		{types.NewStringDatum("23:00"), 82800},
+		{types.NewStringDatum("00:00"), 0},
+		{types.NewStringDatum("00:00:00"), 0},
+		{types.NewStringDatum("23:59:59"), 86399},
+		{types.NewStringDatum("1:0"), 3600},
+		{types.NewStringDatum("1:00"), 3600},
+		{types.NewStringDatum("1:0:0"), 3600},
+		{types.NewStringDatum("-02:00"), -7200},
+		{types.NewStringDatum("-02:00:05"), -7205},
+		{types.NewStringDatum("020005"), 7205},
+		// {types.NewStringDatum("20171222020005"), 7205},
+		// {types.NewIntDatum(020005), 7205},
+		// {types.NewIntDatum(20171222020005), 7205},
+		// {types.NewIntDatum(171222020005), 7205},
 	}
-	fc := funcs[ast.TimeToSec]
 	for _, test := range tests {
-		arg := types.NewStringDatum(test.t)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
-		c.Assert(err, IsNil)
+		expr := datumsToConstants([]types.Datum{test.input})
+		f, err := fc.getFunction(expr, s.ctx)
+		c.Assert(err, IsNil, Commentf("%+v", test))
+		c.Assert(f.isDeterministic(), IsTrue, Commentf("%+v", test))
 		result, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(result.GetInt64(), Equals, test.expect)
+		c.Assert(err, IsNil, Commentf("%+v", test))
+		c.Assert(result.GetInt64(), Equals, test.expect, Commentf("%+v", test))
 	}
 }
 
@@ -1959,6 +1977,7 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 		expr[0].GetType().Decimal = test.inputDecimal
 		f, err := fc.getFunction(expr, s.ctx)
 		c.Assert(err, IsNil, Commentf("%+v", test))
+		c.Assert(f.isDeterministic(), IsTrue, Commentf("%+v", test))
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil, Commentf("%+v", test))
 		result, _ := d.ToString()
