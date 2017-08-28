@@ -188,7 +188,7 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 	case tpString:
 		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinCaseWhenStringSig{baseStringBuiltinFunc{bf}}
-	case tpTime:
+	case tpDatetime, tpTimestamp:
 		sig = &builtinCaseWhenTimeSig{baseTimeBuiltinFunc{bf}}
 	case tpDuration:
 		sig = &builtinCaseWhenDurationSig{baseDurationBuiltinFunc{bf}}
@@ -407,7 +407,7 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 		sig = &builtinIfDecimalSig{baseDecimalBuiltinFunc{bf}}
 	case tpString:
 		sig = &builtinIfStringSig{baseStringBuiltinFunc{bf}}
-	case tpTime:
+	case tpDatetime, tpTimestamp:
 		sig = &builtinIfTimeSig{baseTimeBuiltinFunc{bf}}
 	case tpDuration:
 		sig = &builtinIfDurationSig{baseDurationBuiltinFunc{bf}}
@@ -554,7 +554,7 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 		sig = &builtinIfNullDecimalSig{baseDecimalBuiltinFunc{bf}}
 	case tpString:
 		sig = &builtinIfNullStringSig{baseStringBuiltinFunc{bf}}
-	case tpTime:
+	case tpDatetime, tpTimestamp:
 		sig = &builtinIfNullTimeSig{baseTimeBuiltinFunc{bf}}
 	case tpDuration:
 		sig = &builtinIfNullDurationSig{baseDurationBuiltinFunc{bf}}

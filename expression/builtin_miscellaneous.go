@@ -24,6 +24,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 	"github.com/twinj/uuid"
@@ -208,7 +209,8 @@ func (c *anyValueFunctionClass) getFunction(args []Expression, ctx context.Conte
 	case tpString:
 		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinStringAnyValueSig{baseStringBuiltinFunc{bf}}
-	case tpTime:
+	case tpDatetime, tpTimestamp:
+		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
 		sig = &builtinTimeAnyValueSig{baseTimeBuiltinFunc{bf}}
 	default:
 		panic("unexpected evalTp of builtin function ANY_VALUE")

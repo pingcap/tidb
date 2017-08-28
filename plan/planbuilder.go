@@ -219,7 +219,9 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 			IsSystem: vars.IsSystem,
 		}
 		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
-			assign.Expr, _, b.err = b.rewrite(vars.Value, nil, nil, true)
+			mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+			mockTablePlan.SetSchema(expression.NewSchema())
+			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
 			if b.err != nil {
 				return nil
 			}

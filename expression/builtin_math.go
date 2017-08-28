@@ -1522,7 +1522,7 @@ func (c *truncateFunctionClass) getFunction(args []Expression, ctx context.Conte
 	}
 
 	argTp := fieldTp2EvalTp(args[0].GetType())
-	if argTp == tpTime || argTp == tpDuration || argTp == tpString {
+	if argTp == tpTimestamp || argTp == tpDatetime || argTp == tpDuration || argTp == tpString {
 		argTp = tpReal
 	}
 

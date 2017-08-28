@@ -241,7 +241,7 @@ func NewColDesc(col *Column) *ColDesc {
 		DefaultValue: defaultValue,
 		Extra:        extra,
 		Privileges:   defaultPrivileges,
-		Comment:      "",
+		Comment:      col.Comment,
 	}
 }
 

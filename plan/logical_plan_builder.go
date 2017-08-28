@@ -532,6 +532,9 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
+	resultTp.Charset = a.Charset
+	resultTp.Collate = a.Collate
+	expression.SetBinFlagOrBinStr(b, resultTp)
 	return resultTp
 }
 
