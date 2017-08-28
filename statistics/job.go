@@ -155,10 +155,13 @@ func (m *jobManager) DequeueAndAnalyze(ctx context.Context, h *Handle, is infosc
 	return nil
 }
 
+// mockManager represents the structure which is used for manage auto analyze jobs.
+// It's used for local store and testing.
 type mockManager struct {
 	jobs []string
 }
 
+// NewMockJobManager creates a new mock job manager.
 func NewMockJobManager() JobManager {
 	return &mockManager{}
 }

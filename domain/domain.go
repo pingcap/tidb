@@ -618,6 +618,7 @@ func (do *Domain) autoAnalyzeWorker(ctx context.Context, lease time.Duration) {
 				pendingSize, err := jobManager.PendingSize()
 				if err != nil {
 					log.Error("[stats] job manager get pending size fail:", errors.ErrorStack(err))
+					continue
 				}
 				if pendingSize > 0 {
 					continue
