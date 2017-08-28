@@ -606,7 +606,10 @@ func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	*bf.tp = *args[0].GetType()
+	retTp := *args[0].GetType()
+	retTp.Tp = mysql.TypeVarString
+	retTp.Decimal = types.UnspecifiedLength
+	bf.tp = &retTp
 	var sig builtinFunc
 	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinReverseBinarySig{baseStringBuiltinFunc{bf}}
