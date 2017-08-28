@@ -2748,25 +2748,42 @@ func (c *secToTimeFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinSecToTimeSig{newBaseBuiltinFunc(args, ctx)}
+	var retFlen, retFsp int
+	argType := args[0].GetType()
+	argEvalTp := fieldTp2EvalTp(argType)
+	if argEvalTp == tpString {
+		retFsp = types.UnspecifiedLength
+	} else {
+		retFsp = argType.Decimal
+	}
+	if retFsp > types.MaxFsp || retFsp == types.UnspecifiedLength {
+		retFsp = types.MaxFsp
+	}
+	retFlen = 10
+	if retFsp > 0 {
+		retFlen += 1 + retFsp
+	}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpReal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen, bf.tp.Decimal = retFlen, retFsp
+	sig := &builtinSecToTimeSig{baseDurationBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinSecToTimeSig struct {
-	baseBuiltinFunc
+	baseDurationBuiltinFunc
 }
 
-// eval evals a builtinSecToTimeSig.
+// evalDuration evals SEC_TO_TIME(seconds).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
-func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinSecToTimeSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	ctx := b.getCtx().GetSessionVars().StmtCtx
+	secondsFloat, isNull, err := b.args[0].EvalReal(row, ctx)
+	if isNull || err != nil {
+		return types.Duration{}, isNull, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		return
-	}
-
 	var (
 		hour          int64
 		minute        int64
@@ -2775,16 +2792,6 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 		secondDemical float64
 		negative      string
 	)
-
-	sc := b.ctx.GetSessionVars().StmtCtx
-	secondsFloat, err := args[0].ToFloat64(sc)
-	if err != nil {
-		if args[0].Kind() == types.KindString && types.ErrTruncated.Equal(err) {
-			secondsFloat = float64(0)
-		} else {
-			return d, errors.Trace(err)
-		}
-	}
 
 	if secondsFloat < 0 {
 		negative = "-"
@@ -2805,22 +2812,11 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 	secondDemical = float64(second) + demical
 
 	var dur types.Duration
-	fsp := types.MaxFsp
-	if args[0].Kind() != types.KindString {
-		sec, _ := args[0].ToString()
-		secs := strings.Split(sec, ".")
-		if len(secs) <= 1 {
-			fsp = 0
-		} else if len(secs[1]) < fsp {
-			fsp = len(secs[1])
-		}
-	}
-	dur, err = types.ParseDuration(fmt.Sprintf("%s%02d:%02d:%v", negative, hour, minute, secondDemical), fsp)
+	dur, err = types.ParseDuration(fmt.Sprintf("%s%02d:%02d:%v", negative, hour, minute, secondDemical), b.tp.Decimal)
 	if err != nil {
-		return d, errors.Trace(err)
+		return types.Duration{}, false, errors.Trace(err)
 	}
-	d.SetMysqlDuration(dur)
-	return
+	return dur, false, nil
 }
 
 type subTimeFunctionClass struct {

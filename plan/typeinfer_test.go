@@ -1475,5 +1475,26 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"quarter(c_blob_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"quarter(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"quarter(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+
+		// TODO: Some test cases are commented out due to #4233.
+		// {"sec_to_time(c_int_d      )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		// {"sec_to_time(c_bigint_d   )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"sec_to_time(c_float_d    )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"sec_to_time(c_double_d   )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"sec_to_time(c_decimal    )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"sec_to_time(c_decimal_d  )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"sec_to_time(c_datetime   )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 13, 2},
+		{"sec_to_time(c_time       )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"sec_to_time(c_time_d     )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"sec_to_time(c_timestamp  )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
+		// {"sec_to_time(c_timestamp_d)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"sec_to_time(c_char       )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"sec_to_time(c_varchar    )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"sec_to_time(c_text_d     )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"sec_to_time(c_binary     )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"sec_to_time(c_varbinary  )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"sec_to_time(c_blob_d     )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"sec_to_time(c_set        )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"sec_to_time(c_enum       )", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
 	}
 }

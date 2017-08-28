@@ -1274,6 +1274,19 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`select dayname("2017-12-01"), dayname("0000-00-00"), dayname("0000-01-00"), dayname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("Friday <nil> <nil> <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format", "Warning|1105|invalid time format", "Warning|1105|invalid time format"))
+
+	// for sec_to_time
+	result = tk.MustQuery("select sec_to_time(NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select sec_to_time(2378), sec_to_time(3864000), sec_to_time(-3864000)")
+	result.Check(testkit.Rows("00:39:38 838:59:59 -838:59:59"))
+	// TODO: Some test cases are commented out due to #4296.
+	// result = tk.MustQuery("select sec_to_time(86401.4), sec_to_time(-86401.4), sec_to_time(864014e-1), sec_to_time(-864014e-1), sec_to_time('86401.4'), sec_to_time('-86401.4')")
+	// result.Check(testkit.Rows("24:00:01.4 -24:00:01.4 24:00:01.400000 -24:00:01.400000 24:00:01.400000 -24:00:01.400000"))
+	result = tk.MustQuery("select sec_to_time(86401.54321), sec_to_time(86401.543212345)")
+	result.Check(testkit.Rows("24:00:01.54321 24:00:01.543212"))
+	result = tk.MustQuery("select sec_to_time('123.4'), sec_to_time('123.4567891'), sec_to_time('123')")
+	result.Check(testkit.Rows("00:02:03.400000 00:02:03.456789 00:02:03.000000"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
