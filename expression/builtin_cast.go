@@ -292,6 +292,8 @@ func (c *castAsStringFunctionClass) getFunction(args []Expression, ctx context.C
 			sig = &builtinCastTimeAsStringSig{bf}
 		} else if tp == mysql.TypeDuration {
 			sig = &builtinCastDurationAsStringSig{bf}
+		} else if tp == mysql.TypeJSON {
+			sig = &builtinCastJSONAsStringSig{bf}
 		} else {
 			sig = &builtinCastStringAsStringSig{bf}
 		}

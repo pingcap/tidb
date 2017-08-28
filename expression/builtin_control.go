@@ -574,6 +574,8 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 		sig = &builtinIfNullTimeSig{baseTimeBuiltinFunc{bf}}
 	case tpDuration:
 		sig = &builtinIfNullDurationSig{baseDurationBuiltinFunc{bf}}
+	case tpJSON:
+		sig = &builtinIfNullJSONSig{baseJSONBuiltinFunc{bf}}
 	}
 	return sig.setSelf(sig), nil
 }
