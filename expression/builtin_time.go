@@ -2556,6 +2556,8 @@ func (c *periodAddFunctionClass) getFunction(args []Expression, ctx context.Cont
 	return sig.setSelf(sig), nil
 }
 
+// period2Month converts a period to months, in which period is represented in the format of YYMM or YYYYMM.
+// Note that the period argument is not a date value.
 func period2Month(period uint64) uint64 {
 	if period == 0 {
 		return 0
@@ -2571,6 +2573,7 @@ func period2Month(period uint64) uint64 {
 	return year*12 + month - 1
 }
 
+// month2Period converts a month to a period.
 func month2Period(month uint64) uint64 {
 	if month == 0 {
 		return 0

@@ -1155,8 +1155,8 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> <nil> <nil> 200010 200208 0"))
 
 	// for period_diff
-	result = tk.MustQuery(`SELECT period_diff(191, 2), period_diff(0, 0), period_diff(191, 191);`)
-	result.Check(testkit.Rows("101 0 0"))
+	result = tk.MustQuery(`SELECT period_diff(191, 2), period_diff(191, -2), period_diff(0, 0), period_diff(191, 191);`)
+	result.Check(testkit.Rows("101 -2213609288845122103 0 0"))
 	result = tk.MustQuery(`SELECT period_diff(NULL, 2), period_diff(-191, NULL), period_diff(NULL, NULL), period_diff(12.09, 2), period_diff("21aa", "11aa"), period_diff("", "");`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> 10 10 0"))
 
