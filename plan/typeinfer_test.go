@@ -1024,6 +1024,23 @@ func (s *testPlanSuite) createTestCase4OtherFuncs() []typeInferTestCase {
 		{"1 in (c_time_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"1 in (c_enum)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"1 in (c_text_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+
+		{"bit_count(c_int_d      )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_bigint_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_float_d    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_double_d   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_decimal    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_datetime   )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_time_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_timestamp_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_char       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_varchar    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_text_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_binary     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_varbinary  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_blob_d     )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"bit_count(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 	}
 }
 
