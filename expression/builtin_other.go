@@ -24,7 +24,6 @@ import (
 
 var (
 	_ functionClass = &rowFunctionClass{}
-	_ functionClass = &castFunctionClass{}
 	_ functionClass = &setVarFunctionClass{}
 	_ functionClass = &getVarFunctionClass{}
 	_ functionClass = &lockFunctionClass{}
@@ -36,7 +35,6 @@ var (
 var (
 	_ builtinFunc = &builtinSleepSig{}
 	_ builtinFunc = &builtinRowSig{}
-	_ builtinFunc = &builtinCastSig{}
 	_ builtinFunc = &builtinSetVarSig{}
 	_ builtinFunc = &builtinGetVarSig{}
 	_ builtinFunc = &builtinLockSig{}
