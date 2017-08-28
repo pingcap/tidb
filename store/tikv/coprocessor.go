@@ -40,14 +40,17 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 		switch subType {
 		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic, kv.ReqSubTypeTopN:
 			return true
+		default:
+			return c.supportExpr(tipb.ExprType(subType))
+		}
+	case kv.ReqTypeDAG:
+		switch subType {
 		case kv.ReqSubTypeHandle:
 			// return false
 			return c.store.mock
 		default:
 			return c.supportExpr(tipb.ExprType(subType))
 		}
-	case kv.ReqTypeDAG:
-		return c.supportExpr(tipb.ExprType(subType))
 	}
 	return false
 }
