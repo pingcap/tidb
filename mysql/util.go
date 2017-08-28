@@ -13,8 +13,6 @@
 
 package mysql
 
-import "math"
-
 type lengthAndDecimal struct {
 	length  int
 	decimal int
