@@ -51,6 +51,8 @@ var (
 	_ functionClass = &jsonMergeFunctionClass{}
 	_ functionClass = &jsonObjectFunctionClass{}
 	_ functionClass = &jsonArrayFunctionClass{}
+
+	_ builtinFunc = &builtinJSONTypeSig{}
 )
 
 // argsAnyNull returns true if args contains any null.
@@ -285,23 +287,36 @@ type jsonTypeFunctionClass struct {
 }
 
 type builtinJSONTypeSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinJSONTypeSig{newBaseBuiltinFunc(args, ctx)}
+	argEvalTp := fieldTp2EvalTp(args[0].GetType())
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, argEvalTp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp = &types.FieldType{
+		Tp:      mysql.TypeVarString,
+		Flen:    types.UnspecifiedLength,
+		Decimal: types.UnspecifiedLength,
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
+	}
+	sig := &builtinJSONTypeSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-func (b *builtinJSONTypeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinJSONTypeSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	var j json.JSON
+	j, isNull, err = b.args[0].EvalJSON(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	return JSONType(args, b.ctx.GetSessionVars().StmtCtx)
+	return j.Type(), false, nil
 }
 
 type jsonExtractFunctionClass struct {
