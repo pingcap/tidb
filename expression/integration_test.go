@@ -1606,6 +1606,28 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery(`SELECT 1 DIV - - 28 + ( - SUM( - + 25 ) ) * - CASE - 18 WHEN 44 THEN NULL ELSE - 41 + 32 + + - 70 - + COUNT( - 95 ) * 15 END + 92`)
 	result.Check(testkit.Rows("2442"))
 
+	// for regexp, rlike
+	// https://github.com/pingcap/tidb/issues/4080
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a char(10), b varchar(10), c binary(10), d varbinary(10));`)
+	tk.MustExec(`insert into t values ('text','text','text','text');`)
+	result = tk.MustQuery(`select a regexp 'Xt' from t;`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select b regexp 'Xt' from t;`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select c regexp 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select d regexp 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select a rlike 'Xt' from t;`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select b rlike 'Xt' from t;`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select c rlike 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select d rlike 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
+
 	// testCase is for like and regexp
 	type testCase struct {
 		pattern string
