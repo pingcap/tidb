@@ -364,7 +364,7 @@ func (b *builtinCastIntAsIntSig) evalInt(row []types.Datum) (res int64, isNull b
 func (b builtinCastIntAsIntSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastIntAsIntSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastIntAsInt
+	b.pbCode = tipb.ScalarFuncSig_CastIntAsInt
 	return &b
 }
 
@@ -375,7 +375,7 @@ type builtinCastIntAsRealSig struct {
 func (b builtinCastIntAsRealSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastIntAsRealSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastIntAsReal
+	b.pbCode = tipb.ScalarFuncSig_CastIntAsReal
 	return &b
 }
 
@@ -401,7 +401,7 @@ type builtinCastIntAsDecimalSig struct {
 func (b builtinCastIntAsDecimalSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastIntAsDecimalSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastIntAsDecimal
+	b.pbCode = tipb.ScalarFuncSig_CastIntAsDecimal
 	return &b
 }
 
@@ -432,7 +432,7 @@ type builtinCastIntAsStringSig struct {
 func (b builtinCastIntAsStringSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastIntAsStringSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastIntAsString
+	b.pbCode = tipb.ScalarFuncSig_CastIntAsString
 	return &b
 }
 
@@ -463,7 +463,7 @@ type builtinCastIntAsTimeSig struct {
 func (b builtinCastIntAsTimeSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastIntAsTimeSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastIntAsTime
+	b.pbCode = tipb.ScalarFuncSig_CastIntAsTime
 	return &b
 }
 
@@ -487,7 +487,7 @@ type builtinCastIntAsDurationSig struct {
 func (b builtinCastIntAsDurationSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastIntAsDurationSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastIntAsDuration
+	b.pbCode = tipb.ScalarFuncSig_CastIntAsDuration
 	return &b
 }
 
@@ -507,7 +507,7 @@ type builtinCastIntAsJSONSig struct {
 func (b builtinCastIntAsJSONSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastIntAsJSONSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastIntAsJson
+	b.pbCode = tipb.ScalarFuncSig_CastIntAsJson
 	return &b
 }
 
@@ -537,7 +537,7 @@ func (b *builtinCastRealAsJSONSig) evalJSON(row []types.Datum) (res json.JSON, i
 func (b builtinCastRealAsJSONSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastRealAsJSONSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastRealAsJson
+	b.pbCode = tipb.ScalarFuncSig_CastRealAsJson
 	return &b
 }
 
@@ -548,7 +548,7 @@ type builtinCastDecimalAsJSONSig struct {
 func (b builtinCastDecimalAsJSONSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDecimalAsJSONSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDecimalAsJson
+	b.pbCode = tipb.ScalarFuncSig_CastDecimalAsJson
 	return &b
 }
 
@@ -569,7 +569,7 @@ type builtinCastStringAsJSONSig struct {
 func (b builtinCastStringAsJSONSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastStringAsJSONSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastStringAsJson
+	b.pbCode = tipb.ScalarFuncSig_CastStringAsJson
 	return &b
 }
 
@@ -594,7 +594,7 @@ type builtinCastDurationAsJSONSig struct {
 func (b builtinCastDurationAsJSONSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDurationAsJSONSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDurationAsJson
+	b.pbCode = tipb.ScalarFuncSig_CastDurationAsJson
 	return &b
 }
 
@@ -614,7 +614,7 @@ type builtinCastTimeAsJSONSig struct {
 func (b builtinCastTimeAsJSONSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastTimeAsJSONSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastTimeAsJson
+	b.pbCode = tipb.ScalarFuncSig_CastTimeAsJson
 	return &b
 }
 
@@ -640,7 +640,7 @@ func (b *builtinCastRealAsRealSig) evalReal(row []types.Datum) (res float64, isN
 func (b builtinCastRealAsRealSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastRealAsRealSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastRealAsReal
+	b.pbCode = tipb.ScalarFuncSig_CastRealAsReal
 	return &b
 }
 
@@ -651,7 +651,7 @@ type builtinCastRealAsIntSig struct {
 func (b builtinCastRealAsIntSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastRealAsIntSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastRealAsInt
+	b.pbCode = tipb.ScalarFuncSig_CastRealAsInt
 	return &b
 }
 
@@ -678,7 +678,7 @@ type builtinCastRealAsDecimalSig struct {
 func (b builtinCastRealAsDecimalSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastRealAsDecimalSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastRealAsDecimal
+	b.pbCode = tipb.ScalarFuncSig_CastRealAsDecimal
 	return &b
 }
 
@@ -704,7 +704,7 @@ type builtinCastRealAsStringSig struct {
 func (b builtinCastRealAsStringSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastRealAsStringSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastRealAsString
+	b.pbCode = tipb.ScalarFuncSig_CastRealAsString
 	return &b
 }
 
@@ -725,7 +725,7 @@ type builtinCastRealAsTimeSig struct {
 func (b builtinCastRealAsTimeSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastRealAsTimeSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastRealAsTime
+	b.pbCode = tipb.ScalarFuncSig_CastRealAsTime
 	return &b
 }
 
@@ -746,7 +746,7 @@ type builtinCastRealAsDurationSig struct {
 func (b builtinCastRealAsDurationSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastRealAsDurationSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastRealAsDuration
+	b.pbCode = tipb.ScalarFuncSig_CastRealAsDuration
 	return &b
 }
 
@@ -766,7 +766,7 @@ type builtinCastDecimalAsDecimalSig struct {
 func (b builtinCastDecimalAsDecimalSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDecimalAsDecimalSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDecimalAsDecimal
+	b.pbCode = tipb.ScalarFuncSig_CastDecimalAsDecimal
 	return &b
 }
 
@@ -787,7 +787,7 @@ type builtinCastDecimalAsIntSig struct {
 func (b builtinCastDecimalAsIntSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDecimalAsIntSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDecimalAsInt
+	b.pbCode = tipb.ScalarFuncSig_CastDecimalAsInt
 	return &b
 }
 
@@ -825,7 +825,7 @@ type builtinCastDecimalAsStringSig struct {
 func (b builtinCastDecimalAsStringSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDecimalAsStringSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDecimalAsString
+	b.pbCode = tipb.ScalarFuncSig_CastDecimalAsString
 	return &b
 }
 
@@ -846,7 +846,7 @@ type builtinCastDecimalAsRealSig struct {
 func (b builtinCastDecimalAsRealSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDecimalAsRealSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDecimalAsReal
+	b.pbCode = tipb.ScalarFuncSig_CastDecimalAsReal
 	return &b
 }
 
@@ -866,7 +866,7 @@ type builtinCastDecimalAsTimeSig struct {
 func (b builtinCastDecimalAsTimeSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDecimalAsTimeSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDecimalAsTime
+	b.pbCode = tipb.ScalarFuncSig_CastDecimalAsTime
 	return &b
 }
 
@@ -890,7 +890,7 @@ type builtinCastDecimalAsDurationSig struct {
 func (b builtinCastDecimalAsDurationSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDecimalAsDurationSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDecimalAsDuration
+	b.pbCode = tipb.ScalarFuncSig_CastDecimalAsDuration
 	return &b
 }
 
@@ -910,7 +910,7 @@ type builtinCastStringAsStringSig struct {
 func (b builtinCastStringAsStringSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastStringAsStringSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastStringAsString
+	b.pbCode = tipb.ScalarFuncSig_CastStringAsString
 	return &b
 }
 
@@ -931,7 +931,7 @@ type builtinCastStringAsIntSig struct {
 func (b builtinCastStringAsIntSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastStringAsIntSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastStringAsInt
+	b.pbCode = tipb.ScalarFuncSig_CastStringAsInt
 	return &b
 }
 
@@ -1002,7 +1002,7 @@ type builtinCastStringAsRealSig struct {
 func (b builtinCastStringAsRealSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastStringAsRealSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastStringAsReal
+	b.pbCode = tipb.ScalarFuncSig_CastStringAsReal
 	return &b
 }
 
@@ -1030,7 +1030,7 @@ type builtinCastStringAsDecimalSig struct {
 func (b builtinCastStringAsDecimalSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastStringAsDecimalSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastStringAsDecimal
+	b.pbCode = tipb.ScalarFuncSig_CastStringAsDecimal
 	return &b
 }
 
@@ -1059,7 +1059,7 @@ type builtinCastStringAsTimeSig struct {
 func (b builtinCastStringAsTimeSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastStringAsTimeSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastStringAsTime
+	b.pbCode = tipb.ScalarFuncSig_CastStringAsTime
 	return &b
 }
 
@@ -1083,7 +1083,7 @@ type builtinCastStringAsDurationSig struct {
 func (b builtinCastStringAsDurationSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastStringAsDurationSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastStringAsDuration
+	b.pbCode = tipb.ScalarFuncSig_CastStringAsDuration
 	return &b
 }
 
@@ -1107,7 +1107,7 @@ type builtinCastTimeAsTimeSig struct {
 func (b builtinCastTimeAsTimeSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastTimeAsTimeSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastTimeAsTime
+	b.pbCode = tipb.ScalarFuncSig_CastTimeAsTime
 	return &b
 }
 
@@ -1132,7 +1132,7 @@ type builtinCastTimeAsIntSig struct {
 func (b builtinCastTimeAsIntSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastTimeAsIntSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastTimeAsInt
+	b.pbCode = tipb.ScalarFuncSig_CastTimeAsInt
 	return &b
 }
 
@@ -1156,7 +1156,7 @@ type builtinCastTimeAsRealSig struct {
 func (b builtinCastTimeAsRealSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastTimeAsRealSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastTimeAsReal
+	b.pbCode = tipb.ScalarFuncSig_CastTimeAsReal
 	return &b
 }
 
@@ -1176,7 +1176,7 @@ type builtinCastTimeAsDecimalSig struct {
 func (b builtinCastTimeAsDecimalSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastTimeAsDecimalSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastTimeAsDecimal
+	b.pbCode = tipb.ScalarFuncSig_CastTimeAsDecimal
 	return &b
 }
 
@@ -1197,7 +1197,7 @@ type builtinCastTimeAsStringSig struct {
 func (b builtinCastTimeAsStringSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastTimeAsStringSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastTimeAsString
+	b.pbCode = tipb.ScalarFuncSig_CastTimeAsString
 	return &b
 }
 
@@ -1218,7 +1218,7 @@ type builtinCastTimeAsDurationSig struct {
 func (b builtinCastTimeAsDurationSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastTimeAsDurationSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastTimeAsDuration
+	b.pbCode = tipb.ScalarFuncSig_CastTimeAsDuration
 	return &b
 }
 
@@ -1242,7 +1242,7 @@ type builtinCastDurationAsDurationSig struct {
 func (b builtinCastDurationAsDurationSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDurationAsDurationSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDurationAsDuration
+	b.pbCode = tipb.ScalarFuncSig_CastDurationAsDuration
 	return &b
 }
 
@@ -1262,7 +1262,7 @@ type builtinCastDurationAsIntSig struct {
 func (b builtinCastDurationAsIntSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDurationAsIntSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDurationAsInt
+	b.pbCode = tipb.ScalarFuncSig_CastDurationAsInt
 	return &b
 }
 
@@ -1286,7 +1286,7 @@ type builtinCastDurationAsRealSig struct {
 func (b builtinCastDurationAsRealSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDurationAsRealSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDurationAsReal
+	b.pbCode = tipb.ScalarFuncSig_CastDurationAsReal
 	return &b
 }
 
@@ -1306,7 +1306,7 @@ type builtinCastDurationAsDecimalSig struct {
 func (b builtinCastDurationAsDecimalSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDurationAsDecimalSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDurationAsDecimal
+	b.pbCode = tipb.ScalarFuncSig_CastDurationAsDecimal
 	return &b
 }
 
@@ -1327,7 +1327,7 @@ type builtinCastDurationAsStringSig struct {
 func (b builtinCastDurationAsStringSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDurationAsStringSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDurationAsString
+	b.pbCode = tipb.ScalarFuncSig_CastDurationAsString
 	return &b
 }
 
@@ -1348,7 +1348,7 @@ type builtinCastDurationAsTimeSig struct {
 func (b builtinCastDurationAsTimeSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastDurationAsTimeSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastDurationAsTime
+	b.pbCode = tipb.ScalarFuncSig_CastDurationAsTime
 	return &b
 }
 
@@ -1372,7 +1372,7 @@ type builtinCastJSONAsJSONSig struct {
 func (b builtinCastJSONAsJSONSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastJSONAsJSONSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastJsonAsJson
+	b.pbCode = tipb.ScalarFuncSig_CastJsonAsJson
 	return &b
 }
 
@@ -1387,7 +1387,7 @@ type builtinCastJSONAsIntSig struct {
 func (b builtinCastJSONAsIntSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastJSONAsIntSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastJsonAsInt
+	b.pbCode = tipb.ScalarFuncSig_CastJsonAsInt
 	return &b
 }
 
@@ -1408,7 +1408,7 @@ type builtinCastJSONAsRealSig struct {
 func (b builtinCastJSONAsRealSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastJSONAsRealSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastJsonAsReal
+	b.pbCode = tipb.ScalarFuncSig_CastJsonAsReal
 	return &b
 }
 
@@ -1429,7 +1429,7 @@ type builtinCastJSONAsDecimalSig struct {
 func (b builtinCastJSONAsDecimalSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastJSONAsDecimalSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastJsonAsDecimal
+	b.pbCode = tipb.ScalarFuncSig_CastJsonAsDecimal
 	return &b
 }
 
@@ -1454,7 +1454,7 @@ type builtinCastJSONAsStringSig struct {
 func (b builtinCastJSONAsStringSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastJSONAsStringSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastJsonAsString
+	b.pbCode = tipb.ScalarFuncSig_CastJsonAsString
 	return &b
 }
 
@@ -1474,7 +1474,7 @@ type builtinCastJSONAsTimeSig struct {
 func (b builtinCastJSONAsTimeSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastJSONAsTimeSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastJsonAsTime
+	b.pbCode = tipb.ScalarFuncSig_CastJsonAsTime
 	return &b
 }
 
@@ -1503,7 +1503,7 @@ type builtinCastJSONAsDurationSig struct {
 func (b builtinCastJSONAsDurationSig) new(args []Expression, ctx context.Context, tp *types.FieldType) *builtinCastJSONAsDurationSig {
 	b.baseBuiltinFunc = newBaseBuiltinFunc(args, ctx)
 	b.tp = tp
-	b.name = tipb.ScalarFuncSig_CastJsonAsDuration
+	b.pbCode = tipb.ScalarFuncSig_CastJsonAsDuration
 	return &b
 }
 

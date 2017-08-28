@@ -73,7 +73,7 @@ type baseBuiltinFunc struct {
 	ctx           context.Context
 	deterministic bool
 	tp            *types.FieldType
-	name          tipb.ScalarFuncSig
+	pbCode        tipb.ScalarFuncSig
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
 	self builtinFunc
