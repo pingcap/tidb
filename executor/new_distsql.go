@@ -321,7 +321,7 @@ func (ih *indexHandler) Open(kvRanges []kv.KeyRange, e *IndexLookUpExecutor, wor
 		ih.fetchHandles(result, workCh, ctx, finished)
 		cancel()
 		if err := result.Close(); err != nil {
-			log.Errorf("close SelectDAG result failed:", errors.ErrorStack(err))
+			log.Error("close SelectDAG result failed:", errors.ErrorStack(err))
 		}
 		close(workCh)
 		ih.wg.Done()
