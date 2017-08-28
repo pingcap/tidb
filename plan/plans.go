@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -83,7 +84,7 @@ type Show struct {
 	Column *ast.ColumnName // Used for `desc table column`.
 	Flag   int             // Some flag parsed from sql, such as FULL.
 	Full   bool
-	User   string // Used for show grants.
+	User   *auth.UserIdentity // Used for show grants.
 
 	// Used by show variables
 	GlobalScope bool
@@ -103,6 +104,14 @@ type Simple struct {
 	Statement ast.StmtNode
 }
 
+// InsertGeneratedColumns is for completing generated columns in Insert.
+// We resolve generation expressions in plan, and eval those in executor.
+type InsertGeneratedColumns struct {
+	Columns      []*ast.ColumnName
+	Exprs        []expression.Expression
+	OnDuplicates []*expression.Assignment
+}
+
 // Insert represents an insert plan.
 type Insert struct {
 	*basePlan
@@ -119,6 +128,8 @@ type Insert struct {
 	IsReplace bool
 	Priority  mysql.PriorityEnum
 	Ignore    bool
+
+	GenCols InsertGeneratedColumns
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
@@ -152,6 +163,8 @@ type LoadData struct {
 	Columns    []*ast.ColumnName
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
+
+	GenCols InsertGeneratedColumns
 }
 
 // DDL represents a DDL statement plan.

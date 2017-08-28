@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -87,15 +88,15 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustExec(`create index idx7 on show_index (id);`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|utf8_bin|0|<nil>|<nil>||BTREE||",
-		"show_index|1|cIdx|1|c|utf8_bin|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx",
-		"show_index|1|idx1|1|id|utf8_bin|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx2|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx3|1|id|utf8_bin|0|<nil>|<nil>|YES|HASH||idx",
-		"show_index|1|idx4|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx5|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx6|1|id|utf8_bin|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx7|1|id|utf8_bin|0|<nil>|<nil>|YES|BTREE||",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE||",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH||",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH||",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE||",
 	))
 
 	// For show like with escape
@@ -113,8 +114,9 @@ func (s *testSuite) TestShow(c *C) {
 
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE `Trigger` ='test'").Check(testkit.Rows())
-	tk.MustQuery("SHOW processlist;").Check(testkit.Rows())
+	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows())
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
+	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 
 	// Test show create database
 	testSQL = `create database show_test_DB`
@@ -127,6 +129,25 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustExec("use show_test_DB")
 	result = tk.MustQuery("SHOW index from show_index from test where Column_name = 'c'")
 	c.Check(result.Rows(), HasLen, 1)
+
+	// Test show full columns
+	// for issue https://github.com/pingcap/tidb/issues/4224
+	tk.MustExec(`drop table if exists show_test_comment`)
+	tk.MustExec(`create table show_test_comment (id int not null default 0 comment "show_test_comment_id")`)
+	tk.MustQuery(`show full columns from show_test_comment`).Check(testutil.RowsWithSep("|",
+		"id|int(11)|binary|NO||0||select,insert,update,references|show_test_comment_id",
+	))
+
+	// Test show create table with AUTO_INCREMENT option
+	// for issue https://github.com/pingcap/tidb/issues/3747
+	tk.MustExec(`drop table if exists show_auto_increment`)
+	tk.MustExec(`create table show_auto_increment (id int) auto_increment=4`)
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=4",
+	))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
@@ -143,7 +164,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
-	c.Assert(se.Auth(`show@%`, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
 	tk1.Se = se
 
 	// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA.

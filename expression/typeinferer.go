@@ -55,8 +55,6 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		types.SetBinChsClnFlag(&x.Type)
 	case *ast.BinaryOperationExpr:
 		v.binaryOperation(x)
-	case *ast.CaseExpr:
-		v.handleCaseExpr(x)
 	case *ast.ColumnNameExpr:
 		x.SetType(&x.Refer.Column.FieldType)
 	case *ast.CompareSubqueryExpr:
@@ -91,8 +89,6 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		types.SetBinChsClnFlag(&x.Type)
 		v.convertValueToColumnTypeIfNeeded(x)
-	case *ast.PatternRegexpExpr:
-		v.handleRegexpExpr(x)
 	case *ast.SelectStmt:
 		v.selectStmt(x)
 	case *ast.UnaryOperationExpr:
@@ -374,7 +370,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime, ast.UTCTime, ast.Time:
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
-	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate:
+	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate, ast.LastDay:
 		tp = types.NewFieldType(mysql.TypeDate)
 	case ast.DateAdd, ast.DateSub, ast.AddDate, ast.SubDate, ast.Timestamp, ast.TimestampAdd, ast.StrToDate, ast.ConvertTz:
 		tp = types.NewFieldType(mysql.TypeDatetime)
@@ -469,14 +465,6 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 		types.SetBinChsClnFlag(tp)
 	}
 	x.SetType(tp)
-}
-
-// handleRegexpExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.
-func (v *typeInferrer) handleRegexpExpr(x *ast.PatternRegexpExpr) {
-	x.SetType(types.NewFieldType(mysql.TypeLonglong))
-	types.SetBinChsClnFlag(&x.Type)
-	x.Expr = v.addCastToString(x.Expr)
-	x.Pattern = v.addCastToString(x.Pattern)
 }
 
 // addCastToString adds a cast function to string type if the expr charset is not UTF8.

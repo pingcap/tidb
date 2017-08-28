@@ -200,6 +200,5 @@ type AnalyzeResult struct {
 	Hist    []*Histogram
 	Count   int64
 	IsIndex int
-	Ctx     context.Context
 	Err     error
 }

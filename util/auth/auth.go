@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package auth
 
 import (
 	"bytes"
@@ -21,6 +21,18 @@ import (
 
 	"github.com/juju/errors"
 )
+
+// UserIdentity represents username and hostname.
+type UserIdentity struct {
+	Username string
+	Hostname string
+}
+
+// String converts UserIdentity to the format user@host.
+func (user *UserIdentity) String() string {
+	// TODO: Escape username and hostname.
+	return fmt.Sprintf("%s@%s", user.Username, user.Hostname)
+}
 
 // CheckScrambledPassword check scrambled password received from client.
 // The new authentication is performed in following manner:

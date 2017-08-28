@@ -54,7 +54,6 @@ func handleIsExtra(col *expression.Column) bool {
 
 // TableReaderExecutor sends dag request and reads table data from kv layer.
 type TableReaderExecutor struct {
-	asName    *model.CIStr
 	table     table.Table
 	tableID   int64
 	keepOrder bool
@@ -233,7 +232,6 @@ func (e *TableReaderExecutor) doRequestForDatums(datums [][]types.Datum, goCtx g
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
-	asName    *model.CIStr
 	table     table.Table
 	index     *model.IndexInfo
 	tableID   int64
@@ -410,7 +408,6 @@ func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
-	asName    *model.CIStr
 	table     table.Table
 	index     *model.IndexInfo
 	tableID   int64
@@ -435,10 +432,12 @@ type IndexLookUpExecutor struct {
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
+	finished chan struct{}
 }
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open() error {
+	e.finished = make(chan struct{})
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
@@ -471,6 +470,7 @@ func (e *IndexLookUpExecutor) Open() error {
 
 // doRequestForDatums constructs kv ranges by datums. It is used by index look up executor.
 func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx goctx.Context) error {
+	e.finished = make(chan struct{})
 	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
 	if err != nil {
 		return errors.Trace(err)
@@ -516,7 +516,6 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		e.tableRequest.OutputOffsets = append(e.tableRequest.OutputOffsets, uint32(e.Schema().Len()))
 	}
 	tableReader := &TableReaderExecutor{
-		asName:    e.asName,
 		table:     e.table,
 		tableID:   e.tableID,
 		dagPB:     e.tableRequest,
@@ -559,6 +558,8 @@ func (e *IndexLookUpExecutor) pickAndExecTask(workCh <-chan *lookupTableTask, tx
 			}
 			e.executeTask(task, childCtx)
 		case <-childCtx.Done():
+			return
+		case <-e.finished:
 			return
 		}
 	}
@@ -604,6 +605,8 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 		for _, task := range tasks {
 			select {
 			case <-txnCtx.Done():
+				return
+			case <-e.finished:
 				return
 			case workCh <- task:
 			}
@@ -658,7 +661,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	if e.taskChan == nil {
 		return nil
 	}
-	// TODO: It's better to notify fetchHandles to close instead of fetching all index handle.
+	close(e.finished)
 	// Consume the task channel in case channel is full.
 	for range e.taskChan {
 	}

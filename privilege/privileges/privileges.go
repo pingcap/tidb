@@ -16,13 +16,12 @@ package privileges
 import (
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -74,7 +73,7 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 }
 
 // ConnectionVerification implements the Manager interface.
-func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []byte) bool {
+func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte) bool {
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
@@ -95,23 +94,23 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 	}
 
 	// empty password
-	if len(pwd) == 0 && len(auth) == 0 {
+	if len(pwd) == 0 && len(authentication) == 0 {
 		p.user = user
 		p.host = host
 		return true
 	}
 
-	if len(pwd) == 0 || len(auth) == 0 {
+	if len(pwd) == 0 || len(authentication) == 0 {
 		return false
 	}
 
-	hpwd, err := util.DecodePassword(pwd)
+	hpwd, err := auth.DecodePassword(pwd)
 	if err != nil {
 		log.Errorf("Decode password string error %v", err)
 		return false
 	}
 
-	if !util.CheckScrambledPassword(salt, hpwd, auth) {
+	if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
 		return false
 	}
 
@@ -136,12 +135,7 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
-func (p *UserPrivileges) ShowGrants(ctx context.Context, user string) ([]string, error) {
-	strs := strings.Split(user, "@")
-	if len(strs) != 2 {
-		return nil, errors.Errorf("Invalid format for user: %s", user)
-	}
-	user, host := strs[0], strs[1]
+func (p *UserPrivileges) ShowGrants(ctx context.Context, user *auth.UserIdentity) ([]string, error) {
 	mysqlPrivilege := p.Handle.Get()
-	return mysqlPrivilege.showGrants(user, host), nil
+	return mysqlPrivilege.showGrants(user.Username, user.Hostname), nil
 }

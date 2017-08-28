@@ -91,19 +91,6 @@ func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
 }
 
-// Generate a random string using ASCII characters but avoid separator character.
-// See https://github.com/mysql/mysql-server/blob/5.7/mysys_ssl/crypt_genhash_impl.cc#L435
-func randomBuf(size int) []byte {
-	buf := make([]byte, size)
-	for i := 0; i < size; i++ {
-		buf[i] = byte(rand.Intn(127))
-		if buf[i] == 0 || buf[i] == byte('$') {
-			buf[i]++
-		}
-	}
-	return buf
-}
-
 // newConn creates a new *clientConn from a net.Conn.
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
@@ -123,7 +110,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 			}
 		}
 	}
-	cc.salt = randomBuf(20)
+	cc.salt = util.RandomBuf(20)
 	return cc
 }
 
@@ -147,9 +134,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	var err error
 	if cfg.Socket != "" {
 		cfg.SkipAuth = true
-		s.listener, err = net.Listen("unix", cfg.Socket)
+		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
+			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
+		}
 	} else {
-		s.listener, err = net.Listen("tcp", s.cfg.Addr)
+		if s.listener, err = net.Listen("tcp", s.cfg.Addr); err == nil {
+			log.Infof("Server is running MySQL Protocol at [%s]", s.cfg.Addr)
+		}
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -157,7 +148,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
-	log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Addr)
 	return s, nil
 }
 

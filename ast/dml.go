@@ -16,6 +16,7 @@ package ast
 import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/auth"
 )
 
 var (
@@ -962,6 +963,7 @@ const (
 	ShowStatsMeta
 	ShowStatsHistograms
 	ShowStatsBuckets
+	ShowPlugins
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
@@ -976,7 +978,7 @@ type ShowStmt struct {
 	Column *ColumnName // Used for `desc table column`.
 	Flag   int         // Some flag parsed from sql, such as FULL.
 	Full   bool
-	User   string // Used for show grants.
+	User   *auth.UserIdentity // Used for show grants.
 
 	// GlobalScope is used by show variables
 	GlobalScope bool

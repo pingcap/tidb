@@ -18,6 +18,8 @@
 package expression
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -36,10 +38,32 @@ const (
 	tpReal
 	tpDecimal
 	tpString
-	tpTime
+	tpDatetime
+	tpTimestamp
 	tpDuration
 	tpJSON
 )
+
+func fieldTp2EvalTp(tp *types.FieldType) evalTp {
+	switch tp.ToClass() {
+	case types.ClassInt:
+		return tpInt
+	case types.ClassReal:
+		return tpReal
+	case types.ClassDecimal:
+		return tpDecimal
+	case types.ClassString:
+		switch tp.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime:
+			return tpDatetime
+		case mysql.TypeTimestamp:
+			return tpTimestamp
+		case mysql.TypeDuration:
+			return tpDuration
+		}
+	}
+	return tpString
+}
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
@@ -80,8 +104,10 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			args[i], err = WrapWithCastAsDecimal(args[i], ctx)
 		case tpString:
 			args[i], err = WrapWithCastAsString(args[i], ctx)
-		case tpTime:
+		case tpDatetime:
 			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
+		case tpTimestamp:
+			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
 		case tpDuration:
 			args[i], err = WrapWithCastAsDuration(args[i], ctx)
 		case tpJSON:
@@ -120,9 +146,16 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			Flen:    0,
 			Decimal: types.UnspecifiedLength,
 		}
-	case tpTime:
+	case tpDatetime:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDatetime,
+			Flen:    mysql.MaxDatetimeWidthWithFsp,
+			Decimal: types.MaxFsp,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpTimestamp:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeTimestamp,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
@@ -301,27 +334,27 @@ func (b *baseIntBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 func (b *baseIntBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseIntBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
 }
 
 func (b *baseIntBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get STRING result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
 }
 
 func (b *baseIntBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseIntBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseIntBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from ClassInt expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 // baseRealBuiltinFunc represents the functions which return real values.
@@ -345,27 +378,27 @@ func (b *baseRealBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error)
 }
 
 func (b *baseRealBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseRealBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
 }
 
 func (b *baseRealBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get STRING result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
 }
 
 func (b *baseRealBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseRealBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseRealBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from ClassReal expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 // baseDecimalBuiltinFunc represents the functions which return decimal values.
@@ -389,27 +422,27 @@ func (b *baseDecimalBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecima
 }
 
 func (b *baseDecimalBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseDecimalBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseDecimalBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get REAL result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseDecimalBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseDecimalBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseDecimalBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from ClassDecimal expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 // baseStringBuiltinFunc represents the functions which return string values.
@@ -433,27 +466,27 @@ func (b *baseStringBuiltinFunc) evalString(row []types.Datum) (string, bool, err
 }
 
 func (b *baseStringBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from ClassString expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from ClassString expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from ClassString expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from: %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from ClassString expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from ClassString expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from ClassString expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 func (b *baseStringBuiltinFunc) getRetTp() *types.FieldType {
@@ -488,27 +521,27 @@ func (b *baseTimeBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, err
 }
 
 func (b *baseTimeBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get STRING result from TIME expression")
+	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
 }
 
 func (b *baseTimeBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from TIME expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseTimeBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from TIME expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseTimeBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from TIME expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
 }
 
 func (b *baseTimeBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from TIME expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseTimeBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from TIME expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 type baseDurationBuiltinFunc struct {
@@ -529,27 +562,27 @@ func (b *baseDurationBuiltinFunc) evalDuration(row []types.Datum) (types.Duratio
 }
 
 func (b *baseDurationBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from DURATION expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseDurationBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get STRING result from DURATION expression")
+	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
 }
 
 func (b *baseDurationBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from DURATION expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseDurationBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from DURATION expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseDurationBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from DURATION expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
 }
 
 func (b *baseDurationBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("cannot get JSON result from DURATION expression")
+	panic(fmt.Sprintf("cannot get JSON result from %T", b.self))
 }
 
 type baseJSONBuiltinFunc struct {
@@ -566,27 +599,27 @@ func (b *baseJSONBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error)
 }
 
 func (b *baseJSONBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from JSON expression")
+	panic(fmt.Sprintf("cannot get DURATION result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("cannot get DATE result from JSON expression")
+	panic(fmt.Sprintf("cannot get DATE result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get STRING result from JSON expression")
+	panic(fmt.Sprintf("cannot get STRING result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from JSON expression")
+	panic(fmt.Sprintf("cannot get INT result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from JSON expression")
+	panic(fmt.Sprintf("cannot get REAL result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from JSON expression")
+	panic(fmt.Sprintf("cannot get DECIMAL result from %T", b.self))
 }
 
 func (b *baseJSONBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
@@ -637,7 +670,7 @@ type baseFunctionClass struct {
 func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	l := len(args)
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
-		return errIncorrectParameterCount.GenByArgs(b.funcName)
+		return ErrIncorrectParameterCount.GenByArgs(b.funcName)
 	}
 	return nil
 }
@@ -751,6 +784,7 @@ var funcs = map[string]functionClass{
 	ast.WeekOfYear:       &weekOfYearFunctionClass{baseFunctionClass{ast.WeekOfYear, 1, 1}},
 	ast.Year:             &yearFunctionClass{baseFunctionClass{ast.Year, 1, 1}},
 	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
+	ast.LastDay:          &lastDayFunctionClass{baseFunctionClass{ast.LastDay, 1, 1}},
 
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
@@ -826,7 +860,6 @@ var funcs = map[string]functionClass{
 	// control functions
 	ast.If:     &ifFunctionClass{baseFunctionClass{ast.If, 3, 3}},
 	ast.Ifnull: &ifNullFunctionClass{baseFunctionClass{ast.Ifnull, 2, 2}},
-	ast.Nullif: &nullIfFunctionClass{baseFunctionClass{ast.Nullif, 2, 2}},
 
 	// miscellaneous functions
 	ast.Sleep:           &sleepFunctionClass{baseFunctionClass{ast.Sleep, 1, 1}},
@@ -866,7 +899,7 @@ var funcs = map[string]functionClass{
 	ast.Plus:       &arithmeticPlusFunctionClass{baseFunctionClass{ast.Plus, 2, 2}},
 	ast.Minus:      &arithmeticMinusFunctionClass{baseFunctionClass{ast.Minus, 2, 2}},
 	ast.Mod:        &arithmeticFunctionClass{baseFunctionClass{ast.Mod, 2, 2}, opcode.Mod},
-	ast.Div:        &arithmeticFunctionClass{baseFunctionClass{ast.Div, 2, 2}, opcode.Div},
+	ast.Div:        &arithmeticDivideFunctionClass{baseFunctionClass{ast.Div, 2, 2}},
 	ast.Mul:        &arithmeticMultiplyFunctionClass{baseFunctionClass{ast.Mul, 2, 2}},
 	ast.IntDiv:     &arithmeticFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}, opcode.IntDiv},
 	ast.BitNeg:     &bitNegFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}},
@@ -876,9 +909,7 @@ var funcs = map[string]functionClass{
 	ast.UnaryNot:   &unaryNotFunctionClass{baseFunctionClass{ast.UnaryNot, 1, 1}},
 	ast.Or:         &bitOrFunctionClass{baseFunctionClass{ast.Or, 2, 2}},
 	ast.Xor:        &bitXorFunctionClass{baseFunctionClass{ast.Xor, 2, 2}},
-	ast.UnaryPlus:  &unaryOpFunctionClass{baseFunctionClass{ast.UnaryPlus, 1, 1}, opcode.Plus},
 	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
-	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 1, -1}},
 	ast.IsTruth:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
 	ast.IsFalsity:  &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
 	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 2, 3}},

@@ -29,7 +29,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -58,20 +58,13 @@ var (
 	_ builtinFunc = &builtinAesDecryptSig{}
 	_ builtinFunc = &builtinAesEncryptSig{}
 	_ builtinFunc = &builtinCompressSig{}
-	_ builtinFunc = &builtinDecodeSig{}
-	_ builtinFunc = &builtinDesDecryptSig{}
-	_ builtinFunc = &builtinDesEncryptSig{}
-	_ builtinFunc = &builtinEncodeSig{}
-	_ builtinFunc = &builtinEncryptSig{}
 	_ builtinFunc = &builtinMD5Sig{}
-	_ builtinFunc = &builtinOldPasswordSig{}
 	_ builtinFunc = &builtinPasswordSig{}
 	_ builtinFunc = &builtinRandomBytesSig{}
 	_ builtinFunc = &builtinSHA1Sig{}
 	_ builtinFunc = &builtinSHA2Sig{}
 	_ builtinFunc = &builtinUncompressSig{}
 	_ builtinFunc = &builtinUncompressedLengthSig{}
-	_ builtinFunc = &builtinValidatePasswordStrengthSig{}
 )
 
 // TODO: support other mode
@@ -175,21 +168,7 @@ type decodeFunctionClass struct {
 }
 
 func (c *decodeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinDecodeSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinDecodeSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinDecodeSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_decode
-func (b *builtinDecodeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("DECODE")
+	return nil, errFunctionNotExists.GenByArgs("DECODE")
 }
 
 type desDecryptFunctionClass struct {
@@ -197,21 +176,7 @@ type desDecryptFunctionClass struct {
 }
 
 func (c *desDecryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinDesDecryptSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinDesDecryptSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinDesDecryptSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_des-decrypt
-func (b *builtinDesDecryptSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("DES_DECRYPT")
+	return nil, errFunctionNotExists.GenByArgs("DES_DECRYPT")
 }
 
 type desEncryptFunctionClass struct {
@@ -219,21 +184,7 @@ type desEncryptFunctionClass struct {
 }
 
 func (c *desEncryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinDesEncryptSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinDesEncryptSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinDesEncryptSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_des-encrypt
-func (b *builtinDesEncryptSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("DES_ENCRYPT")
+	return nil, errFunctionNotExists.GenByArgs("DES_ENCRYPT")
 }
 
 type encodeFunctionClass struct {
@@ -241,21 +192,7 @@ type encodeFunctionClass struct {
 }
 
 func (c *encodeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinEncodeSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinEncodeSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinEncodeSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_encode
-func (b *builtinEncodeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ENCODE")
+	return nil, errFunctionNotExists.GenByArgs("ENCODE")
 }
 
 type encryptFunctionClass struct {
@@ -263,21 +200,7 @@ type encryptFunctionClass struct {
 }
 
 func (c *encryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinEncryptSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinEncryptSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinEncryptSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_encrypt
-func (b *builtinEncryptSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ENCRYPT")
+	return nil, errFunctionNotExists.GenByArgs("ENCRYPT")
 }
 
 type oldPasswordFunctionClass struct {
@@ -285,21 +208,7 @@ type oldPasswordFunctionClass struct {
 }
 
 func (c *oldPasswordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinOldPasswordSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinOldPasswordSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinOldPasswordSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_old-password
-func (b *builtinOldPasswordSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("OLD_PASSWORD")
+	return nil, errFunctionNotExists.GenByArgs("OLD_PASSWORD")
 }
 
 type passwordFunctionClass struct {
@@ -336,7 +245,7 @@ func (b *builtinPasswordSig) evalString(row []types.Datum) (d string, isNull boo
 		return "", false, nil
 	}
 
-	return util.EncodePassword(pass), false, nil
+	return auth.EncodePassword(pass), false, nil
 }
 
 type randomBytesFunctionClass struct {
@@ -347,37 +256,37 @@ func (c *randomBytesFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinRandomBytesSig{newBaseBuiltinFunc(args, ctx)}
+	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Flen = 1024 // Max allowed random bytes
+	types.SetBinChsClnFlag(bf.tp)
+	sig := &builtinRandomBytesSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinRandomBytesSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinRandomBytesSig.
+// evalString evals RANDOM_BYTES(len).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_random-bytes
-func (b *builtinRandomBytesSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinRandomBytesSig) evalString(row []types.Datum) (string, bool, error) {
+	len, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
+	if len < 1 || len > 1024 {
+		return "", false, types.ErrOverflow.GenByArgs("length", "random_bytes")
 	}
-	size := arg.GetInt64()
-	if size < 1 || size > 1024 {
-		return d, mysql.NewErr(mysql.ErrDataOutOfRange, "length", "random_bytes")
-	}
-	buf := make([]byte, size)
+	buf := make([]byte, len)
 	if n, err := rand.Read(buf); err != nil {
-		return d, errors.Trace(err)
-	} else if int64(n) != size {
-		return d, errors.New("fail to generate random bytes")
+		return "", false, errors.Trace(err)
+	} else if int64(n) != len {
+		return "", false, errors.New("fail to generate random bytes")
 	}
-	d.SetBytes(buf)
-	return d, nil
+	return string(buf), false, nil
 }
 
 type md5FunctionClass struct {
@@ -691,19 +600,5 @@ type validatePasswordStrengthFunctionClass struct {
 }
 
 func (c *validatePasswordStrengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinValidatePasswordStrengthSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), nil
-}
-
-type builtinValidatePasswordStrengthSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinValidatePasswordStrengthSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_validate-password-strength
-func (b *builtinValidatePasswordStrengthSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("VALIDATE_PASSWORD_STRENGTH")
+	return nil, errFunctionNotExists.GenByArgs("VALIDATE_PASSWORD_STRENGTH")
 }

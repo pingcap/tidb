@@ -33,39 +33,61 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft.Decimal = 5
 	c.Assert(ft.String(), Equals, "time(5)")
 
-	ft.Tp = mysql.TypeLong
-	ft.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
+	ft = NewFieldType(mysql.TypeLong)
+	ft.Flen = 5
+	ft.Flag = mysql.UnsignedFlag | mysql.ZerofillFlag
 	c.Assert(ft.String(), Equals, "int(5) UNSIGNED ZEROFILL")
 	c.Assert(ft.InfoSchemaStr(), Equals, "int(5) unsigned")
 
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.Flen = 10
-	ft.Decimal = 3
-	c.Assert(ft.String(), Equals, "float(10,3)")
+	ft.Flen = 12   // Default
+	ft.Decimal = 3 // Not Default
+	c.Assert(ft.String(), Equals, "float(12,3)")
 	ft = NewFieldType(mysql.TypeFloat)
-	ft.Flen = 10
-	ft.Decimal = -1
+	ft.Flen = 12    // Default
+	ft.Decimal = -1 // Default
 	c.Assert(ft.String(), Equals, "float")
+	ft = NewFieldType(mysql.TypeFloat)
+	ft.Flen = 5     // Not Default
+	ft.Decimal = -1 // Default
+	c.Assert(ft.String(), Equals, "float")
+	ft = NewFieldType(mysql.TypeFloat)
+	ft.Flen = 7    // Not Default
+	ft.Decimal = 3 // Not Default
+	c.Assert(ft.String(), Equals, "float(7,3)")
 
 	ft = NewFieldType(mysql.TypeDouble)
-	ft.Flen = 10
-	ft.Decimal = 3
-	c.Assert(ft.String(), Equals, "double(10,3)")
+	ft.Flen = 22   // Default
+	ft.Decimal = 3 // Not Default
+	c.Assert(ft.String(), Equals, "double(22,3)")
 	ft = NewFieldType(mysql.TypeDouble)
-	ft.Flen = 10
-	ft.Decimal = -1
+	ft.Flen = 22    // Default
+	ft.Decimal = -1 // Default
 	c.Assert(ft.String(), Equals, "double")
+	ft = NewFieldType(mysql.TypeDouble)
+	ft.Flen = 5     // Not Default
+	ft.Decimal = -1 // Default
+	c.Assert(ft.String(), Equals, "double")
+	ft = NewFieldType(mysql.TypeDouble)
+	ft.Flen = 7    // Not Default
+	ft.Decimal = 3 // Not Default
+	c.Assert(ft.String(), Equals, "double(7,3)")
 
 	ft = NewFieldType(mysql.TypeBlob)
 	ft.Flen = 10
 	ft.Charset = "UTF8"
 	ft.Collate = "UTF8_UNICODE_GI"
-	c.Assert(ft.String(), Equals, "text(10) CHARACTER SET UTF8 COLLATE UTF8_UNICODE_GI")
+	c.Assert(ft.String(), Equals, "text CHARACTER SET UTF8 COLLATE UTF8_UNICODE_GI")
 
 	ft = NewFieldType(mysql.TypeVarchar)
 	ft.Flen = 10
 	ft.Flag |= mysql.BinaryFlag
 	c.Assert(ft.String(), Equals, "varchar(10) BINARY")
+
+	ft = NewFieldType(mysql.TypeString)
+	ft.Charset = charset.CollationBin
+	ft.Flag |= mysql.BinaryFlag
+	c.Assert(ft.String(), Equals, "binary(1)")
 
 	ft = NewFieldType(mysql.TypeEnum)
 	ft.Elems = []string{"a", "b"}
@@ -100,14 +122,24 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft.Flen = 8
 	ft.Decimal = 0
 	c.Assert(ft.String(), Equals, "datetime")
+
 	ft = NewFieldType(mysql.TypeDate)
 	ft.Flen = 8
 	ft.Decimal = 2
-	c.Assert(ft.String(), Equals, "date(2)")
+	c.Assert(ft.String(), Equals, "date")
 	ft = NewFieldType(mysql.TypeDate)
 	ft.Flen = 8
 	ft.Decimal = 0
 	c.Assert(ft.String(), Equals, "date")
+
+	ft = NewFieldType(mysql.TypeYear)
+	ft.Flen = 4
+	ft.Decimal = 0
+	c.Assert(ft.String(), Equals, "year")
+	ft = NewFieldType(mysql.TypeYear)
+	ft.Flen = 2
+	ft.Decimal = 2
+	c.Assert(ft.String(), Equals, "year") // Note: Invalid year.
 }
 
 func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
@@ -184,16 +216,18 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 		case mysql.TypeDate:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeNewDate)
 		case mysql.TypeJSON:
-			c.Assert(aggTp.Tp, Equals, mysql.TypeBit)
+			c.Assert(aggTp.Tp, Equals, mysql.TypeJSON)
 		case mysql.TypeEnum, mysql.TypeSet, mysql.TypeVarString:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeVarchar)
+		case mysql.TypeDecimal:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeNewDecimal)
 		default:
 			c.Assert(aggTp.Tp, Equals, fts[i].Tp)
 		}
 
 		aggTp = AggFieldType([]*FieldType{fts[i], NewFieldType(mysql.TypeLong)})
 		switch fts[i].Tp {
-		case mysql.TypeDecimal, mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeYear, mysql.TypeInt24, mysql.TypeNull:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeLong)
 		case mysql.TypeLonglong:
@@ -207,7 +241,7 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 			c.Assert(aggTp.Tp, Equals, mysql.TypeVarchar)
 		case mysql.TypeString:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeString)
-		case mysql.TypeNewDecimal:
+		case mysql.TypeDecimal, mysql.TypeNewDecimal:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeNewDecimal)
 		case mysql.TypeTinyBlob:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeTinyBlob)
@@ -217,6 +251,18 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 			c.Assert(aggTp.Tp, Equals, mysql.TypeMediumBlob)
 		case mysql.TypeLongBlob:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeLongBlob)
+		}
+
+		aggTp = AggFieldType([]*FieldType{fts[i], NewFieldType(mysql.TypeJSON)})
+		switch fts[i].Tp {
+		case mysql.TypeJSON, mysql.TypeNull:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeJSON)
+		case mysql.TypeLongBlob, mysql.TypeMediumBlob, mysql.TypeTinyBlob, mysql.TypeBlob:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeLongBlob)
+		case mysql.TypeString:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeString)
+		default:
+			c.Assert(aggTp.Tp, Equals, mysql.TypeVarchar)
 		}
 	}
 }

@@ -376,7 +376,6 @@ func closeAll(objs ...Closeable) error {
 type XSelectIndexExec struct {
 	tableInfo      *model.TableInfo
 	table          table.Table
-	asName         *model.CIStr
 	ctx            context.Context
 	supportDesc    bool
 	isMemDB        bool
@@ -893,7 +892,6 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 type XSelectTableExec struct {
 	tableInfo   *model.TableInfo
 	table       table.Table
-	asName      *model.CIStr
 	ctx         context.Context
 	supportDesc bool
 	isMemDB     bool

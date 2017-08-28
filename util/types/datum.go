@@ -24,7 +24,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types/json"
@@ -677,14 +676,6 @@ func (d *Datum) compareRow(sc *variable.StatementContext, row []Datum) (int, err
 	return CompareInt64(int64(len(dRow)), int64(len(row))), nil
 }
 
-// Cast casts datum to certain types.
-func (d *Datum) Cast(sc *variable.StatementContext, target *FieldType) (ad Datum, err error) {
-	if !isCastType(target.Tp) {
-		return ad, errors.Errorf("unknown cast type - %v", target)
-	}
-	return d.ConvertTo(sc, target)
-}
-
 // ConvertTo converts a datum to the target field type.
 func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	if d.k == KindNull {
@@ -1101,9 +1092,9 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 	case KindMysqlSet:
 		dec.FromFloat64(d.GetMysqlSet().ToNumber())
 	case KindMysqlJSON:
-		f, err := d.GetMysqlJSON().CastToReal()
-		if err != nil {
-			return ret, errors.Trace(err)
+		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
+		if err1 != nil {
+			return ret, errors.Trace(err1)
 		}
 		dec.FromFloat64(f)
 	default:
@@ -1138,7 +1129,7 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.State
 		}
 	}
 
-	if terror.ErrorEqual(err, ErrOverflow) {
+	if ErrOverflow.Equal(err) {
 		// TODO: warnErr need to be ErrWarnDataOutOfRange
 		err = sc.HandleOverflow(err, err)
 	}
@@ -1361,9 +1352,9 @@ func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, 
 	case KindMysqlSet:
 		dec.FromUint(d.GetMysqlSet().Value)
 	case KindMysqlJSON:
-		f, err := d.GetMysqlJSON().CastToReal()
-		if err != nil {
-			return nil, errors.Trace(err)
+		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		dec.FromFloat64(f)
 	default:
@@ -1455,7 +1446,7 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		fval := d.GetMysqlSet().ToNumber()
 		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
 	case KindMysqlJSON:
-		return d.GetMysqlJSON().CastToInt()
+		return ConvertJSONToInt(sc, d.GetMysqlJSON(), true)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", d.GetValue(), d.GetValue())
 	}
@@ -1736,13 +1727,6 @@ func NewDecimalDatum(dec *MyDecimal) (d Datum) {
 	return d
 }
 
-// NewRawDatum create a new Datum that is not decoded.
-func NewRawDatum(b []byte) (d Datum) {
-	d.k = KindRaw
-	d.b = b
-	return d
-}
-
 // MakeDatums creates datum slice from interfaces.
 func MakeDatums(args ...interface{}) []Datum {
 	datums := make([]Datum, len(args))
@@ -1750,15 +1734,6 @@ func MakeDatums(args ...interface{}) []Datum {
 		datums[i] = NewDatum(v)
 	}
 	return datums
-}
-
-// DatumsToInterfaces converts a datum slice to interface slice.
-func DatumsToInterfaces(datums []Datum) []interface{} {
-	ins := make([]interface{}, len(datums))
-	for i, v := range datums {
-		ins[i] = v.GetValue()
-	}
-	return ins
 }
 
 // MinNotNullDatum returns a datum represents minimum not null value.

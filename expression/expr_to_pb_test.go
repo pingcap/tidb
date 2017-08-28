@@ -317,53 +317,6 @@ func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestInFunc2Pb(c *C) {
-	var (
-		compareExprs []Expression
-		args         []Expression
-	)
-	sc := new(variable.StatementContext)
-	client := new(mockKvClient)
-	dg := new(dataGen4Expr2PbTest)
-
-	args = append(args, dg.genColumn(mysql.TypeLonglong, 1))
-	args = append(args, &Constant{RetType: nil, Value: types.NewDatum(nil)})
-	c.Assert(args[len(args)-1].(*Constant).Value.Kind(), Equals, types.KindNull)
-	args = append(args, &Constant{RetType: nil, Value: types.NewDatum(uint64(100))})
-	c.Assert(args[len(args)-1].(*Constant).Value.Kind(), Equals, types.KindUint64)
-	args = append(args, &Constant{RetType: nil, Value: types.NewDatum("100")})
-	c.Assert(args[len(args)-1].(*Constant).Value.Kind(), Equals, types.KindString)
-
-	fc, err := NewFunction(mock.NewContext(), ast.In, types.NewFieldType(mysql.TypeUnspecified), args...)
-	c.Assert(err, IsNil)
-	compareExprs = append(compareExprs, fc)
-
-	pbExpr, pushed, remained := ExpressionsToPB(sc, compareExprs, client)
-	c.Assert(pbExpr, IsNil)
-	c.Assert(len(pushed), Equals, 0)
-	c.Assert(len(remained), Equals, 1)
-
-	pbExprs := ExpressionsToPBList(sc, compareExprs, client)
-	c.Assert(len(pbExprs), Equals, 1)
-	c.Assert(pbExprs[0], IsNil)
-
-	args = args[:3]
-	args = append(args, &Constant{RetType: nil, Value: types.NewDatum(uint64(200))})
-	c.Assert(args[len(args)-1].(*Constant).Value.Kind(), Equals, types.KindUint64)
-
-	fc, err = NewFunction(mock.NewContext(), ast.In, types.NewFieldType(mysql.TypeUnspecified), args...)
-	c.Assert(err, IsNil)
-	compareExprs[0] = fc
-
-	pbExpr, pushed, remained = ExpressionsToPB(sc, compareExprs, client)
-	c.Assert(pbExpr, NotNil)
-	c.Assert(len(pushed), Equals, 1)
-	c.Assert(len(remained), Equals, 0)
-	js, err := json.Marshal(pbExpr)
-	c.Assert(err, IsNil)
-	c.Assert(string(js), Equals, "{\"tp\":4001,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":151,\"val\":\"AAlkCcgB\"}]}")
-}
-
 func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 	var likeFuncs []Expression
 	sc := new(variable.StatementContext)
@@ -408,8 +361,8 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 			mock.NewContext(),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
-			dg.genColumn(mysql.TypeLonglong, 1),
-			dg.genColumn(mysql.TypeLonglong, 2))
+			dg.genColumn(mysql.TypeDouble, 1),
+			dg.genColumn(mysql.TypeDouble, 2))
 		c.Assert(err, IsNil)
 		arithmeticalFuncs = append(arithmeticalFuncs, fc)
 	}
@@ -508,7 +461,6 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 		ast.Case,
 		ast.If,
 		ast.Ifnull,
-		ast.Nullif,
 	}
 	for i, funcName := range funcNames {
 		args := []Expression{dg.genColumn(mysql.TypeLong, 1)}
