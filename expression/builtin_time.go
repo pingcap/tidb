@@ -160,6 +160,9 @@ var (
 	_ builtinFunc = &builtinTimestamp1ArgSig{}
 	_ builtinFunc = &builtinTimestamp2ArgsSig{}
 	_ builtinFunc = &builtinLastDaySig{}
+	_ builtinFunc = &builtinStrToDateDateSig{}
+	_ builtinFunc = &builtinStrToDateDatetimeSig{}
+	_ builtinFunc = &builtinStrToDateDurationSig{}
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.
