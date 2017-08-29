@@ -802,6 +802,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("0 1 2 0"))
 	result = tk.MustQuery(`select find_in_set(NULL, ""), find_in_set("", NULL), find_in_set(1, "2,3,1");`)
 	result.Check(testkit.Rows("<nil> <nil> 3"))
+
+	// for make_set
+	result = tk.MustQuery(`select make_set(0, "12"), make_set(3, "aa", "11"), make_set(3, NULL, "中文"), make_set(NULL, "aa");`)
+	result.Check(testkit.Rows(" aa,11 中文 <nil>"))
+
+	// for quote
+	result = tk.MustQuery(`select quote("aaaa"), quote(""), quote("\"\""), quote("\n\n");`)
+	result.Check(testkit.Rows("'aaaa' '' '\"\"' '\n\n'"))
+	result = tk.MustQuery(`select quote(0121), quote(0000), quote("中文"), quote(NULL);`)
+	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
