@@ -666,10 +666,10 @@ type builtinFunc interface {
 	getRetTp() *types.FieldType
 	// setSelf sets a pointer to itself.
 	setSelf(builtinFunc) builtinFunc
-	// setPbCode
+	// setPbCode sets pbCode for signature.
 	setPbCode(tipb.ScalarFuncSig)
-	// getPbCode
-	getPbCode() tipb.ScalarFuncSig
+	// PbCode returns PbCode of this signature.
+	PbCode() tipb.ScalarFuncSig
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.
