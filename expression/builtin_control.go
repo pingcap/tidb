@@ -70,9 +70,14 @@ func inferType4ControlFuncs(tp1, tp2 *types.FieldType) *types.FieldType {
 		var unsignedFlag uint
 		typeClass = types.AggTypeClass([]*types.FieldType{tp1, tp2}, &unsignedFlag)
 		retTp = types.AggFieldType([]*types.FieldType{tp1, tp2})
-		retTp.Decimal = 0
-		if typeClass != types.ClassInt {
-			retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
+		if typeClass == types.ClassInt {
+			retTp.Decimal = 0
+		} else {
+			if tp1.Decimal == types.UnspecifiedLength || tp2.Decimal == types.UnspecifiedLength {
+				retTp.Decimal = types.UnspecifiedLength
+			} else {
+				retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
+			}
 		}
 		if types.IsNonBinaryStr(tp1) && !types.IsBinaryStr(tp2) {
 			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
@@ -109,6 +114,15 @@ func inferType4ControlFuncs(tp1, tp2 *types.FieldType) *types.FieldType {
 			retTp.Flen = mathutil.Max(len1, len2) + retTp.Decimal + 1
 		} else {
 			retTp.Flen = mathutil.Max(tp1.Flen, tp2.Flen)
+		}
+	}
+	// Fix decimal for int and string.
+	fieldTp := fieldTp2EvalTp(retTp)
+	if fieldTp == tpInt {
+		retTp.Decimal = 0
+	} else if fieldTp == tpString {
+		if tp1.Tp != mysql.TypeNull || tp2.Tp != mysql.TypeNull {
+			retTp.Decimal = types.UnspecifiedLength
 		}
 	}
 	return retTp
@@ -157,20 +171,19 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if l%2 == 1 {
 		argTps = append(argTps, tp)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
 	bf.tp = fieldTp
 
 	switch tp {
 	case tpInt:
+		bf.tp.Decimal = 0
 		sig = &builtinCaseWhenIntSig{baseIntBuiltinFunc{bf}}
 	case tpReal:
 		sig = &builtinCaseWhenRealSig{baseRealBuiltinFunc{bf}}
 	case tpDecimal:
 		sig = &builtinCaseWhenDecimalSig{baseDecimalBuiltinFunc{bf}}
 	case tpString:
+		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinCaseWhenStringSig{baseStringBuiltinFunc{bf}}
 	case tpDatetime, tpTimestamp:
 		sig = &builtinCaseWhenTimeSig{baseTimeBuiltinFunc{bf}}
@@ -377,10 +390,7 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 	}
 	retTp := inferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := fieldTp2EvalTp(retTp)
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
 	case tpInt:
@@ -524,10 +534,7 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := fieldTp2EvalTp(retTp)
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
 	case tpInt:

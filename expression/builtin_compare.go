@@ -116,10 +116,7 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, retEvalTp, fieldEvalTps...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retEvalTp, fieldEvalTps...)
 
 	bf.tp.Flag |= retTp.Flag
 	retTp.Flen, retTp.Decimal = 0, types.UnspecifiedLength
@@ -614,10 +611,7 @@ func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Con
 
 // genCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx context.Context) (sig builtinFunc, err error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
-	if err != nil {
-		return sig, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
 	bf.tp.Flen = 1
 	intBf := baseIntBuiltinFunc{bf}
 	switch tp {
