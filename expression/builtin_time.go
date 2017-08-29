@@ -2238,10 +2238,7 @@ func (c *addTimeFunctionClass) getFunction(args []Expression, ctx context.Contex
 	default:
 		argTp2 = tpString
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp1, argTp2)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp1, argTp2)
 	bf.tp.Decimal = tp1.Decimal
 	if retTp == tpString {
 		bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeString, mysql.MaxDatetimeWidthWithFsp, types.UnspecifiedLength
@@ -3057,10 +3054,7 @@ func (c *subTimeFunctionClass) getFunction(args []Expression, ctx context.Contex
 	default:
 		argTp2 = tpString
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp1, argTp2)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp1, argTp2)
 	bf.tp.Decimal = tp1.Decimal
 	if retTp == tpString {
 		bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeString, mysql.MaxDatetimeWidthWithFsp, types.UnspecifiedLength
