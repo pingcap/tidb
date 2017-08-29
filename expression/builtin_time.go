@@ -1314,9 +1314,42 @@ type strToDateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *strToDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *strToDateFunctionClass) getRetTp(arg Expression, ctx context.Context) (tp byte) {
+	tp = mysql.TypeDatetime
+	if _, ok := arg.(*Constant); !ok {
+		return
+	}
+		strArg, err := WrapWithCastAsString(arg, ctx)
+		if err != nil {
+			return
+		}
+		format, isNull, err := strArg.EvalString(nil, ctx.GetSessionVars().StmtCtx)
+		if err != nil || isNull{
+			return
+		}
+		isDuration, isDate := types.GetFormatType(format)
+		if isDuration && !isDate{
+			tp = mysql.TypeDuration
+		}else if !isDuration && isDate {
+			tp = mysql.TypeDate
+		}
+	return
+}
+
+func (c *strToDateFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
+	}
+	retTp := c.getRetTp(args[1], ctx)
+	var bf baseBuiltinFunc
+	switch retTp {
+	case mysql.TypeDate:
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString)
+		bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, 0
+	case mysql.TypeDatetime:
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString)
+	case mysql.TypeDuration:
+		bf, err = newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpString)
 	}
 	sig := &builtinStrToDateSig{newBaseBuiltinFunc(args, ctx)}
 	return sig.setSelf(sig), nil

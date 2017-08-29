@@ -2040,6 +2040,48 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	// "%y": yearTwoDigits,         // Year, numeric (two digits)
 }
 
+// GetFormatType checks the type(Duration, Date or Datetime) of format.
+func GetFormatType(format string) (isDuration, isDate bool){
+	durationTokens := map[string]struct{}{
+		"%h" : {},
+		"%H" : {},
+		"%i" : {},
+		"%I" : {},
+		"%s" : {},
+		"%S" : {},
+		"%k" : {},
+		"%l" : {},
+	}
+	dateTokens := map[string]struct{}{
+		"%y" : {},
+		"%Y" : {},
+		"%m" : {},
+		"%M" : {},
+		"%c" : {},
+		"%b" : {},
+		"%D" : {},
+		"%d" : {},
+		"%e" : {},
+	}
+
+	format = skipWhiteSpace(format)
+	for token, formatRemain, succ := getFormatToken(format); len(token) != 0; format = formatRemain{
+		if !succ {
+			isDuration, isDate = false, false
+			break
+		}
+		if _, ok := durationTokens[token]; ok {
+			isDuration = true
+		}else if _, ok := dateTokens[token]; ok {
+			isDate = true
+		}
+		if isDuration && isDate {
+			break
+		}
+	}
+	return
+}
+
 func matchDateWithToken(t *mysqlTime, date string, token string, ctx map[string]int) (remain string, succ bool) {
 	if parse, ok := dateFormatParserTable[token]; ok {
 		return parse(t, date, ctx)
