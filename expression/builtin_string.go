@@ -127,7 +127,8 @@ var (
 	_ builtinFunc = &builtinCharLengthSig{}
 	_ builtinFunc = &builtinFindInSetSig{}
 	_ builtinFunc = &builtinMakeSetSig{}
-	_ builtinFunc = &builtinOctSig{}
+	_ builtinFunc = &builtinOctIntSig{}
+	_ builtinFunc = &builtinOctStringSig{}
 	_ builtinFunc = &builtinOrdSig{}
 	_ builtinFunc = &builtinQuoteSig{}
 	_ builtinFunc = &builtinBinSig{}
@@ -2126,23 +2127,55 @@ func (c *octFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
-	sig := &builtinOctSig{baseStringBuiltinFunc{bf}}
-	bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
+	var bf baseBuiltinFunc
+	var sig builtinFunc
+	switch args[0].GetTypeClass() {
+	case types.ClassInt:
+		bf = newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
+		sig = &builtinOctIntSig{baseStringBuiltinFunc{bf}}
+	default:
+		if IsHybridType(args[0]) {
+			bf = newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+			bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
+			sig = &builtinOctIntSig{baseStringBuiltinFunc{bf}}
+		} else {
+			bf = newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+			bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
+			sig = &builtinOctStringSig{baseStringBuiltinFunc{bf}}
+		}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinOctSig struct {
+type builtinOctIntSig struct {
 	baseStringBuiltinFunc
 }
 
 // evalString evals OCT(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
-func (b *builtinOctSig) evalString(row []types.Datum) (string, bool, error) {
-	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+func (b *builtinOctIntSig) evalString(row []types.Datum) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
+
+	return strconv.FormatUint(uint64(val), 8), false, nil
+}
+
+type builtinOctStringSig struct {
+	baseStringBuiltinFunc
+}
+
+// // evalString evals OCT(N).
+// // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
+func (b *builtinOctStringSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+
 	negative, overflow := false, false
 	val = getValidPrefix(strings.TrimSpace(val), 10)
 	if len(val) == 0 {
