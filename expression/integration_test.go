@@ -1195,6 +1195,18 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`SELECT microsecond("12:00:00.123456"), microsecond("12:00:00.000010"), microsecond(null), microsecond("27aaaa2:59:55");`)
 	result.Check(testkit.Rows("123456 10 <nil> <nil>"))
 
+	// for period_add
+	result = tk.MustQuery(`SELECT period_add(191, 2), period_add(191, -2), period_add(0, 20), period_add(0, 0);`)
+	result.Check(testkit.Rows("200809 200805 0 0"))
+	result = tk.MustQuery(`SELECT period_add(NULL, 2), period_add(-191, NULL), period_add(NULL, NULL), period_add(12.09, -2), period_add("21aa", "11aa"), period_add("", "");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> 200010 200208 0"))
+
+	// for period_diff
+	result = tk.MustQuery(`SELECT period_diff(191, 2), period_diff(191, -2), period_diff(0, 0), period_diff(191, 191);`)
+	result.Check(testkit.Rows("101 -2213609288845122103 0 0"))
+	result = tk.MustQuery(`SELECT period_diff(NULL, 2), period_diff(-191, NULL), period_diff(NULL, NULL), period_diff(12.09, 2), period_diff("21aa", "11aa"), period_diff("", "");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> 10 10 0"))
+
 	// TODO: fix `CAST(xx as duration)` and release the test below:
 	// result = tk.MustQuery(`SELECT hour("aaa"), hour(123456), hour(1234567);`)
 	// result = tk.MustQuery(`SELECT minute("aaa"), minute(123456), minute(1234567);`)
@@ -1984,7 +1996,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"4 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"5 0 1 1 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"6 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
-		"7 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"7 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"8 0 0 0 1 <nil> <nil> 0 0 0 0 1 <nil> <nil> 0 0 0 0 <nil>",
 		"9 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"10 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
