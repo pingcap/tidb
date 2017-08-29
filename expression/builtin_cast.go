@@ -292,6 +292,8 @@ func (c *castAsStringFunctionClass) getFunction(args []Expression, ctx context.C
 			sig = &builtinCastTimeAsStringSig{bf}
 		} else if tp == mysql.TypeDuration {
 			sig = &builtinCastDurationAsStringSig{bf}
+		} else if tp == mysql.TypeJSON {
+			sig = &builtinCastJSONAsStringSig{bf}
 		} else {
 			sig = &builtinCastStringAsStringSig{bf}
 		}
@@ -567,12 +569,13 @@ func (b *builtinCastStringAsJSONSig) evalJSON(row []types.Datum) (res json.JSON,
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if b.tp.Decimal == 0 {
-		res, err = json.ParseFromString(val)
-	} else {
-		// This is a post-wrapped cast.
-		res = json.CreateJSON(val)
-	}
+	res, err = json.ParseFromString(val)
+	// if b.tp.Decimal == 0 {
+	// 	res, err = json.ParseFromString(val)
+	// } else {
+	// 	// This is a post-wrapped cast.
+	// 	res = json.CreateJSON(val)
+	// }
 	return res, false, errors.Trace(err)
 }
 

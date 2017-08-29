@@ -294,18 +294,8 @@ func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	argEvalTp := fieldTp2EvalTp(args[0].GetType())
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, argEvalTp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	bf.tp = &types.FieldType{
-		Tp:      mysql.TypeVarString,
-		Flen:    types.UnspecifiedLength,
-		Decimal: types.UnspecifiedLength,
-		Charset: mysql.DefaultCharset,
-		Collate: mysql.DefaultCollationName,
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
+	bf.tp.Charset, bf.tp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
 	sig := &builtinJSONTypeSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }

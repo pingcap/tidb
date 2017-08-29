@@ -28,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
-
-	"github.com/ngaut/log"
 )
 
 // evalTp indicates the specified types that arguments and result of a built-in function should be.
@@ -62,6 +60,8 @@ func fieldTp2EvalTp(tp *types.FieldType) evalTp {
 			return tpTimestamp
 		case mysql.TypeDuration:
 			return tpDuration
+		case mysql.TypeJSON:
+			return tpJSON
 		}
 	}
 	return tpString
@@ -113,7 +113,6 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 		case tpDuration:
 			args[i] = WrapWithCastAsDuration(args[i], ctx)
 		case tpJSON:
-			log.Errorf("cast to json is added")
 			args[i] = WrapWithCastAsJSON(args[i], ctx)
 		}
 	}
