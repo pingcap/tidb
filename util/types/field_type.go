@@ -312,7 +312,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeDouble
 		s := strconv.FormatFloat(x, 'f', -1, 64)
 		tp.Flen = len(s)
-		tp.Decimal = len(s) - 1 - strings.Index(s, ".")
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case []byte:
 		tp.Tp = mysql.TypeBlob
@@ -327,7 +327,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case Hex:
 		tp.Tp = mysql.TypeVarchar
 		tp.Flen = len(x.String())
-		tp.Decimal = UnspecifiedLength
+		tp.Decimal = 0
+		tp.Flag |= mysql.UnsignedFlag
 		SetBinChsClnFlag(tp)
 	case Time:
 		tp.Tp = x.Type
