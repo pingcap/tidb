@@ -55,9 +55,13 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 		Expected interface{}
 	}{
 		{nil, nil},
+		{``, ``},
+		{`""`, ``},
+		{`''`, ``},
 		{`"a"`, `a`},
 		{`3`, `3`},
-		{`{"a": "b"}`, `{"a":"b"}`},
+		{`{"a": "b"}`, `{"a": "b"}`},
+		{`{"a":     "b"}`, `{"a":     "b"}`},
 		{`"hello,\"quoted string\",world"`, `hello,"quoted string",world`},
 		{`"hello,\"宽字符\",world"`, `hello,"宽字符",world`},
 		{`Invalid Json string\tis OK`, `Invalid Json string	is OK`},

@@ -24,6 +24,13 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+const (
+	// castJSONDirectly is used for really cast to JSON.
+	castJSONDirectly int = 0
+	// castJSONPostWrapped is used for post-wrapped cast to JSON.
+	castJSONPostWrapped int = -1
+)
+
 // jsonFunctionNameToPB is for pushdown json functions to storage engine.
 var jsonFunctionNameToPB = map[string]tipb.ExprType{
 	ast.JSONType:     tipb.ExprType_JsonType,
@@ -176,12 +183,9 @@ func JSONUnquote(args []types.Datum, sc *variable.StatementContext) (d types.Dat
 	if argsAnyNull(args) {
 		return d, nil
 	}
-	djson, err := datum2JSON(args[0], sc)
+	djson, err := args[0].ToMysqlJSON()
 	if err != nil {
-		djson, err = args[0].ToMysqlJSON()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
+		return d, errors.Trace(err)
 	}
 	unquoted, err := djson.Unquote()
 	if err != nil {
@@ -297,6 +301,7 @@ func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Conte
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
 	bf.tp.Charset, bf.tp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
+	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONTypeSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -348,6 +353,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(args []Expression, ctx context.Co
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
 	bf.tp.Charset, bf.tp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
+	// args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONUnquoteSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }

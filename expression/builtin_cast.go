@@ -44,6 +44,7 @@ var (
 	_ functionClass = &castAsDecimalFunctionClass{}
 	_ functionClass = &castAsTimeFunctionClass{}
 	_ functionClass = &castAsDurationFunctionClass{}
+	_ functionClass = &castAsJSONFunctionClass{}
 )
 
 var (
@@ -580,13 +581,12 @@ func (b *builtinCastStringAsJSONSig) evalJSON(row []types.Datum) (res json.JSON,
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = json.ParseFromString(val)
-	// if b.tp.Decimal == 0 {
-	// 	res, err = json.ParseFromString(val)
-	// } else {
-	// 	// This is a post-wrapped cast.
-	// 	res = json.CreateJSON(val)
-	// }
+	if b.tp.Decimal == castJSONDirectly {
+		res, err = json.ParseFromString(val)
+	} else {
+		// This is a post-wrapped cast.
+		res = json.CreateJSON(val)
+	}
 	return res, false, errors.Trace(err)
 }
 
@@ -1392,10 +1392,9 @@ func WrapWithCastAsJSON(expr Expression, ctx context.Context) Expression {
 		return expr
 	}
 	tp := &types.FieldType{
-		Tp:   mysql.TypeJSON,
-		Flen: 12582912,
-		// Here we set decimal to -1 to indicate this is a post-wrapped cast.
-		Decimal: -1,
+		Tp:      mysql.TypeJSON,
+		Flen:    12582912,
+		Decimal: castJSONPostWrapped, // Default is *COERCE*, not *CAST*.
 		Charset: charset.CharsetUTF8,
 		Collate: charset.CollationUTF8,
 		Flag:    mysql.BinaryFlag,
