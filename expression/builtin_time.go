@@ -2678,10 +2678,7 @@ func (c *secToTimeFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if retFsp > 0 {
 		retFlen += 1 + retFsp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpReal)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpReal)
 	bf.tp.Flen, bf.tp.Decimal = retFlen, retFsp
 	sig := &builtinSecToTimeSig{baseDurationBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -2868,10 +2865,7 @@ func (c *timeToSecFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration)
 	bf.tp.Flen = 10
 	sig := &builtinTimeToSecSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
