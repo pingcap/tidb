@@ -277,6 +277,9 @@ func (c *castAsStringFunctionClass) getFunction(args []Expression, ctx context.C
 		} else if tp == mysql.TypeDuration {
 			sig = &builtinCastDurationAsStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsString)
+		} else if tp == mysql.TypeJSON {
+			sig = &builtinCastJSONAsStringSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsString)
 		} else {
 			sig = &builtinCastStringAsStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
