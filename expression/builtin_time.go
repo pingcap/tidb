@@ -1281,6 +1281,7 @@ func (c *strToDateFunctionClass) getRetTp(arg Expression, ctx context.Context) (
 	return
 }
 
+// See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_str-to-date
 func (c *strToDateFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
