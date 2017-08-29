@@ -135,6 +135,9 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{".1C23", int('.')},    // `.`, `1C23`
 		{".1\u0081", int('.')}, // `.`, `1\u0081`
 		{".1\uff34", int('.')}, // `.`, `1\uff34`
+		{`b''`, bitLit},
+		{`b'0101'`, bitLit},
+		{`0b0101`, bitLit},
 	}
 	runTest(c, table)
 }
