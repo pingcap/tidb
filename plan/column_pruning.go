@@ -40,7 +40,7 @@ func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []boo
 	return used
 }
 
-// exprHasSetVar checks if the expression has set-var function. If do, we should not prune it.
+// exprHasSetVar checks if the expression has SetVar function.
 func exprHasSetVar(expr expression.Expression) bool {
 	scalaFunc, isScalaFunc := expr.(*expression.ScalarFunction)
 	if !isScalaFunc {
@@ -58,6 +58,7 @@ func exprHasSetVar(expr expression.Expression) bool {
 }
 
 // PruneColumns implements LogicalPlan interface.
+// If any expression has SetVar functions, we do not prune it.
 func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	used := getUsedList(parentUsedCols, p.schema)
