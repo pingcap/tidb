@@ -2502,10 +2502,7 @@ func (c *periodAddFunctionClass) getFunction(args []Expression, ctx context.Cont
 		return nil, errors.Trace(err)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	bf.tp.Flen = 6
 	sig := &builtinPeriodAddSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -2579,10 +2576,7 @@ func (c *periodDiffFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	bf.tp.Flen = 6
 	sig := &builtinPeriodDiffSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
