@@ -2125,3 +2125,84 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	r.Check(testkit.Rows("<nil>"))
 
 }
+
+func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	r := tk.MustQuery("select time '117:01:12';")
+	r.Check(testkit.Rows("117:01:12"))
+
+	r = tk.MustQuery("select time '01:00:00.999999';")
+	r.Check(testkit.Rows("01:00:00.999999"))
+
+	r = tk.MustQuery("select time '1 01:00:00';")
+	r.Check(testkit.Rows("25:00:00"))
+
+	r = tk.MustQuery("select time '110:00:00';")
+	r.Check(testkit.Rows("110:00:00"))
+
+	r = tk.MustQuery("select time'-1:1:1.123454656';")
+	r.Check(testkit.Rows("-01:01:01.123455"))
+
+	r = tk.MustQuery("select time '33:33';")
+	r.Check(testkit.Rows("33:33:00"))
+
+	r = tk.MustQuery("select time '1.1';")
+	r.Check(testkit.Rows("00:00:01.1"))
+
+	r = tk.MustQuery("select time '21';")
+	r.Check(testkit.Rows("00:00:21"))
+
+	r = tk.MustQuery("select time '20 20:20';")
+	r.Check(testkit.Rows("500:20:00"))
+
+	rs, _ := tk.Exec("select time '2017-01-01 00:00:00';")
+	_, err := tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+
+	rs, _ = tk.Exec("select time '071231235959.999999';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+
+	rs, _ = tk.Exec("select time '20171231235959.999999';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+}
+
+func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	r := tk.MustQuery("select timestamp '2017-01-01 00:00:00';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00"))
+
+	r = tk.MustQuery("select timestamp '2017@01@01 00:00:00';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00"))
+
+	r = tk.MustQuery("select timestamp '2017@01@01 00~00~00';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00"))
+
+	r = tk.MustQuery("select timestamp '2017@01@0001 00~00~00.333';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00.333"))
+
+	rs, _ := tk.Exec("select timestamp '00:00:00';")
+	_, err := tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+
+	rs, _ = tk.Exec("select timestamp '1992-01-03';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+
+	rs, _ = tk.Exec("select timestamp '20171231235959.999999';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+}
