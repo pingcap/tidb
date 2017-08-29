@@ -63,10 +63,7 @@ func (c *logicAndFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinLogicAndSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flen = 1
 	return sig.setSelf(sig), nil
@@ -101,10 +98,7 @@ func (c *logicOrFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	bf.tp.Flen = 1
 	sig := &builtinLogicOrSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -145,10 +139,7 @@ func (c *logicXorFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinLogicXorSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flen = 1
 	return sig.setSelf(sig), nil
@@ -183,10 +174,7 @@ func (c *bitAndFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitAndSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
@@ -218,10 +206,7 @@ func (c *bitOrFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitOrSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
@@ -253,10 +238,7 @@ func (c *bitXorFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitXorSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
@@ -288,10 +270,7 @@ func (c *leftShiftFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinLeftShiftSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
@@ -323,10 +302,7 @@ func (c *rightShiftFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinRightShiftSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
@@ -366,10 +342,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(args []Expression, ctx context.
 	case types.ClassDecimal:
 		argTp = tpDecimal
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp)
 	bf.tp.Flen = 1
 
 	var sig builtinFunc
@@ -494,10 +467,7 @@ func (c *bitNegFunctionClass) getFunction(args []Expression, ctx context.Context
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinBitNegSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -525,10 +495,7 @@ func (c *unaryNotFunctionClass) getFunction(args []Expression, ctx context.Conte
 		return nil, errors.Trace(err)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
 	bf.tp.Flen = 1
 
 	sig := &builtinUnaryNotSig{baseIntBuiltinFunc{bf}}
@@ -610,27 +577,27 @@ func (c *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Con
 	switch argExpr.GetTypeClass() {
 	case types.ClassInt:
 		if intOverflow {
-			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
 			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, true}
 		} else {
-			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
 			sig = &builtinUnaryMinusIntSig{baseIntBuiltinFunc{bf}}
 		}
 		bf.tp.Decimal = 0
 	case types.ClassDecimal:
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
 		bf.tp.Decimal = argExprTp.Decimal
 		sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 	case types.ClassReal:
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
 		sig = &builtinUnaryMinusRealSig{baseRealBuiltinFunc{bf}}
 	case types.ClassString:
 		tp := argExpr.GetType().Tp
 		if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
-			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
 			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
 		} else {
-			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
 			sig = &builtinUnaryMinusRealSig{baseRealBuiltinFunc{bf}}
 		}
 	}
@@ -719,10 +686,7 @@ func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context
 			argTp = tpString
 		}
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp)
 	bf.tp.Flen = 1
 	var sig builtinFunc
 	switch argTp {
