@@ -2562,52 +2562,71 @@ func (c *periodAddFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinPeriodAddSig{newBaseBuiltinFunc(args, ctx)}
+
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	bf.tp.Flen = 6
+	sig := &builtinPeriodAddSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-type builtinPeriodAddSig struct {
-	baseBuiltinFunc
+// period2Month converts a period to months, in which period is represented in the format of YYMM or YYYYMM.
+// Note that the period argument is not a date value.
+func period2Month(period uint64) uint64 {
+	if period == 0 {
+		return 0
+	}
+
+	year, month := period/100, period%100
+	if year < 70 {
+		year += 2000
+	} else if year < 100 {
+		year += 1900
+	}
+
+	return year*12 + month - 1
 }
 
-// eval evals a builtinPeriodAddSig.
+// month2Period converts a month to a period.
+func month2Period(month uint64) uint64 {
+	if month == 0 {
+		return 0
+	}
+
+	year := month / 12
+	if year < 70 {
+		year += 2000
+	} else if year < 100 {
+		year += 1900
+	}
+
+	return year*100 + month%12 + 1
+}
+
+type builtinPeriodAddSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals PERIOD_ADD(P,N).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
-func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if args[0].IsNull() || args[1].IsNull() {
-		return d, errors.Trace(err)
-	}
-
+func (b *builtinPeriodAddSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	period, err := args[0].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+
+	p, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(err)
 	}
 
-	//Check zero
-	if period <= 0 {
-		d.SetInt64(0)
-		return
+	if p == 0 {
+		return 0, false, nil
 	}
 
-	y, m := getYearAndMonth(period)
-
-	months, err := args[1].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	n, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(err)
 	}
 
-	sum := time.Month(m + months)
-	// TODO: Consider time_zone variable.
-	t := time.Date(int(y), sum, 1, 0, 0, 0, 0, time.Local)
-
-	ret := int64(t.Year())*100 + int64(t.Month())
-	d.SetInt64(ret)
-	return
+	sumMonth := int64(period2Month(uint64(p))) + n
+	return int64(month2Period(uint64(sumMonth))), false, nil
 }
 
 type periodDiffFunctionClass struct {
@@ -2618,63 +2637,32 @@ func (c *periodDiffFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinPeriodDiffSig{newBaseBuiltinFunc(args, ctx)}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+	bf.tp.Flen = 6
+	sig := &builtinPeriodDiffSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinPeriodDiffSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinPeriodDiffSig.
+// evalInt evals PERIOD_DIFF(P1,P2).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-diff
-func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if args[0].IsNull() || args[1].IsNull() {
-		return
-	}
-
+func (b *builtinPeriodDiffSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	period, err := args[0].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+
+	p1, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	period2, err := args[1].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+	p2, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	d.SetInt64(getMonth(period) - getMonth(period2))
-	return
-}
-
-func getYearAndMonth(period int64) (int64, int64) {
-	y := period / 100
-	m := period % 100
-
-	// YYMM, 00-69 year: 2000-2069
-	// YYMM, 70-99 year: 1970-1999
-	if y <= 69 {
-		y += 2000
-	} else if y <= 99 {
-		y += 1900
-	}
-	return y, m
-
-}
-
-func getMonth(period int64) int64 {
-	if period == 0 {
-		return int64(0)
-	}
-	y, m := getYearAndMonth(period)
-	return y*12 + m - 1
-
+	return int64(period2Month(uint64(p1)) - period2Month(uint64(p2))), false, nil
 }
 
 type quarterFunctionClass struct {
