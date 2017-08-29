@@ -61,6 +61,8 @@ func fieldTp2EvalTp(tp *types.FieldType) evalTp {
 			return tpTimestamp
 		case mysql.TypeDuration:
 			return tpDuration
+		case mysql.TypeJSON:
+			return tpJSON
 		}
 	}
 	return tpString
