@@ -177,10 +177,13 @@ func (f *flatFormatter) Format(format string, args ...interface{}) (n int, errno
 func OutputFormat(s string) string {
 	replace := map[string]string{
 		"'":  "''",
+		"\a": "\\a",
+		"\b": "\\b",
+		"\f": "\\f",
 		"\n": "\\n",
 		"\r": "\\r",
 		"\t": "\\t",
-		"\b": "\\b",
+		"\v": "\\v",
 	}
 
 	for old, new := range replace {
