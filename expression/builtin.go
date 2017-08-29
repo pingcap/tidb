@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // evalTp indicates the specified types that arguments and result of a built-in function should be.
@@ -60,6 +61,8 @@ func fieldTp2EvalTp(tp *types.FieldType) evalTp {
 			return tpTimestamp
 		case mysql.TypeDuration:
 			return tpDuration
+		case mysql.TypeJSON:
+			return tpJSON
 		}
 	}
 	return tpString
@@ -72,9 +75,18 @@ type baseBuiltinFunc struct {
 	ctx           context.Context
 	deterministic bool
 	tp            *types.FieldType
+	pbCode        tipb.ScalarFuncSig
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
 	self builtinFunc
+}
+
+func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
+	return b.pbCode
+}
+
+func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
+	b.pbCode = c
 }
 
 func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
@@ -656,6 +668,10 @@ type builtinFunc interface {
 	getRetTp() *types.FieldType
 	// setSelf sets a pointer to itself.
 	setSelf(builtinFunc) builtinFunc
+	// setPbCode sets pbCode for signature.
+	setPbCode(tipb.ScalarFuncSig)
+	// PbCode returns PbCode of this signature.
+	PbCode() tipb.ScalarFuncSig
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.
