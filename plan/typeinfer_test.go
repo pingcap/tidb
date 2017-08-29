@@ -404,6 +404,14 @@ func (s *testPlanSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"find_in_set(c_blob_d     , c_text_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
 		{"find_in_set(c_set        , c_text_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
 		{"find_in_set(c_enum       , c_text_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
+
+		{"make_set(c_int_d      , c_text_d)", mysql.TypeVarString, charset.CharsetUTF8, mysql.BinaryFlag, 65535, types.UnspecifiedLength},
+		{"make_set(c_bigint_d   , c_text_d, c_binary)", mysql.TypeMediumBlob, charset.CharsetBin, mysql.BinaryFlag, 65556, types.UnspecifiedLength},
+
+		{"quote(c_int_d      )", mysql.TypeVarString, charset.CharsetUTF8, 0, 24, types.UnspecifiedLength},
+		{"quote(c_bigint_d   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 42, types.UnspecifiedLength},
+		{"quote(c_float_d    )", mysql.TypeVarString, charset.CharsetUTF8, 0, 26, types.UnspecifiedLength},
+		{"quote(c_double_d   )", mysql.TypeVarString, charset.CharsetUTF8, 0, 46, types.UnspecifiedLength},
 	}
 }
 
