@@ -50,6 +50,11 @@ func IsTypeVarchar(tp byte) bool {
 	return tp == mysql.TypeVarString || tp == mysql.TypeVarchar
 }
 
+// IsTypeJSON returns a boolean indicating whether the tp is the JSON type.
+func IsTypeJSON(tp byte) bool {
+	return tp == mysql.TypeJSON
+}
+
 // IsTypePrefixable returns a boolean indicating
 // whether an index on a column with the tp can be defined with a prefix.
 func IsTypePrefixable(tp byte) bool {
