@@ -531,6 +531,12 @@ func (s *testParserSuite) TestExpression(c *C) {
 		// for date literal
 		{"select date'1989-09-10'", true},
 		{"select date 19890910", false},
+		// for time literal
+		{"select date'00:00:00.111'", true},
+		{"select date 19890910", false},
+		// for timestamp literal
+		{"select date'1989-09-10 11:11:11'", true},
+		{"select date 19890910", false},
 	}
 	s.RunTest(c, table)
 }

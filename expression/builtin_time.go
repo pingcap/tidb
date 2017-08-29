@@ -51,7 +51,11 @@ const ( // GET_FORMAT location.
 )
 
 // DurationPattern determine whether to match the format of duration.
-var DurationPattern = regexp.MustCompile(`^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`)
+//var DurationPattern = regexp.MustCompile(`^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`)
+var DurationPattern = regexp.MustCompile(`^\s*[-]?(((\d{1,2}\s+)?0*\d{0,3}(:0*\d{1,2}){0,2})|(\d{1,7}))?(\.\d*)?\s*$`)
+
+// TimestampPattern determine whether to match the format of timestamp.
+var TimestampPattern = regexp.MustCompile(`^\s*0*\d{1,4}([^\d]0*\d{1,2}){2}\s+(0*\d{0,2}([^\d]0*\d{1,2}){2})?(\.\d*)?\s*$`)
 
 var (
 	_ functionClass = &dateFunctionClass{}
@@ -81,6 +85,7 @@ var (
 	_ functionClass = &currentDateFunctionClass{}
 	_ functionClass = &currentTimeFunctionClass{}
 	_ functionClass = &timeFunctionClass{}
+	_ functionClass = &timeLiteralFunctionClass{}
 	_ functionClass = &utcDateFunctionClass{}
 	_ functionClass = &utcTimestampFunctionClass{}
 	_ functionClass = &extractFunctionClass{}
@@ -102,6 +107,7 @@ var (
 	_ functionClass = &toSecondsFunctionClass{}
 	_ functionClass = &utcTimeFunctionClass{}
 	_ functionClass = &timestampFunctionClass{}
+	_ functionClass = &timestampLiteralFunctionClass{}
 	_ functionClass = &lastDayFunctionClass{}
 )
 
@@ -137,6 +143,7 @@ var (
 	_ builtinFunc = &builtinCurrentDateSig{}
 	_ builtinFunc = &builtinCurrentTimeSig{}
 	_ builtinFunc = &builtinTimeSig{}
+	_ builtinFunc = &builtinTimeLiteralSig{}
 	_ builtinFunc = &builtinUTCDateSig{}
 	_ builtinFunc = &builtinUTCTimestampWithArgSig{}
 	_ builtinFunc = &builtinUTCTimestampWithoutArgSig{}
@@ -160,6 +167,7 @@ var (
 	_ builtinFunc = &builtinUTCTimeWithoutArgSig{}
 	_ builtinFunc = &builtinTimestamp1ArgSig{}
 	_ builtinFunc = &builtinTimestamp2ArgsSig{}
+	_ builtinFunc = &builtinTimestampLiteralSig{}
 	_ builtinFunc = &builtinLastDaySig{}
 )
 
@@ -1457,6 +1465,42 @@ func (b *builtinTimeSig) evalDuration(row []types.Datum) (res types.Duration, is
 	return res, isNull, errors.Trace(err)
 }
 
+type timeLiteralFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *timeLiteralFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpString)
+	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDuration, 10, 0
+	sig := &builtinTimeLiteralSig{baseDurationBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinTimeLiteralSig struct {
+	baseDurationBuiltinFunc
+}
+
+// evalDuration evals TIME 'stringLit'.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
+func (b *builtinTimeLiteralSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.ZeroDuration, true, errors.Trace(err)
+	}
+	if !isDuration(str) {
+		return types.ZeroDuration, true, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	ret, err := types.ParseDuration(str, getFsp(str))
+	if err != nil {
+		return types.ZeroDuration, true, errors.Trace(err)
+	}
+	return ret, false, nil
+}
+
 type utcDateFunctionClass struct {
 	baseFunctionClass
 }
@@ -2076,6 +2120,42 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row []types.Datum) (types.Time, bool
 		return types.Time{}, true, errors.Trace(err)
 	}
 	return result, false, nil
+}
+
+type timestampLiteralFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *timestampLiteralFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString)
+	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeTimestamp, 19, 0
+	sig := &builtinTimestampLiteralSig{baseTimeBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinTimestampLiteralSig struct {
+	baseTimeBuiltinFunc
+}
+
+// evalTime evals TIMESTAMP 'stringLit'.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
+func (b *builtinTimestampLiteralSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+	if !TimestampPattern.MatchString(str) {
+		return types.Time{}, true, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	ret, err := types.ParseTime(str, mysql.TypeTimestamp, getFsp(str))
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+	return ret, false, nil
 }
 
 func getFsp(s string) (fsp int) {
