@@ -111,6 +111,7 @@ var (
 
 var (
 	_ builtinFunc = &builtinDateSig{}
+	_ builtinFunc = &builtinDateLiteralSig{}
 	_ builtinFunc = &builtinDateDiffSig{}
 	_ builtinFunc = &builtinTimeDiffSig{}
 	_ builtinFunc = &builtinDateFormatSig{}

@@ -2134,4 +2134,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
 
+	rs, _ = tk.Exec("select date 'abcdefg';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
 }
