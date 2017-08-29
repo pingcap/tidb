@@ -101,6 +101,10 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft.Elems = []string{"a\nb", "a\tb", "a\rb"}
 	c.Assert(ft.String(), Equals, "enum('a\\nb','a\\tb','a\\rb')")
 
+	ft = NewFieldType(mysql.TypeEnum)
+	ft.Elems = []string{"a'\nb", "a'b\tc"}
+	c.Assert(ft.String(), Equals, "enum('a''\\nb','a''b\\tc')")
+
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"a", "b"}
 	c.Assert(ft.String(), Equals, "set('a','b')")
@@ -112,6 +116,10 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"a\nb", "a\tb", "a\rb"}
 	c.Assert(ft.String(), Equals, "set('a\\nb','a\\tb','a\\rb')")
+
+	ft = NewFieldType(mysql.TypeSet)
+	ft.Elems = []string{"a'\nb", "a'b\tc"}
+	c.Assert(ft.String(), Equals, "set('a''\\nb','a''b\\tc')")
 
 	ft = NewFieldType(mysql.TypeTimestamp)
 	ft.Flen = 8
