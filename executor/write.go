@@ -734,6 +734,7 @@ func (e *InsertExec) Next() (Row, error) {
 				if err = e.onDuplicateUpdate(row, h, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
 				}
+				rowCount++
 				continue
 			}
 		}

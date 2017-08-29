@@ -1083,8 +1083,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	}
 	for _, t := range cases {
 		// Test wrapping with CastAsInt.
-		intExpr, err := WrapWithCastAsInt(t.expr, ctx)
-		c.Assert(err, IsNil)
+		intExpr := WrapWithCastAsInt(t.expr, ctx)
 		c.Assert(intExpr.GetTypeClass(), Equals, types.ClassInt)
 		_, ok := intExpr.(*ScalarFunction)
 		c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassInt)
@@ -1094,8 +1093,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		c.Assert(intRes, Equals, t.intRes)
 
 		// Test wrapping with CastAsReal.
-		realExpr, err := WrapWithCastAsReal(t.expr, ctx)
-		c.Assert(err, IsNil)
+		realExpr := WrapWithCastAsReal(t.expr, ctx)
 		c.Assert(realExpr.GetTypeClass(), Equals, types.ClassReal)
 		_, ok = realExpr.(*ScalarFunction)
 		c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassReal)
@@ -1105,8 +1103,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		c.Assert(realRes, Equals, t.realRes)
 
 		// Test wrapping with CastAsDecimal.
-		decExpr, err := WrapWithCastAsDecimal(t.expr, ctx)
-		c.Assert(err, IsNil)
+		decExpr := WrapWithCastAsDecimal(t.expr, ctx)
 		c.Assert(decExpr.GetTypeClass(), Equals, types.ClassDecimal)
 		_, ok = decExpr.(*ScalarFunction)
 		c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassDecimal)
@@ -1116,8 +1113,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		c.Assert(decRes.Compare(t.decRes), Equals, 0)
 
 		// Test wrapping with CastAsString.
-		strExpr, err := WrapWithCastAsString(t.expr, ctx)
-		c.Assert(err, IsNil)
+		strExpr := WrapWithCastAsString(t.expr, ctx)
 		c.Assert(strExpr.GetTypeClass(), Equals, types.ClassString)
 		_, ok = strExpr.(*ScalarFunction)
 		c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassString)
@@ -1130,8 +1126,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	unsignedIntExpr := &Column{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag, Flen: mysql.MaxIntWidth, Decimal: 0}, Index: 0}
 
 	// test cast unsigned int as string.
-	strExpr, err := WrapWithCastAsString(unsignedIntExpr, ctx)
-	c.Assert(err, IsNil)
+	strExpr := WrapWithCastAsString(unsignedIntExpr, ctx)
 	c.Assert(strExpr.GetTypeClass(), Equals, types.ClassString)
 	strRes, isNull, err := strExpr.EvalString([]types.Datum{types.NewUintDatum(math.MaxUint64)}, sc)
 	c.Assert(err, IsNil)
@@ -1144,8 +1139,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	c.Assert(strRes, Equals, strconv.FormatUint(uint64(1234), 10))
 
 	// test cast unsigned int as decimal.
-	decExpr, err := WrapWithCastAsDecimal(unsignedIntExpr, ctx)
-	c.Assert(err, IsNil)
+	decExpr := WrapWithCastAsDecimal(unsignedIntExpr, ctx)
 	c.Assert(decExpr.GetTypeClass(), Equals, types.ClassDecimal)
 	decRes, isNull, err := decExpr.EvalDecimal([]types.Datum{types.NewUintDatum(uint64(1234))}, sc)
 	c.Assert(err, IsNil)
@@ -1153,8 +1147,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	c.Assert(decRes.Compare(types.NewDecFromUint(uint64(1234))), Equals, 0)
 
 	// test cast unsigned int as Time.
-	timeExpr, err := WrapWithCastAsTime(unsignedIntExpr, types.NewFieldType(mysql.TypeDatetime), ctx)
-	c.Assert(err, IsNil)
+	timeExpr := WrapWithCastAsTime(unsignedIntExpr, types.NewFieldType(mysql.TypeDatetime), ctx)
 	c.Assert(timeExpr.GetType().Tp, Equals, mysql.TypeDatetime)
 	timeRes, isNull, err := timeExpr.EvalTime([]types.Datum{types.NewUintDatum(uint64(curTimeInt))}, sc)
 	c.Assert(err, IsNil)
@@ -1201,8 +1194,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
 		},
 	}
 	for _, t := range cases {
-		expr, err := WrapWithCastAsTime(t.expr, t.tp, s.ctx)
-		c.Assert(err, IsNil)
+		expr := WrapWithCastAsTime(t.expr, t.tp, s.ctx)
 		_, ok := expr.(*ScalarFunction)
 		c.Assert(ok, Equals, t.expr.GetType().Tp != t.tp.Tp)
 		res, isNull, err := expr.EvalTime(nil, s.ctx.GetSessionVars().StmtCtx)
@@ -1238,8 +1230,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsDuration(c *C) {
 		},
 	}
 	for _, t := range cases {
-		expr, err := WrapWithCastAsDuration(t.expr, s.ctx)
-		c.Assert(err, IsNil)
+		expr := WrapWithCastAsDuration(t.expr, s.ctx)
 		_, ok := expr.(*ScalarFunction)
 		c.Assert(ok, Equals, t.expr.GetType().Tp != mysql.TypeDuration)
 		res, isNull, err := expr.EvalDuration(nil, s.ctx.GetSessionVars().StmtCtx)
