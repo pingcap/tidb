@@ -121,7 +121,7 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 					}
 					joinDatums = append(joinDatums, innerDatum)
 				}
-				joinOuterEncodeKey, err := codec.EncodeValue(nil, joinDatums...)
+				joinOuterEncodeKey, err := codec.EncodeKey(nil, joinDatums...)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
