@@ -1399,7 +1399,7 @@ func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Co
 	}
 	// args[0] must be an in constant which will not be null.
 	_, ok := args[0].(*Constant)
-	fsp := types.MaxFsp
+	fsp := int64(types.MaxFsp)
 	if ok {
 		fsp, _, err = args[0].EvalInt(nil, ctx.GetSessionVars().StmtCtx)
 		if err != nil {
