@@ -1242,7 +1242,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row []types.Datum) (res type
 	return
 }
 
-func buildCastFunction(expr Expression, tp *types.FieldType, ctx context.Context) (*ScalarFunction, error) {
+func buildCastFunction(expr Expression, tp *types.FieldType, ctx context.Context) *ScalarFunction {
 	var fc functionClass
 	switch tp.ToClass() {
 	case types.ClassInt:
@@ -1262,23 +1262,20 @@ func buildCastFunction(expr Expression, tp *types.FieldType, ctx context.Context
 			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		}
 	}
-	f, err := fc.getFunction([]Expression{expr}, ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	f, _ := fc.getFunction([]Expression{expr}, ctx)
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
 		Function: f,
-	}, nil
+	}
 }
 
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type
 // of expr is not type int,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsInt(expr Expression, ctx context.Context) (Expression, error) {
+func WrapWithCastAsInt(expr Expression, ctx context.Context) Expression {
 	if expr.GetTypeClass() == types.ClassInt {
-		return expr, nil
+		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, 0
@@ -1289,9 +1286,9 @@ func WrapWithCastAsInt(expr Expression, ctx context.Context) (Expression, error)
 // WrapWithCastAsReal wraps `expr` with `cast` if the return type
 // of expr is not type real,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsReal(expr Expression, ctx context.Context) (Expression, error) {
+func WrapWithCastAsReal(expr Expression, ctx context.Context) Expression {
 	if expr.GetTypeClass() == types.ClassReal {
-		return expr, nil
+		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeDouble)
 	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
@@ -1302,9 +1299,9 @@ func WrapWithCastAsReal(expr Expression, ctx context.Context) (Expression, error
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type
 // of expr is not type decimal,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsDecimal(expr Expression, ctx context.Context) (Expression, error) {
+func WrapWithCastAsDecimal(expr Expression, ctx context.Context) Expression {
 	if expr.GetTypeClass() == types.ClassDecimal {
-		return expr, nil
+		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
@@ -1315,9 +1312,9 @@ func WrapWithCastAsDecimal(expr Expression, ctx context.Context) (Expression, er
 // WrapWithCastAsString wraps `expr` with `cast` if the return type
 // of expr is not type string,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsString(expr Expression, ctx context.Context) (Expression, error) {
+func WrapWithCastAsString(expr Expression, ctx context.Context) Expression {
 	if expr.GetTypeClass() == types.ClassString {
-		return expr, nil
+		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
@@ -1328,12 +1325,12 @@ func WrapWithCastAsString(expr Expression, ctx context.Context) (Expression, err
 // WrapWithCastAsTime wraps `expr` with `cast` if the return type
 // of expr is not same as type of the specified `tp` ,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Context) (Expression, error) {
+func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Context) Expression {
 	exprTp := expr.GetType().Tp
 	if tp.Tp == exprTp {
-		return expr, nil
+		return expr
 	} else if exprTp == mysql.TypeDate && tp.Tp == mysql.TypeDatetime {
-		return expr, nil
+		return expr
 	}
 	switch x := expr.GetType(); x.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeNewDate, mysql.TypeDate, mysql.TypeDuration:
@@ -1357,9 +1354,9 @@ func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Contex
 // WrapWithCastAsDuration wraps `expr` with `cast` if the return type
 // of expr is not type duration,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsDuration(expr Expression, ctx context.Context) (Expression, error) {
+func WrapWithCastAsDuration(expr Expression, ctx context.Context) Expression {
 	if expr.GetType().Tp == mysql.TypeDuration {
-		return expr, nil
+		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeDuration)
 	switch x := expr.GetType(); x.Tp {
@@ -1378,9 +1375,9 @@ func WrapWithCastAsDuration(expr Expression, ctx context.Context) (Expression, e
 // WrapWithCastAsJSON wraps `expr` with `cast` if the return type
 // of expr is not type json,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsJSON(expr Expression, ctx context.Context) (Expression, error) {
+func WrapWithCastAsJSON(expr Expression, ctx context.Context) Expression {
 	if expr.GetType().Tp == mysql.TypeJSON {
-		return expr, nil
+		return expr
 	}
 	tp := &types.FieldType{
 		Tp:   mysql.TypeJSON,

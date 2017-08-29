@@ -92,31 +92,28 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc) {
 	if len(args) != len(argTps) {
-		return bf, errors.New("unexpected length of args and argTps")
+		panic("unexpected length of args and argTps")
 	}
 	for i := range args {
 		switch argTps[i] {
 		case tpInt:
-			args[i], err = WrapWithCastAsInt(args[i], ctx)
+			args[i] = WrapWithCastAsInt(args[i], ctx)
 		case tpReal:
-			args[i], err = WrapWithCastAsReal(args[i], ctx)
+			args[i] = WrapWithCastAsReal(args[i], ctx)
 		case tpDecimal:
-			args[i], err = WrapWithCastAsDecimal(args[i], ctx)
+			args[i] = WrapWithCastAsDecimal(args[i], ctx)
 		case tpString:
-			args[i], err = WrapWithCastAsString(args[i], ctx)
+			args[i] = WrapWithCastAsString(args[i], ctx)
 		case tpDatetime:
-			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
+			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
 		case tpTimestamp:
-			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
+			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
 		case tpDuration:
-			args[i], err = WrapWithCastAsDuration(args[i], ctx)
+			args[i] = WrapWithCastAsDuration(args[i], ctx)
 		case tpJSON:
-			args[i], err = WrapWithCastAsJSON(args[i], ctx)
-		}
-		if err != nil {
-			return bf, errors.Trace(err)
+			args[i] = WrapWithCastAsJSON(args[i], ctx)
 		}
 	}
 	var fieldType *types.FieldType
@@ -189,7 +186,8 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 		argValues:     make([]types.Datum, len(args)),
 		ctx:           ctx,
 		deterministic: true,
-		tp:            fieldType}, nil
+		tp:            fieldType,
+	}
 }
 
 func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {

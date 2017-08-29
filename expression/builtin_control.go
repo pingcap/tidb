@@ -174,10 +174,7 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if l%2 == 1 {
 		argTps = append(argTps, tp)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
 	bf.tp = fieldTp
 
 	switch tp {
@@ -396,10 +393,7 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 	}
 	retTp := inferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := fieldTp2EvalTp(retTp)
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
 	case tpInt:
@@ -572,10 +566,7 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := fieldTp2EvalTp(retTp)
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
 	case tpInt:
