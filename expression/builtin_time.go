@@ -1385,6 +1385,7 @@ type currentTimeFunctionClass struct {
 	baseFunctionClass
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curtime
 func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -1417,8 +1418,11 @@ type builtinCurrentTime0ArgSig struct {
 }
 
 func (b *builtinCurrentTime0ArgSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	res, err := types.ParseDuration(time.Now().Format("15:04:05.000000"), types.MinFsp)
-	return res, false, errors.Trace(err)
+	res, err := types.ParseDuration(time.Now().Format(types.TimeFormat), types.MinFsp)
+	if err != nil {
+		return types.Duration{}, true, errors.Trace(err)
+	}
+	return res, false, nil
 }
 
 type builtinCurrentTime1ArgSig struct {
@@ -1430,8 +1434,11 @@ func (b *builtinCurrentTime1ArgSig) evalDuration(row []types.Datum) (types.Durat
 	if err != nil {
 		return types.Duration{}, true, errors.Trace(err)
 	}
-	res, err := types.ParseDuration(time.Now().Format("15:04:05.000000"), int(fsp))
-	return res, false, errors.Trace(err)
+	res, err := types.ParseDuration(time.Now().Format(types.TimeFSPFormat), int(fsp))
+	if err != nil {
+		return types.Duration{}, true, errors.Trace(err)
+	}
+	return res, false, nil
 }
 
 type timeFunctionClass struct {
@@ -3110,7 +3117,7 @@ type builtinUTCTimeWithoutArgSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeWithoutArgSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
 	// the types.ParseDuration here would never fail, so the err returned can be ignored.
-	v, _ := types.ParseDuration(time.Now().UTC().Format("00:00:00"), 0)
+	v, _ := types.ParseDuration(time.Now().UTC().Format(types.TimeFormat), 0)
 	return v, false, nil
 }
 
@@ -3132,7 +3139,7 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(row []types.Datum) (types.Durati
 		return types.Duration{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 	}
 	// the types.ParseDuration here would never fail, so the err returned can be ignored.
-	v, _ := types.ParseDuration(time.Now().UTC().Format("15:04:05.000000"), int(fsp))
+	v, _ := types.ParseDuration(time.Now().UTC().Format(types.TimeFSPFormat), int(fsp))
 	return v, false, nil
 }
 
