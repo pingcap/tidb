@@ -545,6 +545,26 @@ type arithmeticIntDivideFunctionClass struct {
 	baseFunctionClass
 }
 
+func (c *arithmeticIntDivideFunctionClass) setType4IntDivDecimal(retTp, a, b *types.FieldType) {
+	if mysql.HasUnsignedFlag(a.Flag) || mysql.HasUnsignedFlag(b.Flag) {
+		retTp.Flag |= mysql.UnsignedFlag
+	}
+
+	if a.Flen == types.UnspecifiedLength {
+		retTp.Flen = mysql.MaxIntWidth
+		return
+	}
+
+	retTp.Flen = a.Flen
+	if a.Decimal != types.UnspecifiedFsp {
+		retTp.Flen -= a.Decimal
+	}
+
+	if retTp.Flen > mysql.MaxIntWidth {
+		retTp.Flen = mysql.MaxIntWidth
+	}
+}
+
 func (c *arithmeticIntDivideFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -556,19 +576,14 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(args []Expression, ctx co
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
-			setFlenDecimal4Int(bf.tp, tpA, tpB)
 			sig := &builtinArithmeticIntDivideIntUnsignedSig{baseIntBuiltinFunc{bf}}
 			return sig.setSelf(sig), nil
 		}
-		setFlenDecimal4Int(bf.tp, tpA, tpB)
 		sig := &builtinArithmeticIntDivideIntSig{baseIntBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
-	if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
-		bf.tp.Flag |= mysql.UnsignedFlag
-	}
-	setFlenDecimal4Int(bf.tp, tpA, tpB)
+	c.setType4IntDivDecimal(bf.tp, tpA, tpB)
 	sig := &builtinArithmeticIntDivideDecimalSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
