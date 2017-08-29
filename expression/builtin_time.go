@@ -53,8 +53,12 @@ const ( // GET_FORMAT location.
 // DurationPattern determine whether to match the format of duration.
 var DurationPattern = regexp.MustCompile(`^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`)
 
+// DatePattern determine whether to match the format of date.
+var DatePattern = regexp.MustCompile(`^\s*((0*\d{1,4}([^\d]0*\d{1,2}){2})|(\d{2,4}(\d{2}){2}))\s*$`)
+
 var (
 	_ functionClass = &dateFunctionClass{}
+	_ functionClass = &dateLiteralFunctionClass{}
 	_ functionClass = &dateDiffFunctionClass{}
 	_ functionClass = &timeDiffFunctionClass{}
 	_ functionClass = &dateFormatFunctionClass{}
@@ -274,6 +278,42 @@ func (b *builtinDateSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	expr.Time = types.FromDate(expr.Time.Year(), expr.Time.Month(), expr.Time.Day(), 0, 0, 0, 0)
 	expr.Type = mysql.TypeDate
 	return expr, false, nil
+}
+
+type dateLiteralFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *dateLiteralFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString)
+	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, 10, 0
+	sig := &builtinDateLiteralSig{baseTimeBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinDateLiteralSig struct {
+	baseTimeBuiltinFunc
+}
+
+// evalTime evals DATE 'stringLit'.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
+func (b *builtinDateLiteralSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	str, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+	if !DatePattern.MatchString(str) {
+		return types.Time{}, true, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	ret, err := types.ParseDate(str)
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+	return ret, false, nil
 }
 
 func convertDatumToTime(sc *variable.StatementContext, d types.Datum) (t types.Time, err error) {

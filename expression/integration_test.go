@@ -2110,18 +2110,28 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	r.Check(testkit.Rows("2017-12-12"))
 
 	r = tk.MustQuery("select date'0000-00-00'")
-	r.Check(testkit.Rows("<nil>"))
+	r.Check(testkit.Rows("0000-00-00"))
 
-	r = tk.MustQuery("select date'0000-00-00 00:00:00'")
-	r.Check(testkit.Rows("<nil>"))
+	r = tk.MustQuery("select date'1998~01~02'")
+	r.Check(testkit.Rows("1998-01-02"))
 
-	r = tk.MustQuery("select date'2017-99-99';")
-	r.Check(testkit.Rows("<nil>"))
+	r = tk.MustQuery("select date'731124', date '011124'")
+	r.Check(testkit.Rows("1973-11-24 2001-11-24"))
 
-	r = tk.MustQuery("select date'2017-2-31';")
-	r.Check(testkit.Rows("<nil>"))
+	rs, _ := tk.Exec("select date '0000-00-00 00:00:00';")
+	_, err := tidb.GetRows(rs)
+	c.Assert(err, NotNil)
 
-	r = tk.MustQuery("select date'201712-31';")
-	r.Check(testkit.Rows("<nil>"))
+	rs, _ = tk.Exec("select date '2017-99-99';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+
+	rs, _ = tk.Exec("select date '2017-2-31';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+
+	rs, _ = tk.Exec("select date '201712-31';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
 
 }
