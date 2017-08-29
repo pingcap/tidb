@@ -135,7 +135,8 @@ var (
 	_ builtinFunc = &builtinSysDateWithFspSig{}
 	_ builtinFunc = &builtinSysDateWithoutFspSig{}
 	_ builtinFunc = &builtinCurrentDateSig{}
-	_ builtinFunc = &builtinCurrentTimeSig{}
+	_ builtinFunc = &builtinCurrentTime0ArgSig{}
+	_ builtinFunc = &builtinCurrentTime1ArgSig{}
 	_ builtinFunc = &builtinTimeSig{}
 	_ builtinFunc = &builtinUTCDateSig{}
 	_ builtinFunc = &builtinUTCTimestampWithArgSig{}
@@ -1388,31 +1389,49 @@ func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinCurrentTimeSig{newBaseBuiltinFunc(args, ctx)}
+
+	if len(args) == 0 {
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration)
+		bf.tp.Flen, bf.tp.Decimal, bf.deterministic = mysql.MaxDurationWidthNoFsp, types.MinFsp, false
+		sig := &builtinCurrentTime0ArgSig{baseDurationBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	}
+	// args[0] must be an in constant which will not be null.
+	fsp, _, err := args[0].EvalInt(nil, ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if fsp > int64(types.MaxFsp) {
+		return nil, errors.Errorf("Too-big precision %v specified for 'curtime'. Maximum is %v.", fsp, types.MaxFsp)
+	} else if fsp < int64(types.MinFsp) {
+		return nil, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpInt)
+	bf.tp.Flen, bf.tp.Decimal, bf.deterministic = mysql.MaxDurationWidthWithFsp, int(fsp), false
+	sig := &builtinCurrentTime1ArgSig{baseDurationBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-type builtinCurrentTimeSig struct {
-	baseBuiltinFunc
+type builtinCurrentTime0ArgSig struct {
+	baseDurationBuiltinFunc
 }
 
-// eval evals a builtinCurrentTimeSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curtime
-func (b *builtinCurrentTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinCurrentTime0ArgSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	res, err := types.ParseDuration(time.Now().Format("15:04:05.000000"), types.MinFsp)
+	return res, false, errors.Trace(err)
+}
+
+type builtinCurrentTime1ArgSig struct {
+	baseDurationBuiltinFunc
+}
+
+func (b *builtinCurrentTime1ArgSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	fsp, _, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
-		return d, errors.Trace(err)
+		return types.Duration{}, true, errors.Trace(err)
 	}
-	fsp := 0
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if len(args) == 1 && !args[0].IsNull() {
-		if fsp, err = checkFsp(sc, args[0]); err != nil {
-			d.SetNull()
-			return d, errors.Trace(err)
-		}
-	}
-	d.SetString(time.Now().Format("15:04:05.000000"))
-	return convertToDuration(b.ctx.GetSessionVars().StmtCtx, d, fsp)
+	res, err := types.ParseDuration(time.Now().Format("15:04:05.000000"), int(fsp))
+	return res, false, errors.Trace(err)
 }
 
 type timeFunctionClass struct {

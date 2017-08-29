@@ -4020,8 +4020,13 @@ FuncDatetimePrec:
 	}
 |	'(' intLit ')'
 	{
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
+		tp := &types.FieldType{
+		    Tp: mysql.TypeLonglong,
+		    Charset: charset.CharsetBin,
+		    Collate: charset.CollationBin,
+		    Flen: mysql.MaxIntWidth,
+		    Decimal: 0,
+		}
 		var expr ast.ExprNode = ast.NewValueExpr($2)
 		expr.SetType(tp)
 		$$ = expr
