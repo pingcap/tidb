@@ -187,7 +187,7 @@ func (e *IndexLookUpJoin) doJoin() error {
 			datum, _ := col.Eval(innerRow)
 			joinDatums = append(joinDatums, datum)
 		}
-		joinKey, err := codec.EncodeValue(nil, joinDatums...)
+		joinKey, err := codec.EncodeKey(nil, joinDatums...)
 		if err != nil {
 			return errors.Trace(err)
 		}
