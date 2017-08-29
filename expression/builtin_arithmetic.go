@@ -553,10 +553,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(args []Expression, ctx co
 	tpA, tpB := args[0].GetType(), args[1].GetType()
 	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
 	if tcA == types.ClassInt && tcB == types.ClassInt {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 			setFlenDecimal4Int(bf.tp, tpA, tpB)
@@ -567,10 +564,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(args []Expression, ctx co
 		sig := &builtinArithmeticIntDivideIntSig{baseIntBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
 	if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
