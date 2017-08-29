@@ -142,7 +142,7 @@ import:
 - package: github.com/pingcap/pd
   version: 38eb8a2e70dd39668a62d24a79f30596f204df14
 - package: github.com/pingcap/tipb
-  version: b45b9d4dd493e6f5f674f9303a12139fb28be13e
+  version: fae5d734815d6024d8264a008d5736e362efcc77
   subpackages:
   - go-binlog
   - go-mysqlx
