@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -144,13 +145,17 @@ func (c *absFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	case tpInt:
 		if mysql.HasUnsignedFlag(argFieldTp.Flag) {
 			sig = &builtinAbsUIntSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_AbsInt)
 		} else {
 			sig = &builtinAbsIntSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_AbsUInt)
 		}
 	case tpDecimal:
 		sig = &builtinAbsDecSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_AbsDecimal)
 	case tpReal:
 		sig = &builtinAbsRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_AbsReal)
 	default:
 		panic("unexpected argTp")
 	}
@@ -401,17 +406,22 @@ func (c *ceilFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	case types.ClassInt:
 		if retTp == tpInt {
 			sig = &builtinCeilIntToIntSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_CeilIntToInt)
 		} else {
 			sig = &builtinCeilIntToDecSig{baseDecimalBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_CeilIntToDec)
 		}
 	case types.ClassDecimal:
 		if retTp == tpInt {
 			sig = &builtinCeilDecToIntSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_CeilDecToInt)
 		} else {
 			sig = &builtinCeilDecToDecSig{baseDecimalBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_CeilDecToDec)
 		}
 	default:
 		sig = &builtinCeilRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CeilReal)
 	}
 	return sig.setSelf(sig), nil
 }
@@ -543,17 +553,22 @@ func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context)
 	case types.ClassInt:
 		if retTp == tpInt {
 			sig = &builtinFloorIntToIntSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_FloorIntToInt)
 		} else {
 			sig = &builtinFloorIntToDecSig{baseDecimalBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_FloorIntToDec)
 		}
 	case types.ClassDecimal:
 		if retTp == tpInt {
 			sig = &builtinFloorDecToIntSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_FloorDecToInt)
 		} else {
 			sig = &builtinFloorDecToDecSig{baseDecimalBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_FloorDecToDec)
 		}
 	default:
 		sig = &builtinFloorRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_FloorReal)
 	}
 	return sig.setSelf(sig), nil
 }
