@@ -14,6 +14,8 @@
 package statistics
 
 import (
+	"sync"
+
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/contrib/recipes"
@@ -158,12 +160,13 @@ func (m *jobManager) DequeueAndAnalyze(ctx context.Context, h *Handle, is infosc
 // mockManager represents the structure which is used for manage auto analyze jobs.
 // It's used for local store and testing.
 type mockManager struct {
-	jobs []string
+	mutex *sync.Mutex
+	jobs  []string
 }
 
 // NewMockJobManager creates a new mock job manager.
 func NewMockJobManager() JobManager {
-	return &mockManager{}
+	return &mockManager{mutex: &sync.Mutex{}}
 }
 
 // ID implements JobManager.ID interface.
@@ -178,11 +181,15 @@ func (m *mockManager) IsOwner() bool {
 
 // PendingSize implements JobManager.PendingSize interface.
 func (m *mockManager) PendingSize() (int, error) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 	return len(m.jobs), nil
 }
 
 // Enqueue implements JobManager.Enqueue interface.
 func (m *mockManager) Enqueue(jobs []string) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 	if len(m.jobs) == 0 {
 		m.jobs = jobs
 	}
@@ -191,11 +198,14 @@ func (m *mockManager) Enqueue(jobs []string) error {
 
 // DequeueAndAnalyze implements JobManager.DequeueAndAnalyze interface.
 func (m *mockManager) DequeueAndAnalyze(ctx context.Context, h *Handle, is infoschema.InfoSchema) error {
+	m.mutex.Lock()
 	if len(m.jobs) == 0 {
+		m.mutex.Unlock()
 		return nil
 	}
 	job := m.jobs[0]
 	m.jobs = m.jobs[1:]
+	m.mutex.Unlock()
 	dbName, tblName, idxName := decode(job)
 	if !h.needAnalyze(is, dbName, tblName, idxName) {
 		return nil

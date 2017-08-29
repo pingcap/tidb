@@ -589,25 +589,25 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 }
 
 func (do *Domain) autoAnalyzeWorker(ctx context.Context, lease time.Duration) {
-	id := do.ddl.OwnerManager().ID()
-	cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
 	var jobManager statistics.JobManager
 	if do.etcdClient == nil {
 		jobManager = statistics.NewMockJobManager()
 	} else {
+		id := do.ddl.OwnerManager().ID()
+		cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
 		statsOwner := owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
 		// TODO: Need to do something when err is not nil.
 		// If the err is not nil, this means that the statsOwner could not be the owner, but it could be a worker to
 		// do the analyze.
 		err := statsOwner.CampaignOwner(cancelCtx)
 		if err != nil {
-			log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
+			log.Warnf("[stats] campaign owner fail: ", errors.ErrorStack(err))
 		}
 		// If the err is not nil, this means that the jobManager could not be the worker to do the job, but it could be
 		// a owner to push analyze jobs into jobManager.
 		session, err := owner.NewSession(cancelCtx, statistics.StatsPrompt, do.etcdClient, owner.NewSessionDefaultRetryCnt, owner.ManagerSessionTTL)
 		if err != nil {
-			log.Warnf("[stats] create new session fail:", errors.ErrorStack(err))
+			log.Warnf("[stats] create new session fail: ", errors.ErrorStack(err))
 		}
 		jobManager = statistics.NewJobManager(statsOwner, do.etcdClient, session)
 	}
@@ -617,7 +617,7 @@ func (do *Domain) autoAnalyzeWorker(ctx context.Context, lease time.Duration) {
 			if jobManager.IsOwner() {
 				pendingSize, err := jobManager.PendingSize()
 				if err != nil {
-					log.Error("[stats] job manager get pending size fail:", errors.ErrorStack(err))
+					log.Error("[stats] job manager get pending size fail: ", errors.ErrorStack(err))
 					continue
 				}
 				if pendingSize > 0 {
@@ -625,7 +625,7 @@ func (do *Domain) autoAnalyzeWorker(ctx context.Context, lease time.Duration) {
 				}
 				err = jobManager.Enqueue(statsHandle.GetAutoAnalyzeJobs(do.InfoSchema()))
 				if err != nil {
-					log.Error("[stats] job manager enqueue fail:", errors.ErrorStack(err))
+					log.Error("[stats] job manager enqueue fail: ", errors.ErrorStack(err))
 				}
 			}
 			time.Sleep(lease)
@@ -635,7 +635,7 @@ func (do *Domain) autoAnalyzeWorker(ctx context.Context, lease time.Duration) {
 		for {
 			err := jobManager.DequeueAndAnalyze(ctx, statsHandle, do.InfoSchema())
 			if err != nil {
-				log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
+				log.Error("[stats] auto analyze fail: ", errors.ErrorStack(err))
 			}
 		}
 	}()
