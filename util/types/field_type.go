@@ -75,6 +75,7 @@ func AggFieldType(tps []*FieldType) *FieldType {
 		mtp := MergeFieldType(currType.Tp, t.Tp)
 		currType.Tp = mtp
 	}
+
 	return &currType
 }
 
@@ -368,6 +369,10 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case json.JSON:
 		tp.Tp = mysql.TypeJSON
+		tp.Flen = UnspecifiedLength
+		tp.Decimal = 0
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CollationBin
 	default:
 		tp.Tp = mysql.TypeUnspecified
 		tp.Flen = UnspecifiedLength

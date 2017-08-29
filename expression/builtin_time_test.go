@@ -1838,6 +1838,8 @@ func (s *testEvaluatorSuite) TestPeriodAdd(c *C) {
 		months := types.NewIntDatum(test.Months)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{period, months}), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		result, err := f.eval(nil)
 		if !test.Success {
 			c.Assert(result.IsNull(), IsTrue)
@@ -2027,6 +2029,8 @@ func (s *testEvaluatorSuite) TestPeriodDiff(c *C) {
 		period2 := types.NewIntDatum(test.Period2)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{period1, period2}), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		result, err := f.eval(nil)
 		if !test.Success {
 			c.Assert(result.IsNull(), IsTrue)
