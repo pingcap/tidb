@@ -2075,10 +2075,7 @@ func (c *makeSetFunctionClass) getFunction(args []Expression, ctx context.Contex
 	for i, length := 1, len(args); i < length; i++ {
 		argTps[i] = tpString
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
 	for i, length := 0, len(args); i < length; i++ {
 		SetBinFlagOrBinStr(args[i].GetType(), bf.tp)
 	}
@@ -2218,10 +2215,7 @@ func (c *quoteFunctionClass) getFunction(args []Expression, ctx context.Context)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	bf.tp.Flen = 2*args[0].GetType().Flen + 2
 	if bf.tp.Flen > mysql.MaxBlobWidth {
