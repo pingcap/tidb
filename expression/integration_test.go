@@ -802,6 +802,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("0 1 2 0"))
 	result = tk.MustQuery(`select find_in_set(NULL, ""), find_in_set("", NULL), find_in_set(1, "2,3,1");`)
 	result.Check(testkit.Rows("<nil> <nil> 3"))
+
+	// for make_set
+	result = tk.MustQuery(`select make_set(0, "12"), make_set(3, "aa", "11"), make_set(3, NULL, "中文"), make_set(NULL, "aa");`)
+	result.Check(testkit.Rows(" aa,11 中文 <nil>"))
+
+	// for quote
+	result = tk.MustQuery(`select quote("aaaa"), quote(""), quote("\"\""), quote("\n\n");`)
+	result.Check(testkit.Rows("'aaaa' '' '\"\"' '\n\n'"))
+	result = tk.MustQuery(`select quote(0121), quote(0000), quote("中文"), quote(NULL);`)
+	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
@@ -1160,8 +1170,8 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// result.Check(testkit.Rows("00:20:03")
 
 	//for hour
-	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(null), hour("27aaaa2:59:55");`)
-	result.Check(testkit.Rows("12 12 272 <nil> <nil>"))
+	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(020005), hour(null), hour("27aaaa2:59:55");`)
+	result.Check(testkit.Rows("12 12 272 2 <nil> <nil>"))
 
 	// for minute
 	result = tk.MustQuery(`SELECT minute("12:13:14.123456"), minute("12:13:14.000010"), minute("272:59:55"), minute(null), minute("27aaaa2:59:55");`)
@@ -1593,6 +1603,28 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("-37:12:12"))
 	result = tk.MustQuery(`SELECT 1 DIV - - 28 + ( - SUM( - + 25 ) ) * - CASE - 18 WHEN 44 THEN NULL ELSE - 41 + 32 + + - 70 - + COUNT( - 95 ) * 15 END + 92`)
 	result.Check(testkit.Rows("2442"))
+
+	// for regexp, rlike
+	// https://github.com/pingcap/tidb/issues/4080
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a char(10), b varchar(10), c binary(10), d varbinary(10));`)
+	tk.MustExec(`insert into t values ('text','text','text','text');`)
+	result = tk.MustQuery(`select a regexp 'Xt' from t;`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select b regexp 'Xt' from t;`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select c regexp 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select d regexp 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select a rlike 'Xt' from t;`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select b rlike 'Xt' from t;`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select c rlike 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select d rlike 'Xt' from t;`)
+	result.Check(testkit.Rows("0"))
 
 	// testCase is for like and regexp
 	type testCase struct {

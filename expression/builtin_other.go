@@ -176,10 +176,7 @@ func (c *bitCountFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
 	bf.tp.Flen = 2
 	sig := &builtinBitCountSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
