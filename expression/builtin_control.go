@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -398,18 +399,25 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 	switch evalTps {
 	case tpInt:
 		sig = &builtinIfIntSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfInt)
 	case tpReal:
 		sig = &builtinIfRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfReal)
 	case tpDecimal:
 		sig = &builtinIfDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfDecimal)
 	case tpString:
 		sig = &builtinIfStringSig{baseStringBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfString)
 	case tpDatetime, tpTimestamp:
 		sig = &builtinIfTimeSig{baseTimeBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfTime)
 	case tpDuration:
 		sig = &builtinIfDurationSig{baseDurationBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfDuration)
 	case tpJSON:
 		sig = &builtinIfJSONSig{baseJSONBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
 	}
 	return sig.setSelf(sig), nil
 }
@@ -571,18 +579,25 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 	switch evalTps {
 	case tpInt:
 		sig = &builtinIfNullIntSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullInt)
 	case tpReal:
 		sig = &builtinIfNullRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullReal)
 	case tpDecimal:
 		sig = &builtinIfNullDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullDecimal)
 	case tpString:
 		sig = &builtinIfNullStringSig{baseStringBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullString)
 	case tpDatetime, tpTimestamp:
 		sig = &builtinIfNullTimeSig{baseTimeBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullTime)
 	case tpDuration:
 		sig = &builtinIfNullDurationSig{baseDurationBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullDuration)
 	case tpJSON:
 		sig = &builtinIfNullJSONSig{baseJSONBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
 	}
 	return sig.setSelf(sig), nil
 }
