@@ -1948,14 +1948,10 @@ func (c *unixTimestampFunctionClass) getFunction(args []Expression, ctx context.
 	} else if retTp == tpDecimal {
 		retFLen = 12 + retDecimal
 	} else {
-		return nil, errors.Trace(errors.New("Internal error: Unexpected retTp"))
+		panic("Unexpected retTp")
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTps...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTps...)
 	bf.deterministic = false
 	bf.tp.Flen = retFLen
 	bf.tp.Decimal = retDecimal
@@ -1968,7 +1964,7 @@ func (c *unixTimestampFunctionClass) getFunction(args []Expression, ctx context.
 	} else if retTp == tpDecimal {
 		sig = &builtinUnixTimestampDecSig{baseDecimalBuiltinFunc{bf}}
 	} else {
-		return nil, errors.Trace(errors.New("Internal error: Unexpected retTp"))
+		panic("Unexpected retTp")
 	}
 
 	return sig.setSelf(sig), nil
