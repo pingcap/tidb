@@ -1386,7 +1386,7 @@ type currentTimeFunctionClass struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curtime
-func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1394,22 +1394,26 @@ func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Co
 	if len(args) == 0 {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration)
 		bf.tp.Flen, bf.tp.Decimal, bf.deterministic = mysql.MaxDurationWidthNoFsp, types.MinFsp, false
-		sig := &builtinCurrentTime0ArgSig{baseDurationBuiltinFunc{bf}}
+		sig = &builtinCurrentTime0ArgSig{baseDurationBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
 	// args[0] must be an in constant which will not be null.
-	fsp, _, err := args[0].EvalInt(nil, ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if fsp > int64(types.MaxFsp) {
-		return nil, errors.Errorf("Too-big precision %v specified for 'curtime'. Maximum is %v.", fsp, types.MaxFsp)
-	} else if fsp < int64(types.MinFsp) {
-		return nil, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+	_, ok := args[0].(*Constant)
+	fsp := types.MaxFsp
+	if ok {
+		fsp, _, err = args[0].EvalInt(nil, ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if fsp > int64(types.MaxFsp) {
+			return nil, errors.Errorf("Too-big precision %v specified for 'curtime'. Maximum is %v.", fsp, types.MaxFsp)
+		} else if fsp < int64(types.MinFsp) {
+			return nil, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+		}
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpInt)
 	bf.tp.Flen, bf.tp.Decimal, bf.deterministic = mysql.MaxDurationWidthWithFsp, int(fsp), false
-	sig := &builtinCurrentTime1ArgSig{baseDurationBuiltinFunc{bf}}
+	sig = &builtinCurrentTime1ArgSig{baseDurationBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
