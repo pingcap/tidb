@@ -136,8 +136,12 @@ func (c *absFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	if mysql.HasUnsignedFlag(argFieldTp.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
-	bf.tp.Flen = argFieldTp.Flen
-	bf.tp.Decimal = argFieldTp.Decimal
+	if tc == types.ClassReal {
+		bf.tp.Flen, bf.tp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDouble)
+	} else {
+		bf.tp.Flen = argFieldTp.Flen
+		bf.tp.Decimal = argFieldTp.Decimal
+	}
 	var sig builtinFunc
 	switch argTp {
 	case tpInt:
