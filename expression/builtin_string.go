@@ -2127,24 +2127,17 @@ func (c *octFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	var bf baseBuiltinFunc
 	var sig builtinFunc
-	switch args[0].GetTypeClass() {
-	case types.ClassInt:
-		bf = newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+	if IsHybridType(args[0]) || args[0].GetTypeClass() == types.ClassInt {
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
 		sig = &builtinOctIntSig{baseStringBuiltinFunc{bf}}
-	default:
-		if IsHybridType(args[0]) {
-			bf = newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
-			bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
-			sig = &builtinOctIntSig{baseStringBuiltinFunc{bf}}
-		} else {
-			bf = newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
-			bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
-			sig = &builtinOctStringSig{baseStringBuiltinFunc{bf}}
-		}
+	} else {
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
+		sig = &builtinOctStringSig{baseStringBuiltinFunc{bf}}
 	}
+
 	return sig.setSelf(sig), nil
 }
 
