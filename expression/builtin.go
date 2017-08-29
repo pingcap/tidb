@@ -79,7 +79,7 @@ type baseBuiltinFunc struct {
 	self builtinFunc
 }
 
-func (b *baseBuiltinFunc) getPbCode() tipb.ScalarFuncSig {
+func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
 }
 
