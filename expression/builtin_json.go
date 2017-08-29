@@ -53,6 +53,7 @@ var (
 	_ functionClass = &jsonArrayFunctionClass{}
 
 	_ builtinFunc = &builtinJSONTypeSig{}
+	_ builtinFunc = &builtinJSONUnquoteSig{}
 )
 
 // argsAnyNull returns true if args contains any null.
@@ -338,23 +339,27 @@ type jsonUnquoteFunctionClass struct {
 }
 
 type builtinJSONUnquoteSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 func (c *jsonUnquoteFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinJSONUnquoteSig{newBaseBuiltinFunc(args, ctx)}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
+	bf.tp.Charset, bf.tp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
+	sig := &builtinJSONUnquoteSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-func (b *builtinJSONUnquoteSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinJSONUnquoteSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	var j json.JSON
+	j, isNull, err = b.args[0].EvalJSON(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	return JSONUnquote(args, b.ctx.GetSessionVars().StmtCtx)
+	res, err = j.Unquote()
+	return res, false, errors.Trace(err)
 }
 
 type jsonSetFunctionClass struct {
