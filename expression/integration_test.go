@@ -2109,7 +2109,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	r = tk.MustQuery("select date'2017/12-12'")
 	r.Check(testkit.Rows("2017-12-12"))
 
-	r = tk.MustQuery("select date'0000-00-00'")
+	r = tk.MustQuery("select date '0000-00-00';")
 	r.Check(testkit.Rows("0000-00-00"))
 
 	r = tk.MustQuery("select date'1998~01~02'")

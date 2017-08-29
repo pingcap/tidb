@@ -2919,7 +2919,7 @@ FunctionCallConflict:
 		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($2)
 		expr.SetType(tp)
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Date), Args: []ast.ExprNode{expr}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.DateLiteral), Args: []ast.ExprNode{expr}}
 	}
 
 DistinctKwd:
