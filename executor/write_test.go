@@ -370,6 +370,17 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("SHOW WARNINGS")
 	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+
+	// for duplicates with warning
+	testSQL = `drop table if exists t;
+	create table t(a int primary key, b int);`
+	tk.MustExec(testSQL)
+	testSQL = "insert ignore into t values (1,1);"
+	tk.MustExec(testSQL)
+	_, err = tk.Exec(testSQL)
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS")
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
 }
 
 func (s *testSuite) TestReplace(c *C) {
