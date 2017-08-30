@@ -951,8 +951,8 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 				_, err = fmt.Sscanf(str, "%1d", &second)
 			} else {
 				// Maybe only contains date.
-				t, err := ParseDatetime(str)
-				if err == nil {
+				t, err1 := ParseDatetime(str)
+				if err1 == nil {
 					return t.ConvertToDuration()
 				}
 				return ZeroDuration, errors.Trace(ErrInvalidTimeFormat)
