@@ -63,6 +63,12 @@ var (
 	_ builtinFunc = &builtinJSONUnquoteSig{}
 	_ builtinFunc = &builtinJSONArraySig{}
 	_ builtinFunc = &builtinJSONObjectSig{}
+	_ builtinFunc = &builtinJSONExtractSig{}
+	_ builtinFunc = &builtinJSONSetSig{}
+	_ builtinFunc = &builtinJSONInsertSig{}
+	_ builtinFunc = &builtinJSONReplaceSig{}
+	_ builtinFunc = &builtinJSONRemoveSig{}
+	_ builtinFunc = &builtinJSONMergeSig{}
 )
 
 // argsAnyNull returns true if args contains any null.
@@ -146,6 +152,45 @@ func jsonModify(args []types.Datum, mt json.ModifyType, sc *variable.StatementCo
 	}
 	d.SetMysqlJSON(j)
 	return d, nil
+}
+
+// jsonModify1 is similar with `jsonModify`, but for new framework.
+func jsonModify1(args []Expression, row []types.Datum, mt json.ModifyType, sc *variable.StatementContext) (res json.JSON, isNull bool, err error) {
+	res, isNull, err = args[0].EvalJSON(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	pathExprs := make([]json.PathExpression, 0, (len(args)-1)/2+1)
+	values := make([]json.JSON, 0, (len(args)-1)/2+1)
+	for i, arg := range args[1:] {
+		if i&1 == 0 {
+			var s string
+			s, isNull, err = arg.EvalString(row, sc)
+			if isNull || err != nil {
+				return res, isNull, errors.Trace(err)
+			}
+			pathExpr, err := json.ParseJSONPathExpr(s)
+			if err != nil {
+				return res, true, errors.Trace(err)
+			}
+			pathExprs = append(pathExprs, pathExpr)
+		} else {
+			var value json.JSON
+			value, isNull, err = arg.EvalJSON(row, sc)
+			if err != nil {
+				return res, true, errors.Trace(err)
+			}
+			if isNull {
+				value = json.CreateJSON(nil)
+			}
+			values = append(values, value)
+		}
+	}
+	res, err = res.Modify(pathExprs, values, mt)
+	if err != nil {
+		return res, true, errors.Trace(err)
+	}
+	return res, false, nil
 }
 
 // JSONType is for json_type builtin function.
@@ -399,23 +444,31 @@ type jsonSetFunctionClass struct {
 }
 
 type builtinJSONSetSig struct {
-	baseBuiltinFunc
+	baseJSONBuiltinFunc
 }
 
 func (c *jsonSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinJSONSetSig{newBaseBuiltinFunc(args, ctx)}
+	tps := make([]evalTp, 0, len(args))
+	tps = append(tps, tpJSON)
+	for i := range args[1:] {
+		if i&1 == 0 {
+			tps = append(tps, tpString)
+		} else {
+			tps = append(tps, tpJSON)
+		}
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	args[0].GetType().Decimal = castJSONDirectly
+	sig := &builtinJSONSetSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-func (b *builtinJSONSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	return JSONSet(args, b.ctx.GetSessionVars().StmtCtx)
+func (b *builtinJSONSetSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	return jsonModify1(b.args, row, json.ModifySet, sc)
 }
 
 type jsonInsertFunctionClass struct {
@@ -423,23 +476,31 @@ type jsonInsertFunctionClass struct {
 }
 
 type builtinJSONInsertSig struct {
-	baseBuiltinFunc
+	baseJSONBuiltinFunc
 }
 
 func (c *jsonInsertFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinJSONInsertSig{newBaseBuiltinFunc(args, ctx)}
+	tps := make([]evalTp, 0, len(args))
+	tps = append(tps, tpJSON)
+	for i := range args[1:] {
+		if i&1 == 0 {
+			tps = append(tps, tpString)
+		} else {
+			tps = append(tps, tpJSON)
+		}
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	args[0].GetType().Decimal = castJSONDirectly
+	sig := &builtinJSONInsertSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-func (b *builtinJSONInsertSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	return JSONInsert(args, b.ctx.GetSessionVars().StmtCtx)
+func (b *builtinJSONInsertSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	return jsonModify1(b.args, row, json.ModifyInsert, sc)
 }
 
 type jsonReplaceFunctionClass struct {
@@ -447,23 +508,31 @@ type jsonReplaceFunctionClass struct {
 }
 
 type builtinJSONReplaceSig struct {
-	baseBuiltinFunc
+	baseJSONBuiltinFunc
 }
 
 func (c *jsonReplaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinJSONReplaceSig{newBaseBuiltinFunc(args, ctx)}
+	tps := make([]evalTp, 0, len(args))
+	tps = append(tps, tpJSON)
+	for i := range args[1:] {
+		if i&1 == 0 {
+			tps = append(tps, tpString)
+		} else {
+			tps = append(tps, tpJSON)
+		}
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	args[0].GetType().Decimal = castJSONDirectly
+	sig := &builtinJSONReplaceSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-func (b *builtinJSONReplaceSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	return JSONReplace(args, b.ctx.GetSessionVars().StmtCtx)
+func (b *builtinJSONReplaceSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	return jsonModify1(b.args, row, json.ModifyReplace, sc)
 }
 
 type jsonRemoveFunctionClass struct {
