@@ -331,7 +331,7 @@ func (c *jsonExtractFunctionClass) getFunction(args []Expression, ctx context.Co
 	}
 	tps := make([]evalTp, 0, len(args))
 	tps = append(tps, tpJSON)
-	for _ = range args[1:] {
+	for range args[1:] {
 		tps = append(tps, tpString)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
@@ -359,7 +359,8 @@ func (b *builtinJSONExtractSig) evalJSON(row []types.Datum) (res json.JSON, isNu
 		}
 		pathExprs = append(pathExprs, pathExpr)
 	}
-	if res, found := res.Extract(pathExprs); found {
+	var found bool
+	if res, found = res.Extract(pathExprs); found {
 		return res, false, nil
 	}
 	return res, true, nil
@@ -578,7 +579,7 @@ func (c *jsonArrayFunctionClass) getFunction(args []Expression, ctx context.Cont
 		return nil, errors.Trace(err)
 	}
 	tps := make([]evalTp, 0, len(args))
-	for _ = range args {
+	for range args {
 		tps = append(tps, tpJSON)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
