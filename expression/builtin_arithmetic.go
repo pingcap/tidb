@@ -268,7 +268,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(args []Expression, ctx contex
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
 		sig := &builtinArithmeticMinusDecimalSig{baseDecimalBuiltinFunc{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_PlusDecimal)
+		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig.setSelf(sig), nil
 	} else {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
@@ -277,7 +277,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(args []Expression, ctx contex
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		sig := &builtinArithmeticMinusIntSig{baseIntBuiltinFunc: baseIntBuiltinFunc{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
+		sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
 		return sig.setSelf(sig), nil
 	}
 }
