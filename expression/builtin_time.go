@@ -51,7 +51,6 @@ const ( // GET_FORMAT location.
 )
 
 // DurationPattern determine whether to match the format of duration.
-//var DurationPattern = regexp.MustCompile(`^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`)
 var DurationPattern = regexp.MustCompile(`^\s*[-]?(((\d{1,2}\s+)?0*\d{0,3}(:0*\d{1,2}){0,2})|(\d{1,7}))?(\.\d*)?\s*$`)
 
 // TimestampPattern determine whether to match the format of timestamp.
