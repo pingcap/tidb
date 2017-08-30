@@ -386,15 +386,15 @@ func (c *jsonExtractFunctionClass) getFunction(args []Expression, ctx context.Co
 }
 
 func (b *builtinJSONExtractSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
-	ctx := b.getCtx().GetSessionVars().StmtCtx
-	res, isNull, err = b.args[0].EvalJSON(row, ctx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	res, isNull, err = b.args[0].EvalJSON(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
 	pathExprs := make([]json.PathExpression, 0, len(b.args)-1)
 	for _, arg := range b.args[1:] {
 		var s string
-		s, isNull, err = arg.EvalString(row, ctx)
+		s, isNull, err = arg.EvalString(row, sc)
 		if isNull || err != nil {
 			return res, isNull, errors.Trace(err)
 		}
@@ -405,10 +405,10 @@ func (b *builtinJSONExtractSig) evalJSON(row []types.Datum) (res json.JSON, isNu
 		pathExprs = append(pathExprs, pathExpr)
 	}
 	var found bool
-	if res, found = res.Extract(pathExprs); found {
-		return res, false, nil
+	if res, found = res.Extract(pathExprs); !found {
+		return res, true, nil
 	}
-	return res, true, nil
+	return res, false, nil
 }
 
 type jsonUnquoteFunctionClass struct {
@@ -540,23 +540,48 @@ type jsonRemoveFunctionClass struct {
 }
 
 type builtinJSONRemoveSig struct {
-	baseBuiltinFunc
+	baseJSONBuiltinFunc
 }
 
 func (c *jsonRemoveFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinJSONRemoveSig{newBaseBuiltinFunc(args, ctx)}
+	tps := make([]evalTp, 0, len(args))
+	tps = append(tps, tpJSON)
+	for range args[1:] {
+		tps = append(tps, tpString)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	args[0].GetType().Decimal = castJSONDirectly
+	sig := &builtinJSONRemoveSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-func (b *builtinJSONRemoveSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinJSONRemoveSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	res, isNull, err = b.args[0].EvalJSON(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
 	}
-	return JSONRemove(args, b.ctx.GetSessionVars().StmtCtx)
+	pathExprs := make([]json.PathExpression, 0, len(b.args)-1)
+	for _, arg := range b.args[1:] {
+		var s string
+		s, isNull, err = arg.EvalString(row, sc)
+		if isNull || err != nil {
+			return res, isNull, errors.Trace(err)
+		}
+		pathExpr, err := json.ParseJSONPathExpr(s)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
+		pathExprs = append(pathExprs, pathExpr)
+	}
+	res, err = res.Remove(pathExprs)
+	if err != nil {
+		return res, true, errors.Trace(err)
+	}
+	return res, false, nil
 }
 
 type jsonMergeFunctionClass struct {
@@ -613,19 +638,19 @@ func (b *builtinJSONObjectSig) evalJSON(row []types.Datum) (res json.JSON, isNul
 		err = ErrIncorrectParameterCount.GenByArgs(ast.JSONObject)
 		return res, true, errors.Trace(err)
 	}
-	ctx := b.getCtx().GetSessionVars().StmtCtx
+	sc := b.getCtx().GetSessionVars().StmtCtx
 	jsons := make(map[string]json.JSON, len(b.args)>>1)
 	var key string
 	var value json.JSON
 	for i, arg := range b.args {
 		if i&1 == 0 {
-			key, isNull, err = arg.EvalString(row, ctx)
+			key, isNull, err = arg.EvalString(row, sc)
 			if isNull {
 				err = errors.New("JSON documents may not contain NULL member names")
 				return res, true, errors.Trace(err)
 			}
 		} else {
-			value, isNull, err = arg.EvalJSON(row, ctx)
+			value, isNull, err = arg.EvalJSON(row, sc)
 			if isNull {
 				value = json.CreateJSON(nil)
 			}
