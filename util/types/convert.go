@@ -181,7 +181,7 @@ func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, 
 	}
 	// Timestamp format is 'YYYYMMDDHHMMSS' or 'YYMMDDHHMMSS', which length is 12.
 	// See #3923, it explains what we do here.
-	if len(str) >= 12 {
+	if length >= 12 {
 		t, err = StrToDateTime(str, fsp)
 		if err == nil {
 			return t, nil
