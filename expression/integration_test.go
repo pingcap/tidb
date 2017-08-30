@@ -2135,3 +2135,14 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	r.Check(testkit.Rows("<nil>"))
 
 }
+
+func (s *testIntegrationSuite) TestLiterals(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	r := tk.MustQuery("SELECT LENGTH(b''), LENGTH(B''), b''+1, b''-1, B''+1;")
+	r.Check(testkit.Rows("0 0 1 -1 1"))
+}
