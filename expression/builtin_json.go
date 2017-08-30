@@ -493,23 +493,51 @@ type jsonObjectFunctionClass struct {
 }
 
 type builtinJSONObjectSig struct {
-	baseBuiltinFunc
+	baseJSONBuiltinFunc
 }
 
 func (c *jsonObjectFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinJSONObjectSig{newBaseBuiltinFunc(args, ctx)}
+	tps := make([]evalTp, 0, len(args))
+	for i := range args {
+		if i&1 == 0 {
+			tps = append(tps, tpString)
+		} else {
+			tps = append(tps, tpJSON)
+		}
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	sig := &builtinJSONObjectSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-func (b *builtinJSONObjectSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinJSONObjectSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+	if len(b.args)&1 == 1 {
+		err = ErrIncorrectParameterCount.GenByArgs(ast.JSONObject)
+		return res, true, errors.Trace(err)
 	}
-	return JSONObject(args, b.ctx.GetSessionVars().StmtCtx)
+	ctx := b.getCtx().GetSessionVars().StmtCtx
+	jsons := make(map[string]json.JSON, len(b.args)>>1)
+	var key string
+	var value json.JSON
+	for i, arg := range b.args {
+		if i&1 == 0 {
+			key, isNull, err = arg.EvalString(row, ctx)
+			if isNull {
+				err = errors.New("JSON documents may not contain NULL member names")
+				return res, true, errors.Trace(err)
+			}
+		} else {
+			value, isNull, err = arg.EvalJSON(row, ctx)
+			if isNull {
+				value = json.CreateJSON(nil)
+			}
+			jsons[key] = value
+		}
+	}
+	return json.CreateJSON(jsons), false, nil
 }
 
 type jsonArrayFunctionClass struct {
