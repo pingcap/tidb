@@ -1183,6 +1183,18 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(020005), hour(null), hour("27aaaa2:59:55");`)
 	result.Check(testkit.Rows("12 12 272 2 <nil> <nil>"))
 
+	// for hour, issue #4340
+	result = tk.MustQuery(`SELECT HOUR(20171222020005);`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR(20171222020005.1);`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR(20171222020005.1e0);`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR("20171222020005");`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR("20171222020005.1");`)
+	result.Check(testkit.Rows("2"))
+
 	// for minute
 	result = tk.MustQuery(`SELECT minute("12:13:14.123456"), minute("12:13:14.000010"), minute("272:59:55"), minute(null), minute("27aaaa2:59:55");`)
 	result.Check(testkit.Rows("13 13 59 <nil> <nil>"))
