@@ -223,7 +223,7 @@ func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 		{[]interface{}{1, 2, "hello", nil}, `{"1": 2, "hello": null}`, true},
 		{[]interface{}{nil, 2}, nil, false},
 
-		// It's because TiDB treats bool as integer.
+		// TiDB can only tell booleans from parser.
 		{[]interface{}{1, true}, `{"1": 1}`, true},
 	}
 	for _, t := range tbl {
