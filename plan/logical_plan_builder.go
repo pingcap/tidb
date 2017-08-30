@@ -369,25 +369,19 @@ func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	copy(schemaCols[:len(lColumns)], lColumns)
 	copy(schemaCols[len(lColumns):], rColumns[commonLen:])
 
-	conds := make([]*expression.ScalarFunction, 0, commonLen)
+	conds := make([]expression.Expression, 0, commonLen)
 	for i := 0; i < commonLen; i++ {
 		lc, rc := lsc.Columns[i], rsc.Columns[i]
 		cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		_, ok1 := cond.(*expression.ScalarFunction).GetArgs()[0].(*expression.Column)
-		_, ok2 := cond.(*expression.ScalarFunction).GetArgs()[1].(*expression.Column)
-		if ok1 && ok2 {
-			conds = append(conds, cond.(*expression.ScalarFunction))
-		} else {
-			p.OtherConditions = append(p.OtherConditions, cond)
-		}
+		conds = append(conds, cond)
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rColumns[:commonLen]...))
-	p.EqualConditions = append(conds, p.EqualConditions...)
+	p.OtherConditions = append(conds, p.OtherConditions...)
 
 	return nil
 }
