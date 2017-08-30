@@ -778,7 +778,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			}
 		}
 	}
-	if !hasPk {
+	if !hasPk && p.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
 		indexCols = append(indexCols, &expression.Column{FromID: p.id, ID: model.ExtraHandleID, Position: -1})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))

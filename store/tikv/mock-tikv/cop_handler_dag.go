@@ -16,7 +16,6 @@ package mocktikv
 import (
 	"time"
 
-	"fmt"
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -84,9 +83,6 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		}
 		data := dummySlice
 		for _, offset := range dagReq.OutputOffsets {
-			if int(offset) >= len(row) {
-				panic(fmt.Sprintf("offsets: %v, row len: %v, %T", dagReq.OutputOffsets, len(row), e))
-			}
 			data = append(data, row[offset]...)
 		}
 		chunks, rowCnt = newAppendRow(chunks, handle, data, rowCnt)

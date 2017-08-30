@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -58,7 +58,7 @@ type newSelectResult struct {
 	results chan newResultWithErr
 	closed  chan struct{}
 
-	colLen int
+	rowLen int
 }
 
 type newResultWithErr struct {
@@ -88,12 +88,12 @@ func (r *newSelectResult) fetch(ctx goctx.Context) {
 		}
 		pr := &newPartialResult{}
 		pr.unmarshal(resultSubset)
-		pr.len = r.colLen
+		pr.rowLen = r.rowLen
 
 		select {
 		case r.results <- newResultWithErr{result: pr}:
 		case <-r.closed:
-			// if selectResult called Close() already, make fetch goroutine exit
+			// If selectResult called Close() already, make fetch goroutine exit.
 			return
 		case <-ctx.Done():
 			return
@@ -109,7 +109,7 @@ func (r *newSelectResult) Next() (NewPartialResult, error) {
 
 // Close closes SelectResult.
 func (r *newSelectResult) Close() error {
-	// close this channel tell fetch goroutine to exit
+	// Close this channel tell fetch goroutine to exit.
 	close(r.closed)
 	return r.resp.Close()
 }
@@ -117,7 +117,7 @@ func (r *newSelectResult) Close() error {
 type newPartialResult struct {
 	resp     *tipb.SelectResponse
 	chunkIdx int
-	len      int
+	rowLen   int
 }
 
 func (pr *newPartialResult) unmarshal(resultSubset []byte) error {
@@ -141,10 +141,13 @@ func (pr *newPartialResult) Next() (data []types.Datum, err error) {
 	if chunk == nil {
 		return nil, nil
 	}
-	data = make([]types.Datum, pr.len)
-	for i := 0; i < pr.len; i++ {
+	data = make([]types.Datum, pr.rowLen)
+	for i := 0; i < pr.rowLen; i++ {
 		var l []byte
 		l, chunk.RowsData, err = codec.CutOne(chunk.RowsData)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		data[i].SetRaw(l)
 	}
 	return
@@ -207,7 +210,7 @@ func NewSelectDAG(ctx context.Context, goCtx goctx.Context, dag *tipb.DAGRequest
 		resp:    resp,
 		results: make(chan newResultWithErr, ctx.GetSessionVars().DistSQLScanConcurrency),
 		closed:  make(chan struct{}),
-		colLen:  colLen,
+		rowLen:  colLen,
 	}
 	return result, nil
 }

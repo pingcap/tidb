@@ -77,6 +77,7 @@ func (p *Limit) ToPB(ctx context.Context) (*tipb.Executor, error) {
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := p.Columns
+	// If there's no row data to be returned, we force to append one column.
 	if p.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) && len(p.Columns) == 0 {
 		columns = []*model.ColumnInfo{{ID: model.ExtraHandleID, Name: model.NewCIStr("_rowid")}}
 	}
@@ -94,10 +95,12 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
-			columns = append(columns, &model.ColumnInfo{
-				ID:   model.ExtraHandleID,
-				Name: model.NewCIStr("_rowid"),
-			})
+			if p.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+				columns = append(columns, &model.ColumnInfo{
+					ID:   model.ExtraHandleID,
+					Name: model.NewCIStr("_rowid"),
+				})
+			}
 		} else {
 			columns = append(columns, p.Table.Columns[col.Position])
 		}
