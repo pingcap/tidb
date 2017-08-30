@@ -169,7 +169,8 @@ func jsonModify1(args []Expression, row []types.Datum, mt json.ModifyType, sc *v
 			if isNull || err != nil {
 				return res, isNull, errors.Trace(err)
 			}
-			pathExpr, err := json.ParseJSONPathExpr(s)
+			var pathExpr json.PathExpression
+			pathExpr, err = json.ParseJSONPathExpr(s)
 			if err != nil {
 				return res, true, errors.Trace(err)
 			}
@@ -571,7 +572,8 @@ func (b *builtinJSONRemoveSig) evalJSON(row []types.Datum) (res json.JSON, isNul
 		if isNull || err != nil {
 			return res, isNull, errors.Trace(err)
 		}
-		pathExpr, err := json.ParseJSONPathExpr(s)
+		var pathExpr json.PathExpression
+		pathExpr, err = json.ParseJSONPathExpr(s)
 		if err != nil {
 			return res, true, errors.Trace(err)
 		}
