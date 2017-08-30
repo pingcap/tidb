@@ -1109,6 +1109,7 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		format := types.NewStringDatum(test.Format)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{date, format}), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if !test.Success {
