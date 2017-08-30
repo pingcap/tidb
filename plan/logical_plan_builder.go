@@ -344,13 +344,13 @@ func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 				filter[lCol.ColName.L] = false
 			}
 
-			col := rColumns[i]
-			copy(rColumns[commonLen+1:i+1], rColumns[commonLen:i])
-			rColumns[commonLen] = col
-
-			col = lColumns[j]
-			copy(lColumns[commonLen+1:j+1], lColumns[commonLen:j])
+			col := lColumns[i]
+			copy(lColumns[commonLen+1:i+1], lColumns[commonLen:i])
 			lColumns[commonLen] = col
+
+			col = rColumns[j]
+			copy(rColumns[commonLen+1:j+1], rColumns[commonLen:j])
+			rColumns[commonLen] = col
 
 			commonLen++
 			break
@@ -376,7 +376,13 @@ func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		conds = append(conds, cond.(*expression.ScalarFunction))
+		_, ok1 := cond.(*expression.ScalarFunction).GetArgs()[0].(*expression.Column)
+		_, ok2 := cond.(*expression.ScalarFunction).GetArgs()[1].(*expression.Column)
+		if ok1 && ok2 {
+			conds = append(conds, cond.(*expression.ScalarFunction))
+		} else {
+			p.OtherConditions = append(p.OtherConditions, cond)
+		}
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
