@@ -173,6 +173,19 @@ func (s *testParserSuite) TestSimple(c *C) {
 	src = "use quote;"
 	_, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
+
+	// issue #4354
+	src = "select b'';"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	src = "select B'';"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	src = "select 0b'';"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, NotNil)
 }
 
 type testCase struct {
