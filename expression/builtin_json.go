@@ -589,23 +589,38 @@ type jsonMergeFunctionClass struct {
 }
 
 type builtinJSONMergeSig struct {
-	baseBuiltinFunc
+	baseJSONBuiltinFunc
 }
 
 func (c *jsonMergeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinJSONMergeSig{newBaseBuiltinFunc(args, ctx)}
+	tps := make([]evalTp, 0, len(args))
+	for range args {
+		tps = append(tps, tpJSON)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	for i := range args {
+		args[i].GetType().Decimal = castJSONDirectly
+	}
+	sig := &builtinJSONMergeSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-func (b *builtinJSONMergeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinJSONMergeSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	values := make([]json.JSON, 0, len(b.args))
+	for _, arg := range b.args {
+		var value json.JSON
+		value, isNull, err = arg.EvalJSON(row, sc)
+		if isNull || err != nil {
+			return res, isNull, errors.Trace(err)
+		}
+		values = append(values, value)
 	}
-	return JSONMerge(args, b.ctx.GetSessionVars().StmtCtx)
+	res = values[0].Merge(values[1:])
+	return res, false, nil
 }
 
 type jsonObjectFunctionClass struct {
