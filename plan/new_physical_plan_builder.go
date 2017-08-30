@@ -1019,6 +1019,33 @@ func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
 	return []PhysicalPlan{np}
 }
 
+func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
+	aggs := make([]PhysicalPlan, 0, 2)
+	agg := PhysicalAggregation{
+		GroupByItems: p.GroupByItems,
+		AggFuncs:     p.AggFuncs,
+		HasGby:       len(p.GroupByItems) > 0,
+		AggType:      CompleteAgg,
+	}.init(p.allocator, p.ctx)
+	agg.SetSchema(p.schema.Clone())
+	agg.profile = p.profile
+	aggs = append(aggs, agg)
+	if len(p.possibleProperties) == 0 {
+		return aggs
+	}
+	agg = PhysicalAggregation{
+		GroupByItems: p.GroupByItems,
+		AggFuncs:     p.AggFuncs,
+		HasGby:       len(p.GroupByItems) > 0,
+		AggType:      StreamedAgg,
+	}.init(p.allocator, p.ctx)
+	aggs = append(aggs, agg)
+	agg.SetSchema(p.schema.Clone())
+	agg.profile = p.profile
+
+	return aggs
+}
+
 func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
 	// By default, physicalPlan can always match the orders.
@@ -1087,18 +1114,6 @@ func (p *TopN) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 		props = append(props, []*requiredProp{{taskTp: tp, expectedCnt: math.MaxFloat64}})
 	}
 	return props
-}
-
-func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
-	ha := PhysicalAggregation{
-		GroupByItems: p.GroupByItems,
-		AggFuncs:     p.AggFuncs,
-		HasGby:       len(p.GroupByItems) > 0,
-		AggType:      CompleteAgg,
-	}.init(p.allocator, p.ctx)
-	ha.SetSchema(p.schema)
-	ha.profile = p.profile
-	return []PhysicalPlan{ha}
 }
 
 func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {

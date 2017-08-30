@@ -436,10 +436,6 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "LeftHashJoin{Table(t)->Table(t)}->Selection->Limit",
 		},
 		{
-			sql:  "select count(*) from t where concat(a,b) = 'abc' group by c",
-			best: "Index(t.c_d_e)[[<nil>,+inf]]->Selection->StreamAgg",
-		},
-		{
 			sql:  "select sum(b.a) from t a, t b where a.c = b.c and cast(b.d as char) group by b.d",
 			best: "RightHashJoin{Index(t.c_d_e)[[<nil>,+inf]]->Selection->StreamAgg->Table(t)}(b.c,a.c)->HashAgg",
 		},
