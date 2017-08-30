@@ -61,6 +61,7 @@ var (
 
 	_ builtinFunc = &builtinJSONTypeSig{}
 	_ builtinFunc = &builtinJSONUnquoteSig{}
+	_ builtinFunc = &builtinJSONArraySig{}
 )
 
 // argsAnyNull returns true if args contains any null.
@@ -353,7 +354,6 @@ func (c *jsonUnquoteFunctionClass) getFunction(args []Expression, ctx context.Co
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
 	bf.tp.Charset, bf.tp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
-	// args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONUnquoteSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -517,21 +517,30 @@ type jsonArrayFunctionClass struct {
 }
 
 type builtinJSONArraySig struct {
-	baseBuiltinFunc
+	baseJSONBuiltinFunc
 }
 
 func (c *jsonArrayFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinJSONArraySig{newBaseBuiltinFunc(args, ctx)}
+	tps := make([]evalTp, 0, len(args))
+	for _ = range args {
+		tps = append(tps, tpJSON)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	sig := &builtinJSONArraySig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-func (b *builtinJSONArraySig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinJSONArraySig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+	jsons := make([]json.JSON, 0, len(b.args))
+	for _, arg := range b.args {
+		j, _, err := arg.EvalJSON(row, b.getCtx().GetSessionVars().StmtCtx)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
+		jsons = append(jsons, j)
 	}
-	return JSONArray(args, b.ctx.GetSessionVars().StmtCtx)
+	return json.CreateJSON(jsons), false, nil
 }
