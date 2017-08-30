@@ -536,9 +536,12 @@ func (c *jsonArrayFunctionClass) getFunction(args []Expression, ctx context.Cont
 func (b *builtinJSONArraySig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
 	jsons := make([]json.JSON, 0, len(b.args))
 	for _, arg := range b.args {
-		j, _, err := arg.EvalJSON(row, b.getCtx().GetSessionVars().StmtCtx)
+		j, isNull, err := arg.EvalJSON(row, b.getCtx().GetSessionVars().StmtCtx)
 		if err != nil {
 			return res, true, errors.Trace(err)
+		}
+		if isNull {
+			j = json.CreateJSON(nil)
 		}
 		jsons = append(jsons, j)
 	}
