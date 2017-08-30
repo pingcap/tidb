@@ -1387,7 +1387,7 @@ type currentTimeFunctionClass struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curtime
 func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
