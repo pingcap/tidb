@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -266,6 +267,8 @@ func (e *ShowExec) fetchShowColumns() error {
 	return nil
 }
 
+// TODO: index collation can have values A (ascending) or NULL (not sorted).
+// see: https://dev.mysql.com/doc/refman/5.7/en/show-index.html
 func (e *ShowExec) fetchShowIndex() error {
 	tb, err := e.getTable()
 	if err != nil {
@@ -285,7 +288,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"PRIMARY",        // Key_name
 			1,                // Seq_in_index
 			pkCol.Name.O,     // Column_name
-			"utf8_bin",       // Colation
+			"A",              // Collation
 			0,                // Cardinality
 			nil,              // Sub_part
 			nil,              // Packed
@@ -312,7 +315,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				idx.Meta().Name.O, // Key_name
 				i+1,               // Seq_in_index
 				col.Name.O,        // Column_name
-				"utf8_bin",        // Colation
+				"A",               // Collation
 				0,                 // Cardinality
 				subPart,           // Sub_part
 				nil,               // Packed
@@ -528,7 +531,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if len(tb.Meta().Comment) > 0 {
-		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", tb.Meta().Comment))
+		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
 	}
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())

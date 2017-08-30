@@ -934,6 +934,9 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			} else if len(str) == 6 {
 				// HHMMSS
 				_, err = fmt.Sscanf(str, "%2d%2d%2d", &hour, &minute, &second)
+			} else if len(str) == 5 {
+				// HMMSS
+				_, err = fmt.Sscanf(str, "%1d%2d%2d", &hour, &minute, &second)
 			} else if len(str) == 4 {
 				// MMSS
 				_, err = fmt.Sscanf(str, "%2d%2d", &minute, &second)
@@ -2038,6 +2041,49 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	// "%x": yearOfWeek,                 // Year for the week, where Monday is the first day of the week, numeric, four digits; used with %v
 	// Deprecated since MySQL 5.7.5
 	// "%y": yearTwoDigits,         // Year, numeric (two digits)
+}
+
+// GetFormatType checks the type(Duration, Date or Datetime) of a format string.
+func GetFormatType(format string) (isDuration, isDate bool) {
+	durationTokens := map[string]struct{}{
+		"%h": {},
+		"%H": {},
+		"%i": {},
+		"%I": {},
+		"%s": {},
+		"%S": {},
+		"%k": {},
+		"%l": {},
+	}
+	dateTokens := map[string]struct{}{
+		"%y": {},
+		"%Y": {},
+		"%m": {},
+		"%M": {},
+		"%c": {},
+		"%b": {},
+		"%D": {},
+		"%d": {},
+		"%e": {},
+	}
+
+	format = skipWhiteSpace(format)
+	for token, formatRemain, succ := getFormatToken(format); len(token) != 0; format = formatRemain {
+		if !succ {
+			isDuration, isDate = false, false
+			break
+		}
+		if _, ok := durationTokens[token]; ok {
+			isDuration = true
+		} else if _, ok := dateTokens[token]; ok {
+			isDate = true
+		}
+		if isDuration && isDate {
+			break
+		}
+		token, formatRemain, succ = getFormatToken(format)
+	}
+	return
 }
 
 func matchDateWithToken(t *mysqlTime, date string, token string, ctx map[string]int) (remain string, succ bool) {

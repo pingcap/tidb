@@ -18,13 +18,11 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
 	_ functionClass = &rowFunctionClass{}
-	_ functionClass = &castFunctionClass{}
 	_ functionClass = &setVarFunctionClass{}
 	_ functionClass = &getVarFunctionClass{}
 	_ functionClass = &lockFunctionClass{}
@@ -36,7 +34,6 @@ var (
 var (
 	_ builtinFunc = &builtinSleepSig{}
 	_ builtinFunc = &builtinRowSig{}
-	_ builtinFunc = &builtinCastSig{}
 	_ builtinFunc = &builtinSetVarSig{}
 	_ builtinFunc = &builtinGetVarSig{}
 	_ builtinFunc = &builtinLockSig{}
@@ -177,41 +174,32 @@ func (c *bitCountFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinBitCountSig{newBaseBuiltinFunc(args, ctx)}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+	bf.tp.Flen = 2
+	sig := &builtinBitCountSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinBitCountSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinBitCountSig.
+// evalInt evals BIT_COUNT(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-functions.html#function_bit-count
-func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-	sc := new(variable.StatementContext)
-	sc.IgnoreTruncate = true
-	bin, err := arg.ToInt64(sc)
-	if err != nil {
-		if types.ErrOverflow.Equal(err) {
-			d.SetInt64(64)
-			return d, nil
+func (b *builtinBitCountSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
 
+	n, isNull, err := b.args[0].EvalInt(row, sc)
+	if err != nil || isNull {
+		if err != nil && types.ErrOverflow.Equal(err) {
+			return 64, false, nil
 		}
-		return d, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
+
 	var count int64
-	for bin != 0 {
+	for ; n != 0; n = (n - 1) & n {
 		count++
-		bin = (bin - 1) & bin
 	}
-	d.SetInt64(count)
-	return d, nil
+	return count, false, nil
 }
