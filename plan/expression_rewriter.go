@@ -681,9 +681,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
 	case *ast.ValueExpr:
-		tp := &types.FieldType{}
-		types.DefaultTypeForValue(v.GetValue(), tp)
-		value := &expression.Constant{Value: v.Datum, RetType: tp}
+		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}

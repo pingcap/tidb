@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -530,7 +531,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if len(tb.Meta().Comment) > 0 {
-		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", tb.Meta().Comment))
+		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
 	}
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
