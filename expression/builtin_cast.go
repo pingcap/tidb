@@ -1340,7 +1340,7 @@ func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Contex
 	exprTp := expr.GetType().Tp
 	if tp.Tp == exprTp {
 		return expr
-	} else if exprTp == mysql.TypeDate && tp.Tp == mysql.TypeDatetime {
+	} else if (exprTp == mysql.TypeDate || exprTp == mysql.TypeTimestamp) && tp.Tp == mysql.TypeDatetime {
 		return expr
 	}
 	switch x := expr.GetType(); x.Tp {
