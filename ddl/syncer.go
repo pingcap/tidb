@@ -186,14 +186,25 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 
 // MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
 func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx goctx.Context) (int64, error) {
+	var err error
+	var resp *clientv3.GetResponse
+	failedCnt := 0
+	intervalCnt := int(time.Second / keyOpRetryInterval)
 	for {
+		if err != nil {
+			if failedCnt%intervalCnt == 0 {
+				log.Infof("[syncer] get global version failed %v", err)
+			}
+			time.Sleep(keyOpRetryInterval)
+			failedCnt++
+		}
+
 		if isContextDone(ctx) {
 			return 0, errors.Trace(ctx.Err())
 		}
 
-		resp, err := s.etcdCli.Get(ctx, DDLGlobalSchemaVersion)
+		resp, err = s.etcdCli.Get(ctx, DDLGlobalSchemaVersion)
 		if err != nil {
-			log.Infof("[syncer] get global version failed %v", err)
 			continue
 		}
 		if err == nil && len(resp.Kvs) > 0 {
@@ -203,8 +214,6 @@ func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx goctx.Context) (int64, er
 				return int64(ver), nil
 			}
 		}
-		log.Infof("[syncer] get global version failed %v", err)
-		time.Sleep(keyOpRetryInterval)
 	}
 }
 
