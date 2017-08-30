@@ -2900,18 +2900,12 @@ FunctionCallConflict:
 	}
 |	"TIME"  stringLit
 	{
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($2)
-		expr.SetType(tp)
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimeLiteral), Args: []ast.ExprNode{expr}}
 	}
 |	"TIMESTAMP"  stringLit
 	{
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($2)
-		expr.SetType(tp)
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimestampLiteral), Args: []ast.ExprNode{expr}}
 	}
 
