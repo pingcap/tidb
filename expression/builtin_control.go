@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -41,12 +43,14 @@ var (
 	_ builtinFunc = &builtinIfNullStringSig{}
 	_ builtinFunc = &builtinIfNullTimeSig{}
 	_ builtinFunc = &builtinIfNullDurationSig{}
+	_ builtinFunc = &builtinIfNullJSONSig{}
 	_ builtinFunc = &builtinIfIntSig{}
 	_ builtinFunc = &builtinIfRealSig{}
 	_ builtinFunc = &builtinIfDecimalSig{}
 	_ builtinFunc = &builtinIfStringSig{}
-	_ builtinFunc = &builtinIfDurationSig{}
 	_ builtinFunc = &builtinIfTimeSig{}
+	_ builtinFunc = &builtinIfDurationSig{}
+	_ builtinFunc = &builtinIfJSONSig{}
 )
 
 type caseWhenFunctionClass struct {
@@ -70,9 +74,14 @@ func inferType4ControlFuncs(tp1, tp2 *types.FieldType) *types.FieldType {
 		var unsignedFlag uint
 		typeClass = types.AggTypeClass([]*types.FieldType{tp1, tp2}, &unsignedFlag)
 		retTp = types.AggFieldType([]*types.FieldType{tp1, tp2})
-		retTp.Decimal = 0
-		if typeClass != types.ClassInt {
-			retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
+		if typeClass == types.ClassInt {
+			retTp.Decimal = 0
+		} else {
+			if tp1.Decimal == types.UnspecifiedLength || tp2.Decimal == types.UnspecifiedLength {
+				retTp.Decimal = types.UnspecifiedLength
+			} else {
+				retTp.Decimal = mathutil.Max(tp1.Decimal, tp2.Decimal)
+			}
 		}
 		if types.IsNonBinaryStr(tp1) && !types.IsBinaryStr(tp2) {
 			retTp.Charset, retTp.Collate, retTp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
@@ -109,6 +118,15 @@ func inferType4ControlFuncs(tp1, tp2 *types.FieldType) *types.FieldType {
 			retTp.Flen = mathutil.Max(len1, len2) + retTp.Decimal + 1
 		} else {
 			retTp.Flen = mathutil.Max(tp1.Flen, tp2.Flen)
+		}
+	}
+	// Fix decimal for int and string.
+	fieldTp := fieldTp2EvalTp(retTp)
+	if fieldTp == tpInt {
+		retTp.Decimal = 0
+	} else if fieldTp == tpString {
+		if tp1.Tp != mysql.TypeNull || tp2.Tp != mysql.TypeNull {
+			retTp.Decimal = types.UnspecifiedLength
 		}
 	}
 	return retTp
@@ -157,20 +175,19 @@ func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Conte
 	if l%2 == 1 {
 		argTps = append(argTps, tp)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
 	bf.tp = fieldTp
 
 	switch tp {
 	case tpInt:
+		bf.tp.Decimal = 0
 		sig = &builtinCaseWhenIntSig{baseIntBuiltinFunc{bf}}
 	case tpReal:
 		sig = &builtinCaseWhenRealSig{baseRealBuiltinFunc{bf}}
 	case tpDecimal:
 		sig = &builtinCaseWhenDecimalSig{baseDecimalBuiltinFunc{bf}}
 	case tpString:
+		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinCaseWhenStringSig{baseStringBuiltinFunc{bf}}
 	case tpDatetime, tpTimestamp:
 		sig = &builtinCaseWhenTimeSig{baseTimeBuiltinFunc{bf}}
@@ -377,24 +394,30 @@ func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (s
 	}
 	retTp := inferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := fieldTp2EvalTp(retTp)
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
 	case tpInt:
 		sig = &builtinIfIntSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfInt)
 	case tpReal:
 		sig = &builtinIfRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfReal)
 	case tpDecimal:
 		sig = &builtinIfDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfDecimal)
 	case tpString:
 		sig = &builtinIfStringSig{baseStringBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfString)
 	case tpDatetime, tpTimestamp:
 		sig = &builtinIfTimeSig{baseTimeBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfTime)
 	case tpDuration:
 		sig = &builtinIfDurationSig{baseDurationBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfDuration)
+	case tpJSON:
+		sig = &builtinIfJSONSig{baseJSONBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
 	}
 	return sig.setSelf(sig), nil
 }
@@ -507,6 +530,33 @@ func (b *builtinIfDurationSig) evalDuration(row []types.Datum) (ret types.Durati
 	return arg2, isNull2, errors.Trace(err)
 }
 
+type builtinIfJSONSig struct {
+	baseJSONBuiltinFunc
+}
+
+func (b *builtinIfJSONSig) evalJSON(row []types.Datum) (ret json.JSON, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull0, err := b.args[0].EvalInt(row, sc)
+	if err != nil {
+		return ret, false, errors.Trace(err)
+	}
+	arg1, isNull1, err := b.args[1].EvalJSON(row, sc)
+	if err != nil {
+		return ret, false, errors.Trace(err)
+	}
+	arg2, isNull2, err := b.args[2].EvalJSON(row, sc)
+	if err != nil {
+		return ret, false, errors.Trace(err)
+	}
+	switch {
+	case isNull0 || arg0 == 0:
+		ret, isNull = arg2, isNull2
+	case arg0 != 0:
+		ret, isNull = arg1, isNull1
+	}
+	return
+}
+
 type ifNullFunctionClass struct {
 	baseFunctionClass
 }
@@ -524,24 +574,30 @@ func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := fieldTp2EvalTp(retTp)
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
 	case tpInt:
 		sig = &builtinIfNullIntSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullInt)
 	case tpReal:
 		sig = &builtinIfNullRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullReal)
 	case tpDecimal:
 		sig = &builtinIfNullDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullDecimal)
 	case tpString:
 		sig = &builtinIfNullStringSig{baseStringBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullString)
 	case tpDatetime, tpTimestamp:
 		sig = &builtinIfNullTimeSig{baseTimeBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullTime)
 	case tpDuration:
 		sig = &builtinIfNullDurationSig{baseDurationBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullDuration)
+	case tpJSON:
+		sig = &builtinIfNullJSONSig{baseJSONBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
 	}
 	return sig.setSelf(sig), nil
 }
@@ -627,5 +683,19 @@ func (b *builtinIfNullDurationSig) evalDuration(row []types.Datum) (types.Durati
 		return arg0, false, errors.Trace(err)
 	}
 	arg1, isNull, err := b.args[1].EvalDuration(row, sc)
+	return arg1, isNull, errors.Trace(err)
+}
+
+type builtinIfNullJSONSig struct {
+	baseJSONBuiltinFunc
+}
+
+func (b *builtinIfNullJSONSig) evalJSON(row []types.Datum) (json.JSON, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, isNull, err := b.args[0].EvalJSON(row, sc)
+	if !isNull {
+		return arg0, false, errors.Trace(err)
+	}
+	arg1, isNull, err := b.args[1].EvalJSON(row, sc)
 	return arg1, isNull, errors.Trace(err)
 }

@@ -75,6 +75,7 @@ func AggFieldType(tps []*FieldType) *FieldType {
 		mtp := MergeFieldType(currType.Tp, t.Tp)
 		currType.Tp = mtp
 	}
+
 	return &currType
 }
 
@@ -186,6 +187,20 @@ func (ft *FieldType) Init(tp byte) {
 func (ft *FieldType) CompactStr() string {
 	ts := TypeToStr(ft.Tp, ft.Charset)
 	suffix := ""
+
+	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.Tp)
+	isFlenNotDefault := ft.Flen != defaultFlen && ft.Flen != 0 && ft.Flen != UnspecifiedLength
+	isDecimalNotDefault := ft.Decimal != defaultDecimal && ft.Decimal != 0 && ft.Decimal != UnspecifiedLength
+
+	// displayFlen and displayDecimal are flen and decimal values with `-1` substituted with default value.
+	displayFlen, displayDecimal := ft.Flen, ft.Decimal
+	if displayFlen == 0 || displayFlen == UnspecifiedLength {
+		displayFlen = defaultFlen
+	}
+	if displayDecimal == 0 || displayDecimal == UnspecifiedLength {
+		displayDecimal = defaultDecimal
+	}
+
 	switch ft.Tp {
 	case mysql.TypeEnum, mysql.TypeSet:
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
@@ -195,22 +210,29 @@ func (ft *FieldType) CompactStr() string {
 			es = append(es, e)
 		}
 		suffix = fmt.Sprintf("('%s')", strings.Join(es, "','"))
-	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeDuration:
-		if ft.Decimal != UnspecifiedLength && ft.Decimal != 0 {
-			suffix = fmt.Sprintf("(%d)", ft.Decimal)
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
+		if isDecimalNotDefault {
+			suffix = fmt.Sprintf("(%d)", displayDecimal)
 		}
-	default:
-		if ft.Flen != UnspecifiedLength {
-			if ft.Decimal == UnspecifiedLength {
-				if ft.Tp != mysql.TypeFloat && ft.Tp != mysql.TypeDouble {
-					suffix = fmt.Sprintf("(%d)", ft.Flen)
-				}
-			} else {
-				suffix = fmt.Sprintf("(%d,%d)", ft.Flen, ft.Decimal)
+	case mysql.TypeDouble, mysql.TypeFloat:
+		// 1. Flen Not Default, Decimal Not Default -> Valid
+		// 2. Flen Not Default, Decimal Default (-1) -> Invalid
+		// 3. Flen Default, Decimal Not Default -> Valid
+		// 4. Flen Default, Decimal Default -> Valid (hide)
+		if isDecimalNotDefault {
+			suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
+		}
+	case mysql.TypeNewDecimal:
+		if isFlenNotDefault || isDecimalNotDefault {
+			suffix = fmt.Sprintf("(%d", displayFlen)
+			if isDecimalNotDefault {
+				suffix += fmt.Sprintf(",%d", displayDecimal)
 			}
-		} else if ft.Decimal != UnspecifiedLength {
-			suffix = fmt.Sprintf("(%d)", ft.Decimal)
+			suffix += ")"
 		}
+	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+		// Flen is always shown.
+		suffix = fmt.Sprintf("(%d)", displayFlen)
 	}
 	return ts + suffix
 }
@@ -225,8 +247,8 @@ func (ft *FieldType) InfoSchemaStr() string {
 	return ft.CompactStr() + suffix
 }
 
-// String joins the information of FieldType and
-// returns a string.
+// String joins the information of FieldType and returns a string.
+// Note: when flen or decimal is unspecified, this function will use the default value instead of -1.
 func (ft *FieldType) String() string {
 	strs := []string{ft.CompactStr()}
 	if mysql.HasUnsignedFlag(ft.Flag) {
@@ -291,7 +313,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeDouble
 		s := strconv.FormatFloat(x, 'f', -1, 64)
 		tp.Flen = len(s)
-		tp.Decimal = len(s) - 1 - strings.Index(s, ".")
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case []byte:
 		tp.Tp = mysql.TypeBlob
@@ -306,7 +328,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case Hex:
 		tp.Tp = mysql.TypeVarchar
 		tp.Flen = len(x.String())
-		tp.Decimal = UnspecifiedLength
+		tp.Decimal = 0
+		tp.Flag |= mysql.UnsignedFlag
 		SetBinChsClnFlag(tp)
 	case Time:
 		tp.Tp = x.Type
@@ -347,6 +370,10 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case json.JSON:
 		tp.Tp = mysql.TypeJSON
+		tp.Flen = UnspecifiedLength
+		tp.Decimal = 0
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CollationBin
 	default:
 		tp.Tp = mysql.TypeUnspecified
 		tp.Flen = UnspecifiedLength
