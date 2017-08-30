@@ -540,9 +540,8 @@ func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Con
 	ft0, ft1 := args[0].GetType(), args[1].GetType()
 	tc0, tc1 := ft0.ToClass(), ft1.ToClass()
 	cmpType := getCmpType(tc0, tc1)
-	if ft0.Tp == mysql.TypeJSON || ft1.Tp == mysql.TypeJSON {
-		// if (tc0 == types.ClassString && ft1.Tp == mysql.TypeJSON) ||
-		// 	(ft0.Tp == mysql.TypeJSON && tc1 == types.ClassString) {
+	if (tc0 == types.ClassString && ft1.Tp == mysql.TypeJSON) ||
+		(ft0.Tp == mysql.TypeJSON && tc1 == types.ClassString) {
 		sig, err = c.generateCmpSigs(args, tpJSON, ctx)
 	} else if cmpType == types.ClassString && (types.IsTypeTime(ft0.Tp) || types.IsTypeTime(ft1.Tp)) {
 		// date[time] <cmp> date[time]

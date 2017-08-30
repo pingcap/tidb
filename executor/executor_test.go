@@ -1143,6 +1143,12 @@ func (s *testSuite) TestJSON(c *C) {
 	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
 	result.Check(testkit.Rows(`"string"`))
 
+	// Check cast(true/false as JSON).
+	result = tk.MustQuery(`select cast(true as JSON)`)
+	result.Check(testkit.Rows(`true`))
+	result = tk.MustQuery(`select cast(false as JSON)`)
+	result.Check(testkit.Rows(`false`))
+
 	// Check two json grammar sugar.
 	result = tk.MustQuery(`select a->>'$.a[2].aa' as x, a->'$.b' as y from test_json having x is not null order by id`)
 	result.Check(testkit.Rows(`bb true`))
