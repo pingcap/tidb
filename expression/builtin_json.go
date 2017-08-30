@@ -62,6 +62,7 @@ var (
 	_ builtinFunc = &builtinJSONTypeSig{}
 	_ builtinFunc = &builtinJSONUnquoteSig{}
 	_ builtinFunc = &builtinJSONArraySig{}
+	_ builtinFunc = &builtinJSONObjectSig{}
 )
 
 // argsAnyNull returns true if args contains any null.
@@ -321,23 +322,47 @@ type jsonExtractFunctionClass struct {
 }
 
 type builtinJSONExtractSig struct {
-	baseBuiltinFunc
+	baseJSONBuiltinFunc
 }
 
 func (c *jsonExtractFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinJSONExtractSig{newBaseBuiltinFunc(args, ctx)}
+	tps := make([]evalTp, 0, len(args))
+	tps = append(tps, tpJSON)
+	for _ = range args[1:] {
+		tps = append(tps, tpString)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	args[0].GetType().Decimal = castJSONDirectly
+	sig := &builtinJSONExtractSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-func (b *builtinJSONExtractSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinJSONExtractSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
+	ctx := b.getCtx().GetSessionVars().StmtCtx
+	res, isNull, err = b.args[0].EvalJSON(row, ctx)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
 	}
-	return JSONExtract(args, b.ctx.GetSessionVars().StmtCtx)
+	pathExprs := make([]json.PathExpression, 0, len(b.args)-1)
+	for _, arg := range b.args[1:] {
+		var s string
+		s, isNull, err = arg.EvalString(row, ctx)
+		if isNull || err != nil {
+			return res, isNull, errors.Trace(err)
+		}
+		pathExpr, err := json.ParseJSONPathExpr(s)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
+		pathExprs = append(pathExprs, pathExpr)
+	}
+	if res, found := res.Extract(pathExprs); found {
+		return res, false, nil
+	}
+	return res, true, nil
 }
 
 type jsonUnquoteFunctionClass struct {
