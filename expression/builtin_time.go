@@ -131,7 +131,6 @@ var (
 	_ builtinFunc = &builtinYearWeekWithoutModeSig{}
 	_ builtinFunc = &builtinFromUnixTimeSig{}
 	_ builtinFunc = &builtinGetFormatSig{}
-	_ builtinFunc = &builtinStrToDateSig{}
 	_ builtinFunc = &builtinSysDateWithFspSig{}
 	_ builtinFunc = &builtinSysDateWithoutFspSig{}
 	_ builtinFunc = &builtinCurrentDateSig{}
@@ -161,6 +160,9 @@ var (
 	_ builtinFunc = &builtinTimestamp1ArgSig{}
 	_ builtinFunc = &builtinTimestamp2ArgsSig{}
 	_ builtinFunc = &builtinLastDaySig{}
+	_ builtinFunc = &builtinStrToDateDateSig{}
+	_ builtinFunc = &builtinStrToDateDatetimeSig{}
+	_ builtinFunc = &builtinStrToDateDurationSig{}
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.
@@ -1257,37 +1259,129 @@ type strToDateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *strToDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *strToDateFunctionClass) getRetTp(arg Expression, ctx context.Context) (tp byte, fsp int) {
+	tp = mysql.TypeDatetime
+	if _, ok := arg.(*Constant); !ok {
+		return tp, types.MaxFsp
+	}
+	strArg := WrapWithCastAsString(arg, ctx)
+	format, isNull, err := strArg.EvalString(nil, ctx.GetSessionVars().StmtCtx)
+	if err != nil || isNull {
+		return
+	}
+	isDuration, isDate := types.GetFormatType(format)
+	if isDuration && !isDate {
+		tp = mysql.TypeDuration
+	} else if !isDuration && isDate {
+		tp = mysql.TypeDate
+	}
+	if strings.Index(format, "%f") >= 0 {
+		fsp = types.MaxFsp
+	}
+	return
+}
+
+// See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_str-to-date
+func (c *strToDateFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinStrToDateSig{newBaseBuiltinFunc(args, ctx)}
+	retTp, fsp := c.getRetTp(args[1], ctx)
+	switch retTp {
+	case mysql.TypeDate:
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString, tpString)
+		bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, types.MinFsp
+		sig = &builtinStrToDateDateSig{baseTimeBuiltinFunc{bf}}
+	case mysql.TypeDatetime:
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString, tpString)
+		if fsp == types.MinFsp {
+			bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeWidthNoFsp, types.MinFsp
+		} else {
+			bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeWidthWithFsp, types.MaxFsp
+		}
+		sig = &builtinStrToDateDatetimeSig{baseTimeBuiltinFunc{bf}}
+	case mysql.TypeDuration:
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpString, tpString)
+		if fsp == types.MinFsp {
+			bf.tp.Flen, bf.tp.Decimal = mysql.MaxDurationWidthNoFsp, types.MinFsp
+		} else {
+			bf.tp.Flen, bf.tp.Decimal = mysql.MaxDurationWidthWithFsp, types.MaxFsp
+		}
+		sig = &builtinStrToDateDurationSig{baseDurationBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinStrToDateSig struct {
-	baseBuiltinFunc
+type builtinStrToDateDateSig struct {
+	baseTimeBuiltinFunc
 }
 
-// eval evals a builtinStrToDateSig.
-// See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_str-to-date
-func (b *builtinStrToDateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinStrToDateDateSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, isNull, errors.Trace(err)
 	}
-	date := args[0].GetString()
-	format := args[1].GetString()
+	format, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, isNull, errors.Trace(err)
+	}
 	var t types.Time
-
 	succ := t.StrToDate(date, format)
 	if !succ {
-		d.SetNull()
-		return
+		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat)
 	}
+	t.Type, t.Fsp = mysql.TypeDate, types.MinFsp
+	return t, false, nil
+}
 
-	d.SetMysqlTime(t)
-	return
+type builtinStrToDateDatetimeSig struct {
+	baseTimeBuiltinFunc
+}
+
+func (b *builtinStrToDateDatetimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, isNull, errors.Trace(err)
+	}
+	format, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, isNull, errors.Trace(err)
+	}
+	var t types.Time
+	succ := t.StrToDate(date, format)
+	if !succ {
+		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat)
+	}
+	t.Type, t.Fsp = mysql.TypeDatetime, b.tp.Decimal
+	return t, false, nil
+}
+
+type builtinStrToDateDurationSig struct {
+	baseDurationBuiltinFunc
+}
+
+// TODO: If the NO_ZERO_DATE or NO_ZERO_IN_DATE SQL mode is enabled, zero dates or part of dates are disallowed.
+// In that case, STR_TO_DATE() returns NULL and generates a warning.
+func (b *builtinStrToDateDurationSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.Duration{}, isNull, errors.Trace(err)
+	}
+	format, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.Duration{}, isNull, errors.Trace(err)
+	}
+	var t types.Time
+	succ := t.StrToDate(date, format)
+	if !succ {
+		return types.Duration{}, true, handleInvalidTimeError(b.ctx, types.ErrInvalidTimeFormat)
+	}
+	t.Fsp = b.tp.Decimal
+	dur, err := t.ConvertToDuration()
+	return dur, false, errors.Trace(err)
 }
 
 type sysDateFunctionClass struct {
