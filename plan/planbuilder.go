@@ -219,7 +219,9 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 			IsSystem: vars.IsSystem,
 		}
 		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
-			assign.Expr, _, b.err = b.rewrite(vars.Value, nil, nil, true)
+			mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+			mockTablePlan.SetSchema(expression.NewSchema())
+			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
 			if b.err != nil {
 				return nil
 			}
@@ -624,6 +626,41 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 	return nil, ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
 }
 
+// resolveGeneratedColumns resolves generated columns with their generation
+// expressions respectively. onDups indicates which columns are in on-duplicate list.
+func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns) {
+	for _, column := range columns {
+		if !column.IsGenerated() {
+			continue
+		}
+		columnName := &ast.ColumnName{Name: column.Name}
+		columnName.SetText(column.Name.O)
+		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return
+		}
+		igc.Columns = append(igc.Columns, columnName)
+		igc.Exprs = append(igc.Exprs, expr)
+		if onDups == nil {
+			continue
+		}
+		for dep := range column.Dependences {
+			if _, ok := onDups[dep]; ok {
+				col, _, err := mockPlan.findColumn(columnName)
+				if err != nil {
+					b.err = errors.Trace(err)
+					return
+				}
+				assign := &expression.Assignment{Col: col, Expr: expr.Clone()}
+				igc.OnDuplicates = append(igc.OnDuplicates, assign)
+				break
+			}
+		}
+	}
+	return
+}
+
 func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
@@ -668,7 +705,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	if len(insert.Columns) > 0 {
 		for _, col := range insert.Columns {
 			if column, ok := columnByName[col.Name.L]; ok {
-				if len(column.GeneratedExprString) != 0 {
+				if column.IsGenerated() {
 					b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
 					return nil
 				}
@@ -720,7 +757,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		for i := 0; i < effectiveValuesLen; i++ {
 			col := tableInfo.Columns[i]
-			if len(col.GeneratedExprString) != 0 {
+			if col.IsGenerated() {
 				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
 				return nil
 			}
@@ -740,7 +777,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			return nil
 		}
 		// Check set list contains generated column or not.
-		if len(columnByName[assign.Column.Name.L].GeneratedExprString) != 0 {
+		if columnByName[assign.Column.Name.L].IsGenerated() {
 			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
@@ -758,18 +795,17 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 
 	mockTablePlan.SetSchema(schema)
+
+	onDupCols := make(map[string]struct{}, len(insert.OnDuplicate))
 	for _, assign := range insert.OnDuplicate {
-		col, err := schema.FindColumn(assign.Column)
+		col, _, err := mockTablePlan.findColumn(assign.Column)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		if col == nil {
-			b.err = errors.Errorf("Can't find column %s", assign.Column)
-			return nil
-		}
+		column := columnByName[assign.Column.Name.L]
 		// Check "on duplicate set list" contains generated column or not.
-		if len(columnByName[assign.Column.Name.L].GeneratedExprString) != 0 {
+		if column.IsGenerated() {
 			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
@@ -782,7 +818,9 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Col:  col,
 			Expr: expr,
 		})
+		onDupCols[column.Name.L] = struct{}{}
 	}
+
 	if insert.Select != nil {
 		selectPlan := b.build(insert.Select)
 		if b.err != nil {
@@ -797,12 +835,18 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		for i := 0; i < effectiveSelectLen; i++ {
 			col := tableInfo.Columns[i]
-			if len(col.GeneratedExprString) != 0 {
+			if col.IsGenerated() {
 				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
 				return nil
 			}
 		}
 		addChild(insertPlan, selectPlan)
+	}
+
+	// Calculate generated columns.
+	insertPlan.GenCols = b.resolveGeneratedColumns(insertPlan.Table.Cols(), onDupCols, mockTablePlan)
+	if b.err != nil {
+		return nil
 	}
 	insertPlan.SetSchema(expression.NewSchema())
 	return insertPlan
@@ -817,6 +861,17 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 		FieldsInfo: ld.FieldsInfo,
 		LinesInfo:  ld.LinesInfo,
 	}
+	tableInfo := p.Table.TableInfo
+	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		db := b.ctx.GetSessionVars().CurrentDB
+		b.err = infoschema.ErrTableNotExists.GenByArgs(db, tableInfo.Name.O)
+		return nil
+	}
+	schema := expression.TableInfo2Schema(tableInfo)
+	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
+	mockTablePlan.SetSchema(schema)
+	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
 	p.SetSchema(expression.NewSchema())
 	return p
 }
@@ -998,23 +1053,28 @@ func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
 		col := &expression.Column{
 			ColName: model.NewCIStr(name),
 		}
-		var retType types.FieldType
+		var retTp byte
 		if len(ftypes) == 0 || ftypes[i] == 0 {
 			// Use varchar as the default return column type.
-			retType.Tp = mysql.TypeVarchar
+			retTp = mysql.TypeVarchar
 		} else {
-			retType.Tp = ftypes[i]
+			retTp = ftypes[i]
 		}
-
-		if retType.Tp == mysql.TypeVarchar || retType.Tp == mysql.TypeString {
+		retType := types.NewFieldType(retTp)
+		if retTp == mysql.TypeVarchar || retTp == mysql.TypeString {
 			retType.Flen = 256
-		} else if retType.Tp == mysql.TypeDatetime {
+		} else if retTp == mysql.TypeDatetime {
 			retType.Flen = 19
-		} else {
-			retType.Flen = mysql.GetDefaultFieldLength(retType.Tp)
+		}
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(retType.Tp)
+		if retType.Flen == types.UnspecifiedLength {
+			retType.Flen = defaultFlen
+		}
+		if retType.Decimal == types.UnspecifiedLength {
+			retType.Decimal = defaultDecimal
 		}
 		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
-		col.RetType = &retType
+		col.RetType = retType
 		schema.Append(col)
 	}
 	return schema
@@ -1070,6 +1130,11 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowPlugins:
+		names = []string{"Name", "Status", "Type", "Library", "License"}
+		ftypes = []byte{
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
+		}
 	case ast.ShowProcessList:
 		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,

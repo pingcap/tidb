@@ -1,5 +1,5 @@
-hash: e7138b459686bbcdecd0005a1a7e785686171ae6229c4b44855e7e4d1422064d
-updated: 2017-08-16T14:52:37.068717494+08:00
+hash: e31c55045195e7ba74ee2f69f77d6461f3138cb0c60ef4613af3bc96cdbc8b62
+updated: 2017-08-29T15:37:35.994918183+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -17,6 +17,7 @@ imports:
   - auth/authpb
   - clientv3
   - clientv3/concurrency
+  - contrib/recipes
   - etcdserver/api/v3rpc/rpctypes
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
@@ -125,13 +126,23 @@ imports:
   - pkg/raft_serverpb
   - pkg/tikvpb
 - name: github.com/pingcap/pd
-  version: ce8db87a8c3f2560750232e85ad5152a0a1c69df
+  version: 38eb8a2e70dd39668a62d24a79f30596f204df14
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: 27d6520cddb4af5dedc62d742d172c49358e6ed9
+  version: 86c181769e36f3950c6a0ff7d1421c8d7678fa5f
   subpackages:
   - go-binlog
+  - go-mysqlx
+  - go-mysqlx/Connection
+  - go-mysqlx/Crud
+  - go-mysqlx/Datatypes
+  - go-mysqlx/Expect
+  - go-mysqlx/Expr
+  - go-mysqlx/Notice
+  - go-mysqlx/Resultset
+  - go-mysqlx/Session
+  - go-mysqlx/Sql
   - go-tipb
   - sharedbytes
 - name: github.com/prometheus/client_golang

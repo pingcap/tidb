@@ -424,6 +424,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW INDEXES IN t where true;`, true},
 		{`SHOW KEYS FROM t FROM test where true;`, true},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
+		{`SHOW PLUGINS`, true},
 		// for show character set
 		{"show character set;", true},
 		{"show charset", true},
@@ -548,6 +549,9 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{"select n'string'", true},
 		// for comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
+		// for date literal
+		{"select date'1989-09-10'", true},
+		{"select date 19890910", false},
 	}
 	s.RunTest(c, table)
 }
@@ -704,6 +708,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select current_timestamp", true},
 		{"select current_timestamp()", true},
 		{"select current_timestamp(6)", true},
+		{"select current_timestamp(null)", false},
+		{"select current_timestamp(-1)", false},
+		{"select current_timestamp(1.0)", false},
+		{"select current_timestamp('2')", false},
 		{"select now()", true},
 		{"select now(6)", true},
 		{"select sysdate(), sysdate(6)", true},
@@ -717,13 +725,34 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select current_time", true},
 		{"select current_time()", true},
 		{"select current_time(6)", true},
+		{"select current_time(-1)", false},
+		{"select current_time(1.0)", false},
+		{"select current_time('1')", false},
+		{"select current_time(null)", false},
 		{"select curtime()", true},
 		{"select curtime(6)", true},
+		{"select curtime(-1)", false},
+		{"select curtime(1.0)", false},
+		{"select curtime('1')", false},
+		{"select curtime(null)", false},
 
 		// select utc_timestamp
 		{"select utc_timestamp", true},
 		{"select utc_timestamp()", true},
 		{"select utc_timestamp(6)", true},
+		{"select utc_timestamp(-1)", false},
+		{"select utc_timestamp(1.0)", false},
+		{"select utc_timestamp('1')", false},
+		{"select utc_timestamp(null)", false},
+
+		// select utc_time
+		{"select utc_time", true},
+		{"select utc_time()", true},
+		{"select utc_time(6)", true},
+		{"select utc_time(-1)", false},
+		{"select utc_time(1.0)", false},
+		{"select utc_time('1')", false},
+		{"select utc_time(null)", false},
 
 		// for microsecond, second, minute, hour
 		{"SELECT MICROSECOND('2009-12-31 23:59:59.000010');", true},
@@ -811,6 +840,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for TO_DAYS, TO_SECONDS
 		{"SELECT TO_DAYS('2007-10-07')", true},
 		{"SELECT TO_SECONDS('2009-11-29')", true},
+
+		// for LAST_DAY
+		{"SELECT LAST_DAY('2003-02-05');", true},
 
 		// for UTC_TIME
 		{"SELECT UTC_TIME(), UTC_TIME(1)", true},
@@ -1358,7 +1390,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (a timestamp default now() on update now)", false},
 		{"create table t (a timestamp default now() on update now())", true},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
-		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(21) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
+		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},

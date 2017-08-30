@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // evalTp indicates the specified types that arguments and result of a built-in function should be.
@@ -38,7 +39,8 @@ const (
 	tpReal
 	tpDecimal
 	tpString
-	tpTime
+	tpDatetime
+	tpTimestamp
 	tpDuration
 	tpJSON
 )
@@ -52,11 +54,15 @@ func fieldTp2EvalTp(tp *types.FieldType) evalTp {
 	case types.ClassDecimal:
 		return tpDecimal
 	case types.ClassString:
-		switch {
-		case types.IsTypeTime(tp.Tp):
-			return tpTime
-		case tp.Tp == mysql.TypeDuration:
+		switch tp.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime:
+			return tpDatetime
+		case mysql.TypeTimestamp:
+			return tpTimestamp
+		case mysql.TypeDuration:
 			return tpDuration
+		case mysql.TypeJSON:
+			return tpJSON
 		}
 	}
 	return tpString
@@ -69,9 +75,18 @@ type baseBuiltinFunc struct {
 	ctx           context.Context
 	deterministic bool
 	tp            *types.FieldType
+	pbCode        tipb.ScalarFuncSig
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
 	self builtinFunc
+}
+
+func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
+	return b.pbCode
+}
+
+func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
+	b.pbCode = c
 }
 
 func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
@@ -87,29 +102,28 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc) {
 	if len(args) != len(argTps) {
-		return bf, errors.New("unexpected length of args and argTps")
+		panic("unexpected length of args and argTps")
 	}
 	for i := range args {
 		switch argTps[i] {
 		case tpInt:
-			args[i], err = WrapWithCastAsInt(args[i], ctx)
+			args[i] = WrapWithCastAsInt(args[i], ctx)
 		case tpReal:
-			args[i], err = WrapWithCastAsReal(args[i], ctx)
+			args[i] = WrapWithCastAsReal(args[i], ctx)
 		case tpDecimal:
-			args[i], err = WrapWithCastAsDecimal(args[i], ctx)
+			args[i] = WrapWithCastAsDecimal(args[i], ctx)
 		case tpString:
-			args[i], err = WrapWithCastAsString(args[i], ctx)
-		case tpTime:
-			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
+			args[i] = WrapWithCastAsString(args[i], ctx)
+		case tpDatetime:
+			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
+		case tpTimestamp:
+			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
 		case tpDuration:
-			args[i], err = WrapWithCastAsDuration(args[i], ctx)
+			args[i] = WrapWithCastAsDuration(args[i], ctx)
 		case tpJSON:
-			args[i], err = WrapWithCastAsJSON(args[i], ctx)
-		}
-		if err != nil {
-			return bf, errors.Trace(err)
+			args[i] = WrapWithCastAsJSON(args[i], ctx)
 		}
 	}
 	var fieldType *types.FieldType
@@ -141,9 +155,16 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 			Flen:    0,
 			Decimal: types.UnspecifiedLength,
 		}
-	case tpTime:
+	case tpDatetime:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDatetime,
+			Flen:    mysql.MaxDatetimeWidthWithFsp,
+			Decimal: types.MaxFsp,
+			Flag:    mysql.BinaryFlag,
+		}
+	case tpTimestamp:
+		fieldType = &types.FieldType{
+			Tp:      mysql.TypeTimestamp,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
@@ -175,7 +196,8 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 		argValues:     make([]types.Datum, len(args)),
 		ctx:           ctx,
 		deterministic: true,
-		tp:            fieldType}, nil
+		tp:            fieldType,
+	}
 }
 
 func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
@@ -646,6 +668,10 @@ type builtinFunc interface {
 	getRetTp() *types.FieldType
 	// setSelf sets a pointer to itself.
 	setSelf(builtinFunc) builtinFunc
+	// setPbCode sets pbCode for signature.
+	setPbCode(tipb.ScalarFuncSig)
+	// PbCode returns PbCode of this signature.
+	PbCode() tipb.ScalarFuncSig
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.
@@ -772,6 +798,7 @@ var funcs = map[string]functionClass{
 	ast.WeekOfYear:       &weekOfYearFunctionClass{baseFunctionClass{ast.WeekOfYear, 1, 1}},
 	ast.Year:             &yearFunctionClass{baseFunctionClass{ast.Year, 1, 1}},
 	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
+	ast.LastDay:          &lastDayFunctionClass{baseFunctionClass{ast.LastDay, 1, 1}},
 
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},

@@ -200,10 +200,7 @@ func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.C
 	if len(args) == 1 {
 		argsTp = append(argsTp, tpInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argsTp...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argsTp...)
 	bf.tp.Flag |= mysql.UnsignedFlag
 	bf.deterministic = false
 
@@ -273,10 +270,7 @@ func (c *tidbVersionFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
 	bf.tp.Flen = len(printer.GetTiDBInfo())
 	sig := &builtinTiDBVersionSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
