@@ -27,6 +27,9 @@ import (
 // UnspecifiedLength is unspecified length.
 const (
 	UnspecifiedLength int = -1
+
+	// IntIsBoolean is used for boolean literal.
+	IntIsBoolean int = 1
 )
 
 // TypeClass classifies field types, used for type inference.
@@ -285,7 +288,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case bool:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flen = 1
-		tp.Decimal = 0
+		tp.Decimal = IntIsBoolean
 		SetBinChsClnFlag(tp)
 	case int:
 		tp.Tp = mysql.TypeLonglong
