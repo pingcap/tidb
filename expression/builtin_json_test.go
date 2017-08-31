@@ -117,41 +117,47 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		fc       functionClass
-		Input    []interface{}
-		Expected interface{}
-		Success  bool
+		fc           functionClass
+		Input        []interface{}
+		Expected     interface{}
+		BuildSuccess bool
+		Success      bool
 	}{
-		{funcs[ast.JSONSet], []interface{}{nil, nil, nil}, nil, true},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`, true},
-		{funcs[ast.JSONInsert], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`, true},
-		{funcs[ast.JSONReplace], []interface{}{`{}`, `$.a`, 3}, `{}`, true},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`, "3"}, `{"a": 3, "b": "3"}`, true},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, nil, `$.b`, "nil"}, `{"a": null, "b": "nil"}`, true},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`}, nil, false},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$InvalidPath`, 3}, nil, false},
+		{funcs[ast.JSONSet], []interface{}{nil, nil, nil}, nil, true, true},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`, true, true},
+		{funcs[ast.JSONInsert], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`, true, true},
+		{funcs[ast.JSONReplace], []interface{}{`{}`, `$.a`, 3}, `{}`, true, true},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`, "3"}, `{"a": 3, "b": "3"}`, true, true},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, nil, `$.b`, "nil"}, `{"a": null, "b": "nil"}`, true, true},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`}, nil, false, false},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$InvalidPath`, 3}, nil, true, false},
 	}
+	var err error
+	var f builtinFunc
+	var d types.Datum
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := t.fc.getFunction(datumsToConstants(args), s.ctx)
-		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
-		if t.Success {
+		f, err = t.fc.getFunction(datumsToConstants(args), s.ctx)
+		if t.BuildSuccess {
 			c.Assert(err, IsNil)
-			switch x := t.Expected.(type) {
-			case string:
-				var j1 json.JSON
-				j1, err = json.ParseFromString(x)
+			d, err = f.eval(nil)
+			if t.Success {
 				c.Assert(err, IsNil)
-				j2 := d.GetMysqlJSON()
-				var cmp int
-				cmp, err = json.CompareJSON(j1, j2)
-				c.Assert(err, IsNil)
-				c.Assert(cmp, Equals, 0)
+				switch x := t.Expected.(type) {
+				case string:
+					var j1 json.JSON
+					j1, err = json.ParseFromString(x)
+					c.Assert(err, IsNil)
+					j2 := d.GetMysqlJSON()
+					var cmp int
+					cmp, err = json.CompareJSON(j1, j2)
+					c.Assert(err, IsNil)
+					c.Assert(cmp, Equals, 0)
+				}
+				continue
 			}
-		} else {
-			c.Assert(err, NotNil)
 		}
+		c.Assert(err, NotNil)
 	}
 }
 
@@ -215,39 +221,44 @@ func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONObject]
 	tbl := []struct {
-		Input    []interface{}
-		Expected interface{}
-		Success  bool
+		Input        []interface{}
+		Expected     interface{}
+		BuildSuccess bool
+		Success      bool
 	}{
-		{[]interface{}{1, 2, 3}, nil, false},
-		{[]interface{}{1, 2, "hello", nil}, `{"1": 2, "hello": null}`, true},
-		{[]interface{}{nil, 2}, nil, false},
+		{[]interface{}{1, 2, 3}, nil, false, false},
+		{[]interface{}{1, 2, "hello", nil}, `{"1": 2, "hello": null}`, true, true},
+		{[]interface{}{nil, 2}, nil, true, false},
 
 		// It's because TiDB treats bool as integer.
-		{[]interface{}{1, true}, `{"1": 1}`, true},
+		{[]interface{}{1, true}, `{"1": 1}`, true, true},
 	}
+	var err error
+	var f builtinFunc
+	var d types.Datum
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
-		c.Assert(err, IsNil)
-		d, err := f.eval(nil)
-
-		if t.Success {
+		f, err = fc.getFunction(datumsToConstants(args), s.ctx)
+		if t.BuildSuccess {
 			c.Assert(err, IsNil)
-			switch x := t.Expected.(type) {
-			case string:
-				var j1 json.JSON
-				j1, err = json.ParseFromString(x)
+			d, err = f.eval(nil)
+			if t.Success {
 				c.Assert(err, IsNil)
-				j2 := d.GetMysqlJSON()
-				var cmp int
-				cmp, err = json.CompareJSON(j1, j2)
-				c.Assert(err, IsNil)
-				c.Assert(cmp, Equals, 0)
+				switch x := t.Expected.(type) {
+				case string:
+					var j1 json.JSON
+					j1, err = json.ParseFromString(x)
+					c.Assert(err, IsNil)
+					j2 := d.GetMysqlJSON()
+					var cmp int
+					cmp, err = json.CompareJSON(j1, j2)
+					c.Assert(err, IsNil)
+					c.Assert(cmp, Equals, 0)
+				}
+				continue
 			}
-		} else {
-			c.Assert(err, NotNil)
 		}
+		c.Assert(err, NotNil)
 	}
 }
 

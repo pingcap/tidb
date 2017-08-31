@@ -452,6 +452,9 @@ func (c *jsonSetFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if len(args)&1 != 1 {
+		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
+	}
 	argTps := make([]evalTp, 0, len(args))
 	argTps = append(argTps, tpJSON)
 	for i := 1; i < len(args)-1; i += 2 {
@@ -480,6 +483,9 @@ func (c *jsonInsertFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if len(args)&1 != 1 {
+		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
+	}
 	argTps := make([]evalTp, 0, len(args))
 	argTps = append(argTps, tpJSON)
 	for i := 1; i < len(args)-1; i += 2 {
@@ -507,6 +513,9 @@ type builtinJSONReplaceSig struct {
 func (c *jsonReplaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
+	}
+	if len(args)&1 != 1 {
+		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
 	}
 	argTps := make([]evalTp, 0, len(args))
 	argTps = append(argTps, tpJSON)
@@ -625,13 +634,12 @@ func (c *jsonObjectFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if len(args)&1 != 0 {
+		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
+	}
 	argTps := make([]evalTp, 0, len(args))
-	for i := range args {
-		if i&1 == 0 {
-			argTps = append(argTps, tpString)
-		} else {
-			argTps = append(argTps, tpJSON)
-		}
+	for i := 0; i < len(args)-1; i += 2 {
+		argTps = append(argTps, tpString, tpJSON)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	sig := &builtinJSONObjectSig{baseJSONBuiltinFunc{bf}}
