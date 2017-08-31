@@ -571,7 +571,7 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 		}
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
 		handler.rawEndKey = MvccKey(handler.endKey).Raw()
-		res, err := handler.handleCopRequest(r)
+		res, err := handler.handleCopDAGRequest(r)
 		if err != nil {
 			return nil, err
 		}
