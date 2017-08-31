@@ -293,7 +293,15 @@ func (c *dateLiteralFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tm, err := c.getDate(args)
+	constant, ok := args[0].(*Constant)
+	if !ok {
+		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	str := constant.Value.GetString()
+	if !DatePattern.MatchString(str) {
+		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	tm, err := types.ParseDate(str)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -301,22 +309,6 @@ func (c *dateLiteralFunctionClass) getFunction(args []Expression, ctx context.Co
 	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, 10, 0
 	sig := &builtinDateLiteralSig{baseTimeBuiltinFunc{bf}, tm}
 	return sig.setSelf(sig), nil
-}
-
-func (c *dateLiteralFunctionClass) getDate(args []Expression) (types.Time, error) {
-	constant, ok := args[0].(*Constant)
-	if !ok {
-		return types.Time{}, errors.Trace(types.ErrInvalidTimeFormat)
-	}
-	str := constant.Value.GetString()
-	if !DatePattern.MatchString(str) {
-		return types.Time{}, errors.Trace(types.ErrInvalidTimeFormat)
-	}
-	ret, err := types.ParseDate(str)
-	if err != nil {
-		return types.Time{}, errors.Trace(err)
-	}
-	return ret, nil
 }
 
 type builtinDateLiteralSig struct {
