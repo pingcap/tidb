@@ -33,6 +33,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	ctx := mock.NewContext()
 	f, err := fc.getFunction(nil, ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsFalse)
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)

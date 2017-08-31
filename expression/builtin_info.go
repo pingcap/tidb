@@ -58,25 +58,28 @@ type databaseFunctionClass struct {
 }
 
 func (c *databaseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinDatabaseSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
+	bf.tp.Flen = 64
+	bf.deterministic = false
+	sig := &builtinDatabaseSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinDatabaseSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinDatabaseSig.
+// evalString evals a builtinDatabaseSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
-func (b *builtinDatabaseSig) eval(_ []types.Datum) (d types.Datum, err error) {
+func (b *builtinDatabaseSig) evalString(row []types.Datum) (string, bool, error) {
 	currentDB := b.ctx.GetSessionVars().CurrentDB
 	if currentDB == "" {
-		return d, nil
+		return "", true, nil
 	}
-	d.SetString(currentDB)
-	return d, nil
+	return currentDB, false, nil
 }
 
 type foundRowsFunctionClass struct {

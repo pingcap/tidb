@@ -1772,6 +1772,14 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	tk.MustQuery("select count(*) from t") // Test ProjectionExec
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
+
+	// for database
+	result = tk.MustQuery("select database()")
+	result.Check(testkit.Rows("test"))
+	tk.MustExec("drop database test")
+	result = tk.MustQuery("select database()")
+	result.Check(testkit.Rows("<nil>"))
+	tk.MustExec("create database test")
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
