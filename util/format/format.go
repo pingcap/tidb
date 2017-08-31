@@ -20,6 +20,7 @@ package format
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
 const (
@@ -170,4 +171,24 @@ func FlatFormatter(w io.Writer) Formatter {
 // Format implements Format interface.
 func (f *flatFormatter) Format(format string, args ...interface{}) (n int, errno error) {
 	return (*indentFormatter)(f).format(true, format, args...)
+}
+
+// OutputFormat output escape character with backslash
+func OutputFormat(s string) string {
+	replace := map[string]string{
+		"'":  "''",
+		"\a": "\\a",
+		"\b": "\\b",
+		"\f": "\\f",
+		"\n": "\\n",
+		"\r": "\\r",
+		"\t": "\\t",
+		"\v": "\\v",
+	}
+
+	for old, new := range replace {
+		s = strings.Replace(s, old, new, -1)
+	}
+
+	return s
 }
