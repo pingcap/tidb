@@ -1444,6 +1444,14 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select cast(20171222020005 as time);`)
 	result.Check(testkit.Rows("02:00:05"))
+	result = tk.MustQuery(`select cast(8380000 as time);`)
+	result.Check(testkit.Rows("838:00:00"))
+	result = tk.MustQuery(`select cast(8390000 as time);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select cast(8386000 as time);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select cast(8385960 as time);`)
+	result.Check(testkit.Rows("<nil>"))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
