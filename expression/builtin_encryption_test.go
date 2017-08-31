@@ -207,7 +207,7 @@ func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
 	}
 	f, err := funcs[ast.MD5].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 
 }
 
@@ -360,5 +360,5 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 
 	f, err := funcs[ast.PasswordFunc].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }

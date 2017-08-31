@@ -185,13 +185,13 @@ func (pc pbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	case ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT,
 		ast.NullEQ, ast.In, ast.Like:
 		return pc.compareOpsToPBExpr(expr)
-	case ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv:
+	case ast.Plus, ast.Minus, ast.Mul, ast.Div:
 		return pc.arithmeticalOpsToPBExpr(expr)
 	case ast.LogicAnd, ast.LogicOr, ast.UnaryNot, ast.LogicXor:
 		return pc.logicalOpsToPBExpr(expr)
-	case ast.And, ast.Or, ast.BitNeg, ast.Xor, ast.LeftShift, ast.RightShift:
+	case ast.And, ast.Or, ast.BitNeg, ast.Xor:
 		return pc.bitwiseFuncToPBExpr(expr)
-	case ast.Case, ast.Coalesce, ast.If, ast.Ifnull, ast.IsNull, ast.Nullif:
+	case ast.Case, ast.Coalesce, ast.If, ast.Ifnull, ast.IsNull:
 		return pc.builtinFuncToPBExpr(expr)
 	case ast.JSONType, ast.JSONExtract, ast.JSONUnquote, ast.JSONValid,
 		ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
@@ -494,7 +494,7 @@ func (pc pbConverter) convertToPBExpr(expr *ScalarFunction, tp tipb.ExprType) *t
 	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeSignature) {
 		code := expr.Function.PbCode()
 		if code > 0 {
-			return &tipb.Expr{Tp: tipb.ExprType_ScalarFunc, Sig: &code, Children: children, FieldType: toPBFieldType(expr.RetType)}
+			return &tipb.Expr{Tp: tipb.ExprType_ScalarFunc, Sig: code, Children: children, FieldType: toPBFieldType(expr.RetType)}
 		}
 	}
 	return &tipb.Expr{Tp: tp, Children: children}
