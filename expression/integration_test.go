@@ -1803,6 +1803,10 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	result = tk.MustQuery("select connection_id()")
 	result.Check(testkit.Rows("1"))
 	sessionVars.ConnectionID = originConnectionID
+
+	// for version
+	result = tk.MustQuery("select version()")
+	result.Check(testkit.Rows(mysql.ServerVersion))
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {

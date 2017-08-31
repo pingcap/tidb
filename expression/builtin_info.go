@@ -258,21 +258,24 @@ type versionFunctionClass struct {
 }
 
 func (c *versionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinVersionSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
+	bf.tp.Flen = 64
+	bf.deterministic = false
+	sig := &builtinVersionSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinVersionSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinVersionSig.
+// evalString evals a builtinVersionSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_version
-func (b *builtinVersionSig) eval(_ []types.Datum) (d types.Datum, err error) {
-	d.SetString(mysql.ServerVersion)
-	return d, nil
+func (b *builtinVersionSig) evalString(row []types.Datum) (string, bool, error) {
+	return mysql.ServerVersion, false, nil
 }
 
 type tidbVersionFunctionClass struct {
