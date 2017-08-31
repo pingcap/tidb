@@ -1666,3 +1666,13 @@ func (s *testPlanSuite) createTestCase4LikeFuncs() []typeInferTestCase {
 		{"c_enum        regexp c_text_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 	}
 }
+
+func (s *testPlanSuite) createTestCase4Literals() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"time       '00:00:00'", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"time       '3 00:00:00'", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"time       '3 00:00:00.1234'", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
+		{"tiemstamp  '2017-01-01 01:01:01'", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, 0},
+		{"tiemstamp  '2017-01-00000000001 01:01:01.001'", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+	}
+}

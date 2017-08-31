@@ -2280,17 +2280,17 @@ func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 	r = tk.MustQuery("select time '20 20:20';")
 	r.Check(testkit.Rows("500:20:00"))
 
-	rs, _ := tk.Exec("select time '2017-01-01 00:00:00';")
-	_, err := tidb.GetRows(rs)
+	_, err := tk.Exec("select time '2017-01-01 00:00:00';")
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
-	rs, _ = tk.Exec("select time '071231235959.999999';")
-	_, err = tidb.GetRows(rs)
+	_, err = tk.Exec("select time '071231235959.999999';")
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
-	rs, _ = tk.Exec("select time '20171231235959.999999';")
-	_, err = tidb.GetRows(rs)
+	_, err = tk.Exec("select time '20171231235959.999999';")
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
@@ -2313,17 +2313,17 @@ func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
 	r = tk.MustQuery("select timestamp '2017@01@0001 00~00~00.333';")
 	r.Check(testkit.Rows("2017-01-01 00:00:00.333"))
 
-	rs, _ := tk.Exec("select timestamp '00:00:00';")
-	_, err := tidb.GetRows(rs)
+	_, err := tk.Exec("select timestamp '00:00:00';")
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
-	rs, _ = tk.Exec("select timestamp '1992-01-03';")
-	_, err = tidb.GetRows(rs)
+	_, err = tk.Exec("select timestamp '1992-01-03';")
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
-	rs, _ = tk.Exec("select timestamp '20171231235959.999999';")
-	_, err = tidb.GetRows(rs)
+	_, err = tk.Exec("select timestamp '20171231235959.999999';")
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestLiterals(c *C) {

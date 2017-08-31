@@ -50,10 +50,10 @@ const ( // GET_FORMAT location.
 	internalLocation = "INTERNAL"
 )
 
-// DurationPattern determine whether to match the format of duration.
+// DurationPattern checks whether a string matchs the format of duration.
 var DurationPattern = regexp.MustCompile(`^\s*[-]?(((\d{1,2}\s+)?0*\d{0,3}(:0*\d{1,2}){0,2})|(\d{1,7}))?(\.\d*)?\s*$`)
 
-// TimestampPattern determine whether to match the format of timestamp.
+// TimestampPattern checks whether a string matchs the format of timestamp.
 var TimestampPattern = regexp.MustCompile(`^\s*0*\d{1,4}([^\d]0*\d{1,2}){2}\s+(0*\d{0,2}([^\d]0*\d{1,2}){2})?(\.\d*)?\s*$`)
 
 var (
@@ -1568,32 +1568,36 @@ func (c *timeLiteralFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
+	constant, ok := args[0].(*Constant)
+	if !ok {
+		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	str := constant.Value.GetString()
+	if !isDuration(str) {
+		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	duration, err := types.ParseDuration(str, getFsp(str))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpString)
-	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDuration, 10, 0
-	sig := &builtinTimeLiteralSig{baseDurationBuiltinFunc{bf}}
+	bf.tp.Flen, bf.tp.Decimal = 10, duration.Fsp
+	if duration.Fsp > 0 {
+		bf.tp.Flen += 1 + duration.Fsp
+	}
+	sig := &builtinTimeLiteralSig{baseDurationBuiltinFunc{bf}, duration}
 	return sig.setSelf(sig), nil
 }
 
 type builtinTimeLiteralSig struct {
 	baseDurationBuiltinFunc
+	duration types.Duration
 }
 
 // evalDuration evals TIME 'stringLit'.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
 func (b *builtinTimeLiteralSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	str, isNull, err := b.args[0].EvalString(row, sc)
-	if isNull || err != nil {
-		return types.ZeroDuration, true, errors.Trace(err)
-	}
-	if !isDuration(str) {
-		return types.ZeroDuration, true, errors.Trace(types.ErrInvalidTimeFormat)
-	}
-	ret, err := types.ParseDuration(str, getFsp(str))
-	if err != nil {
-		return types.ZeroDuration, true, errors.Trace(err)
-	}
-	return ret, false, nil
+	return b.duration, false, nil
 }
 
 type utcDateFunctionClass struct {
@@ -2283,32 +2287,36 @@ func (c *timestampLiteralFunctionClass) getFunction(args []Expression, ctx conte
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
+	constant, ok := args[0].(*Constant)
+	if !ok {
+		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	str := constant.Value.GetString()
+	if !TimestampPattern.MatchString(str) {
+		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	tm, err := types.ParseTime(str, mysql.TypeTimestamp, getFsp(str))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString)
-	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeTimestamp, 19, 0
-	sig := &builtinTimestampLiteralSig{baseTimeBuiltinFunc{bf}}
+	bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeWidthNoFsp, tm.Fsp
+	if tm.Fsp > 0 {
+		bf.tp.Flen += tm.Fsp + 1
+	}
+	sig := &builtinTimestampLiteralSig{baseTimeBuiltinFunc{bf}, tm}
 	return sig.setSelf(sig), nil
 }
 
 type builtinTimestampLiteralSig struct {
 	baseTimeBuiltinFunc
+	tm types.Time
 }
 
 // evalTime evals TIMESTAMP 'stringLit'.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
 func (b *builtinTimestampLiteralSig) evalTime(row []types.Datum) (types.Time, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	str, isNull, err := b.args[0].EvalString(row, sc)
-	if isNull || err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-	if !TimestampPattern.MatchString(str) {
-		return types.Time{}, true, errors.Trace(types.ErrInvalidTimeFormat)
-	}
-	ret, err := types.ParseTime(str, mysql.TypeTimestamp, getFsp(str))
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-	return ret, false, nil
+	return b.tm, false, nil
 }
 
 func getFsp(s string) (fsp int) {
