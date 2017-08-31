@@ -2045,7 +2045,7 @@ func (c *unixTimestampFunctionClass) getFunction(args []Expression, ctx context.
 	}
 
 	bf := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTps...)
-	bf.deterministic = false
+	bf.foldable = false
 	bf.tp.Flen = retFLen
 	bf.tp.Decimal = retDecimal
 
