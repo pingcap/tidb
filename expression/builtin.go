@@ -73,7 +73,7 @@ type baseBuiltinFunc struct {
 	args      []Expression
 	argValues []types.Datum
 	ctx       context.Context
-	foldable  bool // default: true.
+	foldable  bool // Default value is true because many expressions are foldable.
 	tp        *types.FieldType
 	pbCode    tipb.ScalarFuncSig
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
