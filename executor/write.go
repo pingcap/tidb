@@ -1202,6 +1202,7 @@ type UpdateExec struct {
 
 	SelectExec  Executor
 	OrderedList []*expression.Assignment
+	Ignore      bool
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
 	updatedRowKeys map[int64]map[int64]struct{}
@@ -1254,12 +1255,18 @@ func (e *UpdateExec) Next() (Row, error) {
 			}
 			// Update row
 			changed, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
-			if err1 != nil {
-				return nil, errors.Trace(err1)
+			if err1 == nil {
+				if changed {
+					e.updatedRowKeys[id][handle] = struct{}{}
+				}
+				continue
 			}
-			if changed {
-				e.updatedRowKeys[id][handle] = struct{}{}
+
+			if kv.ErrKeyExists.Equal(err1) && e.Ignore {
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
+				continue
 			}
+			return nil, errors.Trace(err1)
 		}
 	}
 	e.cursor++

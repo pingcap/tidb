@@ -838,6 +838,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		SelectExec:   b.build(v.Children()[0]),
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
+		Ignore:       v.Ignore,
 	}
 }
 
