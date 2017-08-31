@@ -657,8 +657,8 @@ type builtinFunc interface {
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// isDeterministic checks if a function is deterministic.
-	// A function is deterministic if it returns same results for same inputs.
-	// e.g. random is non-deterministic.
+	// A function is deterministic if it returns the same result whenever it's called with the same inputs.
+	// e.g. SUBSTR, CONCAT is deterministic, but RANDOM, SYSDATE is not.
 	isDeterministic() bool
 	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
@@ -694,9 +694,6 @@ type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(args []Expression, ctx context.Context) (builtinFunc, error)
 }
-
-// BuiltinFunc is the function signature for builtin functions
-type BuiltinFunc func([]types.Datum, context.Context) (types.Datum, error)
 
 // funcs holds all registered builtin functions.
 var funcs = map[string]functionClass{
