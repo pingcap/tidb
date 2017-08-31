@@ -102,6 +102,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4OtherFuncs()...)
 	tests = append(tests, s.createTestCase4TimeFuncs()...)
 	tests = append(tests, s.createTestCase4LikeFuncs()...)
+	tests = append(tests, s.createTestCase4JSONFuncs()...)
 
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -1664,5 +1665,20 @@ func (s *testPlanSuite) createTestCase4LikeFuncs() []typeInferTestCase {
 		{"c_blob_d      regexp c_text_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"c_set         regexp c_text_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"c_enum        regexp c_text_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+	}
+}
+
+func (s *testPlanSuite) createTestCase4JSONFuncs() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"json_type(c_json)", mysql.TypeVarString, charset.CharsetUTF8, 0, 0, types.UnspecifiedLength},
+		{"json_unquote(c_json)", mysql.TypeVarString, charset.CharsetUTF8, 0, 0, types.UnspecifiedLength},
+		{"json_extract(c_json, '')", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
+		{"json_set(c_json, '', 0)", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
+		{"json_insert(c_json, '', 0)", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
+		{"json_replace(c_json, '', 0)", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
+		{"json_remove(c_json, '')", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
+		{"json_merge(c_json, c_json)", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
+		{"json_object('k', 'v')", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
+		{"json_array('k', 'v')", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 	}
 }
