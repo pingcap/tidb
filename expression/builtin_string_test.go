@@ -70,7 +70,7 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 
 	f, err := funcs[ast.Length].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestASCII(c *C) {
@@ -109,7 +109,7 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 	}
 	f, err := funcs[ast.Length].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestConcat(c *C) {
@@ -244,7 +244,7 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 
 	fn, err := funcs[ast.ConcatWS].getFunction(primitiveValsToConstants([]interface{}{nil, nil}), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(fn.isDeterministic(), IsTrue)
+	c.Assert(fn.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLeft(c *C) {
@@ -295,7 +295,7 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 
 	f, err := funcs[ast.Left].getFunction([]Expression{varcharCon, int8Con}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestRight(c *C) {
@@ -346,7 +346,7 @@ func (s *testEvaluatorSuite) TestRight(c *C) {
 
 	f, err := funcs[ast.Right].getFunction([]Expression{varcharCon, int8Con}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestRepeat(c *C) {
@@ -433,7 +433,7 @@ func (s *testEvaluatorSuite) TestLower(c *C) {
 
 	f, err := funcs[ast.Lower].getFunction([]Expression{varcharCon}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestUpper(c *C) {
@@ -467,7 +467,7 @@ func (s *testEvaluatorSuite) TestUpper(c *C) {
 
 	f, err := funcs[ast.Upper].getFunction([]Expression{varcharCon}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestReverse(c *C) {
@@ -495,7 +495,7 @@ func (s *testEvaluatorSuite) TestReverse(c *C) {
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(f.canBeFolded(), Equals, true)
 		d, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
@@ -583,7 +583,7 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 
 	f, err := funcs[ast.Replace].getFunction([]Expression{Zero, Zero, Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSubstring(c *C) {
@@ -630,11 +630,11 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 
 	f, err := funcs[ast.Substring].getFunction([]Expression{Zero, Zero, Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 
 	f, err = funcs[ast.Substring].getFunction([]Expression{Zero, Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestConvert(c *C) {
@@ -720,7 +720,7 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 
 	f, err := funcs[ast.SubstringIndex].getFunction([]Expression{Zero, Zero, Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSpace(c *C) {
@@ -767,7 +767,7 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 
 	f, err := funcs[ast.Space].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLocate(c *C) {
@@ -815,7 +815,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(f.canBeFolded(), Equals, true)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
 	// 2. Test LOCATE with binary input
@@ -839,7 +839,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(f.canBeFolded(), Equals, true)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
 }
@@ -886,15 +886,15 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 
 	f, err := funcs[ast.Trim].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 
 	f, err = funcs[ast.Trim].getFunction([]Expression{Zero, Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 
 	f, err = funcs[ast.Trim].getFunction([]Expression{Zero, Zero, Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLTrim(c *C) {
@@ -929,7 +929,7 @@ func (s *testEvaluatorSuite) TestLTrim(c *C) {
 
 	f, err := funcs[ast.LTrim].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestRTrim(c *C) {
@@ -964,7 +964,7 @@ func (s *testEvaluatorSuite) TestRTrim(c *C) {
 
 	f, err := funcs[ast.RTrim].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestHexFunc(c *C) {
@@ -1006,11 +1006,11 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 
 	f, err := funcs[ast.Hex].getFunction([]Expression{int8Con}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 
 	f, err = funcs[ast.Hex].getFunction([]Expression{varcharCon}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
@@ -1051,7 +1051,7 @@ func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 
 	f, err := funcs[ast.Unhex].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestBitLength(c *C) {
@@ -1085,7 +1085,7 @@ func (s *testEvaluatorSuite) TestBitLength(c *C) {
 
 	f, err := funcs[ast.BitLength].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestChar(c *C) {
@@ -1114,7 +1114,7 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 			f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, char)), s.ctx)
 			c.Assert(err, IsNil)
 			c.Assert(f, NotNil)
-			c.Assert(f.isDeterministic(), Equals, true)
+			c.Assert(f.canBeFolded(), Equals, true)
 			r, err := f.eval(nil)
 			if err != nil {
 				fmt.Printf("%s\n", err.Error())
@@ -1155,7 +1155,7 @@ func (s *testEvaluatorSuite) TestCharLength(c *C) {
 		fc := funcs[ast.CharLength]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.input)), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(f.canBeFolded(), Equals, true)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
@@ -1185,7 +1185,7 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 		fc := funcs[ast.FindInSet]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.str, t.strlst)), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret), Commentf("FindInSet(%s, %s)", t.str, t.strlst))
@@ -1244,7 +1244,7 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, length, padStr}), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(f.canBeFolded(), Equals, true)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
@@ -1280,7 +1280,7 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, length, padStr}), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(f.canBeFolded(), Equals, true)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
@@ -1331,7 +1331,7 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(f.canBeFolded(), Equals, true)
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
@@ -1359,7 +1359,7 @@ func (s *testEvaluatorSuite) TestMakeSet(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argList...)), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
@@ -1401,7 +1401,7 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		in := types.NewDatum(tt.origin)
 		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		res, err := r.ToString()
@@ -1536,7 +1536,7 @@ func (s *testEvaluatorSuite) TestFromBase64(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args)), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(f.canBeFolded(), Equals, true)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
@@ -1628,7 +1628,7 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 	}
 	f, err := funcs[ast.Ord].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestElt(c *C) {
@@ -1648,7 +1648,7 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 	for _, t := range tbl {
 		fc := funcs[ast.Elt]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1712,7 +1712,7 @@ func (s *testEvaluatorSuite) TestBin(c *C) {
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), Equals, true)
+		c.Assert(f.canBeFolded(), Equals, true)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
@@ -1743,7 +1743,7 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.arg)), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
@@ -1819,7 +1819,7 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 
 	f, err := funcs[ast.ToBase64].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestStringRight(c *C) {

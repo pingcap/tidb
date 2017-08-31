@@ -57,7 +57,7 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		count, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if count.IsNull() {
@@ -114,7 +114,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(fn.isDeterministic(), Equals, false)
+		c.Assert(fn.canBeFolded(), Equals, false)
 		d, err := fn.eval(types.MakeDatums(tc.args...))
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
@@ -156,7 +156,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(fn.isDeterministic(), Equals, false)
+		c.Assert(fn.canBeFolded(), Equals, false)
 		d, err := fn.eval(types.MakeDatums(tc.args...))
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
@@ -170,7 +170,7 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 	c.Assert(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'values'")
 	sig, err := fc.getFunction(datumsToConstants(types.MakeDatums()), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(sig.isDeterministic(), Equals, false)
+	c.Assert(sig.canBeFolded(), Equals, false)
 	_, err = sig.eval(nil)
 	c.Assert(err.Error(), Equals, "Session current insert values is nil")
 	s.ctx.GetSessionVars().CurrInsertValues = types.MakeDatums("1")
