@@ -25,9 +25,11 @@ import (
 )
 
 const (
-	// castJSONDirectly is used for really cast to JSON.
+	// castJSONDirectly is used for really cast to JSON, which means for
+	// string we should parse it into JSON but not use that as primitive.
 	castJSONDirectly int = 0
-	// castJSONPostWrapped is used for post-wrapped cast to JSON.
+	// castJSONPostWrapped is used for post-wrapped cast to JSON, which
+	// means for string we should use that as primitive but not parse it.
 	castJSONPostWrapped int = -1
 )
 
@@ -161,31 +163,31 @@ func jsonModify1(args []Expression, row []types.Datum, mt json.ModifyType, sc *v
 		return res, isNull, errors.Trace(err)
 	}
 	pathExprs := make([]json.PathExpression, 0, (len(args)-1)/2+1)
-	values := make([]json.JSON, 0, (len(args)-1)/2+1)
-	for i, arg := range args[1:] {
-		if i&1 == 0 {
-			var s string
-			s, isNull, err = arg.EvalString(row, sc)
-			if isNull || err != nil {
-				return res, isNull, errors.Trace(err)
-			}
-			var pathExpr json.PathExpression
-			pathExpr, err = json.ParseJSONPathExpr(s)
-			if err != nil {
-				return res, true, errors.Trace(err)
-			}
-			pathExprs = append(pathExprs, pathExpr)
-		} else {
-			var value json.JSON
-			value, isNull, err = arg.EvalJSON(row, sc)
-			if err != nil {
-				return res, true, errors.Trace(err)
-			}
-			if isNull {
-				value = json.CreateJSON(nil)
-			}
-			values = append(values, value)
+	for i := 1; i < len(args); i += 2 {
+		// TODO: We can cache pathExprs if args are constants.
+		var s string
+		s, isNull, err = args[i].EvalString(row, sc)
+		if isNull || err != nil {
+			return res, isNull, errors.Trace(err)
 		}
+		var pathExpr json.PathExpression
+		pathExpr, err = json.ParseJSONPathExpr(s)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
+		pathExprs = append(pathExprs, pathExpr)
+	}
+	values := make([]json.JSON, 0, (len(args)-1)/2+1)
+	for i := 2; i < len(args); i += 2 {
+		var value json.JSON
+		value, isNull, err = args[i].EvalJSON(row, sc)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
+		if isNull {
+			value = json.CreateJSON(nil)
+		}
+		values = append(values, value)
 	}
 	res, err = res.Modify(pathExprs, values, mt)
 	if err != nil {
@@ -348,7 +350,6 @@ func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Conte
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
-	bf.tp.Charset, bf.tp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONTypeSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -375,12 +376,12 @@ func (c *jsonExtractFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tps := make([]evalTp, 0, len(args))
-	tps = append(tps, tpJSON)
+	argTps := make([]evalTp, 0, len(args))
+	argTps = append(argTps, tpJSON)
 	for range args[1:] {
-		tps = append(tps, tpString)
+		argTps = append(argTps, tpString)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONExtractSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -425,7 +426,6 @@ func (c *jsonUnquoteFunctionClass) getFunction(args []Expression, ctx context.Co
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
-	bf.tp.Charset, bf.tp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
 	sig := &builtinJSONUnquoteSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -452,16 +452,12 @@ func (c *jsonSetFunctionClass) getFunction(args []Expression, ctx context.Contex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tps := make([]evalTp, 0, len(args))
-	tps = append(tps, tpJSON)
-	for i := range args[1:] {
-		if i&1 == 0 {
-			tps = append(tps, tpString)
-		} else {
-			tps = append(tps, tpJSON)
-		}
+	argTps := make([]evalTp, 0, len(args))
+	argTps = append(argTps, tpJSON)
+	for i := 1; i < len(args)-1; i += 2 {
+		argTps = append(argTps, tpString, tpJSON)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONSetSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -484,16 +480,12 @@ func (c *jsonInsertFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tps := make([]evalTp, 0, len(args))
-	tps = append(tps, tpJSON)
-	for i := range args[1:] {
-		if i&1 == 0 {
-			tps = append(tps, tpString)
-		} else {
-			tps = append(tps, tpJSON)
-		}
+	argTps := make([]evalTp, 0, len(args))
+	argTps = append(argTps, tpJSON)
+	for i := 1; i < len(args)-1; i += 2 {
+		argTps = append(argTps, tpString, tpJSON)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONInsertSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -516,16 +508,12 @@ func (c *jsonReplaceFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tps := make([]evalTp, 0, len(args))
-	tps = append(tps, tpJSON)
-	for i := range args[1:] {
-		if i&1 == 0 {
-			tps = append(tps, tpString)
-		} else {
-			tps = append(tps, tpJSON)
-		}
+	argTps := make([]evalTp, 0, len(args))
+	argTps = append(argTps, tpJSON)
+	for i := 1; i < len(args)-1; i += 2 {
+		argTps = append(argTps, tpString, tpJSON)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONReplaceSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -548,12 +536,12 @@ func (c *jsonRemoveFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tps := make([]evalTp, 0, len(args))
-	tps = append(tps, tpJSON)
+	argTps := make([]evalTp, 0, len(args))
+	argTps = append(argTps, tpJSON)
 	for range args[1:] {
-		tps = append(tps, tpString)
+		argTps = append(argTps, tpString)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONRemoveSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -598,11 +586,11 @@ func (c *jsonMergeFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tps := make([]evalTp, 0, len(args))
+	argTps := make([]evalTp, 0, len(args))
 	for range args {
-		tps = append(tps, tpJSON)
+		argTps = append(argTps, tpJSON)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	for i := range args {
 		args[i].GetType().Decimal = castJSONDirectly
 	}
@@ -637,15 +625,15 @@ func (c *jsonObjectFunctionClass) getFunction(args []Expression, ctx context.Con
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tps := make([]evalTp, 0, len(args))
+	argTps := make([]evalTp, 0, len(args))
 	for i := range args {
 		if i&1 == 0 {
-			tps = append(tps, tpString)
+			argTps = append(argTps, tpString)
 		} else {
-			tps = append(tps, tpJSON)
+			argTps = append(argTps, tpJSON)
 		}
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	sig := &builtinJSONObjectSig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -689,11 +677,11 @@ func (c *jsonArrayFunctionClass) getFunction(args []Expression, ctx context.Cont
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tps := make([]evalTp, 0, len(args))
+	argTps := make([]evalTp, 0, len(args))
 	for range args {
-		tps = append(tps, tpJSON)
+		argTps = append(argTps, tpJSON)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, tps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	sig := &builtinJSONArraySig{baseJSONBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
