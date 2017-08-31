@@ -148,26 +148,29 @@ type userFunctionClass struct {
 }
 
 func (c *userFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinUserSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
+	bf.deterministic = false
+	bf.tp.Flen = 64
+	sig := &builtinUserSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinUserSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
-func (b *builtinUserSig) eval(_ []types.Datum) (d types.Datum, err error) {
+func (b *builtinUserSig) evalString(row []types.Datum) (string, bool, error) {
 	data := b.ctx.GetSessionVars()
-	if data == nil {
-		return d, errors.Errorf("Missing session variable when evalue builtin")
+	if data == nil || data.User == nil {
+		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
 
-	d.SetString(data.User.String())
-	return d, nil
+	return data.User.String(), false, nil
 }
 
 type connectionIDFunctionClass struct {

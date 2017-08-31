@@ -737,6 +737,7 @@ func (s *testPlanSuite) createTestCase4InfoFunc() []typeInferTestCase {
 		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
 		{"database()", mysql.TypeVarString, charset.CharsetUTF8, 0, 64, types.UnspecifiedLength},
 		{"current_user()", mysql.TypeVarString, charset.CharsetUTF8, 0, 64, types.UnspecifiedLength},
+		{"user()", mysql.TypeVarString, charset.CharsetUTF8, 0, 64, types.UnspecifiedLength},
 	}
 }
 

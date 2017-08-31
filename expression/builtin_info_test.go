@@ -76,6 +76,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	fc := funcs[ast.User]
 	f, err := fc.getFunction(nil, ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsFalse)
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")

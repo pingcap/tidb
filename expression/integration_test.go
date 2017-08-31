@@ -1785,9 +1785,17 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 
 	// for current_user
 	sessionVars := tk.Se.GetSessionVars()
+	originUser := sessionVars.User
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	result = tk.MustQuery("select current_user()")
 	result.Check(testkit.Rows("root@localhost"))
+	sessionVars.User = originUser
+
+	// for user
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	result = tk.MustQuery("select user()")
+	result.Check(testkit.Rows("root@localhost"))
+	sessionVars.User = originUser
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
