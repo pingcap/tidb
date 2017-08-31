@@ -362,6 +362,7 @@ func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Conte
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONTypeSig{baseStringBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -394,6 +395,7 @@ func (c *jsonExtractFunctionClass) getFunction(args []Expression, ctx context.Co
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONExtractSig{baseJSONBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonExtractSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -437,6 +439,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(args []Expression, ctx context.Co
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
 	sig := &builtinJSONUnquoteSig{baseStringBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -473,6 +476,7 @@ func (c *jsonSetFunctionClass) getFunction(args []Expression, ctx context.Contex
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONSetSig{baseJSONBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -504,6 +508,7 @@ func (c *jsonInsertFunctionClass) getFunction(args []Expression, ctx context.Con
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONInsertSig{baseJSONBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -535,6 +540,7 @@ func (c *jsonReplaceFunctionClass) getFunction(args []Expression, ctx context.Co
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONReplaceSig{baseJSONBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -563,6 +569,7 @@ func (c *jsonRemoveFunctionClass) getFunction(args []Expression, ctx context.Con
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONRemoveSig{baseJSONBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonRemoveSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -614,6 +621,7 @@ func (c *jsonMergeFunctionClass) getFunction(args []Expression, ctx context.Cont
 		args[i].GetType().Decimal = castJSONDirectly
 	}
 	sig := &builtinJSONMergeSig{baseJSONBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonMergeSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -653,6 +661,7 @@ func (c *jsonObjectFunctionClass) getFunction(args []Expression, ctx context.Con
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	sig := &builtinJSONObjectSig{baseJSONBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -701,6 +710,7 @@ func (c *jsonArrayFunctionClass) getFunction(args []Expression, ctx context.Cont
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	sig := &builtinJSONArraySig{baseJSONBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)
 	return sig.setSelf(sig), nil
 }
 
