@@ -581,9 +581,8 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 }
 
 // NewCastFunc creates a new cast function.
-func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) (sf Expression) {
-	sf, _ = buildCastFunction(arg, tp, ctx)
-	return FoldConstant(sf)
+func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) Expression {
+	return FoldConstant(buildCastFunction(arg, tp, ctx))
 }
 
 // NewValuesFunc creates a new values function.

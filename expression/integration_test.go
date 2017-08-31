@@ -792,16 +792,36 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select instr(a, b) from t;`)
 	result.Check(testkit.Rows("4", "1", "1", "1", "0"))
 
+	// for oct
 	result = tk.MustQuery(`select oct("aaaa"), oct("-1.9"),  oct("-9999999999999999999999999"), oct("9999999999999999999999999");`)
 	result.Check(testkit.Rows("0 1777777777777777777777 1777777777777777777777 1777777777777777777777"))
 	result = tk.MustQuery(`select oct(-1.9), oct(1.9), oct(-1), oct(1), oct(-9999999999999999999999999), oct(9999999999999999999999999);`)
 	result.Check(testkit.Rows("1777777777777777777777 1 1777777777777777777777 1 1777777777777777777777 1777777777777777777777"))
+
+	// #issue 4356
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (b BIT(8));")
+	tk.MustExec(`INSERT INTO t SET b = b'11111111';`)
+	tk.MustExec(`INSERT INTO t SET b = b'1010';`)
+	tk.MustExec(`INSERT INTO t SET b = b'0101';`)
+	result = tk.MustQuery(`SELECT b+0, BIN(b), OCT(b), HEX(b) FROM t;`)
+	result.Check(testkit.Rows("255 11111111 377 FF", "10 1010 12 A", "5 101 5 5"))
 
 	// for find_in_set
 	result = tk.MustQuery(`select find_in_set("", ""), find_in_set("", ","), find_in_set("中文", "字符串,中文"), find_in_set("b,", "a,b,c,d");`)
 	result.Check(testkit.Rows("0 1 2 0"))
 	result = tk.MustQuery(`select find_in_set(NULL, ""), find_in_set("", NULL), find_in_set(1, "2,3,1");`)
 	result.Check(testkit.Rows("<nil> <nil> 3"))
+
+	// for make_set
+	result = tk.MustQuery(`select make_set(0, "12"), make_set(3, "aa", "11"), make_set(3, NULL, "中文"), make_set(NULL, "aa");`)
+	result.Check(testkit.Rows(" aa,11 中文 <nil>"))
+
+	// for quote
+	result = tk.MustQuery(`select quote("aaaa"), quote(""), quote("\"\""), quote("\n\n");`)
+	result.Check(testkit.Rows("'aaaa' '' '\"\"' '\n\n'"))
+	result = tk.MustQuery(`select quote(0121), quote(0000), quote("中文"), quote(NULL);`)
+	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
@@ -1160,8 +1180,20 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// result.Check(testkit.Rows("00:20:03")
 
 	//for hour
-	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(null), hour("27aaaa2:59:55");`)
-	result.Check(testkit.Rows("12 12 272 <nil> <nil>"))
+	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(020005), hour(null), hour("27aaaa2:59:55");`)
+	result.Check(testkit.Rows("12 12 272 2 <nil> <nil>"))
+
+	// for hour, issue #4340
+	result = tk.MustQuery(`SELECT HOUR(20171222020005);`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR(20171222020005.1);`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR(20171222020005.1e0);`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR("20171222020005");`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR("20171222020005.1");`)
+	result.Check(testkit.Rows("2"))
 
 	// for minute
 	result = tk.MustQuery(`SELECT minute("12:13:14.123456"), minute("12:13:14.000010"), minute("272:59:55"), minute(null), minute("27aaaa2:59:55");`)
@@ -1174,6 +1206,18 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for microsecond
 	result = tk.MustQuery(`SELECT microsecond("12:00:00.123456"), microsecond("12:00:00.000010"), microsecond(null), microsecond("27aaaa2:59:55");`)
 	result.Check(testkit.Rows("123456 10 <nil> <nil>"))
+
+	// for period_add
+	result = tk.MustQuery(`SELECT period_add(191, 2), period_add(191, -2), period_add(0, 20), period_add(0, 0);`)
+	result.Check(testkit.Rows("200809 200805 0 0"))
+	result = tk.MustQuery(`SELECT period_add(NULL, 2), period_add(-191, NULL), period_add(NULL, NULL), period_add(12.09, -2), period_add("21aa", "11aa"), period_add("", "");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> 200010 200208 0"))
+
+	// for period_diff
+	result = tk.MustQuery(`SELECT period_diff(191, 2), period_diff(191, -2), period_diff(0, 0), period_diff(191, 191);`)
+	result.Check(testkit.Rows("101 -2213609288845122103 0 0"))
+	result = tk.MustQuery(`SELECT period_diff(NULL, 2), period_diff(-191, NULL), period_diff(NULL, NULL), period_diff(12.09, 2), period_diff("21aa", "11aa"), period_diff("", "");`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> 10 10 0"))
 
 	// TODO: fix `CAST(xx as duration)` and release the test below:
 	// result = tk.MustQuery(`SELECT hour("aaa"), hour(123456), hour(1234567);`)
@@ -1274,6 +1318,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`select dayname("2017-12-01"), dayname("0000-00-00"), dayname("0000-01-00"), dayname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("Friday <nil> <nil> <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format", "Warning|1105|invalid time format", "Warning|1105|invalid time format"))
+
+	// for str_to_date
+	result = tk.MustQuery("select str_to_date('01-01-2017', '%d-%m-%Y'), str_to_date('59:20:12 01-01-2017', '%s:%i:%H %d-%m-%Y'), str_to_date('59:20:12', '%s:%i:%H')")
+	result.Check(testkit.Rows("2017-01-01 2017-01-01 12:20:59 12:20:59"))
+	result = tk.MustQuery("select str_to_date('aaa01-01-2017', 'aaa%d-%m-%Y'), str_to_date('59:20:12 aaa01-01-2017', '%s:%i:%H aaa%d-%m-%Y'), str_to_date('59:20:12aaa', '%s:%i:%Haaa')")
+	result.Check(testkit.Rows("2017-01-01 2017-01-01 12:20:59 12:20:59"))
+	result = tk.MustQuery("select str_to_date('01-01-2017', '%d'), str_to_date('59', '%d-%Y')")
+	// TODO: MySQL returns "<nil> <nil>".
+	result.Check(testkit.Rows("0000-00-01 <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
@@ -1964,7 +2018,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 		"4 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"5 0 1 1 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"6 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
-		"7 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"7 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"8 0 0 0 1 <nil> <nil> 0 0 0 0 1 <nil> <nil> 0 0 0 0 <nil>",
 		"9 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
 		"10 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
@@ -2102,4 +2156,15 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	r = tk.MustQuery("select date'201712-31';")
 	r.Check(testkit.Rows("<nil>"))
 
+}
+
+func (s *testIntegrationSuite) TestLiterals(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	r := tk.MustQuery("SELECT LENGTH(b''), LENGTH(B''), b''+1, b''-1, B''+1;")
+	r.Check(testkit.Rows("0 0 1 -1 1"))
 }

@@ -1358,6 +1358,8 @@ func (s *testEvaluatorSuite) TestMakeSet(c *C) {
 		fc := funcs[ast.MakeSet]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argList...)), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
@@ -1390,6 +1392,9 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		//overflow uint64
 		{"9999999999999999999999999", "1777777777777777777777"},
 		{"-9999999999999999999999999", "1777777777777777777777"},
+		{types.Bit{Value: 255, Width: 8}, "377"}, // b'11111111'
+		{types.Bit{Value: 10, Width: 4}, "12"},   // b'1010'
+		{types.Bit{Value: 5, Width: 4}, "5"},     // b'0101'
 	}
 	fc := funcs[ast.Oct]
 	for _, tt := range octTests {
@@ -1737,6 +1742,8 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 		fc := funcs[ast.Quote]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.arg)), s.ctx)
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.isDeterministic(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
