@@ -23,7 +23,7 @@ type mysqlTime struct {
 	year        uint16 // year <= 9999
 	month       uint8  // month <= 12
 	day         uint8  // day <= 31
-	hour        uint8  // hour <= 23
+	hour        uint16 // hour <= 838
 	minute      uint8  // minute <= 59
 	second      uint8  // second <= 59
 	microsecond uint32
@@ -112,7 +112,7 @@ func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysql
 		uint16(year),
 		uint8(month),
 		uint8(day),
-		uint8(hour),
+		uint16(hour),
 		uint8(minute),
 		uint8(second),
 		uint32(microsecond),
@@ -120,7 +120,7 @@ func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysql
 }
 
 func calcTimeFromSec(to *mysqlTime, seconds, microseconds int) {
-	to.hour = uint8(seconds / 3600)
+	to.hour = uint16(seconds / 3600)
 	seconds = seconds % 3600
 	to.minute = uint8(seconds / 60)
 	to.second = uint8(seconds % 60)
