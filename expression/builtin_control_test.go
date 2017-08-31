@@ -76,6 +76,7 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 		{duration, 1, 2, 1},
 		{types.Duration{Duration: time.Duration(0)}, 1, 2, 2},
 		{types.NewDecFromStringForTest("1.2"), 1, 2, 1},
+		{jsonInt.GetMysqlJSON(), 1, 2, 1},
 	}
 
 	fc := funcs[ast.If]
@@ -113,6 +114,7 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 		{nil, types.Bit{Value: 1, Width: 8}, "\x01", false, false},
 		{nil, types.Hex{Value: 1}, "\x01", false, false},
 		{nil, types.Set{Value: 1, Name: "abc"}, "abc", false, false},
+		{nil, jsonInt.GetMysqlJSON(), jsonInt.GetMysqlJSON(), false, false},
 		{"abc", nil, "abc", false, false},
 		{errors.New(""), nil, "", true, true},
 	}
