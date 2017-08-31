@@ -89,14 +89,12 @@ var kindToMysqlType = map[byte]byte{
 	types.KindNull:          mysql.TypeNull,
 	types.KindInt64:         mysql.TypeLonglong,
 	types.KindUint64:        mysql.TypeLonglong,
-	types.KindMysqlHex:      mysql.TypeLonglong,
 	types.KindMinNotNull:    mysql.TypeLonglong,
 	types.KindMaxValue:      mysql.TypeLonglong,
 	types.KindFloat32:       mysql.TypeDouble,
 	types.KindFloat64:       mysql.TypeDouble,
 	types.KindString:        mysql.TypeVarString,
 	types.KindBytes:         mysql.TypeVarString,
-	types.KindMysqlBit:      mysql.TypeBit,
 	types.KindMysqlEnum:     mysql.TypeEnum,
 	types.KindMysqlSet:      mysql.TypeSet,
 	types.KindRow:           mysql.TypeVarString,
@@ -104,6 +102,8 @@ var kindToMysqlType = map[byte]byte{
 	types.KindMysqlDecimal:  mysql.TypeNewDecimal,
 	types.KindMysqlDuration: mysql.TypeDuration,
 	types.KindMysqlTime:     mysql.TypeDatetime,
+	types.KindHexString:     mysql.TypeVarString,
+	types.KindBitString:     mysql.TypeVarString,
 }
 
 // calculateSum adds v to sum.

@@ -55,11 +55,13 @@ func CoerceArithmetic(sc *variable.StatementContext, a Datum) (d Datum, err erro
 		}
 		d.SetMysqlDecimal(de)
 		return d, nil
-	case KindMysqlHex:
-		d.SetFloat64(a.GetMysqlHex().ToNumber())
+	case KindHexString:
+		val, _ := a.GetHexString().ToInt()
+		d.SetUint64(val)
 		return d, nil
-	case KindMysqlBit:
-		d.SetFloat64(a.GetMysqlBit().ToNumber())
+	case KindBitString:
+		val, _ := a.GetBitString().ToInt()
+		d.SetUint64(val)
 		return d, nil
 	case KindMysqlEnum:
 		d.SetFloat64(a.GetMysqlEnum().ToNumber())

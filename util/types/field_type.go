@@ -324,7 +324,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case Bit:
 		tp.Tp = mysql.TypeVarchar
 		tp.Flen = len(x.String())
-		tp.Decimal = UnspecifiedLength
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case Hex:
 		tp.Tp = mysql.TypeVarchar

@@ -91,7 +91,8 @@ func (s *testHexSuite) TestToInt(c *C) {
 	for _, t := range tbl {
 		hex, err := ParseHexStr(t.Input)
 		c.Assert(err, IsNil)
-		intValue := hex.ToInt()
+		intValue, err := hex.ToInt()
+		c.Assert(err, IsNil)
 		c.Assert(intValue, Equals, t.Expected)
 	}
 }

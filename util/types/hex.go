@@ -27,6 +27,9 @@ type Hex struct {
 	Value []byte
 }
 
+// ZeroHex is a Hex literal with zero value.
+var ZeroHex = Hex{[]byte{}}
+
 // String implements fmt.Stringer interface.
 func (h Hex) String() string {
 	if len(h.Value) == 0 {
@@ -41,21 +44,20 @@ func (h Hex) ToString() string {
 }
 
 // ToInt returns the int value for hexadecimal literal.
-func (h Hex) ToInt() uint64 {
+func (h Hex) ToInt() (uint64, error) {
 	length := len(h.Value)
 	if length == 0 {
-		return 0
+		return 0, nil
 	}
 	if length > 8 {
-		// TODO: Throw truncate warning.
-		return math.MaxUint64
+		return math.MaxUint64, ErrTruncated
 	}
 	// Note: the byte-order is BigEndian.
 	val := uint64(h.Value[0])
 	for i := 1; i < length; i++ {
 		val = (val << 8) | uint64(h.Value[i])
 	}
-	return val
+	return val, nil
 }
 
 // ParseHexStr parses hexadecimal literal as string.
@@ -79,7 +81,7 @@ func ParseHexStr(s string) (Hex, error) {
 	}
 
 	if len(s) == 0 {
-		return Hex{[]byte{}}, nil
+		return ZeroHex, nil
 	}
 
 	if len(s)%2 != 0 {

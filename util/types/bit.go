@@ -27,6 +27,9 @@ type Bit struct {
 	Hex
 }
 
+// ZeroBit is a Bit literal with zero value.
+var ZeroBit = Bit{Hex{[]byte{}}}
+
 // String implements fmt.Stringer interface.
 func (b Bit) String() string {
 	if len(b.Value) == 0 {
@@ -59,7 +62,7 @@ func ParseBitStr(s string) (Bit, error) {
 	}
 
 	if len(s) == 0 {
-		return Bit{Hex{[]byte{}}}, nil
+		return ZeroBit, nil
 	}
 
 	alignedLength := (len(s) + 7) &^ 7
