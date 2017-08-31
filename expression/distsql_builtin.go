@@ -356,6 +356,8 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinDurationIsNullSig{baseIntBuiltinFunc{base}}
 	case tipb.ScalarFuncSig_RealIsNull:
 		f = &builtinRealIsNullSig{baseIntBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_TimeIsNull:
+		f = &builtinTimeIsNullSig{baseIntBuiltinFunc{base}}
 	case tipb.ScalarFuncSig_StringIsNull:
 		f = &builtinStringIsNullSig{baseIntBuiltinFunc{base}}
 	case tipb.ScalarFuncSig_IntIsNull:
