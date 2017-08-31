@@ -502,7 +502,7 @@ func IsHybridType(expr Expression) bool {
 	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is `HEX` or `BIT`.
 	if con, ok := expr.(*Constant); ok {
 		switch con.Value.Kind() {
-		case types.KindMysqlHex, types.KindMysqlBit:
+		case types.KindHexString, types.KindBitString:
 			return true
 		}
 	}

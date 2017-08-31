@@ -204,12 +204,6 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 	case types.KindMysqlSet:
 		data.SetUint64(data.GetMysqlSet().Value)
 		return data, nil
-	case types.KindMysqlBit:
-		data.SetUint64(data.GetMysqlBit().Value)
-		return data, nil
-	case types.KindMysqlHex:
-		data.SetInt64(data.GetMysqlHex().Value)
-		return data, nil
 	default:
 		return data, nil
 	}
@@ -373,7 +367,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24,
 		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeTinyBlob,
 		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob, mysql.TypeVarchar,
-		mysql.TypeString:
+		mysql.TypeString, mysql.TypeBit:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
@@ -404,10 +398,6 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 			return datum, errors.Trace(err)
 		}
 		datum.SetValue(set)
-		return datum, nil
-	case mysql.TypeBit:
-		bit := types.Bit{Value: datum.GetUint64(), Width: ft.Flen}
-		datum.SetValue(bit)
 		return datum, nil
 	}
 	return datum, nil

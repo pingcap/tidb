@@ -93,14 +93,12 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 			} else {
 				b = EncodeDecimal(b, val)
 			}
-		case types.KindMysqlHex:
-			b = encodeSignedInt(b, int64(val.GetMysqlHex().ToNumber()), comparable)
-		case types.KindMysqlBit:
-			b = encodeUnsignedInt(b, uint64(val.GetMysqlBit().ToNumber()), comparable)
 		case types.KindMysqlEnum:
 			b = encodeUnsignedInt(b, uint64(val.GetMysqlEnum().ToNumber()), comparable)
 		case types.KindMysqlSet:
 			b = encodeUnsignedInt(b, uint64(val.GetMysqlSet().ToNumber()), comparable)
+		case types.KindBitString, types.KindHexString:
+			b = encodeBytes(b, val.GetBytes(), comparable)
 		case types.KindMysqlJSON:
 			b = append(b, jsonFlag)
 			b = append(b, json.Serialize(val.GetMysqlJSON())...)
