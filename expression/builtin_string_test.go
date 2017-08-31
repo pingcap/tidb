@@ -495,7 +495,7 @@ func (s *testEvaluatorSuite) TestReverse(c *C) {
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), Equals, true)
+		c.Assert(f.canBeFolded(), IsTrue)
 		d, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
@@ -815,7 +815,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), Equals, true)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
 	// 2. Test LOCATE with binary input
@@ -839,7 +839,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), Equals, true)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
 }
@@ -1114,7 +1114,7 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 			f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, char)), s.ctx)
 			c.Assert(err, IsNil)
 			c.Assert(f, NotNil)
-			c.Assert(f.canBeFolded(), Equals, true)
+			c.Assert(f.canBeFolded(), IsTrue)
 			r, err := f.eval(nil)
 			if err != nil {
 				fmt.Printf("%s\n", err.Error())
@@ -1155,7 +1155,7 @@ func (s *testEvaluatorSuite) TestCharLength(c *C) {
 		fc := funcs[ast.CharLength]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.input)), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.canBeFolded(), Equals, true)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
@@ -1244,7 +1244,7 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, length, padStr}), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), Equals, true)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
@@ -1280,7 +1280,7 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, length, padStr}), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), Equals, true)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
@@ -1331,7 +1331,7 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), Equals, true)
+		c.Assert(f.canBeFolded(), IsTrue)
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
@@ -1536,7 +1536,7 @@ func (s *testEvaluatorSuite) TestFromBase64(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args)), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), Equals, true)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
@@ -1712,7 +1712,7 @@ func (s *testEvaluatorSuite) TestBin(c *C) {
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.canBeFolded(), Equals, true)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
