@@ -148,10 +148,11 @@ const (
 	ReqTypeIndex  = 102
 	ReqTypeDAG    = 103
 
-	ReqSubTypeBasic   = 0
-	ReqSubTypeDesc    = 10000
-	ReqSubTypeGroupBy = 10001
-	ReqSubTypeTopN    = 10002
+	ReqSubTypeBasic     = 0
+	ReqSubTypeDesc      = 10000
+	ReqSubTypeGroupBy   = 10001
+	ReqSubTypeTopN      = 10002
+	ReqSubTypeSignature = 10003
 )
 
 // Request represents a kv request.

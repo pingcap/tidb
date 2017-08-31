@@ -1691,7 +1691,6 @@ func (c *nowFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	} else {
 		bf.tp.Flen, bf.tp.Decimal = 19, 0
 	}
-	bf.deterministic = false
 
 	var sig builtinFunc
 	if len(args) == 1 {
