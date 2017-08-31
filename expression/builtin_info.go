@@ -117,27 +117,30 @@ type currentUserFunctionClass struct {
 }
 
 func (c *currentUserFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinCurrentUserSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
+	bf.tp.Flen = 64
+	bf.deterministic = false
+	sig := &builtinCurrentUserSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinCurrentUserSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinCurrentUserSig.
+// evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 // TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
-func (b *builtinCurrentUserSig) eval(_ []types.Datum) (d types.Datum, err error) {
+func (b *builtinCurrentUserSig) evalString(row []types.Datum) (string, bool, error) {
 	data := b.ctx.GetSessionVars()
-	if data == nil {
-		return d, errors.Errorf("Missing session variable when evalue builtin")
+	if data == nil || data.User == nil {
+		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
 
-	d.SetString(data.User.String())
-	return d, nil
+	return data.User.String(), false, nil
 }
 
 type userFunctionClass struct {

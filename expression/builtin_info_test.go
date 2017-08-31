@@ -90,6 +90,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	fc := funcs[ast.CurrentUser]
 	f, err := fc.getFunction(nil, ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsFalse)
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")

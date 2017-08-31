@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -1780,6 +1781,13 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	result = tk.MustQuery("select database()")
 	result.Check(testkit.Rows("<nil>"))
 	tk.MustExec("create database test")
+	tk.MustExec("use test")
+
+	// for current_user
+	sessionVars := tk.Se.GetSessionVars()
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	result = tk.MustQuery("select current_user()")
+	result.Check(testkit.Rows("root@localhost"))
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
