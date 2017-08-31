@@ -1194,6 +1194,18 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2"))
 	result = tk.MustQuery(`SELECT HOUR("20171222020005.1");`)
 	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`select hour(20171222);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select hour(8381222);`)
+	result.Check(testkit.Rows("838"))
+	result = tk.MustQuery(`select hour(10000000000);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select hour(10100000000);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select hour(10001000000);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select hour(10101000000);`)
+	result.Check(testkit.Rows("0"))
 
 	// for minute
 	result = tk.MustQuery(`SELECT minute("12:13:14.123456"), minute("12:13:14.000010"), minute("272:59:55"), minute(null), minute("27aaaa2:59:55");`)
@@ -1424,6 +1436,14 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustExec("insert into t value(12.3, 1.23, '2017-01-01 12:12:12', '12:12:12', 123)")
 	result = tk.MustQuery("select cast(a as json), cast(b as json), cast(c as json), cast(d as json), cast(e as json) from t")
 	result.Check(testkit.Rows(`12.3 1.23 "2017-01-01 12:12:12.000000" "12:12:12.000000" 123`))
+	result = tk.MustQuery(`select cast(10101000000 as time);`)
+	result.Check(testkit.Rows("00:00:00"))
+	result = tk.MustQuery(`select cast(10101001000 as time);`)
+	result.Check(testkit.Rows("00:10:00"))
+	result = tk.MustQuery(`select cast(10000000000 as time);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select cast(20171222020005 as time);`)
+	result.Check(testkit.Rows("02:00:05"))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
