@@ -522,11 +522,20 @@ type builtinCastIntAsDurationSig struct {
 }
 
 func (b *builtinCastIntAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(strconv.FormatInt(val, 10), b.tp.Decimal)
+	t, err := types.NumberToDuration(val, b.tp.Decimal)
+	if err != nil {
+		if types.ErrOverflow.Equal(err) {
+			err = sc.HandleOverflow(err, err)
+		}
+		return res, true, errors.Trace(err)
+	}
+
+	res, err = t.ConvertToDuration()
 	return res, false, errors.Trace(err)
 }
 
