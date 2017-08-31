@@ -201,10 +201,10 @@ func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, 
 // NumberToDuration converts number to Duration.
 func NumberToDuration(number int64, fsp int) (t Time, err error) {
 	if number > TimeMaxValue {
-		// Try parse DATETIME
+		// Try to parse DATETIME.
 		if number >= 10000000000 { // '2001-00-00 00-00-00'
 			if t, err = ParseDatetimeFromNum(number); err == nil {
-				return t, err
+				return t, nil
 			}
 		}
 		t = MaxMySQLTime(false, fsp)
