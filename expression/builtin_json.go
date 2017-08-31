@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
@@ -82,270 +81,6 @@ var (
 	// Merge JSON documents, preserving duplicate keys.
 	_ builtinFunc = &builtinJSONMergeSig{}
 )
-
-// argsAnyNull returns true if args contains any null.
-func argsAnyNull(args []types.Datum) bool {
-	for _, arg := range args {
-		if arg.Kind() == types.KindNull {
-			return true
-		}
-	}
-	return false
-}
-
-// datum2JSON gets or converts to JSON from datum.
-func datum2JSON(d types.Datum, sc *variable.StatementContext) (j json.JSON, err error) {
-	tp := types.NewFieldType(mysql.TypeJSON)
-	if d, err = d.ConvertTo(sc, tp); err == nil {
-		j = d.GetMysqlJSON()
-	}
-	return j, errors.Trace(err)
-}
-
-// parsePathExprs parses strings in datums into json.PathExpression.
-func parsePathExprs(datums []types.Datum) ([]json.PathExpression, error) {
-	pathExprs := make([]json.PathExpression, 0, len(datums))
-	for _, datum := range datums {
-		pathExpr, err := json.ParseJSONPathExpr(datum.GetString())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		pathExprs = append(pathExprs, pathExpr)
-	}
-	return pathExprs, nil
-}
-
-// createJSONFromDatums creates JSONs from Datums.
-func createJSONFromDatums(datums []types.Datum) (jsons []json.JSON, err error) {
-	jsons = make([]json.JSON, 0, len(datums))
-	for _, datum := range datums {
-		j, err := datum.ToMysqlJSON()
-		if err != nil {
-			return jsons, errors.Trace(err)
-		}
-		jsons = append(jsons, j)
-	}
-	return jsons, nil
-}
-
-// jsonModify is the portal for modify JSON with path expressions and values.
-// If the first argument is null, returns null;
-// If any path expressions in arguments are null, return null;
-func jsonModify(args []types.Datum, mt json.ModifyType, sc *variable.StatementContext) (d types.Datum, err error) {
-	// alloc 1 extra element, for len(args) is an even number.
-	pes := make([]types.Datum, 0, (len(args)-1)/2+1)
-	vs := make([]types.Datum, 0, (len(args)-1)/2+1)
-	for i := 1; i < len(args); i++ {
-		if i&1 == 1 {
-			pes = append(pes, args[i])
-		} else {
-			vs = append(vs, args[i])
-		}
-	}
-	if args[0].Kind() == types.KindNull || argsAnyNull(pes) {
-		return d, nil
-	}
-
-	j, err := datum2JSON(args[0], sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	pathExprs, err := parsePathExprs(pes)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	values, err := createJSONFromDatums(vs)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	j, err = j.Modify(pathExprs, values, mt)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetMysqlJSON(j)
-	return d, nil
-}
-
-// jsonModify1 is similar with `jsonModify`, but for new framework.
-func jsonModify1(args []Expression, row []types.Datum, mt json.ModifyType, sc *variable.StatementContext) (res json.JSON, isNull bool, err error) {
-	res, isNull, err = args[0].EvalJSON(row, sc)
-	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
-	}
-	pathExprs := make([]json.PathExpression, 0, (len(args)-1)/2+1)
-	for i := 1; i < len(args); i += 2 {
-		// TODO: We can cache pathExprs if args are constants.
-		var s string
-		s, isNull, err = args[i].EvalString(row, sc)
-		if isNull || err != nil {
-			return res, isNull, errors.Trace(err)
-		}
-		var pathExpr json.PathExpression
-		pathExpr, err = json.ParseJSONPathExpr(s)
-		if err != nil {
-			return res, true, errors.Trace(err)
-		}
-		pathExprs = append(pathExprs, pathExpr)
-	}
-	values := make([]json.JSON, 0, (len(args)-1)/2+1)
-	for i := 2; i < len(args); i += 2 {
-		var value json.JSON
-		value, isNull, err = args[i].EvalJSON(row, sc)
-		if err != nil {
-			return res, true, errors.Trace(err)
-		}
-		if isNull {
-			value = json.CreateJSON(nil)
-		}
-		values = append(values, value)
-	}
-	res, err = res.Modify(pathExprs, values, mt)
-	if err != nil {
-		return res, true, errors.Trace(err)
-	}
-	return res, false, nil
-}
-
-// JSONType is for json_type builtin function.
-func JSONType(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	if argsAnyNull(args) {
-		return d, nil
-	}
-	djson, err := datum2JSON(args[0], sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetString(djson.Type())
-	return
-}
-
-// JSONExtract is for json_extract builtin function.
-func JSONExtract(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	if argsAnyNull(args) {
-		return d, nil
-	}
-	djson, err := datum2JSON(args[0], sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	pathExprs, err := parsePathExprs(args[1:])
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if djson1, found := djson.Extract(pathExprs); found {
-		d.SetMysqlJSON(djson1)
-	}
-	return
-}
-
-// JSONUnquote is for json_unquote builtin function.
-func JSONUnquote(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	if argsAnyNull(args) {
-		return d, nil
-	}
-	djson, err := args[0].ToMysqlJSON()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	unquoted, err := djson.Unquote()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetString(unquoted)
-	return
-}
-
-// JSONSet is for json_set builtin function.
-func JSONSet(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	return jsonModify(args, json.ModifySet, sc)
-}
-
-// JSONInsert is for json_insert builtin function.
-func JSONInsert(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	return jsonModify(args, json.ModifyInsert, sc)
-}
-
-// JSONReplace is for json_replace builtin function.
-func JSONReplace(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	return jsonModify(args, json.ModifyReplace, sc)
-}
-
-// JSONRemove is for json_remove builtin function.
-func JSONRemove(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	if argsAnyNull(args) {
-		return d, nil
-	}
-	j, err := datum2JSON(args[0], sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	pathExprs, err := parsePathExprs(args[1:])
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	j, err = j.Remove(pathExprs)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetMysqlJSON(j)
-	return
-}
-
-// JSONMerge is for json_merge builtin function.
-func JSONMerge(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	if argsAnyNull(args) {
-		return d, nil
-	}
-	jsons := make([]json.JSON, 0, len(args))
-	for _, arg := range args {
-		j, err := datum2JSON(arg, sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		jsons = append(jsons, j)
-	}
-	d.SetMysqlJSON(jsons[0].Merge(jsons[1:]))
-	return
-}
-
-// JSONObject creates a json from an ordered key-value slice. It retrieves 2 arguments at least.
-func JSONObject(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	if len(args)&1 == 1 {
-		err = ErrIncorrectParameterCount.GenByArgs(ast.JSONObject)
-		return
-	}
-	var jsonMap = make(map[string]json.JSON, len(args)>>1)
-	var keyTp = types.NewFieldType(mysql.TypeVarchar)
-	for i := 0; i < len(args); i += 2 {
-		if args[i].Kind() == types.KindNull {
-			err = errors.New("JSON documents may not contain NULL member names")
-			return
-		}
-		key, err := args[i].ConvertTo(sc, keyTp)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		value, err := args[i+1].ToMysqlJSON()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		jsonMap[key.GetString()] = value
-	}
-	j := json.CreateJSON(jsonMap)
-	d.SetMysqlJSON(j)
-	return
-}
-
-// JSONArray creates a json from a slice.
-func JSONArray(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
-	jsons, err := createJSONFromDatums(args)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	j := json.CreateJSON(jsons)
-	d.SetMysqlJSON(j)
-	return
-}
 
 type jsonTypeFunctionClass struct {
 	baseFunctionClass
@@ -482,7 +217,7 @@ func (c *jsonSetFunctionClass) getFunction(args []Expression, ctx context.Contex
 
 func (b *builtinJSONSetSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	return jsonModify1(b.args, row, json.ModifySet, sc)
+	return jsonModify(b.args, row, json.ModifySet, sc)
 }
 
 type jsonInsertFunctionClass struct {
@@ -514,7 +249,7 @@ func (c *jsonInsertFunctionClass) getFunction(args []Expression, ctx context.Con
 
 func (b *builtinJSONInsertSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	return jsonModify1(b.args, row, json.ModifyInsert, sc)
+	return jsonModify(b.args, row, json.ModifyInsert, sc)
 }
 
 type jsonReplaceFunctionClass struct {
@@ -546,7 +281,7 @@ func (c *jsonReplaceFunctionClass) getFunction(args []Expression, ctx context.Co
 
 func (b *builtinJSONReplaceSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	return jsonModify1(b.args, row, json.ModifyReplace, sc)
+	return jsonModify(b.args, row, json.ModifyReplace, sc)
 }
 
 type jsonRemoveFunctionClass struct {
@@ -727,4 +462,44 @@ func (b *builtinJSONArraySig) evalJSON(row []types.Datum) (res json.JSON, isNull
 		jsons = append(jsons, j)
 	}
 	return json.CreateJSON(jsons), false, nil
+}
+
+// jsonModify is similar with `jsonModify`, but for new framework.
+func jsonModify(args []Expression, row []types.Datum, mt json.ModifyType, sc *variable.StatementContext) (res json.JSON, isNull bool, err error) {
+	res, isNull, err = args[0].EvalJSON(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	pathExprs := make([]json.PathExpression, 0, (len(args)-1)/2+1)
+	for i := 1; i < len(args); i += 2 {
+		// TODO: We can cache pathExprs if args are constants.
+		var s string
+		s, isNull, err = args[i].EvalString(row, sc)
+		if isNull || err != nil {
+			return res, isNull, errors.Trace(err)
+		}
+		var pathExpr json.PathExpression
+		pathExpr, err = json.ParseJSONPathExpr(s)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
+		pathExprs = append(pathExprs, pathExpr)
+	}
+	values := make([]json.JSON, 0, (len(args)-1)/2+1)
+	for i := 2; i < len(args); i += 2 {
+		var value json.JSON
+		value, isNull, err = args[i].EvalJSON(row, sc)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
+		if isNull {
+			value = json.CreateJSON(nil)
+		}
+		values = append(values, value)
+	}
+	res, err = res.Modify(pathExprs, values, mt)
+	if err != nil {
+		return res, true, errors.Trace(err)
+	}
+	return res, false, nil
 }
