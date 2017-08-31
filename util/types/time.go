@@ -467,6 +467,8 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	return nil
 }
 
+// check whether Time fiedls is valid.
+// If allowZeroDate is false, it returns ErrZeroDate when month or day is zero.
 func (t *Time) check(allowZeroDate bool) error {
 	var err error
 	switch t.Type {

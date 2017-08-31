@@ -531,7 +531,6 @@ func (b *builtinCastIntAsDurationSig) evalDuration(row []types.Datum) (res types
 	if err != nil {
 		if types.ErrOverflow.Equal(err) {
 			err = sc.HandleOverflow(err, err)
-			return res, true, errors.Trace(err)
 		}
 		return res, true, errors.Trace(err)
 	}
