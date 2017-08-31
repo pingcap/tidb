@@ -14,60 +14,36 @@
 package types
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/util/hack"
 )
 
-// Bit is for mysql bit type.
+// Bit is for mysql bit literal type, inherited from Hex.
 type Bit struct {
-	// Value holds the value for bit type.
-	Value uint64
-
-	// Width is the display with for bit value.
-	// e.g, with is 8, 0 is for 0b00000000.
-	Width int
+	Hex
 }
 
 // String implements fmt.Stringer interface.
 func (b Bit) String() string {
-	format := fmt.Sprintf("0b%%0%db", b.Width)
-	return fmt.Sprintf(format, b.Value)
-}
-
-// ToNumber changes bit type to float64 for numeric operation.
-// MySQL treats bit as double type.
-func (b Bit) ToNumber() float64 {
-	return float64(b.Value)
-}
-
-// ToString returns the binary string for bit type.
-func (b Bit) ToString() string {
-	byteSize := (b.Width + 7) / 8
-	buf := make([]byte, byteSize)
-	for i := byteSize - 1; i >= 0; i-- {
-		buf[byteSize-i-1] = byte(b.Value >> uint(i*8))
+	if len(b.Value) == 0 {
+		return ""
 	}
-	return string(buf)
+	var outputBuffer bytes.Buffer
+	outputBuffer.WriteString("0b")
+	for _, b := range b.Value {
+		fmt.Fprintf(&outputBuffer, "%08b", b)
+	}
+	return outputBuffer.String()
 }
 
-// Min and Max bit width.
-const (
-	MinBitWidth = 1
-	MaxBitWidth = 64
-	// UnspecifiedBitWidth is the unspecified with if you want to calculate bit width dynamically.
-	UnspecifiedBitWidth = -1
-)
-
-// ParseBit parses bit string.
+// ParseBitStr parses bit string.
 // The string format can be b'val', B'val' or 0bval, val must be 0 or 1.
-// Width is the display width for bit representation. -1 means calculating
-// width dynamically, using following algorithm: (len("011101") + 7) & ^7,
-// e.g, if bit string is 0b01, the above will return 8 for its bit width.
-func ParseBit(s string, width int) (Bit, error) {
+// See https://dev.mysql.com/doc/refman/5.7/en/bit-value-literals.html
+func ParseBitStr(s string) (Bit, error) {
 	if len(s) == 0 {
 		return Bit{}, errors.Errorf("invalid empty string for parsing bit type")
 	}
@@ -75,9 +51,6 @@ func ParseBit(s string, width int) (Bit, error) {
 	if s[0] == 'b' || s[0] == 'B' {
 		// format is b'val' or B'val'
 		s = strings.Trim(s[1:], "'")
-		if len(s) == 0 {
-			return Bit{Value: 0, Width: 0}, nil
-		}
 	} else if strings.HasPrefix(s, "0b") {
 		s = s[2:]
 	} else {
@@ -85,56 +58,23 @@ func ParseBit(s string, width int) (Bit, error) {
 		return Bit{}, errors.Errorf("invalid bit type format %s", s)
 	}
 
-	if width == UnspecifiedBitWidth {
-		width = (len(s) + 7) & ^7
-	}
-
-	if width == 0 {
-		width = MinBitWidth
-	}
-
-	if width < MinBitWidth || width > MaxBitWidth {
-		return Bit{}, errors.Errorf("invalid display width for bit type, must in [1, 64], but %d", width)
-	}
-
-	n, err := strconv.ParseUint(s, 2, 64)
-	if err != nil {
-		return Bit{}, errors.Trace(err)
-	}
-
-	if n > (uint64(1)<<uint64(width))-1 {
-		return Bit{}, errors.Errorf("bit %s is too long for width %d", s, width)
-	}
-
-	return Bit{Value: n, Width: width}, nil
-}
-
-// ParseStringToBitValue parses the string for bit type into uint64.
-func ParseStringToBitValue(s string, width int) (uint64, error) {
 	if len(s) == 0 {
-		return 0, errors.Errorf("invalid empty string for parsing bit value")
+		return Bit{Hex{[]byte{}}}, nil
 	}
 
-	b := hack.Slice(s)
-	if width == UnspecifiedBitWidth {
-		width = len(b) * 8
-	}
-	if width == 0 {
-		width = MinBitWidth
-	}
-	if width < MinBitWidth || width > MaxBitWidth {
-		return 0, errors.Errorf("invalid display width for bit type, must in [1, 64], but %d", width)
+	alignedLength := (len(s) + 7) &^ 7
+	s = ("00000000" + s)[len(s)+8-alignedLength:] // Pad with zero (slice from `-alignedLength`)
+	byteLength := len(s) >> 3
+	bytes := make([]byte, byteLength)
+
+	for i := 0; i < byteLength; i++ {
+		strPosition := i << 3
+		val, err := strconv.ParseUint(s[strPosition:strPosition+8], 2, 8)
+		if err != nil {
+			return Bit{}, errors.Trace(err)
+		}
+		bytes[i] = byte(val)
 	}
 
-	var n uint64
-	l := len(b)
-	for i := range b {
-		n += uint64(b[l-i-1]) << uint(i*8)
-	}
-
-	if n > (uint64(1)<<uint64(width))-1 {
-		return 0, errors.Errorf("bit %s is too long for width %d", s, width)
-	}
-
-	return n, nil
+	return Bit{Hex{bytes}}, nil
 }

@@ -14,8 +14,6 @@
 package types
 
 import (
-	"strconv"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -25,61 +23,75 @@ var _ = Suite(&testHexSuite{})
 type testHexSuite struct {
 }
 
-func (s *testHexSuite) TestHex(c *C) {
+func (s *testHexSuite) TestParseHexStr(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		Input  string
-		Expect int64
-		Err    bool
+		Input    string
+		Expected []byte
+		IsError  bool
 	}{
-		{"x'1'", 0, true},
-		{"x'01'", 1, false},
-		{"X'01'", 1, false},
-		{"0x1", 1, false},
-		{"0x-1", 0, true},
-		{"0X11", 0, true},
-		{"x'01+'", 1, true},
-		{"0x123", 0x123, false},
-		{"0x10", 0x10, false},
-		{"", 0, true},
+		{"x'1'", nil, true},
+		{"x'01'", []byte{0x1}, false},
+		{"X'01'", []byte{0x1}, false},
+		{"0x1", []byte{0x1}, false},
+		{"0x-1", nil, true},
+		{"0X11", nil, true},
+		{"x'01+'", nil, true},
+		{"0x123", []byte{0x01, 0x23}, false},
+		{"0x10", []byte{0x10}, false},
+		{"0x4D7953514C", []byte("MySQL"), false},
+		{"0x4920616D2061206C6F6E672068657820737472696E67", []byte("I am a long hex string"), false},
+		{"x'4920616D2061206C6F6E672068657820737472696E67'", []byte("I am a long hex string"), false},
+		{"X'4920616D2061206C6F6E672068657820737472696E67'", []byte("I am a long hex string"), false},
+		{"x''", []byte{}, false},
 	}
-
 	for _, t := range tbl {
-		h, err := ParseHex(t.Input)
-		if t.Err {
-			c.Assert(err, NotNil)
-			continue
+		hex, err := ParseHexStr(t.Input)
+		if t.IsError {
+			c.Assert(err, NotNil, Commentf("%#v", t))
+		} else {
+			c.Assert(err, IsNil, Commentf("%#v", t))
+			c.Assert(hex.Value, DeepEquals, t.Expected, Commentf("%#v", t))
 		}
-
-		c.Assert(err, IsNil)
-		c.Assert(h.ToNumber(), Equals, float64(t.Expect))
-		s := h.String()
-		n, err := strconv.ParseInt(s, 0, 64)
-		c.Assert(err, IsNil)
-		c.Assert(n, Equals, t.Expect)
 	}
+}
 
-	h, err := ParseHex("0x4D7953514C")
-	c.Assert(err, IsNil)
-	c.Assert(h.ToString(), Equals, "MySQL")
+func (s *testHexSuite) TestString(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input    Hex
+		Expected string
+	}{
+		{Hex{[]byte{}}, ""}, // Expected
+		{Hex{[]byte{0x0}}, "0x00"},
+		{Hex{[]byte{0x1}}, "0x01"},
+		{Hex{[]byte{0xff, 0x01}}, "0xff01"},
+	}
+	for _, t := range tbl {
+		str := t.Input.String()
+		c.Assert(str, Equals, t.Expected)
+	}
+}
 
-	h.Value = 1
-	c.Assert(h.ToString(), Equals, "\x01")
-
-	/*
-	 mysql> select hex("I am a long hex string");
-	 +----------------------------------------------+
-	 | hex("I am a long hex string")                |
-	 +----------------------------------------------+
-	 | 4920616D2061206C6F6E672068657820737472696E67 |
-	 +----------------------------------------------+
-	 1 row in set (0.00 sec)
-	*/
-	str := "I am a long hex string"
-	hexStr := "0x4920616D2061206C6F6E672068657820737472696E67"
-	_, err = ParseHex(hexStr)
-	c.Assert(err, NotNil)
-	v, err := ParseHexStr(hexStr)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, str)
+func (s *testHexSuite) TestToInt(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input    string
+		Expected uint64
+	}{
+		{"x''", 0},
+		{"0x00", 0x0},
+		{"0xff", 0xff},
+		{"0x10ff", 0x10ff},
+		{"0x1010ffff", 0x1010ffff},
+		{"0x1010ffff8080", 0x1010ffff8080},
+		{"0x1010ffff8080ff12", 0x1010ffff8080ff12},
+		{"0x1010ffff8080ff12ff", 0xffffffffffffffff},
+	}
+	for _, t := range tbl {
+		hex, err := ParseHexStr(t.Input)
+		c.Assert(err, IsNil)
+		intValue := hex.ToInt()
+		c.Assert(intValue, Equals, t.Expected)
+	}
 }

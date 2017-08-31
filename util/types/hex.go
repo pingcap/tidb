@@ -15,8 +15,7 @@ package types
 
 import (
 	"encoding/hex"
-	"fmt"
-	"strconv"
+	"math"
 	"strings"
 
 	"github.com/juju/errors"
@@ -24,85 +23,71 @@ import (
 
 // Hex is for mysql hexadecimal literal type.
 type Hex struct {
-	// Value holds numeric value for hexadecimal literal.
-	Value int64
+	// Value holds the raw value for hexadecimal literal.
+	Value []byte
 }
 
 // String implements fmt.Stringer interface.
 func (h Hex) String() string {
-	s := fmt.Sprintf("%X", h.Value)
-	if len(s)%2 != 0 {
-		return "0x0" + s
+	if len(h.Value) == 0 {
+		return ""
 	}
-
-	return "0x" + s
-}
-
-// ToNumber changes hexadecimal type to float64 for numeric operation.
-// MySQL treats hexadecimal literal as double type.
-func (h Hex) ToNumber() float64 {
-	return float64(h.Value)
+	return "0x" + hex.EncodeToString(h.Value)
 }
 
 // ToString returns the string representation for hexadecimal literal.
 func (h Hex) ToString() string {
-	s := fmt.Sprintf("%x", h.Value)
-	if len(s)%2 != 0 {
-		s = "0" + s
-	}
-
-	// should never error.
-	b, _ := hex.DecodeString(s)
-	return string(b)
+	return string(h.Value)
 }
 
-func uniformHexStrLit(s string) (string, error) {
+// ToInt returns the int value for hexadecimal literal.
+func (h Hex) ToInt() uint64 {
+	length := len(h.Value)
+	if length == 0 {
+		return 0
+	}
+	if length > 8 {
+		// TODO: Throw truncate warning.
+		return math.MaxUint64
+	}
+	// Note: the byte-order is BigEndian.
+	val := uint64(h.Value[0])
+	for i := 1; i < length; i++ {
+		val = (val << 8) | uint64(h.Value[i])
+	}
+	return val
+}
+
+// ParseHexStr parses hexadecimal literal as string.
+// See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
+func ParseHexStr(s string) (Hex, error) {
 	if len(s) == 0 {
-		return "", errors.Errorf("invalid empty string for parsing hexadecimal literal")
+		return Hex{}, errors.Errorf("invalid empty string for parsing hexadecimal literal")
 	}
 
 	if s[0] == 'x' || s[0] == 'X' {
 		// format is x'val' or X'val'
 		s = strings.Trim(s[1:], "'")
 		if len(s)%2 != 0 {
-			return "", errors.Errorf("invalid hexadecimal format, must even numbers, but %d", len(s))
+			return Hex{}, errors.Errorf("invalid hexadecimal format, must even numbers, but %d", len(s))
 		}
-		s = "0x" + s
-	} else if !strings.HasPrefix(s, "0x") {
+	} else if strings.HasPrefix(s, "0x") {
+		s = s[2:]
+	} else {
 		// here means format is not x'val', X'val' or 0xval.
-		return "", errors.Errorf("invalid hexadecimal format %s", s)
+		return Hex{}, errors.Errorf("invalid hexadecimal format %s", s)
 	}
-	return s, nil
-}
 
-// ParseHex parses hexadecimal literal string.
-// The string format can be X'val', x'val' or 0xval.
-// val must in (0...9, a...f, A...F).
-func ParseHex(s string) (Hex, error) {
-	var err error
-	s, err = uniformHexStrLit(s)
+	if len(s) == 0 {
+		return Hex{[]byte{}}, nil
+	}
+
+	if len(s)%2 != 0 {
+		s = "0" + s
+	}
+	bytes, err := hex.DecodeString(s)
 	if err != nil {
 		return Hex{}, errors.Trace(err)
 	}
-	n, err := strconv.ParseUint(s, 0, 64)
-	if err != nil {
-		return Hex{}, errors.Trace(err)
-	}
-
-	return Hex{Value: int64(n)}, nil
-}
-
-// ParseHexStr parses hexadecimal literal as string.
-// See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
-func ParseHexStr(s string) (string, error) {
-	var err error
-	s, err = uniformHexStrLit(s)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	bs, err := hex.DecodeString(s[2:])
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return string(bs), nil
+	return Hex{bytes}, nil
 }
