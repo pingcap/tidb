@@ -147,7 +147,9 @@ var (
 	_ builtinFunc = &builtinUTCTimestampWithoutArgSig{}
 	_ builtinFunc = &builtinExtractSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
-	_ builtinFunc = &builtinUnixTimestampSig{}
+	_ builtinFunc = &builtinUnixTimestampCurrentSig{}
+	_ builtinFunc = &builtinUnixTimestampIntSig{}
+	_ builtinFunc = &builtinUnixTimestampDecSig{}
 	_ builtinFunc = &builtinAddTimeSig{}
 	_ builtinFunc = &builtinConvertTzSig{}
 	_ builtinFunc = &builtinMakeDateSig{}
@@ -1734,7 +1736,6 @@ func (c *nowFunctionClass) getFunction(args []Expression, ctx context.Context) (
 	} else {
 		bf.tp.Flen, bf.tp.Decimal = 19, 0
 	}
-	bf.deterministic = false
 
 	var sig builtinFunc
 	if len(args) == 1 {
@@ -2053,64 +2054,123 @@ func (c *unixTimestampFunctionClass) getFunction(args []Expression, ctx context.
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinUnixTimestampSig{newBaseBuiltinFunc(args, ctx)}
+	var argTps []evalTp
+	var retTp evalTp
+	var retFLen, retDecimal int
+
+	if len(args) == 0 {
+		retTp, retDecimal = tpInt, 0
+	} else {
+		argTps = []evalTp{tpDatetime}
+		argType := args[0].GetType()
+		argEvaltp := fieldTp2EvalTp(argType)
+		if argEvaltp == tpString {
+			// Treat tpString as unspecified decimal.
+			retDecimal = types.UnspecifiedLength
+		} else {
+			retDecimal = argType.Decimal
+		}
+		if retDecimal > 6 || retDecimal == types.UnspecifiedLength {
+			retDecimal = 6
+		}
+		if retDecimal == 0 {
+			retTp = tpInt
+		} else {
+			retTp = tpDecimal
+		}
+	}
+	if retTp == tpInt {
+		retFLen = 11
+	} else if retTp == tpDecimal {
+		retFLen = 12 + retDecimal
+	} else {
+		panic("Unexpected retTp")
+	}
+
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTps...)
+	bf.deterministic = false
+	bf.tp.Flen = retFLen
+	bf.tp.Decimal = retDecimal
+
+	var sig builtinFunc
+	if len(args) == 0 {
+		sig = &builtinUnixTimestampCurrentSig{baseIntBuiltinFunc{bf}}
+	} else if retTp == tpInt {
+		sig = &builtinUnixTimestampIntSig{baseIntBuiltinFunc{bf}}
+	} else if retTp == tpDecimal {
+		sig = &builtinUnixTimestampDecSig{baseDecimalBuiltinFunc{bf}}
+	} else {
+		panic("Unexpected retTp")
+	}
+
 	return sig.setSelf(sig), nil
 }
 
-type builtinUnixTimestampSig struct {
-	baseBuiltinFunc
+// goTimeToMysqlUnixTimestamp converts go time into MySQL's Unix timestamp.
+// MySQL's Unix timestamp ranges in int32. Values out of range should be rewritten to 0.
+func goTimeToMysqlUnixTimestamp(t time.Time, decimal int) *types.MyDecimal {
+	nanoSeconds := t.UnixNano()
+	if nanoSeconds < 0 || (nanoSeconds/1e3) >= (math.MaxInt32+1)*1e6 {
+		return new(types.MyDecimal)
+	}
+	dec := new(types.MyDecimal)
+	// Here we don't use float to prevent precision lose.
+	dec.FromInt(nanoSeconds)
+	dec.Shift(-9)
+	dec.Round(dec, decimal, types.ModeHalfEven)
+	return dec
 }
 
-// eval evals a builtinUnixTimestampSig.
+type builtinUnixTimestampCurrentSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals a UNIX_TIMESTAMP().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
-func (b *builtinUnixTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinUnixTimestampCurrentSig) evalInt(row []types.Datum) (int64, bool, error) {
+	dec := goTimeToMysqlUnixTimestamp(time.Now(), 1)
+	intVal, _ := dec.ToInt() // Ignore truncate errors.
+	return intVal, false, nil
+}
+
+type builtinUnixTimestampIntSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals a UNIX_TIMESTAMP(time).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
+func (b *builtinUnixTimestampIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		// Return 0 for invalid date time.
+		return 0, isNull, nil
+	}
+	t, err := val.Time.GoTime(getTimeZone(b.getCtx()))
 	if err != nil {
-		return d, errors.Trace(err)
+		return 0, false, nil
 	}
-	if len(args) == 0 {
-		now := time.Now().Unix()
-		d.SetInt64(now)
-		return
-	}
+	dec := goTimeToMysqlUnixTimestamp(t, 1)
+	intVal, _ := dec.ToInt() // Ignore truncate errors.
+	return intVal, false, nil
+}
 
-	var (
-		t  types.Time
-		t1 time.Time
-	)
-	switch args[0].Kind() {
-	case types.KindString:
-		t, err = types.ParseTime(args[0].GetString(), mysql.TypeDatetime, types.MaxFsp)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-	case types.KindInt64, types.KindUint64:
-		t, err = types.ParseTimeFromInt64(args[0].GetInt64())
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-	case types.KindMysqlTime:
-		t = args[0].GetMysqlTime()
-	case types.KindNull:
-		return
-	default:
-		return d, errors.Errorf("Unknown args type for unix_timestamp %d", args[0].Kind())
-	}
+type builtinUnixTimestampDecSig struct {
+	baseDecimalBuiltinFunc
+}
 
-	t1, err = t.Time.GoTime(getTimeZone(b.ctx))
+// evalDecimal evals a UNIX_TIMESTAMP(time).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
+func (b *builtinUnixTimestampDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		// Return 0 for invalid date time.
+		return new(types.MyDecimal), isNull, nil
+	}
+	t, err := val.Time.GoTime(getTimeZone(b.getCtx()))
 	if err != nil {
-		d.SetInt64(0)
-		return d, nil
+		return new(types.MyDecimal), false, nil
 	}
-
-	if t.Time.Microsecond() > 0 {
-		var dec types.MyDecimal
-		dec.FromFloat64(float64(t1.Unix()) + float64(t.Time.Microsecond())/1e6)
-		d.SetMysqlDecimal(&dec)
-	} else {
-		d.SetInt64(t1.Unix())
-	}
-	return
+	return goTimeToMysqlUnixTimestamp(t, b.tp.Decimal), false, nil
 }
 
 type timestampFunctionClass struct {
