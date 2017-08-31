@@ -178,24 +178,26 @@ type connectionIDFunctionClass struct {
 }
 
 func (c *connectionIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinConnectionIDSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt)
+	bf.deterministic = false
+	bf.tp.Flag |= mysql.UnsignedFlag
+	sig := &builtinConnectionIDSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinConnectionIDSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-func (b *builtinConnectionIDSig) eval(_ []types.Datum) (d types.Datum, err error) {
+func (b *builtinConnectionIDSig) evalInt(_ []types.Datum) (int64, bool, error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil {
-		return d, errors.Errorf("Missing session variable when evalue builtin")
+		return 0, true, errors.Errorf("Missing session variable when evalue builtin")
 	}
-
-	d.SetUint64(data.ConnectionID)
-	return d, nil
+	return int64(data.ConnectionID), false, nil
 }
 
 type lastInsertIDFunctionClass struct {

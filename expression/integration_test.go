@@ -1796,6 +1796,13 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	result = tk.MustQuery("select user()")
 	result.Check(testkit.Rows("root@localhost"))
 	sessionVars.User = originUser
+
+	// for connection_id
+	originConnectionID := sessionVars.ConnectionID
+	sessionVars.ConnectionID = uint64(1)
+	result = tk.MustQuery("select connection_id()")
+	result.Check(testkit.Rows("1"))
+	sessionVars.ConnectionID = originConnectionID
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
