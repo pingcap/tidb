@@ -1666,3 +1666,9 @@ func (s *testPlanSuite) createTestCase4LikeFuncs() []typeInferTestCase {
 		{"c_enum        regexp c_text_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 	}
 }
+
+func (s *testPlanSuite) createTestCase4Literals() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"date '2017-01-01'", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 0, 10},
+	}
+}

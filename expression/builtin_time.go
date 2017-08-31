@@ -293,32 +293,56 @@ func (c *dateLiteralFunctionClass) getFunction(args []Expression, ctx context.Co
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
+	tm, err := c.getDate(args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString)
 	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, 10, 0
-	sig := &builtinDateLiteralSig{baseTimeBuiltinFunc{bf}}
+	sig := &builtinDateLiteralSig{baseTimeBuiltinFunc{bf}, tm}
 	return sig.setSelf(sig), nil
+}
+
+func (c *dateLiteralFunctionClass) getDate(args []Expression) (types.Time, error) {
+	constant, ok := args[0].(*Constant)
+	if !ok {
+		return types.Time{}, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	str := constant.Value.GetString()
+	if !DatePattern.MatchString(str) {
+		return types.Time{}, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	ret, err := types.ParseDate(str)
+	if err != nil {
+		return types.Time{}, errors.Trace(err)
+	}
+	return ret, nil
 }
 
 type builtinDateLiteralSig struct {
 	baseTimeBuiltinFunc
+	tm types.Time
 }
 
 // evalTime evals DATE 'stringLit'.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
 func (b *builtinDateLiteralSig) evalTime(row []types.Datum) (types.Time, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	str, isNull, err := b.args[0].EvalString(row, sc)
-	if isNull || err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-	if !DatePattern.MatchString(str) {
-		return types.Time{}, true, errors.Trace(types.ErrInvalidTimeFormat)
-	}
-	ret, err := types.ParseDate(str)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-	return ret, false, nil
+	/*
+		sc := b.ctx.GetSessionVars().StmtCtx
+		str, isNull, err := b.args[0].EvalString(row, sc)
+		if isNull || err != nil {
+			return types.Time{}, true, errors.Trace(err)
+		}
+		if !DatePattern.MatchString(str) {
+			return types.Time{}, true, errors.Trace(types.ErrInvalidTimeFormat)
+		}
+		ret, err := types.ParseDate(str)
+		if err != nil {
+			return types.Time{}, true, errors.Trace(err)
+		}
+		return ret, false, nil
+	*/
+	return b.tm, false, nil
 }
 
 func convertDatumToTime(sc *variable.StatementContext, d types.Datum) (t types.Time, err error) {

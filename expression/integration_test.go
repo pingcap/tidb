@@ -2237,25 +2237,25 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	r = tk.MustQuery("select date'731124', date '011124'")
 	r.Check(testkit.Rows("1973-11-24 2001-11-24"))
 
-	rs, _ := tk.Exec("select date '0000-00-00 00:00:00';")
-	_, err := tidb.GetRows(rs)
+	_, err := tk.Exec("select date '0000-00-00 00:00:00';")
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
-	rs, _ = tk.Exec("select date '2017-99-99';")
-	_, err = tidb.GetRows(rs)
+	_, err = tk.Exec("select date '2017-99-99';")
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
-	rs, _ = tk.Exec("select date '2017-2-31';")
-	_, err = tidb.GetRows(rs)
+	_, err = tk.Exec("select date '2017-2-31';")
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
-	rs, _ = tk.Exec("select date '201712-31';")
-	_, err = tidb.GetRows(rs)
+	_, err = tk.Exec("select date '201712-31';")
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
-	rs, _ = tk.Exec("select date 'abcdefg';")
-	_, err = tidb.GetRows(rs)
+	_, err = tk.Exec("select date 'abcdefg';")
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestLiterals(c *C) {
