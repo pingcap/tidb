@@ -589,11 +589,6 @@ type builtinArithmeticIntDivideDecimalSig struct{ baseIntBuiltinFunc }
 
 func (s *builtinArithmeticIntDivideIntUnsignedSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	a, isNull, err := s.args[0].EvalInt(row, sc)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-
 	b, isNull, err := s.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -601,6 +596,11 @@ func (s *builtinArithmeticIntDivideIntUnsignedSig) evalInt(row []types.Datum) (v
 
 	if b == 0 {
 		return 0, true, nil
+	}
+
+	a, isNull, err := s.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
 	if a < 0 && -a >= b {
@@ -616,11 +616,6 @@ func (s *builtinArithmeticIntDivideIntUnsignedSig) evalInt(row []types.Datum) (v
 
 func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	a, isNull, err := s.args[0].EvalInt(row, sc)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-
 	b, isNull, err := s.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -628,6 +623,11 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (val int64
 
 	if b == 0 {
 		return 0, true, nil
+	}
+
+	a, isNull, err := s.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
 	ret, err := types.DivInt64(a, b)
