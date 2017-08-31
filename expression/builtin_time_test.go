@@ -1374,7 +1374,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	fc := funcs[ast.UnixTimestamp]
 	f, err := fc.getFunction(nil, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsFalse)
+	c.Assert(f.canBeFolded(), IsFalse)
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
@@ -1401,7 +1401,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	args = []types.Datum{types.NewDatum(nil)}
 	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsFalse)
+	c.Assert(f.canBeFolded(), IsFalse)
 	d, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.IsNull(), Equals, true)
