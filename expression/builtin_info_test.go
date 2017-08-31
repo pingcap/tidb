@@ -222,5 +222,5 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 
 	f, err := funcs[ast.LastInsertId].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsFalse)
+	c.Assert(f.canBeFolded(), IsFalse)
 }
