@@ -496,6 +496,7 @@ func (pc pbConverter) convertToPBExpr(expr *ScalarFunction, tp tipb.ExprType) *t
 		if code > 0 {
 			return &tipb.Expr{Tp: tipb.ExprType_ScalarFunc, Sig: &code, Children: children, FieldType: toPBFieldType(expr.RetType)}
 		}
+		return nil
 	}
 	return &tipb.Expr{Tp: tp, Children: children}
 }
