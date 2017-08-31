@@ -60,6 +60,7 @@ func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	fc := funcs[ast.FoundRows]
 	f, err := fc.getFunction(nil, ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.isDeterministic(), IsFalse)
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(2))
