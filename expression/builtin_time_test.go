@@ -681,7 +681,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		return tt
 	}
 
-	for _, x := range []struct {
+	for i, x := range []struct {
 		fc  functionClass
 		now func() time.Time
 	}{
@@ -690,7 +690,11 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	} {
 		f, err := x.fc.getFunction(datumsToConstants(nil), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsFalse)
+		if i == 0 {
+			c.Assert(f.isDeterministic(), IsTrue)
+		} else {
+			c.Assert(f.isDeterministic(), IsFalse)
+		}
 		v, err := f.eval(nil)
 		ts := x.now()
 		c.Assert(err, IsNil)
