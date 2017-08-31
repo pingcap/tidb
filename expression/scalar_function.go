@@ -113,8 +113,7 @@ func (sf *ScalarFunction) Clone() Expression {
 	}
 	switch sf.FuncName.L {
 	case ast.Cast:
-		newFunc, _ := buildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
-		return newFunc
+		return buildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
 	case ast.Values:
 		v := sf.Function.(*builtinValuesSig)
 		return NewValuesFunc(v.offset, sf.GetType(), sf.GetCtx())

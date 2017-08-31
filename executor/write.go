@@ -690,9 +690,9 @@ func (e *InsertExec) Next() (Row, error) {
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(cols)
+		rows, err = e.getRowsSelect(cols, e.Ignore)
 	} else {
-		rows, err = e.getRows(cols)
+		rows, err = e.getRows(cols, e.Ignore)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -734,6 +734,7 @@ func (e *InsertExec) Next() (Row, error) {
 				if err = e.onDuplicateUpdate(row, h, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
 				}
+				rowCount++
 				continue
 			}
 		}
@@ -860,7 +861,7 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCoun
 	return nil
 }
 
-func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err error) {
+func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]types.Datum, err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
 		return nil, errors.Trace(err)
@@ -873,7 +874,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 			return nil, errors.Trace(err)
 		}
 		e.currRow = int64(i)
-		rows[i], err = e.getRow(cols, list)
+		rows[i], err = e.getRow(cols, list, ignoreErr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -881,7 +882,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 	return
 }
 
-func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression) ([]types.Datum, error) {
+func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(list))
 	for i, expr := range list {
 		val, err := expr.Eval(nil)
@@ -890,10 +891,10 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 			return nil, errors.Trace(err)
 		}
 	}
-	return e.fillRowData(cols, vals, false)
+	return e.fillRowData(cols, vals, ignoreErr)
 }
 
-func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
+func (e *InsertValues) getRowsSelect(cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
 	if e.SelectExec.Schema().Len() != len(cols) {
 		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
@@ -908,7 +909,7 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 			break
 		}
 		e.currRow = int64(len(rows))
-		row, err := e.fillRowData(cols, innerRow, false)
+		row, err := e.fillRowData(cols, innerRow, ignoreErr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1127,9 +1128,9 @@ func (e *ReplaceExec) Next() (Row, error) {
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(cols)
+		rows, err = e.getRowsSelect(cols, false)
 	} else {
-		rows, err = e.getRows(cols)
+		rows, err = e.getRows(cols, false)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
