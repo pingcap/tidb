@@ -471,7 +471,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *variable.StatementCon
 		args = append(args, arg)
 	}
 	if expr.Tp == tipb.ExprType_ScalarFunc {
-		return newDistSQLFunctionBySig(sc, *expr.Sig, expr.FieldType, args)
+		return newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
 	}
 	return newDistSQLFunction(sc, expr.Tp, args)
 }
