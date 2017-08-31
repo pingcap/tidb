@@ -1656,7 +1656,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 	for idx, t := range Dtbl {
 		f, err := maketime.getFunction(datumsToConstants(t["Args"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if t["Want"][0].Kind() == types.KindNull {
@@ -1680,7 +1680,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 	for idx, t := range Dtbl {
 		f, err := maketime.getFunction(datumsToConstants(t["Args"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		got, err := f.eval(nil)
 		c.Assert(err, NotNil)
 		want, err := t["Want"][0].ToString()
