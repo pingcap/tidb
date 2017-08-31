@@ -214,5 +214,5 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 
 	f, err := funcs[ast.Length].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }

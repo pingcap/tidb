@@ -793,7 +793,7 @@ func (c *randFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, argTps...)
 	bt := baseRealBuiltinFunc{bf}
-	bt.deterministic = false
+	bt.foldable = false
 	if len(args) == 0 {
 		sig = &builtinRandSig{bt, nil}
 	} else {

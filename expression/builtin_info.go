@@ -60,7 +60,7 @@ type databaseFunctionClass struct {
 func (c *databaseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinDatabaseSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -86,7 +86,7 @@ type foundRowsFunctionClass struct {
 func (c *foundRowsFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinFoundRowsSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -114,7 +114,7 @@ type currentUserFunctionClass struct {
 func (c *currentUserFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinCurrentUserSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -142,7 +142,7 @@ type userFunctionClass struct {
 func (c *userFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinUserSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -169,7 +169,7 @@ type connectionIDFunctionClass struct {
 func (c *connectionIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinConnectionIDSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -202,7 +202,7 @@ func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.C
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argsTp...)
 	bf.tp.Flag |= mysql.UnsignedFlag
-	bf.deterministic = false
+	bf.foldable = false
 
 	if len(args) == 1 {
 		sig = &builtinLastInsertIDWithIDSig{baseIntBuiltinFunc{bf}}
@@ -247,7 +247,7 @@ type versionFunctionClass struct {
 func (c *versionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinVersionSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
