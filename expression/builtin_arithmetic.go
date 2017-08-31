@@ -268,7 +268,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(args []Expression, ctx contex
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
 		sig := &builtinArithmeticMinusDecimalSig{baseDecimalBuiltinFunc{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_PlusDecimal)
+		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig.setSelf(sig), nil
 	} else {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
@@ -277,7 +277,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(args []Expression, ctx contex
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		sig := &builtinArithmeticMinusIntSig{baseIntBuiltinFunc: baseIntBuiltinFunc{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
+		sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
 		return sig.setSelf(sig), nil
 	}
 }
@@ -497,13 +497,11 @@ func (c *arithmeticDivideFunctionClass) getFunction(args []Expression, ctx conte
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		c.setType4DivReal(bf.tp)
 		sig := &builtinArithmeticDivideRealSig{baseRealBuiltinFunc{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_MultiplyReal)
 		return sig.setSelf(sig), nil
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 	c.setType4DivDecimal(bf.tp, tpA, tpB)
 	sig := &builtinArithmeticDivideDecimalSig{baseDecimalBuiltinFunc{bf}}
-	sig.setPbCode(tipb.ScalarFuncSig_MultiplyDecimal)
 	return sig.setSelf(sig), nil
 }
 
