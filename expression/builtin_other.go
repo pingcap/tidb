@@ -46,7 +46,7 @@ type rowFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rowFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *rowFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -75,7 +75,7 @@ type setVarFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *setVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *setVarFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinSetVarSig{newBaseBuiltinFunc(args, ctx)}
 	bt.foldable = false
@@ -109,7 +109,7 @@ type getVarFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *getVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *getVarFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinGetVarSig{newBaseBuiltinFunc(args, ctx)}
 	bt.foldable = false
@@ -141,7 +141,7 @@ type valuesFunctionClass struct {
 	offset int
 }
 
-func (c *valuesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *valuesFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinValuesSig{newBaseBuiltinFunc(args, ctx), c.offset}
 	bt.foldable = false
@@ -170,7 +170,7 @@ type bitCountFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitCountFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *bitCountFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}

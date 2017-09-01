@@ -687,7 +687,7 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
-	getFunction(args []Expression, ctx context.Context) (builtinFunc, error)
+	getFunction(ctx context.Context, args []Expression) (builtinFunc, error)
 }
 
 // funcs holds all registered builtin functions.
