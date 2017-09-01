@@ -2045,8 +2045,8 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	_, err = tidb.GetRows(rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_timestamp timestamp, c_enum enum('a','b','c'));")
-	tk.MustExec("INSERT INTO t VALUE('abc', '12:00:00', 12, 0, '2017-08-05 18:19:03', 'b');")
+	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_int_unsigned int unsigned, c_timestamp timestamp, c_enum enum('a','b','c'));")
+	tk.MustExec("INSERT INTO t VALUE('abc', '12:00:00', 12, 0, 5, '2017-08-05 18:19:03', 'b');")
 	result = tk.MustQuery("select c_varchar div nonzero, c_time div nonzero, c_time div zero, c_timestamp div nonzero, c_timestamp div zero from t;")
 	result.Check(testkit.Rows("0 10000 <nil> 1680900431825 <nil>"))
 	rs, err = tk.Exec("select c_varchar div zero from t")
@@ -2061,6 +2061,8 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrDivByZero), IsTrue)
 	result = tk.MustQuery("select c_time div c_enum, c_timestamp div c_time, c_timestamp div c_enum from t;")
 	result.Check(testkit.Rows("60000 168090043 10085402590951"))
+	result = tk.MustQuery("select c_int_unsigned div nonzero, nonzero div c_int_unsigned, c_int_unsigned div zero from t;")
+	result.Check(testkit.Rows("0 2 <nil>"))
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {

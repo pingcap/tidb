@@ -47,7 +47,6 @@ var (
 	_ builtinFunc = &builtinArithmeticMultiplyDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntSig{}
-	_ builtinFunc = &builtinArithmeticIntDivideIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticIntDivideIntSig{}
 	_ builtinFunc = &builtinArithmeticIntDivideDecimalSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
@@ -567,8 +566,6 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(args []Expression, ctx co
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
-			sig := &builtinArithmeticIntDivideIntUnsignedSig{baseIntBuiltinFunc{bf}}
-			return sig.setSelf(sig), nil
 		}
 		sig := &builtinArithmeticIntDivideIntSig{baseIntBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
@@ -581,11 +578,10 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(args []Expression, ctx co
 	return sig.setSelf(sig), nil
 }
 
-type builtinArithmeticIntDivideIntUnsignedSig struct{ baseIntBuiltinFunc }
 type builtinArithmeticIntDivideIntSig struct{ baseIntBuiltinFunc }
 type builtinArithmeticIntDivideDecimalSig struct{ baseIntBuiltinFunc }
 
-func (s *builtinArithmeticIntDivideIntUnsignedSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	b, isNull, err := s.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
@@ -601,35 +597,31 @@ func (s *builtinArithmeticIntDivideIntUnsignedSig) evalInt(row []types.Datum) (v
 		return 0, isNull, errors.Trace(err)
 	}
 
-	if a < 0 && -a >= b {
-		return 0, false, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%d, %d)", a, b))
+	var (
+		ret int64
+		val uint64
+	)
+	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
+	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+
+	switch {
+	case isLHSUnsigned && isRHSUnsigned:
+		ret = a / b
+	case isLHSUnsigned && !isRHSUnsigned:
+		val, err = types.DivUintWithInt(uint64(a), b)
+		ret = int64(val)
+	case !isLHSUnsigned && isRHSUnsigned:
+		val, err = types.DivIntWithUint(a, uint64(b))
+		ret = int64(val)
+	case !isLHSUnsigned && !isRHSUnsigned:
+		ret, err = types.DivInt64(a, b)
 	}
 
-	if a != 0 && b < 0 && -b <= a {
-		return 0, false, types.ErrOverflow.GenByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%d, %d)", a, b))
+	if err != nil {
+		return ret, false, errors.Trace(err)
 	}
 
-	return a / b, false, nil
-}
-
-func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
-	sc := s.ctx.GetSessionVars().StmtCtx
-	b, isNull, err := s.args[1].EvalInt(row, sc)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-
-	if b == 0 {
-		return 0, true, nil
-	}
-
-	a, isNull, err := s.args[0].EvalInt(row, sc)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-
-	ret, err := types.DivInt64(a, b)
-	return ret, false, err
+	return ret, false, nil
 }
 
 func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64, bool, error) {
@@ -647,16 +639,16 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64
 	c := &types.MyDecimal{}
 	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
 	if err == types.ErrDivByZero {
-		return 0, true, err
+		return 0, true, errors.Trace(err)
 	}
 
 	if err != nil {
-		return 0, false, err
+		return 0, false, errors.Trace(err)
 	}
 
 	ret, err := c.ToInt()
 	if err == types.ErrOverflow {
-		return 0, false, err
+		return 0, false, errors.Trace(err)
 	}
 
 	return ret, false, nil

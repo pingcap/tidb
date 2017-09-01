@@ -274,7 +274,6 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 	testCases := []struct {
 		args   []interface{}
 		expect interface{}
-		err    error
 	}{
 		{
 			args:   []interface{}{int64(13), int64(11)},
