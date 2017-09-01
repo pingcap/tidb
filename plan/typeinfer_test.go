@@ -103,6 +103,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4TimeFuncs()...)
 	tests = append(tests, s.createTestCase4LikeFuncs()...)
 	tests = append(tests, s.createTestCase4JSONFuncs()...)
+	tests = append(tests, s.createTestCase4MiscellaneousFunc()...)
 
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -1681,5 +1682,25 @@ func (s *testPlanSuite) createTestCase4JSONFuncs() []typeInferTestCase {
 		{"json_merge(c_json, c_json)", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{"json_object('k', 'v')", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{"json_array('k', 'v')", mysql.TypeJSON, charset.CharsetUTF8, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
+	}
+}
+
+func (s *testPlanSuite) createTestCase4MiscellaneousFunc() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"get_lock(c_char, c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"get_lock(c_char, c_bigint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"get_lock(c_char, c_float_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"get_lock(c_char, c_double_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"get_lock(c_char, c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"get_lock(c_varchar, c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"get_lock(c_text_d, c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+
+		{"release_lock(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"release_lock(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"release_lock(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"release_lock(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"release_lock(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"release_lock(c_varchar)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"release_lock(c_text_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 	}
 }
