@@ -659,8 +659,8 @@ type InsertExec struct {
 
 	OnDuplicate []*expression.Assignment
 
-	Priority mysql.PriorityEnum
-	Ignore   bool
+	Priority  mysql.PriorityEnum
+	IgnoreErr bool
 
 	finished bool
 }
@@ -690,9 +690,9 @@ func (e *InsertExec) Next() (Row, error) {
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(cols, e.Ignore)
+		rows, err = e.getRowsSelect(cols, e.IgnoreErr)
 	} else {
-		rows, err = e.getRows(cols, e.Ignore)
+		rows, err = e.getRows(cols, e.IgnoreErr)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -712,7 +712,7 @@ func (e *InsertExec) Next() (Row, error) {
 			txn = e.ctx.Txn()
 			rowCount = 0
 		}
-		if len(e.OnDuplicate) == 0 && !e.Ignore {
+		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := e.Table.AddRecord(e.ctx, row)
@@ -727,7 +727,7 @@ func (e *InsertExec) Next() (Row, error) {
 			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-			if e.Ignore {
+			if e.IgnoreErr {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
@@ -1202,7 +1202,7 @@ type UpdateExec struct {
 
 	SelectExec  Executor
 	OrderedList []*expression.Assignment
-	Ignore      bool
+	IgnoreErr   bool
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
 	updatedRowKeys map[int64]map[int64]struct{}
@@ -1262,7 +1262,7 @@ func (e *UpdateExec) Next() (Row, error) {
 				continue
 			}
 
-			if kv.ErrKeyExists.Equal(err1) && e.Ignore {
+			if kv.ErrKeyExists.Equal(err1) && e.IgnoreErr {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
 				continue
 			}

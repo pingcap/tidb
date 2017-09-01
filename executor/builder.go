@@ -288,7 +288,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 		Priority:     v.Priority,
-		Ignore:       v.Ignore,
+		IgnoreErr:    v.IgnoreErr,
 	}
 	return insert
 }
@@ -838,7 +838,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		SelectExec:   b.build(v.Children()[0]),
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
-		Ignore:       v.Ignore,
+		IgnoreErr:    v.IgnoreErr,
 	}
 }
 

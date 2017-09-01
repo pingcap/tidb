@@ -1456,7 +1456,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 
 	updt := Update{
 		OrderedList: orderedList,
-		Ignore:      update.Ignore,
+		IgnoreErr:   update.IgnoreErr,
 	}.init(b.allocator, b.ctx)
 	addChild(updt, p)
 	updt.SetSchema(p.Schema())

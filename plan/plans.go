@@ -127,7 +127,7 @@ type Insert struct {
 
 	IsReplace bool
 	Priority  mysql.PriorityEnum
-	Ignore    bool
+	IgnoreErr bool
 
 	GenCols InsertGeneratedColumns
 }
