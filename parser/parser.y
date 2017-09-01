@@ -6327,9 +6327,9 @@ UpdateStmt:
 		}
 		st := &ast.UpdateStmt{
 			LowPriority:	$2.(bool),
-			TableRefs:	    &ast.TableRefsClause{TableRefs: refs},
-			List:		    $6.([]*ast.Assignment),
-			Ignore:         $3.(bool),	
+			TableRefs:	&ast.TableRefsClause{TableRefs: refs},
+			List:		$6.([]*ast.Assignment),
+			Ignore:		$3.(bool),
 		}
 		if $7 != nil {
 			st.Where = $7.(ast.ExprNode)
@@ -6346,9 +6346,9 @@ UpdateStmt:
 	{
 		st := &ast.UpdateStmt{
 			LowPriority:	$2.(bool),
-			TableRefs:	    &ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
-			List:		    $6.([]*ast.Assignment),
-			Ignore:         $3.(bool),
+			TableRefs:	&ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
+			List:		$6.([]*ast.Assignment),
+			Ignore:		$3.(bool),
 		}
 		if $7 != nil {
 			st.Where = $7.(ast.ExprNode)
