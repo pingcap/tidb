@@ -357,7 +357,6 @@ func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 
 func (it *copIterator) run(ctx goctx.Context) {
 	taskCh := make(chan *copTask)
-	fmt.Println("copIterator run concurrency:", it.concurrency)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
