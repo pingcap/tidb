@@ -94,7 +94,7 @@ type builtinJSONTypeSig struct {
 	baseStringBuiltinFunc
 }
 
-func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *jsonTypeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -123,7 +123,7 @@ type builtinJSONExtractSig struct {
 	baseJSONBuiltinFunc
 }
 
-func (c *jsonExtractFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *jsonExtractFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -173,7 +173,7 @@ type builtinJSONUnquoteSig struct {
 	baseStringBuiltinFunc
 }
 
-func (c *jsonUnquoteFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *jsonUnquoteFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -201,7 +201,7 @@ type builtinJSONSetSig struct {
 	baseJSONBuiltinFunc
 }
 
-func (c *jsonSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *jsonSetFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -233,7 +233,7 @@ type builtinJSONInsertSig struct {
 	baseJSONBuiltinFunc
 }
 
-func (c *jsonInsertFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *jsonInsertFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -265,7 +265,7 @@ type builtinJSONReplaceSig struct {
 	baseJSONBuiltinFunc
 }
 
-func (c *jsonReplaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *jsonReplaceFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -297,7 +297,7 @@ type builtinJSONRemoveSig struct {
 	baseJSONBuiltinFunc
 }
 
-func (c *jsonRemoveFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *jsonRemoveFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -348,7 +348,7 @@ type builtinJSONMergeSig struct {
 	baseJSONBuiltinFunc
 }
 
-func (c *jsonMergeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *jsonMergeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -388,7 +388,7 @@ type builtinJSONObjectSig struct {
 	baseJSONBuiltinFunc
 }
 
-func (c *jsonObjectFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *jsonObjectFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -440,7 +440,7 @@ type builtinJSONArraySig struct {
 	baseJSONBuiltinFunc
 }
 
-func (c *jsonArrayFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *jsonArrayFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
