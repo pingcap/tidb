@@ -41,7 +41,7 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	fc := funcs[ast.Case]
 	for _, t := range tbl {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg...)), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -83,7 +83,7 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 	for _, t := range tbl {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
@@ -137,7 +137,7 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 
 	f, err := funcs[ast.Ifnull].getFunction([]Expression{Zero, Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 
 	f, err = funcs[ast.Ifnull].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, NotNil)

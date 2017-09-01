@@ -85,8 +85,8 @@ func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpReal)
 	bf.tp.Flen = 21
+	bf.foldable = false
 	sig := &builtinSleepSig{baseIntBuiltinFunc{bf}}
-	sig.deterministic = false
 	return sig.setSelf(sig), nil
 }
 
@@ -720,7 +720,7 @@ func (c *uuidFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
 	bf.tp.Flen = 36
-	bf.deterministic = false
+	bf.foldable = false
 	sig := &builtinUUIDSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
