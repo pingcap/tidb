@@ -573,7 +573,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from update_unique").Check(testkit.Rows("1 1", "2 2"))
 
-	// test update ignore
+	// test update ignore for pimary key
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a bigint, primary key (a));")
 	tk.MustExec("insert into t values (1)")
@@ -582,6 +582,18 @@ func (s *testSuite) TestUpdate(c *C) {
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
+
+	// test update ignore for unique key
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint, unique key I_uniq (a));")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (2)")
+	_, err = tk.Exec("update ignore t set a = 1 where a = 2;")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1062 key already exist"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
