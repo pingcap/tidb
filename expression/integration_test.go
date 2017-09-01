@@ -184,6 +184,17 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	tk.MustExec("insert into t1 (a,b) values(1,10),(1,20),(2,30),(2,40);")
 	tk.MustQuery("select any_value(a), sum(b) from t1;").Check(testkit.Rows("1 100"))
 	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
+
+	// for locks
+	result := tk.MustQuery(`SELECT GET_LOCK('test_lock1', 10);`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT GET_LOCK('test_lock2', 10);`)
+	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock2');`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock1');`)
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestConvertToBit(c *C) {
