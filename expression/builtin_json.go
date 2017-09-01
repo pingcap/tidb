@@ -26,9 +26,11 @@ import (
 const (
 	// decimal4CastJSONDirectly is used for really cast to JSON, which means for
 	// string we should parse it into JSON but not use that as primitive.
+	// For example, CAST('{}' as JSON) will return JSON::Str('{}').
 	decimal4CastJSONDirectly int = 0
 	// decimal4CastJSONPostWrapped is used for post-wrapped cast to JSON, which
 	// means for string we should use that as primitive but not parse it.
+	// For example, CAST('{}' as JSON) will return JSON::Object(empty).
 	decimal4CastJSONPostWrapped int = -1
 
 	// jsonTypeFlen is the Flen of JSON_TYPE builtin function.
