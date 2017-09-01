@@ -134,21 +134,22 @@ func (c *lockFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinLockSig{newBaseBuiltinFunc(args, ctx)}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpInt)
+	sig := &builtinLockSig{baseIntBuiltinFunc{bf}}
+	bf.tp.Flen = 1
 	return sig.setSelf(sig), nil
 }
 
 type builtinLockSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinLockSig.
+// evalInt evals a builtinLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
 // The lock function will do nothing.
 // Warning: get_lock() function is parsed but ignored.
-func (b *builtinLockSig) eval(_ []types.Datum) (d types.Datum, err error) {
-	d.SetInt64(1)
-	return d, nil
+func (b *builtinLockSig) evalInt(_ []types.Datum) (int64, bool, error) {
+	return 1, false, nil
 }
 
 type releaseLockFunctionClass struct {
@@ -159,21 +160,22 @@ func (c *releaseLockFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinReleaseLockSig{newBaseBuiltinFunc(args, ctx)}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	sig := &builtinReleaseLockSig{baseIntBuiltinFunc{bf}}
+	bf.tp.Flen = 1
 	return sig.setSelf(sig), nil
 }
 
 type builtinReleaseLockSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinReleaseLockSig.
+// evalInt evals a builtinReleaseLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
 // The release lock function will do nothing.
 // Warning: release_lock() function is parsed but ignored.
-func (b *builtinReleaseLockSig) eval(_ []types.Datum) (d types.Datum, err error) {
-	d.SetInt64(1)
-	return
+func (b *builtinReleaseLockSig) evalInt(_ []types.Datum) (int64, bool, error) {
+	return 1, false, nil
 }
 
 type anyValueFunctionClass struct {
