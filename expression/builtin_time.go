@@ -1493,7 +1493,7 @@ func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Co
 		sig = &builtinCurrentTime0ArgSig{baseDurationBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
-	// args[0] must be an in constant which will not be null.
+	// args[0] must be a constant which should not be null.
 	_, ok := args[0].(*Constant)
 	fsp := int64(types.MaxFsp)
 	if ok {
