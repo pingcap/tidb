@@ -114,7 +114,7 @@ func (s *testEvaluatorSuite) TestUUID(c *C) {
 	}
 	bf, err := funcs[ast.UUID].getFunction(datumsToConstants(nil), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(bf.isDeterministic(), IsFalse)
+	c.Assert(bf.canBeFolded(), IsFalse)
 }
 
 func (s *testEvaluatorSuite) TestAnyValue(c *C) {
