@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -45,7 +46,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc := funcs[ast.Date]
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Expect"][0])
@@ -76,7 +77,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc := funcs[ast.Year]
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Year"][0])
@@ -84,7 +85,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.Month]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Month"][0])
@@ -92,7 +93,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.MonthName]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MonthName"][0])
@@ -122,7 +123,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["WeekDay"][0])
@@ -144,7 +145,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.WeekOfYear]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["WeekOfYear"][0])
@@ -152,7 +153,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.YearWeek]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["YearWeek"][0], Commentf("no.%d", ith))
@@ -183,7 +184,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc := funcs[ast.Year]
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Year"][0])
@@ -191,7 +192,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.Month]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Month"][0])
@@ -199,7 +200,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.MonthName]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MonthName"][0])
@@ -229,7 +230,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["WeekDay"][0])
@@ -258,7 +259,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		fc = funcs[ast.YearWeek]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["YearWeek"][0])
@@ -297,7 +298,7 @@ func (s *testEvaluatorSuite) TestMonthName(c *C) {
 
 	f, err := funcs[ast.MonthName].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestDayName(c *C) {
@@ -334,7 +335,7 @@ func (s *testEvaluatorSuite) TestDayName(c *C) {
 
 	f, err := funcs[ast.DayName].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestDayOfWeek(c *C) {
@@ -369,7 +370,7 @@ func (s *testEvaluatorSuite) TestDayOfWeek(c *C) {
 
 	f, err := funcs[ast.DayOfWeek].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestDayOfMonth(c *C) {
@@ -404,7 +405,7 @@ func (s *testEvaluatorSuite) TestDayOfMonth(c *C) {
 
 	f, err := funcs[ast.DayOfMonth].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestDayOfYear(c *C) {
@@ -439,7 +440,7 @@ func (s *testEvaluatorSuite) TestDayOfYear(c *C) {
 
 	f, err := funcs[ast.DayOfYear].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestDateFormat(c *C) {
@@ -511,7 +512,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		fc := funcs[ast.Hour]
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Hour"][0])
@@ -519,7 +520,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		fc = funcs[ast.Minute]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Minute"][0])
@@ -527,7 +528,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		fc = funcs[ast.Second]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Second"][0])
@@ -535,7 +536,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		fc = funcs[ast.MicroSecond]
 		f, err = fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err = f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MicroSecond"][0])
@@ -552,7 +553,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	fc := funcs[ast.Hour]
 	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
@@ -560,7 +561,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	fc = funcs[ast.Minute]
 	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
@@ -568,7 +569,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	fc = funcs[ast.Second]
 	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
@@ -576,7 +577,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	fc = funcs[ast.MicroSecond]
 	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
@@ -668,7 +669,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 
 	f, err := funcs[ast.Time].getFunction([]Expression{Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
@@ -680,7 +681,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		return tt
 	}
 
-	for _, x := range []struct {
+	for i, x := range []struct {
 		fc  functionClass
 		now func() time.Time
 	}{
@@ -689,7 +690,11 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	} {
 		f, err := x.fc.getFunction(datumsToConstants(nil), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsFalse)
+		if i == 0 {
+			c.Assert(f.canBeFolded(), IsTrue)
+		} else {
+			c.Assert(f.canBeFolded(), IsFalse)
+		}
 		v, err := f.eval(nil)
 		ts := x.now()
 		c.Assert(err, IsNil)
@@ -904,7 +909,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 		varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", timezone)
 		f, err := fc.getFunction(datumsToConstants(nil), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsFalse)
+		c.Assert(f.canBeFolded(), IsFalse)
 		v, err := f.eval(nil)
 		last := time.Now()
 		c.Assert(err, IsNil)
@@ -994,7 +999,7 @@ func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
 	fc := funcs[ast.CurrentDate]
 	f, err := fc.getFunction(datumsToConstants(nil), mock.NewContext())
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsFalse)
+	c.Assert(f.canBeFolded(), IsFalse)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
@@ -1055,7 +1060,7 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	for _, test := range tests {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.param)), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		if test.expect > 0 {
 			c.Assert(err, IsNil)
@@ -1069,7 +1074,7 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 
 	f, err := fc.getFunction(make([]Expression, 0, 0), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err := f.eval(nil)
 	n := v.GetMysqlDuration()
 	c.Assert(n.String(), HasLen, 8)
@@ -1107,7 +1112,7 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		format := types.NewStringDatum(test.Format)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{date, format}), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if !test.Success {
@@ -1155,7 +1160,7 @@ func (s *testEvaluatorSuite) TestFromDays(c *C) {
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{t1}), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 
 		c.Assert(err, IsNil)
@@ -1203,7 +1208,7 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 		t2 := types.NewStringDatum(test.t2)
 
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{t1, t2}), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		result, err := f.eval(nil)
 
@@ -1229,7 +1234,7 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 		t2 := types.NewStringDatum(test.t2)
 
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{t1, t2}), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(d.IsNull(), IsTrue)
@@ -1281,7 +1286,7 @@ func (s *testEvaluatorSuite) TestWeek(c *C) {
 		arg2 := types.NewIntDatum(test.mode)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg1, arg2}), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(result.GetInt64(), Equals, test.expect)
@@ -1305,7 +1310,7 @@ func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 		arg2 := types.NewIntDatum(test.mode)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg1, arg2}), s.ctx)
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(result.GetInt64(), Equals, test.expect)
@@ -1338,7 +1343,7 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 			types.NewStringDatum(test.t2),
 		}
 		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1349,30 +1354,32 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 		types.NewStringDatum("2017-01-00"),
 		types.NewStringDatum("2017-01-01")}), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 	d, err := f.eval(nil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 
 	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
 		{}, types.NewStringDatum("2017-01-01")}), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 	d, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.IsNull(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
+	// Test UNIX_TIMESTAMP().
 	fc := funcs[ast.UnixTimestamp]
 	f, err := fc.getFunction(nil, s.ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.canBeFolded(), IsFalse)
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
 	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
 
-	// Test case for https://github.com/pingcap/tidb/issues/2496
-	// select unix_timestamp(now());
+	// https://github.com/pingcap/tidb/issues/2496
+	// Test UNIX_TIMESTAMP(NOW()).
 	now, isNull, err := evalNowWithFsp(s.ctx, 0)
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsFalse)
@@ -1383,14 +1390,16 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	c.Assert(err, IsNil)
 	d, err = f.eval(nil)
 	c.Assert(err, IsNil)
-	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
-	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
+	val, _ := d.GetMysqlDecimal().ToInt()
+	c.Assert(val-time.Now().Unix(), GreaterEqual, int64(-1))
+	c.Assert(val-time.Now().Unix(), LessEqual, int64(1))
 
-	// Test case for https://github.com/pingcap/tidb/issues/2852
-	// select UNIX_TIMESTAMP(null);
+	// https://github.com/pingcap/tidb/issues/2852
+	// Test UNIX_TIMESTAMP(NULL).
 	args = []types.Datum{types.NewDatum(nil)}
 	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
 	c.Assert(err, IsNil)
+	c.Assert(f.canBeFolded(), IsFalse)
 	d, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.IsNull(), Equals, true)
@@ -1398,23 +1407,50 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	// Set the time_zone variable, because UnixTimestamp() result depends on it.
 	s.ctx.GetSessionVars().TimeZone = time.UTC
 	tests := []struct {
-		input  types.Datum
-		expect string
+		inputDecimal int
+		input        types.Datum
+		expectKind   byte
+		expect       string
 	}{
-		{types.NewIntDatum(20151113102019), "1447410019"},
-		{types.NewStringDatum("2015-11-13 10:20:19"), "1447410019"},
-		{types.NewStringDatum("2015-11-13 10:20:19.012"), "1447410019.012"},
-		{types.NewStringDatum("2017-00-02"), "0"},
+		{0, types.NewIntDatum(151113), types.KindInt64, "1447372800"}, // YYMMDD
+		// TODO: Uncomment the line below after fixing #4232
+		// {5, types.NewFloat64Datum(151113.12345), types.KindMysqlDecimal, "1447372800.00000"},                                           // YYMMDD
+		{0, types.NewIntDatum(20151113), types.KindInt64, "1447372800"}, // YYYYMMDD
+		// TODO: Uncomment the line below after fixing #4232
+		// {5, types.NewFloat64Datum(20151113.12345), types.KindMysqlDecimal, "1447372800.00000"},                                         // YYYYMMDD
+		{0, types.NewIntDatum(151113102019), types.KindInt64, "1447410019"},                                                            // YYMMDDHHMMSS
+		{0, types.NewFloat64Datum(151113102019), types.KindInt64, "1447410019"},                                                        // YYMMDDHHMMSS
+		{2, types.NewFloat64Datum(151113102019.12), types.KindMysqlDecimal, "1447410019.12"},                                           // YYMMDDHHMMSS
+		{0, types.NewDecimalDatum(types.NewDecFromStringForTest("151113102019")), types.KindInt64, "1447410019"},                       // YYMMDDHHMMSS
+		{2, types.NewDecimalDatum(types.NewDecFromStringForTest("151113102019.12")), types.KindMysqlDecimal, "1447410019.12"},          // YYMMDDHHMMSS
+		{7, types.NewDecimalDatum(types.NewDecFromStringForTest("151113102019.1234567")), types.KindMysqlDecimal, "1447410019.123457"}, // YYMMDDHHMMSS
+		{0, types.NewIntDatum(20151113102019), types.KindInt64, "1447410019"},                                                          // YYYYMMDDHHMMSS
+		// TODO: for string literal inputs as below, fsp should be based on user input.
+		{0, types.NewStringDatum("2015-11-13 10:20:19"), types.KindMysqlDecimal, "1447410019.000000"},
+		{0, types.NewStringDatum("2015-11-13 10:20:19.012"), types.KindMysqlDecimal, "1447410019.012000"},
+		{0, types.NewStringDatum("1970-01-01 00:00:00"), types.KindMysqlDecimal, "0.000000"},                 // Min timestamp
+		{0, types.NewStringDatum("2038-01-19 03:14:07.999999"), types.KindMysqlDecimal, "2147483647.999999"}, // Max timestamp
+		{0, types.NewStringDatum("2017-00-02"), types.KindMysqlDecimal, "0"},                                 // Invalid date
+		{0, types.NewStringDatum("1969-12-31 23:59:59.999999"), types.KindMysqlDecimal, "0"},                 // Invalid timestamp
+		{0, types.NewStringDatum("2038-01-19 03:14:08"), types.KindMysqlDecimal, "0"},                        // Invalid timestamp
+		// Below tests irregular inputs.
+		{0, types.NewIntDatum(0), types.KindInt64, "0"},
+		{0, types.NewIntDatum(-1), types.KindInt64, "0"},
+		{0, types.NewIntDatum(12345), types.KindInt64, "0"},
 	}
 
 	for _, test := range tests {
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{test.input}), s.ctx)
-		c.Assert(err, IsNil)
+		fmt.Printf("Begin Test %v\n", test)
+		expr := datumsToConstants([]types.Datum{test.input})
+		expr[0].GetType().Decimal = test.inputDecimal
+		f, err := fc.getFunction(expr, s.ctx)
+		c.Assert(err, IsNil, Commentf("%+v", test))
 		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, Commentf("%+v", test))
+		c.Assert(d.Kind(), Equals, test.expectKind, Commentf("%+v", test))
 		str, err := d.ToString()
-		c.Assert(err, IsNil)
-		c.Assert(str, Equals, test.expect)
+		c.Assert(err, IsNil, Commentf("%+v", test))
+		c.Assert(str, Equals, test.expect, Commentf("%+v", test))
 	}
 }
 
@@ -1556,7 +1592,7 @@ func (s *testEvaluatorSuite) TestMakeDate(c *C) {
 
 	f, err := funcs[ast.MakeDate].getFunction([]Expression{Zero, Zero}, s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestMakeTime(c *C) {
@@ -1656,7 +1692,7 @@ func (s *testEvaluatorSuite) TestQuarter(c *C) {
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(result.GetInt64(), Equals, test.expect)
@@ -1724,7 +1760,7 @@ func (s *testEvaluatorSuite) TestToSeconds(c *C) {
 	for _, test := range tests {
 		t := []types.Datum{types.NewDatum(test.param)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1740,7 +1776,7 @@ func (s *testEvaluatorSuite) TestToSeconds(c *C) {
 	for _, i := range testsNull {
 		t := []types.Datum{types.NewDatum(i)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1765,7 +1801,7 @@ func (s *testEvaluatorSuite) TestToDays(c *C) {
 	for _, test := range tests {
 		t := []types.Datum{types.NewDatum(test.param)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1781,7 +1817,7 @@ func (s *testEvaluatorSuite) TestToDays(c *C) {
 	for _, i := range testsNull {
 		t := []types.Datum{types.NewDatum(i)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1805,7 +1841,7 @@ func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
 	for _, test := range tests {
 		t := []types.Datum{types.NewStringDatum(test.unit), types.NewIntDatum(test.interval), types.NewDatum(test.date)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -1837,7 +1873,7 @@ func (s *testEvaluatorSuite) TestPeriodAdd(c *C) {
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{period, months}), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		if !test.Success {
 			c.Assert(result.IsNull(), IsTrue)
@@ -1883,7 +1919,7 @@ func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 	for i, t := range dtblDate {
 		fc := funcs[ast.TimeFormat]
 		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -2028,7 +2064,7 @@ func (s *testEvaluatorSuite) TestPeriodDiff(c *C) {
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{period1, period2}), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		if !test.Success {
 			c.Assert(result.IsNull(), IsTrue)
@@ -2070,7 +2106,7 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 	for _, test := range tests {
 		t := []types.Datum{types.NewDatum(test.param)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -2087,7 +2123,7 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 	for _, i := range testsNull {
 		t := []types.Datum{types.NewDatum(i)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(d.IsNull(), IsTrue)

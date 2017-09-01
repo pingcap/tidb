@@ -58,7 +58,7 @@ type builtinRowSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRowSig) isDeterministic() bool {
+func (b *builtinRowSig) canBeFolded() bool {
 	return false
 }
 
@@ -78,7 +78,7 @@ type setVarFunctionClass struct {
 func (c *setVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinSetVarSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -112,7 +112,7 @@ type getVarFunctionClass struct {
 func (c *getVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinGetVarSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -144,7 +144,7 @@ type valuesFunctionClass struct {
 func (c *valuesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinValuesSig{newBaseBuiltinFunc(args, ctx), c.offset}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 

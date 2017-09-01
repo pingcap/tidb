@@ -522,11 +522,20 @@ type builtinCastIntAsDurationSig struct {
 }
 
 func (b *builtinCastIntAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(strconv.FormatInt(val, 10), b.tp.Decimal)
+	t, err := types.NumberToDuration(val, b.tp.Decimal)
+	if err != nil {
+		if types.ErrOverflow.Equal(err) {
+			err = sc.HandleOverflow(err, err)
+		}
+		return res, true, errors.Trace(err)
+	}
+
+	res, err = t.ConvertToDuration()
 	return res, false, errors.Trace(err)
 }
 
@@ -1340,7 +1349,7 @@ func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Contex
 	exprTp := expr.GetType().Tp
 	if tp.Tp == exprTp {
 		return expr
-	} else if exprTp == mysql.TypeDate && tp.Tp == mysql.TypeDatetime {
+	} else if (exprTp == mysql.TypeDate || exprTp == mysql.TypeTimestamp) && tp.Tp == mysql.TypeDatetime {
 		return expr
 	}
 	switch x := expr.GetType(); x.Tp {
