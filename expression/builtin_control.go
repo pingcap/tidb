@@ -132,7 +132,7 @@ func inferType4ControlFuncs(tp1, tp2 *types.FieldType) *types.FieldType {
 	return retTp
 }
 
-func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -388,7 +388,7 @@ type ifFunctionClass struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
-func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *ifFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -561,7 +561,7 @@ type ifNullFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *ifNullFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, errors.Trace(err)
 	}
