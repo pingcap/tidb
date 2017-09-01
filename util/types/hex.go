@@ -14,6 +14,7 @@
 package types
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"math"
 	"strings"
@@ -36,6 +37,24 @@ func (h Hex) String() string {
 		return ""
 	}
 	return "0x" + hex.EncodeToString(h.Value)
+}
+
+// NewHexFromBytes creates a new Hex instance by the given bytes.
+func NewHexFromBytes(bytes []byte) Hex {
+	return Hex{bytes}
+}
+
+// NewHexFromUint creates a new Hex instance by the given uint value in BitEndian.
+func NewHexFromUint(value uint64) Hex {
+	bytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(bytes, value)
+	var nonZeroPos int
+	for nonZeroPos = 0; nonZeroPos < 7; nonZeroPos++ {
+		if bytes[nonZeroPos] != 0 {
+			break
+		}
+	}
+	return NewHexFromBytes(bytes[nonZeroPos:])
 }
 
 // ToString returns the string representation for hexadecimal literal.
@@ -64,20 +83,20 @@ func (h Hex) ToInt() (uint64, error) {
 // See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func ParseHexStr(s string) (Hex, error) {
 	if len(s) == 0 {
-		return Hex{}, errors.Errorf("invalid empty string for parsing hexadecimal literal")
+		return NewHexFromBytes(nil), errors.Errorf("invalid empty string for parsing hexadecimal literal")
 	}
 
 	if s[0] == 'x' || s[0] == 'X' {
 		// format is x'val' or X'val'
 		s = strings.Trim(s[1:], "'")
 		if len(s)%2 != 0 {
-			return Hex{}, errors.Errorf("invalid hexadecimal format, must even numbers, but %d", len(s))
+			return NewHexFromBytes(nil), errors.Errorf("invalid hexadecimal format, must even numbers, but %d", len(s))
 		}
 	} else if strings.HasPrefix(s, "0x") {
 		s = s[2:]
 	} else {
 		// here means format is not x'val', X'val' or 0xval.
-		return Hex{}, errors.Errorf("invalid hexadecimal format %s", s)
+		return NewHexFromBytes(nil), errors.Errorf("invalid hexadecimal format %s", s)
 	}
 
 	if len(s) == 0 {
@@ -89,7 +108,7 @@ func ParseHexStr(s string) (Hex, error) {
 	}
 	bytes, err := hex.DecodeString(s)
 	if err != nil {
-		return Hex{}, errors.Trace(err)
+		return NewHexFromBytes(nil), errors.Trace(err)
 	}
-	return Hex{bytes}, nil
+	return NewHexFromBytes(bytes), nil
 }

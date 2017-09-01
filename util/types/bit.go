@@ -30,6 +30,21 @@ type Bit struct {
 // ZeroBit is a Bit literal with zero value.
 var ZeroBit = Bit{Hex{[]byte{}}}
 
+// NewBitFromHex creates a new Bit instance by the content of the given Hex instance.
+func NewBitFromHex(hex Hex) Bit {
+	return Bit{hex}
+}
+
+// NewBitFromBytes creates a new Bit instance by the given bytes.
+func NewBitFromBytes(bytes []byte) Bit {
+	return NewBitFromHex(NewHexFromBytes(bytes))
+}
+
+// NewBitFromUint creates a new Bit instance by the given uint value in BitEndian.
+func NewBitFromUint(value uint64) Bit {
+	return NewBitFromHex(NewHexFromUint(value))
+}
+
 // String implements fmt.Stringer interface.
 func (b Bit) String() string {
 	if len(b.Value) == 0 {
@@ -48,7 +63,7 @@ func (b Bit) String() string {
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-value-literals.html
 func ParseBitStr(s string) (Bit, error) {
 	if len(s) == 0 {
-		return Bit{}, errors.Errorf("invalid empty string for parsing bit type")
+		return NewBitFromBytes(nil), errors.Errorf("invalid empty string for parsing bit type")
 	}
 
 	if s[0] == 'b' || s[0] == 'B' {
@@ -58,7 +73,7 @@ func ParseBitStr(s string) (Bit, error) {
 		s = s[2:]
 	} else {
 		// here means format is not b'val', B'val' or 0bval.
-		return Bit{}, errors.Errorf("invalid bit type format %s", s)
+		return NewBitFromBytes(nil), errors.Errorf("invalid bit type format %s", s)
 	}
 
 	if len(s) == 0 {
@@ -74,10 +89,10 @@ func ParseBitStr(s string) (Bit, error) {
 		strPosition := i << 3
 		val, err := strconv.ParseUint(s[strPosition:strPosition+8], 2, 8)
 		if err != nil {
-			return Bit{}, errors.Trace(err)
+			return NewBitFromBytes(nil), errors.Trace(err)
 		}
 		bytes[i] = byte(val)
 	}
 
-	return Bit{Hex{bytes}}, nil
+	return NewBitFromBytes(bytes), nil
 }

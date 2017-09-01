@@ -2646,10 +2646,6 @@ Literal:
 |	floatLit
 |	decLit
 |	intLit
-	{
-		expr := ast.NewValueExpr($1)
-		$$ = expr
-	}
 |	StringLiteral %prec lowerThanStringLitToken
 	{
 		$$ = $1

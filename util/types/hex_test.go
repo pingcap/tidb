@@ -78,21 +78,45 @@ func (s *testHexSuite) TestToInt(c *C) {
 	tbl := []struct {
 		Input    string
 		Expected uint64
+		HasError bool
 	}{
-		{"x''", 0},
-		{"0x00", 0x0},
-		{"0xff", 0xff},
-		{"0x10ff", 0x10ff},
-		{"0x1010ffff", 0x1010ffff},
-		{"0x1010ffff8080", 0x1010ffff8080},
-		{"0x1010ffff8080ff12", 0x1010ffff8080ff12},
-		{"0x1010ffff8080ff12ff", 0xffffffffffffffff},
+		{"x''", 0, false},
+		{"0x00", 0x0, false},
+		{"0xff", 0xff, false},
+		{"0x10ff", 0x10ff, false},
+		{"0x1010ffff", 0x1010ffff, false},
+		{"0x1010ffff8080", 0x1010ffff8080, false},
+		{"0x1010ffff8080ff12", 0x1010ffff8080ff12, false},
+		{"0x1010ffff8080ff12ff", 0xffffffffffffffff, true},
 	}
 	for _, t := range tbl {
 		hex, err := ParseHexStr(t.Input)
 		c.Assert(err, IsNil)
 		intValue, err := hex.ToInt()
-		c.Assert(err, IsNil)
+		if t.HasError {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+		}
 		c.Assert(intValue, Equals, t.Expected)
+	}
+}
+
+func (s *testHexSuite) TestNewHexFromUint(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input    uint64
+		Expected []byte
+	}{
+		{0x0, []byte{0x0}},
+		{0x1, []byte{0x1}},
+		{0x10, []byte{0x10}},
+		{0x123, []byte{0x1, 0x23}},
+		{0x4D7953514C, []byte{0x4D, 0x79, 0x53, 0x51, 0x4C}},
+		{0x4920616D2061206C, []byte{0x49, 0x20, 0x61, 0x6D, 0x20, 0x61, 0x20, 0x6C}},
+	}
+	for _, t := range tbl {
+		hex := NewHexFromUint(t.Input)
+		c.Assert(hex.Value, DeepEquals, t.Expected, Commentf("%#v", t))
 	}
 }

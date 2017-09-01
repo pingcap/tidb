@@ -212,7 +212,7 @@ func (d *Datum) SetNull() {
 
 // GetHexString gets Hex value
 func (d *Datum) GetHexString() Hex {
-	return Hex{d.b}
+	return NewHexFromBytes(d.b)
 }
 
 // SetHexString sets Hex value
@@ -223,7 +223,7 @@ func (d *Datum) SetHexString(b Hex) {
 
 // GetBitString gets Bit value
 func (d *Datum) GetBitString() Bit {
-	return Bit{Hex{d.b}}
+	return NewBitFromBytes(d.b)
 }
 
 // SetBitString sets Bit value
@@ -702,7 +702,7 @@ func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Dat
 	case mysql.TypeEnum:
 		return d.convertToMysqlEnum(sc, target)
 	case mysql.TypeBit:
-		return d.convertToMysqlBit(sc, target)
+		return d.convertToBitString(sc, target)
 	case mysql.TypeSet:
 		return d.convertToMysqlSet(sc, target)
 	case mysql.TypeJSON:
@@ -1167,15 +1167,16 @@ func (d *Datum) convertToMysqlYear(sc *variable.StatementContext, target *FieldT
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlBit(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToBitString(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+	var ret Datum
 	switch d.k {
 	case KindString, KindBytes, KindBitString, KindHexString:
-		var ret Datum
-		ret.SetBitString(Bit{Hex{Value: d.GetBytes()}})
+		ret.SetBitString(NewBitFromBytes(d.b))
 		return ret, nil
 	default:
 		val, err := d.convertToUint(sc, target)
-		return val, errors.Trace(err)
+		ret.SetBitString(NewBitFromUint(val.GetUint64()))
+		return ret, errors.Trace(err)
 	}
 }
 
