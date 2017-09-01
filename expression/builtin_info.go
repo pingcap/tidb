@@ -57,10 +57,10 @@ type databaseFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *databaseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *databaseFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinDatabaseSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -83,10 +83,10 @@ type foundRowsFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *foundRowsFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *foundRowsFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinFoundRowsSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -111,10 +111,10 @@ type currentUserFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *currentUserFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *currentUserFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinCurrentUserSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -139,10 +139,10 @@ type userFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *userFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *userFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinUserSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -166,10 +166,10 @@ type connectionIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *connectionIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *connectionIDFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinConnectionIDSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -191,7 +191,7 @@ type lastInsertIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *lastInsertIDFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -202,7 +202,7 @@ func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.C
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argsTp...)
 	bf.tp.Flag |= mysql.UnsignedFlag
-	bf.deterministic = false
+	bf.foldable = false
 
 	if len(args) == 1 {
 		sig = &builtinLastInsertIDWithIDSig{baseIntBuiltinFunc{bf}}
@@ -244,10 +244,10 @@ type versionFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *versionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *versionFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinVersionSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -266,7 +266,7 @@ type tidbVersionFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbVersionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *tidbVersionFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -290,7 +290,7 @@ type benchmarkFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *benchmarkFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *benchmarkFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("BENCHMARK")
 }
 
@@ -298,7 +298,7 @@ type charsetFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *charsetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *charsetFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("CHARSET")
 }
 
@@ -306,7 +306,7 @@ type coercibilityFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *coercibilityFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *coercibilityFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("COERCIBILITY")
 }
 
@@ -314,7 +314,7 @@ type collationFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *collationFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *collationFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("COLLATION")
 }
 
@@ -322,6 +322,6 @@ type rowCountFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rowCountFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *rowCountFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("ROW_COUNT")
 }
