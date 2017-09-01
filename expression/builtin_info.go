@@ -99,7 +99,7 @@ type builtinFoundRowsSig struct {
 }
 
 // evalInt evals a builtinFoundRowsSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/information-functions.html#function_found-rows
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_found-rows
 // TODO: SQL_CALC_FOUND_ROWS and LIMIT not support for now, We will finish in another PR.
 func (b *builtinFoundRowsSig) evalInt(row []types.Datum) (int64, bool, error) {
 	data := b.ctx.GetSessionVars()
