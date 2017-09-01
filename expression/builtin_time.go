@@ -141,7 +141,9 @@ var (
 	_ builtinFunc = &builtinUTCTimestampWithoutArgSig{}
 	_ builtinFunc = &builtinExtractSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
-	_ builtinFunc = &builtinUnixTimestampSig{}
+	_ builtinFunc = &builtinUnixTimestampCurrentSig{}
+	_ builtinFunc = &builtinUnixTimestampIntSig{}
+	_ builtinFunc = &builtinUnixTimestampDecSig{}
 	_ builtinFunc = &builtinAddTimeSig{}
 	_ builtinFunc = &builtinConvertTzSig{}
 	_ builtinFunc = &builtinMakeDateSig{}
@@ -245,7 +247,7 @@ type dateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *dateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *dateFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -292,7 +294,7 @@ type dateDiffFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *dateDiffFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *dateDiffFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -327,7 +329,7 @@ type timeDiffFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *timeDiffFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *timeDiffFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -410,7 +412,7 @@ type dateFormatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *dateFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *dateFormatFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -448,7 +450,7 @@ func (b *builtinDateFormatSig) evalString(row []types.Datum) (string, bool, erro
 
 // builtinDateFormat ...
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
-func builtinDateFormat(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+func builtinDateFormat(ctx context.Context, args []types.Datum) (d types.Datum, err error) {
 	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
 	if err != nil {
 		return d, errors.Trace(err)
@@ -470,7 +472,7 @@ type fromDaysFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *fromDaysFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *fromDaysFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -501,7 +503,7 @@ type hourFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *hourFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *hourFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -530,7 +532,7 @@ type minuteFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *minuteFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *minuteFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -559,7 +561,7 @@ type secondFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *secondFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *secondFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -588,7 +590,7 @@ type microSecondFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *microSecondFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *microSecondFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -617,7 +619,7 @@ type monthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *monthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *monthFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -673,7 +675,7 @@ type monthNameFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *monthNameFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *monthNameFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -706,7 +708,7 @@ type dayNameFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *dayNameFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *dayNameFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -741,7 +743,7 @@ type dayOfMonthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *dayOfMonthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *dayOfMonthFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -772,7 +774,7 @@ type dayOfWeekFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *dayOfWeekFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *dayOfWeekFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -805,7 +807,7 @@ type dayOfYearFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *dayOfYearFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *dayOfYearFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -837,7 +839,7 @@ type weekFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *weekFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *weekFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -913,7 +915,7 @@ type weekDayFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *weekDayFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *weekDayFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -949,7 +951,7 @@ type weekOfYearFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *weekOfYearFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *weekOfYearFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -985,7 +987,7 @@ type yearFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *yearFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *yearFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1020,7 +1022,7 @@ type yearWeekFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *yearWeekFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *yearWeekFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1105,7 +1107,7 @@ type fromUnixTimeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *fromUnixTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *fromUnixTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1185,14 +1187,14 @@ func (b *builtinFromUnixTimeSig) eval(row []types.Datum) (d types.Datum, err err
 	if len(args) == 1 {
 		return
 	}
-	return builtinDateFormat([]types.Datum{d, args[1]}, b.ctx)
+	return builtinDateFormat(b.ctx, []types.Datum{d, args[1]})
 }
 
 type getFormatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *getFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *getFormatFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1282,7 +1284,7 @@ func (c *strToDateFunctionClass) getRetTp(arg Expression, ctx context.Context) (
 }
 
 // See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_str-to-date
-func (c *strToDateFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *strToDateFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1388,7 +1390,7 @@ type sysDateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sysDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *sysDateFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1398,7 +1400,7 @@ func (c *sysDateFunctionClass) getFunction(args []Expression, ctx context.Contex
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, argTps...)
 	bf.tp.Flen, bf.tp.Decimal = 19, 0
-	bf.deterministic = false
+	bf.foldable = false
 
 	var sig builtinFunc
 	if len(args) == 1 {
@@ -1448,13 +1450,13 @@ type currentDateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *currentDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *currentDateFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime)
 	bf.tp.Flen, bf.tp.Decimal = 10, 0
-	bf.deterministic = false
+	bf.foldable = false
 	sig := &builtinCurrentDateSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -1478,7 +1480,7 @@ type currentTimeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *currentTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1513,7 +1515,7 @@ type timeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *timeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *timeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1555,13 +1557,13 @@ type utcDateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *utcDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *utcDateFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime)
 	bf.tp.Flen, bf.tp.Decimal = 10, 0
-	bf.deterministic = false
+	bf.foldable = false
 	sig := &builtinUTCDateSig{baseTimeBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
@@ -1604,7 +1606,7 @@ func getFlenAndDecimal4UTCTimestampAndNow(sc *variable.StatementContext, arg Exp
 	return flen, decimal
 }
 
-func (c *utcTimestampFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *utcTimestampFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1619,7 +1621,7 @@ func (c *utcTimestampFunctionClass) getFunction(args []Expression, ctx context.C
 	} else {
 		bf.tp.Flen, bf.tp.Decimal = 19, 0
 	}
-	bf.deterministic = false
+	bf.foldable = false
 
 	var sig builtinFunc
 	if len(args) == 1 {
@@ -1676,7 +1678,7 @@ type nowFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *nowFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *nowFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1760,7 +1762,7 @@ type extractFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *extractFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *extractFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1833,7 +1835,7 @@ type dateArithFunctionClass struct {
 	op ast.DateArithType
 }
 
-func (c *dateArithFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *dateArithFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1966,7 +1968,7 @@ type timestampDiffFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *timestampDiffFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *timestampDiffFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2005,68 +2007,127 @@ type unixTimestampFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *unixTimestampFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *unixTimestampFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinUnixTimestampSig{newBaseBuiltinFunc(args, ctx)}
+	var argTps []evalTp
+	var retTp evalTp
+	var retFLen, retDecimal int
+
+	if len(args) == 0 {
+		retTp, retDecimal = tpInt, 0
+	} else {
+		argTps = []evalTp{tpDatetime}
+		argType := args[0].GetType()
+		argEvaltp := fieldTp2EvalTp(argType)
+		if argEvaltp == tpString {
+			// Treat tpString as unspecified decimal.
+			retDecimal = types.UnspecifiedLength
+		} else {
+			retDecimal = argType.Decimal
+		}
+		if retDecimal > 6 || retDecimal == types.UnspecifiedLength {
+			retDecimal = 6
+		}
+		if retDecimal == 0 {
+			retTp = tpInt
+		} else {
+			retTp = tpDecimal
+		}
+	}
+	if retTp == tpInt {
+		retFLen = 11
+	} else if retTp == tpDecimal {
+		retFLen = 12 + retDecimal
+	} else {
+		panic("Unexpected retTp")
+	}
+
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTps...)
+	bf.foldable = false
+	bf.tp.Flen = retFLen
+	bf.tp.Decimal = retDecimal
+
+	var sig builtinFunc
+	if len(args) == 0 {
+		sig = &builtinUnixTimestampCurrentSig{baseIntBuiltinFunc{bf}}
+	} else if retTp == tpInt {
+		sig = &builtinUnixTimestampIntSig{baseIntBuiltinFunc{bf}}
+	} else if retTp == tpDecimal {
+		sig = &builtinUnixTimestampDecSig{baseDecimalBuiltinFunc{bf}}
+	} else {
+		panic("Unexpected retTp")
+	}
+
 	return sig.setSelf(sig), nil
 }
 
-type builtinUnixTimestampSig struct {
-	baseBuiltinFunc
+// goTimeToMysqlUnixTimestamp converts go time into MySQL's Unix timestamp.
+// MySQL's Unix timestamp ranges in int32. Values out of range should be rewritten to 0.
+func goTimeToMysqlUnixTimestamp(t time.Time, decimal int) *types.MyDecimal {
+	nanoSeconds := t.UnixNano()
+	if nanoSeconds < 0 || (nanoSeconds/1e3) >= (math.MaxInt32+1)*1e6 {
+		return new(types.MyDecimal)
+	}
+	dec := new(types.MyDecimal)
+	// Here we don't use float to prevent precision lose.
+	dec.FromInt(nanoSeconds)
+	dec.Shift(-9)
+	dec.Round(dec, decimal, types.ModeHalfEven)
+	return dec
 }
 
-// eval evals a builtinUnixTimestampSig.
+type builtinUnixTimestampCurrentSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals a UNIX_TIMESTAMP().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
-func (b *builtinUnixTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinUnixTimestampCurrentSig) evalInt(row []types.Datum) (int64, bool, error) {
+	dec := goTimeToMysqlUnixTimestamp(time.Now(), 1)
+	intVal, _ := dec.ToInt() // Ignore truncate errors.
+	return intVal, false, nil
+}
+
+type builtinUnixTimestampIntSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals a UNIX_TIMESTAMP(time).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
+func (b *builtinUnixTimestampIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		// Return 0 for invalid date time.
+		return 0, isNull, nil
+	}
+	t, err := val.Time.GoTime(getTimeZone(b.getCtx()))
 	if err != nil {
-		return d, errors.Trace(err)
+		return 0, false, nil
 	}
-	if len(args) == 0 {
-		now := time.Now().Unix()
-		d.SetInt64(now)
-		return
-	}
+	dec := goTimeToMysqlUnixTimestamp(t, 1)
+	intVal, _ := dec.ToInt() // Ignore truncate errors.
+	return intVal, false, nil
+}
 
-	var (
-		t  types.Time
-		t1 time.Time
-	)
-	switch args[0].Kind() {
-	case types.KindString:
-		t, err = types.ParseTime(args[0].GetString(), mysql.TypeDatetime, types.MaxFsp)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-	case types.KindInt64, types.KindUint64:
-		t, err = types.ParseTimeFromInt64(args[0].GetInt64())
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-	case types.KindMysqlTime:
-		t = args[0].GetMysqlTime()
-	case types.KindNull:
-		return
-	default:
-		return d, errors.Errorf("Unknown args type for unix_timestamp %d", args[0].Kind())
-	}
+type builtinUnixTimestampDecSig struct {
+	baseDecimalBuiltinFunc
+}
 
-	t1, err = t.Time.GoTime(getTimeZone(b.ctx))
+// evalDecimal evals a UNIX_TIMESTAMP(time).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
+func (b *builtinUnixTimestampDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		// Return 0 for invalid date time.
+		return new(types.MyDecimal), isNull, nil
+	}
+	t, err := val.Time.GoTime(getTimeZone(b.getCtx()))
 	if err != nil {
-		d.SetInt64(0)
-		return d, nil
+		return new(types.MyDecimal), false, nil
 	}
-
-	if t.Time.Microsecond() > 0 {
-		var dec types.MyDecimal
-		dec.FromFloat64(float64(t1.Unix()) + float64(t.Time.Microsecond())/1e6)
-		d.SetMysqlDecimal(&dec)
-	} else {
-		d.SetInt64(t1.Unix())
-	}
-	return
+	return goTimeToMysqlUnixTimestamp(t, b.tp.Decimal), false, nil
 }
 
 type timestampFunctionClass struct {
@@ -2092,7 +2153,7 @@ func (c *timestampFunctionClass) getDefaultFsp(tp *types.FieldType) int {
 	return types.MaxFsp
 }
 
-func (c *timestampFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *timestampFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2281,7 +2342,7 @@ type addTimeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *addTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *addTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2355,7 +2416,7 @@ type convertTzFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *convertTzFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *convertTzFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2449,7 +2510,7 @@ type makeDateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *makeDateFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2506,7 +2567,7 @@ type makeTimeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *makeTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *makeTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2590,7 +2651,7 @@ type periodAddFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *periodAddFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *periodAddFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2665,7 +2726,7 @@ type periodDiffFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *periodDiffFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *periodDiffFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2701,7 +2762,7 @@ type quarterFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *quarterFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *quarterFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2738,7 +2799,7 @@ type secToTimeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *secToTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *secToTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2821,7 +2882,7 @@ type subTimeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *subTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *subTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2899,7 +2960,7 @@ type timeFormatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *timeFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *timeFormatFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2947,7 +3008,7 @@ type timeToSecFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *timeToSecFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *timeToSecFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2986,7 +3047,7 @@ type timestampAddFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *timestampAddFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *timestampAddFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3057,7 +3118,7 @@ type toDaysFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *toDaysFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *toDaysFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3090,7 +3151,7 @@ type toSecondsFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *toSecondsFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *toSecondsFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3144,7 +3205,7 @@ func (c *utcTimeFunctionClass) getFlenAndDecimal4UTCTime(sc *variable.StatementC
 	return flen, decimal
 }
 
-func (c *utcTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *utcTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3202,7 +3263,7 @@ type lastDayFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lastDayFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *lastDayFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}

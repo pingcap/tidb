@@ -31,7 +31,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Database]
 	ctx := mock.NewContext()
-	f, err := fc.getFunction(nil, ctx)
+	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsFalse)
 	d, err := f.eval(nil)
@@ -45,7 +45,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	// Test case for schema().
 	fc = funcs[ast.Schema]
 	c.Assert(fc, NotNil)
-	f, err = fc.getFunction(nil, ctx)
+	f, err = fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
 	d, err = f.eval(types.MakeDatums())
 	c.Assert(err, IsNil)
@@ -59,7 +59,7 @@ func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	sessionVars.LastFoundRows = 2
 
 	fc := funcs[ast.FoundRows]
-	f, err := fc.getFunction(nil, ctx)
+	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsFalse)
 	d, err := f.eval(nil)
@@ -74,7 +74,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 
 	fc := funcs[ast.User]
-	f, err := fc.getFunction(nil, ctx)
+	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsFalse)
 	d, err := f.eval(nil)
@@ -89,7 +89,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 
 	fc := funcs[ast.CurrentUser]
-	f, err := fc.getFunction(nil, ctx)
+	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsFalse)
 	d, err := f.eval(nil)
@@ -104,7 +104,7 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	sessionVars.ConnectionID = uint64(1)
 
 	fc := funcs[ast.ConnectionID]
-	f, err := fc.getFunction(nil, ctx)
+	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsFalse)
 	d, err := f.eval(nil)
@@ -115,7 +115,7 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 func (s *testEvaluatorSuite) TestVersion(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Version]
-	f, err := fc.getFunction(nil, s.ctx)
+	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(f.isDeterministic(), IsFalse)
 	v, err := f.eval(nil)
@@ -126,7 +126,7 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Benchmark]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil, nil)), s.ctx)
+	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil, nil)))
 	c.Assert(f, IsNil)
 	c.Assert(err, ErrorMatches, "*FUNCTION BENCHMARK does not exist")
 }
@@ -134,7 +134,7 @@ func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 func (s *testEvaluatorSuite) TestCharset(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Charset]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, IsNil)
 	c.Assert(err, ErrorMatches, "*FUNCTION CHARSET does not exist")
 }
@@ -142,7 +142,7 @@ func (s *testEvaluatorSuite) TestCharset(c *C) {
 func (s *testEvaluatorSuite) TestCoercibility(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Coercibility]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, IsNil)
 	c.Assert(err, ErrorMatches, "*FUNCTION COERCIBILITY does not exist")
 }
@@ -150,7 +150,7 @@ func (s *testEvaluatorSuite) TestCoercibility(c *C) {
 func (s *testEvaluatorSuite) TestCollation(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Collation]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, IsNil)
 	c.Assert(err, ErrorMatches, "*FUNCTION COLLATION does not exist")
 }
@@ -158,7 +158,7 @@ func (s *testEvaluatorSuite) TestCollation(c *C) {
 func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.RowCount]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums()), s.ctx)
+	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums()))
 	c.Assert(f, IsNil)
 	c.Assert(err, ErrorMatches, "*FUNCTION ROW_COUNT does not exist")
 }
@@ -226,7 +226,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.LastInsertId].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.LastInsertId].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsFalse)
+	c.Assert(f.canBeFolded(), IsFalse)
 }
