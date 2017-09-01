@@ -256,7 +256,8 @@ func CollectSamplesAndEstimateNDVs(ctx context.Context, e ast.RecordSet, numCols
 			row.Data = row.Data[1:]
 		}
 		for i, val := range row.Data {
-			err = collectors[i].collect(val)
+			tmp := types.CopyDatum(val)
+			err = collectors[i].collect(tmp)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

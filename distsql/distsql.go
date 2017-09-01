@@ -149,13 +149,11 @@ func (pr *partialResult) Next() (handle int64, data []byte, err error) {
 		return 0, nil, nil
 	}
 	rowMeta := chunk.RowsMeta[pr.cursor]
-	tmp := chunk.RowsData[pr.dataOffset : pr.dataOffset+rowMeta.Length]
+	data = chunk.RowsData[pr.dataOffset : pr.dataOffset+rowMeta.Length]
 	if data == nil {
 		// The caller checks if data is nil to determine finished.
 		data = zeroLenData
 	}
-	data = make([]byte, len(tmp))
-	copy(data, tmp)
 	pr.dataOffset += rowMeta.Length
 	handle = rowMeta.Handle
 	pr.cursor++
