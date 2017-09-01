@@ -221,8 +221,6 @@ func (pc pbConverter) compareOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		tp = tipb.ExprType_NullEQ
 	case ast.In:
 		return pc.inToPBExpr(expr)
-	case ast.Like:
-		return pc.likeToPBExpr(expr)
 	}
 	return pc.convertToPBExpr(expr, tp)
 }
