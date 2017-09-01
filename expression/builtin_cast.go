@@ -1403,7 +1403,7 @@ func WrapWithCastAsJSON(expr Expression, ctx context.Context) Expression {
 	tp := &types.FieldType{
 		Tp:      mysql.TypeJSON,
 		Flen:    12582912,
-		Decimal: castJSONPostWrapped, // Default is *COERCE*, not *CAST*.
+		Decimal: castJSONPostWrapped, // Here we do *COERCE*, not *CAST*.
 		Charset: charset.CharsetUTF8,
 		Collate: charset.CollationUTF8,
 		Flag:    mysql.BinaryFlag,

@@ -95,6 +95,7 @@ func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Conte
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
+	bf.tp.Flen = 51 // max length of UNSIGNED INTEGER.
 	args[0].GetType().Decimal = castJSONDirectly
 	sig := &builtinJSONTypeSig{baseStringBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
