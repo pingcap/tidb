@@ -590,7 +590,7 @@ func (b *builtinCastStringAsJSONSig) evalJSON(row []types.Datum) (res json.JSON,
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if b.tp.Decimal == castJSONDirectly {
+	if b.tp.Decimal == decimal4CastJSONDirectly {
 		res, err = json.ParseFromString(val)
 	} else {
 		// This is a post-wrapped cast.
@@ -1403,7 +1403,7 @@ func WrapWithCastAsJSON(expr Expression, ctx context.Context) Expression {
 	tp := &types.FieldType{
 		Tp:      mysql.TypeJSON,
 		Flen:    12582912,
-		Decimal: castJSONPostWrapped, // Here we do *COERCE*, not *CAST*.
+		Decimal: decimal4CastJSONPostWrapped, // Here we do *COERCE*, not *CAST*.
 		Charset: charset.CharsetUTF8,
 		Collate: charset.CollationUTF8,
 		Flag:    mysql.BinaryFlag,

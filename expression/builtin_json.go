@@ -24,12 +24,16 @@ import (
 )
 
 const (
-	// castJSONDirectly is used for really cast to JSON, which means for
+	// decimal4CastJSONDirectly is used for really cast to JSON, which means for
 	// string we should parse it into JSON but not use that as primitive.
-	castJSONDirectly int = 0
-	// castJSONPostWrapped is used for post-wrapped cast to JSON, which
+	decimal4CastJSONDirectly int = 0
+	// decimal4CastJSONPostWrapped is used for post-wrapped cast to JSON, which
 	// means for string we should use that as primitive but not parse it.
-	castJSONPostWrapped int = -1
+	decimal4CastJSONPostWrapped int = -1
+
+	// jsonTypeFlen is the Flen of JSON_TYPE builtin function.
+	// It comes from length of UNSIGNED INTEGER.
+	jsonTypeFlen int = 51
 )
 
 // jsonFunctionNameToPB is for pushdown json functions to storage engine.
@@ -95,8 +99,8 @@ func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Conte
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
-	bf.tp.Flen = 51 // max length of UNSIGNED INTEGER.
-	args[0].GetType().Decimal = castJSONDirectly
+	bf.tp.Flen = jsonTypeFlen
+	args[0].GetType().Decimal = decimal4CastJSONDirectly
 	sig := &builtinJSONTypeSig{baseStringBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
 	return sig.setSelf(sig), nil
@@ -129,7 +133,7 @@ func (c *jsonExtractFunctionClass) getFunction(args []Expression, ctx context.Co
 		argTps = append(argTps, tpString)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	args[0].GetType().Decimal = castJSONDirectly
+	args[0].GetType().Decimal = decimal4CastJSONDirectly
 	sig := &builtinJSONExtractSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonExtractSig)
 	return sig.setSelf(sig), nil
@@ -210,7 +214,7 @@ func (c *jsonSetFunctionClass) getFunction(args []Expression, ctx context.Contex
 		argTps = append(argTps, tpString, tpJSON)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	args[0].GetType().Decimal = castJSONDirectly
+	args[0].GetType().Decimal = decimal4CastJSONDirectly
 	sig := &builtinJSONSetSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
 	return sig.setSelf(sig), nil
@@ -242,7 +246,7 @@ func (c *jsonInsertFunctionClass) getFunction(args []Expression, ctx context.Con
 		argTps = append(argTps, tpString, tpJSON)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	args[0].GetType().Decimal = castJSONDirectly
+	args[0].GetType().Decimal = decimal4CastJSONDirectly
 	sig := &builtinJSONInsertSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
 	return sig.setSelf(sig), nil
@@ -274,7 +278,7 @@ func (c *jsonReplaceFunctionClass) getFunction(args []Expression, ctx context.Co
 		argTps = append(argTps, tpString, tpJSON)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	args[0].GetType().Decimal = castJSONDirectly
+	args[0].GetType().Decimal = decimal4CastJSONDirectly
 	sig := &builtinJSONReplaceSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
 	return sig.setSelf(sig), nil
@@ -303,7 +307,7 @@ func (c *jsonRemoveFunctionClass) getFunction(args []Expression, ctx context.Con
 		argTps = append(argTps, tpString)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	args[0].GetType().Decimal = castJSONDirectly
+	args[0].GetType().Decimal = decimal4CastJSONDirectly
 	sig := &builtinJSONRemoveSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonRemoveSig)
 	return sig.setSelf(sig), nil
@@ -354,7 +358,7 @@ func (c *jsonMergeFunctionClass) getFunction(args []Expression, ctx context.Cont
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	for i := range args {
-		args[i].GetType().Decimal = castJSONDirectly
+		args[i].GetType().Decimal = decimal4CastJSONDirectly
 	}
 	sig := &builtinJSONMergeSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMergeSig)
