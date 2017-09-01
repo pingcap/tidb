@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // Charset is a charset.
@@ -149,6 +150,19 @@ func GetCharsetDesc(cs string) (*Desc, error) {
 		Maxlen:           c.Maxlen,
 	}
 	return desc, nil
+}
+
+// GetCharsetInfoByID returns charset and collation for id as cs_number.
+func GetCharsetInfoByID(id int) (string, string, error) {
+	if id == mysql.DefaultCollationID {
+		return mysql.DefaultCharset, mysql.DefaultCollationName, nil
+	}
+	for _, collation := range collations {
+		if id == collation.ID {
+			return collation.CharsetName, collation.Name, nil
+		}
+	}
+	return "", "", errors.Errorf("Unknown charset id %d", id)
 }
 
 // GetCollations returns a list for all collations.

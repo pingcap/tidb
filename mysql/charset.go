@@ -551,13 +551,14 @@ var CollationNames = map[string]uint8{
 
 // MySQL collation information.
 const (
-	UTF8Charset          = "utf8"
-	UTF8MB4Charset       = "utf8mb4"
-	DefaultCharset       = UTF8Charset
-	DefaultCollationID   = 83
-	BinaryCollationID    = 63
-	UTF8DefaultCollation = "utf8_bin"
-	DefaultCollationName = UTF8DefaultCollation
+	UTF8Charset               = "utf8"
+	UTF8MB4Charset            = "utf8mb4"
+	DefaultCharset            = UTF8Charset
+	DefaultCollationID        = 83
+	UTF8MB4GeneralCollationID = 45
+	BinaryCollationID         = 63
+	UTF8DefaultCollation      = "utf8_bin"
+	DefaultCollationName      = UTF8DefaultCollation
 )
 
 // IsUTF8Charset checks if charset is utf8 or utf8mb4
