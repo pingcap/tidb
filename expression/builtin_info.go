@@ -76,10 +76,7 @@ type builtinDatabaseSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func (b *builtinDatabaseSig) evalString(row []types.Datum) (string, bool, error) {
 	currentDB := b.ctx.GetSessionVars().CurrentDB
-	if currentDB == "" {
-		return "", true, nil
-	}
-	return currentDB, false, nil
+	return currentDB, currentDB == "", nil
 }
 
 type foundRowsFunctionClass struct {
