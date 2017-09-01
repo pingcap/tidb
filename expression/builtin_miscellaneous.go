@@ -79,7 +79,7 @@ type sleepFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *sleepFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -130,7 +130,7 @@ type lockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *lockFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -156,7 +156,7 @@ type releaseLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *releaseLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *releaseLockFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -182,7 +182,7 @@ type anyValueFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *anyValueFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *anyValueFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -288,7 +288,7 @@ type defaultFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *defaultFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *defaultFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("DEFAULT")
 }
 
@@ -296,7 +296,7 @@ type inetAtonFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inetAtonFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *inetAtonFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -363,7 +363,7 @@ type inetNtoaFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inetNtoaFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *inetNtoaFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -405,7 +405,7 @@ type inet6AtonFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inet6AtonFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *inet6AtonFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -468,7 +468,7 @@ type inet6NtoaFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inet6NtoaFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *inet6NtoaFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -506,7 +506,7 @@ type isFreeLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isFreeLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *isFreeLockFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("IS_FREE_LOCK")
 }
 
@@ -514,7 +514,7 @@ type isIPv4FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *isIPv4FunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -572,7 +572,7 @@ type isIPv4CompatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4CompatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *isIPv4CompatFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -611,7 +611,7 @@ type isIPv4MappedFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4MappedFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *isIPv4MappedFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -650,7 +650,7 @@ type isIPv6FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv6FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *isIPv6FunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -682,7 +682,7 @@ type isUsedLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isUsedLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *isUsedLockFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("IS_USED_LOCK")
 }
 
@@ -690,7 +690,7 @@ type masterPosWaitFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *masterPosWaitFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *masterPosWaitFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("MASTER_POS_WAIT")
 }
 
@@ -698,7 +698,7 @@ type nameConstFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *nameConstFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *nameConstFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("NAME_CONST")
 }
 
@@ -706,7 +706,7 @@ type releaseAllLocksFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *releaseAllLocksFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *releaseAllLocksFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("RELEASE_ALL_LOCKS")
 }
 
@@ -714,7 +714,7 @@ type uuidFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uuidFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *uuidFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -739,6 +739,6 @@ type uuidShortFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uuidShortFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *uuidShortFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("UUID_SHORT")
 }
