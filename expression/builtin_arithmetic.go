@@ -606,7 +606,7 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (int64, bo
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
-		ret = a / b
+		ret = int64(uint64(a) / uint64(b))
 	case isLHSUnsigned && !isRHSUnsigned:
 		val, err = types.DivUintWithInt(uint64(a), b)
 		ret = int64(val)
@@ -639,7 +639,10 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64
 	}
 
 	ret, err := c.ToInt()
-	return ret, err == types.ErrDivByZero, errors.Trace(err)
+	if err == types.ErrOverflow {
+		return 0, false, errors.Trace(err)
+	}
+	return ret, false, nil
 }
 
 type arithmeticFunctionClass struct {

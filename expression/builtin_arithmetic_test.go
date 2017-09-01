@@ -354,7 +354,7 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.IntDiv].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.IntDiv].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)
