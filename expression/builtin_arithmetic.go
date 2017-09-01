@@ -555,7 +555,7 @@ type arithmeticIntDivideFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticIntDivideFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *arithmeticIntDivideFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -617,11 +617,7 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (int64, bo
 		ret, err = types.DivInt64(a, b)
 	}
 
-	if err != nil {
-		return ret, false, errors.Trace(err)
-	}
-
-	return ret, false, nil
+	return ret, false, errors.Trace(err)
 }
 
 func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64, bool, error) {
@@ -638,20 +634,12 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64
 
 	c := &types.MyDecimal{}
 	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
-	if err == types.ErrDivByZero {
-		return 0, true, errors.Trace(err)
-	}
-
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, err == types.ErrDivByZero, errors.Trace(err)
 	}
 
 	ret, err := c.ToInt()
-	if err == types.ErrOverflow {
-		return 0, false, errors.Trace(err)
-	}
-
-	return ret, false, nil
+	return ret, err == types.ErrDivByZero, errors.Trace(err)
 }
 
 type arithmeticFunctionClass struct {
