@@ -113,7 +113,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Plus].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.Plus].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)
@@ -152,7 +152,7 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Minus].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.Minus].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)
@@ -196,7 +196,7 @@ func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Mul].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.Mul].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)
@@ -259,7 +259,7 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Div].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.Div].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)

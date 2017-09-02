@@ -115,7 +115,7 @@ type absFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *absFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *absFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
@@ -228,7 +228,7 @@ func (b *builtinAbsDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, boo
 	return to, false, errors.Trace(err)
 }
 
-func (c *roundFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *roundFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
@@ -384,7 +384,7 @@ type ceilFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *ceilFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *ceilFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	var (
 		bf  baseBuiltinFunc
 		sig builtinFunc
@@ -533,7 +533,7 @@ func setFlag4FloorAndCeil(tp *types.FieldType, arg Expression) {
 	// TODO: when argument type is timestamp, add not null flag.
 }
 
-func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *floorFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	var (
 		bf  baseBuiltinFunc
 		sig builtinFunc
@@ -650,7 +650,7 @@ type logFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *logFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *logFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -722,7 +722,7 @@ type log2FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *log2FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *log2FunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -752,7 +752,7 @@ type log10FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *log10FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *log10FunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -782,7 +782,7 @@ type randFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *randFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *randFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -843,7 +843,7 @@ type powFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *powFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *powFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -883,7 +883,7 @@ type convFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *convFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *convFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -983,7 +983,7 @@ type crc32FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *crc32FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *crc32FunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1013,7 +1013,7 @@ type signFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *signFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *signFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1046,7 +1046,7 @@ type sqrtFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sqrtFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *sqrtFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1076,7 +1076,7 @@ type acosFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *acosFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *acosFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1107,7 +1107,7 @@ type asinFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *asinFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *asinFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1139,7 +1139,7 @@ type atanFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *atanFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *atanFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1204,7 +1204,7 @@ type cosFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *cosFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *cosFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1231,7 +1231,7 @@ type cotFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *cotFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *cotFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1266,7 +1266,7 @@ type degreesFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *degreesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *degreesFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1294,7 +1294,7 @@ type expFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *expFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *expFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1326,7 +1326,7 @@ type piFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *piFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *piFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1356,7 +1356,7 @@ type radiansFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *radiansFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *radiansFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1383,7 +1383,7 @@ type sinFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sinFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *sinFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1410,7 +1410,7 @@ type tanFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tanFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *tanFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1453,7 +1453,7 @@ func (c *truncateFunctionClass) getDecimal(sc *variable.StatementContext, arg Ex
 	return 3
 }
 
-func (c *truncateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *truncateFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
