@@ -7,14 +7,12 @@ ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
 
-CURDIR := $(shell pwd)
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(CURDIR)/_vendor:$(GOPATH)))
-export PATH := $(path_to_add):$(PATH)
+export PATH := $(GOPATH)/bin:$(PATH)
 
 GO        := go
-GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build
-GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) test
-OVERALLS  := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 overalls
+GOBUILD   := CGO_ENABLED=0 $(GO) build
+GOTEST    := CGO_ENABLED=1 $(GO) test
+OVERALLS  := CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
 
 ARCH      := "`uname -s`"
@@ -109,7 +107,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@export log_level=error; \
 	go get github.com/go-playground/overalls
 	go get github.com/mattn/goveralls
-	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,_vendor'
+	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor'
 	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile
 else
 	@echo "Running in native mode."
@@ -134,7 +132,7 @@ tikv_integration_test: parserlib
 RACE_FLAG = 
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
-	GOBUILD   = GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) build
+	GOBUILD   = CGO_ENABLED=1 $(GO) build
 endif
 
 server: parserlib
@@ -156,8 +154,6 @@ benchdb:
 update:
 	which glide >/dev/null || curl https://glide.sh/get | sh
 	which glide-vc || go get -v -u github.com/sgotti/glide-vc
-	rm -r vendor && mv _vendor/src vendor || true
-	rm -rf _vendor
 ifdef PKG
 	glide get -s -v --skip-test ${PKG}
 else
@@ -165,8 +161,6 @@ else
 endif
 	@echo "removing test files"
 	glide vc --only-code --no-tests
-	mkdir -p _vendor
-	mv vendor _vendor/src
 
 checklist:
 	cat checklist.md
