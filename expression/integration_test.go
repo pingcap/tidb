@@ -2081,6 +2081,20 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tidb.GetRows(rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+
+	result = tk.MustQuery("SELECT 13 MOD 12, 13 MOD 0.01, -13 MOD 2, 13 MOD NULL, NULL MOD 13, NULL DIV NULL;")
+	result.Check(testkit.Rows("1 0.00 -1 <nil> <nil> <nil>"))
+	result = tk.MustQuery("SELECT 2.4 MOD 1.1, 2.4 MOD 1.2, 2.4 mod 1.30;")
+	result.Check(testkit.Rows("0.2 0.0 1.10"))
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_timestamp timestamp, c_enum enum('a','b','c'));")
+	tk.MustExec("INSERT INTO t VALUE('abc', '12:00:00', 12, 0, '2017-08-05 18:19:03', 'b');")
+	result = tk.MustQuery("select c_varchar mod nonzero, c_varchar div zero, c_time mod nonzero, c_time mod zero, c_timestamp mod nonzero, c_timestamp mod zero from t;")
+	result.Check(testkit.Rows("0 <nil> 0 <nil> 3 <nil>"))
+	result = tk.MustQuery("select c_enum mod nonzero, c_enum mod zero from t;")
+	result.Check(testkit.Rows("2 <nil>"))
+	result = tk.MustQuery("select c_time mod c_enum, c_timestamp mod c_time, c_timestamp mod c_enum from t;")
+	result.Check(testkit.Rows("0 21903 1"))
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
