@@ -333,7 +333,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case BinString:
 		tp.Tp = mysql.TypeBit
-		tp.Flen = len(x.Value)
+		tp.Flen = len(x.Value) * 8
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case Time:
