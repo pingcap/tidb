@@ -259,7 +259,7 @@ func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 			}
 			if n > endPos {
 				c.exceedBuffer = buf[endPos:]
-				c.exceedBufferLen = n - endPos
+				c.exceedBufferLen = n - endPos + 1
 			}
 			return proxyProtocolV2, buf[0:endPos], nil
 		}
