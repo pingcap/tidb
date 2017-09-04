@@ -616,20 +616,21 @@ type builtinArithmeticModRealSig struct {
 
 func (s *builtinArithmeticModRealSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	a, isNull, err := s.args[0].EvalReal(row, sc)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
 	b, isNull, err := s.args[1].EvalReal(row, sc)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	c := math.Mod(a, b)
 
-	if math.IsNaN(c) {
-		return c, true, types.ErrDivByZero
+	if b == 0 {
+		return 0, true, types.ErrDivByZero
 	}
-	return c, false, nil
+
+	a, isNull, err := s.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	return math.Mod(a, b), false, nil
 }
 
 type builtinArithmeticModDecimalSig struct {
