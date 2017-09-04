@@ -129,22 +129,24 @@ func (c *proxyProtocolConn) parseHeader(connRemoteAddr net.Addr) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ver == proxyProtocolV1 {
+	switch ver {
+	case proxyProtocolV1:
 		raddr, v1err := c.extractClientIPV1(buffer, connRemoteAddr)
 		if v1err != nil {
 			return errors.Trace(v1err)
 		}
 		c.clientIP = raddr
 		return nil
-	} else if ver == proxyProtocolV2 {
+	case proxyProtocolV2:
 		raddr, v2err := c.extraceClientIPV2(buffer, connRemoteAddr)
 		if v2err != nil {
 			return errors.Trace(v2err)
 		}
 		c.clientIP = raddr
 		return nil
+	default:
+		panic("Should not come here")
 	}
-	panic("Should not come here")
 }
 
 func (c *proxyProtocolConn) extractClientIPV1(buffer []byte, connRemoteAddr net.Addr) (net.Addr, error) {
