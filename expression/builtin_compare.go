@@ -388,20 +388,19 @@ func (c *intervalFunctionClass) getFunction(ctx context.Context, args []Expressi
 
 	allInt := true
 	for i := range args {
-		if args[i].GetTypeClass() != types.ClassInt {
+		if fieldTp2EvalTp(args[i].GetType()) != tpInt {
 			allInt = false
 		}
 	}
 
-	argTp := make([]evalTp, 0, len(args))
-	for range args {
-		if allInt {
-			argTp = append(argTp, tpInt)
-		} else {
-			argTp = append(argTp, tpReal)
-		}
+	argTps, argTp := make([]evalTp, 0, len(args)), tpReal
+	if allInt {
+		argTp = tpInt
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp...)
+	for range args {
+		argTps = append(argTps, argTp)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTps...)
 	var sig builtinFunc
 	if allInt {
 		sig = &builtinIntervalIntSig{baseIntBuiltinFunc{bf}}
@@ -420,13 +419,11 @@ type builtinIntervalIntSig struct {
 func (b *builtinIntervalIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	args0, isNull, err := b.args[0].EvalInt(row, sc)
-	if terror.ErrorEqual(err, types.ErrTruncated) {
-		err = sc.HandleTruncate(err)
+	if err != nil {
+		return 0, true, errors.Trace(err)
 	}
 	if isNull {
 		return -1, false, nil
-	} else if err != nil {
-		return 0, true, errors.Trace(err)
 	}
 	idx, err := b.binSearch(sc, args0, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], row)
 	return int64(idx), false, errors.Trace(err)
@@ -478,13 +475,11 @@ type builtinIntervalRealSig struct {
 func (b *builtinIntervalRealSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	args0, isNull, err := b.args[0].EvalReal(row, sc)
-	if terror.ErrorEqual(err, types.ErrTruncated) {
-		err = sc.HandleTruncate(err)
+	if err != nil {
+		return 0, true, errors.Trace(err)
 	}
 	if isNull {
 		return -1, false, nil
-	} else if err != nil {
-		return 0, true, errors.Trace(err)
 	}
 	idx, err := b.binSearch(sc, args0, b.args[1:], row)
 	return int64(idx), false, errors.Trace(err)

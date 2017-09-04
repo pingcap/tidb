@@ -252,7 +252,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		{types.MakeDatums("9007199254740992", "9007199254740993"), 1},
 	} {
 		fc := funcs[ast.Interval]
-		f, err := fc.getFunction(datumsToConstants(t.args), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t.args))
 		c.Assert(err, IsNil)
 		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
