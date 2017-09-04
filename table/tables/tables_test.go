@@ -173,7 +173,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	row, err = rs[0].Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data, NotNil)
-	c.Assert(row.Data[5].GetMysqlBit(), Equals, types.Bit{Value: 6, Width: 8})
+	c.Assert(row.Data[5].GetBinString(), DeepEquals, types.NewBinStringFromUint(6, -1))
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 

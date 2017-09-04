@@ -364,18 +364,17 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 		return nil, nil
 	}
 
-	if v.Kind() == types.KindHexString || v.Kind() == types.KindBitString {
+	if v.Kind() == types.KindBinString || v.Kind() == types.KindMysqlBit {
 		if tp == mysql.TypeBit ||
 			tp == mysql.TypeString || tp == mysql.TypeVarchar || tp == mysql.TypeVarString ||
 			tp == mysql.TypeBlob || tp == mysql.TypeLongBlob || tp == mysql.TypeMediumBlob || tp == mysql.TypeTinyBlob ||
 			tp == mysql.TypeJSON {
-			// For bit / string-like fields, when getting default value we cast the value into Bit{}, thus we return
+			// For binString / string fields, when getting default value we cast the value into Bit{}, thus we return
 			// its raw string content here.
-			// Both HexString and BitString stores data in bytes so that we don't care about the specific type here.
-			return v.GetHexString().ToString(), nil
+			return v.GetBinString().ToString(), nil
 		}
 		// For other kind of fields (e.g. INT), we supply its integer value so that it acts as integers.
-		return v.GetHexString().ToInt()
+		return v.GetBinString().ToInt()
 	}
 
 	return v.ToString()

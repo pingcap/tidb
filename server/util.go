@@ -309,10 +309,8 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlSet().String()), alloc)...)
 		case types.KindMysqlEnum:
 			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlEnum().String()), alloc)...)
-		case types.KindHexString:
-			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetHexString().ToString()), alloc)...)
-		case types.KindBitString:
-			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetBitString().ToString()), alloc)...)
+		case types.KindBinString, types.KindMysqlBit:
+			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetBinString().ToString()), alloc)...)
 		}
 	}
 	return
@@ -350,10 +348,8 @@ func dumpTextValue(colInfo *ColumnInfo, value types.Datum) ([]byte, error) {
 		return hack.Slice(value.GetMysqlSet().String()), nil
 	case types.KindMysqlJSON:
 		return hack.Slice(value.GetMysqlJSON().String()), nil
-	case types.KindHexString:
-		return hack.Slice(value.GetHexString().ToString()), nil
-	case types.KindBitString:
-		return hack.Slice(value.GetBitString().ToString()), nil
+	case types.KindBinString, types.KindMysqlBit:
+		return hack.Slice(value.GetBinString().ToString()), nil
 	default:
 		return nil, errInvalidType.Gen("invalid type %v", value.Kind())
 	}

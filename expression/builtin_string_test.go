@@ -44,8 +44,7 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{3.14, 4, false, false},
 		{types.NewDecFromFloatForTest(123.123), 7, false, false},
 		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, 26, false, false},
-		{types.Bit{Value: 1, Width: 8}, 1, false, false},
-		{types.Hex{Value: 1}, 1, false, false},
+		{types.NewBinStringFromUint(0x01, -1), 1, false, false},
 		{types.Set{Value: 1, Name: "abc"}, 3, false, false},
 		{types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second), Fsp: types.DefaultFsp}, 8, false, false},
 		{nil, 0, true, false},
@@ -274,7 +273,7 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 		{[]interface{}{"abcde", "a"}, false, false, ""},
 		{[]interface{}{1234, 3}, false, false, "123"},
 		{[]interface{}{12.34, 3}, false, false, "12."},
-		{[]interface{}{types.Bit{Value: 0x0102, Width: 16}, 1}, false, false, string([]byte{0x01})},
+		{[]interface{}{types.NewBinStringFromUint(0x0102, -1), 1}, false, false, string([]byte{0x01})},
 		{[]interface{}{errors.New("must err"), 0}, false, true, ""},
 	}
 	for _, t := range cases {
@@ -325,7 +324,7 @@ func (s *testEvaluatorSuite) TestRight(c *C) {
 		{[]interface{}{"abcde", "a"}, false, false, ""},
 		{[]interface{}{1234, 3}, false, false, "234"},
 		{[]interface{}{12.34, 3}, false, false, ".34"},
-		{[]interface{}{types.Bit{Value: 0x0102, Width: 16}, 1}, false, false, string([]byte{0x02})},
+		{[]interface{}{types.NewBinStringFromUint(0x0102, -1), 1}, false, false, string([]byte{0x02})},
 		{[]interface{}{errors.New("must err"), 0}, false, true, ""},
 	}
 	for _, t := range cases {
@@ -983,7 +982,7 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 		{-1, false, false, "FFFFFFFFFFFFFFFF"},
 		{-12.3, false, false, "FFFFFFFFFFFFFFF4"},
 		{-12.8, false, false, "FFFFFFFFFFFFFFF3"},
-		{types.Bit{Value: 0xC, Width: 4}, false, false, "0C"},
+		{types.NewBinStringFromUint(0xC, -1), false, false, "C"},
 		{0x12, false, false, "12"},
 		{nil, true, false, ""},
 		{errors.New("must err"), false, true, ""},
@@ -1392,9 +1391,9 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		//overflow uint64
 		{"9999999999999999999999999", "1777777777777777777777"},
 		{"-9999999999999999999999999", "1777777777777777777777"},
-		{types.Bit{Value: 255, Width: 8}, "377"}, // b'11111111'
-		{types.Bit{Value: 10, Width: 4}, "12"},   // b'1010'
-		{types.Bit{Value: 5, Width: 4}, "5"},     // b'0101'
+		{types.NewBinStringFromUint(255, -1), "377"}, // b'11111111'
+		{types.NewBinStringFromUint(10, -1), "12"},   // b'1010'
+		{types.NewBinStringFromUint(5, -1), "5"},     // b'0101'
 	}
 	fc := funcs[ast.Oct]
 	for _, tt := range octTests {

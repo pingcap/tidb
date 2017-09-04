@@ -66,8 +66,8 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		},
 
 		{
-			types.MakeDatums(types.Hex{Value: 100}, types.Bit{Value: 100, Width: 8}),
-			types.MakeDatums(int64(100), uint64(100)),
+			types.MakeDatums(types.NewBinStringFromUint(100, -1), types.NewBinStringFromUint(100, 4)),
+			types.MakeDatums(uint64(100), uint64(100)),
 		},
 
 		{
@@ -772,8 +772,8 @@ func (s *testCodecSuite) TestCut(c *C) {
 		},
 
 		{
-			types.MakeDatums(types.Hex{Value: 100}, types.Bit{Value: 100, Width: 8}),
-			types.MakeDatums(int64(100), uint64(100)),
+			types.MakeDatums(types.NewBinStringFromUint(100, -1), types.NewBinStringFromUint(100, 4)),
+			types.MakeDatums(uint64(100), uint64(100)),
 		},
 
 		{

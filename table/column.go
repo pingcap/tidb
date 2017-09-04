@@ -373,7 +373,7 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeDatetime:
 		d.SetMysqlTime(types.ZeroDatetime)
 	case mysql.TypeBit:
-		d.SetBitString(types.ZeroBit)
+		d.SetMysqlBit(types.ZeroBinString)
 	case mysql.TypeSet:
 		d.SetMysqlSet(types.Set{})
 	case mysql.TypeEnum:

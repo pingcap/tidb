@@ -205,24 +205,19 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// For TypeBit
 	ft = NewFieldType(mysql.TypeBit)
-	ft.Flen = 24
+	ft.Flen = 24 // 3 bytes.
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, Bit{Value: 3223600, Width: 24})
+	c.Assert(v, DeepEquals, NewBinStringFromUint(3223600, 3))
 
-	ft.Flen = 8
-	v, err = Convert(Hex{Value: 100}, ft)
+	v, err = Convert(NewBinStringFromUint(100, -1), ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, Bit{Value: 100, Width: 8})
-
-	v, err = Convert(Bit{Value: 100, Width: 8}, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, Bit{Value: 100, Width: 8})
+	c.Assert(v, DeepEquals, NewBinStringFromUint(100, 3))
 
 	ft.Flen = 1
 	v, err = Convert(1, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, Bit{Value: 1, Width: 1})
+	c.Assert(v, DeepEquals, NewBinStringFromUint(1, 1))
 
 	_, err = Convert(2, ft)
 	c.Assert(err, NotNil)
@@ -326,8 +321,8 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, float32(1.6), "1.6")
 	testToString(c, float64(-0.6), "-0.6")
 	testToString(c, []byte{1}, "\x01")
-	testToString(c, Hex{Value: 0x4D7953514C}, "MySQL")
-	testToString(c, Bit{Value: 0x41, Width: 8}, "A")
+	testToString(c, NewBinStringFromUint(0x4D7953514C, -1), "MySQL")
+	testToString(c, NewBinStringFromUint(0x41, -1), "A")
 	testToString(c, Enum{Name: "a", Value: 1}, "a")
 	testToString(c, Set{Name: "a", Value: 1}, "a")
 

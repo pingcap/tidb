@@ -97,8 +97,9 @@ func encode(b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, e
 			b = encodeUnsignedInt(b, uint64(val.GetMysqlEnum().ToNumber()), comparable)
 		case types.KindMysqlSet:
 			b = encodeUnsignedInt(b, uint64(val.GetMysqlSet().ToNumber()), comparable)
-		case types.KindBitString, types.KindHexString:
-			b = encodeBytes(b, val.GetBytes(), comparable)
+		case types.KindMysqlBit, types.KindBinString:
+			val, _ := val.GetBinString().ToInt()
+			b = encodeUnsignedInt(b, val, comparable)
 		case types.KindMysqlJSON:
 			b = append(b, jsonFlag)
 			b = append(b, json.Serialize(val.GetMysqlJSON())...)

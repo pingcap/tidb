@@ -63,8 +63,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, "0.1", 0)
 	testDatumToBool(c, []byte{}, 0)
 	testDatumToBool(c, []byte("0.1"), 0)
-	testDatumToBool(c, Hex{Value: 0}, 0)
-	testDatumToBool(c, Bit{Value: 0, Width: 8}, 0)
+	testDatumToBool(c, NewBinStringFromUint(0, -1), 0)
 	testDatumToBool(c, Enum{Name: "a", Value: 1}, 1)
 	testDatumToBool(c, Set{Name: "a", Value: 1}, 1)
 
@@ -140,8 +139,7 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, uint64(0), int64(0))
 	testDatumToInt64(c, float32(3.1), int64(3))
 	testDatumToInt64(c, float64(3.1), int64(3))
-	testDatumToInt64(c, Hex{Value: 100}, int64(100))
-	testDatumToInt64(c, Bit{Value: 100, Width: 8}, int64(100))
+	testDatumToInt64(c, NewBinStringFromUint(100, -1), int64(100))
 	testDatumToInt64(c, Enum{Name: "a", Value: 1}, int64(1))
 	testDatumToInt64(c, Set{Name: "a", Value: 1}, int64(1))
 
@@ -379,16 +377,6 @@ func mustParseDurationDatum(str string, fsp int) Datum {
 	return NewDurationDatum(dur)
 }
 
-func mustParseHexDatum(str string) Datum {
-	hex, err := ParseHex(str)
-	if err != nil {
-		panic(err)
-	}
-	var d Datum
-	d.SetMysqlHex(hex)
-	return d
-}
-
 func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
 	sc := &variable.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
@@ -403,8 +391,8 @@ func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
 		{mustParseTimeIntoDatum("2017-07-18 17:21:42.32172", mysql.TypeDatetime, 0), NewIntDatum(20170718172142), false},
 		{mustParseDurationDatum("10:10:10", 0), NewIntDatum(101010), false},
 		{mustParseDurationDatum("10:10:10.100", 3), NewDatum(NewDecFromStringForTest("101010.100")), false},
-		{mustParseHexDatum("x'4D7953514C'"), NewFloat64Datum(332747985228), false},
-		{NewDatum(Bit{Value: 1, Width: 8}), NewFloat64Datum(1), false},
+		{NewBinStringDatum(NewBinStringFromUint(0x4D7953514C, -1)), NewUintDatum(332747985228), false},
+		{NewBinStringDatum(NewBinStringFromUint(1, -1)), NewUintDatum(1), false},
 		{NewDatum(Enum{"xxx", 1}), NewFloat64Datum(1), false},
 		{NewDatum(Set{"xxx", 1}), NewFloat64Datum(1), false},
 		{NewIntDatum(5), NewIntDatum(5), false},

@@ -133,7 +133,7 @@ func setTypeFlag(flag *uint, flagItem uint, on bool) {
 // ToClass maps the field type to a type class.
 func (ft *FieldType) ToClass() TypeClass {
 	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeBit:
 		return ClassInt
 	case mysql.TypeNewDecimal:
 		return ClassDecimal
@@ -320,16 +320,21 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Flen = len(x)
 		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
-	case Bit:
-		tp.Tp = mysql.TypeVarchar
-		tp.Flen = len(x.ToString())
+	case BitLiteral:
+		tp.Tp = mysql.TypeVarString
+		tp.Flen = len(x.Value)
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
-	case Hex:
-		tp.Tp = mysql.TypeVarchar
-		tp.Flen = len(x.ToString())
+	case HexLiteral:
+		tp.Tp = mysql.TypeVarString
+		tp.Flen = len(x.Value)
 		tp.Decimal = 0
 		tp.Flag |= mysql.UnsignedFlag
+		SetBinChsClnFlag(tp)
+	case BinString:
+		tp.Tp = mysql.TypeBit
+		tp.Flen = len(x.Value)
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case Time:
 		tp.Tp = x.Type
