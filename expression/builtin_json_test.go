@@ -39,7 +39,7 @@ func (s *testEvaluatorSuite) TestJSONType(c *C) {
 	}
 	dtbl := tblToDtbl(tbl)
 	for _, t := range dtbl {
-		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Input"]))
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -64,7 +64,7 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 	}
 	dtbl := tblToDtbl(tbl)
 	for _, t := range dtbl {
-		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Input"]))
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -87,7 +87,7 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(args))
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		if t.Success {
@@ -129,7 +129,7 @@ func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := t.fc.getFunction(datumsToConstants(args), s.ctx)
+		f, err := t.fc.getFunction(s.ctx, datumsToConstants(args))
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		if t.Success {
@@ -164,7 +164,7 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(args))
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -193,7 +193,7 @@ func (s *testEvaluatorSuite) TestJSONArray(c *C) {
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(args))
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -224,7 +224,7 @@ func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(args))
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 
@@ -275,7 +275,7 @@ func (s *testEvaluatorSuite) TestJSONORemove(c *C) {
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(args))
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 

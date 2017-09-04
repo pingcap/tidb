@@ -99,7 +99,7 @@ type coalesceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -289,7 +289,7 @@ type greatestFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *greatestFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -335,7 +335,7 @@ type leastFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leastFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -381,7 +381,7 @@ type intervalFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *intervalFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *intervalFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -616,7 +616,7 @@ func (c *compareFunctionClass) refineArgs(args []Expression, ctx context.Context
 }
 
 // getFunction sets compare built-in function signatures for various types.
-func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, errors.Trace(err)
 	}
