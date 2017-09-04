@@ -322,18 +322,12 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		// mod
 		{10, ast.Mod, 2, 0},
 		{10, ast.Mod, uint64(2), 0},
-		{10, ast.Mod, 0, nil},
-		{10, ast.Mod, uint64(0), nil},
 		{-10, ast.Mod, uint64(2), 0},
 		{uint64(10), ast.Mod, 2, 0},
 		{uint64(10), ast.Mod, uint64(2), 0},
-		{uint64(10), ast.Mod, 0, nil},
-		{uint64(10), ast.Mod, uint64(0), nil},
 		{uint64(10), ast.Mod, -2, 0},
 		{float64(10), ast.Mod, 2, 0},
-		{float64(10), ast.Mod, 0, nil},
 		{types.NewDecFromInt(10), ast.Mod, 2, 0},
-		{types.NewDecFromInt(10), ast.Mod, 0, nil},
 	}
 
 	for _, t := range tbl {

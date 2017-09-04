@@ -694,16 +694,16 @@ func (s *testPlanSuite) createTestCase4ArithmeticFuncs() []typeInferTestCase {
 		{"c_ubigint_d MOD c_int_d", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"c_int_d MOD c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"c_int_d MOD c_time_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
-		{"c_int_d MOD c_double_d", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
-		{"c_int_d MOD c_udouble_d", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
+		{"c_int_d MOD c_double_d", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
+		{"c_int_d MOD c_udouble_d", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"c_int_d MOD c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 11, 3},
 		{"c_udecimal MOD c_int_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 11, 3},
 		{"c_decimal MOD c_udecimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 3},
 		{"c_datetime MOD c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 22, 3},
 		{"c_bigint_d MOD c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 3},
-		{"c_double_d MOD c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, 3},
-		{"c_double_d MOD c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
-		{"c_double_d MOD c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
+		{"c_double_d MOD c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
+		{"c_double_d MOD c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
+		{"c_double_d MOD c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
 	}
 }
 

@@ -2089,12 +2089,15 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_timestamp timestamp, c_enum enum('a','b','c'));")
 	tk.MustExec("INSERT INTO t VALUE('abc', '12:00:00', 12, 0, '2017-08-05 18:19:03', 'b');")
-	result = tk.MustQuery("select c_varchar mod nonzero, c_varchar div zero, c_time mod nonzero, c_time mod zero, c_timestamp mod nonzero, c_timestamp mod zero from t;")
-	result.Check(testkit.Rows("0 <nil> 0 <nil> 3 <nil>"))
-	result = tk.MustQuery("select c_enum mod nonzero, c_enum mod zero from t;")
-	result.Check(testkit.Rows("2 <nil>"))
+	result = tk.MustQuery("select c_varchar mod nonzero, c_time mod nonzero, c_timestamp mod nonzero, c_enum mod nonzero from t;")
+	result.Check(testkit.Rows("0 0 3 2"))
 	result = tk.MustQuery("select c_time mod c_enum, c_timestamp mod c_time, c_timestamp mod c_enum from t;")
 	result.Check(testkit.Rows("0 21903 1"))
+	rs, err = tk.Exec("select c_enum mod zero from t;")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(terror.ErrorEqual(err, types.ErrDivByZero), IsTrue)
+
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {

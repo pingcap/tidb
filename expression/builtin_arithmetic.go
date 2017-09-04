@@ -557,18 +557,25 @@ type arithmeticModFunctionClass struct {
 }
 
 func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types.FieldType, isDecimal bool) {
-	retTp.Decimal = int(math.Max(float64(a.Decimal), float64(b.Decimal)))
-	if isDecimal && retTp.Decimal > mysql.MaxDecimalScale {
-		retTp.Decimal = mysql.MaxDecimalScale
+	if a.Decimal == types.UnspecifiedLength || b.Decimal == types.UnspecifiedLength {
+		retTp.Decimal = types.UnspecifiedLength
+	} else {
+		retTp.Decimal = int(math.Max(float64(a.Decimal), float64(b.Decimal)))
+		if isDecimal && retTp.Decimal > mysql.MaxDecimalScale {
+			retTp.Decimal = mysql.MaxDecimalScale
+		}
 	}
 
-	retTp.Flen = int(math.Max(float64(a.Flen), float64(b.Flen)))
-
-	if isDecimal {
-		retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxDecimalWidth)))
-		return
+	if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
+		retTp.Flen = types.UnspecifiedLength
+	} else {
+		retTp.Flen = int(math.Max(float64(a.Flen), float64(b.Flen)))
+		if isDecimal {
+			retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxDecimalWidth)))
+			return
+		}
+		retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxRealWidth)))
 	}
-	retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxRealWidth)))
 }
 
 func (c *arithmeticModFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -619,7 +626,10 @@ func (s *builtinArithmeticModRealSig) evalReal(row []types.Datum) (float64, bool
 	}
 	c := math.Mod(a, b)
 
-	return c, math.IsNaN(c), nil
+	if math.IsNaN(c) {
+		return c, true, types.ErrDivByZero
+	}
+	return c, false, nil
 }
 
 type builtinArithmeticModDecimalSig struct {
@@ -638,7 +648,10 @@ func (s *builtinArithmeticModDecimalSig) evalDecimal(row []types.Datum) (*types.
 	}
 	c := &types.MyDecimal{}
 	err = types.DecimalMod(a, b, c)
-	return c, err == types.ErrDivByZero, nil
+	if err == types.ErrDivByZero {
+		return c, true, errors.Trace(err)
+	}
+	return c, false, nil
 }
 
 type builtinArithmeticModIntSig struct {
@@ -654,7 +667,7 @@ func (s *builtinArithmeticModIntSig) evalInt(row []types.Datum) (val int64, isNu
 	}
 
 	if b == 0 {
-		return 0, true, nil
+		return 0, true, types.ErrDivByZero
 	}
 
 	a, isNull, err := s.args[0].EvalInt(row, sc)
