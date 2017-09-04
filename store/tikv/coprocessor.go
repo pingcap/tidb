@@ -400,7 +400,7 @@ func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask) (finished boo
 }
 
 // Next returns next coprocessor result.
-func (it *copIterator) Next() ([]byte, error) {
+func (it *copIterator) Next() (*coprocessor.Response, error) {
 	coprocessorCounter.WithLabelValues("next").Inc()
 
 	var (
@@ -431,13 +431,7 @@ func (it *copIterator) Next() ([]byte, error) {
 		}
 	}
 
-	if resp.err != nil {
-		return nil, errors.Trace(resp.err)
-	}
-	if resp.Data == nil {
-		return []byte{}, nil
-	}
-	return resp.Data, nil
+	return resp.Response, errors.Trace(resp.err)
 }
 
 // handleTask handles single copTask.
@@ -525,7 +519,7 @@ func (it *copIterator) Close() error {
 // copErrorResponse returns error when calling Next()
 type copErrorResponse struct{ error }
 
-func (it copErrorResponse) Next() ([]byte, error) {
+func (it copErrorResponse) Next() (*coprocessor.Response, error) {
 	return nil, it.error
 }
 

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -82,16 +83,16 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 		queryHistgram.WithLabelValues(r.label).Observe(duration.Seconds())
 	}()
 	for {
-		resultSubset, err := r.resp.Next()
+		copResponse, err := r.resp.Next()
 		if err != nil {
 			r.results <- resultWithErr{err: errors.Trace(err)}
 			return
 		}
-		if resultSubset == nil {
+		if copResponse == nil {
 			return
 		}
 		pr := &partialResult{}
-		pr.unmarshal(resultSubset)
+		pr.unmarshal(copResponse)
 
 		select {
 		case r.results <- resultWithErr{result: pr}:
@@ -125,17 +126,20 @@ type partialResult struct {
 	dataOffset int64
 }
 
-func (pr *partialResult) unmarshal(resultSubset []byte) error {
-	pr.resp = new(tipb.SelectResponse)
-	err := pr.resp.Unmarshal(resultSubset)
-	if err != nil {
-		return errors.Trace(err)
+func (pr *partialResult) unmarshal(copResponse *coprocessor.Response) error {
+	// TODO: Clean up it.
+	// In the old proto, value is in Data field; new proto put the value to SelectResp field.
+	if copResponse.Data != nil {
+		pr.resp = new(tipb.SelectResponse)
+		if err := pr.resp.Unmarshal(copResponse.Data); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		pr.resp = copResponse.SelectResp
 	}
-
-	if pr.resp.Error != nil {
+	if pr.resp != nil && pr.resp.Error != nil {
 		return errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
 	}
-
 	return nil
 }
 
