@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testValidatorSuite{})
@@ -145,6 +146,11 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 
 		// issue 2273
 		{"create table t(a char, b char, c char, d char, e char, f char, g char, h char ,i char, j char, k int, l char ,m char , n char, o char , p char, q char, index(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q))", true, errors.New("[schema:1070]Too many key parts specified; max 16 parts allowed")},
+
+		// issue #4429
+		{"CREATE TABLE `t` (`a` date DEFAULT now());", false, types.ErrInvalidDefault},
+		{"CREATE TABLE `t` (`a` timestamp DEFAULT now());", false, nil},
+		{"CREATE TABLE `t` (`a` datetime DEFAULT now());", false, nil},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)

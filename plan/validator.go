@@ -444,10 +444,25 @@ func checkColumn(colDef *ast.ColumnDef) error {
 				return types.ErrIllegalValueForType.GenByArgs(types.TypeStr(tp.Tp), str)
 			}
 		}
+	case mysql.TypeDate:
+		for _, columnOpt := range colDef.Options {
+			if columnOpt.Tp == ast.ColumnOptionDefaultValue && isNowBuiltinFunc(columnOpt.Expr) {
+				return types.ErrInvalidDefault.GenByArgs(colDef.Name.Name.O)
+			}
+		}
 	default:
 		// TODO: Add more types.
 	}
 	return nil
+}
+
+func isNowBuiltinFunc(expr ast.ExprNode) bool {
+	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
+		if funcCall.FnName.L == ast.CurrentTimestamp {
+			return true
+		}
+	}
+	return false
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
