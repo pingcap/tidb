@@ -181,7 +181,7 @@ func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, 
 	}
 	// Timestamp format is 'YYYYMMDDHHMMSS' or 'YYMMDDHHMMSS', which length is 12.
 	// See #3923, it explains what we do here.
-	if len(str) >= 12 {
+	if length >= 12 {
 		t, err = StrToDateTime(str, fsp)
 		if err == nil {
 			return t, nil
@@ -196,6 +196,34 @@ func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, 
 		return Time{}, errors.Trace(err)
 	}
 	return duration.ConvertToTime(mysql.TypeDuration)
+}
+
+// NumberToDuration converts number to Duration.
+func NumberToDuration(number int64, fsp int) (t Time, err error) {
+	if number > TimeMaxValue {
+		// Try to parse DATETIME.
+		if number >= 10000000000 { // '2001-00-00 00-00-00'
+			if t, err = ParseDatetimeFromNum(number); err == nil {
+				return t, nil
+			}
+		}
+		t = MaxMySQLTime(false, fsp)
+		return t, ErrOverflow.GenByArgs("Duration", strconv.Itoa(int(number)))
+	} else if number < -TimeMaxValue {
+		t = MaxMySQLTime(true, fsp)
+		return t, ErrOverflow.GenByArgs("Duration", strconv.Itoa(int(number)))
+	}
+	var neg bool
+	if neg = number < 0; neg {
+		number = -number
+	}
+
+	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
+		return ZeroTimestamp, ErrInvalidTimeFormat
+	}
+	t = Time{Time: newMysqlTime(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), Type: mysql.TypeDuration, Fsp: fsp, negative: neg}
+
+	return t, errors.Trace(err)
 }
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.

@@ -387,6 +387,7 @@ type Update struct {
 	basePhysicalPlan
 
 	OrderedList []*expression.Assignment
+	IgnoreErr   bool
 }
 
 // Delete represents a delete plan.
