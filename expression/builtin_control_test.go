@@ -111,7 +111,7 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 		{tm, nil, tm, false, false},
 		{nil, duration, duration, false, false},
 		{nil, types.NewDecFromFloatForTest(123.123), types.NewDecFromFloatForTest(123.123), false, false},
-		{nil, types.NewBinStringFromUint(0x01, -1), 1, false, false},
+		{nil, types.NewBinStringFromUint(0x01, -1), int64(1), false, false},
 		{nil, types.Set{Value: 1, Name: "abc"}, "abc", false, false},
 		{nil, jsonInt.GetMysqlJSON(), jsonInt.GetMysqlJSON(), false, false},
 		{"abc", nil, "abc", false, false},
