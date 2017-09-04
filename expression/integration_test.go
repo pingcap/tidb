@@ -834,6 +834,12 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("'aaaa' '' '\"\"' '\n\n'"))
 	result = tk.MustQuery(`select quote(0121), quote(0000), quote("中文"), quote(NULL);`)
 	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
+
+	// for format
+	result = tk.MustQuery(`select format(12332.1, 4), format(12332.2, 0), format(12332.2, 2,'en_US');`)
+	result.Check(testkit.Rows("12,332.1000 12,332 12,332.20"))
+	result = tk.MustQuery(`select format(NULL, 4), format(12332.2, NULL);`)
+	result.Check(testkit.Rows("<nil> <nil>"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
