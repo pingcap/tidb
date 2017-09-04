@@ -344,13 +344,13 @@ func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 				filter[lCol.ColName.L] = false
 			}
 
-			col := rColumns[i]
-			copy(rColumns[commonLen+1:i+1], rColumns[commonLen:i])
-			rColumns[commonLen] = col
-
-			col = lColumns[j]
-			copy(lColumns[commonLen+1:j+1], lColumns[commonLen:j])
+			col := lColumns[i]
+			copy(lColumns[commonLen+1:i+1], lColumns[commonLen:i])
 			lColumns[commonLen] = col
+
+			col = rColumns[j]
+			copy(rColumns[commonLen+1:j+1], rColumns[commonLen:j])
+			rColumns[commonLen] = col
 
 			commonLen++
 			break
@@ -369,19 +369,19 @@ func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	copy(schemaCols[:len(lColumns)], lColumns)
 	copy(schemaCols[len(lColumns):], rColumns[commonLen:])
 
-	conds := make([]*expression.ScalarFunction, 0, commonLen)
+	conds := make([]expression.Expression, 0, commonLen)
 	for i := 0; i < commonLen; i++ {
 		lc, rc := lsc.Columns[i], rsc.Columns[i]
 		cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		conds = append(conds, cond.(*expression.ScalarFunction))
+		conds = append(conds, cond)
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rColumns[:commonLen]...))
-	p.EqualConditions = append(conds, p.EqualConditions...)
+	p.OtherConditions = append(conds, p.OtherConditions...)
 
 	return nil
 }
@@ -1453,7 +1453,11 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		return nil
 	}
 	p = np
-	updt := Update{OrderedList: orderedList}.init(b.allocator, b.ctx)
+
+	updt := Update{
+		OrderedList: orderedList,
+		IgnoreErr:   update.IgnoreErr,
+	}.init(b.allocator, b.ctx)
 	addChild(updt, p)
 	updt.SetSchema(p.Schema())
 	return updt

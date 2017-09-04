@@ -143,7 +143,7 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 	}
 
 	for _, t := range tests {
-		bf, err := funcs[t.funcName].getFunction(primitiveValsToConstants([]interface{}{t.arg0, t.arg1}), s.ctx)
+		bf, err := funcs[t.funcName].getFunction(s.ctx, primitiveValsToConstants([]interface{}{t.arg0, t.arg1}))
 		c.Assert(err, IsNil)
 		args := bf.getArgs()
 		c.Assert(args[0].GetType().Tp, Equals, t.tp)
@@ -156,7 +156,7 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 
 	// test <non-const decimal expression> <cmp> <const string expression>
 	decimalCol, stringCon := &Column{RetType: types.NewFieldType(mysql.TypeNewDecimal)}, &Constant{RetType: types.NewFieldType(mysql.TypeVarchar)}
-	bf, err := funcs[ast.LT].getFunction([]Expression{decimalCol, stringCon}, s.ctx)
+	bf, err := funcs[ast.LT].getFunction(s.ctx, []Expression{decimalCol, stringCon})
 	c.Assert(err, IsNil)
 	args := bf.getArgs()
 	c.Assert(args[0].GetType().Tp, Equals, mysql.TypeNewDecimal)
@@ -164,7 +164,7 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 
 	// test <time column> <cmp> <non-time const>
 	timeCol := &Column{RetType: types.NewFieldType(mysql.TypeDatetime)}
-	bf, err = funcs[ast.LT].getFunction([]Expression{timeCol, stringCon}, s.ctx)
+	bf, err = funcs[ast.LT].getFunction(s.ctx, []Expression{timeCol, stringCon})
 	c.Assert(err, IsNil)
 	args = bf.getArgs()
 	c.Assert(args[0].GetType().Tp, Equals, mysql.TypeDatetime)
@@ -212,7 +212,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Length].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }

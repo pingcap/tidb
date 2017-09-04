@@ -75,6 +75,9 @@ func ParseBit(s string, width int) (Bit, error) {
 	if s[0] == 'b' || s[0] == 'B' {
 		// format is b'val' or B'val'
 		s = strings.Trim(s[1:], "'")
+		if len(s) == 0 {
+			return Bit{Value: 0, Width: 0}, nil
+		}
 	} else if strings.HasPrefix(s, "0b") {
 		s = s[2:]
 	} else {

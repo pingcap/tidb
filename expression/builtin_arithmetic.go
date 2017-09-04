@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -127,38 +128,32 @@ type arithmeticPlusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticPlusFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *arithmeticPlusFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	tpA, tpB := args[0].GetType(), args[1].GetType()
 	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
 	if tcA == types.ClassReal || tcB == types.ClassReal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
 		sig := &builtinArithmeticPlusRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_PlusReal)
 		return sig.setSelf(sig), nil
 	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
 		sig := &builtinArithmeticPlusDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_PlusDecimal)
 		return sig.setSelf(sig), nil
 	} else {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		sig := &builtinArithmeticPlusIntSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
 		return sig.setSelf(sig), nil
 	}
 }
@@ -257,38 +252,32 @@ type arithmeticMinusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticMinusFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *arithmeticMinusFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	tpA, tpB := args[0].GetType(), args[1].GetType()
 	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
 	if tcA == types.ClassReal || tcB == types.ClassReal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
 		sig := &builtinArithmeticMinusRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MinusReal)
 		return sig.setSelf(sig), nil
 	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
 		sig := &builtinArithmeticMinusDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig.setSelf(sig), nil
 	} else {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		sig := &builtinArithmeticMinusIntSig{baseIntBuiltinFunc: baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
 		return sig.setSelf(sig), nil
 	}
 }
@@ -384,41 +373,36 @@ type arithmeticMultiplyFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticMultiplyFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *arithmeticMultiplyFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	tpA, tpB := args[0].GetType(), args[1].GetType()
 	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
 	if tcA == types.ClassReal || tcB == types.ClassReal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
 		sig := &builtinArithmeticMultiplyRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MultiplyReal)
 		return sig.setSelf(sig), nil
 	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
 		sig := &builtinArithmeticMultiplyDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MultiplyDecimal)
 		return sig.setSelf(sig), nil
 	} else {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 			setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 			sig := &builtinArithmeticMultiplyIntUnsignedSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
 			return sig.setSelf(sig), nil
 		}
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		sig := &builtinArithmeticMultiplyIntSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
 		return sig.setSelf(sig), nil
 	}
 }
@@ -503,25 +487,19 @@ type arithmeticDivideFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticDivideFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *arithmeticDivideFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	tpA, tpB := args[0].GetType(), args[1].GetType()
 	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
 	if tcA == types.ClassReal || tcB == types.ClassReal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		c.setType4DivReal(bf.tp)
 		sig := &builtinArithmeticDivideRealSig{baseRealBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 	c.setType4DivDecimal(bf.tp, tpA, tpB)
 	sig := &builtinArithmeticDivideDecimalSig{baseDecimalBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -575,7 +553,7 @@ type arithmeticFunctionClass struct {
 	op opcode.Op
 }
 
-func (c *arithmeticFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *arithmeticFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
