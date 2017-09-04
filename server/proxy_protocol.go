@@ -15,6 +15,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"strings"
@@ -26,11 +27,20 @@ import (
 // Ref: https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt .
 const (
 	proxyProtocolV1MaxHeaderLen = 108
+	unknownProtocol             = 0
+	proxyProtocolV1             = 1
+	proxyProtocolV2             = 2
+	v2CmdPos                    = 12
+	v2FamlyPos                  = 13
+	v2LenPos                    = 14
+	v2AddrsPos                  = 16
 )
 
 var (
-	errProxyProtocolV1HeaderInvalid = errors.New("PROXY Protocol header is invalid")
+	errProxyProtocolV1HeaderInvalid = errors.New("PROXY Protocol v1 header is invalid")
+	errProxyProtocolV2HeaderInvalid = errors.New("PROXY Protocol v2 header is invalid")
 	errProxyAddressNotAllowed       = errors.New("Proxy address is not allowed")
+	proxyProtocolV2Sig              = []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A}
 
 	_ net.Conn = &proxyProtocolConn{}
 )
@@ -111,20 +121,30 @@ func (c *proxyProtocolConn) readClientAddrBehindProxy() error {
 	if !allowed {
 		return errProxyAddressNotAllowed
 	}
-	return c.parseHeaderV1(connRemoteAddr)
+	return c.parseHeader(connRemoteAddr)
 }
 
-func (c *proxyProtocolConn) parseHeaderV1(connRemoteAddr net.Addr) error {
-	buffer, err := c.readHeaderV1()
+func (c *proxyProtocolConn) parseHeader(connRemoteAddr net.Addr) error {
+	ver, buffer, err := c.readHeader()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	raddr, err := c.extractClientIPV1(buffer, connRemoteAddr)
-	if err != nil {
-		return errors.Trace(err)
+	if ver == proxyProtocolV1 {
+		raddr, v1err := c.extractClientIPV1(buffer, connRemoteAddr)
+		if v1err != nil {
+			return errors.Trace(v1err)
+		}
+		c.clientIP = raddr
+		return nil
+	} else if ver == proxyProtocolV2 {
+		raddr, v2err := c.extraceClientIPV2(buffer, connRemoteAddr)
+		if v2err != nil {
+			return errors.Trace(v2err)
+		}
+		c.clientIP = raddr
+		return nil
 	}
-	c.clientIP = raddr
-	return nil
+	panic("Should not come here")
 }
 
 func (c *proxyProtocolConn) extractClientIPV1(buffer []byte, connRemoteAddr net.Addr) (net.Addr, error) {
@@ -150,6 +170,39 @@ func (c *proxyProtocolConn) extractClientIPV1(buffer []byte, connRemoteAddr net.
 		return connRemoteAddr, nil
 	default:
 		return nil, errProxyProtocolV1HeaderInvalid
+	}
+}
+
+func (c *proxyProtocolConn) extraceClientIPV2(buffer []byte, connRemoteAddr net.Addr) (net.Addr, error) {
+	verCmd := buffer[v2CmdPos]
+	famly := buffer[v2FamlyPos]
+	switch verCmd & 0x0F {
+	case 0x01: /* PROXY command */
+		switch famly {
+		case 0x11: /* TCPv4 */
+			srcAddrV4 := net.IP(buffer[v2AddrsPos : v2AddrsPos+4])
+			srcPortV4 := binary.BigEndian.Uint16(buffer[v2AddrsPos+8 : v2AddrsPos+10])
+			return &net.TCPAddr{
+				IP:   srcAddrV4,
+				Port: int(srcPortV4),
+			}, nil
+		case 0x21: /* TCPv6 */
+			srcAddrV6 := net.IP(buffer[v2AddrsPos : v2AddrsPos+16])
+			srcPortV6 := binary.BigEndian.Uint16(buffer[v2AddrsPos+32 : v2AddrsPos+34])
+			return &net.TCPAddr{
+				IP:   srcAddrV6,
+				Port: int(srcPortV6),
+			}, nil
+		default:
+			// unsupported protocol, keep local connection address
+			return connRemoteAddr, nil
+		}
+	case 0x00: /* LOCAL command */
+		// keep local connection address for LOCAL
+		return connRemoteAddr, nil
+	default:
+		// not a supported command
+		return nil, errProxyProtocolV2HeaderInvalid
 	}
 }
 
@@ -186,7 +239,7 @@ func (c *proxyProtocolConn) Read(buffer []byte) (int, error) {
 	return 0, errors.Trace(err)
 }
 
-func (c *proxyProtocolConn) readHeaderV1() ([]byte, error) {
+func (c *proxyProtocolConn) readHeader() (int, []byte, error) {
 	buf := make([]byte, proxyProtocolV1MaxHeaderLen)
 	// This mean all header data should be read in headerReadTimeout seconds.
 	c.Conn.SetReadDeadline(time.Now().Add(time.Duration(c.builder.headerReadTimeout) * time.Second))
@@ -194,25 +247,38 @@ func (c *proxyProtocolConn) readHeaderV1() ([]byte, error) {
 	defer c.Conn.SetReadDeadline(time.Time{})
 	n, err := c.Conn.Read(buf)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return unknownProtocol, nil, errors.Trace(err)
+	}
+	if n >= 16 {
+		if bytes.Equal(buf[0:12], proxyProtocolV2Sig) && (buf[v2CmdPos]&0xF0) == 0x20 {
+			endPos := 16 + int(binary.BigEndian.Uint16(buf[v2LenPos:v2LenPos+2]))
+			if n < endPos {
+				return unknownProtocol, nil, errProxyProtocolV2HeaderInvalid
+			}
+			if n > endPos {
+				c.exceedBuffer = buf[endPos:]
+				c.exceedBufferLen = n - endPos
+			}
+			return proxyProtocolV2, buf[0:endPos], nil
+		}
 	}
 	if n >= 5 {
 		if string(buf[0:5]) != "PROXY" {
-			return nil, errProxyProtocolV1HeaderInvalid
+			return unknownProtocol, nil, errProxyProtocolV1HeaderInvalid
 		}
-		pos := bytes.IndexByte(buf, byte(13))
+		pos := bytes.IndexByte(buf, byte(10))
 		if pos == -1 {
-			return nil, errProxyProtocolV1HeaderInvalid
+			return unknownProtocol, nil, errProxyProtocolV1HeaderInvalid
 		}
-		if buf[pos+1] != byte(10) {
-			return nil, errProxyProtocolV1HeaderInvalid
+		if buf[pos-1] != byte(13) {
+			return unknownProtocol, nil, errProxyProtocolV1HeaderInvalid
 		}
-		endPos := pos + 1
+		endPos := pos
 		if n > endPos {
 			c.exceedBuffer = buf[endPos+1:]
 			c.exceedBufferLen = n - endPos
 		}
-		return buf[0 : endPos+1], nil
+		return proxyProtocolV1, buf[0 : endPos+1], nil
 	}
-	return nil, errProxyProtocolV1HeaderInvalid
+	return unknownProtocol, nil, errProxyProtocolV1HeaderInvalid
 }

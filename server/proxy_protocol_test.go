@@ -15,6 +15,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/binary"
 	"net"
 	"time"
 
@@ -119,6 +120,20 @@ func (ts ProxyProtocolConnTestSuite) TestProxyProtocolConnMustNotReadAnyDataAfte
 	c.Assert(string(buf[0:n]), Equals, expectedString)
 }
 
+func (ts ProxyProtocolConnTestSuite) TestProxyProtocolV2ConnMustNotReadAnyDataAfterHeader(c *C) {
+	craddr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.51:8080")
+	buffer := encodeProxyProtocolV2Header("tcp4", "192.168.1.100:5678", "192.168.1.5:4000")
+	expectedString := "Other Data"
+	buffer = append(buffer, []byte(expectedString)...)
+	ppb, _ := newProxyProtocolConnBuilder("*", 5)
+	conn := newMockBufferConn(bytes.NewBuffer(buffer), craddr)
+	wconn, err := ppb.wrapConn(conn)
+	buf := make([]byte, len(expectedString))
+	n, err := wconn.Read(buf)
+	c.Assert(err, IsNil)
+	c.Assert(string(buf[0:n]), Equals, expectedString)
+}
+
 func (ts ProxyProtocolConnTestSuite) TestProxyProtocolV1HeaderRead(c *C) {
 	buffer := []byte("PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\nOther Data")
 	expectedString := "PROXY TCP4 192.168.1.100 192.168.1.50 5678 3306\r\n"
@@ -128,7 +143,8 @@ func (ts ProxyProtocolConnTestSuite) TestProxyProtocolV1HeaderRead(c *C) {
 		Conn:    conn,
 		builder: ppb,
 	}
-	buf, err := wconn.readHeaderV1()
+	ver, buf, err := wconn.readHeader()
+	c.Assert(ver, Equals, proxyProtocolV1)
 	c.Assert(err, IsNil)
 	c.Assert(string(buf), Equals, expectedString)
 }
@@ -211,4 +227,79 @@ func (ts ProxyProtocolConnTestSuite) TestProxyProtocolV1ExtractClientIP(c *C) {
 			}
 		}
 	}
+}
+
+func encodeProxyProtocolV2Header(network, srcAddr, dstAddr string) []byte {
+	saddr, _ := net.ResolveTCPAddr(network, srcAddr)
+	daddr, _ := net.ResolveTCPAddr(network, dstAddr)
+	buffer := make([]byte, 1024)
+	copy(buffer, proxyProtocolV2Sig)
+	// Command
+	buffer[v2CmdPos] = 0x21
+	// Famly
+	if network == "tcp4" {
+		buffer[v2FamlyPos] = 0x11
+		binary.BigEndian.PutUint16(buffer[14:14+2], 12)
+		copy(buffer[16:16+4], []byte(saddr.IP.To4()))
+		copy(buffer[20:20+4], []byte(daddr.IP.To4()))
+		binary.BigEndian.PutUint16(buffer[24:24+2], uint16(saddr.Port))
+		binary.BigEndian.PutUint16(buffer[26:26+2], uint16(saddr.Port))
+		return buffer[0:28]
+	} else if network == "tcp6" {
+		buffer[v2FamlyPos] = 0x21
+		binary.BigEndian.PutUint16(buffer[14:14+2], 36)
+		copy(buffer[16:16+16], []byte(saddr.IP.To16()))
+		copy(buffer[32:32+16], []byte(daddr.IP.To16()))
+		binary.BigEndian.PutUint16(buffer[48:48+2], uint16(saddr.Port))
+		binary.BigEndian.PutUint16(buffer[50:50+2], uint16(saddr.Port))
+		return buffer[0:52]
+	}
+	return buffer
+}
+
+func (ts ProxyProtocolConnTestSuite) TestProxyProtocolV2HeaderRead(c *C) {
+	craddr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.51:8080")
+	tests := []struct {
+		buffer     []byte
+		expectedIP string
+	}{
+		{
+			buffer:     encodeProxyProtocolV2Header("tcp4", "192.168.1.100:5678", "192.168.1.5:4000"),
+			expectedIP: "192.168.1.100:5678",
+		},
+		{
+			buffer:     encodeProxyProtocolV2Header("tcp6", "[2001:db8:85a3::8a2e:370:7334]:5678", "[2001:db8:85a3::8a2e:370:8000]:4000"),
+			expectedIP: "[2001:db8:85a3::8a2e:370:7334]:5678",
+		},
+	}
+
+	ppb, _ := newProxyProtocolConnBuilder("*", 5)
+	for _, t := range tests {
+		conn := newMockBufferConn(bytes.NewBuffer(t.buffer), craddr)
+		wconn, err := ppb.wrapConn(conn)
+		clientIP := wconn.RemoteAddr()
+		if err == nil {
+			c.Assert(clientIP.String(), Equals, t.expectedIP, Commentf(
+				"Buffer:%v\nExpect: %s Got: %s", t.buffer, t.expectedIP, clientIP.String(),
+			))
+		} else {
+			c.Assert(false, IsTrue, Commentf(
+				"Buffer:%v\nExpect: %s Got Error: %v", t.buffer, t.expectedIP, err,
+			))
+		}
+	}
+}
+
+func (ts ProxyProtocolConnTestSuite) TestProxyProtocolV2HeaderReadLocalCommand(c *C) {
+	craddr, _ := net.ResolveTCPAddr("tcp4", "192.168.1.51:8080")
+	buffer := encodeProxyProtocolV2Header("tcp4", "192.168.1.100:5678", "192.168.1.5:4000")
+	buffer[v2CmdPos] = 0x20
+	ppb, _ := newProxyProtocolConnBuilder("*", 5)
+	conn := newMockBufferConn(bytes.NewBuffer(buffer), craddr)
+	wconn, err := ppb.wrapConn(conn)
+	clientIP := wconn.RemoteAddr()
+	c.Assert(err, IsNil)
+	c.Assert(clientIP.String(), Equals, craddr.String(), Commentf(
+		"Buffer:%v\nExpected: %s Got: %s", buffer, craddr.String(), clientIP.String(),
+	))
 }
