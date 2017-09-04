@@ -153,16 +153,16 @@ func GetCharsetDesc(cs string) (*Desc, error) {
 }
 
 // GetCharsetInfoByID returns charset and collation for id as cs_number.
-func GetCharsetInfoByID(id int) (string, string, error) {
-	if id == mysql.DefaultCollationID {
+func GetCharsetInfoByID(coID int) (string, string, error) {
+	if coID == mysql.DefaultCollationID {
 		return mysql.DefaultCharset, mysql.DefaultCollationName, nil
 	}
 	for _, collation := range collations {
-		if id == collation.ID {
+		if coID == collation.ID {
 			return collation.CharsetName, collation.Name, nil
 		}
 	}
-	return "", "", errors.Errorf("Unknown charset id %d", id)
+	return "", "", errors.Errorf("Unknown charset id %d", coID)
 }
 
 // GetCollations returns a list for all collations.

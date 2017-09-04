@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -129,11 +128,10 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var cs, co string
-	if cs, co, err = charset.GetCharsetInfoByID(int(collation)); err != nil {
+	err = session.SetCollation(int(collation))
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	session.SetCharset(cs, co)
 	session.SetClientCapability(capability)
 	session.SetConnectionID(connID)
 	tc := &TiDBContext{

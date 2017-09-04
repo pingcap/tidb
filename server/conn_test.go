@@ -132,37 +132,6 @@ func (ts ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
 }
 
-func (ts ConnTestSuite) TestInitialHandshakeWithCollation(c *C) {
-	c.Parallel()
-	var outBuffer bytes.Buffer
-	cc := &clientConn{
-		connectionID: 1,
-		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10},
-		collation:    mysql.UTF8MB4GeneralCollationID, // utf8mb4 collate utf8mb4_general_ci
-		pkt: &packetIO{
-			wb: bufio.NewWriter(&outBuffer),
-		},
-	}
-	err := cc.writeInitialHandshake()
-	c.Assert(err, IsNil)
-
-	expected := new(bytes.Buffer)
-	expected.WriteByte(0x0a)                                                           // Protocol
-	expected.WriteString(mysql.ServerVersion)                                          // Version
-	expected.WriteByte(0x00)                                                           // NULL
-	binary.Write(expected, binary.LittleEndian, int32(1))                              // Connection ID
-	expected.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00})       // Salt
-	binary.Write(expected, binary.LittleEndian, int16(defaultCapability&0xFFFF))       // Server Capability
-	expected.WriteByte(uint8(mysql.UTF8MB4GeneralCollationID))                         // Server Language
-	binary.Write(expected, binary.LittleEndian, mysql.ServerStatusAutocommit)          // Server Status
-	binary.Write(expected, binary.LittleEndian, int16((defaultCapability>>16)&0xFFFF)) // Extended Server Capability
-	expected.WriteByte(0x15)                                                           // Authentication Plugin Length
-	expected.Write([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}) // Unused
-	expected.Write([]byte{0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x00})       // Salt
-	expected.WriteString("mysql_native_password")                                      // Authentication Plugin
-	expected.WriteByte(0x00)                                                           // NULL
-	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
-}
 func mapIdentical(m1, m2 map[string]string) bool {
 	return mapBelong(m1, m2) && mapBelong(m2, m1)
 }
