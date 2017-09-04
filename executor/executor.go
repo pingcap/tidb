@@ -182,30 +182,21 @@ func (e *ShowDDLExec) Next() (Row, error) {
 }
 
 // ShowDDLJobsExec represent a show DDL jobs executor.
-// TODO: Split it into two executors, one is DDL current jobs, another is DDL history jobs.
 type ShowDDLJobsExec struct {
 	baseExecutor
 
-	cursor      int
-	cnt         int
-	jobs        []*model.Job
-	historyJobs []*model.Job
+	cursor int
+	jobs   []*model.Job
 }
 
 // Next implements the Executor Next interface.
 func (e *ShowDDLJobsExec) Next() (Row, error) {
-	if e.cursor >= e.cnt {
+	if e.cursor >= len(e.jobs) {
 		return nil, nil
 	}
 
-	var job, historyJob string
-	if len(e.jobs) > e.cursor {
-		job = e.jobs[e.cursor].String()
-	}
-	if len(e.historyJobs) > e.cursor {
-		historyJob = e.historyJobs[e.cursor].String()
-	}
-	row := types.MakeDatums(job, historyJob)
+	job := e.jobs[e.cursor]
+	row := types.MakeDatums(job.String(), job.State.String())
 	e.cursor++
 
 	return row, nil

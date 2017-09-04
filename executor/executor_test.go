@@ -148,13 +148,11 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.Data, HasLen, 2)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	jobs, err := inspectkv.GetDDLJobs(txn)
-	c.Assert(jobs, HasLen, 0)
-	c.Assert(row.Data[0].GetString(), Equals, "")
-	c.Assert(err, IsNil)
 	historyJobs, err := inspectkv.GetHistoryDDLJobs(txn)
 	c.Assert(len(historyJobs), Greater, 1)
-	c.Assert(len(row.Data[1].GetString()), Greater, 0)
+	c.Assert(len(row.Data[0].GetString()), Greater, 0)
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[1].GetString(), Equals, historyJobs[0].State.String())
 	c.Assert(err, IsNil)
 
 	// check table test

@@ -182,15 +182,12 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	e.cnt = len(e.jobs)
-	e.historyJobs, err = inspectkv.GetHistoryDDLJobs(e.ctx.Txn())
+	historyJobs, err := inspectkv.GetHistoryDDLJobs(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	if e.cnt < len(e.historyJobs) {
-		e.cnt = len(e.historyJobs)
-	}
+	e.jobs = append(e.jobs, historyJobs...)
 	return e
 }
 
