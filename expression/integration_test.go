@@ -834,6 +834,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("'aaaa' '' '\"\"' '\n\n'"))
 	result = tk.MustQuery(`select quote(0121), quote(0000), quote("中文"), quote(NULL);`)
 	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
+
+	// for field
+	result = tk.MustQuery(`select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);`)
+	result.Check(testkit.Rows("2 0 3 0"))
+	result = tk.MustQuery(`select field("1", 2, 1), field(1, "0", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);`)
+	result.Check(testkit.Rows("2 0 3 0"))
+	result = tk.MustQuery(`select field("1", 2, 1), field(1, "abc", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);`)
+	result.Check(testkit.Rows("2 0 3 0"))
+	result = tk.MustQuery(`select field("abc", "a", 1);`)
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {

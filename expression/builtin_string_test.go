@@ -1214,6 +1214,8 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		fc := funcs[ast.Field]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.argLst...)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
