@@ -443,7 +443,7 @@ func (d *Datum) CompareDatum(sc *variable.StatementContext, ad Datum) (int, erro
 	case KindMysqlEnum:
 		return d.compareMysqlEnum(sc, ad.GetMysqlEnum())
 	case KindBinString, KindMysqlBit:
-		return d.compareBitString(sc, ad.GetBinString())
+		return d.compareBinString(sc, ad.GetBinString())
 	case KindMysqlSet:
 		return d.compareMysqlSet(sc, ad.GetMysqlSet())
 	case KindMysqlJSON:
@@ -600,7 +600,7 @@ func (d *Datum) compareMysqlEnum(sc *variable.StatementContext, enum Enum) (int,
 	}
 }
 
-func (d *Datum) compareBitString(sc *variable.StatementContext, b BinString) (int, error) {
+func (d *Datum) compareBinString(sc *variable.StatementContext, b BinString) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), b.ToString()), nil
