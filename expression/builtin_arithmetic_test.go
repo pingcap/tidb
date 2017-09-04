@@ -113,10 +113,10 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Plus].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.Plus].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
-		c.Assert(sig.isDeterministic(), Equals, true)
+		c.Assert(sig.canBeFolded(), IsTrue)
 		val, err := sig.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
@@ -152,10 +152,10 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Minus].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.Minus].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
-		c.Assert(sig.isDeterministic(), Equals, true)
+		c.Assert(sig.canBeFolded(), IsTrue)
 		val, err := sig.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
@@ -196,10 +196,10 @@ func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Mul].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.Mul].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
-		c.Assert(sig.isDeterministic(), Equals, true)
+		c.Assert(sig.canBeFolded(), IsTrue)
 		val, err := sig.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
@@ -259,10 +259,10 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Div].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.Div].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
-		c.Assert(sig.isDeterministic(), Equals, true)
+		c.Assert(sig.canBeFolded(), IsTrue)
 		val, err := sig.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))

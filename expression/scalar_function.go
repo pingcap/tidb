@@ -78,7 +78,7 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
-	f, err := fc.getFunction(funcArgs, ctx)
+	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

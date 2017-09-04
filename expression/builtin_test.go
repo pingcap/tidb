@@ -69,37 +69,37 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 
 	datums = types.MakeDatums(2, 0)
 	greatest := funcs[ast.Greatest]
-	f, err := greatest.getFunction(datumsToConstants(datums), s.ctx)
+	f, err := greatest.getFunction(s.ctx, datumsToConstants(datums))
 	c.Assert(err, IsNil)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(2))
 	least := funcs[ast.Least]
-	f, err = least.getFunction(datumsToConstants(datums), s.ctx)
+	f, err = least.getFunction(s.ctx, datumsToConstants(datums))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(0))
 
 	datums = types.MakeDatums(34.0, 3.0, 5.0, 767.0)
-	f, err = greatest.getFunction(datumsToConstants(datums), s.ctx)
+	f, err = greatest.getFunction(s.ctx, datumsToConstants(datums))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Equals, float64(767.0))
-	f, err = least.getFunction(datumsToConstants(datums), s.ctx)
+	f, err = least.getFunction(s.ctx, datumsToConstants(datums))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Equals, float64(3.0))
 
 	datums = types.MakeDatums("B", "A", "C")
-	f, err = greatest.getFunction(datumsToConstants(datums), s.ctx)
+	f, err = greatest.getFunction(s.ctx, datumsToConstants(datums))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "C")
-	f, err = least.getFunction(datumsToConstants(datums), s.ctx)
+	f, err = least.getFunction(s.ctx, datumsToConstants(datums))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
@@ -107,24 +107,24 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 
 	// GREATEST() and LEAST() return NULL if any argument is NULL.
 	datums = types.MakeDatums(nil, 1, 2)
-	f, err = greatest.getFunction(datumsToConstants(datums), s.ctx)
+	f, err = greatest.getFunction(s.ctx, datumsToConstants(datums))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
-	f, err = least.getFunction(datumsToConstants(datums), s.ctx)
+	f, err = least.getFunction(s.ctx, datumsToConstants(datums))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 
 	datums = types.MakeDatums(1, nil, 2)
-	f, err = greatest.getFunction(datumsToConstants(datums), s.ctx)
+	f, err = greatest.getFunction(s.ctx, datumsToConstants(datums))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
-	f, err = least.getFunction(datumsToConstants(datums), s.ctx)
+	f, err = least.getFunction(s.ctx, datumsToConstants(datums))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
@@ -160,7 +160,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		{types.MakeDatums("9007199254740992", "9007199254740993"), 1},
 	} {
 		fc := funcs[ast.Interval]
-		f, err := fc.getFunction(datumsToConstants(t.args), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t.args))
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -172,13 +172,13 @@ func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 	defer testleak.AfterTest(c)()
 
 	fc := funcs[ast.IsNull]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(1)), s.ctx)
+	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(0))
 
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	f, err = fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
@@ -189,14 +189,14 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 	defer testleak.AfterTest(c)()
 
 	lock := funcs[ast.GetLock]
-	f, err := lock.getFunction(datumsToConstants(types.MakeDatums(nil, 1)), s.ctx)
+	f, err := lock.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil, 1)))
 	c.Assert(err, IsNil)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 
 	releaseLock := funcs[ast.ReleaseLock]
-	f, err = releaseLock.getFunction(datumsToConstants(types.MakeDatums(1)), s.ctx)
+	f, err = releaseLock.getFunction(s.ctx, datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
@@ -212,7 +212,7 @@ func newFunctionForTest(ctx context.Context, funcName string, args ...Expression
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
-	f, err := fc.getFunction(funcArgs, ctx)
+	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

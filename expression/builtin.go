@@ -70,12 +70,12 @@ func fieldTp2EvalTp(tp *types.FieldType) evalTp {
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args          []Expression
-	argValues     []types.Datum
-	ctx           context.Context
-	deterministic bool
-	tp            *types.FieldType
-	pbCode        tipb.ScalarFuncSig
+	args      []Expression
+	argValues []types.Datum
+	ctx       context.Context
+	foldable  bool // Default value is true because many expressions are foldable.
+	tp        *types.FieldType
+	pbCode    tipb.ScalarFuncSig
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
 	self builtinFunc
@@ -91,11 +91,11 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 
 func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
 	return baseBuiltinFunc{
-		args:          args,
-		argValues:     make([]types.Datum, len(args)),
-		ctx:           ctx,
-		deterministic: true,
-		tp:            types.NewFieldType(mysql.TypeUnspecified),
+		args:      args,
+		argValues: make([]types.Datum, len(args)),
+		ctx:       ctx,
+		foldable:  true,
+		tp:        types.NewFieldType(mysql.TypeUnspecified),
 	}
 }
 
@@ -192,11 +192,11 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
 	}
 	return baseBuiltinFunc{
-		args:          args,
-		argValues:     make([]types.Datum, len(args)),
-		ctx:           ctx,
-		deterministic: true,
-		tp:            fieldType,
+		args:      args,
+		argValues: make([]types.Datum, len(args)),
+		ctx:       ctx,
+		foldable:  true,
+		tp:        fieldType,
 	}
 }
 
@@ -215,9 +215,8 @@ func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err erro
 	return b.argValues, nil
 }
 
-// isDeterministic will be true by default. Non-deterministic function will override this function.
-func (b *baseBuiltinFunc) isDeterministic() bool {
-	return b.deterministic
+func (b *baseBuiltinFunc) canBeFolded() bool {
+	return b.foldable
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -297,10 +296,8 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	return b.tp
 }
 
-// equal only checks if both functions are non-deterministic and if these arguments are same.
-// Function name will be checked outside.
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
-	if !b.isDeterministic() || !fun.isDeterministic() {
+	if !b.canBeFolded() || !fun.canBeFolded() {
 		return false
 	}
 	funArgs := fun.getArgs()
@@ -656,10 +653,8 @@ type builtinFunc interface {
 	evalJSON(row []types.Datum) (val json.JSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
-	// isDeterministic checks if a function is deterministic.
-	// A function is deterministic if it returns same results for same inputs.
-	// e.g. random is non-deterministic.
-	isDeterministic() bool
+	// canBeFolded checks whether a function can be folded in constant folding.
+	canBeFolded() bool
 	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
@@ -692,11 +687,8 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
-	getFunction(args []Expression, ctx context.Context) (builtinFunc, error)
+	getFunction(ctx context.Context, args []Expression) (builtinFunc, error)
 }
-
-// BuiltinFunc is the function signature for builtin functions
-type BuiltinFunc func([]types.Datum, context.Context) (types.Datum, error)
 
 // funcs holds all registered builtin functions.
 var funcs = map[string]functionClass{

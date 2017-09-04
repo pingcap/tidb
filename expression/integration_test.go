@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -184,6 +185,17 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	tk.MustExec("insert into t1 (a,b) values(1,10),(1,20),(2,30),(2,40);")
 	tk.MustQuery("select any_value(a), sum(b) from t1;").Check(testkit.Rows("1 100"))
 	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
+
+	// for locks
+	result := tk.MustQuery(`SELECT GET_LOCK('test_lock1', 10);`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT GET_LOCK('test_lock2', 10);`)
+	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock2');`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock1');`)
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestConvertToBit(c *C) {
@@ -1183,6 +1195,30 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(020005), hour(null), hour("27aaaa2:59:55");`)
 	result.Check(testkit.Rows("12 12 272 2 <nil> <nil>"))
 
+	// for hour, issue #4340
+	result = tk.MustQuery(`SELECT HOUR(20171222020005);`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR(20171222020005.1);`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR(20171222020005.1e0);`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR("20171222020005");`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`SELECT HOUR("20171222020005.1");`)
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery(`select hour(20171222);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select hour(8381222);`)
+	result.Check(testkit.Rows("838"))
+	result = tk.MustQuery(`select hour(10000000000);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select hour(10100000000);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select hour(10001000000);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select hour(10101000000);`)
+	result.Check(testkit.Rows("0"))
+
 	// for minute
 	result = tk.MustQuery(`SELECT minute("12:13:14.123456"), minute("12:13:14.000010"), minute("272:59:55"), minute(null), minute("27aaaa2:59:55");`)
 	result.Check(testkit.Rows("13 13 59 <nil> <nil>"))
@@ -1274,6 +1310,65 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfYear(123)`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	tk.MustExec("set sql_mode = ''")
+
+	// for unix_timestamp
+	tk.MustExec("SET time_zone = '+00:00';")
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113);")
+	result.Check(testkit.Rows("1447372800"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(20151113);")
+	result.Check(testkit.Rows("1447372800"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113102019);")
+	result.Check(testkit.Rows("1447410019"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113102019e0);")
+	result.Check(testkit.Rows("1447410019.000000"))
+	// See https://github.com/pingcap/tidb/issues/4296.
+	// result = tk.MustQuery("SELECT UNIX_TIMESTAMP(15111310201912e-2);")
+	// result.Check(testkit.Rows("1447410019.119995"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113102019.12);")
+	result.Check(testkit.Rows("1447410019.12"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113102019.1234567);")
+	result.Check(testkit.Rows("1447410019.123457"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(20151113102019);")
+	result.Check(testkit.Rows("1447410019"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2015-11-13 10:20:19');")
+	result.Check(testkit.Rows("1447410019.000000"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2015-11-13 10:20:19.012');")
+	result.Check(testkit.Rows("1447410019.012000"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00');")
+	result.Check(testkit.Rows("0.000000"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1969-12-31 23:59:59');")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-13-01 00:00:00');")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:07.999999');")
+	result.Check(testkit.Rows("2147483647.999999"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:08');")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(0);")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(-1);")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(12345);")
+	result.Check(testkit.Rows("0"))
+	// Test different time zone.
+	tk.MustExec("SET time_zone = '+08:00';")
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00');")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 08:00:00');")
+	result.Check(testkit.Rows("0.000000"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2015-11-13 18:20:19.012');")
+	result.Check(testkit.Rows("1447410019.012000"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 11:14:07.999999');")
+	result.Check(testkit.Rows("2147483647.999999"))
+
+	result = tk.MustQuery("SELECT TIME_FORMAT('bad string', '%H:%i:%s %p');")
+	result.Check(testkit.Rows("00:00:00 AM"))
+	result = tk.MustQuery("SELECT TIME_FORMAT(null, '%H:%i:%s %p');")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
+	result.Check(testkit.Rows("00:01:23 AM"))
 
 	// for monthname
 	tk.MustExec(`drop table if exists t`)
@@ -1412,6 +1507,22 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustExec("insert into t value(12.3, 1.23, '2017-01-01 12:12:12', '12:12:12', 123)")
 	result = tk.MustQuery("select cast(a as json), cast(b as json), cast(c as json), cast(d as json), cast(e as json) from t")
 	result.Check(testkit.Rows(`12.3 1.23 "2017-01-01 12:12:12.000000" "12:12:12.000000" 123`))
+	result = tk.MustQuery(`select cast(10101000000 as time);`)
+	result.Check(testkit.Rows("00:00:00"))
+	result = tk.MustQuery(`select cast(10101001000 as time);`)
+	result.Check(testkit.Rows("00:10:00"))
+	result = tk.MustQuery(`select cast(10000000000 as time);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select cast(20171222020005 as time);`)
+	result.Check(testkit.Rows("02:00:05"))
+	result = tk.MustQuery(`select cast(8380000 as time);`)
+	result.Check(testkit.Rows("838:00:00"))
+	result = tk.MustQuery(`select cast(8390000 as time);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select cast(8386000 as time);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select cast(8385960 as time);`)
+	result.Check(testkit.Rows("<nil>"))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
@@ -1705,6 +1816,33 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", likeTests)
+}
+
+func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for last_insert_id
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_increment, a int, PRIMARY KEY (id))")
+	tk.MustExec("insert into t(a) values(1)")
+	result := tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t values(2, 1)")
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t(a) values(1)")
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("3"))
+
+	result = tk.MustQuery("select last_insert_id(5);")
+	result.Check(testkit.Rows("5"))
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("5"))
 
 	// for found_rows
 	tk.MustExec("drop table if exists t")
@@ -1733,32 +1871,40 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustQuery("select count(*) from t") // Test ProjectionExec
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
-}
 
-func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-	tk := testkit.NewTestKit(c, s.store)
+	// for database
+	result = tk.MustQuery("select database()")
+	result.Check(testkit.Rows("test"))
+	tk.MustExec("drop database test")
+	result = tk.MustQuery("select database()")
+	result.Check(testkit.Rows("<nil>"))
+	tk.MustExec("create database test")
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int auto_increment, a int, PRIMARY KEY (id))")
-	tk.MustExec("insert into t(a) values(1)")
-	result := tk.MustQuery("select last_insert_id();")
-	result.Check(testkit.Rows("1"))
-	tk.MustExec("insert into t values(2, 1)")
-	result = tk.MustQuery("select last_insert_id();")
-	result.Check(testkit.Rows("1"))
-	tk.MustExec("insert into t(a) values(1)")
-	result = tk.MustQuery("select last_insert_id();")
-	result.Check(testkit.Rows("3"))
+	// for current_user
+	sessionVars := tk.Se.GetSessionVars()
+	originUser := sessionVars.User
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	result = tk.MustQuery("select current_user()")
+	result.Check(testkit.Rows("root@localhost"))
+	sessionVars.User = originUser
 
-	result = tk.MustQuery("select last_insert_id(5);")
-	result.Check(testkit.Rows("5"))
-	result = tk.MustQuery("select last_insert_id();")
-	result.Check(testkit.Rows("5"))
+	// for user
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	result = tk.MustQuery("select user()")
+	result.Check(testkit.Rows("root@localhost"))
+	sessionVars.User = originUser
+
+	// for connection_id
+	originConnectionID := sessionVars.ConnectionID
+	sessionVars.ConnectionID = uint64(1)
+	result = tk.MustQuery("select connection_id()")
+	result.Check(testkit.Rows("1"))
+	sessionVars.ConnectionID = originConnectionID
+
+	// for version
+	result = tk.MustQuery("select version()")
+	result.Check(testkit.Rows(mysql.ServerVersion))
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
