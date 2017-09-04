@@ -369,7 +369,7 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 			tp == mysql.TypeString || tp == mysql.TypeVarchar || tp == mysql.TypeVarString ||
 			tp == mysql.TypeBlob || tp == mysql.TypeLongBlob || tp == mysql.TypeMediumBlob || tp == mysql.TypeTinyBlob ||
 			tp == mysql.TypeJSON {
-			// For binString / string fields, when getting default value we cast the value into Bit{}, thus we return
+			// For binString / string fields, when getting default value we cast the value into BinString{}, thus we return
 			// its raw string content here.
 			return v.GetBinString().ToString(), nil
 		}
