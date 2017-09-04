@@ -156,7 +156,7 @@ func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.C
 	return nil
 }
 
-// doRequestForDatums constructs kv ranges by Datums. It is used by index look up executor.
+// doRequestForDatums constructs kv ranges by Datums. It is used by index look up join.
 // Every lens for `datums` will always be one and must be type of int64.
 func (e *TableReaderExecutor) doRequestForDatums(datums [][]types.Datum, goCtx goctx.Context) error {
 	handles := make([]int64, 0, len(datums))
@@ -450,8 +450,8 @@ func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
 	e.indexHandler = indexHandler{}
 	e.tableHandler = tableHandler{}
 
-	// workCh serves as a pipeline, indexHandler will write to workCh and tableHandler
-	// will read from workCh, so fetching index and getting table data can run concurrently.
+	// indexHandler will write to workCh and tableHandler will read from workCh,
+	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
 	err := e.indexHandler.open(kvRanges, e, workCh, e.finished)
 	if err != nil {
