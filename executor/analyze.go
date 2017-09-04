@@ -211,13 +211,16 @@ func (c *SampleCollector) collect(d types.Datum) error {
 		return nil
 	}
 	c.Count++
+	// The following code use types.CopyDatum(d) because d may have a deep reference
+	// to the underlying slice, GC can't free them which lead to memory leak eventually.
+	// TODO: Refactor the proto to avoid copying here.
 	if len(c.samples) < maxSampleCount {
-		c.samples = append(c.samples, d)
+		c.samples = append(c.samples, types.CopyDatum(d))
 	} else {
 		shouldAdd := rand.Int63n(c.Count) < maxSampleCount
 		if shouldAdd {
 			idx := rand.Intn(maxSampleCount)
-			c.samples[idx] = d
+			c.samples[idx] = types.CopyDatum(d)
 		}
 	}
 	return errors.Trace(c.Sketch.InsertValue(d))
@@ -256,8 +259,7 @@ func CollectSamplesAndEstimateNDVs(ctx context.Context, e ast.RecordSet, numCols
 			row.Data = row.Data[1:]
 		}
 		for i, val := range row.Data {
-			tmp := types.CopyDatum(val)
-			err = collectors[i].collect(tmp)
+			err = collectors[i].collect(val)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

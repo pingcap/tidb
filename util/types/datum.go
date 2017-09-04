@@ -1829,6 +1829,7 @@ func DatumsToString(datums []Datum) (string, error) {
 }
 
 // CopyDatum returns a new copy of the datum.
+// TODO: Abandon this function.
 func CopyDatum(datum Datum) Datum {
 	ret := datum
 	if datum.b != nil {
