@@ -148,6 +148,18 @@ func (s *testSuite) TestShow(c *C) {
 			"  `id` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=4",
 	))
+
+	// Test show table with column's comment contain escape character
+	// for issue https://github.com/pingcap/tidb/issues/4411
+	tk.MustExec(`drop table if exists show_escape_character`)
+	tk.MustExec(`create table show_escape_character(id int comment 'aaa\b\n')`)
+	tk.MustQuery(`show create table show_escape_character`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_escape_character CREATE TABLE `show_escape_character` (\n"+
+			"  `id` int(11) DEFAULT NULL COMMENT 'aaa\b\\n'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {

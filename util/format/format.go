@@ -178,12 +178,10 @@ func OutputFormat(s string) string {
 	replace := map[string]string{
 		"'":  "''",
 		"\a": "\\a",
-		"\b": "\\b",
-		"\f": "\\f",
+		"\f": "f",
 		"\n": "\\n",
 		"\r": "\\r",
-		"\t": "\\t",
-		"\v": "\\v",
+		"\v": "v",
 	}
 
 	for old, new := range replace {
