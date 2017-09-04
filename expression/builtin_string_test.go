@@ -1194,6 +1194,12 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 
 func (s *testEvaluatorSuite) TestField(c *C) {
 	defer testleak.AfterTest(c)()
+	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+	origin := stmtCtx.IgnoreTruncate
+	stmtCtx.IgnoreTruncate = true
+	defer func() {
+		stmtCtx.IgnoreTruncate = origin
+	}()
 
 	tbl := []struct {
 		argLst []interface{}
@@ -1217,6 +1223,9 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		c.Assert(f, NotNil)
 		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
+		if err != nil {
+			fmt.Printf("%s\n", err.Error())
+		}
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
