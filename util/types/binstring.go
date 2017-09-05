@@ -14,8 +14,10 @@
 package types
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -90,6 +92,25 @@ func (b BinString) String() string {
 // ToString returns the string representation for the literal.
 func (b BinString) ToString() string {
 	return string(b.Value)
+}
+
+// ToBitLiteralString returns the bit literal representation for the literal.
+func (b BinString) ToBitLiteralString(trimLeadingZero bool) string {
+	if len(b.Value) == 0 {
+		return "b''"
+	}
+	var buf bytes.Buffer
+	for _, data := range b.Value {
+		fmt.Fprintf(&buf, "%08b", data)
+	}
+	ret := buf.Bytes()
+	if trimLeadingZero {
+		ret = bytes.TrimLeft(ret, "0")
+		if len(ret) == 0 {
+			ret = []byte{'0'}
+		}
+	}
+	return fmt.Sprintf("b'%s'", string(ret))
 }
 
 // ToInt returns the int value for the literal.
