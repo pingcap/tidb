@@ -44,9 +44,9 @@ type idAllocator struct {
 	id int
 }
 
-func (a *idAllocator) allocID() string {
+func (a *idAllocator) allocID() int {
 	a.id++
-	return fmt.Sprintf("_%d", a.id)
+	return a.id
 }
 
 func (p *LogicalAggregation) collectGroupByColumns() {
@@ -1345,7 +1345,7 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	join := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	ap := &LogicalApply{LogicalJoin: *join}
 	ap.tp = TypeApply
-	ap.id = ap.tp + ap.allocator.allocID()
+	ap.id = fmt.Sprintf("%s_%v", ap.tp, ap.allocator.allocID())
 	ap.self = ap
 	ap.children[0].SetParents(ap)
 	ap.children[1].SetParents(ap)

@@ -371,7 +371,7 @@ func newBasePlan(tp string, allocator *idAllocator, ctx context.Context, p Plan)
 	return &basePlan{
 		tp:        tp,
 		allocator: allocator,
-		id:        tp + allocator.allocID(),
+		id:        fmt.Sprintf("%s_%v", tp, allocator.allocID()),
 		ctx:       ctx,
 		self:      p,
 	}
