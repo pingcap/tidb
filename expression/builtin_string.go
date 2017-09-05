@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
@@ -141,6 +142,8 @@ var (
 	_ builtinFunc = &builtinInstrSig{}
 	_ builtinFunc = &builtinInstrBinarySig{}
 )
+
+var errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
 
 func reverseBytes(origin []byte) []byte {
 	for i, length := 0, len(origin); i < length/2; i++ {
@@ -826,7 +829,7 @@ func (b *builtinConvertSig) evalString(row []types.Datum) (string, bool, error) 
 
 	encoding, _ := charset.Lookup(charsetName)
 	if encoding == nil {
-		return "", true, errors.Errorf("unknown encoding: %s", charsetName)
+		return "", true, errUnknownCharacterSet.GenByArgs(charsetName)
 	}
 
 	target, _, err := transform.String(encoding.NewDecoder(), expr)
