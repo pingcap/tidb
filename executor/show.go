@@ -15,6 +15,7 @@ package executor
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"sort"
 	"strings"
@@ -429,7 +430,15 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
 				default:
-					buf.WriteString(fmt.Sprintf(" DEFAULT '%v'", col.DefaultValue))
+					defaultValStr := fmt.Sprintf("%v", col.DefaultValue)
+					if col.Tp == mysql.TypeBit {
+						bytes := make([]byte, 8)
+						copy(bytes[8-len(defaultValStr):8], []byte(defaultValStr))
+						intValue := binary.BigEndian.Uint64(bytes)
+						buf.WriteString(fmt.Sprintf(" DEFAULT b'%b'", intValue))
+					} else {
+						buf.WriteString(fmt.Sprintf(" DEFAULT '%s'", format.OutputFormat(defaultValStr)))
+					}
 				}
 			}
 			if mysql.HasOnUpdateNowFlag(col.Flag) {
