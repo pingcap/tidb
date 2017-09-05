@@ -355,7 +355,7 @@ func (ih *indexHandler) fetchHandles(e *IndexLookUpExecutor, result distsql.Sele
 	}
 }
 
-func (ih *indexHandler) closeIndexHandler() {
+func (ih *indexHandler) close() {
 	ih.wg.Wait()
 }
 
@@ -411,7 +411,30 @@ func (th *tableHandler) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *l
 	}
 }
 
-func (th *tableHandler) closeTableHandler() {
+func (th *tableHandler) next() (Row, error) {
+	for {
+		if th.taskCurr == nil {
+			taskCurr, ok := <-th.taskChan
+			if !ok {
+				return nil, nil
+			}
+			if taskCurr.tasksErr != nil {
+				return nil, errors.Trace(taskCurr.tasksErr)
+			}
+			th.taskCurr = taskCurr
+		}
+		row, err := th.taskCurr.getRow()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row != nil {
+			return row, nil
+		}
+		th.taskCurr = nil
+	}
+}
+
+func (th *tableHandler) close() {
 	for range th.taskChan {
 	}
 }
@@ -555,8 +578,8 @@ func (e *IndexLookUpExecutor) Schema() *expression.Schema {
 func (e *IndexLookUpExecutor) Close() error {
 	if e.finished != nil {
 		close(e.finished)
-		e.closeIndexHandler()
-		e.closeTableHandler()
+		e.indexHandler.close()
+		e.tableHandler.close()
 		e.finished = nil
 	}
 	return nil
@@ -564,25 +587,5 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next() (Row, error) {
-	th := &e.tableHandler
-	for {
-		if th.taskCurr == nil {
-			taskCurr, ok := <-th.taskChan
-			if !ok {
-				return nil, nil
-			}
-			if taskCurr.tasksErr != nil {
-				return nil, errors.Trace(taskCurr.tasksErr)
-			}
-			th.taskCurr = taskCurr
-		}
-		row, err := th.taskCurr.getRow()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row != nil {
-			return row, nil
-		}
-		th.taskCurr = nil
-	}
+	return e.tableHandler.next()
 }
