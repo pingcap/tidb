@@ -1323,9 +1323,8 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("1447410019"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113102019e0);")
 	result.Check(testkit.Rows("1447410019.000000"))
-	// See https://github.com/pingcap/tidb/issues/4296.
-	// result = tk.MustQuery("SELECT UNIX_TIMESTAMP(15111310201912e-2);")
-	// result.Check(testkit.Rows("1447410019.119995"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(15111310201912e-2);")
+	result.Check(testkit.Rows("1447410019.120000"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113102019.12);")
 	result.Check(testkit.Rows("1447410019.12"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113102019.1234567);")
@@ -1402,6 +1401,28 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("Friday <nil> <nil> <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format", "Warning|1105|invalid time format", "Warning|1105|invalid time format"))
 
+	// for sec_to_time
+	result = tk.MustQuery("select sec_to_time(NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select sec_to_time(2378), sec_to_time(3864000), sec_to_time(-3864000)")
+	result.Check(testkit.Rows("00:39:38 838:59:59 -838:59:59"))
+	result = tk.MustQuery("select sec_to_time(86401.4), sec_to_time(-86401.4), sec_to_time(864014e-1), sec_to_time(-864014e-1), sec_to_time('86401.4'), sec_to_time('-86401.4')")
+	result.Check(testkit.Rows("24:00:01.4 -24:00:01.4 24:00:01.400000 -24:00:01.400000 24:00:01.400000 -24:00:01.400000"))
+	result = tk.MustQuery("select sec_to_time(86401.54321), sec_to_time(86401.543212345)")
+	result.Check(testkit.Rows("24:00:01.54321 24:00:01.543212"))
+	result = tk.MustQuery("select sec_to_time('123.4'), sec_to_time('123.4567891'), sec_to_time('123')")
+	result.Check(testkit.Rows("00:02:03.400000 00:02:03.456789 00:02:03.000000"))
+
+	// for time_to_sec
+	result = tk.MustQuery("select time_to_sec(NULL)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select time_to_sec('22:23:00'), time_to_sec('00:39:38'), time_to_sec('23:00'), time_to_sec('00:00'), time_to_sec('00:00:00'), time_to_sec('23:59:59')")
+	result.Check(testkit.Rows("80580 2378 82800 0 0 86399"))
+	result = tk.MustQuery("select time_to_sec('1:0'), time_to_sec('1:00'), time_to_sec('1:0:0'), time_to_sec('-02:00'), time_to_sec('-02:00:05'), time_to_sec('020005')")
+	result.Check(testkit.Rows("3600 3600 3600 -7200 -7205 7205"))
+	result = tk.MustQuery("select time_to_sec('20171222020005'), time_to_sec(020005), time_to_sec(20171222020005), time_to_sec(171222020005)")
+	result.Check(testkit.Rows("7205 7205 7205 7205"))
+
 	// for str_to_date
 	result = tk.MustQuery("select str_to_date('01-01-2017', '%d-%m-%Y'), str_to_date('59:20:12 01-01-2017', '%s:%i:%H %d-%m-%Y'), str_to_date('59:20:12', '%s:%i:%H')")
 	result.Check(testkit.Rows("2017-01-01 2017-01-01 12:20:59 12:20:59"))
@@ -1411,6 +1432,13 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// TODO: MySQL returns "<nil> <nil>".
 	result.Check(testkit.Rows("0000-00-01 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format"))
+
+	// for get_format
+	result = tk.MustQuery(`select GET_FORMAT(DATE,'USA'), GET_FORMAT(DATE,'JIS'), GET_FORMAT(DATE,'ISO'), GET_FORMAT(DATE,'EUR'),
+	GET_FORMAT(DATE,'INTERNAL'), GET_FORMAT(DATETIME,'USA') , GET_FORMAT(DATETIME,'JIS'), GET_FORMAT(DATETIME,'ISO'),
+	GET_FORMAT(DATETIME,'EUR') , GET_FORMAT(DATETIME,'INTERNAL'), GET_FORMAT(TIME,'USA') , GET_FORMAT(TIME,'JIS'),
+	GET_FORMAT(TIME,'ISO'), GET_FORMAT(TIME,'EUR'), GET_FORMAT(TIME,'INTERNAL')`)
+	result.Check(testkit.Rows("%m.%d.%Y %Y-%m-%d %Y-%m-%d %d.%m.%Y %Y%m%d %Y-%m-%d %H.%i.%s %Y-%m-%d %H:%i:%s %Y-%m-%d %H:%i:%s %Y-%m-%d %H.%i.%s %Y%m%d%H%i%s %h:%i:%s %p %H:%i:%s %H:%i:%s %H.%i.%s %H%i%s"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
