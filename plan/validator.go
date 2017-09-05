@@ -454,7 +454,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	return nil
 }
 
-// isNowSymFunc check whether defaul value is a NOW() builtin function.
+// isNowSymFunc checks whether defaul value is a NOW() builtin function.
 func isDefaultValNowSymFunc(expr ast.ExprNode) bool {
 	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
 		// Default value NOW() is transformed to CURRENT_TIMESTAMP() in parser.
