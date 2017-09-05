@@ -1014,7 +1014,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	fc := funcs[ast.CurrentTime]
 	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlDuration()
@@ -1023,7 +1023,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 
 	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(3)), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(f.canBeFolded(), IsFalse)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	n = v.GetMysqlDuration()

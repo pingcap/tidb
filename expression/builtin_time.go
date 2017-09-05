@@ -1489,7 +1489,7 @@ func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Co
 
 	if len(args) == 0 {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration)
-		bf.tp.Flen, bf.tp.Decimal, bf.foldable = mysql.MaxDurationWidthNoFsp, types.MinFsp, false
+		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDurationWidthNoFsp, types.MinFsp
 		sig = &builtinCurrentTime0ArgSig{baseDurationBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
@@ -1508,7 +1508,7 @@ func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Co
 		}
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpInt)
-	bf.tp.Flen, bf.tp.Decimal, bf.foldable = mysql.MaxDurationWidthWithFsp, int(fsp), false
+	bf.tp.Flen, bf.tp.Decimal = mysql.MaxDurationWidthWithFsp, int(fsp)
 	sig = &builtinCurrentTime1ArgSig{baseDurationBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
