@@ -181,14 +181,20 @@ func (f *flatFormatter) Format(format string, args ...interface{}) (n int, errno
 }
 
 // OutputFormat output escape character with backslash
-func OutputFormat(s string, truncate bool) string {
+func OutputFormat(s string, truncate bool, repeat bool) string {
 	var buf bytes.Buffer
 	for i, old := range s {
 		if old == '\000' {
-			if !truncate {
-				buf.Write(bytes.Repeat([]byte("\\0"), len(s)-i))
+			if truncate {
+				break
 			}
-			break
+			if repeat {
+				buf.Write(bytes.Repeat([]byte("\\0"), len(s)-i))
+				break
+			}
+
+			buf.WriteString("\\0")
+			continue
 		}
 		if new, ok := replace[old]; ok {
 			buf.WriteString(new)

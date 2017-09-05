@@ -207,7 +207,7 @@ func (ft *FieldType) CompactStr() string {
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
 		es := make([]string, 0, len(ft.Elems))
 		for _, e := range ft.Elems {
-			e = format.OutputFormat(e)
+			e = format.OutputFormat(e, true, false)
 			es = append(es, e)
 		}
 		suffix = fmt.Sprintf("('%s')", strings.Join(es, "','"))
