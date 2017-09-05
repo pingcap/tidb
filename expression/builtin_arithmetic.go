@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -30,8 +29,8 @@ var (
 	_ functionClass = &arithmeticMinusFunctionClass{}
 	_ functionClass = &arithmeticDivideFunctionClass{}
 	_ functionClass = &arithmeticMultiplyFunctionClass{}
+	_ functionClass = &arithmeticIntDivideFunctionClass{}
 	_ functionClass = &arithmeticModFunctionClass{}
-	_ functionClass = &arithmeticFunctionClass{}
 )
 
 var (
@@ -47,10 +46,11 @@ var (
 	_ builtinFunc = &builtinArithmeticMultiplyDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntSig{}
+	_ builtinFunc = &builtinArithmeticIntDivideIntSig{}
+	_ builtinFunc = &builtinArithmeticIntDivideDecimalSig{}
 	_ builtinFunc = &builtinArithmeticModIntSig{}
 	_ builtinFunc = &builtinArithmeticModRealSig{}
 	_ builtinFunc = &builtinArithmeticModDecimalSig{}
-	_ builtinFunc = &builtinArithmeticSig{}
 )
 
 // precIncrement indicates the number of digits by which to increase the scale of the result of division operations
@@ -552,6 +552,101 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row []types.Datum) (*typ
 	return c, false, err
 }
 
+type arithmeticIntDivideFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *arithmeticIntDivideFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tpA, tpB := args[0].GetType(), args[1].GetType()
+	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
+	if tcA == types.ClassInt && tcB == types.ClassInt {
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		}
+		sig := &builtinArithmeticIntDivideIntSig{baseIntBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
+	if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
+		bf.tp.Flag |= mysql.UnsignedFlag
+	}
+	sig := &builtinArithmeticIntDivideDecimalSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinArithmeticIntDivideIntSig struct{ baseIntBuiltinFunc }
+type builtinArithmeticIntDivideDecimalSig struct{ baseIntBuiltinFunc }
+
+func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	b, isNull, err := s.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	if b == 0 {
+		return 0, true, nil
+	}
+
+	a, isNull, err := s.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	var (
+		ret int64
+		val uint64
+	)
+	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
+	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+
+	switch {
+	case isLHSUnsigned && isRHSUnsigned:
+		ret = int64(uint64(a) / uint64(b))
+	case isLHSUnsigned && !isRHSUnsigned:
+		val, err = types.DivUintWithInt(uint64(a), b)
+		ret = int64(val)
+	case !isLHSUnsigned && isRHSUnsigned:
+		val, err = types.DivIntWithUint(a, uint64(b))
+		ret = int64(val)
+	case !isLHSUnsigned && !isRHSUnsigned:
+		ret, err = types.DivInt64(a, b)
+	}
+
+	return ret, false, errors.Trace(err)
+}
+
+func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	a, isNull, err := s.args[0].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	b, isNull, err := s.args[1].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	c := &types.MyDecimal{}
+	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
+	if err != nil {
+		return 0, err == types.ErrDivByZero, errors.Trace(err)
+	}
+
+	ret, err := c.ToInt()
+	// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
+	if err == types.ErrOverflow {
+		return 0, false, errors.Trace(err)
+	}
+	return ret, false, nil
+}
+
 type arithmeticModFunctionClass struct {
 	baseFunctionClass
 }
@@ -700,53 +795,4 @@ func (s *builtinArithmeticModIntSig) evalInt(row []types.Datum) (val int64, isNu
 	}
 
 	return ret, false, nil
-}
-
-type arithmeticFunctionClass struct {
-	baseFunctionClass
-	op opcode.Op
-}
-
-func (c *arithmeticFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	sig := &builtinArithmeticSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), nil
-}
-
-type builtinArithmeticSig struct {
-	baseBuiltinFunc
-	op opcode.Op
-}
-
-func (s *builtinArithmeticSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := s.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	sc := s.ctx.GetSessionVars().StmtCtx
-	a, err := types.CoerceArithmetic(sc, args[0])
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	b, err := types.CoerceArithmetic(sc, args[1])
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	a, b, err = types.CoerceDatum(sc, a, b)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if a.IsNull() || b.IsNull() {
-		return
-	}
-
-	switch s.op {
-	case opcode.IntDiv:
-		return types.ComputeIntDiv(sc, a, b)
-	default:
-		return d, errInvalidOperation.Gen("invalid op %v in arithmetic operation", s.op)
-	}
 }
