@@ -45,7 +45,6 @@ type indentFormatter struct {
 
 var replace = map[rune]string{
 	'\'': "''",
-	'\a': "\\a",
 	'\n': "\\n",
 	'\r': "\\r",
 }
@@ -180,7 +179,9 @@ func (f *flatFormatter) Format(format string, args ...interface{}) (n int, errno
 	return (*indentFormatter)(f).format(true, format, args...)
 }
 
-// OutputFormat output escape character with backslash
+// OutputFormat output escape character with backslash.
+// truncate indicate should we stop abandon left characters when we meet '\0'.
+// repeat indicate should we use '\\0' to fill the left space when we meet '\0'.
 func OutputFormat(s string, truncate bool, repeat bool) string {
 	var buf bytes.Buffer
 	for i, old := range s {
