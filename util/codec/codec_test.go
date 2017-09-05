@@ -66,7 +66,7 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		},
 
 		{
-			types.MakeDatums(types.NewBinStringFromUint(100, -1), types.NewBinStringFromUint(100, 4)),
+			types.MakeDatums(types.NewBinaryLiteralFromUint(100, -1), types.NewBinaryLiteralFromUint(100, 4)),
 			types.MakeDatums(uint64(100), uint64(100)),
 		},
 
@@ -772,7 +772,7 @@ func (s *testCodecSuite) TestCut(c *C) {
 		},
 
 		{
-			types.MakeDatums(types.NewBinStringFromUint(100, -1), types.NewBinStringFromUint(100, 4)),
+			types.MakeDatums(types.NewBinaryLiteralFromUint(100, -1), types.NewBinaryLiteralFromUint(100, 4)),
 			types.MakeDatums(uint64(100), uint64(100)),
 		},
 

@@ -331,7 +331,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Decimal = 0
 		tp.Flag |= mysql.UnsignedFlag
 		SetBinChsClnFlag(tp)
-	case BinString:
+	case BinaryLiteral:
 		tp.Tp = mysql.TypeBit
 		tp.Flen = len(x.Value) * 8
 		tp.Decimal = 0

@@ -1322,7 +1322,7 @@ func (s *testSessionSuite) TestBit(c *C) {
 	r := mustExecSQL(c, se, "select * from t where c1 = 2")
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetBinString(), DeepEquals, types.NewBinStringFromUint(2, -1))
+	c.Assert(row.Data[0].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (c1 bit(31))")

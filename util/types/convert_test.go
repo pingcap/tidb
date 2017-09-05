@@ -208,16 +208,16 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Flen = 24 // 3 bytes.
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, NewBinStringFromUint(3223600, 3))
+	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(3223600, 3))
 
-	v, err = Convert(NewBinStringFromUint(100, -1), ft)
+	v, err = Convert(NewBinaryLiteralFromUint(100, -1), ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, NewBinStringFromUint(100, 3))
+	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(100, 3))
 
 	ft.Flen = 1
 	v, err = Convert(1, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, NewBinStringFromUint(1, 1))
+	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(1, 1))
 
 	_, err = Convert(2, ft)
 	c.Assert(err, NotNil)
@@ -321,8 +321,8 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, float32(1.6), "1.6")
 	testToString(c, float64(-0.6), "-0.6")
 	testToString(c, []byte{1}, "\x01")
-	testToString(c, NewBinStringFromUint(0x4D7953514C, -1), "MySQL")
-	testToString(c, NewBinStringFromUint(0x41, -1), "A")
+	testToString(c, NewBinaryLiteralFromUint(0x4D7953514C, -1), "MySQL")
+	testToString(c, NewBinaryLiteralFromUint(0x41, -1), "A")
 	testToString(c, Enum{Name: "a", Value: 1}, "a")
 	testToString(c, Set{Name: "a", Value: 1}, "a")
 

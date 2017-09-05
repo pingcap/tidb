@@ -183,7 +183,7 @@ func (s *testTableSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeBit),
-			types.NewMysqlBitDatum(types.ZeroBinString),
+			types.NewMysqlBitDatum(types.ZeroBinaryLiteral),
 		},
 		{
 			types.NewFieldType(mysql.TypeSet),

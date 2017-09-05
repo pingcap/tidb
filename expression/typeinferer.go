@@ -491,7 +491,7 @@ func (v *typeInferrer) addCastToString(expr ast.ExprNode) ast.ExprNode {
 // For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
 // it will cause an error if we convert ENUM/SET to int as a string value.
 //
-// For BinString/MysqlBit, we will get a wrong result if we convert it to int as a string value.
+// For BinaryLiteral/MysqlBit, we will get a wrong result if we convert it to int as a string value.
 // For example, when convert `0b101` to int, the result should be 5, but we will get 101 if we regard it as a string.
 func IsHybridType(expr Expression) bool {
 	switch expr.GetType().Tp {
@@ -499,10 +499,10 @@ func IsHybridType(expr Expression) bool {
 		return true
 	}
 
-	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is BinString
+	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is BinaryLiteral
 	if con, ok := expr.(*Constant); ok {
 		switch con.Value.Kind() {
-		case types.KindBinString:
+		case types.KindBinaryLiteral:
 			return true
 		}
 	}

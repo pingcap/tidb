@@ -38,7 +38,7 @@ const (
 	KindFloat64       byte = 4
 	KindString        byte = 5
 	KindBytes         byte = 6
-	KindBinString     byte = 7 // Used for BIT / HEX literals.
+	KindBinaryLiteral byte = 7 // Used for BIT / HEX literals.
 	KindMysqlDecimal  byte = 8
 	KindMysqlDuration byte = 9
 	KindMysqlEnum     byte = 10
@@ -210,24 +210,24 @@ func (d *Datum) SetNull() {
 	d.x = nil
 }
 
-// GetBinString gets Bit value
-func (d *Datum) GetBinString() BinString {
-	return NewBinStringFromBytes(d.b)
+// GetBinaryLiteral gets Bit value
+func (d *Datum) GetBinaryLiteral() BinaryLiteral {
+	return NewBinaryLiteralFromBytes(d.b)
 }
 
 // GetMysqlBit gets MysqlBit value
-func (d *Datum) GetMysqlBit() BinString {
-	return d.GetBinString()
+func (d *Datum) GetMysqlBit() BinaryLiteral {
+	return d.GetBinaryLiteral()
 }
 
-// SetBinString sets Bit value
-func (d *Datum) SetBinString(b BinString) {
-	d.k = KindBinString
+// SetBinaryLiteral sets Bit value
+func (d *Datum) SetBinaryLiteral(b BinaryLiteral) {
+	d.k = KindBinaryLiteral
 	d.b = b.Value
 }
 
 // SetMysqlBit sets MysqlBit value
-func (d *Datum) SetMysqlBit(b BinString) {
+func (d *Datum) SetMysqlBit(b BinaryLiteral) {
 	d.k = KindMysqlBit
 	d.b = b.Value
 }
@@ -335,8 +335,8 @@ func (d *Datum) GetValue() interface{} {
 		return d.GetMysqlDuration()
 	case KindMysqlEnum:
 		return d.GetMysqlEnum()
-	case KindBinString, KindMysqlBit:
-		return d.GetBinString()
+	case KindBinaryLiteral, KindMysqlBit:
+		return d.GetBinaryLiteral()
 	case KindMysqlSet:
 		return d.GetMysqlSet()
 	case KindMysqlJSON:
@@ -379,12 +379,12 @@ func (d *Datum) SetValue(val interface{}) {
 		d.SetMysqlDuration(x)
 	case Enum:
 		d.SetMysqlEnum(x)
-	case BinString:
-		d.SetBinString(x)
-	case BitLiteral: // Store as BinString for Bit and Hex literals
-		d.SetBinString(x.BinString)
+	case BinaryLiteral:
+		d.SetBinaryLiteral(x)
+	case BitLiteral: // Store as BinaryLiteral for Bit and Hex literals
+		d.SetBinaryLiteral(x.BinaryLiteral)
 	case HexLiteral:
-		d.SetBinString(x.BinString)
+		d.SetBinaryLiteral(x.BinaryLiteral)
 	case Set:
 		d.SetMysqlSet(x)
 	case json.JSON:
@@ -442,8 +442,8 @@ func (d *Datum) CompareDatum(sc *variable.StatementContext, ad Datum) (int, erro
 		return d.compareMysqlDuration(sc, ad.GetMysqlDuration())
 	case KindMysqlEnum:
 		return d.compareMysqlEnum(sc, ad.GetMysqlEnum())
-	case KindBinString, KindMysqlBit:
-		return d.compareBinString(sc, ad.GetBinString())
+	case KindBinaryLiteral, KindMysqlBit:
+		return d.compareBinaryLiteral(sc, ad.GetBinaryLiteral())
 	case KindMysqlSet:
 		return d.compareMysqlSet(sc, ad.GetMysqlSet())
 	case KindMysqlJSON:
@@ -513,8 +513,8 @@ func (d *Datum) compareFloat64(sc *variable.StatementContext, f float64) (int, e
 	case KindMysqlEnum:
 		fVal := d.GetMysqlEnum().ToNumber()
 		return CompareFloat64(fVal, f), nil
-	case KindBinString, KindMysqlBit:
-		val, err := d.GetBinString().ToInt()
+	case KindBinaryLiteral, KindMysqlBit:
+		val, err := d.GetBinaryLiteral().ToInt()
 		fVal := float64(val)
 		return CompareFloat64(fVal, f), err
 	case KindMysqlSet:
@@ -550,8 +550,8 @@ func (d *Datum) compareString(sc *variable.StatementContext, s string) (int, err
 		return CompareString(d.GetMysqlSet().String(), s), nil
 	case KindMysqlEnum:
 		return CompareString(d.GetMysqlEnum().String(), s), nil
-	case KindBinString, KindMysqlBit:
-		return CompareString(d.GetBinString().ToString(), s), nil
+	case KindBinaryLiteral, KindMysqlBit:
+		return CompareString(d.GetBinaryLiteral().ToString(), s), nil
 	default:
 		fVal, err := StrToFloat(sc, s)
 		if err != nil {
@@ -600,12 +600,12 @@ func (d *Datum) compareMysqlEnum(sc *variable.StatementContext, enum Enum) (int,
 	}
 }
 
-func (d *Datum) compareBinString(sc *variable.StatementContext, b BinString) (int, error) {
+func (d *Datum) compareBinaryLiteral(sc *variable.StatementContext, b BinaryLiteral) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), b.ToString()), nil
-	case KindBinString, KindMysqlBit:
-		return CompareString(d.GetBinString().ToString(), b.ToString()), nil
+	case KindBinaryLiteral, KindMysqlBit:
+		return CompareString(d.GetBinaryLiteral().ToString(), b.ToString()), nil
 	default:
 		val, err := b.ToInt()
 		result, _ := d.compareFloat64(sc, float64(val))
@@ -731,8 +731,8 @@ func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType)
 		f = d.GetMysqlSet().ToNumber()
 	case KindMysqlEnum:
 		f = d.GetMysqlEnum().ToNumber()
-	case KindBinString, KindMysqlBit:
-		val, _ := d.GetBinString().ToInt()
+	case KindBinaryLiteral, KindMysqlBit:
+		val, _ := d.GetBinaryLiteral().ToInt()
 		f = float64(val)
 	default:
 		return invalidConv(d, target.Tp)
@@ -792,8 +792,8 @@ func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType
 		s = d.GetMysqlEnum().String()
 	case KindMysqlSet:
 		s = d.GetMysqlSet().String()
-	case KindBinString, KindMysqlBit:
-		s = d.GetBinString().ToString()
+	case KindBinaryLiteral, KindMysqlBit:
+		s = d.GetBinaryLiteral().ToString()
 	case KindMysqlJSON:
 		s = d.GetMysqlJSON().String()
 	default:
@@ -900,8 +900,8 @@ func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) 
 		val, err = ConvertFloatToUint(sc, d.GetMysqlEnum().ToNumber(), upperBound, tp)
 	case KindMysqlSet:
 		val, err = ConvertFloatToUint(sc, d.GetMysqlSet().ToNumber(), upperBound, tp)
-	case KindBinString, KindMysqlBit:
-		val, err = d.GetBinString().ToInt()
+	case KindBinaryLiteral, KindMysqlBit:
+		val, err = d.GetBinaryLiteral().ToInt()
 	default:
 		return invalidConv(d, target.Tp)
 	}
@@ -1068,8 +1068,8 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 		dec.FromFloat64(d.GetMysqlEnum().ToNumber())
 	case KindMysqlSet:
 		dec.FromFloat64(d.GetMysqlSet().ToNumber())
-	case KindBinString, KindMysqlBit:
-		val, _ := d.GetBinString().ToInt()
+	case KindBinaryLiteral, KindMysqlBit:
+		val, _ := d.GetBinaryLiteral().ToInt()
 		dec.FromUint(val)
 	case KindMysqlJSON:
 		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
@@ -1153,7 +1153,7 @@ func (d *Datum) convertToMysqlBit(sc *variable.StatementContext, target *FieldTy
 	var err error
 	switch d.k {
 	case KindString, KindBytes:
-		uintValue, err = NewBinStringFromBytes(d.b).ToInt()
+		uintValue, err = NewBinaryLiteralFromBytes(d.b).ToInt()
 	default:
 		uintDatum, err1 := d.convertToUint(sc, target)
 		uintValue, err = uintDatum.GetUint64(), err1
@@ -1162,7 +1162,7 @@ func (d *Datum) convertToMysqlBit(sc *variable.StatementContext, target *FieldTy
 		return Datum{}, errors.Trace(ErrOverflow.GenByArgs("BIT", fmt.Sprintf("(%d)", target.Flen)))
 	}
 	byteSize := (target.Flen + 7) >> 3
-	ret.SetMysqlBit(NewBinStringFromUint(uintValue, byteSize))
+	ret.SetMysqlBit(NewBinaryLiteralFromUint(uintValue, byteSize))
 	return ret, errors.Trace(err)
 }
 
@@ -1280,8 +1280,8 @@ func (d *Datum) ToBool(sc *variable.StatementContext) (int64, error) {
 		isZero = (d.GetMysqlEnum().ToNumber() == 0)
 	case KindMysqlSet:
 		isZero = (d.GetMysqlSet().ToNumber() == 0)
-	case KindBinString, KindMysqlBit:
-		val, _ := d.GetBinString().ToInt()
+	case KindBinaryLiteral, KindMysqlBit:
+		val, _ := d.GetBinaryLiteral().ToInt()
 		isZero = (val == 0)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", d.GetValue(), d.GetValue())
@@ -1313,8 +1313,8 @@ func ConvertDatumToDecimal(sc *variable.StatementContext, d Datum) (*MyDecimal, 
 		dec.FromUint(d.GetMysqlEnum().Value)
 	case KindMysqlSet:
 		dec.FromUint(d.GetMysqlSet().Value)
-	case KindBinString, KindMysqlBit:
-		val, _ := d.GetBinString().ToInt()
+	case KindBinaryLiteral, KindMysqlBit:
+		val, _ := d.GetBinaryLiteral().ToInt()
 		dec.FromUint(val)
 	case KindMysqlJSON:
 		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
@@ -1407,8 +1407,8 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
 	case KindMysqlJSON:
 		return ConvertJSONToInt(sc, d.GetMysqlJSON(), true)
-	case KindBinString, KindMysqlBit:
-		val, err := d.GetBinString().ToInt()
+	case KindBinaryLiteral, KindMysqlBit:
+		val, err := d.GetBinaryLiteral().ToInt()
 		return int64(val), err
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", d.GetValue(), d.GetValue())
@@ -1443,8 +1443,8 @@ func (d *Datum) ToFloat64(sc *variable.StatementContext) (float64, error) {
 		return d.GetMysqlEnum().ToNumber(), nil
 	case KindMysqlSet:
 		return d.GetMysqlSet().ToNumber(), nil
-	case KindBinString, KindMysqlBit:
-		val, err := d.GetBinString().ToInt()
+	case KindBinaryLiteral, KindMysqlBit:
+		val, err := d.GetBinaryLiteral().ToInt()
 		return float64(val), err
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to float64", d.GetValue(), d.GetValue())
@@ -1478,8 +1478,8 @@ func (d *Datum) ToString() (string, error) {
 		return d.GetMysqlSet().String(), nil
 	case KindMysqlJSON:
 		return d.GetMysqlJSON().String(), nil
-	case KindBinString, KindMysqlBit:
-		return d.GetBinString().ToString(), nil
+	case KindBinaryLiteral, KindMysqlBit:
+		return d.GetBinaryLiteral().ToString(), nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", d.GetValue(), d.GetValue())
 	}
@@ -1517,8 +1517,8 @@ func (d *Datum) ToMysqlJSON() (j json.JSON, err error) {
 		in, _ = d.GetMysqlDecimal().ToFloat64()
 	case KindString, KindBytes:
 		in = d.GetString()
-	case KindBinString, KindMysqlBit:
-		in = d.GetBinString().ToString()
+	case KindBinaryLiteral, KindMysqlBit:
+		in = d.GetBinaryLiteral().ToString()
 	case KindNull:
 		in = nil
 	default:
@@ -1571,8 +1571,8 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 			x.SetFloat64(float64(x.GetInt64()))
 		case KindUint64:
 			x.SetFloat64(float64(x.GetUint64()))
-		case KindBinString, KindMysqlBit:
-			val, _ := x.GetBinString().ToInt()
+		case KindBinaryLiteral, KindMysqlBit:
+			val, _ := x.GetBinaryLiteral().ToInt()
 			x.SetFloat64(float64(val))
 		case KindMysqlEnum:
 			x.SetFloat64(x.GetMysqlEnum().ToNumber())
@@ -1591,8 +1591,8 @@ func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err err
 			y.SetFloat64(float64(y.GetInt64()))
 		case KindUint64:
 			y.SetFloat64(float64(y.GetUint64()))
-		case KindBinString, KindMysqlBit:
-			val, _ := y.GetBinString().ToInt()
+		case KindBinaryLiteral, KindMysqlBit:
+			val, _ := y.GetBinaryLiteral().ToInt()
 			y.SetFloat64(float64(val))
 		case KindMysqlEnum:
 			y.SetFloat64(y.GetMysqlEnum().ToNumber())
@@ -1687,14 +1687,14 @@ func NewDecimalDatum(dec *MyDecimal) (d Datum) {
 	return d
 }
 
-// NewBinStringDatum creates a new BinString Datum for a BinString value.
-func NewBinStringDatum(b BinString) (d Datum) {
-	d.SetBinString(b)
+// NewBinaryLiteralDatum creates a new BinaryLiteral Datum for a BinaryLiteral value.
+func NewBinaryLiteralDatum(b BinaryLiteral) (d Datum) {
+	d.SetBinaryLiteral(b)
 	return d
 }
 
-// NewMysqlBitDatum creates a new MysqlBit Datum for a BinString value.
-func NewMysqlBitDatum(b BinString) (d Datum) {
+// NewMysqlBitDatum creates a new MysqlBit Datum for a BinaryLiteral value.
+func NewMysqlBitDatum(b BinaryLiteral) (d Datum) {
 	d.SetMysqlBit(b)
 	return d
 }

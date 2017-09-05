@@ -437,7 +437,7 @@ func ToString(value interface{}) (string, error) {
 		return v.String(), nil
 	case *MyDecimal:
 		return v.String(), nil
-	case BinString:
+	case BinaryLiteral:
 		return v.ToString(), nil
 	case Enum:
 		return v.String(), nil

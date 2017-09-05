@@ -102,7 +102,7 @@ var kindToMysqlType = map[byte]byte{
 	types.KindMysqlDecimal:  mysql.TypeNewDecimal,
 	types.KindMysqlDuration: mysql.TypeDuration,
 	types.KindMysqlTime:     mysql.TypeDatetime,
-	types.KindBinString:     mysql.TypeVarString,
+	types.KindBinaryLiteral: mysql.TypeVarString,
 	types.KindMysqlBit:      mysql.TypeBit,
 }
 

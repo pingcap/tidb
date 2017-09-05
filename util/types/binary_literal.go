@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,32 +25,31 @@ import (
 	"github.com/juju/errors"
 )
 
-// BinString is the internal type for storing bit / hex literal type.
-type BinString struct {
+// BinaryLiteral is the internal type for storing bit / hex literal type.
+type BinaryLiteral struct {
 	// Value holds the raw value for literal in BigEndian.
 	Value []byte
 }
 
 // BitLiteral is the bit literal type.
 type BitLiteral struct {
-	BinString
+	BinaryLiteral
 }
 
 // HexLiteral is the hex literal type.
 type HexLiteral struct {
-	BinString
+	BinaryLiteral
 }
 
-// ZeroBinString is a BinString literal with zero value.
-var ZeroBinString = BinString{[]byte{}}
+// ZeroBinaryLiteral is a BinaryLiteral literal with zero value.
+var ZeroBinaryLiteral = BinaryLiteral{[]byte{}}
 
 func trimLeadingZeroBytes(bytes []byte) []byte {
 	if len(bytes) == 0 {
 		return bytes
 	}
-	var pos int
-	posMax := len(bytes) - 1
-	for pos = 0; pos < posMax; pos++ {
+	pos, posMax := 0, len(bytes)-1
+	for ; pos < posMax; pos++ {
 		if bytes[pos] != 0 {
 			break
 		}
@@ -58,16 +57,17 @@ func trimLeadingZeroBytes(bytes []byte) []byte {
 	return bytes[pos:]
 }
 
-// NewBinStringFromBytes creates a new BinString instance by the given bytes.
-// The leading zero in bytes are required to be trimmed before feeding to this function.
-func NewBinStringFromBytes(bytes []byte) BinString {
-	return BinString{bytes}
+// NewBinaryLiteralFromBytes creates a new BinaryLiteral instance by the given bytes.
+func NewBinaryLiteralFromBytes(bytes []byte) BinaryLiteral {
+	b := make([]byte, len(bytes))
+	copy(b, bytes)
+	return BinaryLiteral{b}
 }
 
-// NewBinStringFromUint creates a new BinString instance by the given uint value in BitEndian.
-// byteSize will be used as the length of the new BinString, with leading bytes filled to zero.
-// If byteSize is -1, the leading zeros in new BinString will be trimmed.
-func NewBinStringFromUint(value uint64, byteSize int) BinString {
+// NewBinaryLiteralFromUint creates a new BinaryLiteral instance by the given uint value in BitEndian.
+// byteSize will be used as the length of the new BinaryLiteral, with leading bytes filled to zero.
+// If byteSize is -1, the leading zeros in new BinaryLiteral will be trimmed.
+func NewBinaryLiteralFromUint(value uint64, byteSize int) BinaryLiteral {
 	if byteSize != -1 && (byteSize < 1 || byteSize > 8) {
 		panic("Invalid byteSize")
 	}
@@ -78,11 +78,11 @@ func NewBinStringFromUint(value uint64, byteSize int) BinString {
 	} else {
 		bytes = bytes[8-byteSize:]
 	}
-	return NewBinStringFromBytes(bytes)
+	return NewBinaryLiteralFromBytes(bytes)
 }
 
 // String implements fmt.Stringer interface.
-func (b BinString) String() string {
+func (b BinaryLiteral) String() string {
 	if len(b.Value) == 0 {
 		return ""
 	}
@@ -90,12 +90,12 @@ func (b BinString) String() string {
 }
 
 // ToString returns the string representation for the literal.
-func (b BinString) ToString() string {
+func (b BinaryLiteral) ToString() string {
 	return string(b.Value)
 }
 
 // ToBitLiteralString returns the bit literal representation for the literal.
-func (b BinString) ToBitLiteralString(trimLeadingZero bool) string {
+func (b BinaryLiteral) ToBitLiteralString(trimLeadingZero bool) string {
 	if len(b.Value) == 0 {
 		return "b''"
 	}
@@ -114,7 +114,7 @@ func (b BinString) ToBitLiteralString(trimLeadingZero bool) string {
 }
 
 // ToInt returns the int value for the literal.
-func (b BinString) ToInt() (uint64, error) {
+func (b BinaryLiteral) ToInt() (uint64, error) {
 	bytes := trimLeadingZeroBytes(b.Value)
 	length := len(bytes)
 	if length == 0 {
@@ -134,9 +134,9 @@ func (b BinString) ToInt() (uint64, error) {
 // ParseBitStr parses bit string.
 // The string format can be b'val', B'val' or 0bval, val must be 0 or 1.
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-value-literals.html
-func ParseBitStr(s string) (BinString, error) {
+func ParseBitStr(s string) (BinaryLiteral, error) {
 	if len(s) == 0 {
-		return NewBinStringFromBytes(nil), errors.Errorf("invalid empty string for parsing bit type")
+		return NewBinaryLiteralFromBytes(nil), errors.Errorf("invalid empty string for parsing bit type")
 	}
 
 	if s[0] == 'b' || s[0] == 'B' {
@@ -146,11 +146,11 @@ func ParseBitStr(s string) (BinString, error) {
 		s = s[2:]
 	} else {
 		// here means format is not b'val', B'val' or 0bval.
-		return NewBinStringFromBytes(nil), errors.Errorf("invalid bit type format %s", s)
+		return NewBinaryLiteralFromBytes(nil), errors.Errorf("invalid bit type format %s", s)
 	}
 
 	if len(s) == 0 {
-		return ZeroBinString, nil
+		return ZeroBinaryLiteral, nil
 	}
 
 	alignedLength := (len(s) + 7) &^ 7
@@ -162,12 +162,12 @@ func ParseBitStr(s string) (BinString, error) {
 		strPosition := i << 3
 		val, err := strconv.ParseUint(s[strPosition:strPosition+8], 2, 8)
 		if err != nil {
-			return NewBinStringFromBytes(nil), errors.Trace(err)
+			return NewBinaryLiteralFromBytes(nil), errors.Trace(err)
 		}
 		bytes[i] = byte(val)
 	}
 
-	return NewBinStringFromBytes(bytes), nil
+	return NewBinaryLiteralFromBytes(bytes), nil
 }
 
 // NewBitLiteral parses bit string as BitLiteral type.
@@ -181,26 +181,26 @@ func NewBitLiteral(s string) (BitLiteral, error) {
 
 // ParseHexStr parses hexadecimal string literal.
 // See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
-func ParseHexStr(s string) (BinString, error) {
+func ParseHexStr(s string) (BinaryLiteral, error) {
 	if len(s) == 0 {
-		return NewBinStringFromBytes(nil), errors.Errorf("invalid empty string for parsing hexadecimal literal")
+		return NewBinaryLiteralFromBytes(nil), errors.Errorf("invalid empty string for parsing hexadecimal literal")
 	}
 
 	if s[0] == 'x' || s[0] == 'X' {
 		// format is x'val' or X'val'
 		s = strings.Trim(s[1:], "'")
 		if len(s)%2 != 0 {
-			return NewBinStringFromBytes(nil), errors.Errorf("invalid hexadecimal format, must even numbers, but %d", len(s))
+			return NewBinaryLiteralFromBytes(nil), errors.Errorf("invalid hexadecimal format, must even numbers, but %d", len(s))
 		}
 	} else if strings.HasPrefix(s, "0x") {
 		s = s[2:]
 	} else {
 		// here means format is not x'val', X'val' or 0xval.
-		return NewBinStringFromBytes(nil), errors.Errorf("invalid hexadecimal format %s", s)
+		return NewBinaryLiteralFromBytes(nil), errors.Errorf("invalid hexadecimal format %s", s)
 	}
 
 	if len(s) == 0 {
-		return ZeroBinString, nil
+		return ZeroBinaryLiteral, nil
 	}
 
 	if len(s)%2 != 0 {
@@ -208,9 +208,9 @@ func ParseHexStr(s string) (BinString, error) {
 	}
 	bytes, err := hex.DecodeString(s)
 	if err != nil {
-		return NewBinStringFromBytes(nil), errors.Trace(err)
+		return NewBinaryLiteralFromBytes(nil), errors.Trace(err)
 	}
-	return NewBinStringFromBytes(bytes), nil
+	return NewBinaryLiteralFromBytes(bytes), nil
 }
 
 // NewHexLiteral parses hexadecimal string as HexLiteral type.

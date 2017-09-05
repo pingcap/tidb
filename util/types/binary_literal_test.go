@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,12 +18,12 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testBinStringSuite{})
+var _ = Suite(&testBinaryLiteralSuite{})
 
-type testBinStringSuite struct {
+type testBinaryLiteralSuite struct {
 }
 
-func (s *testBinStringSuite) TestTrimLeadingZeroBytes(c *C) {
+func (s *testBinaryLiteralSuite) TestTrimLeadingZeroBytes(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input    []byte
@@ -45,7 +45,7 @@ func (s *testBinStringSuite) TestTrimLeadingZeroBytes(c *C) {
 	}
 }
 
-func (s *testBinStringSuite) TestParseBitStr(c *C) {
+func (s *testBinaryLiteralSuite) TestParseBitStr(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input    string
@@ -107,7 +107,7 @@ func (s *testBinStringSuite) TestParseBitStr(c *C) {
 	}
 }
 
-func (s *testBinStringSuite) TestParseHexStr(c *C) {
+func (s *testBinaryLiteralSuite) TestParseHexStr(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input    string
@@ -140,16 +140,16 @@ func (s *testBinStringSuite) TestParseHexStr(c *C) {
 	}
 }
 
-func (s *testBinStringSuite) TestString(c *C) {
+func (s *testBinaryLiteralSuite) TestString(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		Input    BinString
+		Input    BinaryLiteral
 		Expected string
 	}{
-		{BinString{[]byte{}}, ""}, // Expected
-		{BinString{[]byte{0x0}}, "0x00"},
-		{BinString{[]byte{0x1}}, "0x01"},
-		{BinString{[]byte{0xff, 0x01}}, "0xff01"},
+		{BinaryLiteral{[]byte{}}, ""}, // Expected
+		{BinaryLiteral{[]byte{0x0}}, "0x00"},
+		{BinaryLiteral{[]byte{0x1}}, "0x01"},
+		{BinaryLiteral{[]byte{0xff, 0x01}}, "0xff01"},
 	}
 	for _, t := range tbl {
 		str := t.Input.String()
@@ -157,25 +157,25 @@ func (s *testBinStringSuite) TestString(c *C) {
 	}
 }
 
-func (s *testBinStringSuite) TestToBitLiteralString(c *C) {
+func (s *testBinaryLiteralSuite) TestToBitLiteralString(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		Input           BinString
+		Input           BinaryLiteral
 		TrimLeadingZero bool
 		Expected        string
 	}{
-		{BinString{[]byte{}}, true, "b''"},
-		{BinString{[]byte{}}, false, "b''"},
-		{BinString{[]byte{0x0}}, true, "b'0'"},
-		{BinString{[]byte{0x0}}, false, "b'00000000'"},
-		{BinString{[]byte{0x0, 0x0}}, true, "b'0'"},
-		{BinString{[]byte{0x0, 0x0}}, false, "b'0000000000000000'"},
-		{BinString{[]byte{0x1}}, true, "b'1'"},
-		{BinString{[]byte{0x1}}, false, "b'00000001'"},
-		{BinString{[]byte{0xff, 0x01}}, true, "b'1111111100000001'"},
-		{BinString{[]byte{0xff, 0x01}}, false, "b'1111111100000001'"},
-		{BinString{[]byte{0x0, 0xff, 0x01}}, true, "b'1111111100000001'"},
-		{BinString{[]byte{0x0, 0xff, 0x01}}, false, "b'000000001111111100000001'"},
+		{BinaryLiteral{[]byte{}}, true, "b''"},
+		{BinaryLiteral{[]byte{}}, false, "b''"},
+		{BinaryLiteral{[]byte{0x0}}, true, "b'0'"},
+		{BinaryLiteral{[]byte{0x0}}, false, "b'00000000'"},
+		{BinaryLiteral{[]byte{0x0, 0x0}}, true, "b'0'"},
+		{BinaryLiteral{[]byte{0x0, 0x0}}, false, "b'0000000000000000'"},
+		{BinaryLiteral{[]byte{0x1}}, true, "b'1'"},
+		{BinaryLiteral{[]byte{0x1}}, false, "b'00000001'"},
+		{BinaryLiteral{[]byte{0xff, 0x01}}, true, "b'1111111100000001'"},
+		{BinaryLiteral{[]byte{0xff, 0x01}}, false, "b'1111111100000001'"},
+		{BinaryLiteral{[]byte{0x0, 0xff, 0x01}}, true, "b'1111111100000001'"},
+		{BinaryLiteral{[]byte{0x0, 0xff, 0x01}}, false, "b'000000001111111100000001'"},
 	}
 	for _, t := range tbl {
 		str := t.Input.ToBitLiteralString(t.TrimLeadingZero)
@@ -183,7 +183,7 @@ func (s *testBinStringSuite) TestToBitLiteralString(c *C) {
 	}
 }
 
-func (s *testBinStringSuite) TestToInt(c *C) {
+func (s *testBinaryLiteralSuite) TestToInt(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input    string
@@ -212,7 +212,7 @@ func (s *testBinStringSuite) TestToInt(c *C) {
 	}
 }
 
-func (s *testBinStringSuite) TestNewBinStringFromUint(c *C) {
+func (s *testBinaryLiteralSuite) TestNewBinaryLiteralFromUint(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input    uint64
@@ -238,7 +238,7 @@ func (s *testBinStringSuite) TestNewBinStringFromUint(c *C) {
 		{0x4920616D2061206C, 5, []byte{0x6D, 0x20, 0x61, 0x20, 0x6C}},
 	}
 	for _, t := range tbl {
-		hex := NewBinStringFromUint(t.Input, t.ByteSize)
+		hex := NewBinaryLiteralFromUint(t.Input, t.ByteSize)
 		c.Assert(hex.Value, DeepEquals, t.Expected, Commentf("%#v", t))
 	}
 }

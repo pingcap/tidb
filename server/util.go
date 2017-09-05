@@ -309,8 +309,8 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlSet().String()), alloc)...)
 		case types.KindMysqlEnum:
 			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlEnum().String()), alloc)...)
-		case types.KindBinString, types.KindMysqlBit:
-			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetBinString().ToString()), alloc)...)
+		case types.KindBinaryLiteral, types.KindMysqlBit:
+			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetBinaryLiteral().ToString()), alloc)...)
 		}
 	}
 	return
@@ -348,8 +348,8 @@ func dumpTextValue(colInfo *ColumnInfo, value types.Datum) ([]byte, error) {
 		return hack.Slice(value.GetMysqlSet().String()), nil
 	case types.KindMysqlJSON:
 		return hack.Slice(value.GetMysqlJSON().String()), nil
-	case types.KindBinString, types.KindMysqlBit:
-		return hack.Slice(value.GetBinString().ToString()), nil
+	case types.KindBinaryLiteral, types.KindMysqlBit:
+		return hack.Slice(value.GetBinaryLiteral().ToString()), nil
 	default:
 		return nil, errInvalidType.Gen("invalid type %v", value.Kind())
 	}

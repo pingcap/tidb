@@ -1076,7 +1076,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 			123, 123, types.NewDecFromStringForTest("123"), "a",
 		},
 		{
-			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinStringDatum(types.NewBinStringFromUint(0x61, -1))},
+			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0x61, -1))},
 			nil,
 			97, 97, types.NewDecFromInt(0x61), "a",
 		},

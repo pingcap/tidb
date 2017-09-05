@@ -431,8 +431,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				default:
 					defaultValStr := fmt.Sprintf("%v", col.DefaultValue)
 					if col.Tp == mysql.TypeBit {
-						defaultValBinString := types.NewBinStringFromBytes([]byte(defaultValStr))
-						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinString.ToBitLiteralString(true)))
+						defaultValBinaryLiteral := types.NewBinaryLiteralFromBytes([]byte(defaultValStr))
+						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true)))
 					} else {
 						buf.WriteString(fmt.Sprintf(" DEFAULT '%s'", format.OutputFormat(defaultValStr)))
 					}
