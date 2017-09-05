@@ -686,7 +686,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		tableSchema: schema,
 		IsReplace:   insert.IsReplace,
 		Priority:    insert.Priority,
-		Ignore:      insert.Ignore,
+		IgnoreErr:   insert.IgnoreErr,
 	}.init(b.allocator, b.ctx)
 
 	b.visitInfo = append(b.visitInfo, visitInfo{
