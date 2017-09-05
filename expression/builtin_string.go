@@ -2616,15 +2616,14 @@ type insertFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *insertFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *insertFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpInt, tpString)
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[3].GetType(), bf.tp)
-	var sig builtinFunc
 	if types.IsBinaryStr(args[0].GetType()) {
 		sig = &builtinInsertBinarySig{baseStringBuiltinFunc{bf}}
 	} else {
@@ -2646,10 +2645,14 @@ func (b *builtinInsertBinarySig) evalString(row []types.Datum) (string, bool, er
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
+	strLength := int64(len(str))
 
 	pos, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
+	}
+	if pos < 1 || pos > strLength {
+		return str, false, nil
 	}
 
 	length, isNull, err := b.args[2].EvalInt(row, sc)
@@ -2662,10 +2665,6 @@ func (b *builtinInsertBinarySig) evalString(row []types.Datum) (string, bool, er
 		return "", true, errors.Trace(err)
 	}
 
-	strLength := int64(len(str))
-	if pos < 1 || pos > strLength {
-		return str, false, nil
-	}
 	if length > strLength-pos+1 || length < 0 {
 		return str[0:pos-1] + newstr, false, nil
 	}
@@ -2685,10 +2684,15 @@ func (b *builtinInsertSig) evalString(row []types.Datum) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
+	runes := []rune(str)
+	runeLength := int64(len(runes))
 
 	pos, isNull, err := b.args[1].EvalInt(row, sc)
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
+	}
+	if pos < 1 || pos > runeLength {
+		return str, false, nil
 	}
 
 	length, isNull, err := b.args[2].EvalInt(row, sc)
@@ -2701,12 +2705,6 @@ func (b *builtinInsertSig) evalString(row []types.Datum) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 
-	runes := []rune(str)
-	runeLength := int64(len(runes))
-
-	if pos < 1 || pos > runeLength {
-		return str, false, nil
-	}
 	if length > runeLength-pos+1 || length < 0 {
 		return string(runes[0:pos-1]) + newstr, false, nil
 	}
