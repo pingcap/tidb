@@ -470,7 +470,6 @@ func (b *builtinJSONArraySig) evalJSON(row []types.Datum) (res json.JSON, isNull
 	return json.CreateJSON(jsons), false, nil
 }
 
-// jsonModify is similar with `jsonModify`, but for new framework.
 func jsonModify(args []Expression, row []types.Datum, mt json.ModifyType, sc *variable.StatementContext) (res json.JSON, isNull bool, err error) {
 	res, isNull, err = args[0].EvalJSON(row, sc)
 	if isNull || err != nil {

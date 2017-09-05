@@ -2351,13 +2351,13 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))
 
 	r = tk.MustQuery(`select json_extract(json_set(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_set(b, '$.b', false), '$.b') from table_json`)
-	r.Check(testkit.Rows("3 0", "<nil> <nil>")) // TODO: TiDB treat false as 0. Should fix it.
+	r.Check(testkit.Rows("3 0", "<nil> <nil>")) // TODO: TiDB treats false as 0. Should fix it.
 
 	r = tk.MustQuery(`select json_extract(json_insert(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_insert(b, '$.b', false), '$.b') from table_json`)
 	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))
 
 	r = tk.MustQuery(`select json_extract(json_replace(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_replace(b, '$.b', false), '$.b') from table_json`)
-	r.Check(testkit.Rows("3 0", "<nil> <nil>")) // TODO: TiDB treat false as 0. Should fix it.
+	r.Check(testkit.Rows("3 0", "<nil> <nil>")) // TODO: TiDB treats false as 0. Should fix it.
 
 	r = tk.MustQuery(`select json_extract(json_merge(a, cast(b as JSON)), '$[0].a[0]') from table_json`)
 	r.Check(testkit.Rows("1", "1"))
