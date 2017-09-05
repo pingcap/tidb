@@ -152,3 +152,8 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 		config.Strict = true
 	}, "SocketRegression")
 }
+
+func (ts *TidbTestSuite) TestClientWithCollation(c *C) {
+	c.Parallel()
+	runTestClientWithCollation(c)
+}
