@@ -2813,25 +2813,41 @@ func (c *secToTimeFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinSecToTimeSig{newBaseBuiltinFunc(args, ctx)}
+	var retFlen, retFsp int
+	argType := args[0].GetType()
+	argEvalTp := fieldTp2EvalTp(argType)
+	if argEvalTp == tpString {
+		retFsp = types.UnspecifiedLength
+	} else {
+		retFsp = argType.Decimal
+	}
+	if retFsp > types.MaxFsp || retFsp == types.UnspecifiedLength {
+		retFsp = types.MaxFsp
+	} else if retFsp < types.MinFsp {
+		retFsp = types.MinFsp
+	}
+	retFlen = 10
+	if retFsp > 0 {
+		retFlen += 1 + retFsp
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpReal)
+	bf.tp.Flen, bf.tp.Decimal = retFlen, retFsp
+	sig := &builtinSecToTimeSig{baseDurationBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinSecToTimeSig struct {
-	baseBuiltinFunc
+	baseDurationBuiltinFunc
 }
 
-// eval evals a builtinSecToTimeSig.
+// evalDuration evals SEC_TO_TIME(seconds).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
-func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinSecToTimeSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	ctx := b.getCtx().GetSessionVars().StmtCtx
+	secondsFloat, isNull, err := b.args[0].EvalReal(row, ctx)
+	if isNull || err != nil {
+		return types.Duration{}, isNull, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		return
-	}
-
 	var (
 		hour          int64
 		minute        int64
@@ -2840,16 +2856,6 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 		secondDemical float64
 		negative      string
 	)
-
-	sc := b.ctx.GetSessionVars().StmtCtx
-	secondsFloat, err := args[0].ToFloat64(sc)
-	if err != nil {
-		if args[0].Kind() == types.KindString && types.ErrTruncated.Equal(err) {
-			secondsFloat = float64(0)
-		} else {
-			return d, errors.Trace(err)
-		}
-	}
 
 	if secondsFloat < 0 {
 		negative = "-"
@@ -2870,22 +2876,11 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 	secondDemical = float64(second) + demical
 
 	var dur types.Duration
-	fsp := types.MaxFsp
-	if args[0].Kind() != types.KindString {
-		sec, _ := args[0].ToString()
-		secs := strings.Split(sec, ".")
-		if len(secs) <= 1 {
-			fsp = 0
-		} else if len(secs[1]) < fsp {
-			fsp = len(secs[1])
-		}
-	}
-	dur, err = types.ParseDuration(fmt.Sprintf("%s%02d:%02d:%v", negative, hour, minute, secondDemical), fsp)
+	dur, err = types.ParseDuration(fmt.Sprintf("%s%02d:%02d:%v", negative, hour, minute, secondDemical), b.tp.Decimal)
 	if err != nil {
-		return d, errors.Trace(err)
+		return types.Duration{}, false, errors.Trace(err)
 	}
-	d.SetMysqlDuration(dur)
-	return
+	return dur, false, nil
 }
 
 type subTimeFunctionClass struct {
@@ -3022,35 +3017,31 @@ func (c *timeToSecFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinTimeToSecSig{newBaseBuiltinFunc(args, ctx)}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDuration)
+	bf.tp.Flen = 10
+	sig := &builtinTimeToSecSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinTimeToSecSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinTimeToSecSig.
+// evalInt evals TIME_TO_SEC(time).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-to-sec
-func (b *builtinTimeToSecSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinTimeToSecSig) evalInt(row []types.Datum) (int64, bool, error) {
+	ctx := b.getCtx().GetSessionVars().StmtCtx
+	duration, isNull, err := b.args[0].EvalDuration(row, ctx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-
-	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], 0)
-	if err != nil || d.IsNull() {
-		return d, errors.Trace(err)
-	}
-
-	t := d.GetMysqlDuration()
-	// TODO: select TIME_TO_SEC('-2:-2:-2') not handle well.
-	if t.Compare(types.ZeroDuration) < 0 {
-		d.SetInt64(int64(-1 * (t.Hour()*3600 + t.Minute()*60 + t.Second())))
+	var sign int
+	if duration.Duration >= 0 {
+		sign = 1
 	} else {
-		d.SetInt64(int64(t.Hour()*3600 + t.Minute()*60 + t.Second()))
+		sign = -1
 	}
-	return
+	return int64(sign * (duration.Hour()*3600 + duration.Minute()*60 + duration.Second())), false, nil
 }
 
 type timestampAddFunctionClass struct {
