@@ -221,8 +221,6 @@ func (pc pbConverter) compareOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		tp = tipb.ExprType_NullEQ
 	case ast.In:
 		return pc.inToPBExpr(expr)
-	case ast.Like:
-		return pc.likeToPBExpr(expr)
 	}
 	return pc.convertToPBExpr(expr, tp)
 }
@@ -496,6 +494,7 @@ func (pc pbConverter) convertToPBExpr(expr *ScalarFunction, tp tipb.ExprType) *t
 		if code > 0 {
 			return &tipb.Expr{Tp: tipb.ExprType_ScalarFunc, Sig: code, Children: children, FieldType: toPBFieldType(expr.RetType)}
 		}
+		return nil
 	}
 	return &tipb.Expr{Tp: tp, Children: children}
 }

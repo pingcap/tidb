@@ -2,7 +2,7 @@
 
 node {
     def TIDB_TEST_BRANCH = "master"
-    def TIKV_BRANCH = "master"
+    def TIKV_BRANCH = "shirly/dag_expression"
     def PD_BRANCH = "master"
 
     fileLoader.withGit('git@github.com:pingcap/SRE.git', 'master', 'github-iamxy-ssh', '') {
