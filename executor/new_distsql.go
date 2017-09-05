@@ -306,7 +306,7 @@ type indexHandler struct {
 	wg sync.WaitGroup
 }
 
-// openIndexHandler open the indexHandler, launch some background worker goroutines and write the results to workCh.
+// openIndexHandler open the indexHandler, launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) openIndexHandler(kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
 	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges,
 		e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
@@ -355,7 +355,7 @@ func (ih *indexHandler) fetchHandles(e *IndexLookUpExecutor, result distsql.Sele
 	}
 }
 
-func (ih *indexHandler) close() {
+func (ih *indexHandler) closeIndexHandler() {
 	ih.wg.Wait()
 }
 
@@ -411,30 +411,7 @@ func (th *tableHandler) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *l
 	}
 }
 
-func (th *tableHandler) next() (Row, error) {
-	for {
-		if th.taskCurr == nil {
-			taskCurr, ok := <-th.taskChan
-			if !ok {
-				return nil, nil
-			}
-			if taskCurr.tasksErr != nil {
-				return nil, errors.Trace(taskCurr.tasksErr)
-			}
-			th.taskCurr = taskCurr
-		}
-		row, err := th.taskCurr.getRow()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row != nil {
-			return row, nil
-		}
-		th.taskCurr = nil
-	}
-}
-
-func (th *tableHandler) close() {
+func (th *tableHandler) closeTableHandler() {
 	for range th.taskChan {
 	}
 }
@@ -578,8 +555,8 @@ func (e *IndexLookUpExecutor) Schema() *expression.Schema {
 func (e *IndexLookUpExecutor) Close() error {
 	if e.finished != nil {
 		close(e.finished)
-		e.indexHandler.close()
-		e.tableHandler.close()
+		e.closeIndexHandler()
+		e.closeTableHandler()
 		e.finished = nil
 	}
 	return nil
@@ -587,5 +564,25 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next() (Row, error) {
-	return e.tableHandler.next()
+	th := &e.tableHandler
+	for {
+		if th.taskCurr == nil {
+			taskCurr, ok := <-th.taskChan
+			if !ok {
+				return nil, nil
+			}
+			if taskCurr.tasksErr != nil {
+				return nil, errors.Trace(taskCurr.tasksErr)
+			}
+			th.taskCurr = taskCurr
+		}
+		row, err := th.taskCurr.getRow()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row != nil {
+			return row, nil
+		}
+		th.taskCurr = nil
+	}
 }
