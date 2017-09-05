@@ -639,7 +639,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64
 	}
 
 	ret, err := c.ToInt()
-	// err return by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrOverflow
+	// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 	if err == types.ErrOverflow {
 		return 0, false, errors.Trace(err)
 	}
