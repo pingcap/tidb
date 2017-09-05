@@ -381,8 +381,13 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 			}
 			startKey = endKey
 		}
-		err := ddl.CompleteDeleteRange(w.session, r)
-		if err != nil {
+		if _, err := w.session.Execute("BEGIN"); err != nil {
+			return errors.Trace(err)
+		}
+		if err := ddl.CompleteDeleteRange(w.session, r); err != nil {
+			return errors.Trace(err)
+		}
+		if _, err := w.session.Execute("COMMIT"); err != nil {
 			return errors.Trace(err)
 		}
 	}
