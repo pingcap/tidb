@@ -339,6 +339,11 @@ func (p *TopN) attach2Task(tasks ...task) task {
 	// This is a topN plan.
 	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
 		pushedDownTopN := p.Copy().(*TopN)
+		newByItems := make([]*ByItems, 0, len(p.ByItems))
+		for _, expr := range p.ByItems {
+			newByItems = append(newByItems, expr.Clone())
+		}
+		pushedDownTopN.ByItems = newByItems
 		// When topN is pushed down, it should remove its offset.
 		pushedDownTopN.Count, pushedDownTopN.Offset = p.Count+p.Offset, 0
 		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and

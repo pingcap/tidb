@@ -64,6 +64,48 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
+// GetDDLJobs returns the DDL jobs and an error.
+func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
+	t := meta.NewMeta(txn)
+	cnt, err := t.DDLJobQueueLen()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	jobs := make([]*model.Job, cnt)
+	for i := range jobs {
+		jobs[i], err = t.GetDDLJob(int64(i))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return jobs, nil
+}
+
+const maxHistoryJobs = 10
+
+// GetHistoryDDLJobs returns the DDL history jobs and an error.
+// The maximum count of history jobs is maxHistoryJobs.
+func GetHistoryDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
+	t := meta.NewMeta(txn)
+	jobs, err := t.GetAllHistoryDDLJobs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	jobsLen := len(jobs)
+	if jobsLen > maxHistoryJobs {
+		start := jobsLen - maxHistoryJobs
+		jobs = jobs[start:]
+	}
+	jobsLen = len(jobs)
+	ret := make([]*model.Job, 0, jobsLen)
+	for i := jobsLen - 1; i >= 0; i-- {
+		ret = append(ret, jobs[i])
+	}
+	return ret, nil
+}
+
 func nextIndexVals(data []types.Datum) []types.Datum {
 	// Add 0x0 to the end of data.
 	return append(data, types.Datum{})
