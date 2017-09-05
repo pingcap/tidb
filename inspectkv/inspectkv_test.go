@@ -223,8 +223,9 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 	historyJobs, err := GetHistoryDDLJobs(txn)
 	c.Assert(err, IsNil)
 	c.Assert(historyJobs, HasLen, maxHistoryJobs)
+	l := len(historyJobs) - 1
 	for i, job := range historyJobs {
-		c.Assert(job.ID, Equals, jobs[delta+i].ID)
+		c.Assert(job.ID, Equals, jobs[delta+l-i].ID)
 		c.Assert(job.SchemaID, Equals, int64(1))
 		c.Assert(job.Type, Equals, model.ActionCreateTable)
 	}

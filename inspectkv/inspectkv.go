@@ -98,7 +98,12 @@ func GetHistoryDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 		start := jobsLen - maxHistoryJobs
 		jobs = jobs[start:]
 	}
-	return jobs, nil
+	jobsLen = len(jobs)
+	ret := make([]*model.Job, 0, jobsLen)
+	for i := jobsLen - 1; i >= 0; i-- {
+		ret = append(ret, jobs[i])
+	}
+	return ret, nil
 }
 
 func nextIndexVals(data []types.Datum) []types.Datum {
