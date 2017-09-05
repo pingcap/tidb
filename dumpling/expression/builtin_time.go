@@ -1199,63 +1199,73 @@ func (c *getFormatFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinGetFormatSig{newBaseBuiltinFunc(args, ctx)}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
+	bf.tp.Flen = 17
+	sig := &builtinGetFormatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinGetFormatSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinGetFormatSig.
+// evalString evals a builtinGetFormatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_get-format
-func (b *builtinGetFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	t := args[0].GetString()
-	l := args[1].GetString()
+func (b *builtinGetFormatSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	t, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	l, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+
+	var res string
 	switch t {
 	case dateFormat:
 		switch l {
 		case usaLocation:
-			d.SetString("%m.%d.%Y")
+			res = "%m.%d.%Y"
 		case jisLocation:
-			d.SetString("%Y-%m-%d")
+			res = "%Y-%m-%d"
 		case isoLocation:
-			d.SetString("%Y-%m-%d")
+			res = "%Y-%m-%d"
 		case eurLocation:
-			d.SetString("%d.%m.%Y")
+			res = "%d.%m.%Y"
 		case internalLocation:
-			d.SetString("%Y%m%d")
+			res = "%Y%m%d"
 		}
 	case datetimeFormat, timestampFormat:
 		switch l {
 		case usaLocation:
-			d.SetString("%Y-%m-%d %H.%i.%s")
+			res = "%Y-%m-%d %H.%i.%s"
 		case jisLocation:
-			d.SetString("%Y-%m-%d %H:%i:%s")
+			res = "%Y-%m-%d %H:%i:%s"
 		case isoLocation:
-			d.SetString("%Y-%m-%d %H:%i:%s")
+			res = "%Y-%m-%d %H:%i:%s"
 		case eurLocation:
-			d.SetString("%Y-%m-%d %H.%i.%s")
+			res = "%Y-%m-%d %H.%i.%s"
 		case internalLocation:
-			d.SetString("%Y%m%d%H%i%s")
+			res = "%Y%m%d%H%i%s"
 		}
 	case timeFormat:
 		switch l {
 		case usaLocation:
-			d.SetString("%h:%i:%s %p")
+			res = "%h:%i:%s %p"
 		case jisLocation:
-			d.SetString("%H:%i:%s")
+			res = "%H:%i:%s"
 		case isoLocation:
-			d.SetString("%H:%i:%s")
+			res = "%H:%i:%s"
 		case eurLocation:
-			d.SetString("%H.%i.%s")
+			res = "%H.%i.%s"
 		case internalLocation:
-			d.SetString("%H%i%s")
+			res = "%H%i%s"
 		}
 	}
 
-	return
+	return res, false, nil
 }
 
 type strToDateFunctionClass struct {

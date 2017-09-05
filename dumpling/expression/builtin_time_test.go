@@ -1737,6 +1737,7 @@ func (s *testEvaluatorSuite) TestGetFormat(c *C) {
 		t := []types.Datum{types.NewStringDatum(test.unit), types.NewStringDatum(test.location)}
 		f, err := fc.getFunction(s.ctx, datumsToConstants(t))
 		c.Assert(err, IsNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		result, _ := d.ToString()
