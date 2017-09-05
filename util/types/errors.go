@@ -45,7 +45,7 @@ var (
 	ErrCastAsSignedOverflow = terror.ClassTypes.New(codeUnknown, msgCastAsSignedOverflow)
 	// ErrCastNegIntAsUnsigned is returned when a negative integer be casted to an unsigned int.
 	ErrCastNegIntAsUnsigned = terror.ClassTypes.New(codeUnknown, msgCastNegIntAsUnsigned)
-	// ErrInvalidDefault is return when meet a invalid default value.
+	// ErrInvalidDefault is returned when meet a invalid default value.
 	ErrInvalidDefault = terror.ClassTypes.New(codeInvalidDefault, "Invalid default value for '%s'")
 )
 

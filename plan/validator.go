@@ -465,7 +465,9 @@ func isNowSymFunc(expr ast.ExprNode) bool {
 
 func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 	tp := colDef.Tp
-	for _, columnOpt := range colDef.Options {
+	// Check the last default value.
+	for i := len(colDef.Options) - 1; i >= 0; i-- {
+		columnOpt := colDef.Options[i]
 		if columnOpt.Tp == ast.ColumnOptionDefaultValue {
 			if !(tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeDatetime) && isNowSymFunc(columnOpt.Expr) {
 				return true
@@ -473,6 +475,7 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 			break
 		}
 	}
+
 	return false
 }
 

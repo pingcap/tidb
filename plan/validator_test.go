@@ -154,6 +154,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE `t` (`a` int DEFAULT now());", false, types.ErrInvalidDefault},
 		{"CREATE TABLE `t` (`a` float DEFAULT now());", false, types.ErrInvalidDefault},
 		{"CREATE TABLE `t` (`a` varchar(10) DEFAULT now());", false, types.ErrInvalidDefault},
+		{"CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );", false, nil},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
