@@ -572,3 +572,28 @@ func (ts *testDatumSuite) TestComputeIntDiv(c *C) {
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
 	}
 }
+
+func (ts *testDatumSuite) TestCopyDatum(c *C) {
+	var raw Datum
+	raw.b = []byte("raw")
+	raw.k = KindRaw
+	tests := []Datum{
+		NewIntDatum(72),
+		NewUintDatum(72),
+		NewStringDatum("abcd"),
+		NewBytesDatum([]byte("abcd")),
+		raw,
+	}
+
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	for _, tt := range tests {
+		tt1 := CopyDatum(tt)
+		res, err := tt.CompareDatum(sc, tt1)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, 0)
+		if tt.b != nil {
+			c.Assert(&tt.b[0], Not(Equals), &tt1.b[0])
+		}
+	}
+}
