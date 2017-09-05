@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 	"github.com/pingcap/tipb/go-tipb"
@@ -426,25 +425,23 @@ func (b *builtinIntervalIntSig) evalInt(row []types.Datum) (int64, bool, error) 
 		return -1, false, nil
 	}
 	idx, err := b.binSearch(sc, args0, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], row)
-	return int64(idx), false, errors.Trace(err)
+	return int64(idx), err != nil, errors.Trace(err)
 }
 
 // All arguments are treated as integers.
 // It is required that arg[0] < args[1] < args[2] < ... < args[n] for this function to work correctly.
 // This is because a binary search is used (very fast).
-func (b *builtinIntervalIntSig) binSearch(sc *variable.StatementContext, target int64, isUint1 bool, args []Expression, row []types.Datum) (idx int, err error) {
+func (b *builtinIntervalIntSig) binSearch(sc *variable.StatementContext, target int64, isUint1 bool, args []Expression, row []types.Datum) (_ int, err error) {
 	i, j, cmp := 0, len(args), false
 	for i < j {
 		mid := i + (j-i)/2
-		v, isNull, err := args[mid].EvalInt(row, sc)
-		if terror.ErrorEqual(err, types.ErrTruncated) {
-			err = sc.HandleTruncate(err)
-		}
-		if err != nil {
+		v, isNull, err1 := args[mid].EvalInt(row, sc)
+		if err1 != nil {
+			err = err1
 			break
 		}
 		if isNull {
-			v = 0
+			v = target
 		}
 		isUint2 := mysql.HasUnsignedFlag(args[mid].GetType().Flag)
 		switch {
@@ -482,22 +479,20 @@ func (b *builtinIntervalRealSig) evalInt(row []types.Datum) (int64, bool, error)
 		return -1, false, nil
 	}
 	idx, err := b.binSearch(sc, args0, b.args[1:], row)
-	return int64(idx), false, errors.Trace(err)
+	return int64(idx), err != nil, errors.Trace(err)
 }
 
-func (b *builtinIntervalRealSig) binSearch(sc *variable.StatementContext, target float64, args []Expression, row []types.Datum) (idx int, err error) {
+func (b *builtinIntervalRealSig) binSearch(sc *variable.StatementContext, target float64, args []Expression, row []types.Datum) (_ int, err error) {
 	i, j := 0, len(args)
 	for i < j {
 		mid := i + (j-i)/2
-		v, isNull, err := args[mid].EvalReal(row, sc)
-		if terror.ErrorEqual(err, types.ErrTruncated) {
-			err = sc.HandleTruncate(err)
-		}
+		v, isNull, err1 := args[mid].EvalReal(row, sc)
 		if err != nil {
+			err = err1
 			break
 		}
 		if isNull {
-			v = 0
+			v = target
 		}
 		if cmp := target < v; !cmp {
 			i = mid + 1

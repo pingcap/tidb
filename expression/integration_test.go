@@ -2226,6 +2226,8 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows("0 1 0"))
 	result = tk.MustQuery(`select interval(9007199254740992, "9007199254740993"), interval("9007199254740992", 9007199254740993), interval("9007199254740992", "9007199254740993")`)
 	result.Check(testkit.Rows("1 1 1"))
+	result = tk.MustQuery(`select INTERVAL(100, NULL, NULL, NULL, NULL, NULL, 100);`)
+	result.Check(testkit.Rows("6"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
