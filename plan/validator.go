@@ -399,6 +399,10 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		return ddl.ErrWrongColumnName.GenByArgs(cName)
 	}
 
+	if isInvalidDefaultValue(colDef) {
+		return types.ErrInvalidDefault.GenByArgs(colDef.Name.Name.O)
+	}
+
 	// Check column type.
 	tp := colDef.Tp
 	if tp == nil {
@@ -444,22 +448,29 @@ func checkColumn(colDef *ast.ColumnDef) error {
 				return types.ErrIllegalValueForType.GenByArgs(types.TypeStr(tp.Tp), str)
 			}
 		}
-	case mysql.TypeDate:
-		for _, columnOpt := range colDef.Options {
-			if columnOpt.Tp == ast.ColumnOptionDefaultValue && isNowBuiltinFunc(columnOpt.Expr) {
-				return types.ErrInvalidDefault.GenByArgs(colDef.Name.Name.O)
-			}
-		}
 	default:
 		// TODO: Add more types.
 	}
 	return nil
 }
 
-func isNowBuiltinFunc(expr ast.ExprNode) bool {
+func isNowSymFunc(expr ast.ExprNode) bool {
 	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
 		if funcCall.FnName.L == ast.CurrentTimestamp {
 			return true
+		}
+	}
+	return false
+}
+
+func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
+	tp := colDef.Tp
+	for _, columnOpt := range colDef.Options {
+		if columnOpt.Tp == ast.ColumnOptionDefaultValue {
+			if !(tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeDatetime) && isNowSymFunc(columnOpt.Expr) {
+				return true
+			}
+			break
 		}
 	}
 	return false
