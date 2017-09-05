@@ -377,6 +377,13 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 		return v.GetBinString().ToInt()
 	}
 
+	if tp == mysql.TypeBit {
+		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
+			// For BIT fields, convert int into binString.
+			return types.NewBinStringFromUint(v.GetUint64(), -1).ToString(), nil
+		}
+	}
+
 	return v.ToString()
 }
 
