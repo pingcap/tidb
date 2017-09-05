@@ -307,6 +307,7 @@ type indexHandler struct {
 	wg              sync.WaitGroup
 }
 
+// open the indexHandler, launch some background worker goroutines and write the results to workCh.
 func (ih *indexHandler) open(kvRanges []kv.KeyRange, e *IndexLookUpExecutor, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
 	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges,
 		e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
@@ -366,6 +367,8 @@ type tableHandler struct {
 	executeTask func(task *lookupTableTask, goCtx goctx.Context)
 }
 
+// open the tableHandler, launch some background worker goroutines which pick
+// tasks from workCh, execute the task and store the results in tableHandler's taskChan.
 func (th *tableHandler) open(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, finished <-chan struct{}) {
 	th.executeTask = e.executeTask
 	th.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
@@ -386,20 +389,22 @@ func (th *tableHandler) open(e *IndexLookUpExecutor, workCh <-chan *lookupTableT
 	}()
 }
 
+// pickAndExecTask picks tasks from workCh, execute them, and store the result to tableHandler's taskCh.
 func (th *tableHandler) pickAndExecTask(workCh <-chan *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
 	for {
 		select {
-		case task := <-workCh:
-			if task == nil {
+		case task, ok := <-workCh:
+			if !ok {
 				return
 			}
-			if task.tasksErr == nil {
-				th.executeTask(task, ctx)
-				th.taskChan <- task
-			} else {
+			if task.tasksErr != nil {
 				th.taskChan <- task
 				return
 			}
+
+			// TODO: The results can be simplified when new_distsql.go replace distsql.go totally.
+			th.executeTask(task, ctx)
+			th.taskChan <- task
 		case <-ctx.Done():
 			return
 		case <-finished:
