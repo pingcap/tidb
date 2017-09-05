@@ -1929,66 +1929,96 @@ func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestTimeToSec(c *C) {
+	fc := funcs[ast.TimeToSec]
+
+	// test nil
+	nilDatum := types.NewDatum(nil)
+	f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{nilDatum}))
+	c.Assert(err, IsNil)
+	c.Assert(f.canBeFolded(), IsTrue)
+	d, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
+
+	// TODO: Some test cases are commented out due to #4340, #4341.
 	tests := []struct {
-		t      string
+		input  types.Datum
 		expect int64
 	}{
-		{"22:23:00", 80580},
-		{"00:39:38", 2378},
-		{"23:00", 82800},
-		{"00:00", 0},
-		{"00:00:00", 0},
-		{"23:59:59", 86399},
-		{"1:0", 3600},
-		{"1:00", 3600},
-		{"1:0:0", 3600},
-		{"-02:00", -7200},
+		{types.NewStringDatum("22:23:00"), 80580},
+		{types.NewStringDatum("00:39:38"), 2378},
+		{types.NewStringDatum("23:00"), 82800},
+		{types.NewStringDatum("00:00"), 0},
+		{types.NewStringDatum("00:00:00"), 0},
+		{types.NewStringDatum("23:59:59"), 86399},
+		{types.NewStringDatum("1:0"), 3600},
+		{types.NewStringDatum("1:00"), 3600},
+		{types.NewStringDatum("1:0:0"), 3600},
+		{types.NewStringDatum("-02:00"), -7200},
+		{types.NewStringDatum("-02:00:05"), -7205},
+		{types.NewStringDatum("020005"), 7205},
+		// {types.NewStringDatum("20171222020005"), 7205},
+		// {types.NewIntDatum(020005), 7205},
+		// {types.NewIntDatum(20171222020005), 7205},
+		// {types.NewIntDatum(171222020005), 7205},
 	}
-	fc := funcs[ast.TimeToSec]
 	for _, test := range tests {
-		arg := types.NewStringDatum(test.t)
-		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{arg}))
-		c.Assert(err, IsNil)
+		expr := datumsToConstants([]types.Datum{test.input})
+		f, err := fc.getFunction(s.ctx, expr)
+		c.Assert(err, IsNil, Commentf("%+v", test))
+		c.Assert(f.canBeFolded(), IsTrue, Commentf("%+v", test))
 		result, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(result.GetInt64(), Equals, test.expect)
+		c.Assert(err, IsNil, Commentf("%+v", test))
+		c.Assert(result.GetInt64(), Equals, test.expect, Commentf("%+v", test))
 	}
 }
 
 func (s *testEvaluatorSuite) TestSecToTime(c *C) {
-	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
+	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+	origin := stmtCtx.IgnoreTruncate
+	stmtCtx.IgnoreTruncate = true
+	defer func() {
+		stmtCtx.IgnoreTruncate = origin
+	}()
+
 	fc := funcs[ast.SecToTime]
-	//test nil
+
+	// test nil
 	nilDatum := types.NewDatum(nil)
 	f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{nilDatum}))
 	c.Assert(err, IsNil)
+	c.Assert(f.canBeFolded(), IsTrue)
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 
 	tests := []struct {
-		param  interface{}
-		expect string
+		inputDecimal int
+		input        types.Datum
+		expect       string
 	}{
-		{2378, "00:39:38"},
-		{3864000, "838:59:59"},
-		{-3864000, "-838:59:59"},
-		{86401.4, "24:00:01.4"},
-		{-86401.4, "-24:00:01.4"},
-		{86401.54321, "24:00:01.54321"},
-		{"123.4", "00:02:03.400000"},
-		{"123.4567891", "00:02:03.456789"},
-		{"123", "00:02:03.000000"},
-		{"abc", "00:00:00.000000"},
+		{0, types.NewIntDatum(2378), "00:39:38"},
+		{0, types.NewIntDatum(3864000), "838:59:59"},
+		{0, types.NewIntDatum(-3864000), "-838:59:59"},
+		{1, types.NewFloat64Datum(86401.4), "24:00:01.4"},
+		{1, types.NewFloat64Datum(-86401.4), "-24:00:01.4"},
+		{5, types.NewFloat64Datum(86401.54321), "24:00:01.54321"},
+		{-1, types.NewFloat64Datum(86401.54321), "24:00:01.543210"},
+		{0, types.NewStringDatum("123.4"), "00:02:03.400000"},
+		{0, types.NewStringDatum("123.4567891"), "00:02:03.456789"},
+		{0, types.NewStringDatum("123"), "00:02:03.000000"},
+		{0, types.NewStringDatum("abc"), "00:00:00.000000"},
 	}
 	for _, test := range tests {
-		t := []types.Datum{types.NewDatum(test.param)}
-		f, err := fc.getFunction(s.ctx, datumsToConstants(t))
-		c.Assert(err, IsNil)
+		expr := datumsToConstants([]types.Datum{test.input})
+		expr[0].GetType().Decimal = test.inputDecimal
+		f, err := fc.getFunction(s.ctx, expr)
+		c.Assert(err, IsNil, Commentf("%+v", test))
+		c.Assert(f.canBeFolded(), IsTrue, Commentf("%+v", test))
 		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, Commentf("%+v", test))
 		result, _ := d.ToString()
-		c.Assert(result, Equals, test.expect)
+		c.Assert(result, Equals, test.expect, Commentf("%+v", test))
 	}
 }
 
