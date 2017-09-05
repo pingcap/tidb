@@ -19,6 +19,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -44,6 +45,10 @@ type GCWorker struct {
 	lastFinish  time.Time
 	cancel      goctx.CancelFunc
 	done        chan error
+
+	// drPending indicates delete-range there are some delete-range tasks pending or not.
+	// We can start new go-routine to do delete-range only if drPending is not.
+	drPending int32
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -203,7 +208,9 @@ func (w *GCWorker) leaderTick(ctx goctx.Context) error {
 
 	w.gcIsRunning = true
 	log.Infof("[gc worker] %s starts GC job, safePoint: %v", w.uuid, safePoint)
-	go w.runGCJob(ctx, safePoint)
+	if atomic.CompareAndSwapInt32(&w.drPending, 0, 1) {
+		go w.runGCJob(ctx, safePoint)
+	}
 	return nil
 }
 
@@ -312,6 +319,7 @@ func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 		return
 	}
 	w.done <- nil
+	atomic.StoreInt32(&w.drPending, 0)
 }
 
 func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
