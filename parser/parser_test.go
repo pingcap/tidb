@@ -337,6 +337,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for admin
 		{"admin show ddl;", true},
+		{"admin show ddl jobs;", true},
 		{"admin check table t1, t2;", true},
 
 		// for on duplicate key update
