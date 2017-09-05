@@ -32,10 +32,6 @@ const (
 	// means for string we should use that as primitive but not parse it.
 	// For example, CAST('{}' as JSON) will return JSON::Object(empty).
 	decimal4CastJSONPostWrapped int = -1
-
-	// jsonTypeFlen is the Flen of JSON_TYPE builtin function.
-	// It comes from length of UNSIGNED INTEGER.
-	jsonTypeFlen int = 51
 )
 
 // jsonFunctionNameToPB is for pushdown json functions to storage engine.
@@ -101,7 +97,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx context.Context, args []Expressi
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
-	bf.tp.Flen = jsonTypeFlen
+	bf.tp.Flen = 51 // Flen of JSON_TYPE is length of UNSIGNED INTEGER.
 	args[0].GetType().Decimal = decimal4CastJSONDirectly
 	sig := &builtinJSONTypeSig{baseStringBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
@@ -145,7 +141,7 @@ func (b *builtinJSONExtractSig) evalJSON(row []types.Datum) (res json.JSON, isNu
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	res, isNull, err = b.args[0].EvalJSON(row, sc)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return
 	}
 	pathExprs := make([]json.PathExpression, 0, len(b.args)-1)
 	for _, arg := range b.args[1:] {
@@ -224,7 +220,8 @@ func (c *jsonSetFunctionClass) getFunction(ctx context.Context, args []Expressio
 
 func (b *builtinJSONSetSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	return jsonModify(b.args, row, json.ModifySet, sc)
+	res, isNull, err = jsonModify(b.args, row, json.ModifySet, sc)
+	return res, isNull, errors.Trace(err)
 }
 
 type jsonInsertFunctionClass struct {
@@ -256,7 +253,8 @@ func (c *jsonInsertFunctionClass) getFunction(ctx context.Context, args []Expres
 
 func (b *builtinJSONInsertSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	return jsonModify(b.args, row, json.ModifyInsert, sc)
+	res, isNull, err = jsonModify(b.args, row, json.ModifyInsert, sc)
+	return res, isNull, errors.Trace(err)
 }
 
 type jsonReplaceFunctionClass struct {
@@ -288,7 +286,8 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx context.Context, args []Expre
 
 func (b *builtinJSONReplaceSig) evalJSON(row []types.Datum) (res json.JSON, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	return jsonModify(b.args, row, json.ModifyReplace, sc)
+	res, isNull, err = jsonModify(b.args, row, json.ModifyReplace, sc)
+	return res, isNull, errors.Trace(err)
 }
 
 type jsonRemoveFunctionClass struct {
