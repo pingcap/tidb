@@ -52,26 +52,26 @@ const TypeUnspecified = TypeDecimal
 
 // Flag information.
 const (
-	NotNullFlag     = 1   /* Field can't be NULL */
-	PriKeyFlag      = 2   /* Field is part of a primary key */
-	UniqueKeyFlag   = 4   /* Field is part of a unique key */
-	MultipleKeyFlag = 8   /* Field is part of a key */
-	BlobFlag        = 16  /* Field is a blob */
-	UnsignedFlag    = 32  /* Field is unsigned */
-	ZerofillFlag    = 64  /* Field is zerofill */
-	BinaryFlag      = 128 /* Field is binary   */
+	NotNullFlag     uint = 1   /* Field can't be NULL */
+	PriKeyFlag      uint = 2   /* Field is part of a primary key */
+	UniqueKeyFlag   uint = 4   /* Field is part of a unique key */
+	MultipleKeyFlag uint = 8   /* Field is part of a key */
+	BlobFlag        uint = 16  /* Field is a blob */
+	UnsignedFlag    uint = 32  /* Field is unsigned */
+	ZerofillFlag    uint = 64  /* Field is zerofill */
+	BinaryFlag      uint = 128 /* Field is binary   */
 
-	EnumFlag           = 256    /* Field is an enum */
-	AutoIncrementFlag  = 512    /* Field is an auto increment field */
-	TimestampFlag      = 1024   /* Field is a timestamp */
-	SetFlag            = 2048   /* Field is a set */
-	NoDefaultValueFlag = 4096   /* Field doesn't have a default value */
-	OnUpdateNowFlag    = 8192   /* Field is set to NOW on UPDATE */
-	NumFlag            = 32768  /* Field is a num (for clients) */
-	PartKeyFlag        = 16384  /* Intern: Part of some keys */
-	GroupFlag          = 32768  /* Intern: Group field */
-	UniqueFlag         = 65536  /* Intern: Used by sql_yacc */
-	BinCmpFlag         = 131072 /* Intern: Used by sql_yacc */
+	EnumFlag           uint = 256    /* Field is an enum */
+	AutoIncrementFlag  uint = 512    /* Field is an auto increment field */
+	TimestampFlag      uint = 1024   /* Field is a timestamp */
+	SetFlag            uint = 2048   /* Field is a set */
+	NoDefaultValueFlag uint = 4096   /* Field doesn't have a default value */
+	OnUpdateNowFlag    uint = 8192   /* Field is set to NOW on UPDATE */
+	NumFlag            uint = 32768  /* Field is a num (for clients) */
+	PartKeyFlag        uint = 16384  /* Intern: Part of some keys */
+	GroupFlag          uint = 32768  /* Intern: Group field */
+	UniqueFlag         uint = 65536  /* Intern: Used by sql_yacc */
+	BinCmpFlag         uint = 131072 /* Intern: Used by sql_yacc */
 )
 
 // TypeInt24 bounds.

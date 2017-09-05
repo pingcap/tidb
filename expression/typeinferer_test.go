@@ -66,7 +66,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		expr string
 		tp   byte
 		chs  string
-		flag int
+		flag uint
 	}{
 		{"c_int", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag},
 		{"+1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},

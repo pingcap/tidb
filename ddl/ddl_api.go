@@ -328,6 +328,11 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	if col.Charset == charset.CharsetBin {
 		col.Flag |= mysql.BinaryFlag
 	}
+	if col.Tp == mysql.TypeBit {
+		// For BIT field, it's charset is binary but does not have binary flag.
+		col.Flag &= ^mysql.BinaryFlag
+		col.Flag |= mysql.UnsignedFlag
+	}
 	err := checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
