@@ -80,7 +80,6 @@ var (
 	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
 	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
-	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 
 	// errWrongKeyColumn is for table column cannot be indexed.
@@ -534,7 +533,6 @@ const (
 	codeBadField                     = 1054
 	codeTooLongIdent                 = 1059
 	codeDupKeyName                   = 1061
-	codeInvalidDefault               = 1067
 	codeTooLongKey                   = 1071
 	codeKeyColumnDoesNotExits        = 1072
 	codeIncorrectPrefixKey           = 1089
@@ -572,7 +570,6 @@ func init() {
 		codeFileNotFound:                 mysql.ErrFileNotFound,
 		codeErrorOnRename:                mysql.ErrErrorOnRename,
 		codeBadField:                     mysql.ErrBadField,
-		codeInvalidDefault:               mysql.ErrInvalidDefault,
 		codeInvalidUseOfNull:             mysql.ErrInvalidUseOfNull,
 		codeUnsupportedOnGeneratedColumn: mysql.ErrUnsupportedOnGeneratedColumn,
 		codeGeneratedColumnNonPrior:      mysql.ErrGeneratedColumnNonPrior,
