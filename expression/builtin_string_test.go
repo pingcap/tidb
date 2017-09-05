@@ -1678,6 +1678,8 @@ func (s *testEvaluatorSuite) TestExportSet(c *C) {
 	for _, t := range estd {
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.argLst...)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		exportSetRes, err := f.eval(nil)
 		res, err := exportSetRes.ToString()
 		c.Assert(err, IsNil)

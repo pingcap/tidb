@@ -2372,62 +2372,62 @@ func (c *exportSetFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinExportSetSig{newBaseBuiltinFunc(args, ctx)}
+	argTps := make([]evalTp, 0, 5)
+	argTps = append(argTps, tpInt, tpString, tpString)
+	if len(args) > 3 {
+		argTps = append(argTps, tpString)
+	}
+	if len(args) > 4 {
+		argTps = append(argTps, tpInt)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
+	bf.tp.Flen = mysql.MaxBlobWidth
+	sig := &builtinExportSetSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinExportSetSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinExportSetSig.
+// evalString evals EXPORT_SET(bits,on,off[,separator[,number_of_bits]]).
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_export-set
-func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinExportSetSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	bits, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	var (
-		bits         uint64
-		on           string
-		off          string
-		separator    = ","
-		numberOfBits = 64
-	)
-	switch len(args) {
-	case 5:
-		var arg int64
-		arg, err = args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		if arg >= 0 && arg < 64 {
-			numberOfBits = int(arg)
-		}
-		fallthrough
-	case 4:
-		separator, err = args[3].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		fallthrough
-	case 3:
-		arg, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		bits = uint64(arg)
-		on, err = args[1].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		off, err = args[2].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
+
+	on, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	off, isNull, err := b.args[2].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	separator, numberOfBits := ",", int64(64)
+	if len(b.args) > 3 {
+		separator, isNull, err = b.args[3].EvalString(row, sc)
+		if isNull || err != nil {
+			return "", true, errors.Trace(err)
 		}
 	}
-	var result string
-	for i := 0; i < numberOfBits; i++ {
+	if len(b.args) > 4 {
+		numberOfBits, isNull, err = b.args[4].EvalInt(row, sc)
+		if isNull || err != nil {
+			return "", true, errors.Trace(err)
+		}
+		if numberOfBits < 0 || numberOfBits > 64 {
+			numberOfBits = 64
+		}
+	}
+
+	result := ""
+	for i := int64(0); i < numberOfBits; i++ {
 		if bits&1 > 0 {
 			result += on
 		} else {
@@ -2438,8 +2438,7 @@ func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error)
 			result += separator
 		}
 	}
-	d.SetString(result)
-	return d, nil
+	return result, false, nil
 }
 
 type formatFunctionClass struct {
