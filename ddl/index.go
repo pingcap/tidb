@@ -394,7 +394,7 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 	rawRecords := make([][]byte, 0, handleCnt)
 	idxRecords := make([]*indexRecord, 0, handleCnt)
 	ret := &taskResult{doneHandle: handleInfo.startHandle}
-	err := d.iterateSnapshotRows(t, txn.StartTS(), handleInfo.startHandle,
+	err := d.iterateSnapshotRows(t, taskOpInfo.snapshotVer, handleInfo.startHandle,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			rawRecords = append(rawRecords, rawRecord)
 			indexRecord := &indexRecord{handle: h, key: rowKey}
@@ -501,10 +501,11 @@ type indexRecord struct {
 
 // indexTaskOpInfo records the information that is needed in the task.
 type indexTaskOpInfo struct {
-	tblIndex  table.Index
-	colMap    map[int64]*types.FieldType // It's the index columns map.
-	taskRetCh chan *taskResult           // Get the results of all tasks.
-	nextCh    chan int64                 // It notifies to start the next task.
+	tblIndex    table.Index
+	colMap      map[int64]*types.FieldType // It's the index columns map.
+	taskRetCh   chan *taskResult           // Get the results of all tasks.
+	nextCh      chan int64                 // It notifies to start the next task.
+	snapshotVer uint64
 }
 
 // addTableIndex adds index into table.
@@ -535,10 +536,11 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 	taskCnt := defaultTaskCnt
 	taskOpInfo := &indexTaskOpInfo{
-		tblIndex:  tables.NewIndex(t.Meta(), indexInfo),
-		colMap:    colMap,
-		nextCh:    make(chan int64, 1),
-		taskRetCh: make(chan *taskResult, taskCnt),
+		tblIndex:    tables.NewIndex(t.Meta(), indexInfo),
+		colMap:      colMap,
+		nextCh:      make(chan int64, 1),
+		taskRetCh:   make(chan *taskResult, taskCnt),
+		snapshotVer: job.SnapshotVer,
 	}
 
 	addedCount := job.GetRowCount()
