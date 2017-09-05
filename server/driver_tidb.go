@@ -128,6 +128,10 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	err = session.SetCollation(int(collation))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	session.SetClientCapability(capability)
 	session.SetConnectionID(connID)
 	tc := &TiDBContext{
