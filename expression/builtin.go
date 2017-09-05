@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // evalTp indicates the specified types that arguments and result of a built-in function should be.
@@ -60,6 +61,8 @@ func fieldTp2EvalTp(tp *types.FieldType) evalTp {
 			return tpTimestamp
 		case mysql.TypeDuration:
 			return tpDuration
+		case mysql.TypeJSON:
+			return tpJSON
 		}
 	}
 	return tpString
@@ -67,54 +70,60 @@ func fieldTp2EvalTp(tp *types.FieldType) evalTp {
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args          []Expression
-	argValues     []types.Datum
-	ctx           context.Context
-	deterministic bool
-	tp            *types.FieldType
+	args      []Expression
+	argValues []types.Datum
+	ctx       context.Context
+	foldable  bool // Default value is true because many expressions are foldable.
+	tp        *types.FieldType
+	pbCode    tipb.ScalarFuncSig
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
 	self builtinFunc
 }
 
+func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
+	return b.pbCode
+}
+
+func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
+	b.pbCode = c
+}
+
 func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
 	return baseBuiltinFunc{
-		args:          args,
-		argValues:     make([]types.Datum, len(args)),
-		ctx:           ctx,
-		deterministic: true,
-		tp:            types.NewFieldType(mysql.TypeUnspecified),
+		args:      args,
+		argValues: make([]types.Datum, len(args)),
+		ctx:       ctx,
+		foldable:  true,
+		tp:        types.NewFieldType(mysql.TypeUnspecified),
 	}
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc) {
 	if len(args) != len(argTps) {
-		return bf, errors.New("unexpected length of args and argTps")
+		panic("unexpected length of args and argTps")
 	}
 	for i := range args {
 		switch argTps[i] {
 		case tpInt:
-			args[i], err = WrapWithCastAsInt(args[i], ctx)
+			args[i] = WrapWithCastAsInt(args[i], ctx)
 		case tpReal:
-			args[i], err = WrapWithCastAsReal(args[i], ctx)
+			args[i] = WrapWithCastAsReal(args[i], ctx)
 		case tpDecimal:
-			args[i], err = WrapWithCastAsDecimal(args[i], ctx)
+			args[i] = WrapWithCastAsDecimal(args[i], ctx)
 		case tpString:
-			args[i], err = WrapWithCastAsString(args[i], ctx)
+			args[i] = WrapWithCastAsString(args[i], ctx)
 		case tpDatetime:
-			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
+			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
 		case tpTimestamp:
-			args[i], err = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
+			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
 		case tpDuration:
-			args[i], err = WrapWithCastAsDuration(args[i], ctx)
+			args[i] = WrapWithCastAsDuration(args[i], ctx)
 		case tpJSON:
-			args[i], err = WrapWithCastAsJSON(args[i], ctx)
-		}
-		if err != nil {
-			return bf, errors.Trace(err)
+			args[i] = WrapWithCastAsJSON(args[i], ctx)
 		}
 	}
 	var fieldType *types.FieldType
@@ -183,11 +192,12 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
 	}
 	return baseBuiltinFunc{
-		args:          args,
-		argValues:     make([]types.Datum, len(args)),
-		ctx:           ctx,
-		deterministic: true,
-		tp:            fieldType}, nil
+		args:      args,
+		argValues: make([]types.Datum, len(args)),
+		ctx:       ctx,
+		foldable:  true,
+		tp:        fieldType,
+	}
 }
 
 func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
@@ -205,9 +215,8 @@ func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err erro
 	return b.argValues, nil
 }
 
-// isDeterministic will be true by default. Non-deterministic function will override this function.
-func (b *baseBuiltinFunc) isDeterministic() bool {
-	return b.deterministic
+func (b *baseBuiltinFunc) canBeFolded() bool {
+	return b.foldable
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -287,10 +296,8 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	return b.tp
 }
 
-// equal only checks if both functions are non-deterministic and if these arguments are same.
-// Function name will be checked outside.
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
-	if !b.isDeterministic() || !fun.isDeterministic() {
+	if !b.canBeFolded() || !fun.canBeFolded() {
 		return false
 	}
 	funArgs := fun.getArgs()
@@ -646,10 +653,8 @@ type builtinFunc interface {
 	evalJSON(row []types.Datum) (val json.JSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
-	// isDeterministic checks if a function is deterministic.
-	// A function is deterministic if it returns same results for same inputs.
-	// e.g. random is non-deterministic.
-	isDeterministic() bool
+	// canBeFolded checks whether a function can be folded in constant folding.
+	canBeFolded() bool
 	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
@@ -658,6 +663,10 @@ type builtinFunc interface {
 	getRetTp() *types.FieldType
 	// setSelf sets a pointer to itself.
 	setSelf(builtinFunc) builtinFunc
+	// setPbCode sets pbCode for signature.
+	setPbCode(tipb.ScalarFuncSig)
+	// PbCode returns PbCode of this signature.
+	PbCode() tipb.ScalarFuncSig
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.
@@ -678,11 +687,8 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
-	getFunction(args []Expression, ctx context.Context) (builtinFunc, error)
+	getFunction(ctx context.Context, args []Expression) (builtinFunc, error)
 }
-
-// BuiltinFunc is the function signature for builtin functions
-type BuiltinFunc func([]types.Datum, context.Context) (types.Datum, error)
 
 // funcs holds all registered builtin functions.
 var funcs = map[string]functionClass{

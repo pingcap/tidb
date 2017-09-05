@@ -15,6 +15,7 @@ import:
   - mvcc/mvccpb
   - pkg/tlsutil
   - pkg/monotime
+  - contrib/recipes
 - package: github.com/gengo/grpc-gateway
   version: f52d055dc48aec25854ed7d31862f78913cf17d1
   subpackages:
@@ -141,7 +142,7 @@ import:
 - package: github.com/pingcap/pd
   version: 38eb8a2e70dd39668a62d24a79f30596f204df14
 - package: github.com/pingcap/tipb
-  version: b45b9d4dd493e6f5f674f9303a12139fb28be13e
+  version: ffbc1bb02a2425782286825eec276be817b7f93a
   subpackages:
   - go-binlog
   - go-mysqlx
