@@ -437,7 +437,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 		}
 		if len(col.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment, false)))
 		}
 		if i != len(tb.Cols())-1 {
 			buf.WriteString(",\n")
@@ -531,7 +531,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if len(tb.Meta().Comment) > 0 {
-		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
+		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment, true)))
 	}
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
