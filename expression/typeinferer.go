@@ -15,7 +15,6 @@ package expression
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -85,10 +84,6 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		types.DefaultTypeForValue(x.GetValue(), x.GetType())
 	case *ast.ParenthesesExpr:
 		x.SetType(x.Expr.GetType())
-	case *ast.PatternInExpr:
-		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		types.SetBinChsClnFlag(&x.Type)
-		v.convertValueToColumnTypeIfNeeded(x)
 	case *ast.SelectStmt:
 		v.selectStmt(x)
 	case *ast.UnaryOperationExpr:
@@ -489,36 +484,6 @@ func (v *typeInferrer) addCastToString(expr ast.ExprNode) ast.ExprNode {
 		expr.SetType(castTp)
 	}
 	return expr
-}
-
-// convertValueToColumnTypeIfNeeded checks if the expr in PatternInExpr is column name,
-// and casts function to the items in the list.
-func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
-	if cn, ok := x.Expr.(*ast.ColumnNameExpr); ok && cn.Refer != nil {
-		ft := cn.Refer.Column.FieldType
-		for _, expr := range x.List {
-			if valueExpr, ok := expr.(*ast.ValueExpr); ok {
-				newDatum, err := valueExpr.Datum.ConvertTo(v.sc, &ft)
-				if err != nil {
-					v.err = errors.Trace(err)
-				}
-				cmp, err := newDatum.CompareDatum(v.sc, valueExpr.Datum)
-				if err != nil {
-					v.err = errors.Trace(err)
-				}
-				if cmp != 0 {
-					// The value will never match the column, do not set newDatum.
-					continue
-				}
-				valueExpr.SetDatum(newDatum)
-			}
-		}
-		if v.err != nil {
-			// TODO: Errors should be handled differently according to query context.
-			log.Errorf("inferor type for pattern in error %v", v.err)
-			v.err = nil
-		}
-	}
 }
 
 // IsHybridType checks whether a ClassString expression is a hybrid type value which will return different types of value in different context.

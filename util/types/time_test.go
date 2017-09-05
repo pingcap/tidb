@@ -837,8 +837,8 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 	}
 
 	for _, test := range tests {
-		t1 := Time{test.t1, mysql.TypeDatetime, 6, nil}
-		t2 := Time{test.t2, mysql.TypeDatetime, 6, nil}
+		t1 := Time{test.t1, mysql.TypeDatetime, 6, nil, false}
+		t2 := Time{test.t2, mysql.TypeDatetime, 6, nil, false}
 		c.Assert(TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}
 }
