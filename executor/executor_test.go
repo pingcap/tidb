@@ -647,6 +647,14 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustExec("insert into t values(1, 1), (2, 2)")
 	tk.MustQuery("select * from t where 1 order by b").Check(testkit.Rows("1 1", "2 2"))
 	tk.MustQuery("select * from t where a between 1 and 2 order by a desc").Check(testkit.Rows("2 2", "1 1"))
+
+	// Test double read and topN is pushed down to first read plan.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int, index idx(b))")
+	tk.MustExec("insert into t values(1, 3, 1)")
+	tk.MustExec("insert into t values(2, 2, 2)")
+	tk.MustExec("insert into t values(3, 1, 3)")
+	tk.MustQuery("select * from t use index(idx) order by a desc limit 1").Check(testkit.Rows("3 1 3"))
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {
