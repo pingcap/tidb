@@ -148,8 +148,11 @@ func (cc *clientConn) writeInitialHandshake() error {
 	data = append(data, 0)
 	// capability flag lower 2 bytes, using default capability here
 	data = append(data, byte(defaultCapability), byte(defaultCapability>>8))
-	// charset, utf-8 default
-	data = append(data, uint8(mysql.DefaultCollationID))
+	// charset
+	if cc.collation == 0 {
+		cc.collation = uint8(mysql.DefaultCollationID)
+	}
+	data = append(data, cc.collation)
 	//status
 	data = append(data, dumpUint16(mysql.ServerStatusAutocommit)...)
 	// below 13 byte may not be used
@@ -205,7 +208,7 @@ func handshakeResponseFromData(packet *handshakeResponse41, data []byte) (err er
 	pos += 4
 	// skip max packet size
 	pos += 4
-	// charset, skip, if you want to use another charset, use set names
+	// charset
 	packet.Collation = data[pos]
 	pos++
 	// skip reserved 23[00]
