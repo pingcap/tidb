@@ -647,6 +647,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 	}
 }
 
+// column: a, b, c, d, e, c_str, d_str, e_str, f, g
+// PK: a
+// indeices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
 func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)

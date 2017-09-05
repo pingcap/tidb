@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -472,7 +473,6 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 	if tasks[0].plan() == nil {
 		return tasks[0]
 	}
-	// TODO: We only consider hash aggregation here.
 	task := tasks[0].copy()
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
@@ -488,12 +488,20 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 				cop.cst += cop.count() * cpuFactor
 			}
 		}
+		log.Debugf("hash agg, count %v, cost %v, cardinality %v", cop.count(), cop.cost(), p.cardinality)
 		task = finishCopTask(cop, p.ctx, p.allocator)
+		task.addCost(task.count()*cpuFactor + p.cardinality*hashAggMemFactor)
 		attachPlan2Task(finalAgg, task)
+		log.Debugf("hash agg, count %v, cost %v", task.count(), task.cost())
 	} else {
 		np := p.Copy()
 		attachPlan2Task(np, task)
-		task.addCost(task.count() * cpuFactor)
+		if p.AggType == StreamedAgg {
+			task.addCost(task.count() * cpuFactor)
+		} else {
+			task.addCost(task.count()*cpuFactor + p.cardinality*hashAggMemFactor)
+		}
+		log.Debugf("%v agg, count %v cost %v, cardinality %v", p.AggType, task.count(), task.cost(), p.cardinality)
 	}
 	return task
 }

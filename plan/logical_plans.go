@@ -179,11 +179,12 @@ type LogicalAggregation struct {
 
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
-
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
 
 	possibleProperties [][]*expression.Column
+	childCount         float64
+	cardinality        float64
 }
 
 func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {

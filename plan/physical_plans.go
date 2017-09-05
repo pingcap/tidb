@@ -579,6 +579,10 @@ type PhysicalAggregation struct {
 	AggType      AggregationType
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
+
+	propKeys    []*expression.Column
+	childCount  float64
+	cardinality float64
 }
 
 // PhysicalUnionScan represents a union scan operator.

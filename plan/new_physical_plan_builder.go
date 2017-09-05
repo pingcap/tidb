@@ -535,17 +535,21 @@ func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp Phys
 	}
 	for _, newProp := range newProps {
 		tasks := make([]task, 0, len(p.basePlan.children))
+		log.Infof("props :%v", newProp)
 		for i, child := range p.basePlan.children {
+			log.Infof("no.%d plan:%s prop:%v", i, ToString(child), newProp[i])
 			childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(newProp[i])
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			log.Infof("task %v", childTask)
 			tasks = append(tasks, childTask)
 		}
 		resultTask := pp.attach2Task(tasks...)
 		if enforced {
 			resultTask = prop.enforceProperty(resultTask, p.basePlan.ctx, p.basePlan.allocator)
 		}
+		log.Infof("bestTask %v, currentTask %v", bestTask, resultTask)
 		if resultTask.cost() < bestTask.cost() {
 			bestTask = resultTask
 		}
@@ -647,6 +651,7 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
 	t = invalidTask
+	log.Debugf("include table scan %v", includeTableScan)
 	if includeTableScan {
 		t, err = p.convertToTableScan(prop)
 		if err != nil {
@@ -708,6 +713,7 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo) (task task, err error) {
+	log.Debugf("data source convert index scan")
 	is := PhysicalIndexScan{
 		Table:               p.tableInfo,
 		TableAsName:         p.TableAsName,
@@ -1019,33 +1025,6 @@ func (p *baseLogicalPlan) generatePhysicalPlans() []PhysicalPlan {
 	return []PhysicalPlan{np}
 }
 
-func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
-	aggs := make([]PhysicalPlan, 0, 2)
-	agg := PhysicalAggregation{
-		GroupByItems: p.GroupByItems,
-		AggFuncs:     p.AggFuncs,
-		HasGby:       len(p.GroupByItems) > 0,
-		AggType:      CompleteAgg,
-	}.init(p.allocator, p.ctx)
-	agg.SetSchema(p.schema.Clone())
-	agg.profile = p.profile
-	aggs = append(aggs, agg)
-	if len(p.possibleProperties) == 0 {
-		return aggs
-	}
-	agg = PhysicalAggregation{
-		GroupByItems: p.GroupByItems,
-		AggFuncs:     p.AggFuncs,
-		HasGby:       len(p.GroupByItems) > 0,
-		AggType:      StreamedAgg,
-	}.init(p.allocator, p.ctx)
-	aggs = append(aggs, agg)
-	agg.SetSchema(p.schema.Clone())
-	agg.profile = p.profile
-
-	return aggs
-}
-
 func (p *basePhysicalPlan) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
 	// By default, physicalPlan can always match the orders.
@@ -1116,14 +1095,84 @@ func (p *TopN) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	return props
 }
 
-func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
-	p.expectedCnt = prop.expectedCnt
-	if !prop.isEmpty() {
+func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
+	for _, aggFunc := range p.AggFuncs {
+		if aggFunc.GetMode() == expression.FinalMode {
+			return nil
+		}
+	}
+	// group by a + b is not interested in any order.
+	if len(p.groupByCols) != len(p.GroupByItems) {
 		return nil
 	}
-	props := make([][]*requiredProp, 0, len(wholeTaskTypes))
-	for _, tp := range wholeTaskTypes {
-		props = append(props, []*requiredProp{{taskTp: tp, expectedCnt: math.MaxFloat64}})
+	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties))
+	for _, cols := range p.possibleProperties {
+		_, keys := getPermutation(cols, p.groupByCols)
+		if len(keys) != len(p.groupByCols) {
+			continue
+		}
+		agg := PhysicalAggregation{
+			GroupByItems: p.GroupByItems,
+			AggFuncs:     p.AggFuncs,
+			HasGby:       len(p.GroupByItems) > 0,
+			AggType:      StreamedAgg,
+			propKeys:     cols,
+			childCount:   p.childCount,
+		}.init(p.allocator, p.ctx)
+		agg.SetSchema(p.schema.Clone())
+		agg.profile = p.profile
+		streamAggs = append(streamAggs, agg)
+		log.Infof("stream agg, profile %v", agg.profile)
 	}
-	return props
+	return streamAggs
+}
+
+func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
+	aggs := make([]PhysicalPlan, 0, 2)
+	agg := PhysicalAggregation{
+		GroupByItems: p.GroupByItems,
+		AggFuncs:     p.AggFuncs,
+		HasGby:       len(p.GroupByItems) > 0,
+		AggType:      CompleteAgg,
+		cardinality:  p.cardinality,
+	}.init(p.allocator, p.ctx)
+	agg.SetSchema(p.schema.Clone())
+	agg.profile = p.profile
+	aggs = append(aggs, agg)
+	if len(p.possibleProperties) == 0 {
+		return aggs
+	}
+	log.Infof("hash agg, profile %v", agg.profile)
+
+	streamAggs := p.getStreamAggs()
+	aggs = append(aggs, streamAggs...)
+
+	return aggs
+}
+
+func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
+	p.expectedCnt = prop.expectedCnt
+	if p.AggType != StreamedAgg {
+		if !prop.isEmpty() {
+			return nil
+		}
+		props := make([][]*requiredProp, 0, len(wholeTaskTypes))
+		for _, tp := range wholeTaskTypes {
+			props = append(props, []*requiredProp{{taskTp: tp, expectedCnt: math.MaxFloat64}})
+		}
+		return props
+	}
+
+	reqProp := &requiredProp{taskTp: rootTaskType, cols: p.propKeys, expectedCnt: prop.expectedCnt * p.childCount / p.profile.count}
+	log.Debugf("stream prop %v, is empty %v, desc %v, prop.expectedCnt %v, childCount %v, p.count %v", reqProp, !prop.isEmpty(), prop.desc, prop.expectedCnt, p.childCount, p.profile.count)
+	if !prop.isEmpty() {
+		if prop.desc {
+			return nil
+		}
+		log.Debugf("prop %v, reqProp %v", prop, reqProp)
+		if !prop.equal(reqProp) {
+			return nil
+		}
+	}
+	return [][]*requiredProp{{reqProp}}
 }

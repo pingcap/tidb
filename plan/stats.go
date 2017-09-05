@@ -195,6 +195,8 @@ func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
 	for i := range p.profile.cardinality {
 		p.profile.cardinality[i] = count
 	}
+	p.childCount = childProfile.count
+	p.cardinality = count
 	return p.profile
 }
 
