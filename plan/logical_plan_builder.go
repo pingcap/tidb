@@ -617,6 +617,11 @@ func (by *ByItems) String() string {
 	return by.Expr.String()
 }
 
+// Clone makes a copy of ByItems.
+func (by *ByItems) Clone() *ByItems {
+	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
+}
+
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	sort := Sort{}.init(b.allocator, b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
@@ -1453,7 +1458,11 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		return nil
 	}
 	p = np
-	updt := Update{OrderedList: orderedList}.init(b.allocator, b.ctx)
+
+	updt := Update{
+		OrderedList: orderedList,
+		IgnoreErr:   update.IgnoreErr,
+	}.init(b.allocator, b.ctx)
 	addChild(updt, p)
 	updt.SetSchema(p.Schema())
 	return updt

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -184,6 +185,17 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 	tk.MustExec("insert into t1 (a,b) values(1,10),(1,20),(2,30),(2,40);")
 	tk.MustQuery("select any_value(a), sum(b) from t1;").Check(testkit.Rows("1 100"))
 	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
+
+	// for locks
+	result := tk.MustQuery(`SELECT GET_LOCK('test_lock1', 10);`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT GET_LOCK('test_lock2', 10);`)
+	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock2');`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock1');`)
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestConvertToBit(c *C) {
@@ -1804,6 +1816,33 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", likeTests)
+}
+
+func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for last_insert_id
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_increment, a int, PRIMARY KEY (id))")
+	tk.MustExec("insert into t(a) values(1)")
+	result := tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t values(2, 1)")
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t(a) values(1)")
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("3"))
+
+	result = tk.MustQuery("select last_insert_id(5);")
+	result.Check(testkit.Rows("5"))
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("5"))
 
 	// for found_rows
 	tk.MustExec("drop table if exists t")
@@ -1832,32 +1871,40 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustQuery("select count(*) from t") // Test ProjectionExec
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
-}
 
-func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-	tk := testkit.NewTestKit(c, s.store)
+	// for database
+	result = tk.MustQuery("select database()")
+	result.Check(testkit.Rows("test"))
+	tk.MustExec("drop database test")
+	result = tk.MustQuery("select database()")
+	result.Check(testkit.Rows("<nil>"))
+	tk.MustExec("create database test")
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int auto_increment, a int, PRIMARY KEY (id))")
-	tk.MustExec("insert into t(a) values(1)")
-	result := tk.MustQuery("select last_insert_id();")
-	result.Check(testkit.Rows("1"))
-	tk.MustExec("insert into t values(2, 1)")
-	result = tk.MustQuery("select last_insert_id();")
-	result.Check(testkit.Rows("1"))
-	tk.MustExec("insert into t(a) values(1)")
-	result = tk.MustQuery("select last_insert_id();")
-	result.Check(testkit.Rows("3"))
+	// for current_user
+	sessionVars := tk.Se.GetSessionVars()
+	originUser := sessionVars.User
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	result = tk.MustQuery("select current_user()")
+	result.Check(testkit.Rows("root@localhost"))
+	sessionVars.User = originUser
 
-	result = tk.MustQuery("select last_insert_id(5);")
-	result.Check(testkit.Rows("5"))
-	result = tk.MustQuery("select last_insert_id();")
-	result.Check(testkit.Rows("5"))
+	// for user
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	result = tk.MustQuery("select user()")
+	result.Check(testkit.Rows("root@localhost"))
+	sessionVars.User = originUser
+
+	// for connection_id
+	originConnectionID := sessionVars.ConnectionID
+	sessionVars.ConnectionID = uint64(1)
+	result = tk.MustQuery("select connection_id()")
+	result.Check(testkit.Rows("1"))
+	sessionVars.ConnectionID = originConnectionID
+
+	// for version
+	result = tk.MustQuery("select version()")
+	result.Check(testkit.Rows(mysql.ServerVersion))
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
