@@ -454,8 +454,10 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	return nil
 }
 
-func isNowSymFunc(expr ast.ExprNode) bool {
+// isNowSymFunc check whether defaul value is a NOW() builtin function.
+func isDefaultValNowSymFunc(expr ast.ExprNode) bool {
 	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
+		// Default value NOW() is transformed to CURRENT_TIMESTAMP() in parser.
 		if funcCall.FnName.L == ast.CurrentTimestamp {
 			return true
 		}
@@ -469,7 +471,7 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 	for i := len(colDef.Options) - 1; i >= 0; i-- {
 		columnOpt := colDef.Options[i]
 		if columnOpt.Tp == ast.ColumnOptionDefaultValue {
-			if !(tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeDatetime) && isNowSymFunc(columnOpt.Expr) {
+			if !(tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeDatetime) && isDefaultValNowSymFunc(columnOpt.Expr) {
 				return true
 			}
 			break
