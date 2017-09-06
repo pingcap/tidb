@@ -492,7 +492,7 @@ func (b *builtinIntervalRealSig) binSearch(sc *variable.StatementContext, target
 			break
 		}
 		if isNull {
-			id = mid + 1
+			i = mid + 1
 		} else if cmp := target < v; !cmp {
 			i = mid + 1
 		} else {
