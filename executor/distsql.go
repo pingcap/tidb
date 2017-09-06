@@ -49,11 +49,15 @@ var LookupTableTaskChannelSize int32 = 50
 // lookupTableTask is created from a partial result of an index request which
 // contains the handles in those index keys.
 type lookupTableTask struct {
-	handles []int64
-	rows    []Row
-	cursor  int
-	done    bool
-	doneCh  chan error
+	// If tasksErr is not nil, this is a invalid lookupTableTask, it would
+	// bypass the pickAndExecTask() function and make tableHandler halt.
+	tasksErr error
+	handles  []int64
+	rows     []Row
+	cursor   int
+	// TODO: Remove those two fields, the new distsql don't need them.
+	done   bool
+	doneCh chan error
 
 	// indexOrder map is used to save the original index order for the handles.
 	// Without this map, the original index order might be lost.

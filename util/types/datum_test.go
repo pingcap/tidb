@@ -209,7 +209,6 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 		{NewStringDatum("\"hello, 世界\""), `"hello, 世界"`, true},
 		{NewStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
 		{NewStringDatum("{}"), `{}`, true},
-		{NewIntDatum(1), `true`, true},
 		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
 
 		// can not parse JSON from this string, so error occurs.
