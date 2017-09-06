@@ -907,7 +907,7 @@ var funcs = map[string]functionClass{
 	ast.Mod:        &arithmeticFunctionClass{baseFunctionClass{ast.Mod, 2, 2}, opcode.Mod},
 	ast.Div:        &arithmeticDivideFunctionClass{baseFunctionClass{ast.Div, 2, 2}},
 	ast.Mul:        &arithmeticMultiplyFunctionClass{baseFunctionClass{ast.Mul, 2, 2}},
-	ast.IntDiv:     &arithmeticFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}, opcode.IntDiv},
+	ast.IntDiv:     &arithmeticIntDivideFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}},
 	ast.BitNeg:     &bitNegFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}},
 	ast.And:        &bitAndFunctionClass{baseFunctionClass{ast.And, 2, 2}},
 	ast.LeftShift:  &leftShiftFunctionClass{baseFunctionClass{ast.LeftShift, 2, 2}},
@@ -955,6 +955,6 @@ var funcs = map[string]functionClass{
 	ast.JSONReplace: &jsonReplaceFunctionClass{baseFunctionClass{ast.JSONReplace, 3, -1}},
 	ast.JSONRemove:  &jsonRemoveFunctionClass{baseFunctionClass{ast.JSONRemove, 2, -1}},
 	ast.JSONMerge:   &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
-	ast.JSONObject:  &jsonObjectFunctionClass{baseFunctionClass{ast.JSONObject, 2, -1}},
-	ast.JSONArray:   &jsonArrayFunctionClass{baseFunctionClass{ast.JSONArray, 1, -1}},
+	ast.JSONObject:  &jsonObjectFunctionClass{baseFunctionClass{ast.JSONObject, 0, -1}},
+	ast.JSONArray:   &jsonArrayFunctionClass{baseFunctionClass{ast.JSONArray, 0, -1}},
 }

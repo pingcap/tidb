@@ -207,7 +207,6 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 		{NewStringDatum("\"hello, 世界\""), `"hello, 世界"`, true},
 		{NewStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
 		{NewStringDatum("{}"), `{}`, true},
-		{NewIntDatum(1), `true`, true},
 		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
 
 		// can not parse JSON from this string, so error occurs.
@@ -558,5 +557,30 @@ func (ts *testDatumSuite) TestComputeIntDiv(c *C) {
 		v, err := got.CompareDatum(sc, tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
+	}
+}
+
+func (ts *testDatumSuite) TestCopyDatum(c *C) {
+	var raw Datum
+	raw.b = []byte("raw")
+	raw.k = KindRaw
+	tests := []Datum{
+		NewIntDatum(72),
+		NewUintDatum(72),
+		NewStringDatum("abcd"),
+		NewBytesDatum([]byte("abcd")),
+		raw,
+	}
+
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	for _, tt := range tests {
+		tt1 := CopyDatum(tt)
+		res, err := tt.CompareDatum(sc, tt1)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, 0)
+		if tt.b != nil {
+			c.Assert(&tt.b[0], Not(Equals), &tt1.b[0])
+		}
 	}
 }

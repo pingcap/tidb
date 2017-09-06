@@ -1799,3 +1799,14 @@ func DatumsToString(datums []Datum) (string, error) {
 	}
 	return strings.Join(strs, ", "), nil
 }
+
+// CopyDatum returns a new copy of the datum.
+// TODO: Abandon this function.
+func CopyDatum(datum Datum) Datum {
+	ret := datum
+	if datum.b != nil {
+		ret.b = make([]byte, len(datum.b))
+		copy(ret.b, datum.b)
+	}
+	return ret
+}

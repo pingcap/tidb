@@ -438,14 +438,14 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 	if c.DefaultValue != nil {
 		_, err := table.GetColDefaultValue(ctx, c.ToInfo())
 		if types.ErrTruncated.Equal(err) {
-			return errInvalidDefault.GenByArgs(c.Name)
+			return types.ErrInvalidDefault.GenByArgs(c.Name)
 		}
 		return errors.Trace(err)
 	}
 
 	// Set not null but default null is invalid.
 	if mysql.HasNotNullFlag(c.Flag) {
-		return errInvalidDefault.GenByArgs(c.Name)
+		return types.ErrInvalidDefault.GenByArgs(c.Name)
 	}
 
 	return nil
