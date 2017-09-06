@@ -215,9 +215,7 @@ func BuildRange(sc *variable.StatementContext, conds []expression.Expression, ra
 			return nil, nil, nil, errors.Trace(err)
 		}
 		retRanges = make([]types.Range, 0, len(ranges))
-		for _, ran := range ranges {
-			retRanges = append(retRanges, ran)
-		}
+		retRanges = append(retRanges, ranges...)
 	} else if rangeType == ColumnRangeType {
 		accessConditions, otherConditions = DetachColumnConditions(conds, cols[0].ColName)
 		ranges, err := buildColumnRange(accessConditions, sc, cols[0].RetType)
