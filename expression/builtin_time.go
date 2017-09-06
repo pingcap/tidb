@@ -1288,7 +1288,7 @@ func (c *strToDateFunctionClass) getRetTp(arg Expression, ctx context.Context) (
 	} else if !isDuration && isDate {
 		tp = mysql.TypeDate
 	}
-	if strings.Index(format, "%f") >= 0 {
+	if strings.Contains(format, "%f") {
 		fsp = types.MaxFsp
 	}
 	return
