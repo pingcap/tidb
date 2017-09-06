@@ -278,7 +278,7 @@ func (p *Limit) attach2Task(tasks ...task) task {
 	}
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		// If the table/index scans data by order and applies a double read, the limit can be pushed to the table side.
+		// If the table/index scans data by order and applies a double read, the limit cannot be pushed to the table side.
 		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
 			// When limit be pushed down, it should remove its offset.
 			pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
