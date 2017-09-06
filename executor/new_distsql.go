@@ -300,8 +300,8 @@ type IndexLookUpExecutor struct {
 	tableWorker
 	finished chan struct{}
 
-	taskChan <-chan *lookupTableTask
-	taskCurr *lookupTableTask
+	resultChan <-chan *lookupTableTask
+	resultCurr *lookupTableTask
 }
 
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
@@ -378,7 +378,7 @@ func (e *IndexLookUpExecutor) startTableWorker(workCh <-chan *lookupTableTask, f
 	resultCh := make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 	th := &e.tableWorker
 	th.resultCh = resultCh
-	e.taskChan = resultCh
+	e.resultChan = resultCh
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	th.wg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
@@ -420,7 +420,7 @@ func (th *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lo
 }
 
 func (e *IndexLookUpExecutor) waitTableWorker() {
-	for range e.taskChan {
+	for range e.resultChan {
 	}
 }
 
@@ -573,23 +573,23 @@ func (e *IndexLookUpExecutor) Close() error {
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next() (Row, error) {
 	for {
-		if e.taskCurr == nil {
-			taskCurr, ok := <-e.taskChan
+		if e.resultCurr == nil {
+			resultCurr, ok := <-e.resultChan
 			if !ok {
 				return nil, nil
 			}
-			if taskCurr.tasksErr != nil {
-				return nil, errors.Trace(taskCurr.tasksErr)
+			if resultCurr.tasksErr != nil {
+				return nil, errors.Trace(resultCurr.tasksErr)
 			}
-			e.taskCurr = taskCurr
+			e.resultCurr = resultCurr
 		}
-		row, err := e.taskCurr.getRow()
+		row, err := e.resultCurr.getRow()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
 			return row, nil
 		}
-		e.taskCurr = nil
+		e.resultCurr = nil
 	}
 }
