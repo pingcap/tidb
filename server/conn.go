@@ -315,7 +315,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 
 	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.tlsConfig != nil {
 		// The packet is a SSLRequest, let's switch to TLS.
-		if err = cc.UpgradeToTLS(cc.server.tlsConfig); err != nil {
+		if err = cc.upgradeToTLS(cc.server.tlsConfig); err != nil {
 			return errors.Trace(err)
 		}
 		// Read the following HandshakeResponse packet.
@@ -858,7 +858,7 @@ func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
 	return cc.writeOK()
 }
 
-func (cc *clientConn) UpgradeToTLS(tlsConfig *tls.Config) error {
+func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 	// Important: read from buffered reader because it may contain data we need.
 	tlsConn := tls.Server(cc.bufConn, tlsConfig)
 	if err := tlsConn.Handshake(); err != nil {
