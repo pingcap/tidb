@@ -109,7 +109,6 @@ func (s *Server) releaseToken(token *Token) {
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := &clientConn{
-		conn:         conn,
 		server:       s,
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysql.DefaultCollationID,
@@ -123,7 +122,8 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 			}
 		}
 	}
-	cc.BuildPacketIO(0)
+	cc.bufConn = newBufferedConn(conn)
+	cc.pkt = newPacketIO(cc.bufConn)
 	cc.salt = util.RandomBuf(20)
 	return cc
 }

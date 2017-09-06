@@ -61,8 +61,8 @@ import (
 // handles client query.
 type clientConn struct {
 	pkt          *packetIO         // a helper to read and write data in packet format.
-	conn         net.Conn          // net.Conn if not SSL or a TLS wrapped net.Conn.
-	tlsConn      *tls.Conn         // nil if not TLS connection.
+	bufConn      *bufferedConn     // a buffered net.Conn or buffered tls.Conn.
+	tlsConn      *tls.Conn         // TLS connection, nil if not TLS.
 	server       *Server           // a reference of server instance.
 	capability   uint32            // client capability affects the way server handles client request.
 	connectionID uint32            // atomically allocated by a global variable, unique in process scope.
@@ -80,7 +80,7 @@ type clientConn struct {
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
 	return fmt.Sprintf("id:%d, addr:%s status:%d, collation:%s, user:%s",
-		cc.connectionID, cc.conn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
+		cc.connectionID, cc.bufConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
 }
 
@@ -118,7 +118,7 @@ func (cc *clientConn) Close() error {
 	connections := len(cc.server.clients)
 	cc.server.rwlock.Unlock()
 	connGauge.Set(float64(connections))
-	cc.conn.Close()
+	cc.bufConn.Close()
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -313,8 +313,8 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		return errors.Trace(err)
 	}
 
-	// The packet is a SSLRequest, let's switch to TLS.
 	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.tlsConfig != nil {
+		// The packet is a SSLRequest, let's switch to TLS.
 		if err = cc.UpgradeToTLS(cc.server.tlsConfig); err != nil {
 			return errors.Trace(err)
 		}
@@ -352,7 +352,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 	}
 	if !cc.server.skipAuth() {
 		// Do Auth.
-		addr := cc.conn.RemoteAddr().String()
+		addr := cc.bufConn.RemoteAddr().String()
 		host, _, err1 := net.SplitHostPort(addr)
 		if err1 != nil {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
@@ -858,18 +858,14 @@ func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
 	return cc.writeOK()
 }
 
-func (cc *clientConn) BuildPacketIO(initialSeq uint8) {
-	cc.pkt = newPacketIO(cc.conn, initialSeq)
-}
-
 func (cc *clientConn) UpgradeToTLS(tlsConfig *tls.Config) error {
 	// Important: read from buffered reader because it may contain data we need.
-	tlsConn := tls.Server(cc.pkt.ConnReadFromBuffer, tlsConfig)
+	tlsConn := tls.Server(cc.bufConn, tlsConfig)
 	if err := tlsConn.Handshake(); err != nil {
 		return errors.Trace(err)
 	}
 	cc.tlsConn = tlsConn
-	cc.conn = net.Conn(tlsConn)
-	cc.BuildPacketIO(cc.pkt.sequence)
+	cc.bufConn = newBufferedConn(tlsConn)
+	cc.pkt.setBufferedConn(cc.bufConn)
 	return nil
 }
