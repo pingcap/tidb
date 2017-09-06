@@ -131,6 +131,11 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
 	sql = "create table test_error_code1 (c1 int not null default '')"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT 2.0 DEFAULT now());"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "CREATE TABLE `t` (`a` double DEFAULT now());"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
 	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
@@ -969,7 +974,7 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.mustExec(c, "alter table mc modify column c bigint") // Unique should be preserved
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(21) NOT NULL,\n  `b` bigint(21) DEFAULT NULL,\n  `c` bigint(21) DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
 	c.Assert(createSQL, Equals, expected)
 
 	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
@@ -978,11 +983,11 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.mustExec(c, "alter table mc modify column a bigint auto_increment") // Keeps auto_increment
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(21) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
 	s.mustExec(c, "alter table mc modify column a bigint") // Drops auto_increment
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(21) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
 	c.Assert(createSQL, Equals, expected)
 	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
 	c.Assert(err, NotNil)
@@ -1122,6 +1127,29 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.testErrorCode(c, failSQL, tmysql.ErrBadDB)
 	failSQL = fmt.Sprintf("create table t1 like test.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+}
+
+func (s *testDBSuite) TestCreateTable(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://create_table")
+	c.Assert(err, IsNil)
+	s.tk = testkit.NewTestKit(c, store)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	s.tk.MustExec("use test")
+	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	cols := tbl.Cols()
+
+	c.Assert(len(cols), Equals, 1)
+	col := cols[0]
+	c.Assert(col.Name.L, Equals, "a")
+	d, ok := col.DefaultValue.(string)
+	c.Assert(ok, IsTrue)
+	c.Assert(d, Equals, "2.0")
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {
@@ -1412,13 +1440,13 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	// Check alter table modify/change generated column.
 	s.tk.MustExec(`alter table test_gv_ddl modify column c bigint as (b+200) stored`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c bigint(21) YES  <nil> STORED GENERATED`))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c bigint(20) YES  <nil> STORED GENERATED`))
 
 	s.tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> VIRTUAL GENERATED`, `c bigint(21) YES  <nil> STORED GENERATED`))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c bigint(20) YES  <nil> STORED GENERATED`))
 
 	s.tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(21) YES  <nil> `))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
 }

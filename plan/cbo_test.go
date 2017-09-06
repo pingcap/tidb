@@ -57,9 +57,10 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a int primary key, b int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP)")
+	testKit.MustExec("create table t (a int primary key, b int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP, ts timestamp DEFAULT CURRENT_TIMESTAMP)")
 	testKit.MustExec("create index b on t (b)")
 	testKit.MustExec("create index d on t (d)")
+	testKit.MustExec("create index ts on t (ts)")
 	for i := 0; i < 100; i++ {
 		testKit.MustExec(constructInsertSQL(i, 100))
 	}
@@ -92,6 +93,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 			sql:  "select * from t where t.b <= 50",
 			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
 		},
+		// test panic
+		{
+			sql:  "select * from t where 1 and t.b <= 50",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
+		},
 		{
 			sql:  "select * from t where t.b <= 100 order by t.a limit 1",
 			best: "TableReader(Table(t)->Sel([le(test.t.b, 100)])->Limit)->Limit",
@@ -108,6 +114,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		{
 			sql:  "select * from t where d < cast('1991-09-05' as datetime)",
 			best: "IndexLookUp(Index(t.d)[[-inf,1991-09-05 00:00:00)], Table(t))",
+		},
+		// test timestamp
+		{
+			sql:  "select * from t where ts < '1991-09-05'",
+			best: "IndexLookUp(Index(t.ts)[[-inf,1991-09-05 00:00:00)], Table(t))",
 		},
 	}
 	for _, tt := range tests {

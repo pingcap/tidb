@@ -355,6 +355,32 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	_, err := tk.Exec("insert ignore into t values (1, 3)")
 	c.Assert(err, NotNil)
 	cfg.SetGetError(nil)
+
+	// for issue 4268
+	testSQL = `drop table if exists t;
+	create table t (a bigint);`
+	tk.MustExec(testSQL)
+	testSQL = "insert ignore into t select '1a';"
+	_, err = tk.Exec(testSQL)
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	testSQL = "insert ignore into t values ('1a')"
+	_, err = tk.Exec(testSQL)
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+
+	// for duplicates with warning
+	testSQL = `drop table if exists t;
+	create table t(a int primary key, b int);`
+	tk.MustExec(testSQL)
+	testSQL = "insert ignore into t values (1,1);"
+	tk.MustExec(testSQL)
+	_, err = tk.Exec(testSQL)
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS")
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
 }
 
 func (s *testSuite) TestReplace(c *C) {
@@ -546,6 +572,28 @@ func (s *testSuite) TestUpdate(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from update_unique").Check(testkit.Rows("1 1", "2 2"))
+
+	// test update ignore for pimary key
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint, primary key (a));")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (2)")
+	_, err = tk.Exec("update ignore t set a = 1 where a = 2;")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
+
+	// test update ignore for unique key
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint, unique key I_uniq (a));")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (2)")
+	_, err = tk.Exec("update ignore t set a = 1 where a = 2;")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1062 key already exist"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
@@ -983,6 +1031,8 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists batch_insert")
 	tk.MustExec("create table batch_insert (c int)")
+	tk.MustExec("drop table if exists batch_insert_on_duplicate")
+	tk.MustExec("create table batch_insert_on_duplicate (id int primary key, c int)")
 	// Insert 10 rows.
 	tk.MustExec("insert into batch_insert values (1),(1),(1),(1),(1),(1),(1),(1),(1),(1)")
 	r := tk.MustQuery("select count(*) from batch_insert;")
@@ -1003,11 +1053,24 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("160"))
+	// for on duplicate key
+	for i := 0; i < 160; i++ {
+		tk.MustExec(fmt.Sprintf("insert into batch_insert_on_duplicate values(%d, %d);", i, i))
+	}
+	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
+	r.Check(testkit.Rows("160"))
 
 	// This will meet txn too large error.
 	_, err := tk.Exec("insert into batch_insert (c) select * from batch_insert;")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("160"))
+	// for on duplicate key
+	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue, Commentf("%v", err))
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("160"))
 
@@ -1016,6 +1079,12 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+	// for on duplicate key
+	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
+	r.Check(testkit.Rows("160"))
 
 	// Disable BachInsert mode in transition.
 	tk.MustExec("begin;")

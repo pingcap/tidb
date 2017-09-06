@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
@@ -71,6 +72,7 @@ type Session interface {
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
+	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
@@ -179,6 +181,18 @@ func (s *session) SetClientCapability(capability uint32) {
 
 func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
+}
+
+func (s *session) SetCollation(coID int) error {
+	cs, co, err := charset.GetCharsetInfoByID(coID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, v := range variable.SetNamesVariables {
+		s.sessionVars.Systems[v] = cs
+	}
+	s.sessionVars.Systems[variable.CollationConnection] = co
+	return nil
 }
 
 func (s *session) SetSessionManager(sm util.SessionManager) {
@@ -986,8 +1000,8 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	finishBootstrap(store)
 	s.ClearValue(context.Initing)
 
-	domain := sessionctx.GetDomain(s)
-	domain.Close()
+	dom := sessionctx.GetDomain(s)
+	dom.Close()
 	domap.Delete(store)
 }
 
@@ -1230,7 +1244,7 @@ func (s *session) ShowProcess() util.ProcessInfo {
 	return pi
 }
 
-// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD etc.
+// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc.
 func logCrucialStmt(node ast.StmtNode) {
 	switch stmt := node.(type) {
 	case *ast.CreateUserStmt:
@@ -1254,6 +1268,9 @@ func logCrucialStmt(node ast.StmtNode) {
 		}
 		log.Infof("[CRUCIAL OPERATION] %s.", text)
 	case *ast.RevokeStmt:
+		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
+	case *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
+		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
 	}
 }

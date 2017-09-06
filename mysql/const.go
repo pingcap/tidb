@@ -24,7 +24,7 @@ const (
 	MaxPayloadLen      int  = 1<<24 - 1
 	// The version number should be three digits.
 	// See https://dev.mysql.com/doc/refman/5.7/en/which-version.html
-	TiDBReleaseVersion string = "0.8.0"
+	TiDBReleaseVersion string = "0.9.0"
 )
 
 // ServerVersion is the version information of this tidb-server in MySQL's format.
@@ -211,7 +211,7 @@ const (
 	MaxDateWidth            = 10 // YYYY-MM-DD.
 	MaxDatetimeWidthNoFsp   = 19 // YYYY-MM-DD HH:MM:SS
 	MaxDatetimeWidthWithFsp = 26 // YYYY-MM-DD HH:MM:SS[.fraction]
-	MaxDurationWidthNoFsp   = 9  // HH:MM:SS
+	MaxDurationWidthNoFsp   = 10 // HH:MM:SS
 	MaxDurationWidthWithFsp = 15 // HH:MM:SS[.fraction]
 	MaxBlobWidth            = 16777216
 )

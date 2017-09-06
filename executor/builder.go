@@ -81,6 +81,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSelectLock(v)
 	case *plan.ShowDDL:
 		return b.buildShowDDL(v)
+	case *plan.ShowDDLJobs:
+		return b.buildShowDDLJobs(v)
 	case *plan.Show:
 		return b.buildShow(v)
 	case *plan.Simple:
@@ -166,6 +168,26 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	}
 	e.ddlInfo = ddlInfo
 	e.selfID = ownerManager.ID()
+	return e
+}
+
+func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
+	e := &ShowDDLJobsExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+	}
+
+	var err error
+	e.jobs, err = inspectkv.GetDDLJobs(e.ctx.Txn())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	historyJobs, err := inspectkv.GetHistoryDDLJobs(e.ctx.Txn())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	e.jobs = append(e.jobs, historyJobs...)
 	return e
 }
 
@@ -270,10 +292,12 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	ivs := &InsertValues{
-		ctx:     b.ctx,
-		Columns: v.Columns,
-		Lists:   v.Lists,
-		Setlist: v.Setlist,
+		ctx:        b.ctx,
+		Columns:    v.Columns,
+		Lists:      v.Lists,
+		Setlist:    v.Setlist,
+		GenColumns: v.GenCols.Columns,
+		GenExprs:   v.GenCols.Exprs,
 	}
 	if len(v.Children()) > 0 {
 		ivs.SelectExec = b.build(v.Children()[0])
@@ -284,9 +308,9 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	}
 	insert := &InsertExec{
 		InsertValues: ivs,
-		OnDuplicate:  v.OnDuplicate,
+		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 		Priority:     v.Priority,
-		Ignore:       v.Ignore,
+		IgnoreErr:    v.IgnoreErr,
 	}
 	return insert
 }
@@ -297,7 +321,13 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
-	insertVal := &InsertValues{ctx: b.ctx, Table: tbl, Columns: v.Columns}
+	insertVal := &InsertValues{
+		ctx:        b.ctx,
+		Table:      tbl,
+		Columns:    v.Columns,
+		GenColumns: v.GenCols.Columns,
+		GenExprs:   v.GenCols.Exprs,
+	}
 	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {
@@ -830,6 +860,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		SelectExec:   b.build(v.Children()[0]),
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
+		IgnoreErr:    v.IgnoreErr,
 	}
 }
 

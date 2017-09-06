@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 var _ = Suite(&testTypeConvertSuite{})
@@ -740,5 +741,114 @@ func testConvertTimeTimeZone(c *C, sc *variable.StatementContext) {
 		if test.expect.Type == mysql.TypeTimestamp {
 			c.Assert(t.TimeZone, Equals, test.expect.TimeZone)
 		}
+	}
+}
+
+func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
+	var tests = []struct {
+		In  string
+		Out int64
+	}{
+		{`{}`, 0},
+		{`[]`, 0},
+		{`3`, 3},
+		{`-3`, -3},
+		{`4.5`, 5},
+		{`true`, 1},
+		{`false`, 0},
+		{`null`, 0},
+		{`"hello"`, 0},
+		{`"123hello"`, 123},
+		{`"1234"`, 1234},
+	}
+	for _, tt := range tests {
+		j, err := json.ParseFromString(tt.In)
+		c.Assert(err, IsNil)
+
+		casted, _ := ConvertJSONToInt(new(variable.StatementContext), j, false)
+		c.Assert(casted, Equals, tt.Out)
+	}
+}
+
+func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
+	var tests = []struct {
+		In  string
+		Out float64
+	}{
+		{`{}`, 0},
+		{`[]`, 0},
+		{`3`, 3},
+		{`-3`, -3},
+		{`4.5`, 4.5},
+		{`true`, 1},
+		{`false`, 0},
+		{`null`, 0},
+		{`"hello"`, 0},
+		{`"123.456hello"`, 123.456},
+		{`"1234"`, 1234},
+	}
+	for _, tt := range tests {
+		j, err := json.ParseFromString(tt.In)
+		c.Assert(err, IsNil)
+		casted, _ := ConvertJSONToFloat(new(variable.StatementContext), j)
+		c.Assert(casted, Equals, tt.Out)
+	}
+}
+
+func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
+	var testCases = []struct {
+		number int64
+		fsp    int
+		hasErr bool
+		year   int
+		month  int
+		day    int
+		hour   int
+		minute int
+		second int
+	}{
+		{20171222, 0, true, 0, 0, 0, 0, 0, 0},
+		{171222, 0, false, 0, 0, 0, 17, 12, 22},
+		{20171222020005, 0, false, 2017, 12, 22, 02, 00, 05},
+		{10000000000, 0, true, 0, 0, 0, 0, 0, 0},
+		{171222, 1, false, 0, 0, 0, 17, 12, 22},
+		{176022, 1, true, 0, 0, 0, 0, 0, 0},
+		{8391222, 1, true, 0, 0, 0, 0, 0, 0},
+		{8381222, 0, false, 0, 0, 0, 838, 12, 22},
+		{1001222, 0, false, 0, 0, 0, 100, 12, 22},
+		{171260, 1, true, 0, 0, 0, 0, 0, 0},
+	}
+
+	for _, tc := range testCases {
+		t, err := NumberToDuration(tc.number, tc.fsp)
+		if tc.hasErr {
+			c.Assert(err, NotNil)
+			continue
+		}
+		c.Assert(err, IsNil)
+		c.Assert(t.Time.Year(), Equals, tc.year)
+		c.Assert(t.Time.Month(), Equals, tc.month)
+		c.Assert(t.Time.Day(), Equals, tc.day)
+		c.Assert(t.Time.Hour(), Equals, tc.hour)
+		c.Assert(t.Time.Minute(), Equals, tc.minute)
+		c.Assert(t.Time.Second(), Equals, tc.second)
+	}
+
+	var testCases1 = []struct {
+		number int64
+		neg    bool
+		dur    time.Duration
+	}{
+		{171222, false, 17*time.Hour + 12*time.Minute + 22*time.Second},
+		{-171222, true, -(17*time.Hour + 12*time.Minute + 22*time.Second)},
+	}
+
+	for _, tc := range testCases1 {
+		t, err := NumberToDuration(tc.number, 0)
+		c.Assert(err, IsNil)
+		c.Assert(t.IsNegative(), Equals, tc.neg)
+		d, err1 := t.ConvertToDuration()
+		c.Assert(err1, IsNil)
+		c.Assert(d.Duration, Equals, tc.dur)
 	}
 }

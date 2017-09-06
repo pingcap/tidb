@@ -32,6 +32,11 @@ type ShowDDL struct {
 	basePlan
 }
 
+// ShowDDLJobs is for showing DDL job list.
+type ShowDDLJobs struct {
+	basePlan
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
 	basePlan
@@ -104,6 +109,14 @@ type Simple struct {
 	Statement ast.StmtNode
 }
 
+// InsertGeneratedColumns is for completing generated columns in Insert.
+// We resolve generation expressions in plan, and eval those in executor.
+type InsertGeneratedColumns struct {
+	Columns      []*ast.ColumnName
+	Exprs        []expression.Expression
+	OnDuplicates []*expression.Assignment
+}
+
 // Insert represents an insert plan.
 type Insert struct {
 	*basePlan
@@ -119,7 +132,9 @@ type Insert struct {
 
 	IsReplace bool
 	Priority  mysql.PriorityEnum
-	Ignore    bool
+	IgnoreErr bool
+
+	GenCols InsertGeneratedColumns
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
@@ -153,6 +168,8 @@ type LoadData struct {
 	Columns    []*ast.ColumnName
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
+
+	GenCols InsertGeneratedColumns
 }
 
 // DDL represents a DDL statement plan.

@@ -163,6 +163,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}{
 		{"10:11:12", "10:11:12"},
 		{"101112", "10:11:12"},
+		{"020005", "02:00:05"},
 		{"112", "00:01:12"},
 		{"10:11", "10:11:00"},
 		{"101112.123456", "10:11:12"},
@@ -836,8 +837,8 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 	}
 
 	for _, test := range tests {
-		t1 := Time{test.t1, mysql.TypeDatetime, 6, nil}
-		t2 := Time{test.t2, mysql.TypeDatetime, 6, nil}
+		t1 := Time{test.t1, mysql.TypeDatetime, 6, nil, false}
+		t2 := Time{test.t2, mysql.TypeDatetime, 6, nil, false}
 		c.Assert(TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}
 }
@@ -890,6 +891,7 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 		{"2017-01-18 01:01:01.123457", "12:30:59", "2017-01-18 13:32:0.123457"},
 		{"2017-01-18 01:01:01", "838:59:59", "2017-02-22 00:01:00"},
 		{"2017-08-21 15:34:42", "-838:59:59", "2017-07-17 16:34:43"},
+		{"2017-08-21", "01:01:01.001", "2017-08-21 01:01:01.001"},
 	}
 
 	for _, t := range tbl {

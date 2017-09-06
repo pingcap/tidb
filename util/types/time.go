@@ -33,6 +33,7 @@ var (
 	ErrInvalidTimeFormat = errors.New("invalid time format")
 	ErrInvalidYearFormat = errors.New("invalid year format")
 	ErrInvalidYear       = errors.New("invalid year")
+	ErrZeroDate          = errors.New("datetime zero in date")
 )
 
 // Time format without fractional seconds precision.
@@ -56,6 +57,17 @@ const (
 
 	zeroDatetimeStr = "0000-00-00 00:00:00"
 	zeroDateStr     = "0000-00-00"
+
+	// TimeMaxHour is the max hour for mysql time type.
+	TimeMaxHour = 838
+	// TimeMaxMinute is the max minute for mysql time type.
+	TimeMaxMinute = 59
+	// TimeMaxSecond is the max second for mysql time type.
+	TimeMaxSecond = 59
+	// TimeMaxValue is the maximum value for mysql time type.
+	TimeMaxValue = TimeMaxHour*10000 + TimeMaxMinute*100 + TimeMaxSecond
+	// TimeMaxValueSeconds is the maximum second value for mysql time type.
+	TimeMaxValueSeconds = TimeMaxHour*3600 + TimeMaxMinute*60 + TimeMaxSecond
 )
 
 // Zero values for different types.
@@ -135,6 +147,7 @@ type TimeInternal interface {
 	Week(mode int) int
 	Microsecond() int
 	GoTime(*gotime.Location) (gotime.Time, error)
+	IsLeapYear() bool
 }
 
 // FromGoTime translates time.Time to mysql time internal representation.
@@ -166,6 +179,12 @@ type Time struct {
 	// TODO: Define a type for timestamp, remove its representation from here.
 	// TimeZone is valid when Type is mysql.Timestamp, it's meaningless for date/datetime.
 	TimeZone *gotime.Location
+	negative bool
+}
+
+// MaxMySQLTime returns Time with maximum mysql time type.
+func MaxMySQLTime(neg bool, fsp int) Time {
+	return Time{Time: newMysqlTime(0, 0, 0, TimeMaxHour, TimeMaxMinute, TimeMaxSecond, 0), Type: mysql.TypeDuration, Fsp: fsp, negative: neg}
 }
 
 // CurrentTime returns current time with type tp.
@@ -186,6 +205,11 @@ func (t *Time) ConvertTimeZone(from, to *gotime.Location) error {
 	}
 	t.TimeZone = to
 	return nil
+}
+
+// IsNegative returns a boolean to indicate whether the Time is negative.
+func (t *Time) IsNegative() bool {
+	return t.negative
 }
 
 func (t Time) String() string {
@@ -259,7 +283,7 @@ func (t Time) Convert(tp uint8) (Time, error) {
 	}
 
 	t1 := Time{Time: t.Time, Type: tp, Fsp: t.Fsp}
-	err := t1.check()
+	err := t1.check(true)
 	return t1, errors.Trace(err)
 }
 
@@ -276,7 +300,9 @@ func (t Time) ConvertToDuration() (Duration, error) {
 	frac := t.Time.Microsecond() * 1000
 
 	d := gotime.Duration(hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)
-
+	if t.negative {
+		return Duration{Duration: -gotime.Duration(d), Fsp: t.Fsp}, nil
+	}
 	// TODO: check convert validation
 	return Duration{Duration: gotime.Duration(d), Fsp: t.Fsp}, nil
 }
@@ -433,7 +459,7 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	microsec := int(packed % (1 << 24))
 
 	t.Time = FromDate(year, month, day, hour, minute, second, microsec)
-	if err := t.check(); err != nil {
+	if err := t.check(false); err != nil {
 		return errors.Trace(err)
 	}
 	t.TimeZone = gotime.UTC
@@ -441,22 +467,24 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	return nil
 }
 
-func (t *Time) check() error {
+// check whether t matches valid Time format.
+// If allowZeroDate is false, it returns ErrZeroDate when month or day is zero.
+func (t *Time) check(allowZeroDate bool) error {
 	var err error
 	switch t.Type {
 	case mysql.TypeTimestamp:
 		err = checkTimestampType(t.Time)
 	case mysql.TypeDatetime:
-		err = checkDatetimeType(t.Time)
+		err = checkDatetimeType(t.Time, allowZeroDate)
 	case mysql.TypeDate:
-		err = checkDateType(t.Time)
+		err = checkDateType(t.Time, allowZeroDate)
 	}
 	return errors.Trace(err)
 }
 
 // Check if 't' is valid
 func (t *Time) Check() error {
-	return t.check()
+	return t.check(true)
 }
 
 // Sub subtracts t1 from t, returns a duration value.
@@ -495,10 +523,20 @@ func (t *Time) Add(d Duration) (Time, error) {
 	var tm mysqlTime
 	tm.year, tm.month, tm.day = uint16(year), uint8(month), uint8(day)
 	calcTimeFromSec(&tm, seconds%secondsIn24Hour, microseconds)
+	if t.Type == mysql.TypeDate {
+		tm.hour = 0
+		tm.minute = 0
+		tm.second = 0
+		tm.microsecond = 0
+	}
+	fsp := t.Fsp
+	if d.Fsp > fsp {
+		fsp = d.Fsp
+	}
 	ret := Time{
 		Time:     tm,
 		Type:     t.Type,
-		Fsp:      t.Fsp,
+		Fsp:      fsp,
 		TimeZone: t.TimeZone,
 	}
 	return ret, ret.Check()
@@ -943,6 +981,9 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			} else if len(str) == 6 {
 				// HHMMSS
 				_, err = fmt.Sscanf(str, "%2d%2d%2d", &hour, &minute, &second)
+			} else if len(str) == 5 {
+				// HMMSS
+				_, err = fmt.Sscanf(str, "%1d%2d%2d", &hour, &minute, &second)
 			} else if len(str) == 4 {
 				// MMSS
 				_, err = fmt.Sscanf(str, "%2d%2d", &minute, &second)
@@ -957,9 +998,9 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 				_, err = fmt.Sscanf(str, "%1d", &second)
 			} else {
 				// Maybe only contains date.
-				_, err = ParseDate(str)
-				if err == nil {
-					return ZeroDuration, nil
+				t, err1 := ParseDatetime(str)
+				if err1 == nil {
+					return t.ConvertToDuration()
 				}
 				return ZeroDuration, errors.Trace(ErrInvalidTimeFormat)
 			}
@@ -1050,7 +1091,7 @@ func getTime(num int64, tp byte) (Time, error) {
 		Type: tp,
 		Fsp:  DefaultFsp,
 	}
-	err := t.check()
+	err := t.check(false)
 	return t, errors.Trace(err)
 }
 
@@ -1158,7 +1199,7 @@ func ParseTime(str string, tp byte, fsp int) (Time, error) {
 	}
 
 	t.Type = tp
-	if err = t.check(); err != nil {
+	if err = t.check(true); err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
 	return t, nil
@@ -1195,7 +1236,7 @@ func ParseTimeFromNum(num int64, tp byte, fsp int) (Time, error) {
 
 	t.Type = tp
 	t.Fsp = fsp
-	if err := t.check(); err != nil {
+	if err := t.check(false); err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
 	return t, nil
@@ -1235,10 +1276,14 @@ func TimeFromDays(num int64) Time {
 	}
 }
 
-func checkDateType(t TimeInternal) error {
+func checkDateType(t TimeInternal, allowZeroDate bool) error {
 	year, month, day := t.Year(), t.Month(), t.Day()
 	if year == 0 && month == 0 && day == 0 {
 		return nil
+	}
+
+	if !allowZeroDate && (month == 0 || day == 0) {
+		return ErrZeroDate
 	}
 
 	if err := checkDateRange(t); err != nil {
@@ -1299,8 +1344,8 @@ func checkTimestampType(t TimeInternal) error {
 	return nil
 }
 
-func checkDatetimeType(t TimeInternal) error {
-	if err := checkDateType(t); err != nil {
+func checkDatetimeType(t TimeInternal, allowZeroDate bool) error {
+	if err := checkDateType(t, allowZeroDate); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1896,7 +1941,7 @@ func (t *Time) StrToDate(date, format string) bool {
 
 	t.Time = tm
 	t.Type = mysql.TypeDatetime
-	if t.check() != nil {
+	if t.check(true) != nil {
 		return false
 	}
 	return true
@@ -2047,6 +2092,49 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	// "%x": yearOfWeek,                 // Year for the week, where Monday is the first day of the week, numeric, four digits; used with %v
 	// Deprecated since MySQL 5.7.5
 	// "%y": yearTwoDigits,         // Year, numeric (two digits)
+}
+
+// GetFormatType checks the type(Duration, Date or Datetime) of a format string.
+func GetFormatType(format string) (isDuration, isDate bool) {
+	durationTokens := map[string]struct{}{
+		"%h": {},
+		"%H": {},
+		"%i": {},
+		"%I": {},
+		"%s": {},
+		"%S": {},
+		"%k": {},
+		"%l": {},
+	}
+	dateTokens := map[string]struct{}{
+		"%y": {},
+		"%Y": {},
+		"%m": {},
+		"%M": {},
+		"%c": {},
+		"%b": {},
+		"%D": {},
+		"%d": {},
+		"%e": {},
+	}
+
+	format = skipWhiteSpace(format)
+	for token, formatRemain, succ := getFormatToken(format); len(token) != 0; format = formatRemain {
+		if !succ {
+			isDuration, isDate = false, false
+			break
+		}
+		if _, ok := durationTokens[token]; ok {
+			isDuration = true
+		} else if _, ok := dateTokens[token]; ok {
+			isDate = true
+		}
+		if isDuration && isDate {
+			break
+		}
+		token, formatRemain, succ = getFormatToken(format)
+	}
+	return
 }
 
 func matchDateWithToken(t *mysqlTime, date string, token string, ctx map[string]int) (remain string, succ bool) {

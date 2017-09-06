@@ -15,7 +15,6 @@ package expression
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -85,12 +84,6 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		types.DefaultTypeForValue(x.GetValue(), x.GetType())
 	case *ast.ParenthesesExpr:
 		x.SetType(x.Expr.GetType())
-	case *ast.PatternInExpr:
-		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		types.SetBinChsClnFlag(&x.Type)
-		v.convertValueToColumnTypeIfNeeded(x)
-	case *ast.PatternRegexpExpr:
-		v.handleRegexpExpr(x)
 	case *ast.SelectStmt:
 		v.selectStmt(x)
 	case *ast.UnaryOperationExpr:
@@ -342,7 +335,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.Weekday, ast.WeekOfYear, ast.YearWeek, ast.DateDiff,
 		ast.FoundRows, ast.Length, ast.ASCII, ast.Extract, ast.Locate, ast.UnixTimestamp, ast.Quarter, ast.IsIPv4, ast.ToDays,
 		ast.ToSeconds, ast.Strcmp, ast.IsNull, ast.BitLength, ast.CharLength, ast.CRC32, ast.TimestampDiff,
-		ast.Sign, ast.IsIPv6, ast.Ord, ast.Instr, ast.BitCount, ast.TimeToSec, ast.FindInSet, ast.Field,
+		ast.Sign, ast.IsIPv6, ast.Ord, ast.Instr, ast.BitCount, ast.FindInSet, ast.Field,
 		ast.GetLock, ast.ReleaseLock, ast.Interval, ast.Position, ast.PeriodAdd, ast.PeriodDiff, ast.IsIPv4Mapped, ast.IsIPv4Compat, ast.UncompressedLength:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case ast.ConnectionID, ast.InetAton:
@@ -369,10 +362,10 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
 		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
-	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime, ast.UTCTime, ast.Time:
+	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.UTCTime, ast.Time:
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
-	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate:
+	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate, ast.LastDay:
 		tp = types.NewFieldType(mysql.TypeDate)
 	case ast.DateAdd, ast.DateSub, ast.AddDate, ast.SubDate, ast.Timestamp, ast.TimestampAdd, ast.StrToDate, ast.ConvertTz:
 		tp = types.NewFieldType(mysql.TypeDatetime)
@@ -469,14 +462,6 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	x.SetType(tp)
 }
 
-// handleRegexpExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.
-func (v *typeInferrer) handleRegexpExpr(x *ast.PatternRegexpExpr) {
-	x.SetType(types.NewFieldType(mysql.TypeLonglong))
-	types.SetBinChsClnFlag(&x.Type)
-	x.Expr = v.addCastToString(x.Expr)
-	x.Pattern = v.addCastToString(x.Pattern)
-}
-
 // addCastToString adds a cast function to string type if the expr charset is not UTF8.
 func (v *typeInferrer) addCastToString(expr ast.ExprNode) ast.ExprNode {
 	if !mysql.IsUTF8Charset(expr.GetType().Charset) {
@@ -499,36 +484,6 @@ func (v *typeInferrer) addCastToString(expr ast.ExprNode) ast.ExprNode {
 		expr.SetType(castTp)
 	}
 	return expr
-}
-
-// convertValueToColumnTypeIfNeeded checks if the expr in PatternInExpr is column name,
-// and casts function to the items in the list.
-func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
-	if cn, ok := x.Expr.(*ast.ColumnNameExpr); ok && cn.Refer != nil {
-		ft := cn.Refer.Column.FieldType
-		for _, expr := range x.List {
-			if valueExpr, ok := expr.(*ast.ValueExpr); ok {
-				newDatum, err := valueExpr.Datum.ConvertTo(v.sc, &ft)
-				if err != nil {
-					v.err = errors.Trace(err)
-				}
-				cmp, err := newDatum.CompareDatum(v.sc, valueExpr.Datum)
-				if err != nil {
-					v.err = errors.Trace(err)
-				}
-				if cmp != 0 {
-					// The value will never match the column, do not set newDatum.
-					continue
-				}
-				valueExpr.SetDatum(newDatum)
-			}
-		}
-		if v.err != nil {
-			// TODO: Errors should be handled differently according to query context.
-			log.Errorf("inferor type for pattern in error %v", v.err)
-			v.err = nil
-		}
-	}
 }
 
 // IsHybridType checks whether a ClassString expression is a hybrid type value which will return different types of value in different context.

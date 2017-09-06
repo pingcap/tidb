@@ -58,6 +58,14 @@ func (h *Handle) Clear() {
 	h.statsCache.Store(statsCache{})
 	h.LastVersion = 0
 	h.PrevLastVersion = 0
+	for len(h.ddlEventCh) > 0 {
+		<-h.ddlEventCh
+	}
+	for len(h.analyzeResultCh) > 0 {
+		<-h.analyzeResultCh
+	}
+	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap)}
+	h.globalMap = make(tableDeltaMap)
 }
 
 // NewHandle creates a Handle for update stats.
@@ -91,6 +99,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		version, tableID, modifyCount, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64(), row.Data[3].GetInt64()
+		h.LastVersion = version
 		table, ok := is.TableByID(tableID)
 		if !ok {
 			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
@@ -101,7 +110,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl, err := h.tableStatsFromStorage(tableInfo)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
+			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, errors.ErrorStack(err))
 			continue
 		}
 		if tbl == nil {
@@ -112,7 +121,6 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.Count = count
 		tbl.ModifyCount = modifyCount
 		tables = append(tables, tbl)
-		h.LastVersion = version
 	}
 	h.UpdateTableStats(tables, deletedTableIDs)
 	return nil
