@@ -133,7 +133,9 @@ var (
 	_ builtinFunc = &builtinQuoteSig{}
 	_ builtinFunc = &builtinBinSig{}
 	_ builtinFunc = &builtinEltSig{}
-	_ builtinFunc = &builtinExportSetSig{}
+	_ builtinFunc = &builtinExportSet3ArgSig{}
+	_ builtinFunc = &builtinExportSet4ArgSig{}
+	_ builtinFunc = &builtinExportSet5ArgSig{}
 	_ builtinFunc = &builtinFormatSig{}
 	_ builtinFunc = &builtinFromBase64Sig{}
 	_ builtinFunc = &builtinToBase64Sig{}
@@ -2368,8 +2370,8 @@ type exportSetFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *exportSetFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *exportSetFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	argTps := make([]evalTp, 0, 5)
@@ -2382,18 +2384,51 @@ func (c *exportSetFunctionClass) getFunction(ctx context.Context, args []Express
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
 	bf.tp.Flen = mysql.MaxBlobWidth
-	sig := &builtinExportSetSig{baseStringBuiltinFunc{bf}}
+	switch len(args) {
+	case 3:
+		sig = &builtinExportSet3ArgSig{baseStringBuiltinFunc{bf}}
+	case 4:
+		sig = &builtinExportSet4ArgSig{baseStringBuiltinFunc{bf}}
+	case 5:
+		sig = &builtinExportSet5ArgSig{baseStringBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinExportSetSig struct {
+func exportSet(bits int64, on, off, separator []byte, numberOfBits int64) []byte {
+	len4Res := len(separator) * int(numberOfBits-1)
+	len4On, len4Off := len(on), len(off)
+	for i := uint64(0); i < uint64(numberOfBits); i++ {
+		if (bits & (1 << i)) > 0 {
+			len4Res += len4On
+		} else {
+			len4Res += len4Off
+		}
+	}
+
+	result := make([]byte, 0, len4Res)
+	for i := uint64(0); i < uint64(numberOfBits); i++ {
+		if (bits & (1 << i)) > 0 {
+			result = append(result, on...)
+		} else {
+			result = append(result, off...)
+		}
+		if i < uint64(numberOfBits)-1 {
+			result = append(result, separator...)
+		}
+	}
+	return result
+}
+
+type builtinExportSet3ArgSig struct {
 	baseStringBuiltinFunc
 }
 
 // evalString evals EXPORT_SET(bits,on,off[,separator[,number_of_bits]]).
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_export-set
-func (b *builtinExportSetSig) evalString(row []types.Datum) (string, bool, error) {
+func (b *builtinExportSet3ArgSig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
+
 	bits, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
@@ -2409,36 +2444,79 @@ func (b *builtinExportSetSig) evalString(row []types.Datum) (string, bool, error
 		return "", true, errors.Trace(err)
 	}
 
-	separator, numberOfBits := ",", int64(64)
-	if len(b.args) > 3 {
-		separator, isNull, err = b.args[3].EvalString(row, sc)
-		if isNull || err != nil {
-			return "", true, errors.Trace(err)
-		}
-	}
-	if len(b.args) > 4 {
-		numberOfBits, isNull, err = b.args[4].EvalInt(row, sc)
-		if isNull || err != nil {
-			return "", true, errors.Trace(err)
-		}
-		if numberOfBits < 0 || numberOfBits > 64 {
-			numberOfBits = 64
-		}
+	return hack.String(exportSet(bits, hack.Slice(on), hack.Slice(off), hack.Slice(","), 64)), false, nil
+}
+
+type builtinExportSet4ArgSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals EXPORT_SET(bits,on,off[,separator[,number_of_bits]]).
+// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_export-set
+func (b *builtinExportSet4ArgSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	bits, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
 
-	result := ""
-	for i := int64(0); i < numberOfBits; i++ {
-		if bits&1 > 0 {
-			result += on
-		} else {
-			result += off
-		}
-		bits >>= 1
-		if i < numberOfBits-1 {
-			result += separator
-		}
+	on, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	return result, false, nil
+
+	off, isNull, err := b.args[2].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	separator, isNull, err := b.args[3].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	return hack.String(exportSet(bits, hack.Slice(on), hack.Slice(off), hack.Slice(separator), 64)), false, nil
+}
+
+type builtinExportSet5ArgSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals EXPORT_SET(bits,on,off[,separator[,number_of_bits]]).
+// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_export-set
+func (b *builtinExportSet5ArgSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	bits, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	on, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	off, isNull, err := b.args[2].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	separator, isNull, err := b.args[3].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	numberOfBits, isNull, err := b.args[4].EvalInt(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	if numberOfBits < 0 || numberOfBits > 64 {
+		numberOfBits = 64
+	}
+
+	return hack.String(exportSet(bits, hack.Slice(on), hack.Slice(off), hack.Slice(separator), numberOfBits)), false, nil
 }
 
 type formatFunctionClass struct {
