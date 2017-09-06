@@ -1998,6 +1998,8 @@ type builtinFieldIntSig struct {
 	baseIntBuiltinFunc
 }
 
+// evalInt evals FIELD(str,str1,str2,str3,...).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
 func (b *builtinFieldIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	str, isNull, err := b.args[0].EvalInt(row, sc)
