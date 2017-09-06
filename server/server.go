@@ -277,8 +277,6 @@ func (s *Server) onConn(c net.Conn) {
 		log.Infof("[%d] close connection", conn.connectionID)
 	}()
 
-	// Notice: `conn.conn` may be upgraded to `tls.Conn` after `handshake()`,
-	// so that it may not always equal to `c`
 	if err := conn.handshake(); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we use info log level.
