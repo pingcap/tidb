@@ -57,8 +57,6 @@ type Plan interface {
 	ID() int
 	// Get the ID in explain statement
 	ExplainID() string
-	// Get the type.
-	Type() string
 	// Get id allocator
 	Allocator() *idAllocator
 	// SetParents sets the parents for the plan.
@@ -487,11 +485,6 @@ func (p *basePlan) ID() int {
 
 func (p *basePlan) ExplainID() string {
 	return fmt.Sprintf("%s_%d", p.tp, p.id)
-}
-
-// ID implements Plan ID interface.
-func (p *basePlan) Type() string {
-	return p.tp
 }
 
 // SetSchema implements Plan SetSchema interface.

@@ -34,7 +34,7 @@ type testExpressionSuite struct{}
 func newColumn(from int) *Column {
 	return &Column{
 		FromID:  from,
-		ColName: model.NewCIStr(fmt.Sprintf("%v", from)),
+		ColName: model.NewCIStr(fmt.Sprint(from)),
 		TblName: model.NewCIStr("t"),
 		DBName:  model.NewCIStr("test"),
 		RetType: types.NewFieldType(mysql.TypeLonglong),
