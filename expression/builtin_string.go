@@ -294,7 +294,7 @@ func (c *concatWSFunctionClass) getFunction(ctx context.Context, args []Expressi
 		argType := args[i].GetType()
 		SetBinFlagOrBinStr(argType, bf.tp)
 
-		// skip seperator param
+		// skip separator param
 		if i != 0 {
 			if argType.Flen < 0 {
 				bf.tp.Flen = mysql.MaxBlobWidth
@@ -304,7 +304,7 @@ func (c *concatWSFunctionClass) getFunction(ctx context.Context, args []Expressi
 		}
 	}
 
-	// add seperator
+	// add separator
 	argsLen := len(args) - 1
 	bf.tp.Flen += argsLen - 1
 
