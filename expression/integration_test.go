@@ -1578,7 +1578,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast('-34 100:00:00' as time);")
 	result.Check(testkit.Rows("-838:59:59"))
 
-	// Fix issue #3691, cast compability.
+	// Fix issue #3691, cast compatibility.
 	result = tk.MustQuery("select cast('18446744073709551616' as unsigned);")
 	result.Check(testkit.Rows("18446744073709551615"))
 	result = tk.MustQuery("select cast('18446744073709551616' as signed);")
@@ -2369,4 +2369,49 @@ func (s *testIntegrationSuite) TestLiterals(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	r := tk.MustQuery("SELECT LENGTH(b''), LENGTH(B''), b''+1, b''-1, B''+1;")
 	r.Check(testkit.Rows("0 0 1 -1 1"))
+}
+
+func (s *testIntegrationSuite) TestFuncJSON(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS table_json;")
+	tk.MustExec("CREATE TABLE table_json(a json, b VARCHAR(255));")
+
+	j1 := `{"\\"hello\\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`
+	j2 := `[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`
+	for _, j := range []string{j1, j2} {
+		tk.MustExec(fmt.Sprintf(`INSERT INTO table_json values('%s', '%s')`, j, j))
+	}
+
+	var r *testkit.Result
+	r = tk.MustQuery(`select json_type(a), json_type(b) from table_json`)
+	r.Check(testkit.Rows("OBJECT OBJECT", "ARRAY ARRAY"))
+
+	r = tk.MustQuery(`select json_unquote('hello'), json_unquote('world')`)
+	r.Check(testkit.Rows("hello world"))
+
+	r = tk.MustQuery(`select json_extract(a, '$.a[1]'), json_extract(b, '$.b') from table_json`)
+	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))
+
+	r = tk.MustQuery(`select json_extract(json_set(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_set(b, '$.b', false), '$.b') from table_json`)
+	r.Check(testkit.Rows("3 false", "<nil> <nil>"))
+
+	r = tk.MustQuery(`select json_extract(json_insert(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_insert(b, '$.b', false), '$.b') from table_json`)
+	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))
+
+	r = tk.MustQuery(`select json_extract(json_replace(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_replace(b, '$.b', false), '$.b') from table_json`)
+	r.Check(testkit.Rows("3 false", "<nil> <nil>"))
+
+	r = tk.MustQuery(`select json_extract(json_merge(a, cast(b as JSON)), '$[0].a[0]') from table_json`)
+	r.Check(testkit.Rows("1", "1"))
+
+	r = tk.MustQuery(`select json_extract(json_array(1,2,3), '$[1]')`)
+	r.Check(testkit.Rows("2"))
+
+	r = tk.MustQuery(`select json_extract(json_object(1,2,3,4), '$."1"')`)
+	r.Check(testkit.Rows("2"))
 }
