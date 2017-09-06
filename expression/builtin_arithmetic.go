@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -88,13 +89,13 @@ func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 			retTp.Flen = types.UnspecifiedLength
 			return
 		}
-		digitsInt := int(math.Max(float64(a.Flen-a.Decimal), float64(b.Flen-b.Decimal)))
+		digitsInt := mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal)
 		retTp.Flen = digitsInt + retTp.Decimal + 3
 		if isReal {
-			retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxRealWidth)))
+			retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxRealWidth)
 			return
 		}
-		retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxDecimalWidth)))
+		retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxDecimalWidth)
 		return
 	}
 	retTp.Decimal = types.UnspecifiedLength
@@ -655,7 +656,7 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 	if a.Decimal == types.UnspecifiedLength || b.Decimal == types.UnspecifiedLength {
 		retTp.Decimal = types.UnspecifiedLength
 	} else {
-		retTp.Decimal = int(math.Max(float64(a.Decimal), float64(b.Decimal)))
+		retTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 		if isDecimal && retTp.Decimal > mysql.MaxDecimalScale {
 			retTp.Decimal = mysql.MaxDecimalScale
 		}
@@ -664,12 +665,12 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 	if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
 		retTp.Flen = types.UnspecifiedLength
 	} else {
-		retTp.Flen = int(math.Max(float64(a.Flen), float64(b.Flen)))
+		retTp.Flen = mathutil.Max(a.Flen, b.Flen)
 		if isDecimal {
-			retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxDecimalWidth)))
+			retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxDecimalWidth)
 			return
 		}
-		retTp.Flen = int(math.Min(float64(retTp.Flen), float64(mysql.MaxRealWidth)))
+		retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxRealWidth)
 	}
 }
 
@@ -744,10 +745,7 @@ func (s *builtinArithmeticModDecimalSig) evalDecimal(row []types.Datum) (*types.
 	}
 	c := &types.MyDecimal{}
 	err = types.DecimalMod(a, b, c)
-	if err == types.ErrDivByZero {
-		return c, true, errors.Trace(err)
-	}
-	return c, false, nil
+	return c, err == types.ErrDivByZero, errors.Trace(err)
 }
 
 type builtinArithmeticModIntSig struct {
