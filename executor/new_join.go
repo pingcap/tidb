@@ -152,7 +152,7 @@ func getUniqueDatums(rows orderedRows) [][]types.Datum {
 	datums := make([][]types.Datum, 0, rows.Len())
 	sort.Sort(rows)
 	for i := range rows {
-		if i > 0 && bytes.Compare(rows[i-1].key, rows[i].key) == 0 {
+		if i > 0 && bytes.Equal(rows[i-1].key, rows[i].key) {
 			continue
 		}
 		datums = append(datums, rows[i].row)

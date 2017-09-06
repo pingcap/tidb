@@ -180,7 +180,7 @@ func (e *Evaluator) evalLike(expr *tipb.Expr) (types.Datum, error) {
 	case matchSuffix:
 		matched = strings.HasSuffix(targetStr, trimmedPattern)
 	case matchMiddle:
-		matched = strings.Index(targetStr, trimmedPattern) != -1
+		matched = strings.Contains(targetStr, trimmedPattern)
 	}
 	if matched {
 		return types.NewIntDatum(1), nil

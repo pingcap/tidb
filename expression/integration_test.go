@@ -1571,7 +1571,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast('-34 100:00:00' as time);")
 	result.Check(testkit.Rows("-838:59:59"))
 
-	// Fix issue #3691, cast compability.
+	// Fix issue #3691, cast compatibility.
 	result = tk.MustQuery("select cast('18446744073709551616' as unsigned);")
 	result.Check(testkit.Rows("18446744073709551615"))
 	result = tk.MustQuery("select cast('18446744073709551616' as signed);")
@@ -2113,6 +2113,35 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tidb.GetRows(rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+
+	// for intDiv
+	result = tk.MustQuery("SELECT 13 DIV 12, 13 DIV 0.01, -13 DIV 2, 13 DIV NULL, NULL DIV 13, NULL DIV NULL;")
+	result.Check(testkit.Rows("1 1300 -6 <nil> <nil> <nil>"))
+	result = tk.MustQuery("SELECT 2.4 div 1.1, 2.4 div 1.2, 2.4 div 1.3;")
+	result.Check(testkit.Rows("2 2 1"))
+	rs, err = tk.Exec("select 1e300 DIV 1.5")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_int_unsigned int unsigned, c_timestamp timestamp, c_enum enum('a','b','c'));")
+	tk.MustExec("INSERT INTO t VALUE('abc', '12:00:00', 12, 0, 5, '2017-08-05 18:19:03', 'b');")
+	result = tk.MustQuery("select c_varchar div nonzero, c_time div nonzero, c_time div zero, c_timestamp div nonzero, c_timestamp div zero from t;")
+	result.Check(testkit.Rows("0 10000 <nil> 1680900431825 <nil>"))
+	rs, err = tk.Exec("select c_varchar div zero from t")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(terror.ErrorEqual(err, types.ErrDivByZero), IsTrue)
+	result = tk.MustQuery("select c_enum div nonzero from t;")
+	result.Check(testkit.Rows("0"))
+	rs, err = tk.Exec("select c_enum div zero from t")
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(terror.ErrorEqual(err, types.ErrDivByZero), IsTrue)
+	result = tk.MustQuery("select c_time div c_enum, c_timestamp div c_time, c_timestamp div c_enum from t;")
+	result.Check(testkit.Rows("60000 168090043 10085402590951"))
+	result = tk.MustQuery("select c_int_unsigned div nonzero, nonzero div c_int_unsigned, c_int_unsigned div zero from t;")
+	result.Check(testkit.Rows("0 2 <nil>"))
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
@@ -2333,4 +2362,49 @@ func (s *testIntegrationSuite) TestLiterals(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	r := tk.MustQuery("SELECT LENGTH(b''), LENGTH(B''), b''+1, b''-1, B''+1;")
 	r.Check(testkit.Rows("0 0 1 -1 1"))
+}
+
+func (s *testIntegrationSuite) TestFuncJSON(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS table_json;")
+	tk.MustExec("CREATE TABLE table_json(a json, b VARCHAR(255));")
+
+	j1 := `{"\\"hello\\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`
+	j2 := `[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`
+	for _, j := range []string{j1, j2} {
+		tk.MustExec(fmt.Sprintf(`INSERT INTO table_json values('%s', '%s')`, j, j))
+	}
+
+	var r *testkit.Result
+	r = tk.MustQuery(`select json_type(a), json_type(b) from table_json`)
+	r.Check(testkit.Rows("OBJECT OBJECT", "ARRAY ARRAY"))
+
+	r = tk.MustQuery(`select json_unquote('hello'), json_unquote('world')`)
+	r.Check(testkit.Rows("hello world"))
+
+	r = tk.MustQuery(`select json_extract(a, '$.a[1]'), json_extract(b, '$.b') from table_json`)
+	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))
+
+	r = tk.MustQuery(`select json_extract(json_set(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_set(b, '$.b', false), '$.b') from table_json`)
+	r.Check(testkit.Rows("3 false", "<nil> <nil>"))
+
+	r = tk.MustQuery(`select json_extract(json_insert(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_insert(b, '$.b', false), '$.b') from table_json`)
+	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))
+
+	r = tk.MustQuery(`select json_extract(json_replace(a, '$.a[1]', 3), '$.a[1]'), json_extract(json_replace(b, '$.b', false), '$.b') from table_json`)
+	r.Check(testkit.Rows("3 false", "<nil> <nil>"))
+
+	r = tk.MustQuery(`select json_extract(json_merge(a, cast(b as JSON)), '$[0].a[0]') from table_json`)
+	r.Check(testkit.Rows("1", "1"))
+
+	r = tk.MustQuery(`select json_extract(json_array(1,2,3), '$[1]')`)
+	r.Check(testkit.Rows("2"))
+
+	r = tk.MustQuery(`select json_extract(json_object(1,2,3,4), '$."1"')`)
+	r.Check(testkit.Rows("2"))
 }
