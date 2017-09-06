@@ -54,7 +54,11 @@ type Plan interface {
 	// Get the schema.
 	Schema() *expression.Schema
 	// Get the ID.
-	ID() string
+	ID() int
+	// Get the ID in explain statement
+	ExplainID() string
+	// Get the type.
+	Type() string
 	// Get id allocator
 	Allocator() *idAllocator
 	// SetParents sets the parents for the plan.
@@ -371,7 +375,7 @@ func newBasePlan(tp string, allocator *idAllocator, ctx context.Context, p Plan)
 	return &basePlan{
 		tp:        tp,
 		allocator: allocator,
-		id:        fmt.Sprintf("%s_%v", tp, allocator.allocID()),
+		id:        allocator.allocID(),
 		ctx:       ctx,
 		self:      p,
 	}
@@ -444,7 +448,7 @@ type basePlan struct {
 
 	schema    *expression.Schema
 	tp        string
-	id        string
+	id        int
 	allocator *idAllocator
 	ctx       context.Context
 	self      Plan
@@ -462,7 +466,7 @@ func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *basePlan) MarshalJSON() ([]byte, error) {
-	children := make([]string, 0, len(p.children))
+	children := make([]int, 0, len(p.children))
 	for _, child := range p.children {
 		children = append(children, child.ID())
 	}
@@ -477,8 +481,17 @@ func (p *basePlan) MarshalJSON() ([]byte, error) {
 }
 
 // ID implements Plan ID interface.
-func (p *basePlan) ID() string {
+func (p *basePlan) ID() int {
 	return p.id
+}
+
+func (p *basePlan) ExplainID() string {
+	return fmt.Sprintf("%s_%d", p.tp, p.id)
+}
+
+// ID implements Plan ID interface.
+func (p *basePlan) Type() string {
+	return p.tp
 }
 
 // SetSchema implements Plan SetSchema interface.
