@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -50,7 +50,9 @@ var (
 func main() {
 	flag.Parse()
 	flag.PrintDefaults()
-	log.SetLevelByString(*logLevel)
+	if level, err := log.ParseLevel(*logLevel); err == nil {
+		log.SetLevel(level)
+	}
 	tidb.RegisterStore("tikv", tikv.Driver{})
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")

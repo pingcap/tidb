@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
@@ -74,7 +74,9 @@ type testBinlogSuite struct {
 
 func (s *testBinlogSuite) SetUpSuite(c *C) {
 	logLevel := os.Getenv("log_level")
-	log.SetLevelByString(logLevel)
+	if level, err := log.ParseLevel(logLevel); err == nil {
+		log.SetLevel(level)
+	}
 	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store

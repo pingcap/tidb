@@ -24,8 +24,8 @@ import (
 	"runtime/pprof"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/filesort"
@@ -392,7 +392,9 @@ func driveRunCmd() {
 }
 
 func init() {
-	log.SetLevelByString(logLevel)
+	if level, err := log.ParseLevel(logLevel); err == nil {
+		log.SetLevel(level)
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {

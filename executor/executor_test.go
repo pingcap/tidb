@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
@@ -91,7 +91,9 @@ func (s *testSuite) SetUpSuite(c *C) {
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	logLevel := os.Getenv("log_level")
-	log.SetLevelByString(logLevel)
+	if level, err := log.ParseLevel(logLevel); err == nil {
+		log.SetLevel(level)
+	}
 }
 
 func (s *testSuite) TearDownSuite(c *C) {

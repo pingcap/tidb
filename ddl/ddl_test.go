@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -146,6 +146,10 @@ func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 
 func init() {
 	logLevel := os.Getenv("log_level")
-	log.SetLevelByString(logLevel)
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
+	if level, err := log.ParseLevel(logLevel); err == nil {
+		log.SetLevel(level)
+	}
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp: true,
+	})
 }

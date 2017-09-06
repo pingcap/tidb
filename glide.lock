@@ -1,5 +1,5 @@
-hash: 8a8dcce87b743988e8f76a05ddf91430ea0f5f4236b3c6dc09b72854d2e726bb
-updated: 2017-08-31T14:56:45.412923915+08:00
+hash: 16e27fc9091380943e09598c7f69ed027119bd1e7659f890566bdd9920136b10
+updated: 2017-09-06T14:47:41.94988291+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -23,6 +23,16 @@ imports:
   - mvcc/mvccpb
   - pkg/monotime
   - pkg/tlsutil
+- name: github.com/coreos/go-systemd
+  version: 48702e0da86bd25e76cfef347e2adeb434a0d0a6
+  subpackages:
+  - daemon
+  - journal
+  - util
+- name: github.com/coreos/pkg
+  version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
+  subpackages:
+  - capnslog
 - name: github.com/cznic/golex
   version: da5a7153a51074477ecac5c45a7e5182a0c72448
   subpackages:
@@ -129,6 +139,7 @@ imports:
   version: 38eb8a2e70dd39668a62d24a79f30596f204df14
   subpackages:
   - pd-client
+  - pkg/logutil
 - name: github.com/pingcap/tipb
   version: ffbc1bb02a2425782286825eec276be817b7f93a
   subpackages:
@@ -223,4 +234,6 @@ imports:
   - status
   - tap
   - transport
+- name: gopkg.in/natefinch/lumberjack.v2
+  version: dd45e6a67c53f673bb49ca8a001fd3a63ceb640e
 testImports: []

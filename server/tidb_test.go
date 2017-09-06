@@ -17,8 +17,8 @@ package server
 import (
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/go-sql-driver/mysql"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
@@ -32,7 +32,7 @@ type TidbTestSuite struct {
 var _ = Suite(new(TidbTestSuite))
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	log.SetLevelByString("error")
+	log.SetLevel(log.ErrorLevel)
 	store, err := tidb.NewStore("memory:///tmp/tidb")
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
