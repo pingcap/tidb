@@ -525,6 +525,7 @@ type AdminStmtType int
 const (
 	AdminShowDDL = iota + 1
 	AdminCheckTable
+	AdminShowDDLJobs
 )
 
 // AdminStmt is the struct for Admin statement.
