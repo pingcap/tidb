@@ -2634,7 +2634,7 @@ ReplacePriority:
 Literal:
 	"FALSE"
 	{
-		$$ = int64(0)
+		$$ = false
 	}
 |	"NULL"
 	{
@@ -2642,7 +2642,7 @@ Literal:
 	}
 |	"TRUE"
 	{
-		$$ = int64(1)
+		$$ = true
 	}
 |	floatLit
 |	decLit

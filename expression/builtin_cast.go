@@ -549,7 +549,9 @@ func (b *builtinCastIntAsJSONSig) evalJSON(row []types.Datum) (res json.JSON, is
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+	if mysql.HasIsBooleanFlag(b.args[0].GetType().Flag) {
+		res = json.CreateJSON(val != 0)
+	} else if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = json.CreateJSON(uint64(val))
 	} else {
 		res = json.CreateJSON(val)
