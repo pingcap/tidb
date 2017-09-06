@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -41,9 +41,9 @@ var store = flag.String("store", "memory", "registered store name, [memory, gole
 
 func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
-	if level, err := log.ParseLevel(logLevel); err == nil {
-		log.SetLevel(level)
-	}
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 	CustomVerboseFlag = true
 	TestingT(t)
 }

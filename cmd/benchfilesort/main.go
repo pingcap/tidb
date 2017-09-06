@@ -26,6 +26,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/filesort"
@@ -392,9 +393,10 @@ func driveRunCmd() {
 }
 
 func init() {
-	if level, err := log.ParseLevel(logLevel); err == nil {
-		log.SetLevel(level)
-	}
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 
 	cwd, err := os.Getwd()
 	if err != nil {

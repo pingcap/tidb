@@ -22,6 +22,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -50,9 +51,9 @@ var (
 func main() {
 	flag.Parse()
 	flag.PrintDefaults()
-	if level, err := log.ParseLevel(*logLevel); err == nil {
-		log.SetLevel(level)
-	}
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: *logLevel,
+	})
 	tidb.RegisterStore("tikv", tikv.Driver{})
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")

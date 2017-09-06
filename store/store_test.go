@@ -22,8 +22,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	log "github.com/Sirupsen/logrus"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
@@ -62,9 +62,9 @@ func (s *testKVSuite) SetUpSuite(c *C) {
 	cacheS, _ := tidb.NewStore(fmt.Sprintf("%s://%s", *testStore, *testStorePath))
 	c.Assert(cacheS, Equals, store)
 	logLevel := os.Getenv("log_level")
-	if level, err := log.ParseLevel(logLevel); err == nil {
-		log.SetLevel(level)
-	}
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 }
 
 func (s *testKVSuite) TearDownSuite(c *C) {

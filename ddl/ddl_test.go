@@ -22,6 +22,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -146,10 +147,7 @@ func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 
 func init() {
 	logLevel := os.Getenv("log_level")
-	if level, err := log.ParseLevel(logLevel); err == nil {
-		log.SetLevel(level)
-	}
-	log.SetFormatter(&log.TextFormatter{
-		FullTimestamp: true,
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
 	})
 }

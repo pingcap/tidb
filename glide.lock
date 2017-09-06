@@ -1,5 +1,5 @@
-hash: 16e27fc9091380943e09598c7f69ed027119bd1e7659f890566bdd9920136b10
-updated: 2017-09-06T14:47:41.94988291+08:00
+hash: 12d6d4f999def45ff7abfba9826f38d0931b5611050b74b25c2ff25daa89d093
+updated: 2017-09-06T16:45:49.726923497+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -26,9 +26,7 @@ imports:
 - name: github.com/coreos/go-systemd
   version: 48702e0da86bd25e76cfef347e2adeb434a0d0a6
   subpackages:
-  - daemon
   - journal
-  - util
 - name: github.com/coreos/pkg
   version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
   subpackages:
@@ -93,14 +91,10 @@ imports:
   - pbutil
 - name: github.com/ngaut/deadline
   version: fae8f9dfd7048de16575b9d4c255278e38c28a4f
-- name: github.com/ngaut/log
-  version: cec23d3e10b016363780d894a0eb732a12c06e02
 - name: github.com/ngaut/pools
   version: 6352e005618615ffaf1cb1c6622b8e91435751fe
 - name: github.com/ngaut/sync2
   version: 7a24ed77b2efb460c1468b7dc917821c66e80e55
-- name: github.com/ngaut/systimemon
-  version: c2ca1c75c6af5556eb6ce67994120adf12f2ccef
 - name: github.com/petar/GoLLRB
   version: 53be0d36a84c2a886ca057d34b6aa4468df9ccb4
   subpackages:
