@@ -2500,7 +2500,7 @@ type builtinFormatSig struct {
 }
 
 // evalString evals FORMAT(X,D).
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_format
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
 func (b *builtinFormatSig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
