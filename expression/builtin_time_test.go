@@ -982,6 +982,7 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 
 	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(-12345)))
 	c.Assert(err, IsNil)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
