@@ -134,7 +134,8 @@ var (
 	_ builtinFunc = &builtinSysDateWithFspSig{}
 	_ builtinFunc = &builtinSysDateWithoutFspSig{}
 	_ builtinFunc = &builtinCurrentDateSig{}
-	_ builtinFunc = &builtinCurrentTimeSig{}
+	_ builtinFunc = &builtinCurrentTime0ArgSig{}
+	_ builtinFunc = &builtinCurrentTime1ArgSig{}
 	_ builtinFunc = &builtinTimeSig{}
 	_ builtinFunc = &builtinUTCDateSig{}
 	_ builtinFunc = &builtinUTCTimestampWithArgSig{}
@@ -1198,63 +1199,73 @@ func (c *getFormatFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinGetFormatSig{newBaseBuiltinFunc(args, ctx)}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
+	bf.tp.Flen = 17
+	sig := &builtinGetFormatSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinGetFormatSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-// eval evals a builtinGetFormatSig.
+// evalString evals a builtinGetFormatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_get-format
-func (b *builtinGetFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	t := args[0].GetString()
-	l := args[1].GetString()
+func (b *builtinGetFormatSig) evalString(row []types.Datum) (string, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	t, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	l, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+
+	var res string
 	switch t {
 	case dateFormat:
 		switch l {
 		case usaLocation:
-			d.SetString("%m.%d.%Y")
+			res = "%m.%d.%Y"
 		case jisLocation:
-			d.SetString("%Y-%m-%d")
+			res = "%Y-%m-%d"
 		case isoLocation:
-			d.SetString("%Y-%m-%d")
+			res = "%Y-%m-%d"
 		case eurLocation:
-			d.SetString("%d.%m.%Y")
+			res = "%d.%m.%Y"
 		case internalLocation:
-			d.SetString("%Y%m%d")
+			res = "%Y%m%d"
 		}
 	case datetimeFormat, timestampFormat:
 		switch l {
 		case usaLocation:
-			d.SetString("%Y-%m-%d %H.%i.%s")
+			res = "%Y-%m-%d %H.%i.%s"
 		case jisLocation:
-			d.SetString("%Y-%m-%d %H:%i:%s")
+			res = "%Y-%m-%d %H:%i:%s"
 		case isoLocation:
-			d.SetString("%Y-%m-%d %H:%i:%s")
+			res = "%Y-%m-%d %H:%i:%s"
 		case eurLocation:
-			d.SetString("%Y-%m-%d %H.%i.%s")
+			res = "%Y-%m-%d %H.%i.%s"
 		case internalLocation:
-			d.SetString("%Y%m%d%H%i%s")
+			res = "%Y%m%d%H%i%s"
 		}
 	case timeFormat:
 		switch l {
 		case usaLocation:
-			d.SetString("%h:%i:%s %p")
+			res = "%h:%i:%s %p"
 		case jisLocation:
-			d.SetString("%H:%i:%s")
+			res = "%H:%i:%s"
 		case isoLocation:
-			d.SetString("%H:%i:%s")
+			res = "%H:%i:%s"
 		case eurLocation:
-			d.SetString("%H.%i.%s")
+			res = "%H.%i.%s"
 		case internalLocation:
-			d.SetString("%H%i%s")
+			res = "%H%i%s"
 		}
 	}
 
-	return
+	return res, false, nil
 }
 
 type strToDateFunctionClass struct {
@@ -1277,7 +1288,7 @@ func (c *strToDateFunctionClass) getRetTp(arg Expression, ctx context.Context) (
 	} else if !isDuration && isDate {
 		tp = mysql.TypeDate
 	}
-	if strings.Index(format, "%f") >= 0 {
+	if strings.Contains(format, "%f") {
 		fsp = types.MaxFsp
 	}
 	return
@@ -1480,35 +1491,63 @@ type currentTimeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *currentTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *currentTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinCurrentTimeSig{newBaseBuiltinFunc(args, ctx)}
+
+	if len(args) == 0 {
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration)
+		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDurationWidthNoFsp, types.MinFsp
+		sig = &builtinCurrentTime0ArgSig{baseDurationBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	}
+	// args[0] must be a constant which should not be null.
+	_, ok := args[0].(*Constant)
+	fsp := int64(types.MaxFsp)
+	if ok {
+		fsp, _, err = args[0].EvalInt(nil, ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if fsp > int64(types.MaxFsp) {
+			return nil, errors.Errorf("Too-big precision %v specified for 'curtime'. Maximum is %v.", fsp, types.MaxFsp)
+		} else if fsp < int64(types.MinFsp) {
+			return nil, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+		}
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpInt)
+	bf.tp.Flen, bf.tp.Decimal = mysql.MaxDurationWidthWithFsp, int(fsp)
+	sig = &builtinCurrentTime1ArgSig{baseDurationBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
-type builtinCurrentTimeSig struct {
-	baseBuiltinFunc
+type builtinCurrentTime0ArgSig struct {
+	baseDurationBuiltinFunc
 }
 
-// eval evals a builtinCurrentTimeSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curtime
-func (b *builtinCurrentTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinCurrentTime0ArgSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	res, err := types.ParseDuration(time.Now().Format(types.TimeFormat), types.MinFsp)
 	if err != nil {
-		return d, errors.Trace(err)
+		return types.Duration{}, true, errors.Trace(err)
 	}
-	fsp := 0
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if len(args) == 1 && !args[0].IsNull() {
-		if fsp, err = checkFsp(sc, args[0]); err != nil {
-			d.SetNull()
-			return d, errors.Trace(err)
-		}
+	return res, false, nil
+}
+
+type builtinCurrentTime1ArgSig struct {
+	baseDurationBuiltinFunc
+}
+
+func (b *builtinCurrentTime1ArgSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	fsp, _, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return types.Duration{}, true, errors.Trace(err)
 	}
-	d.SetString(time.Now().Format("15:04:05.000000"))
-	return convertToDuration(b.ctx.GetSessionVars().StmtCtx, d, fsp)
+	res, err := types.ParseDuration(time.Now().Format(types.TimeFSPFormat), int(fsp))
+	if err != nil {
+		return types.Duration{}, true, errors.Trace(err)
+	}
+	return res, false, nil
 }
 
 type timeFunctionClass struct {
@@ -3224,7 +3263,7 @@ type builtinUTCTimeWithoutArgSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeWithoutArgSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
 	// the types.ParseDuration here would never fail, so the err returned can be ignored.
-	v, _ := types.ParseDuration(time.Now().UTC().Format("00:00:00"), 0)
+	v, _ := types.ParseDuration(time.Now().UTC().Format(types.TimeFormat), 0)
 	return v, false, nil
 }
 
@@ -3246,7 +3285,7 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(row []types.Datum) (types.Durati
 		return types.Duration{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 	}
 	// the types.ParseDuration here would never fail, so the err returned can be ignored.
-	v, _ := types.ParseDuration(time.Now().UTC().Format("00:00:00.000000"), int(fsp))
+	v, _ := types.ParseDuration(time.Now().UTC().Format(types.TimeFSPFormat), int(fsp))
 	return v, false, nil
 }
 
