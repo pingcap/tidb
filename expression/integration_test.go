@@ -1581,7 +1581,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast('-34 100:00:00' as time);")
 	result.Check(testkit.Rows("-838:59:59"))
 
-	// Fix issue #3691, cast compability.
+	// Fix issue #3691, cast compatibility.
 	result = tk.MustQuery("select cast('18446744073709551616' as unsigned);")
 	result.Check(testkit.Rows("18446744073709551615"))
 	result = tk.MustQuery("select cast('18446744073709551616' as signed);")
