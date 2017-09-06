@@ -165,6 +165,8 @@ var (
 	_ builtinFunc = &builtinStrToDateDateSig{}
 	_ builtinFunc = &builtinStrToDateDatetimeSig{}
 	_ builtinFunc = &builtinStrToDateDurationSig{}
+	_ builtinFunc = &builtinExtractDatetimeSig{}
+	_ builtinFunc = &builtinExtractDurationSig{}
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.
