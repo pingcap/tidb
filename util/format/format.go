@@ -18,9 +18,9 @@
 package format
 
 import (
+	"bytes"
 	"fmt"
 	"io"
-	"strings"
 )
 
 const (
@@ -41,6 +41,13 @@ type indentFormatter struct {
 	indent      []byte
 	indentLevel int
 	state       int
+}
+
+var replace = map[rune]string{
+	'\000': "\\0",
+	'\'':   "''",
+	'\n':   "\\n",
+	'\r':   "\\r",
 }
 
 // IndentFormatter returns a new Formatter which interprets %i and %u in the
@@ -173,22 +180,16 @@ func (f *flatFormatter) Format(format string, args ...interface{}) (n int, errno
 	return (*indentFormatter)(f).format(true, format, args...)
 }
 
-// OutputFormat output escape character with backslash
+// OutputFormat output escape character with backslash.
 func OutputFormat(s string) string {
-	replace := map[string]string{
-		"'":  "''",
-		"\a": "\\a",
-		"\b": "\\b",
-		"\f": "\\f",
-		"\n": "\\n",
-		"\r": "\\r",
-		"\t": "\\t",
-		"\v": "\\v",
+	var buf bytes.Buffer
+	for _, old := range s {
+		if new, ok := replace[old]; ok {
+			buf.WriteString(new)
+			continue
+		}
+		buf.WriteRune(old)
 	}
 
-	for old, new := range replace {
-		s = strings.Replace(s, old, new, -1)
-	}
-
-	return s
+	return buf.String()
 }
