@@ -137,6 +137,23 @@ func (s *testSuite) TestAdmin(c *C) {
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
+
+	// show ddl jobs test
+	r, err = tk.Exec("admin show ddl jobs")
+	c.Assert(err, IsNil)
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, HasLen, 2)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	historyJobs, err := inspectkv.GetHistoryDDLJobs(txn)
+	c.Assert(len(historyJobs), Greater, 1)
+	c.Assert(len(row.Data[0].GetString()), Greater, 0)
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[1].GetString(), Equals, historyJobs[0].State.String())
+	c.Assert(err, IsNil)
 
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
@@ -647,6 +664,14 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustExec("insert into t values(1, 1), (2, 2)")
 	tk.MustQuery("select * from t where 1 order by b").Check(testkit.Rows("1 1", "2 2"))
 	tk.MustQuery("select * from t where a between 1 and 2 order by a desc").Check(testkit.Rows("2 2", "1 1"))
+
+	// Test double read and topN is pushed down to first read plan.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int, index idx(b))")
+	tk.MustExec("insert into t values(1, 3, 1)")
+	tk.MustExec("insert into t values(2, 2, 2)")
+	tk.MustExec("insert into t values(3, 1, 3)")
+	tk.MustQuery("select * from t use index(idx) order by a desc limit 1").Check(testkit.Rows("3 1 3"))
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {

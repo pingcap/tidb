@@ -317,7 +317,6 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{uint64(1), ast.IntDiv, 0, nil},
 		{uint64(1), ast.IntDiv, uint64(0), nil},
 		{1.0, ast.IntDiv, 2.0, 0},
-		{1.0, ast.IntDiv, 0, nil},
 
 		// mod
 		{10, ast.Mod, 2, 0},
