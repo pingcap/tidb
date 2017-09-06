@@ -1223,9 +1223,6 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		c.Assert(f, NotNil)
 		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
-		if err != nil {
-			fmt.Printf("%s\n", err.Error())
-		}
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
