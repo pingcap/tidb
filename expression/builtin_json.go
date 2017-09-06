@@ -17,21 +17,11 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 	"github.com/pingcap/tipb/go-tipb"
-)
-
-const (
-	// decimal4CastJSONDirectly is used for really cast to JSON, which means for
-	// string we should parse it into JSON but not use that as primitive.
-	// For example, CAST('{}' as JSON) will return JSON::Str('{}').
-	decimal4CastJSONDirectly int = 0
-	// decimal4CastJSONPostWrapped is used for post-wrapped cast to JSON, which
-	// means for string we should use that as primitive but not parse it.
-	// For example, CAST('{}' as JSON) will return JSON::Object(empty).
-	decimal4CastJSONPostWrapped int = -1
 )
 
 // jsonFunctionNameToPB is for pushdown json functions to storage engine.
@@ -98,7 +88,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
 	bf.tp.Flen = 51 // Flen of JSON_TYPE is length of UNSIGNED INTEGER.
-	args[0].GetType().Decimal = decimal4CastJSONDirectly
+	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONTypeSig{baseStringBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
 	return sig.setSelf(sig), nil
@@ -131,7 +121,7 @@ func (c *jsonExtractFunctionClass) getFunction(ctx context.Context, args []Expre
 		argTps = append(argTps, tpString)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	args[0].GetType().Decimal = decimal4CastJSONDirectly
+	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONExtractSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonExtractSig)
 	return sig.setSelf(sig), nil
@@ -212,7 +202,7 @@ func (c *jsonSetFunctionClass) getFunction(ctx context.Context, args []Expressio
 		argTps = append(argTps, tpString, tpJSON)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	args[0].GetType().Decimal = decimal4CastJSONDirectly
+	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONSetSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
 	return sig.setSelf(sig), nil
@@ -245,7 +235,7 @@ func (c *jsonInsertFunctionClass) getFunction(ctx context.Context, args []Expres
 		argTps = append(argTps, tpString, tpJSON)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	args[0].GetType().Decimal = decimal4CastJSONDirectly
+	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONInsertSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
 	return sig.setSelf(sig), nil
@@ -278,7 +268,7 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx context.Context, args []Expre
 		argTps = append(argTps, tpString, tpJSON)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	args[0].GetType().Decimal = decimal4CastJSONDirectly
+	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONReplaceSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
 	return sig.setSelf(sig), nil
@@ -308,7 +298,7 @@ func (c *jsonRemoveFunctionClass) getFunction(ctx context.Context, args []Expres
 		argTps = append(argTps, tpString)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	args[0].GetType().Decimal = decimal4CastJSONDirectly
+	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONRemoveSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonRemoveSig)
 	return sig.setSelf(sig), nil
@@ -359,7 +349,7 @@ func (c *jsonMergeFunctionClass) getFunction(ctx context.Context, args []Express
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	for i := range args {
-		args[i].GetType().Decimal = decimal4CastJSONDirectly
+		args[i].GetType().Flag |= mysql.ParseToJSONFlag
 	}
 	sig := &builtinJSONMergeSig{baseJSONBuiltinFunc{bf}}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMergeSig)

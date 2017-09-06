@@ -4247,7 +4247,7 @@ CastType:
 |	"JSON"
 	{
 		x := types.NewFieldType(mysql.TypeJSON)
-		x.Flag |= mysql.BinaryFlag
+		x.Flag |= mysql.BinaryFlag | (mysql.ParseToJSONFlag)
 		x.Charset = charset.CharsetUTF8
 		x.Collate = charset.CollationUTF8
 		$$ = x
