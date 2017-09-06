@@ -848,6 +848,17 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select export_set(7, "1", "0", ",", 1);`)
 	result.Check(testkit.Rows("1"))
+
+	// for format
+	result = tk.MustQuery(`select format(12332.1, 4), format(12332.2, 0), format(12332.2, 2,'en_US');`)
+	result.Check(testkit.Rows("12,332.1000 12,332 12,332.20"))
+	result = tk.MustQuery(`select format(NULL, 4), format(12332.2, NULL);`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+	rs, err := tk.Exec(`select format(12332.2, 2,'es_EC');`)
+	c.Assert(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "not support for the specific locale")
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
