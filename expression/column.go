@@ -113,7 +113,7 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 
 // Column represents a column.
 type Column struct {
-	FromID  string
+	FromID  int
 	ColName model.CIStr
 	DBName  model.CIStr
 	TblName model.CIStr
@@ -237,7 +237,7 @@ func (col *Column) HashCode() []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
-	col.hashcode, _ = codec.EncodeValue(col.hashcode, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
+	col.hashcode, _ = codec.EncodeValue(col.hashcode, types.NewIntDatum(int64(col.FromID)), types.NewIntDatum(int64(col.Position)))
 	return col.hashcode
 }
 

@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -28,9 +26,9 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 
 	sc := s.ctx.GetSessionVars().StmtCtx
 
-	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: "DataSource_0", Position: 0}
+	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 0}
 	c.Assert(col.Equal(col, nil), IsTrue)
-	c.Assert(col.Equal(&Column{FromID: "Projection_0"}, nil), IsFalse)
+	c.Assert(col.Equal(&Column{FromID: 1}, nil), IsFalse)
 	c.Assert(col.IsCorrelated(), IsFalse)
 	c.Assert(col.Equal(col.Decorrelate(nil), nil), IsTrue)
 
@@ -40,8 +38,8 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 
 	intDatum := types.NewIntDatum(1)
 	corCol := &CorrelatedColumn{Column: *col, Data: &intDatum}
-	invalidCorCol := &CorrelatedColumn{Column: Column{FromID: "Projection_0"}}
-	schema := &Schema{Columns: []*Column{{FromID: "DataSource_0", Position: 0}}}
+	invalidCorCol := &CorrelatedColumn{Column: Column{FromID: 1}}
+	schema := &Schema{Columns: []*Column{{FromID: 0, Position: 0}}}
 	c.Assert(corCol.Equal(corCol, nil), IsTrue)
 	c.Assert(corCol.Equal(invalidCorCol, nil), IsFalse)
 	c.Assert(corCol.IsCorrelated(), IsTrue)
@@ -100,7 +98,7 @@ func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 
 	cols := make([]*Column, 0, 5)
 	for i := 0; i < 5; i++ {
-		cols = append(cols, &Column{FromID: fmt.Sprintf("DataSource_%d", i)})
+		cols = append(cols, &Column{FromID: i})
 	}
 
 	exprs := Column2Exprs(cols)
