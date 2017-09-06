@@ -37,6 +37,8 @@ type Node interface {
 	Text() string
 	// SetText sets original text to the Node.
 	SetText(text string)
+	// SecureText is different from Text that it hide password information.
+	SecureText() string
 }
 
 // Flags indicates whether an expression contains certain types of expression.

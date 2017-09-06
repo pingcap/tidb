@@ -31,6 +31,11 @@ func (n *node) Text() string {
 	return n.text
 }
 
+// SecureText implements Node interface.
+func (n *node) SecureText() string {
+	return n.text
+}
+
 // stmtNode implements StmtNode interface.
 // Statement implementations should embed it in.
 type stmtNode struct {

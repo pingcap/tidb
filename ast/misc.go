@@ -14,7 +14,9 @@
 package ast
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
@@ -406,6 +408,11 @@ type SetPwdStmt struct {
 	Password string
 }
 
+// SecureString overloads Node interface method.
+func (n *SetPwdStmt) SecureString() string {
+	return fmt.Sprintf("set password for user %s", n.User)
+}
+
 // Accept implements Node Accept interface.
 func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -455,6 +462,17 @@ func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// SecureString overloads Node interface method.
+func (n *CreateUserStmt) SecureString() string {
+	var buf bytes.Buffer
+	buf.WriteString("create user")
+	for _, user := range n.Specs {
+		buf.WriteString(" ")
+		buf.WriteString(user.SecurityString())
+	}
+	return buf.String()
+}
+
 // AlterUserStmt modifies user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/alter-user.html
 type AlterUserStmt struct {
@@ -463,6 +481,17 @@ type AlterUserStmt struct {
 	IfExists    bool
 	CurrentAuth *AuthOption
 	Specs       []*UserSpec
+}
+
+// SecureString overloads Node interface method.
+func (n *AlterUserStmt) SecureString() string {
+	var buf bytes.Buffer
+	buf.WriteString("alter user")
+	for _, user := range n.Specs {
+		buf.WriteString(" ")
+		buf.WriteString(user.SecurityString())
+	}
+	return buf.String()
 }
 
 // Accept implements Node Accept interface.
@@ -647,6 +676,17 @@ type GrantStmt struct {
 	Level      *GrantLevel
 	Users      []*UserSpec
 	WithGrant  bool
+}
+
+// SecureString overloads Node interface method.
+func (n *GrantStmt) SecureString() string {
+	text := n.text
+	// Filter "identified by xxx" because it would expose password information.
+	idx := strings.Index(strings.ToLower(text), "identified")
+	if idx > 0 {
+		text = text[:idx]
+	}
+	return text
 }
 
 // Accept implements Node Accept interface.
