@@ -15,6 +15,7 @@ package expression
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 )
@@ -237,7 +237,10 @@ func (col *Column) HashCode() []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
-	col.hashcode, _ = codec.EncodeValue(col.hashcode, types.NewIntDatum(int64(col.FromID)), types.NewIntDatum(int64(col.Position)))
+	col.hashcode = make([]byte, 2*binary.MaxVarintLen64)
+	size1 := binary.PutVarint(col.hashcode, int64(col.FromID))
+	size2 := binary.PutVarint(col.hashcode[size1:], int64(col.Position))
+	col.hashcode = col.hashcode[:size1+size2]
 	return col.hashcode
 }
 
