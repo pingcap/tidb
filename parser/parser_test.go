@@ -173,6 +173,19 @@ func (s *testParserSuite) TestSimple(c *C) {
 	src = "use quote;"
 	_, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
+
+	// issue #4354
+	src = "select b'';"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	src = "select B'';"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	src = "select 0b'';"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, NotNil)
 }
 
 type testCase struct {
@@ -324,6 +337,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for admin
 		{"admin show ddl;", true},
+		{"admin show ddl jobs;", true},
 		{"admin check table t1, t2;", true},
 
 		// for on duplicate key update
@@ -1369,7 +1383,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (a timestamp default now() on update now)", false},
 		{"create table t (a timestamp default now() on update now())", true},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
-		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(21) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
+		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},

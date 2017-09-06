@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -29,6 +30,7 @@ var (
 	_ functionClass = &arithmeticMinusFunctionClass{}
 	_ functionClass = &arithmeticDivideFunctionClass{}
 	_ functionClass = &arithmeticMultiplyFunctionClass{}
+	_ functionClass = &arithmeticIntDivideFunctionClass{}
 	_ functionClass = &arithmeticFunctionClass{}
 )
 
@@ -45,6 +47,8 @@ var (
 	_ builtinFunc = &builtinArithmeticMultiplyDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntSig{}
+	_ builtinFunc = &builtinArithmeticIntDivideIntSig{}
+	_ builtinFunc = &builtinArithmeticIntDivideDecimalSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 )
 
@@ -127,38 +131,32 @@ type arithmeticPlusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticPlusFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *arithmeticPlusFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	tpA, tpB := args[0].GetType(), args[1].GetType()
 	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
 	if tcA == types.ClassReal || tcB == types.ClassReal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
 		sig := &builtinArithmeticPlusRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_PlusReal)
 		return sig.setSelf(sig), nil
 	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
 		sig := &builtinArithmeticPlusDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_PlusDecimal)
 		return sig.setSelf(sig), nil
 	} else {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		sig := &builtinArithmeticPlusIntSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
 		return sig.setSelf(sig), nil
 	}
 }
@@ -257,38 +255,32 @@ type arithmeticMinusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticMinusFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *arithmeticMinusFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	tpA, tpB := args[0].GetType(), args[1].GetType()
 	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
 	if tcA == types.ClassReal || tcB == types.ClassReal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
 		sig := &builtinArithmeticMinusRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MinusReal)
 		return sig.setSelf(sig), nil
 	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
 		sig := &builtinArithmeticMinusDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig.setSelf(sig), nil
 	} else {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		sig := &builtinArithmeticMinusIntSig{baseIntBuiltinFunc: baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
 		return sig.setSelf(sig), nil
 	}
 }
@@ -384,41 +376,36 @@ type arithmeticMultiplyFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticMultiplyFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *arithmeticMultiplyFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	tpA, tpB := args[0].GetType(), args[1].GetType()
 	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
 	if tcA == types.ClassReal || tcB == types.ClassReal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
 		sig := &builtinArithmeticMultiplyRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MultiplyReal)
 		return sig.setSelf(sig), nil
 	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
 		sig := &builtinArithmeticMultiplyDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MultiplyDecimal)
 		return sig.setSelf(sig), nil
 	} else {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 			setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 			sig := &builtinArithmeticMultiplyIntUnsignedSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
 			return sig.setSelf(sig), nil
 		}
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		sig := &builtinArithmeticMultiplyIntSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
 		return sig.setSelf(sig), nil
 	}
 }
@@ -503,25 +490,19 @@ type arithmeticDivideFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticDivideFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *arithmeticDivideFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	tpA, tpB := args[0].GetType(), args[1].GetType()
 	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
 	if tcA == types.ClassReal || tcB == types.ClassReal {
-		bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		c.setType4DivReal(bf.tp)
 		sig := &builtinArithmeticDivideRealSig{baseRealBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 	c.setType4DivDecimal(bf.tp, tpA, tpB)
 	sig := &builtinArithmeticDivideDecimalSig{baseDecimalBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -570,12 +551,107 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row []types.Datum) (*typ
 	return c, false, err
 }
 
+type arithmeticIntDivideFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *arithmeticIntDivideFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tpA, tpB := args[0].GetType(), args[1].GetType()
+	tcA, tcB := numericContextResultType(tpA), numericContextResultType(tpB)
+	if tcA == types.ClassInt && tcB == types.ClassInt {
+		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
+		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		}
+		sig := &builtinArithmeticIntDivideIntSig{baseIntBuiltinFunc{bf}}
+		return sig.setSelf(sig), nil
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
+	if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
+		bf.tp.Flag |= mysql.UnsignedFlag
+	}
+	sig := &builtinArithmeticIntDivideDecimalSig{baseIntBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
+}
+
+type builtinArithmeticIntDivideIntSig struct{ baseIntBuiltinFunc }
+type builtinArithmeticIntDivideDecimalSig struct{ baseIntBuiltinFunc }
+
+func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	b, isNull, err := s.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	if b == 0 {
+		return 0, true, nil
+	}
+
+	a, isNull, err := s.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	var (
+		ret int64
+		val uint64
+	)
+	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
+	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+
+	switch {
+	case isLHSUnsigned && isRHSUnsigned:
+		ret = int64(uint64(a) / uint64(b))
+	case isLHSUnsigned && !isRHSUnsigned:
+		val, err = types.DivUintWithInt(uint64(a), b)
+		ret = int64(val)
+	case !isLHSUnsigned && isRHSUnsigned:
+		val, err = types.DivIntWithUint(a, uint64(b))
+		ret = int64(val)
+	case !isLHSUnsigned && !isRHSUnsigned:
+		ret, err = types.DivInt64(a, b)
+	}
+
+	return ret, false, errors.Trace(err)
+}
+
+func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	a, isNull, err := s.args[0].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	b, isNull, err := s.args[1].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	c := &types.MyDecimal{}
+	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
+	if err != nil {
+		return 0, err == types.ErrDivByZero, errors.Trace(err)
+	}
+
+	ret, err := c.ToInt()
+	// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
+	if err == types.ErrOverflow {
+		return 0, false, errors.Trace(err)
+	}
+	return ret, false, nil
+}
+
 type arithmeticFunctionClass struct {
 	baseFunctionClass
 	op opcode.Op
 }
 
-func (c *arithmeticFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *arithmeticFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -612,14 +688,8 @@ func (s *builtinArithmeticSig) eval(row []types.Datum) (d types.Datum, err error
 	}
 
 	switch s.op {
-	case opcode.Mul:
-		return types.ComputeMul(a, b)
-	case opcode.Div:
-		return types.ComputeDiv(sc, a, b)
 	case opcode.Mod:
 		return types.ComputeMod(sc, a, b)
-	case opcode.IntDiv:
-		return types.ComputeIntDiv(sc, a, b)
 	default:
 		return d, errInvalidOperation.Gen("invalid op %v in arithmetic operation", s.op)
 	}

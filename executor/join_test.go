@@ -350,6 +350,19 @@ func (s *testSuite) TestUsing(c *C) {
 	tk.MustQuery("select * from t1 join t2 using (b, a)").Check(testkit.Rows("2 1 4 5"))
 
 	tk.MustExec("select * from (t1 join t2 using (a)) join (t3 join t4 using (a)) on (t2.a = t4.a and t1.a = t3.a)")
+
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table tt(b int, a int)")
+	tk.MustExec("insert into t (a, b) values(1, 1)")
+	tk.MustExec("insert into tt (a, b) values(1, 2)")
+	tk.MustQuery("select * from t join tt using(a)").Check(testkit.Rows("1 1 2"))
+
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a float, b int)")
+	tk.MustExec("create table tt(b bigint, a int)")
+	// Check whether this sql can execute successfully.
+	tk.MustExec("select * from t join tt using(a)")
 }
 
 func (s *testSuite) TestNaturalJoin(c *C) {
