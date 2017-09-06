@@ -150,7 +150,7 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 		return false
 	}
 	t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-	if time.Now().Sub(t) < limit {
+	if time.Since(t) < limit {
 		return false
 	}
 	for _, col := range tbl.Columns {
