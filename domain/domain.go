@@ -549,7 +549,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 		return nil
 	}
 	go do.updateStatsWorker(ctx, lease)
-	go do.autoAnalyzeWorker(lease)
 	return nil
 }
 

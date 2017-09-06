@@ -1,5 +1,5 @@
-hash: 27c5506d07670b678390a2a4957ae5a4e946234dbfe9216b429dbec86f403d7c
-updated: 2017-08-21T15:40:30.311704667+08:00
+hash: 8a8dcce87b743988e8f76a05ddf91430ea0f5f4236b3c6dc09b72854d2e726bb
+updated: 2017-08-31T14:56:45.412923915+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -17,6 +17,7 @@ imports:
   - auth/authpb
   - clientv3
   - clientv3/concurrency
+  - contrib/recipes
   - etcdserver/api/v3rpc/rpctypes
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
@@ -129,7 +130,7 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: b45b9d4dd493e6f5f674f9303a12139fb28be13e
+  version: ffbc1bb02a2425782286825eec276be817b7f93a
   subpackages:
   - go-binlog
   - go-mysqlx

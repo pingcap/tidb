@@ -300,6 +300,17 @@ func (s *testSuite) TestJoinCast(c *C) {
 	tk.MustExec("insert into t1 values(0), (9)")
 	result = tk.MustQuery("select /*+ TIDB_INLJ(t) */ * from t left join t1 on t1.c1 = t.c1")
 	result.Sort().Check(testkit.Rows("0.0 0.00", "2.0 <nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 char(10))")
+	tk.MustExec("create table t1(c1 char(10))")
+	tk.MustExec("create table t2(c1 char(10))")
+	tk.MustExec("insert into t values('abd')")
+	tk.MustExec("insert into t1 values('abc')")
+	tk.MustExec("insert into t2 values('abc')")
+	result = tk.MustQuery("select * from (select * from t union all select * from t1) t1 join t2 on t1.c1 = t2.c1")
+	result.Sort().Check(testkit.Rows("abc abc"))
 }
 
 func (s *testSuite) TestUsing(c *C) {
@@ -339,6 +350,19 @@ func (s *testSuite) TestUsing(c *C) {
 	tk.MustQuery("select * from t1 join t2 using (b, a)").Check(testkit.Rows("2 1 4 5"))
 
 	tk.MustExec("select * from (t1 join t2 using (a)) join (t3 join t4 using (a)) on (t2.a = t4.a and t1.a = t3.a)")
+
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table tt(b int, a int)")
+	tk.MustExec("insert into t (a, b) values(1, 1)")
+	tk.MustExec("insert into tt (a, b) values(1, 2)")
+	tk.MustQuery("select * from t join tt using(a)").Check(testkit.Rows("1 1 2"))
+
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a float, b int)")
+	tk.MustExec("create table tt(b bigint, a int)")
+	// Check whether this sql can execute successfully.
+	tk.MustExec("select * from t join tt using(a)")
 }
 
 func (s *testSuite) TestNaturalJoin(c *C) {

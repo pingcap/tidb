@@ -221,6 +221,7 @@ import (
 	using			"USING"
 	utcDate 		"UTC_DATE"
 	utcTimestamp		"UTC_TIMESTAMP"
+	utcTime			"UTC_TIME"
 	values			"VALUES"
 	varcharType		"VARCHAR"
 	varbinaryType		"VARBINARY"
@@ -255,7 +256,7 @@ import (
 	concatWs			"CONCAT_WS"
 	connectionID			"CONNECTION_ID"
 	convertTz			"CONVERT_TZ"
-	curTime				"CUR_TIME"
+	curTime                         "CURTIME"
 	cos				"COS"
 	cot				"COT"
 	count				"COUNT"
@@ -292,6 +293,7 @@ import (
 	insertFunc			"INSERT_FUNC"
 	instr				"INSTR"
 	isNull				"ISNULL"
+	jobs				"JOBS"
 	jsonExtract			"JSON_EXTRACT"
 	jsonUnquote			"JSON_UNQUOTE"
 	jsonTypeFunc			"JSON_TYPE"
@@ -376,7 +378,6 @@ import (
 	getLock				"GET_LOCK"
 	releaseLock			"RELEASE_LOCK"
 	rpad				"RPAD"
-	utcTime				"UTC_TIME"
 	bitCount			"BIT_COUNT"
 	bitLength			"BIT_LENGTH"
 	charFunc			"CHAR_FUNC"
@@ -635,6 +636,8 @@ import (
 	ExpressionList			"expression list"
 	ExpressionListOpt		"expression list opt"
 	ExpressionListList		"expression list list"
+	FuncDatetimePrecListOpt	        "Function datetime precision list opt"
+	FuncDatetimePrecList	        "Function datetime precision list"
 	ExpressionListListItem		"expression list list item"
 	Factor				"expression factor"
 	PredicateExpr			"Predicate expression factor"
@@ -1097,11 +1100,11 @@ LockClause:
 	{
 		$$ = ast.LockTypeDefault
 	}
-|       "LOCK" eq "SHARED"
+|	"LOCK" eq "SHARED"
 	{
 		$$ = ast.LockTypeShared
 	}
-|   	"LOCK" eq "EXCLUSIVE"
+|	"LOCK" eq "EXCLUSIVE"
 	{
 		$$ = ast.LockTypeExclusive
 	}
@@ -1111,7 +1114,7 @@ KeyOrIndex: "KEY" | "INDEX"
 
 KeyOrIndexOpt:
 	{}
-|   	KeyOrIndex
+|	KeyOrIndex
 
 ColumnKeywordOpt:
 	{}
@@ -1379,15 +1382,15 @@ GeneratedAlways: | "GENERATED" "ALWAYS"
 
 VirtualOrStored:
 	{
-	    $$ = false
+		$$ = false
 	}
 |	"VIRTUAL"
 	{
-	    $$ = false
+		$$ = false
 	}
 |	"STORED"
 	{
-	    $$ = true
+		$$ = true
 	}
 
 ColumnOptionList:
@@ -1592,7 +1595,6 @@ SignedLiteral:
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr($2)}
 	}
 
-// TODO: support decimal literal
 NumLiteral:
 	intLit
 |	floatLit
@@ -1904,13 +1906,13 @@ DropViewStmt:
 	}
 
 DropUserStmt:
-    "DROP" "USER" UsernameList
+	"DROP" "USER" UsernameList
 	{
-        $$ = &ast.DropUserStmt{IfExists: false, UserList: $3.([]*auth.UserIdentity)}
+		$$ = &ast.DropUserStmt{IfExists: false, UserList: $3.([]*auth.UserIdentity)}
 	}
-|   "DROP" "USER" "IF" "EXISTS" UsernameList
+|	"DROP" "USER" "IF" "EXISTS" UsernameList
 	{
-        $$ = &ast.DropUserStmt{IfExists: true, UserList: $5.([]*auth.UserIdentity)}
+		$$ = &ast.DropUserStmt{IfExists: true, UserList: $5.([]*auth.UserIdentity)}
 	}
 
 DropStatsStmt:
@@ -2035,6 +2037,22 @@ ExpressionListOpt:
 		$$ = []ast.ExprNode{}
 	}
 |	ExpressionList
+
+FuncDatetimePrecListOpt:
+	{
+		$$ = []ast.ExprNode{}
+	}
+|	FuncDatetimePrecList
+	{
+		$$ = $1
+	}
+
+FuncDatetimePrecList:
+	intLit
+	{
+		expr := ast.NewValueExpr($1)
+		$$ = []ast.ExprNode{expr}
+	}
 
 Factor:
 	Factor IsOrNotOp "NULL" %prec is
@@ -2416,7 +2434,7 @@ Identifier | ReservedKeyword
 
 UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AT" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
-| "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
+| "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DEALLOCATE" | "DO"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
 | "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIDB" | "TIME" | "TIMESTAMP"
@@ -2431,7 +2449,7 @@ ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
 | "BINARY" | "BLOB" | "BOTH" | "BY" | "CASCADE" | "CASE" | "CHANGE" | "CHARACTER" | "CHECK" | "COLLATE"
 | "COLUMN" | "CONSTRAINT" | "CONVERT" | "CREATE" | "CROSS" | "CURRENT_DATE" | "CURRENT_TIME"
-| "CURRENT_TIMESTAMP" | "CURRENT_USER" | "DATABASE" | "DATABASES" | "DAY_HOUR" | "DAY_MICROSECOND"
+| "CURRENT_TIMESTAMP"| "CURRENT_USER" | "DATABASE" | "DATABASES" | "DAY_HOUR" | "DAY_MICROSECOND"
 | "DAY_MINUTE" | "DAY_SECOND" | "DECIMAL" | "DEFAULT" | "DELETE" | "DESC" | "DESCRIBE"
 | "DISTINCT" | "DISTINCTROW" | "DIV" | "DOUBLE" | "DROP" | "DUAL" | "ELSE" | "ENCLOSED" | "ESCAPED"
 | "EXISTS" | "EXPLAIN" | "FALSE" | "FLOAT" | "FOR" | "FORCE" | "FOREIGN" | "FROM"
@@ -2445,7 +2463,7 @@ ReservedKeyword:
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
 | "STARTING" | "TABLE" | "STORED" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRIGGER" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
-| "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "VALUES" | "VARBINARY" | "VARCHAR" | "VIRTUAL"
+| "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "UTC_TIME" | "VALUES" | "VARBINARY" | "VARCHAR" | "VIRTUAL"
 | "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL" | "NATURAL"
  /*
 | "DELAYED" | "HIGH_PRIORITY" | "LOW_PRIORITY"| "WITH"
@@ -2453,17 +2471,18 @@ ReservedKeyword:
 
 
 NotKeywordToken:
-	"ABS" | "ACOS" | "ADDTIME" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BENCHMARK" | "BIN" | "BIT_COUNT" | "BIT_LENGTH" | "COALESCE" | "COERCIBILITY" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CONVERT_TZ" | "CUR_TIME"| "COS" | "COT" | "COUNT" | "DAY"
+	"ABS" | "ACOS" | "ADDTIME" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BENCHMARK" | "BIN" | "BIT_COUNT"
+	| "BIT_LENGTH" | "COALESCE" | "COERCIBILITY" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CONVERT_TZ" | "CURTIME" | "COS" | "COT" | "COUNT" | "DAY"
 |	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "DEGREES" | "ELT" | "EXP" | "EXPORT_SET" | "FROM_DAYS" | "FROM_BASE64" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GET_FORMAT" | "GROUP_CONCAT" | "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
 |	"MAKE_SET" | "MAX" | "MAKEDATE" | "MAKETIME" | "MICROSECOND" | "MID" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" |  "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PERIOD_ADD" | "PERIOD_DIFF" | "PI" | "POW" | "POWER" | "RAND" | "RADIANS" | "ROW_COUNT"
 	"QUOTE" | "SEC_TO_TIME" | "SECOND" | "SIGN" | "SIN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBTIME" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
-	"SESSION_USER" | "SUBSTRING_INDEX" | "SUM" | "SYSTEM_USER" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_BASE64" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
+	"SESSION_USER" | "SUBSTRING_INDEX" | "SUM" | "SYSTEM_USER" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_BASE64" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE" | "LAST_DAY"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
 |	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
-|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY" | "TIDB_VERSION"
+|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY" | "TIDB_VERSION" | "JOBS"
 
 /************************************************************************************
  *
@@ -2476,7 +2495,7 @@ InsertIntoStmt:
 	{
 		x := $6.(*ast.InsertStmt)
 		x.Priority = $2.(mysql.PriorityEnum)
-		x.Ignore = $3.(bool)
+		x.IgnoreErr = $3.(bool)
 		// Wraps many layers here so that it can be processed the same way as select statement.
 		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
@@ -2629,10 +2648,7 @@ Literal:
 |	decLit
 |	intLit
 	{
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($1)
-		expr.SetType(tp)
 		$$ = expr
 	}
 |	StringLiteral %prec lowerThanStringLitToken
@@ -2642,16 +2658,18 @@ Literal:
 |	"UNDERSCORE_CHARSET" stringLit
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset = $1
-		co, err := charset.GetDefaultCollation(tp.Charset)
+		co, err := charset.GetDefaultCollation($1)
 		if err != nil {
-			yylex.Errorf("Get collation error for charset: %s", tp.Charset)
+			yylex.Errorf("Get collation error for charset: %s", $1)
 			return 1
 		}
-		tp.Collate = co
 		expr := ast.NewValueExpr($2)
-		expr.SetType(tp)
+		tp := expr.GetType()
+		tp.Charset = $1
+		tp.Collate = co
+		if tp.Collate == charset.CollationBin {
+			tp.Flag |= mysql.BinaryFlag
+		}
 		$$ = expr
 	}
 |	hexLit
@@ -2660,18 +2678,13 @@ Literal:
 StringLiteral:
 	stringLit
 	{
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($1)
-		expr.SetType(tp)
 		$$ = expr
 	}
 |	StringLiteral stringLit
 	{
 		valExpr := $1.(*ast.ValueExpr)
 		strLit := valExpr.GetString()
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr(strLit+$2)
 		// Fix #4239, use first string literal as projection name.
 		if valExpr.GetProjectionOffset() >= 0 {
@@ -2679,7 +2692,6 @@ StringLiteral:
 		} else {
 			expr.SetProjectionOffset(len(strLit))
 		}
-		expr.SetType(tp)
 		$$ = expr
 	}
 
@@ -2835,23 +2847,13 @@ Function:
 |	Identifier jss stringLit
 	{
 	    col := &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: model.NewCIStr($1)}}
-
-	    tp := types.NewFieldType(mysql.TypeString)
-	    tp.Charset, tp.Collate = parser.charset, parser.collation
 	    expr := ast.NewValueExpr($3)
-	    expr.SetType(tp)
-
 	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{col, expr}}
 	}
 |	Identifier juss stringLit
 	{
 	    col := &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: model.NewCIStr($1)}}
-
-	    tp := types.NewFieldType(mysql.TypeString)
-	    tp.Charset, tp.Collate = parser.charset, parser.collation
 	    expr := ast.NewValueExpr($3)
-	    expr.SetType(tp)
-
 	    extract := &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{col, expr}}
 	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONUnquote), Args: []ast.ExprNode{extract}}
 	}
@@ -2891,6 +2893,11 @@ FunctionCallConflict:
 	{
 		$$ = &ast.BinaryOperationExpr{Op: opcode.Mod, L: $3.(ast.ExprNode), R: $5.(ast.ExprNode)}
 	}
+|	"DATE"  stringLit
+	{
+		expr := ast.NewValueExpr($2)
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Date), Args: []ast.ExprNode{expr}}
+	}
 
 DistinctKwd:
 	"DISTINCT"
@@ -2929,9 +2936,17 @@ FunctionCallKeyword:
 	"CAST" '(' Expression "AS" CastType ')'
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
+		tp := $5.(*types.FieldType)
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
+		if tp.Flen == types.UnspecifiedLength {
+			tp.Flen = defaultFlen
+		}
+		if tp.Decimal == types.UnspecifiedLength {
+			tp.Decimal = defaultDecimal
+		}
 		$$ = &ast.FuncCastExpr{
 			Expr: $3.(ast.ExprNode),
-			Tp: $5.(*types.FieldType),
+			Tp: tp,
 			FunctionType: ast.CastFunction,
 		}
 	}
@@ -2966,9 +2981,17 @@ FunctionCallKeyword:
 |	"CONVERT" '(' Expression ',' CastType ')'
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
+		tp := $5.(*types.FieldType)
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
+		if tp.Flen == types.UnspecifiedLength {
+			tp.Flen = defaultFlen
+		}
+		if tp.Decimal == types.UnspecifiedLength {
+			tp.Decimal = defaultDecimal
+		}
 		$$ = &ast.FuncCastExpr{
 			Expr: $3.(ast.ExprNode),
-			Tp: $5.(*types.FieldType),
+			Tp: tp,
 			FunctionType: ast.CastConvertFunction,
 		}
 	}
@@ -3087,7 +3110,7 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
 	}
-|	"CUR_TIME" '(' ExpressionListOpt ')'
+|	"CURTIME" '(' FuncDatetimePrecListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
@@ -3126,7 +3149,7 @@ FunctionCallNonKeyword:
 |	"DATEDIFF" '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
-   	}
+	}
 |	"DAY" '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
@@ -3607,10 +3630,6 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-|	"UTC_TIME" '(' ExpressionListOpt ')'
-	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
-	}
 |	"UCASE" '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
@@ -3624,6 +3643,14 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"UTC_TIMESTAMP" FuncDatetimePrec
+	{
+		args := []ast.ExprNode{}
+		if $2 != nil {
+			args = append(args, $2.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
+	}
+|	"UTC_TIME" FuncDatetimePrec
 	{
 		args := []ast.ExprNode{}
 		if $2 != nil {
@@ -3671,7 +3698,7 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-|   "CHAR" '(' ExpressionList ')'
+|	"CHAR" '(' ExpressionList ')'
 	{
 		nilVal := ast.NewValueExpr(nil)
 		args := $3.([]ast.ExprNode)
@@ -3968,9 +3995,10 @@ FuncDatetimePrec:
 	{
 		$$ = nil
 	}
-|	'(' Expression ')'
+|	'(' intLit ')'
 	{
-		$$ = $2
+		expr := ast.NewValueExpr($2)
+		$$ = expr
 	}
 
 TimeUnit:
@@ -4134,8 +4162,8 @@ ElseOpt:
 CastType:
 	"BINARY" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int)
+		x := types.NewFieldType(mysql.TypeVarString)
+		x.Flen = $2.(int)  // TODO: Flen should be the flen of expression
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
 		x.Flag |= mysql.BinaryFlag
@@ -4143,8 +4171,8 @@ CastType:
 	}
 |	"CHAR" OptFieldLen OptBinary OptCharset
 	{
-		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int)
+		x := types.NewFieldType(mysql.TypeVarString)
+		x.Flen = $2.(int)  // TODO: Flen should be the flen of expression
 		x.Charset = $4.(string)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
@@ -4158,8 +4186,6 @@ CastType:
 |	"DATE"
 	{
 		x := types.NewFieldType(mysql.TypeDate)
-		x.Flen = mysql.MaxDateWidth
-		x.Decimal = 0
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
 		x.Flag |= mysql.BinaryFlag
@@ -4168,7 +4194,7 @@ CastType:
 |	"DATETIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDatetime)
-		x.Flen = mysql.MaxDatetimeWidthNoFsp
+		x.Flen, _ = mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDatetime)
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
 			x.Flen = x.Flen + 1 + x.Decimal
@@ -4184,21 +4210,15 @@ CastType:
 		x := types.NewFieldType(mysql.TypeNewDecimal)
 		x.Flen = fopt.Flen
 		x.Decimal = fopt.Decimal
-		if fopt.Flen == types.UnspecifiedLength {
-			x.Flen = mysql.GetDefaultFieldLength(mysql.TypeNewDecimal)
-			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
-		} else if fopt.Decimal == types.UnspecifiedLength {
-			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
-		}
 		x.Charset = charset.CharsetBin
-        x.Collate = charset.CollationBin
-        x.Flag |= mysql.BinaryFlag
+		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"TIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDuration)
-		x.Flen = mysql.MaxDurationWidthNoFsp
+		x.Flen, _ = mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDuration)
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
 			x.Flen = x.Flen + 1 + x.Decimal
@@ -4211,8 +4231,6 @@ CastType:
 |	"SIGNED" OptInteger
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
-		x.Flen = mysql.MaxIntWidth
-		x.Decimal = 0
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
 		x.Flag |= mysql.BinaryFlag
@@ -4221,19 +4239,14 @@ CastType:
 |	"UNSIGNED" OptInteger
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
-		x.Flen = mysql.MaxIntWidth
-		x.Decimal = 0
-		x.Flag |= mysql.UnsignedFlag
+		x.Flag |= mysql.UnsignedFlag | mysql.BinaryFlag
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
-		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"JSON"
 	{
 		x := types.NewFieldType(mysql.TypeJSON)
-		x.Flen = mysql.MaxBlobWidth
-		x.Decimal = 0
 		x.Flag |= mysql.BinaryFlag
 		x.Charset = charset.CharsetUTF8
 		x.Collate = charset.CollationUTF8
@@ -4798,26 +4811,26 @@ SelectStmtOpts:
 	{
 		opt := &ast.SelectStmtOpts{}
 		if $1 != nil {
-		    opt.TableHints = $1.([]*ast.TableOptimizerHint)
+			opt.TableHints = $1.([]*ast.TableOptimizerHint)
 		}
 		if $2 != nil {
-		    opt.Distinct = $2.(bool)
+			opt.Distinct = $2.(bool)
 		}
 		if $3 != nil {
-		    opt.Priority = $3.(mysql.PriorityEnum)
+			opt.Priority = $3.(mysql.PriorityEnum)
 		}
 		if $4 != nil {
-		    opt.SQLCache = $4.(bool)
+			opt.SQLCache = $4.(bool)
 		}
 		if $5 != nil {
-		    opt.CalcFoundRows = $5.(bool)
+			opt.CalcFoundRows = $5.(bool)
 		}
 
 		$$ = opt
 	}
 
 TableOptimizerHints:
-    /* empty */
+	/* empty */
 	{
 		$$ = nil
 	}
@@ -5041,10 +5054,7 @@ TransactionChars:
 TransactionChar:
 	"ISOLATION" "LEVEL" IsolationLevel
 	{
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($3)
-		expr.SetType(tp)
 		$$ = &ast.VariableAssignment{Name: "tx_isolation", Value: expr, IsSystem: true}
 	}
 |	"READ" "WRITE"
@@ -5077,11 +5087,11 @@ IsolationLevel:
 	}
 
 SetExpr:
-    "ON"
-    {
+	"ON"
+	{
 		$$ = ast.NewValueExpr("ON")
-    }
-|   Expression
+	}
+|	Expression
 
 VariableAssignment:
 	Identifier eq SetExpr
@@ -5218,14 +5228,13 @@ Username:
 	}
 
 UsernameList:
-    Username
+	Username
 	{
-        $$ = []*auth.UserIdentity{$1.(*auth.UserIdentity)}
+		$$ = []*auth.UserIdentity{$1.(*auth.UserIdentity)}
 	}
-|   UsernameList ',' Username
-
+|	UsernameList ',' Username
 	{
-        $$ = append($1.([]*auth.UserIdentity), $3.(*auth.UserIdentity))
+		$$ = append($1.([]*auth.UserIdentity), $3.(*auth.UserIdentity))
 	}
 
 PasswordOpt:
@@ -5249,6 +5258,10 @@ AdminStmt:
 	"ADMIN" "SHOW" "DDL"
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDL}
+	}
+|	"ADMIN" "SHOW" "DDL" "JOBS"
+	{
+		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
 	}
 |	"ADMIN" "CHECK" "TABLE" TableNameList
 	{
@@ -5911,7 +5924,7 @@ NumericType:
 				x.Tp = mysql.TypeDouble
 			}
 		}
-		x.Decimal =fopt.Decimal
+		x.Decimal = fopt.Decimal
 		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
 				x.Flag |= mysql.UnsignedFlag
@@ -5926,7 +5939,7 @@ NumericType:
 	{
 		x := types.NewFieldType($1.(byte))
 		x.Flen = $2.(int)
-		if x.Flen == -1 || x.Flen == 0 {
+		if x.Flen == types.UnspecifiedLength || x.Flen == 0 {
 			x.Flen = 1
 		} else if x.Flen > 64 {
 			yylex.Errorf("invalid field length %d for bit type, must in [1, 64]", x.Flen)
@@ -6095,6 +6108,9 @@ StringType:
 |	"JSON"
 	{
 		x := types.NewFieldType(mysql.TypeJSON)
+		x.Decimal = 0
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
 		$$ = x
 	}
 
@@ -6190,7 +6206,7 @@ DateAndTimeType:
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		x.Flen = $2.(int)
-		if x.Flen != -1 && x.Flen != 4 {
+		if x.Flen != types.UnspecifiedLength && x.Flen != 4 {
 			yylex.Errorf("Supports only YEAR or YEAR(4) column.")
 			return -1
 		}
@@ -6205,7 +6221,6 @@ FieldLen:
 
 OptFieldLen:
 	{
-		/* -1 means unspecified field length*/
 		$$ = types.UnspecifiedLength
 	}
 |	FieldLen
@@ -6319,6 +6334,7 @@ UpdateStmt:
 			LowPriority:	$2.(bool),
 			TableRefs:	&ast.TableRefsClause{TableRefs: refs},
 			List:		$6.([]*ast.Assignment),
+			IgnoreErr:		$3.(bool),
 		}
 		if $7 != nil {
 			st.Where = $7.(ast.ExprNode)
@@ -6337,6 +6353,7 @@ UpdateStmt:
 			LowPriority:	$2.(bool),
 			TableRefs:	&ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
 			List:		$6.([]*ast.Assignment),
+			IgnoreErr:		$3.(bool),
 		}
 		if $7 != nil {
 			st.Where = $7.(ast.ExprNode)
