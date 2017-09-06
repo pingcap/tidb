@@ -357,3 +357,8 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	runTestRegression(c, connOverrider, "TLSRegression")
 	server.Close()
 }
+
+func (ts *TidbTestSuite) TestClientWithCollation(c *C) {
+	c.Parallel()
+	runTestClientWithCollation(c)
+}

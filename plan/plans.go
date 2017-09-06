@@ -32,6 +32,11 @@ type ShowDDL struct {
 	basePlan
 }
 
+// ShowDDLJobs is for showing DDL job list.
+type ShowDDLJobs struct {
+	basePlan
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
 	basePlan
@@ -127,7 +132,7 @@ type Insert struct {
 
 	IsReplace bool
 	Priority  mysql.PriorityEnum
-	Ignore    bool
+	IgnoreErr bool
 
 	GenCols InsertGeneratedColumns
 }

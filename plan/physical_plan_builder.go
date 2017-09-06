@@ -614,9 +614,7 @@ func (p *LogicalJoin) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*
 	if selection.controllerStatus == notController {
 		return nil, nil
 	}
-	for _, cond := range innerConditions {
-		conds = append(conds, cond)
-	}
+	conds = append(conds, innerConditions...)
 	for _, cond := range p.OtherConditions {
 		newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
 		newCond.ResolveIndices(innerChild.Schema())
