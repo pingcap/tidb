@@ -44,9 +44,10 @@ type indentFormatter struct {
 }
 
 var replace = map[rune]string{
-	'\'': "''",
-	'\n': "\\n",
-	'\r': "\\r",
+	'\000': "\\0",
+	'\'':   "''",
+	'\n':   "\\n",
+	'\r':   "\\r",
 }
 
 // IndentFormatter returns a new Formatter which interprets %i and %u in the
@@ -180,23 +181,9 @@ func (f *flatFormatter) Format(format string, args ...interface{}) (n int, errno
 }
 
 // OutputFormat output escape character with backslash.
-// truncate indicate should we stop abandon left characters when we meet '\0'.
-// repeat indicate should we use '\\0' to fill the left space when we meet '\0'.
-func OutputFormat(s string, truncate bool, repeat bool) string {
+func OutputFormat(s string) string {
 	var buf bytes.Buffer
-	for i, old := range s {
-		if old == '\000' {
-			if truncate {
-				break
-			}
-			if repeat {
-				buf.Write(bytes.Repeat([]byte("\\0"), len(s)-i))
-				break
-			}
-
-			buf.WriteString("\\0")
-			continue
-		}
+	for _, old := range s {
 		if new, ok := replace[old]; ok {
 			buf.WriteString(new)
 			continue

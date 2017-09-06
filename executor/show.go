@@ -437,7 +437,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 						intValue := binary.BigEndian.Uint64(bytes)
 						buf.WriteString(fmt.Sprintf(" DEFAULT b'%b'", intValue))
 					} else {
-						buf.WriteString(fmt.Sprintf(" DEFAULT '%s'", format.OutputFormat(defaultValStr, false, false)))
+						buf.WriteString(fmt.Sprintf(" DEFAULT '%s'", format.OutputFormat(defaultValStr)))
 					}
 				}
 			}
@@ -446,7 +446,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 		}
 		if len(col.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment, false, false)))
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
 		}
 		if i != len(tb.Cols())-1 {
 			buf.WriteString(",\n")
@@ -540,7 +540,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if len(tb.Meta().Comment) > 0 {
-		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment, false, true)))
+		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
 	}
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
