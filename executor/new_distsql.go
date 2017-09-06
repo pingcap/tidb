@@ -368,30 +368,30 @@ func (e *IndexLookUpExecutor) waitIndexWorker() {
 
 // tableWorker is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableWorker struct {
-	taskChan chan<- *lookupTableTask
+	resultCh chan<- *lookupTableTask
+	wg       sync.WaitGroup
 }
 
 // startTableWorker launch some background goroutines which pick tasks from workCh,
-// execute the task and store the results in IndexLookUpExecutor's taskChan.
+// execute the task and store the results in IndexLookUpExecutor's resultCh.
 func (e *IndexLookUpExecutor) startTableWorker(workCh <-chan *lookupTableTask, finished <-chan struct{}) {
-	taskChan := make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	resultCh := make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 	th := &e.tableWorker
-	th.taskChan = taskChan
-	e.taskChan = taskChan
+	th.resultCh = resultCh
+	e.taskChan = resultCh
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
-	var wg sync.WaitGroup
-	wg.Add(lookupConcurrencyLimit)
+	th.wg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
 		go func() {
 			th.pickAndExecTask(e, workCh, ctx, finished)
 			cancel()
-			wg.Done()
+			th.wg.Done()
 		}()
 	}
 	go func() {
-		wg.Wait()
-		close(taskChan)
+		th.wg.Wait()
+		close(th.resultCh)
 	}()
 }
 
@@ -404,13 +404,13 @@ func (th *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lo
 				return
 			}
 			if task.tasksErr != nil {
-				th.taskChan <- task
+				th.resultCh <- task
 				return
 			}
 
 			// TODO: The results can be simplified when new_distsql.go replace distsql.go totally.
 			e.executeTask(task, ctx)
-			th.taskChan <- task
+			th.resultCh <- task
 		case <-ctx.Done():
 			return
 		case <-finished:
