@@ -153,7 +153,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 		}
 
 		// For integer, field length = maxIntLen + (1/0 for sign bit)
-		// For decimal, field lenght = maxIntLen + maxDecimal + (1/0 for sign bit)
+		// For decimal, field length = maxIntLen + maxDecimal + (1/0 for sign bit)
 		if retCTp == types.ClassInt || retCTp == types.ClassDecimal {
 			retTp.Flen = maxIntLen + retTp.Decimal
 			if retTp.Decimal > 0 {
@@ -566,7 +566,7 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 				or
 				<const string expression> <cmp> <non-const decimal expression>
 
-				Do comparision as decimal rather than float, in order not to lose precision.
+				Do comparison as decimal rather than float, in order not to lose precision.
 			)*/
 			cmpType = types.ClassDecimal
 		} else if isTemporalColumn(args[0]) && isConst1 ||
