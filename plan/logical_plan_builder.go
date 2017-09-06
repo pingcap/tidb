@@ -1343,10 +1343,9 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
 	join := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
-	ap := &LogicalApply{LogicalJoin: *join}
-	ap.tp = TypeApply
-	ap.id = ap.allocator.allocID()
-	ap.self = ap
+	ap := LogicalApply{
+		LogicalJoin: *join,
+	}.init(join.allocator, join.ctx)
 	ap.children[0].SetParents(ap)
 	ap.children[1].SetParents(ap)
 	return ap
