@@ -2395,26 +2395,16 @@ func (c *exportSetFunctionClass) getFunction(ctx context.Context, args []Express
 	return sig.setSelf(sig), nil
 }
 
-func exportSet(bits int64, on, off, separator []byte, numberOfBits int64) []byte {
-	len4Res := len(separator) * int(numberOfBits-1)
-	len4On, len4Off := len(on), len(off)
+func exportSet(bits int64, on, off, separator string, numberOfBits int64) string {
+	result := ""
 	for i := uint64(0); i < uint64(numberOfBits); i++ {
 		if (bits & (1 << i)) > 0 {
-			len4Res += len4On
+			result += on
 		} else {
-			len4Res += len4Off
-		}
-	}
-
-	result := make([]byte, 0, len4Res)
-	for i := uint64(0); i < uint64(numberOfBits); i++ {
-		if (bits & (1 << i)) > 0 {
-			result = append(result, on...)
-		} else {
-			result = append(result, off...)
+			result += off
 		}
 		if i < uint64(numberOfBits)-1 {
-			result = append(result, separator...)
+			result += separator
 		}
 	}
 	return result
@@ -2444,7 +2434,7 @@ func (b *builtinExportSet3ArgSig) evalString(row []types.Datum) (string, bool, e
 		return "", true, errors.Trace(err)
 	}
 
-	return hack.String(exportSet(bits, hack.Slice(on), hack.Slice(off), hack.Slice(","), 64)), false, nil
+	return exportSet(bits, on, off, ",", 64), false, nil
 }
 
 type builtinExportSet4ArgSig struct {
@@ -2476,7 +2466,7 @@ func (b *builtinExportSet4ArgSig) evalString(row []types.Datum) (string, bool, e
 		return "", true, errors.Trace(err)
 	}
 
-	return hack.String(exportSet(bits, hack.Slice(on), hack.Slice(off), hack.Slice(separator), 64)), false, nil
+	return exportSet(bits, on, off, separator, 64), false, nil
 }
 
 type builtinExportSet5ArgSig struct {
@@ -2516,7 +2506,7 @@ func (b *builtinExportSet5ArgSig) evalString(row []types.Datum) (string, bool, e
 		numberOfBits = 64
 	}
 
-	return hack.String(exportSet(bits, hack.Slice(on), hack.Slice(off), hack.Slice(separator), numberOfBits)), false, nil
+	return exportSet(bits, on, off, separator, numberOfBits), false, nil
 }
 
 type formatFunctionClass struct {
