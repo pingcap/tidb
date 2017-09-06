@@ -72,6 +72,8 @@ const (
 	GroupFlag          = 32768  /* Intern: Group field */
 	UniqueFlag         = 65536  /* Intern: Used by sql_yacc */
 	BinCmpFlag         = 131072 /* Intern: Used by sql_yacc */
+	ParseToJSONFlag    = 262144 /* Intern: Used when we want to parse string to JSON in CAST */
+	IsBooleanFlag      = 524288 /* Intern: Used for telling boolean literal from integer */
 )
 
 // TypeInt24 bounds.
@@ -134,4 +136,14 @@ func HasTimestampFlag(flag uint) bool {
 // HasOnUpdateNowFlag checks if OnUpdateNowFlag is set.
 func HasOnUpdateNowFlag(flag uint) bool {
 	return (flag & OnUpdateNowFlag) > 0
+}
+
+// HasParseToJSONFlag checks if ParseToJSONFlag is set.
+func HasParseToJSONFlag(flag uint) bool {
+	return (flag & ParseToJSONFlag) > 0
+}
+
+// HasIsBooleanFlag checks if IsBooleanFlag is set.
+func HasIsBooleanFlag(flag uint) bool {
+	return (flag & IsBooleanFlag) > 0
 }

@@ -41,7 +41,7 @@ const (
 	keyOpDefaultRetryCnt = 3
 	putKeyRetryUnlimited = math.MaxInt64
 	keyOpDefaultTimeout  = 2 * time.Second
-	putKeyRetryInterval  = 30 * time.Millisecond
+	keyOpRetryInterval   = 30 * time.Millisecond
 	checkVersInterval    = 20 * time.Millisecond
 )
 
@@ -67,6 +67,8 @@ type SchemaSyncer interface {
 	OwnerUpdateGlobalVersion(ctx goctx.Context, version int64) error
 	// GlobalVersionCh gets the chan for watching global version.
 	GlobalVersionCh() clientv3.WatchChan
+	// MustGetGlobalVersion gets the global version. The only reason it fails is that ctx is done.
+	MustGetGlobalVersion(ctx goctx.Context) (int64, error)
 	// Done() returns a channel that closes when the syncer is no longer being refreshed.
 	Done() <-chan struct{}
 	// Restart restarts the syncer when it's on longer being refreshed.
@@ -107,7 +109,7 @@ func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val st
 			return nil
 		}
 		log.Warnf("[syncer] put schema version %s failed %v no.%d", val, err, i)
-		time.Sleep(putKeyRetryInterval)
+		time.Sleep(keyOpRetryInterval)
 	}
 	return errors.Trace(err)
 }
@@ -180,6 +182,39 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 		log.Warnf("remove schema version path %s failed %v no.%d", s.selfSchemaVerPath, err, i)
 	}
 	return errors.Trace(err)
+}
+
+// MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
+func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx goctx.Context) (int64, error) {
+	var err error
+	var resp *clientv3.GetResponse
+	failedCnt := 0
+	intervalCnt := int(time.Second / keyOpRetryInterval)
+	for {
+		if err != nil {
+			if failedCnt%intervalCnt == 0 {
+				log.Infof("[syncer] get global version failed %v", err)
+			}
+			time.Sleep(keyOpRetryInterval)
+			failedCnt++
+		}
+
+		if isContextDone(ctx) {
+			return 0, errors.Trace(ctx.Err())
+		}
+
+		resp, err = s.etcdCli.Get(ctx, DDLGlobalSchemaVersion)
+		if err != nil {
+			continue
+		}
+		if err == nil && len(resp.Kvs) > 0 {
+			var ver int
+			ver, err = strconv.Atoi(string(resp.Kvs[0].Value))
+			if err == nil {
+				return int64(ver), nil
+			}
+		}
+	}
 }
 
 func isContextDone(ctx goctx.Context) bool {
