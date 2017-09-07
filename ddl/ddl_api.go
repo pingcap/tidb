@@ -498,6 +498,13 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
+	if len(colDefs) > TableColumnCountLimit {
+		return errTooManyFields
+	}
+	return nil
+}
+
 func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
 	if name == "" {
 		return nil
@@ -726,6 +733,9 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(err)
 	}
 	if err = checkTooLongColumn(colDefs); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkTooManyColumns(colDefs); err != nil {
 		return errors.Trace(err)
 	}
 
