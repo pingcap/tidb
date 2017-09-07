@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -465,6 +467,26 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 		{
 			args:   []interface{}{nil, nil},
 			expect: nil,
+			err:    nil,
+		},
+		{
+			args:   []interface{}{"1231", 12},
+			expect: 7,
+			err:    nil,
+		},
+		{
+			args:   []interface{}{"1231", "12"},
+			expect: float64(7),
+			err:    nil,
+		},
+		{
+			args:   []interface{}{types.Duration{Duration: 45296 * time.Second}, 122},
+			expect: 114,
+			err:    nil,
+		},
+		{
+			args:   []interface{}{types.Set{Value: 7, Name: "abc"}, "12"},
+			expect: float64(7),
 			err:    nil,
 		},
 	}
