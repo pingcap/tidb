@@ -314,8 +314,6 @@ type resultChannel struct {
 
 func (c *resultChannel) fetchTask() *lookupTableTask {
 	task := <-c.taskCh
-	if task != nil {
-	}
 	if c.keepOrder && task != nil {
 		c.curID = task.id + 1
 		ch := c.waitCh(c.curID)
