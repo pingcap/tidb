@@ -137,6 +137,23 @@ func (s *testSuite) TestAdmin(c *C) {
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
+
+	// show ddl jobs test
+	r, err = tk.Exec("admin show ddl jobs")
+	c.Assert(err, IsNil)
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, HasLen, 2)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	historyJobs, err := inspectkv.GetHistoryDDLJobs(txn)
+	c.Assert(len(historyJobs), Greater, 1)
+	c.Assert(len(row.Data[0].GetString()), Greater, 0)
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[1].GetString(), Equals, historyJobs[0].State.String())
+	c.Assert(err, IsNil)
 
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
@@ -1150,6 +1167,12 @@ func (s *testSuite) TestJSON(c *C) {
 	result.Check(testkit.Rows("true"))
 	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
 	result.Check(testkit.Rows(`"string"`))
+
+	// Check cast(true/false as JSON).
+	result = tk.MustQuery(`select cast(true as JSON)`)
+	result.Check(testkit.Rows(`true`))
+	result = tk.MustQuery(`select cast(false as JSON)`)
+	result.Check(testkit.Rows(`false`))
 
 	// Check two json grammar sugar.
 	result = tk.MustQuery(`select a->>'$.a[2].aa' as x, a->'$.b' as y from test_json having x is not null order by id`)

@@ -32,6 +32,11 @@ type ShowDDL struct {
 	basePlan
 }
 
+// ShowDDLJobs is for showing DDL job list.
+type ShowDDLJobs struct {
+	basePlan
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
 	basePlan
@@ -180,7 +185,7 @@ type Explain struct {
 
 	StmtPlan       Plan
 	Rows           [][]types.Datum
-	explainedPlans map[string]bool
+	explainedPlans map[int]bool
 }
 
 func (e *Explain) prepareExplainInfo(p Plan, parent Plan) error {
@@ -196,9 +201,9 @@ func (e *Explain) prepareExplainInfo(p Plan, parent Plan) error {
 	}
 	parentStr := ""
 	if parent != nil {
-		parentStr = parent.ID()
+		parentStr = parent.ExplainID()
 	}
-	row := types.MakeDatums(p.ID(), string(explain), parentStr)
+	row := types.MakeDatums(p.ExplainID(), string(explain), parentStr)
 	e.Rows = append(e.Rows, row)
 	return nil
 }
@@ -209,17 +214,17 @@ func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
 	parents := p.Parents()
 	parentIDs := make([]string, 0, len(parents))
 	for _, parent := range parents {
-		parentIDs = append(parentIDs, parent.ID())
+		parentIDs = append(parentIDs, parent.ExplainID())
 	}
 	childrenIDs := make([]string, 0, len(p.Children()))
 	for _, ch := range p.Children() {
-		childrenIDs = append(childrenIDs, ch.ID())
+		childrenIDs = append(childrenIDs, ch.ExplainID())
 	}
 	parentInfo := strings.Join(parentIDs, ",")
 	childrenInfo := strings.Join(childrenIDs, ",")
 	operatorInfo := p.ExplainInfo()
 	count := p.statsProfile().count
-	row := types.MakeDatums(p.ID(), parentInfo, childrenInfo, taskType, operatorInfo, count)
+	row := types.MakeDatums(p.ExplainID(), parentInfo, childrenInfo, taskType, operatorInfo, count)
 	e.Rows = append(e.Rows, row)
 }
 

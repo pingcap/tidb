@@ -451,10 +451,7 @@ func (p *TopN) generatePhysicalPlans() []PhysicalPlan {
 // If this sort is a topN plan, we will try to push the sort down and leave the limit.
 // TODO: If this is a sort plan and the coming prop is not nil, this plan is redundant and can be removed.
 func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	t, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	t := p.getTask(prop)
 	if t != nil {
 		return t, nil
 	}
@@ -463,10 +460,11 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		// e.g. If an aggregation want to be pushed, the SQL is always like select count(*) from t order by ...
 		// The Sort will on top of Aggregation. If the SQL is like select count(*) from (select * from s order by k).
 		// The Aggregation will also be blocked by projection. In the future we will break this restriction.
-		return invalidTask, p.storeTask(prop, invalidTask)
+		p.storeTask(prop, invalidTask)
+		return invalidTask, nil
 	}
 	// enforce branch
-	t, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
+	t, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -483,30 +481,30 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		}
 	}
 	t = prop.enforceProperty(t, p.ctx, p.allocator)
-	return t, p.storeTask(prop, t)
+	p.storeTask(prop, t)
+	return t, nil
 }
 
 // convert2NewPhysicalPlan implements LogicalPlan interface.
-func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, err error) {
 	// look up the task map
-	t, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	t = p.getTask(prop)
 	if t != nil {
 		return t, nil
 	}
 	t = invalidTask
 	if prop.taskTp != rootTaskType {
 		// Currently all plan cannot totally push down.
-		return t, p.storeTask(prop, t)
+		p.storeTask(prop, t)
+		return t, nil
 	}
 	// Now we only consider rootTask.
 	if len(p.basePlan.children) == 0 {
 		// When the children length is 0, we process it specially.
 		t = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
 		t = prop.enforceProperty(t, p.basePlan.ctx, p.basePlan.allocator)
-		return t, p.storeTask(prop, t)
+		p.storeTask(prop, t)
+		return t, nil
 	}
 	// Else we suppose it only has one child.
 	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
@@ -523,7 +521,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, err
 			return nil, errors.Trace(err)
 		}
 	}
-	return t, p.storeTask(prop, t)
+	p.storeTask(prop, t)
+	return t, nil
 }
 
 func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan, enforced bool) (task, error) {
@@ -623,26 +622,25 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	if prop == nil {
 		return nil, nil
 	}
-	t, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	t := p.getTask(prop)
 	if t != nil {
 		return t, nil
 	}
-	t, err = p.tryToGetDualTask()
+	t, err := p.tryToGetDualTask()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if t != nil {
-		return t, p.storeTask(prop, t)
+		p.storeTask(prop, t)
+		return t, nil
 	}
 	t, err = p.tryToGetMemTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if t != nil {
-		return t, p.storeTask(prop, t)
+		p.storeTask(prop, t)
+		return t, nil
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
@@ -664,7 +662,8 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 			}
 		}
 	}
-	return t, p.storeTask(prop, t)
+	p.storeTask(prop, t)
+	return t, nil
 }
 
 func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
@@ -802,6 +801,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
+		cop.keepOrder = true
 		is.addPushedDownSelection(cop, p, prop.expectedCnt)
 		if p.unionScanSchema != nil {
 			task = addUnionScan(cop, p)
@@ -960,6 +960,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 			copTask.cst = rowCount * descScanFactor
 		}
 		ts.KeepOrder = true
+		copTask.keepOrder = true
 		ts.addPushedDownSelection(copTask, p.profile, prop.expectedCnt)
 		if p.unionScanSchema != nil {
 			task = addUnionScan(copTask, p)

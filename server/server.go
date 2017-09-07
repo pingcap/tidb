@@ -30,6 +30,9 @@ package server
 
 import (
 	"fmt"
+	"crypto/tls"
+	"crypto/x509"
+	"io/ioutil"
 	"math/rand"
 	"net"
 	"sync"
@@ -42,6 +45,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
@@ -60,14 +64,24 @@ var (
 	errAccessDenied      = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
+// DefaultCapability is the capability of the server when it is created using the default configuration.
+// When server is configured with SSL, the server will have extra capabilities compared to DefaultCapability.
+const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
+	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
+	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
+	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth
+
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
+	tlsConfig         *tls.Config
 	driver            IDriver
 	listener          net.Listener
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
+	capability        uint32
 
 	// When a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
@@ -110,21 +124,17 @@ func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
 			}
 		}
 	}
-
+  
 	if s.proxyProtocolConnBuilder != nil {
 		// Proxy is configured. wrap net.Conn to proxyProtocolConn
 		wconn, err := s.proxyProtocolConnBuilder.wrapConn(conn)
 		if err != nil {
 			return cc, errors.Trace(fmt.Errorf("%s (%s)", err.Error(), conn.RemoteAddr().String()))
 		}
-		cc.pkt = newPacketIO(wconn)
-		cc.conn = wconn
-		cc.clientAddr = wconn.RemoteAddr()
-		log.Infof("[%d] new connection %s (through proxy %s)", cc.connectionID, cc.clientAddr, conn.RemoteAddr().String())
+    cc.setConn(wconn)
+    log.Infof("[%d] new connection %s (through proxy %s)", cc.connectionID, wconn.RemoteAddr(), conn.RemoteAddr().String())
 	} else {
-		cc.pkt = newPacketIO(conn)
-		cc.conn = conn
-		cc.clientAddr = conn.RemoteAddr()
+    cc.setConn(conn)
 		log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	}
 
@@ -157,6 +167,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		stopListenerCh:           make(chan struct{}, 1),
 		proxyProtocolConnBuilder: ppcb,
 	}
+	s.loadTLSCertificates()
+
+	s.capability = defaultCapability
+	if s.tlsConfig != nil {
+		s.capability |= mysql.ClientSSL
+	}
 
 	if cfg.Socket != "" {
 		cfg.SkipAuth = true
@@ -182,6 +198,54 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	return s, nil
+}
+
+func (s *Server) loadTLSCertificates() {
+	defer func() {
+		if s.tlsConfig != nil {
+			log.Infof("Secure connection is enabled (client verification enabled = %v)", len(variable.SysVars["ssl_ca"].Value) > 0)
+			variable.SysVars["have_openssl"].Value = "YES"
+			variable.SysVars["have_ssl"].Value = "YES"
+			variable.SysVars["ssl_cert"].Value = s.cfg.SSLCertPath
+			variable.SysVars["ssl_key"].Value = s.cfg.SSLKeyPath
+		} else {
+			log.Warn("Secure connection is NOT ENABLED")
+		}
+	}()
+
+	if len(s.cfg.SSLCertPath) == 0 || len(s.cfg.SSLKeyPath) == 0 {
+		s.tlsConfig = nil
+		return
+	}
+
+	tlsCert, err := tls.LoadX509KeyPair(s.cfg.SSLCertPath, s.cfg.SSLKeyPath)
+	if err != nil {
+		log.Warn(errors.ErrorStack(err))
+		s.tlsConfig = nil
+		return
+	}
+
+	// Try loading CA cert.
+	clientAuthPolicy := tls.NoClientCert
+	var certPool *x509.CertPool
+	if len(s.cfg.SSLCAPath) > 0 {
+		caCert, err := ioutil.ReadFile(s.cfg.SSLCAPath)
+		if err != nil {
+			log.Warn(errors.ErrorStack(err))
+		} else {
+			certPool = x509.NewCertPool()
+			if certPool.AppendCertsFromPEM(caCert) {
+				clientAuthPolicy = tls.VerifyClientCertIfGiven
+			}
+			variable.SysVars["ssl_ca"].Value = s.cfg.SSLCAPath
+		}
+	}
+	s.tlsConfig = &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		ClientCAs:    certPool,
+		ClientAuth:   clientAuthPolicy,
+		MinVersion:   0,
+	}
 }
 
 // Run runs the server.
