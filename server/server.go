@@ -29,9 +29,9 @@
 package server
 
 import (
-	"fmt"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net"
@@ -124,17 +124,17 @@ func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
 			}
 		}
 	}
-  
+
 	if s.proxyProtocolConnBuilder != nil {
 		// Proxy is configured. wrap net.Conn to proxyProtocolConn
 		wconn, err := s.proxyProtocolConnBuilder.wrapConn(conn)
 		if err != nil {
 			return cc, errors.Trace(fmt.Errorf("%s (%s)", err.Error(), conn.RemoteAddr().String()))
 		}
-    cc.setConn(wconn)
-    log.Infof("[%d] new connection %s (through proxy %s)", cc.connectionID, wconn.RemoteAddr(), conn.RemoteAddr().String())
+		cc.setConn(wconn)
+		log.Infof("[%d] new connection %s (through proxy %s)", cc.connectionID, wconn.RemoteAddr(), conn.RemoteAddr().String())
 	} else {
-    cc.setConn(conn)
+		cc.setConn(conn)
 		log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	}
 

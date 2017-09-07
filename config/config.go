@@ -17,20 +17,20 @@ import "sync"
 
 // Config contains configuration options.
 type Config struct {
-	Addr           string `json:"addr" toml:"addr"`
-	LogLevel       string `json:"log_level" toml:"log_level"`
-	SkipAuth       bool   `json:"skip_auth" toml:"skip_auth"`
-	StatusAddr     string `json:"status_addr" toml:"status_addr"`
-	Socket         string `json:"socket" toml:"socket"`
-	ReportStatus   bool   `json:"report_status" toml:"report_status"`
-	StorePath      string `json:"store_path" toml:"store_path"`
-	Store          string `json:"store" toml:"store"`
-	SlowThreshold  int    `json:"slow_threshold" toml:"slow_threshold"`
-	QueryLogMaxlen int    `json:"query_log_max_len" toml:"query_log_max_len"`
-	TCPKeepAlive   bool   `json:"tcp_keep_alive" toml:"tcp_keep_alive"`
-	SSLCAPath      string `json:"ssl_ca_path" toml:"ssl_ca_path"`
-	SSLCertPath    string `json:"ssl_cert_path" toml:"ssl_cert_path"`
-	SSLKeyPath     string `json:"ssl_key_path" toml:"ssl_key_path"`
+	Addr                       string `json:"addr" toml:"addr"`
+	LogLevel                   string `json:"log_level" toml:"log_level"`
+	SkipAuth                   bool   `json:"skip_auth" toml:"skip_auth"`
+	StatusAddr                 string `json:"status_addr" toml:"status_addr"`
+	Socket                     string `json:"socket" toml:"socket"`
+	ReportStatus               bool   `json:"report_status" toml:"report_status"`
+	StorePath                  string `json:"store_path" toml:"store_path"`
+	Store                      string `json:"store" toml:"store"`
+	SlowThreshold              int    `json:"slow_threshold" toml:"slow_threshold"`
+	QueryLogMaxlen             int    `json:"query_log_max_len" toml:"query_log_max_len"`
+	TCPKeepAlive               bool   `json:"tcp_keep_alive" toml:"tcp_keep_alive"`
+	SSLCAPath                  string `json:"ssl_ca_path" toml:"ssl_ca_path"`
+	SSLCertPath                string `json:"ssl_cert_path" toml:"ssl_cert_path"`
+	SSLKeyPath                 string `json:"ssl_key_path" toml:"ssl_key_path"`
 	ProxyProtocolNetworks      string `json:"proxy_protocol_networks" toml:"proxy_protocol_networks"`
 	ProxyProtocolHeaderTimeout int    `json:"proxy_protocol_header_timeout" toml:"proxy_protocol_header_timeout"`
 }
