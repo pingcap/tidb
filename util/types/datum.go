@@ -756,14 +756,7 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *variable.Stat
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 		f, err = TruncateFloat(f, target.Flen, target.Decimal)
-		if err != nil {
-			if sc.IgnoreTruncate {
-				err = nil
-			} else if sc.TruncateAsWarning {
-				sc.AppendWarning(err)
-				err = nil
-			}
-		}
+		err = sc.HandleOverflow(err, err)
 	}
 	return f, errors.Trace(err)
 }

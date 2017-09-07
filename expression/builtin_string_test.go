@@ -1473,6 +1473,8 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		fc := funcs[ast.Format]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
@@ -1482,6 +1484,8 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		fc := funcs[ast.Format]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
@@ -1490,6 +1494,8 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	fc2 := funcs[ast.Format]
 	f2, err := fc2.getFunction(s.ctx, datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
 	c.Assert(err, IsNil)
+	c.Assert(f2, NotNil)
+	c.Assert(f2.canBeFolded(), IsTrue)
 	r2, err := f2.eval(nil)
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not implemented")))
 	c.Assert(r2, testutil.DatumEquals, types.NewDatum(formatTests2.ret))
@@ -1497,6 +1503,8 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	fc3 := funcs[ast.Format]
 	f3, err := fc3.getFunction(s.ctx, datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
 	c.Assert(err, IsNil)
+	c.Assert(f3, NotNil)
+	c.Assert(f3.canBeFolded(), IsTrue)
 	r3, err := f3.eval(nil)
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not support for the specific locale")))
 	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatTests3.ret))

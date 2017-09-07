@@ -981,7 +981,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		}
 		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
 		p.SetSchema(schema)
-		p.explainedPlans = map[string]bool{}
+		p.explainedPlans = map[int]bool{}
 		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
 	} else {
 		schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)

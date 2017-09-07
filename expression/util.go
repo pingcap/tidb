@@ -72,7 +72,9 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 func datumsToConstants(datums []types.Datum) []Expression {
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
-		constants = append(constants, &Constant{Value: d, RetType: types.NewFieldType(kindToMysqlType[d.Kind()])})
+		ft := kindToFieldType(d.Kind())
+		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
+		constants = append(constants, &Constant{Value: d, RetType: &ft})
 	}
 	return constants
 }
@@ -85,25 +87,48 @@ func primitiveValsToConstants(args []interface{}) []Expression {
 	return cons
 }
 
-var kindToMysqlType = map[byte]byte{
-	types.KindNull:          mysql.TypeNull,
-	types.KindInt64:         mysql.TypeLonglong,
-	types.KindUint64:        mysql.TypeLonglong,
-	types.KindMinNotNull:    mysql.TypeLonglong,
-	types.KindMaxValue:      mysql.TypeLonglong,
-	types.KindFloat32:       mysql.TypeDouble,
-	types.KindFloat64:       mysql.TypeDouble,
-	types.KindString:        mysql.TypeVarString,
-	types.KindBytes:         mysql.TypeVarString,
-	types.KindMysqlEnum:     mysql.TypeEnum,
-	types.KindMysqlSet:      mysql.TypeSet,
-	types.KindRow:           mysql.TypeVarString,
-	types.KindInterface:     mysql.TypeVarString,
-	types.KindMysqlDecimal:  mysql.TypeNewDecimal,
-	types.KindMysqlDuration: mysql.TypeDuration,
-	types.KindMysqlTime:     mysql.TypeDatetime,
-	types.KindBinaryLiteral: mysql.TypeVarString,
-	types.KindMysqlBit:      mysql.TypeBit,
+func kindToFieldType(kind byte) types.FieldType {
+	ft := types.FieldType{}
+	switch kind {
+	case types.KindNull:
+		ft.Tp = mysql.TypeNull
+	case types.KindInt64:
+		ft.Tp = mysql.TypeLonglong
+	case types.KindUint64:
+		ft.Tp = mysql.TypeLonglong
+		ft.Flag |= mysql.UnsignedFlag
+	case types.KindMinNotNull:
+		ft.Tp = mysql.TypeLonglong
+	case types.KindMaxValue:
+		ft.Tp = mysql.TypeLonglong
+	case types.KindFloat32:
+		ft.Tp = mysql.TypeDouble
+	case types.KindFloat64:
+		ft.Tp = mysql.TypeDouble
+	case types.KindString:
+		ft.Tp = mysql.TypeVarString
+	case types.KindBytes:
+		ft.Tp = mysql.TypeVarString
+	case types.KindMysqlEnum:
+		ft.Tp = mysql.TypeEnum
+	case types.KindMysqlSet:
+		ft.Tp = mysql.TypeSet
+	case types.KindRow:
+		ft.Tp = mysql.TypeVarString
+	case types.KindInterface:
+		ft.Tp = mysql.TypeVarString
+	case types.KindMysqlDecimal:
+		ft.Tp = mysql.TypeNewDecimal
+	case types.KindMysqlDuration:
+		ft.Tp = mysql.TypeDuration
+	case types.KindMysqlTime:
+		ft.Tp = mysql.TypeDatetime
+	case types.KindBinaryLiteral:
+		ft.Tp = mysql.TypeVarString
+	case types.KindMysqlBit:
+		ft.Tp = mysql.TypeBit
+	}
+	return ft
 }
 
 // calculateSum adds v to sum.
