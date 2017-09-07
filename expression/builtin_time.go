@@ -1863,7 +1863,7 @@ type builtinExtractDurationSig struct {
 	baseIntBuiltinFunc
 }
 
-// eval evals a builtinExtractDurationSig.
+// evalInt evals a builtinExtractDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
 func (b *builtinExtractDurationSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
