@@ -549,6 +549,8 @@ func (e *IndexLookUpExecutor) Schema() *expression.Schema {
 func (e *IndexLookUpExecutor) Close() error {
 	if e.finished != nil {
 		close(e.finished)
+		for range e.resultCh {
+		}
 		e.indexWorker.close()
 		e.tableWorker.close()
 		e.finished = nil
