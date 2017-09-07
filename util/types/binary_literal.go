@@ -35,7 +35,7 @@ type BitLiteral BinaryLiteral
 type HexLiteral BinaryLiteral
 
 // ZeroBinaryLiteral is a BinaryLiteral literal with zero value.
-var ZeroBinaryLiteral = BinaryLiteral([]byte{})
+var ZeroBinaryLiteral = BinaryLiteral{}
 
 func trimLeadingZeroBytes(bytes []byte) []byte {
 	if len(bytes) == 0 {

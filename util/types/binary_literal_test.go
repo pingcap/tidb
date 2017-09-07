@@ -146,10 +146,10 @@ func (s *testBinaryLiteralSuite) TestString(c *C) {
 		Input    BinaryLiteral
 		Expected string
 	}{
-		{BinaryLiteral([]byte{}), ""}, // Expected
-		{BinaryLiteral([]byte{0x0}), "0x00"},
-		{BinaryLiteral([]byte{0x1}), "0x01"},
-		{BinaryLiteral([]byte{0xff, 0x01}), "0xff01"},
+		{BinaryLiteral{}, ""}, // Expected
+		{BinaryLiteral{0x0}, "0x00"},
+		{BinaryLiteral{0x1}, "0x01"},
+		{BinaryLiteral{0xff, 0x01}, "0xff01"},
 	}
 	for _, t := range tbl {
 		str := t.Input.String()
@@ -164,18 +164,18 @@ func (s *testBinaryLiteralSuite) TestToBitLiteralString(c *C) {
 		TrimLeadingZero bool
 		Expected        string
 	}{
-		{BinaryLiteral([]byte{}), true, "b''"},
-		{BinaryLiteral([]byte{}), false, "b''"},
-		{BinaryLiteral([]byte{0x0}), true, "b'0'"},
-		{BinaryLiteral([]byte{0x0}), false, "b'00000000'"},
-		{BinaryLiteral([]byte{0x0, 0x0}), true, "b'0'"},
-		{BinaryLiteral([]byte{0x0, 0x0}), false, "b'0000000000000000'"},
-		{BinaryLiteral([]byte{0x1}), true, "b'1'"},
-		{BinaryLiteral([]byte{0x1}), false, "b'00000001'"},
-		{BinaryLiteral([]byte{0xff, 0x01}), true, "b'1111111100000001'"},
-		{BinaryLiteral([]byte{0xff, 0x01}), false, "b'1111111100000001'"},
-		{BinaryLiteral([]byte{0x0, 0xff, 0x01}), true, "b'1111111100000001'"},
-		{BinaryLiteral([]byte{0x0, 0xff, 0x01}), false, "b'000000001111111100000001'"},
+		{BinaryLiteral{}, true, "b''"},
+		{BinaryLiteral{}, false, "b''"},
+		{BinaryLiteral{0x0}, true, "b'0'"},
+		{BinaryLiteral{0x0}, false, "b'00000000'"},
+		{BinaryLiteral{0x0, 0x0}, true, "b'0'"},
+		{BinaryLiteral{0x0, 0x0}, false, "b'0000000000000000'"},
+		{BinaryLiteral{0x1}, true, "b'1'"},
+		{BinaryLiteral{0x1}, false, "b'00000001'"},
+		{BinaryLiteral{0xff, 0x01}, true, "b'1111111100000001'"},
+		{BinaryLiteral{0xff, 0x01}, false, "b'1111111100000001'"},
+		{BinaryLiteral{0x0, 0xff, 0x01}, true, "b'1111111100000001'"},
+		{BinaryLiteral{0x0, 0xff, 0x01}, false, "b'000000001111111100000001'"},
 	}
 	for _, t := range tbl {
 		str := t.Input.ToBitLiteralString(t.TrimLeadingZero)
