@@ -205,6 +205,7 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 		data.SetUint64(data.GetMysqlSet().Value)
 		return data, nil
 	case types.KindBinaryLiteral, types.KindMysqlBit:
+		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		val, _ := data.GetBinaryLiteral().ToInt()
 		data.SetUint64(val)
 		return data, nil
