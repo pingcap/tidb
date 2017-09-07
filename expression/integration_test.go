@@ -1457,6 +1457,10 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// TODO: release the following test after fix #4462
 	//result = tk.MustQuery(`select convert_tz(20040101, "+00:00", "+10:32"), convert_tz(20040101.01, "+00:00", "+10:32"), convert_tz(20040101.01234567, "+00:00", "+10:32");`)
 	//result.Check(testkit.Rows("2004-01-01 10:32:00 2004-01-01 10:32:00.00 2004-01-01 10:32:00.000000"))
+
+	// for extract
+	result = tk.MustQuery(`select extract(day from '800:12:12'), extract(hour from '800:12:12'), extract(month from 20170101), extract(day_second from '2017-01-01 12:12:12')`)
+	result.Check(testkit.Rows("12 800 1 1121212"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
