@@ -212,7 +212,7 @@ func (d *Datum) SetNull() {
 
 // GetBinaryLiteral gets Bit value
 func (d *Datum) GetBinaryLiteral() BinaryLiteral {
-	return NewBinaryLiteralFromBytes(d.b)
+	return d.b
 }
 
 // GetMysqlBit gets MysqlBit value
@@ -1151,7 +1151,7 @@ func (d *Datum) convertToMysqlBit(sc *variable.StatementContext, target *FieldTy
 	var err error
 	switch d.k {
 	case KindString, KindBytes:
-		uintValue, err = NewBinaryLiteralFromBytes(d.b).ToInt()
+		uintValue, err = BinaryLiteral(d.b).ToInt()
 	default:
 		uintDatum, err1 := d.convertToUint(sc, target)
 		uintValue, err = uintDatum.GetUint64(), err1
