@@ -2061,7 +2061,7 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 			c.Assert(err, NotNil)
 		}
 		result, _ := d.ToString()
-		c.Assert(result, Equals, test.expect)
+		c.Assert(result, Equals, test.expect, Commentf("convert_tz(\"%v\", \"%s\", \"%s\")", test.t, test.fromTz, test.toTz))
 	}
 }
 
