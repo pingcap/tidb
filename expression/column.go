@@ -237,7 +237,9 @@ func (col *Column) HashCode() []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
-	col.hashcode, _ = codec.EncodeValue(col.hashcode, types.NewIntDatum(int64(col.FromID)), types.NewIntDatum(int64(col.Position)))
+	col.hashcode = make([]byte, 0, 16)
+	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.FromID))
+	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.Position))
 	return col.hashcode
 }
 
