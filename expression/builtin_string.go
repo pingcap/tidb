@@ -2396,7 +2396,7 @@ func (c *exportSetFunctionClass) getFunction(ctx context.Context, args []Express
 	return sig.setSelf(sig), nil
 }
 
-// exportSet evals EXPORT_SET(bits,on,off[,separator[,number_of_bits]]).
+// exportSet evals EXPORT_SET(bits,on,off,separator,number_of_bits).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func exportSet(bits int64, on, off, separator string, numberOfBits int64) string {
 	result := ""
@@ -2417,7 +2417,7 @@ type builtinExportSet3ArgSig struct {
 	baseStringBuiltinFunc
 }
 
-// evalString evals EXPORT_SET(bits,on,off[,separator[,number_of_bits]]).
+// evalString evals EXPORT_SET(bits,on,off).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func (b *builtinExportSet3ArgSig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -2444,7 +2444,7 @@ type builtinExportSet4ArgSig struct {
 	baseStringBuiltinFunc
 }
 
-// evalString evals EXPORT_SET(bits,on,off[,separator[,number_of_bits]]).
+// evalString evals EXPORT_SET(bits,on,off,separator).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func (b *builtinExportSet4ArgSig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -2476,7 +2476,7 @@ type builtinExportSet5ArgSig struct {
 	baseStringBuiltinFunc
 }
 
-// evalString evals EXPORT_SET(bits,on,off[,separator[,number_of_bits]]).
+// evalString evals EXPORT_SET(bits,on,off,separator,number_of_bits).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func (b *builtinExportSet5ArgSig) evalString(row []types.Datum) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
