@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -73,11 +72,9 @@ type TableReaderExecutor struct {
 	zeroData bool
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result           distsql.SelectResult
-	partialResult    distsql.PartialResult
-	newResult        distsql.NewSelectResult
-	newPartialResult distsql.NewPartialResult
-	priority         int
+	result        distsql.NewSelectResult
+	partialResult distsql.NewPartialResult
+	priority      int
 }
 
 // Schema implements the Executor Schema interface.
@@ -87,64 +84,14 @@ func (e *TableReaderExecutor) Schema() *expression.Schema {
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	var err error
-	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
-		err = closeAll(e.newResult, e.newPartialResult)
-		e.newResult = nil
-		e.newPartialResult = nil
-	} else {
-		err = closeAll(e.result, e.partialResult)
-		e.result = nil
-		e.partialResult = nil
-	}
+	err := closeAll(e.result, e.partialResult)
+	e.result = nil
+	e.partialResult = nil
 	return errors.Trace(err)
 }
 
 // Next implements the Executor Next interface.
 func (e *TableReaderExecutor) Next() (Row, error) {
-	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
-		return e.newNext()
-	}
-	return e.oldNext()
-}
-
-func (e *TableReaderExecutor) newNext() (Row, error) {
-	for {
-		// Get partial result.
-		if e.newPartialResult == nil {
-			var err error
-			e.newPartialResult, err = e.newResult.Next()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if e.newPartialResult == nil {
-				// Finished.
-				return nil, nil
-			}
-		}
-		// Get a row from partial result.
-		rowData, err := e.newPartialResult.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if rowData == nil {
-			// Finish the current partial result and get the next one.
-			e.newPartialResult.Close()
-			e.newPartialResult = nil
-			continue
-		}
-		if e.zeroData {
-			return Row{}, nil
-		}
-		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return rowData, nil
-	}
-}
-
-func (e *TableReaderExecutor) oldNext() (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -159,7 +106,7 @@ func (e *TableReaderExecutor) oldNext() (Row, error) {
 			}
 		}
 		// Get a row from partial result.
-		h, rowData, err := e.partialResult.Next()
+		rowData, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -169,45 +116,30 @@ func (e *TableReaderExecutor) oldNext() (Row, error) {
 			e.partialResult = nil
 			continue
 		}
-		values := make([]types.Datum, e.schema.Len())
-		if handleIsExtra(e.handleCol) {
-			err = codec.SetRawValues(rowData, values[:len(values)-1])
-			values[len(values)-1].SetInt64(h)
-		} else {
-			err = codec.SetRawValues(rowData, values)
+		if e.zeroData {
+			return Row{}, nil
 		}
+		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return values, nil
+		return rowData, nil
 	}
 }
 
 // Open implements the Executor Open interface.
 func (e *TableReaderExecutor) Open() error {
 	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
-	var err error
-	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
-		colLen := e.schema.Len()
-		if colLen == 0 {
-			colLen = 1
-		}
-		e.newResult, err = distsql.NewSelectDAG(e.ctx, goctx.Background(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, colLen)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.newResult.Fetch(e.ctx.GoCtx())
-	} else {
-		e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.result.Fetch(e.ctx.GoCtx())
+	colLen := e.schema.Len()
+	if colLen == 0 {
+		colLen = 1
 	}
+	var err error
+	e.result, err = distsql.NewSelectDAG(e.ctx, goctx.Background(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, colLen)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.result.Fetch(e.ctx.GoCtx())
 	return nil
 }
 
@@ -216,19 +148,11 @@ func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.C
 	sort.Sort(int64Slice(handles))
 	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
 	var err error
-	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
-		e.newResult, err = distsql.NewSelectDAG(e.ctx, goCtx, e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.newResult.Fetch(goCtx)
-	} else {
-		e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.result.Fetch(goCtx)
+	e.result, err = distsql.NewSelectDAG(e.ctx, goCtx, e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+	if err != nil {
+		return errors.Trace(err)
 	}
+	e.result.Fetch(goCtx)
 	return nil
 }
 
@@ -257,10 +181,8 @@ type IndexReaderExecutor struct {
 	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result           distsql.SelectResult
-	partialResult    distsql.PartialResult
-	newResult        distsql.NewSelectResult
-	newPartialResult distsql.NewPartialResult
+	result        distsql.NewSelectResult
+	partialResult distsql.NewPartialResult
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
@@ -273,28 +195,14 @@ func (e *IndexReaderExecutor) Schema() *expression.Schema {
 
 // Close implements the Executor Close interface.
 func (e *IndexReaderExecutor) Close() error {
-	var err error
-	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
-		err = closeAll(e.newResult, e.newPartialResult)
-		e.newResult = nil
-		e.newPartialResult = nil
-	} else {
-		err = closeAll(e.result, e.partialResult)
-		e.result = nil
-		e.partialResult = nil
-	}
+	err := closeAll(e.result, e.partialResult)
+	e.result = nil
+	e.partialResult = nil
 	return errors.Trace(err)
 }
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next() (Row, error) {
-	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
-		return e.newNext()
-	}
-	return e.oldNext()
-}
-
-func (e *IndexReaderExecutor) oldNext() (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
@@ -309,7 +217,7 @@ func (e *IndexReaderExecutor) oldNext() (Row, error) {
 			}
 		}
 		// Get a row from partial result.
-		h, rowData, err := e.partialResult.Next()
+		rowData, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -317,49 +225,6 @@ func (e *IndexReaderExecutor) oldNext() (Row, error) {
 			// Finish the current partial result and get the next one.
 			e.partialResult.Close()
 			e.partialResult = nil
-			continue
-		}
-		values := make([]types.Datum, e.schema.Len())
-		if handleIsExtra(e.handleCol) {
-			err = codec.SetRawValues(rowData, values[:len(values)-1])
-			values[len(values)-1].SetInt64(h)
-		} else {
-			err = codec.SetRawValues(rowData, values)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return values, nil
-	}
-}
-
-func (e *IndexReaderExecutor) newNext() (Row, error) {
-	for {
-		// Get partial result.
-		if e.newPartialResult == nil {
-			var err error
-			e.newPartialResult, err = e.newResult.Next()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if e.newPartialResult == nil {
-				// Finished.
-				return nil, nil
-			}
-		}
-		// Get a row from partial result.
-		rowData, err := e.newPartialResult.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if rowData == nil {
-			// Finish the current partial result and get the next one.
-			e.newPartialResult.Close()
-			e.newPartialResult = nil
 			continue
 		}
 		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
@@ -380,19 +245,11 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
-		e.newResult, err = distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.newResult.Fetch(e.ctx.GoCtx())
-	} else {
-		e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.result.Fetch(e.ctx.GoCtx())
+	e.result, err = distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+	if err != nil {
+		return errors.Trace(err)
 	}
+	e.result.Fetch(e.ctx.GoCtx())
 	return nil
 }
 
@@ -402,19 +259,11 @@ func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if e.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
-		e.newResult, err = distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.newResult.Fetch(goCtx)
-	} else {
-		e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.result.Fetch(goCtx)
+	e.result, err = distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
+	if err != nil {
+		return errors.Trace(err)
 	}
+	e.result.Fetch(goCtx)
 	return nil
 }
 
