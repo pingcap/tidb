@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
@@ -164,7 +165,7 @@ type mockResponse struct {
 	count int
 }
 
-func (resp *mockResponse) Next() ([]byte, error) {
+func (resp *mockResponse) Next() (*coprocessor.Response, error) {
 	resp.count++
 	if resp.count == 100 {
 		return nil, errors.New("error happened")
@@ -176,11 +177,13 @@ func (resp *mockResponse) Close() error {
 	return nil
 }
 
-func mockSubresult() []byte {
+func mockSubresult() *coprocessor.Response {
 	resp := new(tipb.SelectResponse)
 	b, err := resp.Marshal()
 	if err != nil {
 		panic(err)
 	}
-	return b
+	return &coprocessor.Response{
+		Data: b,
+	}
 }

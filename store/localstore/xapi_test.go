@@ -71,7 +71,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	c.Check(err, IsNil)
 	c.Check(err, IsNil)
 	selResp := new(tipb.SelectResponse)
-	proto.Unmarshal(data, selResp)
+	proto.Unmarshal(data.Data, selResp)
 	c.Check(selResp.Chunks, HasLen, 1)
 	chunk := &selResp.Chunks[0]
 	c.Check(chunk.RowsMeta, HasLen, int(count))
@@ -98,7 +98,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	data, err = resp.Next()
 	c.Check(err, IsNil)
 	idxResp := new(tipb.SelectResponse)
-	proto.Unmarshal(data, idxResp)
+	proto.Unmarshal(data.Data, idxResp)
 	chunk = &idxResp.Chunks[0]
 	c.Check(chunk.RowsMeta, HasLen, int(count))
 	handles := make([]int, 0, 10)

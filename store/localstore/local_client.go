@@ -2,6 +2,7 @@ package localstore
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -114,7 +115,7 @@ type task struct {
 	region  *localRegion
 }
 
-func (it *response) Next() (resp []byte, err error) {
+func (it *response) Next() (resp *coprocessor.Response, err error) {
 	if it.finished {
 		return nil, nil
 	}
@@ -140,7 +141,12 @@ func (it *response) Next() (resp []byte, err error) {
 	if it.reqSent == len(it.tasks) && it.respGot == it.reqSent {
 		it.Close()
 	}
-	return regionResp.data, nil
+	if regionResp.data != nil {
+		return &coprocessor.Response{
+			Data: regionResp.data,
+		}, nil
+	}
+	return nil, nil
 }
 
 func (it *response) createRetryTasks(resp *regionResponse) []*task {
