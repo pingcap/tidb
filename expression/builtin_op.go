@@ -180,6 +180,7 @@ func (c *bitAndFunctionClass) getFunction(args []Expression, ctx context.Context
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitAndSig{baseIntBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_BitAndSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
 }
@@ -212,6 +213,7 @@ func (c *bitOrFunctionClass) getFunction(args []Expression, ctx context.Context)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitOrSig{baseIntBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_BitOrSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
 }
@@ -244,6 +246,7 @@ func (c *bitXorFunctionClass) getFunction(args []Expression, ctx context.Context
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitXorSig{baseIntBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_BitXorSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
 }
@@ -355,19 +358,25 @@ func (c *isTrueOrFalseFunctionClass) getFunction(args []Expression, ctx context.
 		switch argTp {
 		case tpReal:
 			sig = &builtinRealIsTrueSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_RealIsTrue)
 		case tpDecimal:
 			sig = &builtinDecimalIsTrueSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_DecimalIsTrue)
 		case tpInt:
 			sig = &builtinIntIsTrueSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
 		}
 	case opcode.IsFalsity:
 		switch argTp {
 		case tpReal:
 			sig = &builtinRealIsFalseSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_RealIsFalse)
 		case tpDecimal:
 			sig = &builtinDecimalIsFalseSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_DecimalIsFalse)
 		case tpInt:
 			sig = &builtinIntIsFalseSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
 		}
 	}
 	return sig.setSelf(sig), nil
@@ -474,6 +483,7 @@ func (c *bitNegFunctionClass) getFunction(args []Expression, ctx context.Context
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinBitNegSig{baseIntBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_BitNegSig)
 	return sig.setSelf(sig), nil
 }
 

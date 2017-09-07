@@ -172,16 +172,22 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 	switch retEvalTp {
 	case tpInt:
 		sig = &builtinCoalesceIntSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceInt)
 	case tpReal:
 		sig = &builtinCoalesceRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceReal)
 	case tpDecimal:
 		sig = &builtinCoalesceDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDecimal)
 	case tpString:
 		sig = &builtinCoalesceStringSig{baseStringBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceString)
 	case tpDatetime, tpTimestamp:
 		sig = &builtinCoalesceTimeSig{baseTimeBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceTime)
 	case tpDuration:
 		sig = &builtinCoalesceDurationSig{baseDurationBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
 	}
 
 	return sig.setSelf(sig), nil

@@ -360,6 +360,14 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinLogicOrSig{baseIntBuiltinFunc{base}}
 	case tipb.ScalarFuncSig_LogicalXor:
 		f = &builtinLogicXorSig{baseIntBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_BitAndSig:
+		f = &builtinBitAndSig{baseIntBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_BitOrSig:
+		f = &builtinBitOrSig{baseIntBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_BitXorSig:
+		f = &builtinBitXorSig{baseIntBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_BitNegSig:
+		f = &builtinBitNegSig{baseIntBuiltinFunc{base}}
 
 	case tipb.ScalarFuncSig_UnaryNot:
 		f = &builtinUnaryNotSig{baseIntBuiltinFunc{base}}
@@ -382,6 +390,45 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinStringIsNullSig{baseIntBuiltinFunc{base}}
 	case tipb.ScalarFuncSig_IntIsNull:
 		f = &builtinIntIsNullSig{baseIntBuiltinFunc{base}}
+
+	case tipb.ScalarFuncSig_CoalesceDecimal:
+		f = &builtinCoalesceDecimalSig{baseDecimalBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_CoalesceDuration:
+		f = &builtinCoalesceDurationSig{baseDurationBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_CoalesceReal:
+		f = &builtinCoalesceRealSig{baseRealBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_CoalesceTime:
+		f = &builtinCoalesceTimeSig{baseTimeBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_CoalesceString:
+		f = &builtinCoalesceStringSig{baseStringBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_CoalesceInt:
+		f = &builtinCoalesceIntSig{baseIntBuiltinFunc{base}}
+
+	case tipb.ScalarFuncSig_CaseWhenDecimal:
+		f = &builtinCaseWhenDecimalSig{baseDecimalBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_CaseWhenDuration:
+		f = &builtinCaseWhenDurationSig{baseDurationBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_CaseWhenReal:
+		f = &builtinCaseWhenRealSig{baseRealBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_CaseWhenTime:
+		f = &builtinCaseWhenTimeSig{baseTimeBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_CaseWhenString:
+		f = &builtinCaseWhenStringSig{baseStringBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_CaseWhenInt:
+		f = &builtinCaseWhenIntSig{baseIntBuiltinFunc{base}}
+
+	case tipb.ScalarFuncSig_IntIsFalse:
+		f = &builtinIntIsFalseSig{baseIntBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_RealIsFalse:
+		f = &builtinRealIsFalseSig{baseIntBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_DecimalIsFalse:
+		f = &builtinDecimalIsFalseSig{baseIntBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_IntIsTrue:
+		f = &builtinIntIsTrueSig{baseIntBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_RealIsTrue:
+		f = &builtinRealIsTrueSig{baseIntBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_DecimalIsTrue:
+		f = &builtinDecimalIsTrueSig{baseIntBuiltinFunc{base}}
 
 	case tipb.ScalarFuncSig_IfNullReal:
 		f = &builtinIfNullRealSig{baseRealBuiltinFunc{base}}
@@ -407,6 +454,27 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinIfTimeSig{baseTimeBuiltinFunc{base}}
 	case tipb.ScalarFuncSig_IfDuration:
 		f = &builtinIfDurationSig{baseDurationBuiltinFunc{base}}
+
+	//case tipb.ScalarFuncSig_JsonArraySig:
+	//	f = &builtinJSONArraySig{baseBuiltinFunc{base}}
+	//case tipb.ScalarFuncSig_JsonObjectSig:
+	//	f = &builtinJSONObjectSig{baseBuiltinFunc{base}}
+	//case tipb.ScalarFuncSig_JsonMergeSig:
+	//	f = &builtinJSONMergeSig{baseBuiltinFunc{base}}
+	//case tipb.ScalarFuncSig_JsonRemoveSig:
+	//	f = &builtinJSONRemoveSig{baseBuiltinFunc{base}}
+	//case tipb.ScalarFuncSig_JsonReplaceSig:
+	//	f = &builtinJSONReplaceSig{baseBuiltinFunc{base}}
+	//case tipb.ScalarFuncSig_JsonInsertSig:
+	//	f = &builtinJSONInsertSig{baseBuiltinFunc{base}}
+	//case tipb.ScalarFuncSig_JsonSetSig:
+	//	f = &builtinJSONSetSig{baseBuiltinFunc{base}}
+	//case tipb.ScalarFuncSig_JsonUnquoteSig:
+	//	f = &builtinJSONUnquoteSig{baseBuiltinFunc{base}}
+	//case tipb.ScalarFuncSig_JsonExtractSig:
+	//	f = &builtinJSONExtractSig{baseBuiltinFunc{base}}
+	//case tipb.ScalarFuncSig_JsonTypeSig:
+	//	f = &builtinJSONTypeSig{baseBuiltinFunc{base}}
 
 	default:
 		e = errFunctionNotExists.GenByArgs(sigCode)

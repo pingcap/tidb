@@ -293,6 +293,7 @@ func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Conte
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinJSONTypeSig{newBaseBuiltinFunc(args, ctx)}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -317,6 +318,7 @@ func (c *jsonExtractFunctionClass) getFunction(args []Expression, ctx context.Co
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinJSONExtractSig{newBaseBuiltinFunc(args, ctx)}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonExtractSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -341,6 +343,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(args []Expression, ctx context.Co
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinJSONUnquoteSig{newBaseBuiltinFunc(args, ctx)}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -365,6 +368,7 @@ func (c *jsonSetFunctionClass) getFunction(args []Expression, ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinJSONSetSig{newBaseBuiltinFunc(args, ctx)}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -389,6 +393,7 @@ func (c *jsonInsertFunctionClass) getFunction(args []Expression, ctx context.Con
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinJSONInsertSig{newBaseBuiltinFunc(args, ctx)}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -413,6 +418,7 @@ func (c *jsonReplaceFunctionClass) getFunction(args []Expression, ctx context.Co
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinJSONReplaceSig{newBaseBuiltinFunc(args, ctx)}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -437,6 +443,7 @@ func (c *jsonRemoveFunctionClass) getFunction(args []Expression, ctx context.Con
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinJSONRemoveSig{newBaseBuiltinFunc(args, ctx)}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonRemoveSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -461,6 +468,7 @@ func (c *jsonMergeFunctionClass) getFunction(args []Expression, ctx context.Cont
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinJSONMergeSig{newBaseBuiltinFunc(args, ctx)}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonMergeSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -485,6 +493,7 @@ func (c *jsonObjectFunctionClass) getFunction(args []Expression, ctx context.Con
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinJSONObjectSig{newBaseBuiltinFunc(args, ctx)}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -509,6 +518,7 @@ func (c *jsonArrayFunctionClass) getFunction(args []Expression, ctx context.Cont
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinJSONArraySig{newBaseBuiltinFunc(args, ctx)}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)
 	return sig.setSelf(sig), nil
 }
 
