@@ -26,10 +26,7 @@ import (
 )
 
 // BinaryLiteral is the internal type for storing bit / hex literal type.
-type BinaryLiteral struct {
-	// Value holds the raw value for literal in BigEndian.
-	Value []byte
-}
+type BinaryLiteral []byte
 
 // BitLiteral is the bit literal type.
 type BitLiteral BinaryLiteral
@@ -38,7 +35,7 @@ type BitLiteral BinaryLiteral
 type HexLiteral BinaryLiteral
 
 // ZeroBinaryLiteral is a BinaryLiteral literal with zero value.
-var ZeroBinaryLiteral = BinaryLiteral{[]byte{}}
+var ZeroBinaryLiteral = BinaryLiteral([]byte{})
 
 func trimLeadingZeroBytes(bytes []byte) []byte {
 	if len(bytes) == 0 {
@@ -57,7 +54,7 @@ func trimLeadingZeroBytes(bytes []byte) []byte {
 func NewBinaryLiteralFromBytes(bytes []byte) BinaryLiteral {
 	b := make([]byte, len(bytes))
 	copy(b, bytes)
-	return BinaryLiteral{b}
+	return BinaryLiteral(b)
 }
 
 // NewBinaryLiteralFromUint creates a new BinaryLiteral instance by the given uint value in BitEndian.
@@ -79,24 +76,24 @@ func NewBinaryLiteralFromUint(value uint64, byteSize int) BinaryLiteral {
 
 // String implements fmt.Stringer interface.
 func (b BinaryLiteral) String() string {
-	if len(b.Value) == 0 {
+	if len(b) == 0 {
 		return ""
 	}
-	return "0x" + hex.EncodeToString(b.Value)
+	return "0x" + hex.EncodeToString(b)
 }
 
 // ToString returns the string representation for the literal.
 func (b BinaryLiteral) ToString() string {
-	return string(b.Value)
+	return string(b)
 }
 
 // ToBitLiteralString returns the bit literal representation for the literal.
 func (b BinaryLiteral) ToBitLiteralString(trimLeadingZero bool) string {
-	if len(b.Value) == 0 {
+	if len(b) == 0 {
 		return "b''"
 	}
 	var buf bytes.Buffer
-	for _, data := range b.Value {
+	for _, data := range b {
 		fmt.Fprintf(&buf, "%08b", data)
 	}
 	ret := buf.Bytes()
@@ -111,7 +108,7 @@ func (b BinaryLiteral) ToBitLiteralString(trimLeadingZero bool) string {
 
 // ToInt returns the int value for the literal.
 func (b BinaryLiteral) ToInt() (uint64, error) {
-	bytes := trimLeadingZeroBytes(b.Value)
+	bytes := trimLeadingZeroBytes(b)
 	length := len(bytes)
 	if length == 0 {
 		return 0, nil

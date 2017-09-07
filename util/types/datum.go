@@ -223,13 +223,13 @@ func (d *Datum) GetMysqlBit() BinaryLiteral {
 // SetBinaryLiteral sets Bit value
 func (d *Datum) SetBinaryLiteral(b BinaryLiteral) {
 	d.k = KindBinaryLiteral
-	d.b = b.Value
+	d.b = b
 }
 
 // SetMysqlBit sets MysqlBit value
 func (d *Datum) SetMysqlBit(b BinaryLiteral) {
 	d.k = KindMysqlBit
-	d.b = b.Value
+	d.b = b
 }
 
 // GetMysqlDecimal gets Decimal value
