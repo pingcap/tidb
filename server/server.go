@@ -122,8 +122,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 			}
 		}
 	}
-	cc.bufConn = newBufferedConn(conn)
-	cc.pkt = newPacketIO(cc.bufConn)
+	cc.setConn(conn)
 	cc.salt = util.RandomBuf(20)
 	return cc
 }

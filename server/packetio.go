@@ -35,33 +35,37 @@
 package server
 
 import (
+	"bufio"
 	"io"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 )
 
+const defaultWriterSize = 16 * 1024
+
 // packetIO is a helper to read and write data in packet format.
 type packetIO struct {
-	bufConn  *bufferedConn
-	sequence uint8
+	bufReadConn *bufferedReadConn
+	bufWriter   *bufio.Writer
+	sequence    uint8
 }
 
-func newPacketIO(bufConn *bufferedConn) *packetIO {
-	return &packetIO{
-		bufConn:  bufConn,
-		sequence: 0,
-	}
+func newPacketIO(bufReadConn *bufferedReadConn) *packetIO {
+	p := &packetIO{sequence: 0}
+	p.setBufferedReadConn(bufReadConn)
+	return p
 }
 
-func (p *packetIO) setBufferedConn(bufConn *bufferedConn) {
-	p.bufConn = bufConn
+func (p *packetIO) setBufferedReadConn(bufReadConn *bufferedReadConn) {
+	p.bufReadConn = bufReadConn
+	p.bufWriter = bufio.NewWriterSize(bufReadConn, defaultWriterSize)
 }
 
 func (p *packetIO) readOnePacket() ([]byte, error) {
 	var header [4]byte
 
-	if _, err := io.ReadFull(p.bufConn, header[:]); err != nil {
+	if _, err := io.ReadFull(p.bufReadConn, header[:]); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -75,7 +79,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 
 	data := make([]byte, length)
-	if _, err := io.ReadFull(p.bufConn, data); err != nil {
+	if _, err := io.ReadFull(p.bufReadConn, data); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return data, nil
@@ -119,7 +123,7 @@ func (p *packetIO) writePacket(data []byte) error {
 
 		data[3] = p.sequence
 
-		if n, err := p.bufConn.BufferedWrite(data[:4+mysql.MaxPayloadLen]); err != nil {
+		if n, err := p.bufWriter.Write(data[:4+mysql.MaxPayloadLen]); err != nil {
 			return mysql.ErrBadConn
 		} else if n != (4 + mysql.MaxPayloadLen) {
 			return mysql.ErrBadConn
@@ -135,7 +139,7 @@ func (p *packetIO) writePacket(data []byte) error {
 	data[2] = byte(length >> 16)
 	data[3] = p.sequence
 
-	if n, err := p.bufConn.BufferedWrite(data); err != nil {
+	if n, err := p.bufWriter.Write(data); err != nil {
 		return errors.Trace(mysql.ErrBadConn)
 	} else if n != len(data) {
 		return errors.Trace(mysql.ErrBadConn)
@@ -146,5 +150,5 @@ func (p *packetIO) writePacket(data []byte) error {
 }
 
 func (p *packetIO) flush() error {
-	return p.bufConn.Flush()
+	return p.bufWriter.Flush()
 }

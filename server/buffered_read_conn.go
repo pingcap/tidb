@@ -18,35 +18,21 @@ import (
 	"net"
 )
 
-const (
-	defaultReaderSize = 16 * 1024
-	defaultWriterSize = 16 * 1024
-)
+const defaultReaderSize = 16 * 1024
 
-// bufferedConn is a net.Conn compatible structure that reads from bufio.Reader and
-// optionally writes to bufio.Writer.
-type bufferedConn struct {
+// bufferedReadConn is a net.Conn compatible structure that reads from bufio.Reader.
+type bufferedReadConn struct {
 	net.Conn
 	rb *bufio.Reader
-	wb *bufio.Writer
 }
 
-func (conn bufferedConn) Read(b []byte) (n int, err error) {
+func (conn bufferedReadConn) Read(b []byte) (n int, err error) {
 	return conn.rb.Read(b)
 }
 
-func (conn bufferedConn) BufferedWrite(p []byte) (nn int, err error) {
-	return conn.wb.Write(p)
-}
-
-func (conn bufferedConn) Flush() error {
-	return conn.wb.Flush()
-}
-
-func newBufferedConn(conn net.Conn) *bufferedConn {
-	return &bufferedConn{
+func newBufferedReadConn(conn net.Conn) *bufferedReadConn {
+	return &bufferedReadConn{
 		Conn: conn,
 		rb:   bufio.NewReaderSize(conn, defaultReaderSize),
-		wb:   bufio.NewWriterSize(conn, defaultWriterSize),
 	}
 }

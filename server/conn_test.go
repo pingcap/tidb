@@ -125,9 +125,7 @@ func (ts ConnTestSuite) TestInitialHandshake(c *C) {
 			capability: defaultCapability,
 		},
 		pkt: &packetIO{
-			bufConn: &bufferedConn{
-				wb: bufio.NewWriter(&outBuffer),
-			},
+			bufWriter: bufio.NewWriter(&outBuffer),
 		},
 	}
 	err := cc.writeInitialHandshake()

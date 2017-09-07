@@ -61,7 +61,7 @@ import (
 // handles client query.
 type clientConn struct {
 	pkt          *packetIO         // a helper to read and write data in packet format.
-	bufConn      *bufferedConn     // a buffered net.Conn or buffered tls.Conn.
+	bufReadConn  *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
 	tlsConn      *tls.Conn         // TLS connection, nil if not TLS.
 	server       *Server           // a reference of server instance.
 	capability   uint32            // client capability affects the way server handles client request.
@@ -80,7 +80,7 @@ type clientConn struct {
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
 	return fmt.Sprintf("id:%d, addr:%s status:%d, collation:%s, user:%s",
-		cc.connectionID, cc.bufConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
+		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
 }
 
@@ -118,7 +118,7 @@ func (cc *clientConn) Close() error {
 	connections := len(cc.server.clients)
 	cc.server.rwlock.Unlock()
 	connGauge.Set(float64(connections))
-	cc.bufConn.Close()
+	cc.bufReadConn.Close()
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -354,7 +354,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 	}
 	if !cc.server.skipAuth() {
 		// Do Auth.
-		addr := cc.bufConn.RemoteAddr().String()
+		addr := cc.bufReadConn.RemoteAddr().String()
 		host, _, err1 := net.SplitHostPort(addr)
 		if err1 != nil {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
@@ -860,14 +860,18 @@ func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
 	return cc.writeOK()
 }
 
+func (cc *clientConn) setConn(conn net.Conn) {
+	cc.bufReadConn = newBufferedReadConn(conn)
+	cc.pkt = newPacketIO(cc.bufReadConn)
+}
+
 func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
-	// Important: read from buffered reader because it may contain data we need.
-	tlsConn := tls.Server(cc.bufConn, tlsConfig)
+	// Important: read from buffered reader instead of the original net.Conn because it may contain data we need.
+	tlsConn := tls.Server(cc.bufReadConn, tlsConfig)
 	if err := tlsConn.Handshake(); err != nil {
 		return errors.Trace(err)
 	}
+	cc.setConn(tlsConn)
 	cc.tlsConn = tlsConn
-	cc.bufConn = newBufferedConn(tlsConn)
-	cc.pkt.setBufferedConn(cc.bufConn)
 	return nil
 }
