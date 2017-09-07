@@ -681,11 +681,11 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		if i == len(tests)-2 {
 			c.Assert(len(info.p.Schema().Columns), Equals, 1)
 			c.Assert(info.p.Schema().Columns[0].ColName.O, Equals, "count(*)")
-			c.Assert(info.p.Schema().Columns[0].FromID, Equals, "Projection_5")
+			c.Assert(info.p.Schema().Columns[0].FromID, Equals, 5)
 		} else if i == len(tests)-1 {
 			c.Assert(len(info.p.Schema().Columns), Equals, 1)
 			c.Assert(info.p.Schema().Columns[0].ColName.O, Equals, "c1")
-			c.Assert(info.p.Schema().Columns[0].FromID, Equals, "TableScan_1")
+			c.Assert(info.p.Schema().Columns[0].FromID, Equals, 1)
 		}
 	}
 }
