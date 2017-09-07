@@ -122,7 +122,7 @@ type requiredProp struct {
 	taskTp taskType
 	// expectedCnt means this operator may be closed after fetching expectedCnt records.
 	expectedCnt float64
-	// hashcode stores the hash code of a requiredProp, will ba lazy calculated when function "hashCode()" called.
+	// hashcode stores the hash code of a requiredProp, will be lazily calculated when function "hashCode()" being called.
 	hashcode []byte
 }
 
