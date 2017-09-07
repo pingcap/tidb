@@ -1344,7 +1344,7 @@ func checkDatetimeType(t TimeInternal, allowZeroDate bool) error {
 }
 
 // ExtractDatetimeNum extracts time value number from datetime unit and format.
-func ExtractDatetimeNum(unit string, t Time) (int64, error) {
+func ExtractDatetimeNum(t *Time, unit string) (int64, error) {
 	switch strings.ToUpper(unit) {
 	case "DAY":
 		return int64(t.Time.Day()), nil
@@ -1392,28 +1392,28 @@ func ExtractDatetimeNum(unit string, t Time) (int64, error) {
 }
 
 // ExtractDurationNum extracts duration value number from duration unit and format.
-func ExtractDurationNum(unit string, t Duration) (int64, error) {
+func ExtractDurationNum(d *Duration, unit string) (int64, error) {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		return int64(t.MicroSecond()), nil
+		return int64(d.MicroSecond()), nil
 	case "SECOND":
-		return int64(t.Second()), nil
+		return int64(d.Second()), nil
 	case "MINUTE":
-		return int64(t.Minute()), nil
+		return int64(d.Minute()), nil
 	case "HOUR":
-		return int64(t.Hour()), nil
+		return int64(d.Hour()), nil
 	case "SECOND_MICROSECOND":
-		return int64(t.Second())*1000000 + int64(t.MicroSecond()), nil
+		return int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
 	case "MINUTE_MICROSECOND":
-		return int64(t.Minute())*100000000 + int64(t.Second())*1000000 + int64(t.MicroSecond()), nil
+		return int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
 	case "MINUTE_SECOND":
-		return int64(t.Minute()*100 + t.Second()), nil
+		return int64(d.Minute()*100 + d.Second()), nil
 	case "HOUR_MICROSECOND":
-		return int64(t.Hour())*10000000000 + int64(t.Minute())*100000000 + int64(t.Second())*1000000 + int64(t.MicroSecond()), nil
+		return int64(d.Hour())*10000000000 + int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
 	case "HOUR_SECOND":
-		return int64(t.Hour())*10000 + int64(t.Minute())*100 + int64(t.Second()), nil
+		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
 	case "HOUR_MINUTE":
-		return int64(t.Hour())*100 + int64(t.Minute()), nil
+		return int64(d.Hour())*100 + int64(d.Minute()), nil
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)
 	}
