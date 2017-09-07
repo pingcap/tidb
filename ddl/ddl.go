@@ -50,6 +50,12 @@ const (
 )
 
 var (
+	// TableColumnCountLimit is limit of the number of columns in a table.
+	// It's exported for testing.
+	TableColumnCountLimit = 512
+)
+
+var (
 	// errWorkerClosed means we have already closed the DDL worker.
 	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
 	// errNotOwner means we are not owner and can't handle DDL jobs.
@@ -80,8 +86,8 @@ var (
 	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
 	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
-	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+	errTooManyFields         = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
@@ -534,7 +540,6 @@ const (
 	codeBadField                     = 1054
 	codeTooLongIdent                 = 1059
 	codeDupKeyName                   = 1061
-	codeInvalidDefault               = 1067
 	codeTooLongKey                   = 1071
 	codeKeyColumnDoesNotExits        = 1072
 	codeIncorrectPrefixKey           = 1089
@@ -543,6 +548,7 @@ const (
 	codeBlobCantHaveDefault          = 1101
 	codeWrongDBName                  = 1102
 	codeWrongTableName               = 1103
+	codeTooManyFields                = 1117
 	codeInvalidUseOfNull             = 1138
 	codeWrongColumnName              = 1166
 	codeWrongKeyColumn               = 1167
@@ -572,7 +578,6 @@ func init() {
 		codeFileNotFound:                 mysql.ErrFileNotFound,
 		codeErrorOnRename:                mysql.ErrErrorOnRename,
 		codeBadField:                     mysql.ErrBadField,
-		codeInvalidDefault:               mysql.ErrInvalidDefault,
 		codeInvalidUseOfNull:             mysql.ErrInvalidUseOfNull,
 		codeUnsupportedOnGeneratedColumn: mysql.ErrUnsupportedOnGeneratedColumn,
 		codeGeneratedColumnNonPrior:      mysql.ErrGeneratedColumnNonPrior,
@@ -582,6 +587,7 @@ func init() {
 		codeWrongColumnName:              mysql.ErrWrongColumnName,
 		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
 		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
+		codeTooManyFields:                mysql.ErrTooManyFields,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

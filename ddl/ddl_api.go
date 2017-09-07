@@ -418,14 +418,14 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 	if c.DefaultValue != nil {
 		_, err := table.GetColDefaultValue(ctx, c.ToInfo())
 		if types.ErrTruncated.Equal(err) {
-			return errInvalidDefault.GenByArgs(c.Name)
+			return types.ErrInvalidDefault.GenByArgs(c.Name)
 		}
 		return errors.Trace(err)
 	}
 
 	// Set not null but default null is invalid.
 	if mysql.HasNotNullFlag(c.Flag) {
-		return errInvalidDefault.GenByArgs(c.Name)
+		return types.ErrInvalidDefault.GenByArgs(c.Name)
 	}
 
 	return nil
@@ -474,6 +474,13 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
 			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name)
 		}
+	}
+	return nil
+}
+
+func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
+	if len(colDefs) > TableColumnCountLimit {
+		return errTooManyFields
 	}
 	return nil
 }
@@ -706,6 +713,9 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(err)
 	}
 	if err = checkTooLongColumn(colDefs); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkTooManyColumns(colDefs); err != nil {
 		return errors.Trace(err)
 	}
 

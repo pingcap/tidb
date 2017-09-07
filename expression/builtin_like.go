@@ -37,7 +37,7 @@ type likeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *likeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -88,7 +88,7 @@ type regexpFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *regexpFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}

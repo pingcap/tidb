@@ -667,9 +667,7 @@ func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForColumnsInTable(schema, table)
-			for _, r := range rs {
-				rows = append(rows, r)
-			}
+			rows = append(rows, rs...)
 		}
 	}
 	return rows
@@ -724,9 +722,7 @@ func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForStatisticsInTable(schema, table)
-			for _, r := range rs {
-				rows = append(rows, r)
-			}
+			rows = append(rows, rs...)
 		}
 	}
 	return rows

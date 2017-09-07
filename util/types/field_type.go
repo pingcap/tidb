@@ -286,6 +286,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeLonglong
 		tp.Flen = 1
 		tp.Decimal = 0
+		tp.Flag |= mysql.IsBooleanFlag
 		SetBinChsClnFlag(tp)
 	case int:
 		tp.Tp = mysql.TypeLonglong
