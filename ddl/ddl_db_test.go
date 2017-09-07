@@ -131,6 +131,11 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
 	sql = "create table test_error_code1 (c1 int not null default '')"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT 2.0 DEFAULT now());"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "CREATE TABLE `t` (`a` double DEFAULT now());"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
 	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
@@ -1075,6 +1080,24 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
 }
 
+func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
+	defer testleak.AfterTest(c)
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+
+	sql := "create table t_too_large ("
+	cnt := 3000
+	for i := 1; i <= cnt; i++ {
+		sql += fmt.Sprintf("a%d double, b%d double, c%d double, d%d double", i, i, i, i)
+		if i != cnt {
+			sql += ","
+		}
+	}
+	sql += ");"
+	_, err := s.tk.Exec(sql)
+	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("sql:%v", sql))
+}
+
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://create_table_like")
@@ -1122,6 +1145,29 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.testErrorCode(c, failSQL, tmysql.ErrBadDB)
 	failSQL = fmt.Sprintf("create table t1 like test.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+}
+
+func (s *testDBSuite) TestCreateTable(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://create_table")
+	c.Assert(err, IsNil)
+	s.tk = testkit.NewTestKit(c, store)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	s.tk.MustExec("use test")
+	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	cols := tbl.Cols()
+
+	c.Assert(len(cols), Equals, 1)
+	col := cols[0]
+	c.Assert(col.Name.L, Equals, "a")
+	d, ok := col.DefaultValue.(string)
+	c.Assert(ok, IsTrue)
+	c.Assert(d, Equals, "2.0")
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {

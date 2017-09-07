@@ -771,14 +771,7 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *variable.Stat
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 		f, err = TruncateFloat(f, target.Flen, target.Decimal)
-		if err != nil {
-			if sc.IgnoreTruncate {
-				err = nil
-			} else if sc.TruncateAsWarning {
-				sc.AppendWarning(err)
-				err = nil
-			}
-		}
+		err = sc.HandleOverflow(err, err)
 	}
 	return f, errors.Trace(err)
 }
@@ -1826,4 +1819,15 @@ func DatumsToString(datums []Datum) (string, error) {
 		strs[size-1] = strs[size-1] + ")"
 	}
 	return strings.Join(strs, ", "), nil
+}
+
+// CopyDatum returns a new copy of the datum.
+// TODO: Abandon this function.
+func CopyDatum(datum Datum) Datum {
+	ret := datum
+	if datum.b != nil {
+		ret.b = make([]byte, len(datum.b))
+		copy(ret.b, datum.b)
+	}
+	return ret
 }

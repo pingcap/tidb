@@ -246,6 +246,41 @@ func runTestSpecialType(t *C) {
 	})
 }
 
+func runTestClientWithCollation(t *C) {
+	runTests(t, func(config *mysql.Config) {
+		config.Collation = "utf8mb4_general_ci"
+	}, func(dbt *DBTest) {
+		var name, charset, collation string
+		// check session variable collation_connection
+		rows := dbt.mustQuery("show variables like 'collation_connection'")
+		t.Assert(rows.Next(), IsTrue)
+		err := rows.Scan(&name, &collation)
+		t.Assert(err, IsNil)
+		t.Assert(collation, Equals, "utf8mb4_general_ci")
+
+		// check session variable character_set_client
+		rows = dbt.mustQuery("show variables like 'character_set_client'")
+		t.Assert(rows.Next(), IsTrue)
+		err = rows.Scan(&name, &charset)
+		t.Assert(err, IsNil)
+		t.Assert(charset, Equals, "utf8mb4")
+
+		// check session variable character_set_results
+		rows = dbt.mustQuery("show variables like 'character_set_results'")
+		t.Assert(rows.Next(), IsTrue)
+		err = rows.Scan(&name, &charset)
+		t.Assert(err, IsNil)
+		t.Assert(charset, Equals, "utf8mb4")
+
+		// check session variable character_set_connection
+		rows = dbt.mustQuery("show variables like 'character_set_connection'")
+		t.Assert(rows.Next(), IsTrue)
+		err = rows.Scan(&name, &charset)
+		t.Assert(err, IsNil)
+		t.Assert(charset, Equals, "utf8mb4")
+	})
+}
+
 func runTestPreparedString(t *C) {
 	runTestsOnNewDB(t, nil, "PreparedString", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a char(10), b char(10))")
@@ -392,7 +427,7 @@ func runTestLoadData(c *C) {
 	})
 
 	// unsupport ClientLocalFiles capability
-	defaultCapability ^= tmysql.ClientLocalFiles
+	suite.server.capability ^= tmysql.ClientLocalFiles
 	runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 	}, "LoadData", func(dbt *DBTest) {
@@ -401,7 +436,7 @@ func runTestLoadData(c *C) {
 		dbt.Assert(err, NotNil)
 		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
 	})
-	defaultCapability |= tmysql.ClientLocalFiles
+	suite.server.capability |= tmysql.ClientLocalFiles
 }
 
 func runTestConcurrentUpdate(c *C) {
@@ -673,6 +708,14 @@ func runTestStmtCount(t *C) {
 		selectLabel := "SelectTableFull"
 		t.Assert(currentStmtCnt[selectLabel], Equals, originStmtCnt[selectLabel]+2)
 	})
+}
+
+func runTestTLSConnection(t *C, overrider configOverrider) error {
+	db, err := sql.Open("mysql", getDSN(overrider))
+	t.Assert(err, IsNil)
+	defer db.Close()
+	_, err = db.Exec("USE test")
+	return err
 }
 
 func getMetrics(t *C) []byte {

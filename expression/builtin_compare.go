@@ -15,14 +15,13 @@ package expression
 
 import (
 	"math"
-	"sort"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 	"github.com/pingcap/tipb/go-tipb"
@@ -46,7 +45,9 @@ var (
 
 	_ builtinFunc = &builtinGreatestSig{}
 	_ builtinFunc = &builtinLeastSig{}
-	_ builtinFunc = &builtinIntervalSig{}
+	_ builtinFunc = &builtinIntervalIntSig{}
+	_ builtinFunc = &builtinIntervalRealSig{}
+	_ builtinFunc = &builtinLeastSig{}
 
 	_ builtinFunc = &builtinLTIntSig{}
 	_ builtinFunc = &builtinLTRealSig{}
@@ -97,7 +98,7 @@ type coalesceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -153,7 +154,7 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 		}
 
 		// For integer, field length = maxIntLen + (1/0 for sign bit)
-		// For decimal, field lenght = maxIntLen + maxDecimal + (1/0 for sign bit)
+		// For decimal, field length = maxIntLen + maxDecimal + (1/0 for sign bit)
 		if retCTp == types.ClassInt || retCTp == types.ClassDecimal {
 			retTp.Flen = maxIntLen + retTp.Decimal
 			if retTp.Decimal > 0 {
@@ -287,7 +288,7 @@ type greatestFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *greatestFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -333,7 +334,7 @@ type leastFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leastFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -379,52 +380,126 @@ type intervalFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *intervalFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *intervalFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinIntervalSig{newBaseBuiltinFunc(args, ctx)}
+
+	allInt := true
+	for i := range args {
+		if fieldTp2EvalTp(args[i].GetType()) != tpInt {
+			allInt = false
+		}
+	}
+
+	argTps, argTp := make([]evalTp, 0, len(args)), tpReal
+	if allInt {
+		argTp = tpInt
+	}
+	for range args {
+		argTps = append(argTps, argTp)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTps...)
+	var sig builtinFunc
+	if allInt {
+		sig = &builtinIntervalIntSig{baseIntBuiltinFunc{bf}}
+	} else {
+		sig = &builtinIntervalRealSig{baseIntBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinIntervalSig struct {
-	baseBuiltinFunc
+type builtinIntervalIntSig struct {
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinIntervalSig.
+// evalInt evals a builtinIntervalIntSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
-func (b *builtinIntervalSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		d.SetInt64(int64(-1))
-		return
-	}
+func (b *builtinIntervalIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
+	args0, isNull, err := b.args[0].EvalInt(row, sc)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull {
+		return -1, false, nil
+	}
+	idx, err := b.binSearch(sc, args0, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], row)
+	return int64(idx), err != nil, errors.Trace(err)
+}
 
-	idx := sort.Search(len(args)-1, func(i int) bool {
-		d1, d2 := args[0], args[i+1]
-		if d1.Kind() == types.KindInt64 && d1.Kind() == d2.Kind() {
-			return d1.GetInt64() < d2.GetInt64()
+// All arguments are treated as integers.
+// It is required that arg[0] < args[1] < args[2] < ... < args[n] for this function to work correctly.
+// This is because a binary search is used (very fast).
+func (b *builtinIntervalIntSig) binSearch(sc *variable.StatementContext, target int64, isUint1 bool, args []Expression, row []types.Datum) (_ int, err error) {
+	i, j, cmp := 0, len(args), false
+	for i < j {
+		mid := i + (j-i)/2
+		v, isNull, err1 := args[mid].EvalInt(row, sc)
+		if err1 != nil {
+			err = err1
+			break
 		}
-		if d1.Kind() == types.KindUint64 && d1.Kind() == d2.Kind() {
-			return d1.GetUint64() < d2.GetUint64()
+		if isNull {
+			v = target
 		}
-		if d1.Kind() == types.KindInt64 && d2.Kind() == types.KindUint64 {
-			return d1.GetInt64() < 0 || d1.GetUint64() < d2.GetUint64()
+		isUint2 := mysql.HasUnsignedFlag(args[mid].GetType().Flag)
+		switch {
+		case !isUint1 && !isUint2:
+			cmp = target < v
+		case isUint1 && isUint2:
+			cmp = uint64(target) < uint64(v)
+		case !isUint1 && isUint2:
+			cmp = target < 0 || uint64(target) < uint64(v)
+		case isUint1 && !isUint2:
+			cmp = v > 0 && uint64(target) < uint64(v)
 		}
-		if d1.Kind() == types.KindUint64 && d2.Kind() == types.KindInt64 {
-			return d2.GetInt64() > 0 && d1.GetUint64() < d2.GetUint64()
+		if !cmp {
+			i = mid + 1
+		} else {
+			j = mid
 		}
-		v1, _ := d1.ToFloat64(sc)
-		v2, _ := d2.ToFloat64(sc)
-		return v1 < v2
-	})
-	d.SetInt64(int64(idx))
+	}
+	return i, errors.Trace(err)
+}
 
-	return
+type builtinIntervalRealSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals a builtinIntervalRealSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
+func (b *builtinIntervalRealSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	args0, isNull, err := b.args[0].EvalReal(row, sc)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull {
+		return -1, false, nil
+	}
+	idx, err := b.binSearch(sc, args0, b.args[1:], row)
+	return int64(idx), err != nil, errors.Trace(err)
+}
+
+func (b *builtinIntervalRealSig) binSearch(sc *variable.StatementContext, target float64, args []Expression, row []types.Datum) (_ int, err error) {
+	i, j := 0, len(args)
+	for i < j {
+		mid := i + (j-i)/2
+		v, isNull, err1 := args[mid].EvalReal(row, sc)
+		if err != nil {
+			err = err1
+			break
+		}
+		if isNull {
+			i = mid + 1
+		} else if cmp := target < v; !cmp {
+			i = mid + 1
+		} else {
+			j = mid
+		}
+	}
+	return i, errors.Trace(err)
 }
 
 type compareFunctionClass struct {
@@ -480,13 +555,11 @@ func refineConstantArg(con *Constant, op opcode.Op, ctx context.Context) *Consta
 	sc := ctx.GetSessionVars().StmtCtx
 	i64, err := con.Value.ToInt64(sc)
 	if err != nil {
-		log.Warnf("failed to refine this expression, the constant argument is %s", con)
 		return con
 	}
 	datumInt := types.NewIntDatum(i64)
 	c, err := datumInt.CompareDatum(sc, con.Value)
 	if err != nil {
-		log.Warnf("failed to refine this expression, the constant argument is %s", con)
 		return con
 	}
 	if c == 0 {
@@ -532,7 +605,7 @@ func (c *compareFunctionClass) refineArgs(args []Expression, ctx context.Context
 }
 
 // getFunction sets compare built-in function signatures for various types.
-func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -566,7 +639,7 @@ func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Con
 				or
 				<const string expression> <cmp> <non-const decimal expression>
 
-				Do comparision as decimal rather than float, in order not to lose precision.
+				Do comparison as decimal rather than float, in order not to lose precision.
 			)*/
 			cmpType = types.ClassDecimal
 		} else if isTemporalColumn(args[0]) && isConst1 ||
