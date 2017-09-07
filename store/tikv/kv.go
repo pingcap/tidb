@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
@@ -120,82 +118,18 @@ type tikvStore struct {
 	spMsg     chan string  // this is used to nofity when the store is closed
 }
 
-func (s *tikvStore) createSPSession() {
-	for {
-		var err error
-		s.spSession, err = tidb.CreateSession(s)
-		if err != nil {
-			log.Warnf("[safepoint] create session err: %v", err)
-			continue
-		}
-		// Disable privilege check for gc worker session.
-		privilege.BindPrivilegeManager(s.spSession, nil)
-		return
-	}
-}
-
-func (s *tikvStore) saveUint64(key string, t uint64) error {
-	str := fmt.Sprintf("%v", t)
-	err := s.saveValueToSysTable(key, str)
-	return errors.Trace(err)
-}
-
-func (s *tikvStore) loadUint64(key string) (uint64, error) {
-	str, err := s.loadValueFromSysTable(key)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if str == "" {
-		return 0, nil
-	}
-	t, err := strconv.ParseUint(str, 10, 64)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return t, nil
-}
-
-func (s *tikvStore) saveValueToSysTable(key, value string) error {
-	stmt := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
-		key, value, gcVariableComments[key])
-	_, err := s.spSession.Execute(stmt)
-	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
-	return errors.Trace(err)
-}
-
-func (s *tikvStore) loadValueFromSysTable(key string) (string, error) {
-	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s'`, key)
-	rs, err := s.spSession.Execute(stmt)
-	if err != nil {
-		return "", errors.New("no value")
-	}
-	row, err := rs[0].Next()
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	if row == nil {
-		log.Debugf("[safepoint] load kv, %s:nil", key)
-		return "", nil
-	}
-	value := row.Data[0].GetString()
-	log.Debugf("[safepoint] load kv, %s:%s", key, value)
-	return value, nil
-}
-
 func (s *tikvStore) CheckVisibility() (uint64, error) {
 	s.spMutex.Lock()
-	currentSafePoint := s.safePoint
-	lastLocalTime := s.spTime
+	cachedSafePoint := s.safePoint
+	cachedTime := s.spTime
 	s.spMutex.Unlock()
-	diff := time.Since(lastLocalTime)
+	diff := time.Since(cachedTime)
 
 	if diff > 100*time.Second {
 		return 0, errors.New("start timestamp may fall behind safepoint")
 	}
 
-	return currentSafePoint, nil
+	return cachedSafePoint, nil
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
@@ -229,43 +163,7 @@ func (s *tikvStore) EtcdAddrs() []string {
 
 // StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
 func (s *tikvStore) StartGCWorker() error {
-	go func() {
-		for {
-			s.createSPSession()
-
-			for {
-				repeatbreak := false
-				select {
-				case <-s.spMsg:
-					return
-				default:
-					newSafePoint, err := s.loadUint64(gcSavedSafePoint)
-					if err == nil {
-						s.spMutex.Lock()
-						s.safePoint = newSafePoint
-						s.spTime = time.Now()
-						s.spMutex.Unlock()
-					} else {
-						s.spMutex.Lock()
-						s.spTime = time.Now()
-						s.spMutex.Unlock()
-						repeatbreak = true
-					}
-					time.Sleep(5 * time.Second) // this is configurable
-				}
-				if repeatbreak {
-					break
-				}
-			}
-		}
-	}()
-
-	if !s.enableGC {
-		return nil
-	}
-
-	fmt.Printf("Start a gc worker\n")
-	gcWorker, err := NewGCWorker(s)
+	gcWorker, err := NewGCWorker(s, s.enableGC)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
@@ -38,7 +37,7 @@ func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.store.oracle = s.oracle
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	gcWorker, err := NewGCWorker(s.store)
+	gcWorker, err := NewGCWorker(s.store, false)
 	c.Assert(err, IsNil)
 	s.gcWorker = gcWorker
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
@@ -79,8 +78,8 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	c.Assert(geterr, IsNil)
 
 	for {
-		s.store.saveUint64(gcSavedSafePoint, txn2.startTS+10)
-		newSafePoint, loaderr := s.store.loadUint64(gcSavedSafePoint)
+		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn2.startTS+10)
+		newSafePoint, loaderr := s.gcWorker.loadSafePoint(gcSavedSafePoint)
 		if loaderr == nil {
 			s.store.spMutex.Lock()
 			s.store.safePoint = newSafePoint
@@ -98,9 +97,9 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	// for txn seek
 	txn3 := s.beginTxn(c)
 	for {
-		s.store.saveUint64(gcSavedSafePoint, txn3.startTS+10)
+		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn3.startTS+10)
 
-		newSafePoint, loaderr := s.store.loadUint64(gcSavedSafePoint)
+		newSafePoint, loaderr := s.gcWorker.loadSafePoint(gcSavedSafePoint)
 		if loaderr == nil {
 			s.store.spMutex.Lock()
 			s.store.safePoint = newSafePoint
@@ -119,9 +118,9 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	keys := mymakeKeys(10, s.prefix)
 	txn4 := s.beginTxn(c)
 	for {
-		s.store.saveUint64(gcSavedSafePoint, txn4.startTS+10)
+		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn4.startTS+10)
 
-		newSafePoint, loaderr := s.store.loadUint64(gcSavedSafePoint)
+		newSafePoint, loaderr := s.gcWorker.loadSafePoint(gcSavedSafePoint)
 		if loaderr == nil {
 			s.store.spMutex.Lock()
 			s.store.safePoint = newSafePoint
