@@ -93,6 +93,22 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testEvaluatorSuite) TestColumnHashCode(c *C) {
+	defer testleak.AfterTest(c)()
+
+	col1 := &Column{
+		FromID:   1,
+		Position: 12,
+	}
+	c.Assert(col1.HashCode(), DeepEquals, []byte{0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc})
+
+	col2 := &Column{
+		FromID:   11,
+		Position: 2,
+	}
+	c.Assert(col2.HashCode(), DeepEquals, []byte{0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2})
+}
+
 func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 	defer testleak.AfterTest(c)()
 
