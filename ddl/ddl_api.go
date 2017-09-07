@@ -479,7 +479,7 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 }
 
 func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
-	if len(colDefs) > tableColumnCountLimit {
+	if len(colDefs) > TableColumnCountLimit {
 		return errTooManyFields
 	}
 	return nil
