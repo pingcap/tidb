@@ -300,8 +300,50 @@ type IndexLookUpExecutor struct {
 	tableWorker
 	finished chan struct{}
 
-	resultChan <-chan *lookupTableTask
+	resultCh   *resultChannel
 	resultCurr *lookupTableTask
+}
+
+type resultChannel struct {
+	keepOrder  bool
+	taskCh     chan *lookupTableTask
+	curID      int
+	waitChLock sync.Mutex
+	waitChMap  map[int]chan struct{}
+}
+
+func (c *resultChannel) fetchTask() *lookupTableTask {
+	task := <-c.taskCh
+	if task != nil {
+	}
+	if c.keepOrder && task != nil {
+		c.curID = task.id + 1
+		ch := c.waitCh(c.curID)
+		close(ch)
+	}
+	return task
+}
+
+func (c *resultChannel) waitCh(id int) chan struct{} {
+	c.waitChLock.Lock()
+	defer c.waitChLock.Unlock()
+	ch, ok := c.waitChMap[id]
+	if !ok {
+		ch = make(chan struct{})
+		c.waitChMap[id] = ch
+	}
+	return ch
+}
+
+func (c *resultChannel) append(task *lookupTableTask, finished <-chan struct{}) {
+	if c.keepOrder && task.id > 0 {
+		select {
+		case <-c.waitCh(task.id):
+		case <-finished:
+			return
+		}
+	}
+	c.taskCh <- task
 }
 
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
@@ -334,6 +376,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh ch
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 func (ih *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
+	taskID := 0
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(result)
 		if err != nil {
@@ -345,7 +388,7 @@ func (ih *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.Selec
 		if finish {
 			return
 		}
-		tasks := e.buildTableTasks(handles)
+		tasks := e.buildTableTasks(handles, &taskID)
 		for _, task := range tasks {
 			select {
 			case <-ctx.Done():
@@ -368,17 +411,21 @@ func (e *IndexLookUpExecutor) waitIndexWorker() {
 
 // tableWorker is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableWorker struct {
-	resultCh chan<- *lookupTableTask
+	resultCh *resultChannel
 	wg       sync.WaitGroup
 }
 
 // startTableWorker launch some background goroutines which pick tasks from workCh,
 // execute the task and store the results in IndexLookUpExecutor's resultCh.
 func (e *IndexLookUpExecutor) startTableWorker(workCh <-chan *lookupTableTask, finished <-chan struct{}) {
-	resultCh := make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	resultCh := &resultChannel{
+		keepOrder: e.keepOrder,
+		taskCh:    make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize)),
+		waitChMap: make(map[int]chan struct{}),
+	}
 	th := &e.tableWorker
 	th.resultCh = resultCh
-	e.resultChan = resultCh
+	e.resultCh = resultCh
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	th.wg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
@@ -391,7 +438,7 @@ func (e *IndexLookUpExecutor) startTableWorker(workCh <-chan *lookupTableTask, f
 	}
 	go func() {
 		th.wg.Wait()
-		close(th.resultCh)
+		close(th.resultCh.taskCh)
 	}()
 }
 
@@ -404,13 +451,13 @@ func (th *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lo
 				return
 			}
 			if task.tasksErr != nil {
-				th.resultCh <- task
+				th.resultCh.append(task, finished)
 				return
 			}
 
 			// TODO: The results can be simplified when new_distsql.go replace distsql.go totally.
 			e.executeTask(task, ctx)
-			th.resultCh <- task
+			th.resultCh.append(task, finished)
 		case <-ctx.Done():
 			return
 		case <-finished:
@@ -420,8 +467,9 @@ func (th *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lo
 }
 
 func (e *IndexLookUpExecutor) waitTableWorker() {
-	for range e.resultChan {
+	for range e.resultCh.taskCh {
 	}
+	e.resultCh = nil
 }
 
 // Open implements the Executor Open interface.
@@ -519,7 +567,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 }
 
-func (e *IndexLookUpExecutor) buildTableTasks(handles []int64) []*lookupTableTask {
+func (e *IndexLookUpExecutor) buildTableTasks(handles []int64, taskID *int) []*lookupTableTask {
 	// Build tasks with increasing batch size.
 	var taskSizes []int
 	total := len(handles)
@@ -544,9 +592,11 @@ func (e *IndexLookUpExecutor) buildTableTasks(handles []int64) []*lookupTableTas
 	tasks := make([]*lookupTableTask, len(taskSizes))
 	for i, size := range taskSizes {
 		task := &lookupTableTask{
+			id:         *taskID,
 			handles:    handles[:size],
 			indexOrder: indexOrder,
 		}
+		*taskID++
 		task.doneCh = make(chan error, 1)
 		handles = handles[size:]
 		tasks[i] = task
@@ -574,8 +624,8 @@ func (e *IndexLookUpExecutor) Close() error {
 func (e *IndexLookUpExecutor) Next() (Row, error) {
 	for {
 		if e.resultCurr == nil {
-			resultCurr, ok := <-e.resultChan
-			if !ok {
+			resultCurr := e.resultCh.fetchTask()
+			if resultCurr == nil {
 				return nil, nil
 			}
 			if resultCurr.tasksErr != nil {
