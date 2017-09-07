@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // FMSketch is used to count the number of distinct elements in a set.
@@ -85,17 +86,39 @@ func buildFMSketch(values []types.Datum, maxSize int) (*FMSketch, int64, error) 
 	return s, s.NDV(), nil
 }
 
-func mergeFMSketches(sketches []*FMSketch, maxSize int) (*FMSketch, int64) {
-	s := NewFMSketch(maxSize)
-	for _, sketch := range sketches {
-		if s.mask < sketch.mask {
-			s.mask = sketch.mask
+// MergeFMSketch merges FMSketch.
+func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
+	if s.mask < rs.mask {
+		s.mask = rs.mask
+		for key := range s.hashset {
+			if (key & s.mask) != 0 {
+				delete(s.hashset, key)
+			}
 		}
 	}
-	for _, sketch := range sketches {
-		for key := range sketch.hashset {
-			s.insertHashValue(key)
-		}
+	for key := range rs.hashset {
+		s.insertHashValue(key)
 	}
-	return s, s.NDV()
+}
+
+// FMSketchToProto converts FMSketch to its protobuf representation.
+func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
+	protoSketch := new(tipb.FMSketch)
+	protoSketch.Mask = s.mask
+	for val := range s.hashset {
+		protoSketch.Hashset = append(protoSketch.Hashset, val)
+	}
+	return protoSketch
+}
+
+// FMSketchFromProto converts FMSketch from its protobuf representation.
+func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
+	sketch := &FMSketch{
+		hashset: make(map[uint64]bool),
+		mask:    protoSketch.Mask,
+	}
+	for _, val := range protoSketch.Hashset {
+		sketch.hashset[val] = true
+	}
+	return sketch
 }

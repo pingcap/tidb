@@ -17,6 +17,7 @@ import (
 	"math"
 	"testing"
 
+	"bytes"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -131,7 +132,7 @@ func encodeKey(key types.Datum) types.Datum {
 }
 
 func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
-	b := NewSortedBuilder(ctx, numBuckets, id, true)
+	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
 	for {
 		row, err := records.Next()
 		if err != nil {
@@ -140,12 +141,12 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 		if row == nil {
 			break
 		}
-		err = b.Iterate(row.Data)
+		err = b.Iterate(row.Data[0])
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
 	}
-	return b.Count, b.Hist, nil
+	return b.Count, b.hist, nil
 }
 
 func (s *testStatisticsSuite) TestBuild(c *C) {
@@ -229,6 +230,69 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	count, err = col.lessRowCount(sc, types.NewIntDatum(99999))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 99999)
+}
+
+func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
+	ctx := mock.NewContext()
+	s.rc.Close()
+	tblCount, col, err := BuildIndex(ctx, 256, 1, ast.RecordSet(s.rc))
+	c.Check(err, IsNil)
+	c.Check(int(tblCount), Equals, 100000)
+
+	p := HistogramToProto(col)
+	h := HistogramFromProto(p)
+	c.Assert(col.NDV, Equals, h.NDV)
+	c.Assert(len(col.Buckets), Equals, len(h.Buckets))
+	for i, bkt := range col.Buckets {
+		c.Assert(bkt.Count, Equals, h.Buckets[i].Count)
+		c.Assert(bkt.Repeats, Equals, h.Buckets[i].Repeats)
+		c.Assert(bytes.Equal(bkt.LowerBound.GetBytes(), h.Buckets[i].LowerBound.GetBytes()), IsTrue)
+		c.Assert(bytes.Equal(bkt.UpperBound.GetBytes(), h.Buckets[i].UpperBound.GetBytes()), IsTrue)
+	}
+}
+
+func mockHistogram(lower, null, num int64) *Histogram {
+	h := &Histogram{
+		NDV:       num,
+		NullCount: null,
+	}
+	for i := int64(0); i < num; i++ {
+		bkt := Bucket{
+			LowerBound: types.NewIntDatum(lower + i),
+			UpperBound: types.NewIntDatum(lower + i),
+			Count:      i + 1,
+			Repeats:    1,
+		}
+		h.Buckets = append(h.Buckets, bkt)
+	}
+	return h
+}
+
+func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	bucketCount := 256
+	lh := mockHistogram(0, 0, 0)
+	rh := mockHistogram(0, 0, 1)
+	h, err := MergeHistograms(sc, lh, rh, bucketCount)
+	c.Assert(err, IsNil)
+	c.Assert(len(h.Buckets), Equals, 1)
+	c.Assert(h.NDV, Equals, int64(1))
+
+	lh = mockHistogram(0, 0, 200)
+	rh = mockHistogram(200, 1, 200)
+	h, err = MergeHistograms(sc, lh, rh, bucketCount)
+	c.Assert(err, IsNil)
+	c.Assert(h.NDV, Equals, int64(400))
+	c.Assert(h.NullCount, Equals, int64(1))
+	c.Assert(len(h.Buckets), Equals, 200)
+
+	lh = mockHistogram(0, 0, 200)
+	rh = mockHistogram(199, 1, 200)
+	h, err = MergeHistograms(sc, lh, rh, bucketCount)
+	c.Assert(err, IsNil)
+	c.Assert(h.NDV, Equals, int64(399))
+	c.Assert(h.NullCount, Equals, int64(1))
+	c.Assert(len(h.Buckets), Equals, 200)
 }
 
 func (s *testStatisticsSuite) TestPseudoTable(c *C) {
