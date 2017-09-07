@@ -862,7 +862,12 @@ func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
 
 func (cc *clientConn) setConn(conn net.Conn) {
 	cc.bufReadConn = newBufferedReadConn(conn)
-	cc.pkt = newPacketIO(cc.bufReadConn)
+	if cc.pkt != nil {
+		cc.pkt = newPacketIO(cc.bufReadConn)
+	} else {
+		// Preserve current sequence number.
+		cc.pkt.setBufferedReadConn(cc.bufReadConn)
+	}
 }
 
 func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
