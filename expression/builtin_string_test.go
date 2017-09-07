@@ -1584,6 +1584,8 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 	for _, test := range tests {
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(test.args...)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
