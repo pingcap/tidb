@@ -1095,9 +1095,12 @@ func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
 	}
 	sql += ");"
 	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
-	ddl.TableColumnCountLimit = cnt
+
+	originLimit := ddl.TableColumnCountLimit
+	ddl.TableColumnCountLimit = cnt * 4
 	_, err := s.tk.Exec(sql)
-	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("sql:%v", sql))
+	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("err:%v", err))
+	ddl.TableColumnCountLimit = originLimit
 }
 
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
