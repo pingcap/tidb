@@ -137,13 +137,13 @@ func (mh *marshalHelper) WriteNumber(buf io.Writer, n interface{}) {
 }
 
 func writeFull(w io.Writer, slice []byte) error {
-	writen := 0
-	for writen < len(slice) {
-		n, err := w.Write(slice[writen:])
+	written := 0
+	for written < len(slice) {
+		n, err := w.Write(slice[written:])
 		if err != nil {
 			return errors.Trace(err)
 		}
-		writen += n
+		written += n
 	}
 	return nil
 }
