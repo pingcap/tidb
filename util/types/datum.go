@@ -382,9 +382,9 @@ func (d *Datum) SetValue(val interface{}) {
 	case BinaryLiteral:
 		d.SetBinaryLiteral(x)
 	case BitLiteral: // Store as BinaryLiteral for Bit and Hex literals
-		d.SetBinaryLiteral(x.BinaryLiteral)
+		d.SetBinaryLiteral(BinaryLiteral(x))
 	case HexLiteral:
-		d.SetBinaryLiteral(x.BinaryLiteral)
+		d.SetBinaryLiteral(BinaryLiteral(x))
 	case Set:
 		d.SetMysqlSet(x)
 	case json.JSON:

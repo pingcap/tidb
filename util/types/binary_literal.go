@@ -32,14 +32,10 @@ type BinaryLiteral struct {
 }
 
 // BitLiteral is the bit literal type.
-type BitLiteral struct {
-	BinaryLiteral
-}
+type BitLiteral BinaryLiteral
 
 // HexLiteral is the hex literal type.
-type HexLiteral struct {
-	BinaryLiteral
-}
+type HexLiteral BinaryLiteral
 
 // ZeroBinaryLiteral is a BinaryLiteral literal with zero value.
 var ZeroBinaryLiteral = BinaryLiteral{[]byte{}}
@@ -176,7 +172,7 @@ func NewBitLiteral(s string) (BitLiteral, error) {
 	if err != nil {
 		return BitLiteral{}, err
 	}
-	return BitLiteral{b}, nil
+	return BitLiteral(b), nil
 }
 
 // ParseHexStr parses hexadecimal string literal.
@@ -219,5 +215,5 @@ func NewHexLiteral(s string) (HexLiteral, error) {
 	if err != nil {
 		return HexLiteral{}, err
 	}
-	return HexLiteral{h}, nil
+	return HexLiteral(h), nil
 }
