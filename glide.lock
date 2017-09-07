@@ -1,5 +1,5 @@
-hash: 8a8dcce87b743988e8f76a05ddf91430ea0f5f4236b3c6dc09b72854d2e726bb
-updated: 2017-08-31T14:56:45.412923915+08:00
+hash: c36835c9a5f0cf156b4ea71f60bc4ef95891df8282e29c38a9c18328dc044d02
+updated: 2017-09-07T10:31:23.688075563+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -130,7 +130,7 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: ffbc1bb02a2425782286825eec276be817b7f93a
+  version: 0edd80335ab0c044ddcd9de57b63026ab7a209fa
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -146,7 +146,7 @@ imports:
   - go-tipb
   - sharedbytes
 - name: github.com/prometheus/client_golang
-  version: c5b7fccd204277076155f10851dad72b76a49317
+  version: 967789050ba94deca04a5e84cce8ad472ce313c1
   subpackages:
   - prometheus
   - prometheus/push
