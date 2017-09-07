@@ -142,7 +142,7 @@ import:
 - package: github.com/pingcap/pd
   version: 38eb8a2e70dd39668a62d24a79f30596f204df14
 - package: github.com/pingcap/tipb
-  version: ffbc1bb02a2425782286825eec276be817b7f93a
+  version: 0edd80335ab0c044ddcd9de57b63026ab7a209fa
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -164,7 +164,7 @@ import:
   subpackages:
   - proto
 - package: github.com/prometheus/client_golang
-  version: ^0.8.0
+  version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:
   - prometheus/push
 - package: golang.org/x/time
