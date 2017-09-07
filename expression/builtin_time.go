@@ -1198,7 +1198,8 @@ func evalFromUnixTime(ctx context.Context, fsp int, row []types.Datum, arg Expre
 		fsp = types.MaxFsp
 	}
 
-	t, err := convertTimeToMysqlTime(time.Unix(integralPart, fractionalPart), fsp)
+	tmp := time.Unix(integralPart, fractionalPart).In(sc.TimeZone)
+	t, err := convertTimeToMysqlTime(tmp, fsp)
 	if err != nil {
 		return res, true, errors.Trace(err)
 	}
