@@ -44,8 +44,7 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{3.14, 4, false, false},
 		{types.NewDecFromFloatForTest(123.123), 7, false, false},
 		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, 26, false, false},
-		{types.Bit{Value: 1, Width: 8}, 1, false, false},
-		{types.Hex{Value: 1}, 1, false, false},
+		{types.NewBinaryLiteralFromUint(0x01, -1), 1, false, false},
 		{types.Set{Value: 1, Name: "abc"}, 3, false, false},
 		{types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second), Fsp: types.DefaultFsp}, 8, false, false},
 		{nil, 0, true, false},
@@ -274,7 +273,7 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 		{[]interface{}{"abcde", "a"}, false, false, ""},
 		{[]interface{}{1234, 3}, false, false, "123"},
 		{[]interface{}{12.34, 3}, false, false, "12."},
-		{[]interface{}{types.Bit{Value: 0x0102, Width: 16}, 1}, false, false, string([]byte{0x01})},
+		{[]interface{}{types.NewBinaryLiteralFromUint(0x0102, -1), 1}, false, false, string([]byte{0x01})},
 		{[]interface{}{errors.New("must err"), 0}, false, true, ""},
 	}
 	for _, t := range cases {
@@ -325,7 +324,7 @@ func (s *testEvaluatorSuite) TestRight(c *C) {
 		{[]interface{}{"abcde", "a"}, false, false, ""},
 		{[]interface{}{1234, 3}, false, false, "234"},
 		{[]interface{}{12.34, 3}, false, false, ".34"},
-		{[]interface{}{types.Bit{Value: 0x0102, Width: 16}, 1}, false, false, string([]byte{0x02})},
+		{[]interface{}{types.NewBinaryLiteralFromUint(0x0102, -1), 1}, false, false, string([]byte{0x02})},
 		{[]interface{}{errors.New("must err"), 0}, false, true, ""},
 	}
 	for _, t := range cases {
@@ -987,7 +986,7 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 		{-1, false, false, "FFFFFFFFFFFFFFFF"},
 		{-12.3, false, false, "FFFFFFFFFFFFFFF4"},
 		{-12.8, false, false, "FFFFFFFFFFFFFFF3"},
-		{types.Bit{Value: 0xC, Width: 4}, false, false, "0C"},
+		{types.NewBinaryLiteralFromUint(0xC, -1), false, false, "C"},
 		{0x12, false, false, "12"},
 		{nil, true, false, ""},
 		{errors.New("must err"), false, true, ""},
@@ -1396,9 +1395,9 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		//overflow uint64
 		{"9999999999999999999999999", "1777777777777777777777"},
 		{"-9999999999999999999999999", "1777777777777777777777"},
-		{types.Bit{Value: 255, Width: 8}, "377"}, // b'11111111'
-		{types.Bit{Value: 10, Width: 4}, "12"},   // b'1010'
-		{types.Bit{Value: 5, Width: 4}, "5"},     // b'0101'
+		{types.NewBinaryLiteralFromUint(255, -1), "377"}, // b'11111111'
+		{types.NewBinaryLiteralFromUint(10, -1), "12"},   // b'1010'
+		{types.NewBinaryLiteralFromUint(5, -1), "5"},     // b'0101'
 	}
 	fc := funcs[ast.Oct]
 	for _, tt := range octTests {
@@ -1478,6 +1477,8 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		fc := funcs[ast.Format]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
@@ -1487,6 +1488,8 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		fc := funcs[ast.Format]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
@@ -1495,6 +1498,8 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	fc2 := funcs[ast.Format]
 	f2, err := fc2.getFunction(s.ctx, datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
 	c.Assert(err, IsNil)
+	c.Assert(f2, NotNil)
+	c.Assert(f2.canBeFolded(), IsTrue)
 	r2, err := f2.eval(nil)
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not implemented")))
 	c.Assert(r2, testutil.DatumEquals, types.NewDatum(formatTests2.ret))
@@ -1502,6 +1507,8 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	fc3 := funcs[ast.Format]
 	f3, err := fc3.getFunction(s.ctx, datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
 	c.Assert(err, IsNil)
+	c.Assert(f3, NotNil)
+	c.Assert(f3.canBeFolded(), IsTrue)
 	r3, err := f3.eval(nil)
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not support for the specific locale")))
 	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatTests3.ret))
@@ -1581,6 +1588,8 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 	for _, test := range tests {
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(test.args...)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if test.expect == nil {
@@ -1682,6 +1691,8 @@ func (s *testEvaluatorSuite) TestExportSet(c *C) {
 	for _, t := range estd {
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.argLst...)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		exportSetRes, err := f.eval(nil)
 		res, err := exportSetRes.ToString()
 		c.Assert(err, IsNil)

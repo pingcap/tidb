@@ -163,11 +163,11 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if expr.GetTypeClass() == types.ClassInt {
-		return val.GetInt64(), false, nil
-	} else if IsHybridType(expr) {
+	if IsHybridType(expr) {
 		res, err = val.ToInt64(sc)
 		return res, false, errors.Trace(err)
+	} else if expr.GetTypeClass() == types.ClassInt {
+		return val.GetInt64(), false, nil
 	}
 	panic(fmt.Sprintf("cannot get INT result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }

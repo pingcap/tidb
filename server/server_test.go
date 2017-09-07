@@ -295,7 +295,7 @@ func runTestPreparedString(t *C) {
 	})
 }
 
-func runTestLoadData(c *C) {
+func runTestLoadData(c *C, server *Server) {
 	// create a file and write data.
 	path := "/tmp/load_data_test.csv"
 	fp, err := os.Create(path)
@@ -427,7 +427,7 @@ func runTestLoadData(c *C) {
 	})
 
 	// unsupport ClientLocalFiles capability
-	defaultCapability ^= tmysql.ClientLocalFiles
+	server.capability ^= tmysql.ClientLocalFiles
 	runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 	}, "LoadData", func(dbt *DBTest) {
@@ -436,7 +436,7 @@ func runTestLoadData(c *C) {
 		dbt.Assert(err, NotNil)
 		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
 	})
-	defaultCapability |= tmysql.ClientLocalFiles
+	server.capability |= tmysql.ClientLocalFiles
 }
 
 func runTestConcurrentUpdate(c *C) {
@@ -708,6 +708,14 @@ func runTestStmtCount(t *C) {
 		selectLabel := "SelectTableFull"
 		t.Assert(currentStmtCnt[selectLabel], Equals, originStmtCnt[selectLabel]+2)
 	})
+}
+
+func runTestTLSConnection(t *C, overrider configOverrider) error {
+	db, err := sql.Open("mysql", getDSN(overrider))
+	t.Assert(err, IsNil)
+	defer db.Close()
+	_, err = db.Exec("USE test")
+	return err
 }
 
 func getMetrics(t *C) []byte {
