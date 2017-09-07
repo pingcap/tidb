@@ -1157,10 +1157,7 @@ func evalFromUnixTime(ctx context.Context, fsp int, row []types.Datum, arg Expre
 		return res, true, nil
 	}
 	integralPart, err := unixTimeStamp.ToInt()
-	if terror.ErrorEqual(err, types.ErrTruncated) {
-		err = nil
-	}
-	if err != nil {
+	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
 		return res, true, errors.Trace(err)
 	}
 	if integralPart > int64(math.MaxInt32) {
@@ -1180,13 +1177,10 @@ func evalFromUnixTime(ctx context.Context, fsp int, row []types.Datum, arg Expre
 	x := new(types.MyDecimal)
 	err = types.DecimalMul(fracDecimalTp, nano, x)
 	if err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, true, errors.Trace(err)
 	}
 	fractionalPart, err := x.ToInt() // here fractionalPart is result multiplying the original fractional part by 10^9.
-	if terror.ErrorEqual(err, types.ErrTruncated) {
-		err = nil
-	}
-	if err != nil {
+	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
 		return res, true, errors.Trace(err)
 	}
 	fracDigitsNumber := int(unixTimeStamp.GetDigitsFrac())
@@ -1210,6 +1204,8 @@ type builtinFromUnixTime1ArgSig struct {
 	baseTimeBuiltinFunc
 }
 
+// evalTime evals a builtinFromUnixTime1ArgSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
 func (b *builtinFromUnixTime1ArgSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
 	return evalFromUnixTime(b.ctx, b.tp.Decimal, row, b.args[0])
 }
@@ -1218,6 +1214,8 @@ type builtinFromUnixTime2ArgSig struct {
 	baseStringBuiltinFunc
 }
 
+// evalString evals a builtinFromUnixTime2ArgSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
 func (b *builtinFromUnixTime2ArgSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	format, isNull, err := b.args[1].EvalString(row, sc)
