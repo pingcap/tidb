@@ -393,7 +393,6 @@ func driveRunCmd() {
 }
 
 func init() {
-	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(&logutil.LogConfig{
 		Level: logLevel,
 	})
