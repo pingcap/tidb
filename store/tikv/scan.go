@@ -171,8 +171,6 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		var safePoint uint64
 		safePoint, checkerr := s.snapshot.store.CheckVisibility()
 
-		log.Error("[scanner:getData] startTS:%v, safePoint:%v", s.startTS(), safePoint)
-
 		if checkerr != nil {
 			return checkerr
 		}

@@ -82,8 +82,6 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	var safePoint uint64
 	safePoint, checkerr := s.store.CheckVisibility()
 
-	log.Error("[snapshot:BatchGet] startTS:%v, safePoint:%v", s.version.Ver, safePoint)
-
 	if checkerr != nil {
 		return nil, checkerr
 	}

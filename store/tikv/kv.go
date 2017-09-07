@@ -121,7 +121,6 @@ type tikvStore struct {
 }
 
 func (s *tikvStore) createSPSession() {
-	log.Error("Enter createSPSession!\n")
 	for {
 		var err error
 		s.spSession, err = tidb.CreateSession(s)
@@ -131,7 +130,6 @@ func (s *tikvStore) createSPSession() {
 		}
 		// Disable privilege check for gc worker session.
 		privilege.BindPrivilegeManager(s.spSession, nil)
-		log.Error("Exit createSPSession!\n")
 		return
 	}
 }
@@ -148,7 +146,6 @@ func (s *tikvStore) loadUint64(key string) (uint64, error) {
 		return 0, errors.Trace(err)
 	}
 	if str == "" {
-		log.Error("No Result\n")
 		return 0, nil
 	}
 	t, err := strconv.ParseUint(str, 10, 64)
@@ -234,29 +231,24 @@ func (s *tikvStore) EtcdAddrs() []string {
 func (s *tikvStore) StartGCWorker() error {
 	go func() {
 		for {
-			log.Error("Create SP Session\n")
 			s.createSPSession()
 
 			for {
 				repeatbreak := false
 				select {
 				case <-s.spMsg:
-					log.Error("[safepoint store close]\n")
 					return
 				default:
-					log.Error("Start Fetch SafePoint\n")
 					newSafePoint, err := s.loadUint64(gcSavedSafePoint)
 					if err == nil {
 						s.spMutex.Lock()
 						s.safePoint = newSafePoint
 						s.spTime = time.Now()
 						s.spMutex.Unlock()
-						log.Error("[safepoint load OK]\n")
 					} else {
 						s.spMutex.Lock()
 						s.spTime = time.Now()
 						s.spMutex.Unlock()
-						log.Error("[safepoint load error]\n")
 						repeatbreak = true
 					}
 					time.Sleep(5 * time.Second) // this is configurable
