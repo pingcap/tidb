@@ -483,7 +483,7 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 			// all workers are busy now, cooldown and retry
 			time.Sleep(cooldownTime)
 		}
-		if time.Now().Sub(origin) >= abortTime {
+		if time.Since(origin) >= abortTime {
 			// weird: all workers are busy for at least 1 min
 			// choose to abort for safety
 			return errors.New("can not make progress since all workers are busy")
