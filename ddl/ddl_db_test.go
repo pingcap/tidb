@@ -1080,6 +1080,24 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
 }
 
+func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
+	defer testleak.AfterTest(c)
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+
+	sql := "create table t_too_large ("
+	cnt := 3000
+	for i := 1; i <= cnt; i++ {
+		sql += fmt.Sprintf("a%d double, b%d double, c%d double, d%d double", i, i, i, i)
+		if i != cnt {
+			sql += ","
+		}
+	}
+	sql += ");"
+	_, err := s.tk.Exec(sql)
+	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("sql:%v", sql))
+}
+
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://create_table_like")
