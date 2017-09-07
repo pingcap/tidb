@@ -1142,9 +1142,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		return nil
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
-		indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
-	}
+	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
 	table, _ := b.is.TableByID(is.Table.ID)
 	var handleCol *expression.Column
 	if v.NeedColHandle {

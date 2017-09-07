@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -78,7 +77,7 @@ func (p *Limit) ToPB(ctx context.Context) (*tipb.Executor, error) {
 func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := p.Columns
 	// If there's no row data to be returned, we force to append one column.
-	if p.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) && len(p.Columns) == 0 {
+	if len(p.Columns) == 0 {
 		columns = []*model.ColumnInfo{{ID: model.ExtraHandleID, Name: model.NewCIStr("_rowid")}}
 	}
 	tsExec := &tipb.TableScan{
@@ -95,12 +94,10 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
-			if p.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
-				columns = append(columns, &model.ColumnInfo{
-					ID:   model.ExtraHandleID,
-					Name: model.NewCIStr("_rowid"),
-				})
-			}
+			columns = append(columns, &model.ColumnInfo{
+				ID:   model.ExtraHandleID,
+				Name: model.NewCIStr("_rowid"),
+			})
 		} else {
 			columns = append(columns, p.Table.Columns[col.Position])
 		}

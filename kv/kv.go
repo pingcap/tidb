@@ -153,8 +153,6 @@ const (
 	ReqSubTypeGroupBy   = 10001
 	ReqSubTypeTopN      = 10002
 	ReqSubTypeSignature = 10003
-
-	ReqSubTypeHandle = 20000
 )
 
 // Request represents a kv request.

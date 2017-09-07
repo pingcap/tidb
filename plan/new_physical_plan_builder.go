@@ -701,7 +701,7 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 		cop.tablePlan.SetSchema(is.dataSourceSchema)
 		// If it's double read, the first index read must return handle, so we should add extra handle column
 		// if there isn't a handle column.
-		if !setHandle && p.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		if !setHandle {
 			indexCols = append(indexCols, &expression.Column{FromID: p.id, ID: model.ExtraHandleID, Position: -1})
 		}
 	}
@@ -773,7 +773,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		}
 		// If it's double read, the first index read must return handle, so we should add extra handle column
 		// if there isn't a handle column.
-		if !setHandle && p.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeHandle) {
+		if !setHandle {
 			indexCols = append(indexCols, &expression.Column{FromID: p.id, ID: model.ExtraHandleID, Position: -1})
 		}
 	} else if prop.taskTp == copDoubleReadTaskType {
