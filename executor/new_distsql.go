@@ -452,8 +452,8 @@ type indexWorker struct {
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
-	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges,
-		e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	result, err := distsql.NewSelectDAG(e.ctx, e.ctx.GoCtx(), e.dagPB, kvRanges,
+		e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, 1)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -474,9 +474,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh ch
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
-func (ih *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
+func (ih *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.NewSelectResult, workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
 	for {
-		handles, finish, err := extractHandlesFromIndexResult(result)
+		handles, finish, err := extractHandlesFromNewIndexResult(result)
 		if err != nil {
 			workCh <- &lookupTableTask{
 				tasksErr: errors.Trace(err),
