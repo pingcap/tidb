@@ -43,18 +43,3 @@ func (s *testStatisticsSuite) TestSketch(c *C) {
 	sketch.insertHashValue(4)
 	c.Check(len(sketch.hashset), LessEqual, maxSize)
 }
-
-func (s *testStatisticsSuite) TestSketchProtoConversion(c *C) {
-	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(s.samples, maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(6624))
-
-	p := FMSketchToProto(sampleSketch)
-	f := FMSketchFromProto(p)
-	c.Assert(sampleSketch.mask, Equals, f.mask)
-	c.Assert(len(sampleSketch.hashset), Equals, len(f.hashset))
-	for val := range sampleSketch.hashset {
-		c.Assert(f.hashset[val], IsTrue)
-	}
-}

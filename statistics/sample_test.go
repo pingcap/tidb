@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -110,28 +110,4 @@ func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 	c.Assert(len(collectors[0].Samples), Equals, 10000)
 	c.Assert(collectors[0].NullCount, Equals, int64(1000))
 	c.Assert(collectors[0].Count, Equals, int64(19000))
-}
-
-func (s *testSampleSuite) TestCollectorProtoConversion(c *C) {
-	builder := statistics.SampleBuilder{
-		SC:            mock.NewContext().GetSessionVars().StmtCtx,
-		RecordSet:     s.rs,
-		NumCols:       2,
-		PkID:          -1,
-		MaxSampleSize: 10000,
-		MaxBucketSize: 256,
-		MaxSketchSize: 1000,
-	}
-	s.rs.Close()
-	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
-	c.Assert(err, IsNil)
-	c.Assert(pkBuilder, IsNil)
-	for _, collector := range collectors {
-		p := statistics.SampleCollectorToProto(collector)
-		s := statistics.SampleCollectorFromProto(p)
-		c.Assert(collector.Count, Equals, s.Count)
-		c.Assert(collector.NullCount, Equals, s.NullCount)
-		c.Assert(collector.Sketch.NDV(), Equals, s.Sketch.NDV())
-		c.Assert(len(collector.Samples), Equals, len(s.Samples))
-	}
 }
