@@ -97,6 +97,23 @@ func (d *ddl) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
+// handleUpdateJobError handles the too large DDL job.
+func (d *ddl) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) error {
+	if err == nil {
+		return nil
+	}
+	if kv.ErrEntryTooLarge.Equal(err) {
+		log.Warnf("[ddl] update DDL job %v failed %v", job, errors.ErrorStack(err))
+		// Reduce this txn entry size.
+		job.BinlogInfo.Clean()
+		job.Error = toTError(err)
+		job.SchemaState = model.StateNone
+		job.State = model.JobCancelled
+		err = d.finishDDLJob(t, job)
+	}
+	return errors.Trace(err)
+}
+
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
 func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, updateTS uint64) error {
@@ -193,7 +210,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				return errors.Trace(err)
 			}
 			err = d.updateDDLJob(t, job, txn.StartTS())
-			return errors.Trace(err)
+			return errors.Trace(d.handleUpdateJobError(t, job, err))
 		})
 		if err != nil {
 			return errors.Trace(err)

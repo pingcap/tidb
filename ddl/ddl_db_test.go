@@ -1080,6 +1080,29 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
 }
 
+func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
+	defer testleak.AfterTest(c)
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+
+	sql := "create table t_too_large ("
+	cnt := 3000
+	for i := 1; i <= cnt; i++ {
+		sql += fmt.Sprintf("a%d double, b%d double, c%d double, d%d double", i, i, i, i)
+		if i != cnt {
+			sql += ","
+		}
+	}
+	sql += ");"
+	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
+
+	originLimit := ddl.TableColumnCountLimit
+	ddl.TableColumnCountLimit = cnt * 4
+	_, err := s.tk.Exec(sql)
+	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("err:%v", err))
+	ddl.TableColumnCountLimit = originLimit
+}
+
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://create_table_like")
@@ -1322,6 +1345,32 @@ func (s *testDBSuite) TestIssue2858And2717(c *C) {
 	s.tk.MustExec("insert into t_issue_2858_hex values (123), (0x321)")
 	s.tk.MustQuery("select a from t_issue_2858_hex").Check(testkit.Rows("291", "123", "801"))
 	s.tk.MustExec(`alter table t_issue_2858_hex alter column a set default 0x321`)
+}
+
+func (s *testDBSuite) TestIssue4432(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("create table tx (col bit(10) default 'a')")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
+
+	s.tk.MustExec("create table tx (col bit(10) default 0x61)")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
+
+	s.tk.MustExec("create table tx (col bit(10) default 97)")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
+
+	s.tk.MustExec("create table tx (col bit(10) default 0b1100001)")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
 }
 
 func (s *testDBSuite) TestChangeColumnPosition(c *C) {

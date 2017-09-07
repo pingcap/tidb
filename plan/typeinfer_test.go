@@ -51,6 +51,7 @@ func (s *testPlanSuite) TestInferType(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	sql := `create table t (
+		c_bit bit(10),
 		c_int_d int,
 		c_uint_d int unsigned,
 		c_bigint_d bigint,
@@ -146,6 +147,12 @@ func (s *testPlanSuite) createTestCase4Constants() []typeInferTestCase {
 		{"'1234'", mysql.TypeVarString, charset.CharsetUTF8, 0, 4, types.UnspecifiedLength},
 		{"_utf8'1234'", mysql.TypeVarString, charset.CharsetUTF8, 0, 4, types.UnspecifiedLength},
 		{"_binary'1234'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 4, types.UnspecifiedLength},
+		{"b'0001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{"b'000100001'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"b'0000000000010000'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
+		{"x'10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 1, 0},
+		{"x'ff10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 2, 0},
+		{"x'0000000000000000ff10'", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 10, 0},
 	}
 }
 
@@ -171,6 +178,7 @@ func (s *testPlanSuite) createTestCase4Cast() []typeInferTestCase {
 
 func (s *testPlanSuite) createTestCase4Columns() []typeInferTestCase {
 	return []typeInferTestCase{
+		{"c_bit        ", mysql.TypeBit, charset.CharsetBin, mysql.UnsignedFlag, 10, 0},
 		{"c_int_d      ", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"c_uint_d     ", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, 11, 0}, // TODO: Flen should be 10
 		{"c_bigint_d   ", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
@@ -1705,6 +1713,8 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"period_diff(c_enum       , c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 
 		{"get_format(DATE, 'USA')", mysql.TypeVarString, charset.CharsetUTF8, 0, 17, types.UnspecifiedLength},
+		{"extract(day from c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
+		{"extract(hour from c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 	}
 }
 
