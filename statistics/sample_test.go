@@ -73,9 +73,9 @@ func (s *testSampleSuite) SetUpSuite(c *C) {
 
 func (s *testSampleSuite) TestCollectSamplesAndEstimateNDVs(c *C) {
 	builder := statistics.SampleBuilder{
-		SC:            mock.NewContext().GetSessionVars().StmtCtx,
+		Sc:            mock.NewContext().GetSessionVars().StmtCtx,
 		RecordSet:     s.rs,
-		NumCols:       1,
+		ColLen:        1,
 		PkID:          1,
 		MaxSampleSize: 10000,
 		MaxBucketSize: 256,
@@ -92,9 +92,9 @@ func (s *testSampleSuite) TestCollectSamplesAndEstimateNDVs(c *C) {
 
 func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 	builder := statistics.SampleBuilder{
-		SC:            mock.NewContext().GetSessionVars().StmtCtx,
+		Sc:            mock.NewContext().GetSessionVars().StmtCtx,
 		RecordSet:     s.rs,
-		NumCols:       2,
+		ColLen:        2,
 		PkID:          -1,
 		MaxSampleSize: 10000,
 		MaxBucketSize: 256,

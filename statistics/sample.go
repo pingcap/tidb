@@ -64,9 +64,9 @@ func (c *SampleCollector) collect(d types.Datum) error {
 // SampleBuilder is used to build samples for columns.
 // Also, if primary key is handle, it will directly build histogram for it.
 type SampleBuilder struct {
-	SC            *variable.StatementContext
+	Sc            *variable.StatementContext
 	RecordSet     ast.RecordSet
-	NumCols       int   // NumCols is the number of columns need to be sampled.
+	ColLen        int   // ColLen is the number of columns need to be sampled.
 	PkID          int64 // If primary key is handle, the PkID is the id of the primary key. If not exists, it is -1.
 	MaxBucketSize int64
 	MaxSampleSize int64
@@ -81,9 +81,9 @@ type SampleBuilder struct {
 func (s SampleBuilder) CollectSamplesAndEstimateNDVs() ([]*SampleCollector, *SortedBuilder, error) {
 	var pkBuilder *SortedBuilder
 	if s.PkID != -1 {
-		pkBuilder = NewSortedBuilder(s.SC, s.MaxBucketSize, s.PkID)
+		pkBuilder = NewSortedBuilder(s.Sc, s.MaxBucketSize, s.PkID)
 	}
-	collectors := make([]*SampleCollector, s.NumCols)
+	collectors := make([]*SampleCollector, s.ColLen)
 	for i := range collectors {
 		collectors[i] = &SampleCollector{
 			MaxSampleSize: s.MaxSampleSize,

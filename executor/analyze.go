@@ -164,9 +164,9 @@ func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) statistics.AnalyzeResult
 		pkID = task.PKInfo.ID
 	}
 	builder := statistics.SampleBuilder{
-		SC:            e.ctx.GetSessionVars().StmtCtx,
+		Sc:            e.ctx.GetSessionVars().StmtCtx,
 		RecordSet:     &recordSet{executor: task.src},
-		NumCols:       len(task.Columns),
+		ColLen:        len(task.Columns),
 		PkID:          pkID,
 		MaxBucketSize: maxBucketSize,
 		MaxSketchSize: maxSketchSize,
