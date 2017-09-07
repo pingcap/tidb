@@ -46,24 +46,22 @@ const (
 )
 
 func fieldTp2EvalTp(tp *types.FieldType) evalTp {
-	switch tp.ToClass() {
-	case types.ClassInt:
+	switch tp.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeBit, mysql.TypeYear:
 		return tpInt
-	case types.ClassReal:
+	case mysql.TypeFloat, mysql.TypeDouble:
 		return tpReal
-	case types.ClassDecimal:
+	case mysql.TypeNewDecimal:
 		return tpDecimal
-	case types.ClassString:
-		switch tp.Tp {
-		case mysql.TypeDate, mysql.TypeDatetime:
-			return tpDatetime
-		case mysql.TypeTimestamp:
-			return tpTimestamp
-		case mysql.TypeDuration:
-			return tpDuration
-		case mysql.TypeJSON:
-			return tpJSON
-		}
+	case mysql.TypeDate, mysql.TypeDatetime:
+		return tpDatetime
+	case mysql.TypeTimestamp:
+		return tpTimestamp
+	case mysql.TypeDuration:
+		return tpDuration
+	case mysql.TypeJSON:
+		return tpJSON
 	}
 	return tpString
 }
