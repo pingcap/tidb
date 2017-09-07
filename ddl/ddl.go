@@ -50,9 +50,9 @@ const (
 )
 
 var (
-	// tableColumnCountLimit is limit of the number of columns in a table.
-	// It's set as a variable because it's used for testing.
-	tableColumnCountLimit = 512
+	// TableColumnCountLimit is limit of the number of columns in a table.
+	// It's exported for testing.
+	TableColumnCountLimit = 512
 )
 
 var (
