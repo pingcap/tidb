@@ -317,18 +317,18 @@ func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh ch
 		return errors.Trace(err)
 	}
 	result.Fetch(e.ctx.GoCtx())
-	ih := &e.indexWorker
-	ih.wg.Add(1)
+	worker := &e.indexWorker
+	worker.wg.Add(1)
 	go func() {
 		ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
-		ih.fetchHandles(e, result, workCh, ctx, finished)
+		worker.fetchHandles(e, result, workCh, ctx, finished)
 		cancel()
 		if err := result.Close(); err != nil {
 			log.Error("close SelectDAG result failed:", errors.ErrorStack(err))
 		}
 		close(workCh)
 		close(e.resultCh)
-		ih.wg.Done()
+		worker.wg.Done()
 	}()
 	return nil
 }
@@ -336,7 +336,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh ch
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (ih *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
+func (worker *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(result)
 		if err != nil {
@@ -364,8 +364,8 @@ func (ih *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.Selec
 	}
 }
 
-func (ih *indexWorker) close() {
-	ih.wg.Wait()
+func (worker *indexWorker) close() {
+	worker.wg.Wait()
 }
 
 // tableWorker is used by IndexLookUpExecutor to maintain table lookup background goroutines.
@@ -375,21 +375,21 @@ type tableWorker struct {
 
 // startTableWorker launch some background goroutines which pick tasks from workCh and execute the task.
 func (e *IndexLookUpExecutor) startTableWorker(workCh <-chan *lookupTableTask, finished <-chan struct{}) {
-	th := &e.tableWorker
+	worker := &e.tableWorker
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
-	th.wg.Add(lookupConcurrencyLimit)
+	worker.wg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
 		go func() {
-			th.pickAndExecTask(e, workCh, ctx, finished)
+			worker.pickAndExecTask(e, workCh, ctx, finished)
 			cancel()
-			th.wg.Done()
+			worker.wg.Done()
 		}()
 	}
 }
 
 // pickAndExecTask picks tasks from workCh, and execute them.
-func (th *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
+func (worker *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
 	for {
 		select {
 		case task, ok := <-workCh:
@@ -405,8 +405,8 @@ func (th *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lo
 	}
 }
 
-func (th *tableWorker) close() {
-	th.wg.Wait()
+func (worker *tableWorker) close() {
+	worker.wg.Wait()
 }
 
 // Open implements the Executor Open interface.
