@@ -1224,11 +1224,11 @@ func (b *builtinFromUnixTime2ArgSig) evalString(row []types.Datum) (res string, 
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	time, isNull, err := evalFromUnixTime(b.ctx, b.tp.Decimal, row, b.args[0])
+	t, isNull, err := evalFromUnixTime(b.ctx, b.tp.Decimal, row, b.args[0])
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
-	res, err = time.DateFormat(format)
+	res, err = t.DateFormat(format)
 	return res, err != nil, errors.Trace(err)
 }
 
