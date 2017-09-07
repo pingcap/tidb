@@ -455,26 +455,26 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 	case tipb.ScalarFuncSig_IfDuration:
 		f = &builtinIfDurationSig{baseDurationBuiltinFunc{base}}
 
-	//case tipb.ScalarFuncSig_JsonArraySig:
-	//	f = &builtinJSONArraySig{baseBuiltinFunc{base}}
-	//case tipb.ScalarFuncSig_JsonObjectSig:
-	//	f = &builtinJSONObjectSig{baseBuiltinFunc{base}}
-	//case tipb.ScalarFuncSig_JsonMergeSig:
-	//	f = &builtinJSONMergeSig{baseBuiltinFunc{base}}
-	//case tipb.ScalarFuncSig_JsonRemoveSig:
-	//	f = &builtinJSONRemoveSig{baseBuiltinFunc{base}}
-	//case tipb.ScalarFuncSig_JsonReplaceSig:
-	//	f = &builtinJSONReplaceSig{baseBuiltinFunc{base}}
-	//case tipb.ScalarFuncSig_JsonInsertSig:
-	//	f = &builtinJSONInsertSig{baseBuiltinFunc{base}}
-	//case tipb.ScalarFuncSig_JsonSetSig:
-	//	f = &builtinJSONSetSig{baseBuiltinFunc{base}}
-	//case tipb.ScalarFuncSig_JsonUnquoteSig:
-	//	f = &builtinJSONUnquoteSig{baseBuiltinFunc{base}}
-	//case tipb.ScalarFuncSig_JsonExtractSig:
-	//	f = &builtinJSONExtractSig{baseBuiltinFunc{base}}
-	//case tipb.ScalarFuncSig_JsonTypeSig:
-	//	f = &builtinJSONTypeSig{baseBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_JsonTypeSig:
+		f = &builtinJSONTypeSig{baseStringBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_JsonUnquoteSig:
+		f = &builtinJSONUnquoteSig{baseStringBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_JsonArraySig:
+		f = &builtinJSONArraySig{baseJSONBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_JsonObjectSig:
+		f = &builtinJSONObjectSig{baseJSONBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_JsonExtractSig:
+		f = &builtinJSONExtractSig{baseJSONBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_JsonSetSig:
+		f = &builtinJSONSetSig{baseJSONBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_JsonInsertSig:
+		f = &builtinJSONInsertSig{baseJSONBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_JsonReplaceSig:
+		f = &builtinJSONReplaceSig{baseJSONBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_JsonRemoveSig:
+		f = &builtinJSONRemoveSig{baseJSONBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_JsonMergeSig:
+		f = &builtinJSONMergeSig{baseJSONBuiltinFunc{base}}
 
 	default:
 		e = errFunctionNotExists.GenByArgs(sigCode)
