@@ -164,7 +164,7 @@ import:
   subpackages:
   - proto
 - package: github.com/prometheus/client_golang
-  version: ^0.8.0
+  version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:
   - prometheus/push
 - package: golang.org/x/time

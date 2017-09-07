@@ -1,5 +1,5 @@
-hash: c36835c9a5f0cf156b4ea71f60bc4ef95891df8282e29c38a9c18328dc044d02
-updated: 2017-09-07T10:31:23.688075563+08:00
+hash: 572342fd3964f6673d6c6c6832d66eb7a8ead6469e3a59404a2e8cb99be54e03
+updated: 2017-09-07T11:17:12.175998262+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -146,7 +146,7 @@ imports:
   - go-tipb
   - sharedbytes
 - name: github.com/prometheus/client_golang
-  version: 967789050ba94deca04a5e84cce8ad472ce313c1
+  version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:
   - prometheus
   - prometheus/push
