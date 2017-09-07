@@ -1855,7 +1855,7 @@ func (b *builtinExtractDatetimeSig) evalInt(row []types.Datum) (int64, bool, err
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	res, err := types.ExtractDatetimeNum(unit, dt)
+	res, err := types.ExtractDatetimeNum(&dt, unit)
 	return res, false, errors.Trace(err)
 }
 
@@ -1875,7 +1875,7 @@ func (b *builtinExtractDurationSig) evalInt(row []types.Datum) (int64, bool, err
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	res, err := types.ExtractDurationNum(unit, dur)
+	res, err := types.ExtractDurationNum(&dur, unit)
 	return res, false, errors.Trace(err)
 }
 
