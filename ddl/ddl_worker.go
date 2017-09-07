@@ -97,8 +97,8 @@ func (d *ddl) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-// handleTooLargeJob handles the too large DDL job.
-func (d *ddl) handleTooLargeJob(t *meta.Meta, job *model.Job, err error) error {
+// handleUpdateJobError handles the too large DDL job.
+func (d *ddl) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -210,7 +210,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				return errors.Trace(err)
 			}
 			err = d.updateDDLJob(t, job, txn.StartTS())
-			return errors.Trace(d.handleTooLargeJob(t, job, err))
+			return errors.Trace(d.handleUpdateJobError(t, job, err))
 		})
 		if err != nil {
 			return errors.Trace(err)
