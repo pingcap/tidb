@@ -862,7 +862,7 @@ func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
 
 func (cc *clientConn) setConn(conn net.Conn) {
 	cc.bufReadConn = newBufferedReadConn(conn)
-	if cc.pkt != nil {
+	if cc.pkt == nil {
 		cc.pkt = newPacketIO(cc.bufReadConn)
 	} else {
 		// Preserve current sequence number.
