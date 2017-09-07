@@ -135,7 +135,7 @@ imports:
   - pd-client
   - pkg/logutil
 - name: github.com/pingcap/tipb
-  version: ffbc1bb02a2425782286825eec276be817b7f93a
+  version: 0edd80335ab0c044ddcd9de57b63026ab7a209fa
   subpackages:
   - go-binlog
   - go-mysqlx
