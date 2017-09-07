@@ -16,11 +16,11 @@ package tikv
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"sync"
 	"time"
-	"math"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -189,7 +189,7 @@ func (w *GCWorker) storeIsBootstrapped() bool {
 
 // Leader of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx goctx.Context) error {
-	
+
 	if w.gcIsRunning {
 		return nil
 	}
@@ -478,7 +478,7 @@ func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier stri
 	store.gcWorker.saveUint64(gcSavedSafePoint, safePoint)
 	log.Error("[gc worker] %s start gc, safePoint: %v.", identifier, safePoint)
 	time.Sleep(100 * time.Second)
-	
+
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
 		GC: &kvrpcpb.GCRequest{

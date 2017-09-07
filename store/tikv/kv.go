@@ -17,10 +17,10 @@ import (
 	"fmt"
 	"math/rand"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
@@ -113,38 +113,37 @@ type tikvStore struct {
 	mock         bool
 	enableGC     bool
 
-
-	safePoint	 uint64
-	spTime       time.Time
-	spSession    tidb.Session // this is used to obtain safePoint from remote
-	spMutex		 sync.Mutex   // this is used to update safePoint and spTime
-	spMsg		 chan string  // this is used to nofity when the store is closed
+	safePoint uint64
+	spTime    time.Time
+	spSession tidb.Session // this is used to obtain safePoint from remote
+	spMutex   sync.Mutex   // this is used to update safePoint and spTime
+	spMsg     chan string  // this is used to nofity when the store is closed
 }
 
-func (w *tikvStore) createSPSession() {
+func (s *tikvStore) createSPSession() {
 	log.Error("Enter createSPSession!\n")
 	for {
 		var err error
-		w.spSession, err = tidb.CreateSession(w)
+		s.spSession, err = tidb.CreateSession(s)
 		if err != nil {
 			log.Warnf("[safepoint] create session err: %v", err)
 			continue
 		}
 		// Disable privilege check for gc worker session.
-		privilege.BindPrivilegeManager(w.spSession, nil)
+		privilege.BindPrivilegeManager(s.spSession, nil)
 		log.Error("Exit createSPSession!\n")
 		return
 	}
 }
 
-func (w *tikvStore) saveUint64(key string, t uint64) error {
-	s := fmt.Sprintf("%v", t)
-	err := w.saveValueToSysTable(key, s)
+func (s *tikvStore) saveUint64(key string, t uint64) error {
+	str := fmt.Sprintf("%v", t)
+	err := s.saveValueToSysTable(key, str)
 	return errors.Trace(err)
 }
 
-func (w *tikvStore) loadUint64(key string) (uint64, error) {
-	str, err := w.loadValueFromSysTable(key)
+func (s *tikvStore) loadUint64(key string) (uint64, error) {
+	str, err := s.loadValueFromSysTable(key)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -159,19 +158,19 @@ func (w *tikvStore) loadUint64(key string) (uint64, error) {
 	return t, nil
 }
 
-func (w *tikvStore) saveValueToSysTable(key, value string) error {
+func (s *tikvStore) saveValueToSysTable(key, value string) error {
 	stmt := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
 		key, value, gcVariableComments[key])
-	_, err := w.spSession.Execute(stmt)
+	_, err := s.spSession.Execute(stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
 }
 
-func (w *tikvStore) loadValueFromSysTable(key string) (string, error) {
+func (s *tikvStore) loadValueFromSysTable(key string) (string, error) {
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s'`, key)
-	rs, err := w.spSession.Execute(stmt)
+	rs, err := s.spSession.Execute(stmt)
 	if err != nil {
 		return "", errors.New("no value")
 	}
@@ -188,18 +187,17 @@ func (w *tikvStore) loadValueFromSysTable(key string) (string, error) {
 	return value, nil
 }
 
-func (w *tikvStore) CheckVisibility() (uint64, error) {
-	w.spMutex.Lock()
-	currentSafePoint := w.safePoint
-	lastLocalTime := w.spTime
-	w.spMutex.Unlock()
+func (s *tikvStore) CheckVisibility() (uint64, error) {
+	s.spMutex.Lock()
+	currentSafePoint := s.safePoint
+	lastLocalTime := s.spTime
+	s.spMutex.Unlock()
 	diff := time.Since(lastLocalTime)
-	fmt.Printf("%v", diff)
-	
-	if diff > 100 * time.Second {
-		return 0, errors.New("start timestamp may fall behind safepoint\n")
+
+	if diff > 100*time.Second {
+		return 0, errors.New("start timestamp may fall behind safepoint")
 	}
-	
+
 	return currentSafePoint, nil
 }
 
@@ -218,9 +216,9 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		regionCache: NewRegionCache(pdClient),
 		mock:        mock,
 
-		safePoint:    0,
-		spTime:       time.Now(),
-		spMsg:        make(chan string),
+		safePoint: 0,
+		spTime:    time.Now(),
+		spMsg:     make(chan string),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
@@ -240,7 +238,7 @@ func (s *tikvStore) StartGCWorker() error {
 			s.createSPSession()
 
 			for {
-				repeat_break := false
+				repeatbreak := false
 				select {
 				case <-s.spMsg:
 					log.Error("[safepoint store close]\n")
@@ -255,18 +253,20 @@ func (s *tikvStore) StartGCWorker() error {
 						s.spMutex.Unlock()
 						log.Error("[safepoint load OK]\n")
 					} else {
+						s.spMutex.Lock()
+						s.spTime = time.Now()
+						s.spMutex.Unlock()
 						log.Error("[safepoint load error]\n")
-						repeat_break = true
+						repeatbreak = true
 					}
 					time.Sleep(5 * time.Second) // this is configurable
 				}
-				if repeat_break {
+				if repeatbreak {
 					break
 				}
 			}
 		}
 	}()
-
 
 	if !s.enableGC {
 		return nil
@@ -400,7 +400,7 @@ func (s *tikvStore) Close() error {
 		s.gcWorker.Close()
 	}
 
-	s.spMsg <- "close"
+	close(s.spMsg)
 
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)

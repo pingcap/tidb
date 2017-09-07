@@ -24,10 +24,10 @@ import (
 )
 
 type testSafePointSuite struct {
-	store   *tikvStore
+	store    *tikvStore
 	oracle   *mockOracle
 	gcWorker *GCWorker
-	prefix  string
+	prefix   string
 }
 
 var _ = Suite(&testSafePointSuite{})
@@ -69,25 +69,25 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	log.Error("Start TestSafePoint!\n")
 	txn := s.beginTxn(c)
 	for i := 0; i < 10; i++ {
-		set_err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
-		c.Assert(set_err, IsNil)
+		seterr := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
+		c.Assert(seterr, IsNil)
 	}
-	commit_err := txn.Commit()
-	c.Assert(commit_err, IsNil)
+	commiterr := txn.Commit()
+	c.Assert(commiterr, IsNil)
 
 	// for txn get
 	txn2 := s.beginTxn(c)
-	_, get_err := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
-	c.Assert(get_err, IsNil)
+	_, geterr := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
+	c.Assert(geterr, IsNil)
 
 	for {
 		log.Error("Enter For!\n")
-		log.Error("startTS:%v, write safePoint:%v", txn2.startTS, txn2.startTS + 10)
-		s.store.saveUint64(gcSavedSafePoint, txn2.startTS + 10)
+		log.Error("startTS:%v, write safePoint:%v", txn2.startTS, txn2.startTS+10)
+		s.store.saveUint64(gcSavedSafePoint, txn2.startTS+10)
 
 		log.Error("Start Fetch SafePoint\n")
-		newSafePoint, load_err := s.store.loadUint64(gcSavedSafePoint)
-		if load_err == nil {
+		newSafePoint, loaderr := s.store.loadUint64(gcSavedSafePoint)
+		if loaderr == nil {
 			s.store.spMutex.Lock()
 			s.store.safePoint = newSafePoint
 			s.store.spTime = time.Now()
@@ -96,25 +96,25 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 			log.Error("Break For!\n")
 			break
 		} else {
-			log.Error("TestSafePoint Read Error: %v", load_err)
+			log.Error("TestSafePoint Read Error: %v", loaderr)
 			time.Sleep(5 * time.Second)
 		}
 	}
 
 	log.Error("Break For Success!\n")
-	_, get_err2 := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
-	c.Assert(get_err2, NotNil)
-	
+	_, geterr2 := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
+	c.Assert(geterr2, NotNil)
+
 	// for txn seek
 	txn3 := s.beginTxn(c)
 	for {
 		log.Error("Enter For!\n")
-		log.Error("startTS:%v, write safePoint:%v", txn3.startTS, txn3.startTS + 10)
-		s.store.saveUint64(gcSavedSafePoint, txn3.startTS + 10)
+		log.Error("startTS:%v, write safePoint:%v", txn3.startTS, txn3.startTS+10)
+		s.store.saveUint64(gcSavedSafePoint, txn3.startTS+10)
 
 		log.Error("Start Fetch SafePoint\n")
-		newSafePoint, load_err := s.store.loadUint64(gcSavedSafePoint)
-		if load_err == nil {
+		newSafePoint, loaderr := s.store.loadUint64(gcSavedSafePoint)
+		if loaderr == nil {
 			s.store.spMutex.Lock()
 			s.store.safePoint = newSafePoint
 			s.store.spTime = time.Now()
@@ -123,25 +123,25 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 			log.Error("Break For!\n")
 			break
 		} else {
-			log.Error("TestSafePoint Read Error: %v", load_err)
+			log.Error("TestSafePoint Read Error: %v", loaderr)
 			time.Sleep(5 * time.Second)
 		}
 	}
 
-	_, seek_err := txn3.Seek(encodeKey(s.prefix, ""))
-	c.Assert(seek_err, NotNil)
+	_, seekerr := txn3.Seek(encodeKey(s.prefix, ""))
+	c.Assert(seekerr, NotNil)
 
 	// for snapshot batchGet
 	keys := mymakeKeys(10, s.prefix)
 	txn4 := s.beginTxn(c)
 	for {
 		log.Error("Enter For!\n")
-		log.Error("startTS:%v, write safePoint:%v", txn4.startTS, txn4.startTS + 10)
-		s.store.saveUint64(gcSavedSafePoint, txn4.startTS + 10)
+		log.Error("startTS:%v, write safePoint:%v", txn4.startTS, txn4.startTS+10)
+		s.store.saveUint64(gcSavedSafePoint, txn4.startTS+10)
 
 		log.Error("Start Fetch SafePoint\n")
-		newSafePoint, load_err := s.store.loadUint64(gcSavedSafePoint)
-		if load_err == nil {
+		newSafePoint, loaderr := s.store.loadUint64(gcSavedSafePoint)
+		if loaderr == nil {
 			s.store.spMutex.Lock()
 			s.store.safePoint = newSafePoint
 			s.store.spTime = time.Now()
@@ -150,12 +150,12 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 			log.Error("Break For!\n")
 			break
 		} else {
-			log.Error("TestSafePoint Read Error: %v", load_err)
+			log.Error("TestSafePoint Read Error: %v", loaderr)
 			time.Sleep(5 * time.Second)
 		}
 	}
 
 	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn4.StartTS()})
-	_, batchget_err := snapshot.BatchGet(keys)
-	c.Assert(batchget_err, NotNil)
+	_, batchgeterr := snapshot.BatchGet(keys)
+	c.Assert(batchgeterr, NotNil)
 }

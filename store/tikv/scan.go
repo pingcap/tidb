@@ -169,18 +169,17 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 
 		var safePoint uint64
-		safePoint, check_err := s.snapshot.store.CheckVisibility()
-	
+		safePoint, checkerr := s.snapshot.store.CheckVisibility()
+
 		log.Error("[scanner:getData] startTS:%v, safePoint:%v", s.startTS(), safePoint)
-	
-		if check_err != nil {
-			return check_err
-		} else {
-			if s.startTS() < safePoint {
-				return errors.New("start timestamp falls behind safepoint\n")
-			}
+
+		if checkerr != nil {
+			return checkerr
 		}
-	
+
+		if s.startTS() < safePoint {
+			return errors.New("start timestamp falls behind safepoint")
+		}
 
 		kvPairs := cmdScanResp.Pairs
 		// Check if kvPair contains error, it should be a Lock.
