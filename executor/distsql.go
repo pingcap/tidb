@@ -55,6 +55,7 @@ type lookupTableTask struct {
 	handles  []int64
 	rows     []Row
 	cursor   int
+	id       int // id is used for keep order
 	// TODO: Remove those two fields, the new distsql don't need them.
 	done   bool
 	doneCh chan error
