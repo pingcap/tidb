@@ -34,7 +34,7 @@ type SampleCollector struct {
 // MergeSampleCollector merges two sample collectors.
 func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
 	c.NullCount += rc.NullCount
-	c.Sketch.MergeFMSketch(rc.Sketch)
+	c.Sketch.mergeFMSketch(rc.Sketch)
 	for _, val := range rc.Samples {
 		c.collect(val)
 	}

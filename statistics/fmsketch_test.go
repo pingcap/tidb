@@ -31,8 +31,8 @@ func (s *testStatisticsSuite) TestSketch(c *C) {
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(99968))
 
-	sampleSketch.MergeFMSketch(pkSketch)
-	sampleSketch.MergeFMSketch(rcSketch)
+	sampleSketch.mergeFMSketch(pkSketch)
+	sampleSketch.mergeFMSketch(rcSketch)
 	c.Check(sampleSketch.NDV(), Equals, int64(99968))
 
 	maxSize = 2
