@@ -52,8 +52,9 @@ type lookupTableTask struct {
 	handles []int64
 	rows    []Row
 	cursor  int
-	done    bool
-	doneCh  chan error
+
+	done   bool
+	doneCh chan error
 
 	// indexOrder map is used to save the original index order for the handles.
 	// Without this map, the original index order might be lost.

@@ -15,7 +15,6 @@ package executor
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"sort"
 	"strings"
@@ -432,10 +431,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				default:
 					defaultValStr := fmt.Sprintf("%v", col.DefaultValue)
 					if col.Tp == mysql.TypeBit {
-						bytes := make([]byte, 8)
-						copy(bytes[8-len(defaultValStr):8], []byte(defaultValStr))
-						intValue := binary.BigEndian.Uint64(bytes)
-						buf.WriteString(fmt.Sprintf(" DEFAULT b'%b'", intValue))
+						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
+						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true)))
 					} else {
 						buf.WriteString(fmt.Sprintf(" DEFAULT '%s'", format.OutputFormat(defaultValStr)))
 					}
@@ -446,7 +443,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 		}
 		if len(col.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", col.Comment))
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
 		}
 		if i != len(tb.Cols())-1 {
 			buf.WriteString(",\n")
