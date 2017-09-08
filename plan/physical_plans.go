@@ -580,9 +580,8 @@ type PhysicalAggregation struct {
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
 
-	propKeys    []*expression.Column
-	childCount  float64 // childCount is the child plan's count.
-	cardinality float64
+	propKeys   []*expression.Column
+	inputCount float64 // inputCount is the input count of this plan.
 }
 
 // PhysicalUnionScan represents a union scan operator.

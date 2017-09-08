@@ -482,6 +482,7 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 	if tasks[0].plan() == nil {
 		return tasks[0]
 	}
+	cardinality := p.statsProfile().count
 	task := tasks[0].copy()
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
@@ -496,7 +497,7 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 			}
 		}
 		task = finishCopTask(cop, p.ctx, p.allocator)
-		task.addCost(task.count()*cpuFactor + p.cardinality*hashAggMemFactor)
+		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 		attachPlan2Task(finalAgg, task)
 	} else {
 		np := p.Copy()
@@ -504,7 +505,7 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 		if p.AggType == StreamedAgg {
 			task.addCost(task.count() * cpuFactor)
 		} else {
-			task.addCost(task.count()*cpuFactor + p.cardinality*hashAggMemFactor)
+			task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 		}
 	}
 	return task

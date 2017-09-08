@@ -1091,6 +1091,9 @@ func (p *TopN) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 }
 
 func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
+	if len(p.possibleProperties) == 0 {
+		return nil
+	}
 	for _, aggFunc := range p.AggFuncs {
 		if aggFunc.GetMode() == expression.FinalMode {
 			return nil
@@ -1112,7 +1115,7 @@ func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
 			HasGby:       len(p.GroupByItems) > 0,
 			AggType:      StreamedAgg,
 			propKeys:     cols,
-			childCount:   p.childCount,
+			inputCount:   p.inputCount,
 		}.init(p.allocator, p.ctx)
 		agg.SetSchema(p.schema.Clone())
 		agg.profile = p.profile
@@ -1122,20 +1125,16 @@ func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
 }
 
 func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
-	aggs := make([]PhysicalPlan, 0, 2)
+	aggs := make([]PhysicalPlan, 0, len(p.possibleProperties)+1)
 	agg := PhysicalAggregation{
 		GroupByItems: p.GroupByItems,
 		AggFuncs:     p.AggFuncs,
 		HasGby:       len(p.GroupByItems) > 0,
 		AggType:      CompleteAgg,
-		cardinality:  p.cardinality,
 	}.init(p.allocator, p.ctx)
 	agg.SetSchema(p.schema.Clone())
 	agg.profile = p.profile
 	aggs = append(aggs, agg)
-	if len(p.possibleProperties) == 0 {
-		return aggs
-	}
 
 	streamAggs := p.getStreamAggs()
 	aggs = append(aggs, streamAggs...)
@@ -1156,7 +1155,7 @@ func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*
 		return props
 	}
 
-	reqProp := &requiredProp{taskTp: rootTaskType, cols: p.propKeys, expectedCnt: prop.expectedCnt * p.childCount / p.profile.count}
+	reqProp := &requiredProp{taskTp: rootTaskType, cols: p.propKeys, expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count}
 	if !prop.isEmpty() {
 		if prop.desc {
 			return nil

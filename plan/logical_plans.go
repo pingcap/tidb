@@ -183,8 +183,7 @@ type LogicalAggregation struct {
 	groupByCols []*expression.Column
 
 	possibleProperties [][]*expression.Column
-	childCount         float64 // childCount is the child plan's count.
-	cardinality        float64
+	inputCount         float64 // inputCount is the input count of this plan.
 }
 
 func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
