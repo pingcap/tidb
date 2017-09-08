@@ -132,7 +132,7 @@ func BuildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet
 	return b.Count, b.Hist(), nil
 }
 
-// BuildColumn builds histogram from Samples for column.
+// BuildColumn builds histogram from samples for column.
 func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int64, nullCount int64, samples []types.Datum) (*Histogram, error) {
 	if count == 0 {
 		return &Histogram{ID: id, NullCount: nullCount}, nil
@@ -150,7 +150,7 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int
 	}
 	valuesPerBucket := float64(count)/float64(numBuckets) + 1
 
-	// As we use Samples to build the histogram, the bucket number and repeat should multiply a factor.
+	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(samples))
 	ndvFactor := float64(count) / float64(ndv)
 	if ndvFactor > sampleFactor {

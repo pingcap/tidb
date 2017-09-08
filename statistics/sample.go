@@ -41,7 +41,7 @@ func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
 	}
 }
 
-// SampleCollectorToProto converts Histogram to its protobuf representation.
+// SampleCollectorToProto converts SampleCollector to its protobuf representation.
 func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 	collector := &tipb.SampleCollector{
 		NullCount: c.NullCount,
@@ -54,7 +54,7 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 	return collector
 }
 
-// SampleCollectorFromProto converts Histogram from its protobuf representation.
+// SampleCollectorFromProto converts SampleCollector from its protobuf representation.
 func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector {
 	s := &SampleCollector{
 		NullCount: collector.NullCount,

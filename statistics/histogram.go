@@ -401,7 +401,6 @@ func MergeHistograms(sc *variable.StatementContext, lh *Histogram, rh *Histogram
 		rAvg *= 2
 	}
 	lh.NDV += rh.NDV
-	lh.NullCount += rh.NullCount
 	lLen := len(lh.Buckets)
 	cmp, err := lh.Buckets[lLen-1].UpperBound.CompareDatum(sc, rh.Buckets[0].LowerBound)
 	if err != nil {

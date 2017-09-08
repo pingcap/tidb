@@ -14,10 +14,10 @@
 package statistics
 
 import (
+	"bytes"
 	"math"
 	"testing"
 
-	"bytes"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -251,10 +251,9 @@ func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
 	}
 }
 
-func mockHistogram(lower, null, num int64) *Histogram {
+func mockHistogram(lower, num int64) *Histogram {
 	h := &Histogram{
-		NDV:       num,
-		NullCount: null,
+		NDV: num,
 	}
 	for i := int64(0); i < num; i++ {
 		bkt := Bucket{
@@ -271,28 +270,47 @@ func mockHistogram(lower, null, num int64) *Histogram {
 func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	bucketCount := 256
-	lh := mockHistogram(0, 0, 0)
-	rh := mockHistogram(0, 0, 1)
+	lh := mockHistogram(0, 0)
+	rh := mockHistogram(0, 1)
 	h, err := MergeHistograms(sc, lh, rh, bucketCount)
 	c.Assert(err, IsNil)
 	c.Assert(len(h.Buckets), Equals, 1)
 	c.Assert(h.NDV, Equals, int64(1))
+	c.Assert(h.Buckets[len(h.Buckets)-1].Count, Equals, int64(1))
+	cmp, err := h.Buckets[0].LowerBound.CompareDatum(sc, types.NewIntDatum(0))
+	c.Assert(err, IsNil)
+	c.Assert(cmp, Equals, 0)
+	cmp, err = h.Buckets[len(h.Buckets)-1].UpperBound.CompareDatum(sc, types.NewIntDatum(0))
+	c.Assert(err, IsNil)
+	c.Assert(cmp, Equals, 0)
 
-	lh = mockHistogram(0, 0, 200)
-	rh = mockHistogram(200, 1, 200)
+	lh = mockHistogram(0, 200)
+	rh = mockHistogram(200, 200)
 	h, err = MergeHistograms(sc, lh, rh, bucketCount)
 	c.Assert(err, IsNil)
 	c.Assert(h.NDV, Equals, int64(400))
-	c.Assert(h.NullCount, Equals, int64(1))
 	c.Assert(len(h.Buckets), Equals, 200)
+	c.Assert(h.Buckets[len(h.Buckets)-1].Count, Equals, int64(400))
+	cmp, err = h.Buckets[0].LowerBound.CompareDatum(sc, types.NewIntDatum(0))
+	c.Assert(err, IsNil)
+	c.Assert(cmp, Equals, 0)
+	cmp, err = h.Buckets[len(h.Buckets)-1].UpperBound.CompareDatum(sc, types.NewIntDatum(399))
+	c.Assert(err, IsNil)
+	c.Assert(cmp, Equals, 0)
 
-	lh = mockHistogram(0, 0, 200)
-	rh = mockHistogram(199, 1, 200)
+	lh = mockHistogram(0, 200)
+	rh = mockHistogram(199, 200)
 	h, err = MergeHistograms(sc, lh, rh, bucketCount)
 	c.Assert(err, IsNil)
 	c.Assert(h.NDV, Equals, int64(399))
-	c.Assert(h.NullCount, Equals, int64(1))
 	c.Assert(len(h.Buckets), Equals, 200)
+	c.Assert(h.Buckets[len(h.Buckets)-1].Count, Equals, int64(400))
+	cmp, err = h.Buckets[0].LowerBound.CompareDatum(sc, types.NewIntDatum(0))
+	c.Assert(err, IsNil)
+	c.Assert(cmp, Equals, 0)
+	cmp, err = h.Buckets[len(h.Buckets)-1].UpperBound.CompareDatum(sc, types.NewIntDatum(398))
+	c.Assert(err, IsNil)
+	c.Assert(cmp, Equals, 0)
 }
 
 func (s *testStatisticsSuite) TestPseudoTable(c *C) {
