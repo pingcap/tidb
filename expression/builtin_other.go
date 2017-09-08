@@ -46,29 +46,27 @@ type rowFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rowFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *rowFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinRowSig{newBaseBuiltinFunc(args, ctx)}
+	argTps := make([]evalTp, len(args))
+	for i := range argTps {
+		argTps[i] = fieldTp2EvalTp(args[i].GetType())
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
+	bf.foldable = false
+	sig = &builtinRowSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinRowSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-func (b *builtinRowSig) canBeFolded() bool {
-	return false
-}
-
-func (b *builtinRowSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	d.SetRow(args)
-	return
+// rowFunc should always be flattened in expression rewrite phrase.
+func (b *builtinRowSig) evalString(row []types.Datum) (string, bool, error) {
+	return "", false, errors.New("`builtinRowSig.evalString()` should never be called.")
 }
 
 type setVarFunctionClass struct {
