@@ -110,6 +110,9 @@ func (r *selectResult) Next() (PartialResult, error) {
 	if re.err != nil {
 		return nil, errors.Trace(re.err)
 	}
+	if re.result == nil {
+		return nil, nil
+	}
 	pr := &partialResult{}
 	err := pr.unmarshal(re.result)
 	return pr, errors.Trace(err)
