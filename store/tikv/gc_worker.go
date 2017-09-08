@@ -45,35 +45,35 @@ type GCWorker struct {
 	cancel      goctx.CancelFunc
 	done        chan error
 
-	/*
-	 * gc worker uses "session"
-	 * safepoint checker uses "spSession"
-	 * so there is no race
-	 */
-	session   tidb.Session
-	spSession tidb.Session
+	session tidb.Session
+
+	spsession   tidb.Session
+	sessionLock sync.Mutex
 }
 
 // StartSafePointChecker triggers SafePoint Checker on each tidb
 func (w *GCWorker) StartSafePointChecker() {
-	for {
-		select {
-		case <-w.store.spMsg:
-			return
-		default:
-			spCachedTime := time.Now()
-			cachedSafePoint, cacheErr := w.loadSafePoint(gcSavedSafePoint)
-			if cacheErr == nil {
-				w.store.spMutex.Lock()
-				w.store.safePoint = cachedSafePoint
-				w.store.spTime = spCachedTime
-				w.store.spMutex.Unlock()
-			} else {
-				log.Error("[safepoint] read error:", cacheErr)
+	w.spsession = createSession(w.store)
+	go func() {
+		for {
+			select {
+			case <-w.store.spMsg:
+				return
+			default:
+				spCachedTime := time.Now()
+				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
+				if err == nil {
+					w.store.spMutex.Lock()
+					w.store.safePoint = cachedSafePoint
+					w.store.spTime = spCachedTime
+					w.store.spMutex.Unlock()
+				} else {
+					log.Error("[safepoint] read error:", err)
+				}
+				time.Sleep(gcSafePointUpdateInterval)
 			}
-			time.Sleep(gcSafePointUpdateInterval)
 		}
-	}
+	}()
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -98,17 +98,14 @@ func NewGCWorker(store kv.Storage, enableGC bool) (*GCWorker, error) {
 	ctx, worker.cancel = goctx.WithCancel(goctx.Background())
 	var wg sync.WaitGroup
 
+	worker.session = createSession(worker.store)
 	if enableGC {
 		wg.Add(1)
 		go worker.start(ctx, &wg)
 		wg.Wait() // Wait create session finish in worker, some test code depend on this to avoid race.
-	} else {
-		worker.session = createSession(store)
 	}
 
-	worker.spSession = createSession(store)
-
-	go worker.StartSafePointChecker()
+	worker.StartSafePointChecker()
 
 	return worker, nil
 }
@@ -264,11 +261,11 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
-	err = w.saveTime(gcLastRunTimeKey, now)
+	err = w.saveTime(gcLastRunTimeKey, now, w.session)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-	err = w.saveTime(gcSafePointKey, *newSafePoint)
+	err = w.saveTime(gcSafePointKey, *newSafePoint, w.session)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -291,7 +288,7 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 		return false, errors.Trace(err)
 	}
 	gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(float64(runInterval.Seconds()))
-	lastRun, err := w.loadTime(gcLastRunTimeKey)
+	lastRun, err := w.loadTime(gcLastRunTimeKey, w.session)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -307,7 +304,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 		return nil, errors.Trace(err)
 	}
 	gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(float64(lifeTime.Seconds()))
-	lastSafePoint, err := w.loadTime(gcSafePointKey)
+	lastSafePoint, err := w.loadTime(gcSafePointKey, w.session)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -592,7 +589,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	}
 	log.Debugf("[gc worker] got leader: %s", leader)
 	if leader == w.uuid {
-		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
+		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), session)
 		if err != nil {
 			session.Execute("ROLLBACK")
 			return false, errors.Trace(err)
@@ -603,7 +600,12 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		}
 		return true, nil
 	}
-	lease, err := w.loadTime(gcLeaderLeaseKey)
+
+	_, err = session.Execute("BEGIN")
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	lease, err := w.loadTime(gcLeaderLeaseKey, session)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -621,7 +623,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 			session.Execute("ROLLBACK")
 			return false, errors.Trace(err)
 		}
-		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
+		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), session)
 		if err != nil {
 			session.Execute("ROLLBACK")
 			return false, errors.Trace(err)
@@ -637,13 +639,17 @@ func (w *GCWorker) checkLeader() (bool, error) {
 }
 
 func (w *GCWorker) saveSafePoint(key string, t uint64) error {
+	w.sessionLock.Lock()
+	defer w.sessionLock.Unlock()
 	s := strconv.FormatUint(t, 10)
-	err := w.saveValueToSysTable(key, s, w.session)
+	err := w.saveValueToSysTable(key, s, w.spsession)
 	return errors.Trace(err)
 }
 
 func (w *GCWorker) loadSafePoint(key string) (uint64, error) {
-	str, err := w.loadValueFromSysTable(key, w.spSession)
+	w.sessionLock.Lock()
+	defer w.sessionLock.Unlock()
+	str, err := w.loadValueFromSysTable(key, w.spsession)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -657,13 +663,13 @@ func (w *GCWorker) loadSafePoint(key string) (uint64, error) {
 	return t, nil
 }
 
-func (w *GCWorker) saveTime(key string, t time.Time) error {
-	err := w.saveValueToSysTable(key, t.Format(gcTimeFormat), w.session)
+func (w *GCWorker) saveTime(key string, t time.Time, s tidb.Session) error {
+	err := w.saveValueToSysTable(key, t.Format(gcTimeFormat), s)
 	return errors.Trace(err)
 }
 
-func (w *GCWorker) loadTime(key string) (*time.Time, error) {
-	str, err := w.loadValueFromSysTable(key, w.session)
+func (w *GCWorker) loadTime(key string, s tidb.Session) (*time.Time, error) {
+	str, err := w.loadValueFromSysTable(key, s)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -736,6 +742,9 @@ func (w *GCWorker) saveValueToSysTable(key, value string, s tidb.Session) error 
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
 		key, value, gcVariableComments[key])
+	if s == nil {
+		return errors.New("[saveValueToSysTable session is nil]")
+	}
 	_, err := s.Execute(stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
@@ -743,7 +752,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string, s tidb.Session) error 
 
 // MockGCWorker is for test.
 type MockGCWorker struct {
-	worker GCWorker
+	worker *GCWorker
 }
 
 // NewMockGCWorker creates a MockGCWorker instance ONLY for test.
@@ -756,7 +765,7 @@ func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 	if err != nil {
 		hostName = "unknown"
 	}
-	worker := GCWorker{
+	worker := &GCWorker{
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:       store.(*tikvStore),

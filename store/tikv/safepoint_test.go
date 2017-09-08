@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
@@ -66,27 +67,28 @@ func mymakeKeys(rowNum int, prefix string) []kv.Key {
 func (s *testSafePointSuite) TestSafePoint(c *C) {
 	txn := s.beginTxn(c)
 	for i := 0; i < 10; i++ {
-		seterr := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
-		c.Assert(seterr, IsNil)
+		err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
+		c.Assert(err, IsNil)
 	}
-	commiterr := txn.Commit()
-	c.Assert(commiterr, IsNil)
+	err := txn.Commit()
+	c.Assert(err, IsNil)
 
 	// for txn get
 	txn2 := s.beginTxn(c)
-	_, geterr := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
-	c.Assert(geterr, IsNil)
+	_, err = txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
+	c.Assert(err, IsNil)
 
 	for {
 		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn2.startTS+10)
-		newSafePoint, loaderr := s.gcWorker.loadSafePoint(gcSavedSafePoint)
-		if loaderr == nil {
+		newSafePoint, err := s.gcWorker.loadSafePoint(gcSavedSafePoint)
+		if err == nil {
 			s.store.spMutex.Lock()
 			s.store.safePoint = newSafePoint
 			s.store.spTime = time.Now()
 			s.store.spMutex.Unlock()
 			break
 		} else {
+			log.Error(err)
 			time.Sleep(5 * time.Second)
 		}
 	}
