@@ -342,7 +342,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			tp.Flen = mysql.MaxDatetimeWidthNoFsp
 			if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
-				tp.Flen = x.Fsp + 1
+				tp.Flen += x.Fsp + 1
 			}
 			tp.Decimal = x.Fsp
 		}
