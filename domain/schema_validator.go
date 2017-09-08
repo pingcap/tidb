@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 )
 
 // SchemaValidator is the interface for checking the validity of schema version.

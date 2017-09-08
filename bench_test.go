@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 )
 
@@ -31,7 +31,7 @@ func prepareBenchSession() Session {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.SetLevel(log.LOG_LEVEL_ERROR)
+	log.SetLevel(log.ErrorLevel)
 	se, err := CreateSession(store)
 	if err != nil {
 		log.Fatal(err)
