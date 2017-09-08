@@ -79,12 +79,6 @@ func IsTemporalWithDate(tp byte) bool {
 	return IsTypeTime(tp)
 }
 
-// IsString returns a boolean indicating
-// whether the field type is a string type.
-func IsTypeString(tp byte) bool {
-	return IsTypeVarchar(tp) || IsTypeChar(tp) || IsTypeBlob(tp)
-}
-
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
