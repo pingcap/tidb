@@ -215,8 +215,7 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
-		err = errors.New("client returns nil response")
-		return nil, err
+		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
 		resp:    resp,
@@ -267,8 +266,7 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
-		err = errors.New("client returns nil response")
-		return nil, errors.Trace(err)
+		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
 		label:   "dag",
@@ -306,8 +304,7 @@ func Analyze(client kv.Client, ctx goctx.Context, req *tipb.AnalyzeReq, keyRange
 
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
-		err = errors.New("client returns nil response")
-		return nil, errors.Trace(err)
+		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
 		label:   "analyze",
