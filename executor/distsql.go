@@ -309,7 +309,10 @@ func extractHandlesFromNewIndexResult(idxResult distsql.NewSelectResult) (handle
 
 func extractHandlesFromNewIndexSubResult(subResult distsql.NewPartialResult) ([]int64, error) {
 	defer subResult.Close()
-	var handles []int64
+	var (
+		handles     []int64
+		handleDatum types.Datum
+	)
 	for {
 		data, err := subResult.Next()
 		if err != nil {
@@ -319,7 +322,7 @@ func extractHandlesFromNewIndexSubResult(subResult distsql.NewPartialResult) ([]
 			break
 		}
 		l := len(data)
-		handleDatum, err := tablecodec.DecodeColumnValue(data[l-1].GetRaw(), types.NewFieldType(mysql.TypeLonglong), nil)
+		handleDatum, err = tablecodec.DecodeColumnValue(data[l-1].GetRaw(), types.NewFieldType(mysql.TypeLonglong), nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
