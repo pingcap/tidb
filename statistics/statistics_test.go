@@ -131,7 +131,7 @@ func encodeKey(key types.Datum) types.Datum {
 }
 
 func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
-	b := NewSortedBuilder(ctx, numBuckets, id, true)
+	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
 	for {
 		row, err := records.Next()
 		if err != nil {
@@ -140,12 +140,12 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 		if row == nil {
 			break
 		}
-		err = b.Iterate(row.Data)
+		err = b.Iterate(row.Data[0])
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
 	}
-	return b.Count, b.Hist, nil
+	return b.Count, b.hist, nil
 }
 
 func (s *testStatisticsSuite) TestBuild(c *C) {
