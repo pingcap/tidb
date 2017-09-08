@@ -807,6 +807,9 @@ func (c *convertFunctionClass) getFunction(ctx context.Context, args []Expressio
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
+	// TODO: issue #4436: The second parameter should be a constant.
+	// TODO: issue #4474: Charset supported by TiDB and MySQL is not the same.
+	// TODO: Fix #4436 && #4474, set the correct charset and flag of `bf.tp`.
 	bf.tp.Flen = mysql.MaxBlobWidth
 	sig := &builtinConvertSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
