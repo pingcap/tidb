@@ -391,14 +391,15 @@ func (e *IndexLookUpExecutor) startTableWorker(workCh <-chan *lookupTableTask, f
 // pickAndExecTask picks tasks from workCh, and execute them.
 func (worker *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
 	for {
+		// Don't check ctx.Done() on purpose. If background worker get the signal and all
+		// exit immediately, session's goroutine doesn't know this and still calling Next(),
+		// it may block reading resultCh forever.
 		select {
 		case task, ok := <-workCh:
 			if !ok {
 				return
 			}
 			e.executeTask(task, ctx)
-		case <-ctx.Done():
-			return
 		case <-finished:
 			return
 		}
