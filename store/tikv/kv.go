@@ -132,8 +132,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	s.spMutex.RUnlock()
 	diff := time.Since(cachedTime)
 
-	// the magic number "5" is used to compensate the inaccuracy of CPU clock
-	if diff > (gcSafePointCacheInterval - 5) {
+	if diff > (gcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
 		return errors.New("start timestamp may fall behind safepoint")
 	}
 

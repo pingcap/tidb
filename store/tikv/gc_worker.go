@@ -132,6 +132,7 @@ const (
 	gcSavedSafePoint          = "tikv_gc_saved_safe_point"
 	gcSafePointCacheInterval  = time.Second * 100
 	gcSafePointUpdateInterval = time.Second * 10
+	gcCPUTimeInaccuracyBound  = time.Second
 )
 
 var gcVariableComments = map[string]string{
