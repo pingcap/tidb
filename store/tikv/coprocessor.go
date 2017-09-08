@@ -446,7 +446,7 @@ func (it *copIterator) Next() ([]byte, error) {
 
 	if it.req.StartTs < safePoint {
 		return nil, errors.New("start timestamp falls behind safepoint")
-	} 
+	}
 
 	return resp.Data, nil
 }
