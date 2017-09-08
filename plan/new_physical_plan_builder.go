@@ -713,7 +713,6 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo) (task task, err error) {
-	log.Debugf("data source convert index scan")
 	is := PhysicalIndexScan{
 		Table:               p.tableInfo,
 		TableAsName:         p.TableAsName,
@@ -824,11 +823,13 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		}
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
+	log.Debugf("index scan before, idx %v, tp %v, count %v, cost %v", idx.Name, prop.taskTp, task.count(), task.cost())
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
+	log.Debugf("index scan, tp %v, cost %v", prop.taskTp, task.cost())
 	return task, nil
 }
 
@@ -983,6 +984,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)
+		log.Warnf("table scan cost %v", task.cost())
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -1122,7 +1124,7 @@ func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
 		agg.SetSchema(p.schema.Clone())
 		agg.profile = p.profile
 		streamAggs = append(streamAggs, agg)
-		log.Infof("stream agg, profile %v", agg.profile)
+		log.Infof("stream agg, keys %v, profile %v", keys, agg.profile)
 	}
 	return streamAggs
 }

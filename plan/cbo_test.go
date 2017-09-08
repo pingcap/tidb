@@ -35,9 +35,9 @@ type testAnalyzeSuite struct {
 }
 
 func constructInsertSQL(i, n int) string {
-	sql := "insert into t (a,b,c)values "
+	sql := "insert into t (a,b,c,e)values "
 	for j := 0; j < n; j++ {
-		sql += fmt.Sprintf("(%d, %d, '%d')", i*n+j, i, i+j)
+		sql += fmt.Sprintf("(%d, %d, '%d', %d)", i*n+j, i, i+j, i*n+j)
 		if j != n-1 {
 			sql += ", "
 		}
@@ -57,9 +57,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a int primary key, b int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP)")
+	testKit.MustExec("create table t (a int primary key, b int, e int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP)")
 	testKit.MustExec("create index b on t (b)")
 	testKit.MustExec("create index d on t (d)")
+	testKit.MustExec("create index e on t (e)")
+	testKit.MustExec("create index b_c on t (b,c)")
 	for i := 0; i < 100; i++ {
 		testKit.MustExec(constructInsertSQL(i, 100))
 	}
@@ -69,19 +71,43 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		best string
 	}{
 		{
-			sql:  "select count(c) from t where t.b <= 20",
-			best: "IndexLookUp(Index(t.b)[[-inf,20]], Table(t)->HashAgg)->HashAgg",
+			sql:  "select count(*) from t group by e",
+			best: "IndexReader(Index(t.e)[[<nil>,+inf]])->StreamAgg",
 		},
 		{
-			sql:  "select count(c) from t where t.b <= 30",
+			sql:  "select count(*) from t where e <= 10 group by e",
+			best: "IndexReader(Index(t.e)[[-inf,10]])->StreamAgg",
+		},
+		{
+			sql:  "select count(*) from t where e <= 50",
+			best: "IndexReader(Index(t.e)[[-inf,50]]->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(*) from t where c > '1' group by b",
+			best: "IndexReader(Index(t.b_c)[[<nil> <nil>,+inf +inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
+		},
+		{
+			sql:  "select count(*) from t where e = 1 group by b",
+			best: "IndexLookUp(Index(t.e)[[1,1]], Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(*) from t where e > 1 group by b",
+			best: "TableReader(Table(t)->Sel([gt(test.t.e, 1)])->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(e) from t where t.b <= 20",
+			best: "IndexLookUp(Index(t.b_c)[[-inf <nil>,20 +inf]], Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(e) from t where t.b <= 30",
 			best: "IndexLookUp(Index(t.b)[[-inf,30]], Table(t)->HashAgg)->HashAgg",
 		},
 		{
-			sql:  "select count(c) from t where t.b <= 40",
+			sql:  "select count(e) from t where t.b <= 40",
 			best: "IndexLookUp(Index(t.b)[[-inf,40]], Table(t)->HashAgg)->HashAgg",
 		},
 		{
-			sql:  "select count(c) from t where t.b <= 50",
+			sql:  "select count(e) from t where t.b <= 50",
 			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->HashAgg)->HashAgg",
 		},
 		{

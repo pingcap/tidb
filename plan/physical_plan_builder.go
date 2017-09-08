@@ -34,7 +34,7 @@ const (
 	scanFactor         = 2.0
 	descScanFactor     = 5 * scanFactor
 	memoryFactor       = 5.0
-	hashAggMemFactor   = 1.0
+	hashAggMemFactor   = 2.0
 	selectionFactor    = 0.8
 	distinctFactor     = 0.8
 	cpuFactor          = 0.9

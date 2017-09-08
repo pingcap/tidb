@@ -102,10 +102,11 @@ func attachPlan2Task(p PhysicalPlan, t task) task {
 // finishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.
 func (t *copTask) finishIndexPlan() {
 	if !t.indexPlanFinished {
-		t.cst += t.count() * (netWorkFactor + scanFactor)
+		t.cst += t.count() * netWorkFactor
 		t.indexPlanFinished = true
 		if t.tablePlan != nil {
 			t.tablePlan.(*PhysicalTableScan).profile = t.indexPlan.statsProfile()
+			t.cst += t.count() * scanFactor
 		}
 	}
 }
@@ -481,27 +482,28 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 				cop.finishIndexPlan()
 				partialAgg.SetChildren(cop.tablePlan)
 				cop.tablePlan = partialAgg
-				cop.cst += cop.count() * cpuFactor
+				//			cop.cst += cop.count() * cpuFactor
 			} else {
 				partialAgg.SetChildren(cop.indexPlan)
 				cop.indexPlan = partialAgg
-				cop.cst += cop.count() * cpuFactor
+				//			cop.cst += cop.count() * cpuFactor
 			}
 		}
-		log.Debugf("hash agg, count %v, cost %v, cardinality %v", cop.count(), cop.cost(), p.cardinality)
+		log.Warnf("hash agg, count %v, cost %v, cardinality %v", cop.count(), cop.cost(), p.cardinality)
 		task = finishCopTask(cop, p.ctx, p.allocator)
 		task.addCost(task.count()*cpuFactor + p.cardinality*hashAggMemFactor)
 		attachPlan2Task(finalAgg, task)
-		log.Debugf("hash agg, count %v, cost %v", task.count(), task.cost())
+		log.Warnf("hash agg, count %v, cost %v", task.count(), task.cost())
 	} else {
 		np := p.Copy()
+		log.Warnf("%v agg, count %v cost %v, plan %s", p.AggType, task.count(), task.cost(), ToString(task.plan()))
 		attachPlan2Task(np, task)
 		if p.AggType == StreamedAgg {
 			task.addCost(task.count() * cpuFactor)
 		} else {
 			task.addCost(task.count()*cpuFactor + p.cardinality*hashAggMemFactor)
 		}
-		log.Debugf("%v agg, count %v cost %v, cardinality %v", p.AggType, task.count(), task.cost(), p.cardinality)
+		log.Warnf("%v agg, count %v cost %v, cardinality %v", p.AggType, task.count(), task.cost(), p.cardinality)
 	}
 	return task
 }
