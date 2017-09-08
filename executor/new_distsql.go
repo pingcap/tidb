@@ -393,7 +393,7 @@ func (worker *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan
 	for {
 		// Don't check ctx.Done() on purpose. If background worker get the signal and all
 		// exit immediately, session's goroutine doesn't know this and still calling Next(),
-		// it may block reading resultCh forever.
+		// it may block reading task.doneCh forever.
 		select {
 		case task, ok := <-workCh:
 			if !ok {
