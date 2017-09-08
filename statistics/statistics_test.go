@@ -275,9 +275,6 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 		rightNum   int64
 		bucketNum  int
 		ndv        int64
-		count      int64
-		lower      int64
-		upper      int64
 	}{
 		{
 			leftLower:  0,
@@ -286,9 +283,6 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 			rightNum:   1,
 			bucketNum:  1,
 			ndv:        1,
-			count:      1,
-			lower:      0,
-			upper:      0,
 		},
 		{
 			leftLower:  0,
@@ -297,9 +291,6 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 			rightNum:   200,
 			bucketNum:  200,
 			ndv:        400,
-			count:      400,
-			lower:      0,
-			upper:      399,
 		},
 		{
 			leftLower:  0,
@@ -308,9 +299,6 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 			rightNum:   200,
 			bucketNum:  200,
 			ndv:        399,
-			count:      400,
-			lower:      0,
-			upper:      398,
 		},
 	}
 	sc := mock.NewContext().GetSessionVars().StmtCtx
@@ -322,11 +310,11 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(h.NDV, Equals, t.ndv)
 		c.Assert(len(h.Buckets), Equals, t.bucketNum)
-		c.Assert(h.Buckets[len(h.Buckets)-1].Count, Equals, t.count)
-		cmp, err := h.Buckets[0].LowerBound.CompareDatum(sc, types.NewIntDatum(t.lower))
+		c.Assert(h.Buckets[len(h.Buckets)-1].Count, Equals, t.leftNum+t.rightNum)
+		cmp, err := h.Buckets[0].LowerBound.CompareDatum(sc, types.NewIntDatum(t.leftLower))
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
-		cmp, err = h.Buckets[len(h.Buckets)-1].UpperBound.CompareDatum(sc, types.NewIntDatum(t.upper))
+		cmp, err = h.Buckets[len(h.Buckets)-1].UpperBound.CompareDatum(sc, types.NewIntDatum(t.rightLower+t.rightNum-1))
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
