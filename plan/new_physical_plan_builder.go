@@ -534,21 +534,17 @@ func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp Phys
 	}
 	for _, newProp := range newProps {
 		tasks := make([]task, 0, len(p.basePlan.children))
-		log.Infof("props :%v", newProp)
 		for i, child := range p.basePlan.children {
-			log.Infof("no.%d plan:%s prop:%v", i, ToString(child), newProp[i])
 			childTask, err := child.(LogicalPlan).convert2NewPhysicalPlan(newProp[i])
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			log.Infof("task %v", childTask)
 			tasks = append(tasks, childTask)
 		}
 		resultTask := pp.attach2Task(tasks...)
 		if enforced {
 			resultTask = prop.enforceProperty(resultTask, p.basePlan.ctx, p.basePlan.allocator)
 		}
-		log.Infof("bestTask %v, currentTask %v", bestTask, resultTask)
 		if resultTask.cost() < bestTask.cost() {
 			bestTask = resultTask
 		}
@@ -649,7 +645,6 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
 	t = invalidTask
-	log.Debugf("include table scan %v", includeTableScan)
 	if includeTableScan {
 		t, err = p.convertToTableScan(prop)
 		if err != nil {
@@ -823,13 +818,11 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		}
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
-	log.Debugf("index scan before, idx %v, tp %v, count %v, cost %v", idx.Name, prop.taskTp, task.count(), task.cost())
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
-	log.Debugf("index scan, tp %v, cost %v", prop.taskTp, task.cost())
 	return task, nil
 }
 
@@ -985,7 +978,6 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, p.ctx, p.allocator)
-		log.Warnf("table scan cost %v", task.cost())
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -1125,7 +1117,6 @@ func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
 		agg.SetSchema(p.schema.Clone())
 		agg.profile = p.profile
 		streamAggs = append(streamAggs, agg)
-		log.Infof("stream agg, keys %v, profile %v", keys, agg.profile)
 	}
 	return streamAggs
 }
@@ -1145,7 +1136,6 @@ func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
 	if len(p.possibleProperties) == 0 {
 		return aggs
 	}
-	log.Infof("hash agg, profile %v", agg.profile)
 
 	streamAggs := p.getStreamAggs()
 	aggs = append(aggs, streamAggs...)
@@ -1167,12 +1157,10 @@ func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*
 	}
 
 	reqProp := &requiredProp{taskTp: rootTaskType, cols: p.propKeys, expectedCnt: prop.expectedCnt * p.childCount / p.profile.count}
-	log.Debugf("stream prop %v, is empty %v, desc %v, prop.expectedCnt %v, childCount %v, p.count %v", reqProp, !prop.isEmpty(), prop.desc, prop.expectedCnt, p.childCount, p.profile.count)
 	if !prop.isEmpty() {
 		if prop.desc {
 			return nil
 		}
-		log.Debugf("prop %v, reqProp %v", prop, reqProp)
 		if !prop.equal(reqProp) {
 			return nil
 		}

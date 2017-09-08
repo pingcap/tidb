@@ -183,7 +183,7 @@ type LogicalAggregation struct {
 	groupByCols []*expression.Column
 
 	possibleProperties [][]*expression.Column
-	childCount         float64
+	childCount         float64 // childCount is the child plan's count.
 	cardinality        float64
 }
 

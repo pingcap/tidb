@@ -78,11 +78,9 @@ func (p *DataSource) getStatsProfileByFilter(conds expression.CNFExprs) *statsPr
 		} else {
 			profile.cardinality[i] = profile.count * distinctFactor
 		}
-		log.Infof("data source, col %v, ok %v, cardinality %v", col, ok, profile.cardinality[i])
 	}
 	selectivity, err := p.statisticTable.Selectivity(p.ctx, conds)
 	if err != nil {
-		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 		selectivity = selectionFactor
 	}
 	return profile.collapse(selectivity)
@@ -197,8 +195,8 @@ func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
 	for i := range p.profile.cardinality {
 		p.profile.cardinality[i] = count
 	}
-	p.childCount = childProfile.count
 	p.cardinality = count
+	p.childCount = childProfile.count
 	return p.profile
 }
 
