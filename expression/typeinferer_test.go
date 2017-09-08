@@ -66,7 +66,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		expr string
 		tp   byte
 		chs  string
-		flag int
+		flag uint
 	}{
 		{"c_int", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag},
 		{"+1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -410,8 +410,8 @@ func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
 		{"c_enum", mysql.TypeEnum, true},
 		{"c_set", mysql.TypeSet, true},
 		{"c_bit", mysql.TypeBit, true},
-		{"0b1001", mysql.TypeVarchar, true},
-		{"0xFFFF", mysql.TypeVarchar, true},
+		{"0b1001", mysql.TypeVarString, true},
+		{"0xFFFF", mysql.TypeVarString, true},
 		{"c_dt", mysql.TypeDatetime, false},
 		{"c_date", mysql.TypeDate, false},
 		{"c_time", mysql.TypeDuration, false},
