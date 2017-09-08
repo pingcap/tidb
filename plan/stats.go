@@ -16,7 +16,7 @@ package plan
 import (
 	"math"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/expression"
 )
 

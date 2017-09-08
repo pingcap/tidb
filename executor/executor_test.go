@@ -23,9 +23,9 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -91,7 +91,9 @@ func (s *testSuite) SetUpSuite(c *C) {
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	logLevel := os.Getenv("log_level")
-	log.SetLevelByString(logLevel)
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
