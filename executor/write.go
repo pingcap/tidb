@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"strings"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -114,11 +114,11 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 
 	if handleChanged {
-		err = t.RemoveRecord(ctx, h, oldData)
+		_, err = t.AddRecord(ctx, newData)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		_, err = t.AddRecord(ctx, newData)
+		err = t.RemoveRecord(ctx, h, oldData)
 	} else {
 		// Update record to new value and update index.
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
@@ -659,8 +659,8 @@ type InsertExec struct {
 
 	OnDuplicate []*expression.Assignment
 
-	Priority mysql.PriorityEnum
-	Ignore   bool
+	Priority  mysql.PriorityEnum
+	IgnoreErr bool
 
 	finished bool
 }
@@ -690,9 +690,9 @@ func (e *InsertExec) Next() (Row, error) {
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(cols)
+		rows, err = e.getRowsSelect(cols, e.IgnoreErr)
 	} else {
-		rows, err = e.getRows(cols)
+		rows, err = e.getRows(cols, e.IgnoreErr)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -712,7 +712,7 @@ func (e *InsertExec) Next() (Row, error) {
 			txn = e.ctx.Txn()
 			rowCount = 0
 		}
-		if len(e.OnDuplicate) == 0 && !e.Ignore {
+		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := e.Table.AddRecord(e.ctx, row)
@@ -727,7 +727,8 @@ func (e *InsertExec) Next() (Row, error) {
 			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-			if e.Ignore {
+			if e.IgnoreErr {
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
 			if len(e.OnDuplicate) > 0 {
@@ -861,7 +862,7 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCoun
 	return nil
 }
 
-func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err error) {
+func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]types.Datum, err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
 		return nil, errors.Trace(err)
@@ -874,7 +875,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 			return nil, errors.Trace(err)
 		}
 		e.currRow = int64(i)
-		rows[i], err = e.getRow(cols, list)
+		rows[i], err = e.getRow(cols, list, ignoreErr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -882,7 +883,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 	return
 }
 
-func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression) ([]types.Datum, error) {
+func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(list))
 	for i, expr := range list {
 		val, err := expr.Eval(nil)
@@ -891,10 +892,10 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 			return nil, errors.Trace(err)
 		}
 	}
-	return e.fillRowData(cols, vals, false)
+	return e.fillRowData(cols, vals, ignoreErr)
 }
 
-func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
+func (e *InsertValues) getRowsSelect(cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
 	if e.SelectExec.Schema().Len() != len(cols) {
 		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
@@ -909,7 +910,7 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 			break
 		}
 		e.currRow = int64(len(rows))
-		row, err := e.fillRowData(cols, innerRow, false)
+		row, err := e.fillRowData(cols, innerRow, ignoreErr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1128,9 +1129,9 @@ func (e *ReplaceExec) Next() (Row, error) {
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(cols)
+		rows, err = e.getRowsSelect(cols, false)
 	} else {
-		rows, err = e.getRows(cols)
+		rows, err = e.getRows(cols, false)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1201,6 +1202,7 @@ type UpdateExec struct {
 
 	SelectExec  Executor
 	OrderedList []*expression.Assignment
+	IgnoreErr   bool
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
 	updatedRowKeys map[int64]map[int64]struct{}
@@ -1253,12 +1255,18 @@ func (e *UpdateExec) Next() (Row, error) {
 			}
 			// Update row
 			changed, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
-			if err1 != nil {
-				return nil, errors.Trace(err1)
+			if err1 == nil {
+				if changed {
+					e.updatedRowKeys[id][handle] = struct{}{}
+				}
+				continue
 			}
-			if changed {
-				e.updatedRowKeys[id][handle] = struct{}{}
+
+			if kv.ErrKeyExists.Equal(err1) && e.IgnoreErr {
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
+				continue
 			}
+			return nil, errors.Trace(err1)
 		}
 	}
 	e.cursor++

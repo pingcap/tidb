@@ -14,6 +14,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -123,8 +124,13 @@ func (ts *TiDBStatement) Close() error {
 }
 
 // OpenCtx implements IDriver.
-func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string) (QueryCtx, error) {
+func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (QueryCtx, error) {
 	session, err := tidb.CreateSession(qd.store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	session.SetTLSState(tlsState)
+	err = session.SetCollation(int(collation))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

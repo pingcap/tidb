@@ -205,24 +205,19 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// For TypeBit
 	ft = NewFieldType(mysql.TypeBit)
-	ft.Flen = 24
+	ft.Flen = 24 // 3 bytes.
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, Bit{Value: 3223600, Width: 24})
+	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(3223600, 3))
 
-	ft.Flen = 8
-	v, err = Convert(Hex{Value: 100}, ft)
+	v, err = Convert(NewBinaryLiteralFromUint(100, -1), ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, Bit{Value: 100, Width: 8})
-
-	v, err = Convert(Bit{Value: 100, Width: 8}, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, Bit{Value: 100, Width: 8})
+	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(100, 3))
 
 	ft.Flen = 1
 	v, err = Convert(1, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, Bit{Value: 1, Width: 1})
+	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(1, 1))
 
 	_, err = Convert(2, ft)
 	c.Assert(err, NotNil)
@@ -326,8 +321,8 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, float32(1.6), "1.6")
 	testToString(c, float64(-0.6), "-0.6")
 	testToString(c, []byte{1}, "\x01")
-	testToString(c, Hex{Value: 0x4D7953514C}, "MySQL")
-	testToString(c, Bit{Value: 0x41, Width: 8}, "A")
+	testToString(c, NewBinaryLiteralFromUint(0x4D7953514C, -1), "MySQL")
+	testToString(c, NewBinaryLiteralFromUint(0x41, -1), "A")
 	testToString(c, Enum{Name: "a", Value: 1}, "a")
 	testToString(c, Set{Name: "a", Value: 1}, "a")
 
@@ -792,5 +787,63 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 		c.Assert(err, IsNil)
 		casted, _ := ConvertJSONToFloat(new(variable.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)
+	}
+}
+
+func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
+	var testCases = []struct {
+		number int64
+		fsp    int
+		hasErr bool
+		year   int
+		month  int
+		day    int
+		hour   int
+		minute int
+		second int
+	}{
+		{20171222, 0, true, 0, 0, 0, 0, 0, 0},
+		{171222, 0, false, 0, 0, 0, 17, 12, 22},
+		{20171222020005, 0, false, 2017, 12, 22, 02, 00, 05},
+		{10000000000, 0, true, 0, 0, 0, 0, 0, 0},
+		{171222, 1, false, 0, 0, 0, 17, 12, 22},
+		{176022, 1, true, 0, 0, 0, 0, 0, 0},
+		{8391222, 1, true, 0, 0, 0, 0, 0, 0},
+		{8381222, 0, false, 0, 0, 0, 838, 12, 22},
+		{1001222, 0, false, 0, 0, 0, 100, 12, 22},
+		{171260, 1, true, 0, 0, 0, 0, 0, 0},
+	}
+
+	for _, tc := range testCases {
+		t, err := NumberToDuration(tc.number, tc.fsp)
+		if tc.hasErr {
+			c.Assert(err, NotNil)
+			continue
+		}
+		c.Assert(err, IsNil)
+		c.Assert(t.Time.Year(), Equals, tc.year)
+		c.Assert(t.Time.Month(), Equals, tc.month)
+		c.Assert(t.Time.Day(), Equals, tc.day)
+		c.Assert(t.Time.Hour(), Equals, tc.hour)
+		c.Assert(t.Time.Minute(), Equals, tc.minute)
+		c.Assert(t.Time.Second(), Equals, tc.second)
+	}
+
+	var testCases1 = []struct {
+		number int64
+		neg    bool
+		dur    time.Duration
+	}{
+		{171222, false, 17*time.Hour + 12*time.Minute + 22*time.Second},
+		{-171222, true, -(17*time.Hour + 12*time.Minute + 22*time.Second)},
+	}
+
+	for _, tc := range testCases1 {
+		t, err := NumberToDuration(tc.number, 0)
+		c.Assert(err, IsNil)
+		c.Assert(t.IsNegative(), Equals, tc.neg)
+		d, err1 := t.ConvertToDuration()
+		c.Assert(err1, IsNil)
+		c.Assert(d.Duration, Equals, tc.dur)
 	}
 }

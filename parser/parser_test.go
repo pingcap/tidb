@@ -173,6 +173,19 @@ func (s *testParserSuite) TestSimple(c *C) {
 	src = "use quote;"
 	_, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
+
+	// issue #4354
+	src = "select b'';"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	src = "select B'';"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	// src = "select 0b'';"
+	// _, err = parser.ParseOneStmt(src, "", "")
+	// c.Assert(err, NotNil)
 }
 
 type testCase struct {
@@ -324,6 +337,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for admin
 		{"admin show ddl;", true},
+		{"admin show ddl jobs;", true},
 		{"admin check table t1, t2;", true},
 
 		// for on duplicate key update

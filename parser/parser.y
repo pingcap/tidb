@@ -293,6 +293,7 @@ import (
 	insertFunc			"INSERT_FUNC"
 	instr				"INSTR"
 	isNull				"ISNULL"
+	jobs				"JOBS"
 	jsonExtract			"JSON_EXTRACT"
 	jsonUnquote			"JSON_UNQUOTE"
 	jsonTypeFunc			"JSON_TYPE"
@@ -1594,7 +1595,6 @@ SignedLiteral:
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr($2)}
 	}
 
-// TODO: support decimal literal
 NumLiteral:
 	intLit
 |	floatLit
@@ -2039,23 +2039,20 @@ ExpressionListOpt:
 |	ExpressionList
 
 FuncDatetimePrecListOpt:
-    {
-        $$ = []ast.ExprNode{}
-    }
-|   FuncDatetimePrecList
-    {
-        $$ = $1
-    }
+	{
+		$$ = []ast.ExprNode{}
+	}
+|	FuncDatetimePrecList
+	{
+		$$ = $1
+	}
 
 FuncDatetimePrecList:
-    intLit
-    {
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
-		var expr ast.ExprNode = ast.NewValueExpr($1)
-		expr.SetType(tp)
+	intLit
+	{
+		expr := ast.NewValueExpr($1)
 		$$ = []ast.ExprNode{expr}
-    }
+	}
 
 Factor:
 	Factor IsOrNotOp "NULL" %prec is
@@ -2485,7 +2482,7 @@ NotKeywordToken:
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE" | "LAST_DAY"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
 |	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
-|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY" | "TIDB_VERSION"
+|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY" | "TIDB_VERSION" | "JOBS"
 
 /************************************************************************************
  *
@@ -2498,7 +2495,7 @@ InsertIntoStmt:
 	{
 		x := $6.(*ast.InsertStmt)
 		x.Priority = $2.(mysql.PriorityEnum)
-		x.Ignore = $3.(bool)
+		x.IgnoreErr = $3.(bool)
 		// Wraps many layers here so that it can be processed the same way as select statement.
 		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
@@ -2637,7 +2634,7 @@ ReplacePriority:
 Literal:
 	"FALSE"
 	{
-		$$ = int64(0)
+		$$ = false
 	}
 |	"NULL"
 	{
@@ -2645,18 +2642,11 @@ Literal:
 	}
 |	"TRUE"
 	{
-		$$ = int64(1)
+		$$ = true
 	}
 |	floatLit
 |	decLit
 |	intLit
-	{
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
-		expr := ast.NewValueExpr($1)
-		expr.SetType(tp)
-		$$ = expr
-	}
 |	StringLiteral %prec lowerThanStringLitToken
 	{
 		$$ = $1
@@ -2664,16 +2654,18 @@ Literal:
 |	"UNDERSCORE_CHARSET" stringLit
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset = $1
-		co, err := charset.GetDefaultCollation(tp.Charset)
+		co, err := charset.GetDefaultCollation($1)
 		if err != nil {
-			yylex.Errorf("Get collation error for charset: %s", tp.Charset)
+			yylex.Errorf("Get collation error for charset: %s", $1)
 			return 1
 		}
-		tp.Collate = co
 		expr := ast.NewValueExpr($2)
-		expr.SetType(tp)
+		tp := expr.GetType()
+		tp.Charset = $1
+		tp.Collate = co
+		if tp.Collate == charset.CollationBin {
+			tp.Flag |= mysql.BinaryFlag
+		}
 		$$ = expr
 	}
 |	hexLit
@@ -2682,18 +2674,13 @@ Literal:
 StringLiteral:
 	stringLit
 	{
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($1)
-		expr.SetType(tp)
 		$$ = expr
 	}
 |	StringLiteral stringLit
 	{
 		valExpr := $1.(*ast.ValueExpr)
 		strLit := valExpr.GetString()
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr(strLit+$2)
 		// Fix #4239, use first string literal as projection name.
 		if valExpr.GetProjectionOffset() >= 0 {
@@ -2701,7 +2688,6 @@ StringLiteral:
 		} else {
 			expr.SetProjectionOffset(len(strLit))
 		}
-		expr.SetType(tp)
 		$$ = expr
 	}
 
@@ -2857,23 +2843,13 @@ Function:
 |	Identifier jss stringLit
 	{
 	    col := &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: model.NewCIStr($1)}}
-
-	    tp := types.NewFieldType(mysql.TypeString)
-	    tp.Charset, tp.Collate = parser.charset, parser.collation
 	    expr := ast.NewValueExpr($3)
-	    expr.SetType(tp)
-
 	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{col, expr}}
 	}
 |	Identifier juss stringLit
 	{
 	    col := &ast.ColumnNameExpr{Name: &ast.ColumnName{Name: model.NewCIStr($1)}}
-
-	    tp := types.NewFieldType(mysql.TypeString)
-	    tp.Charset, tp.Collate = parser.charset, parser.collation
 	    expr := ast.NewValueExpr($3)
-	    expr.SetType(tp)
-
 	    extract := &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{col, expr}}
 	    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONUnquote), Args: []ast.ExprNode{extract}}
 	}
@@ -2915,10 +2891,7 @@ FunctionCallConflict:
 	}
 |	"DATE"  stringLit
 	{
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($2)
-		expr.SetType(tp)
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Date), Args: []ast.ExprNode{expr}}
 	}
 
@@ -4020,10 +3993,7 @@ FuncDatetimePrec:
 	}
 |	'(' intLit ')'
 	{
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
-		var expr ast.ExprNode = ast.NewValueExpr($2)
-		expr.SetType(tp)
+		expr := ast.NewValueExpr($2)
 		$$ = expr
 	}
 
@@ -4273,7 +4243,7 @@ CastType:
 |	"JSON"
 	{
 		x := types.NewFieldType(mysql.TypeJSON)
-		x.Flag |= mysql.BinaryFlag
+		x.Flag |= mysql.BinaryFlag | (mysql.ParseToJSONFlag)
 		x.Charset = charset.CharsetUTF8
 		x.Collate = charset.CollationUTF8
 		$$ = x
@@ -5080,10 +5050,7 @@ TransactionChars:
 TransactionChar:
 	"ISOLATION" "LEVEL" IsolationLevel
 	{
-		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset, tp.Collate = parser.charset, parser.collation
 		expr := ast.NewValueExpr($3)
-		expr.SetType(tp)
 		$$ = &ast.VariableAssignment{Name: "tx_isolation", Value: expr, IsSystem: true}
 	}
 |	"READ" "WRITE"
@@ -5287,6 +5254,10 @@ AdminStmt:
 	"ADMIN" "SHOW" "DDL"
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDL}
+	}
+|	"ADMIN" "SHOW" "DDL" "JOBS"
+	{
+		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
 	}
 |	"ADMIN" "CHECK" "TABLE" TableNameList
 	{
@@ -6133,6 +6104,9 @@ StringType:
 |	"JSON"
 	{
 		x := types.NewFieldType(mysql.TypeJSON)
+		x.Decimal = 0
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
 		$$ = x
 	}
 
@@ -6356,6 +6330,7 @@ UpdateStmt:
 			LowPriority:	$2.(bool),
 			TableRefs:	&ast.TableRefsClause{TableRefs: refs},
 			List:		$6.([]*ast.Assignment),
+			IgnoreErr:		$3.(bool),
 		}
 		if $7 != nil {
 			st.Where = $7.(ast.ExprNode)
@@ -6374,6 +6349,7 @@ UpdateStmt:
 			LowPriority:	$2.(bool),
 			TableRefs:	&ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
 			List:		$6.([]*ast.Assignment),
+			IgnoreErr:		$3.(bool),
 		}
 		if $7 != nil {
 			st.Where = $7.(ast.ExprNode)

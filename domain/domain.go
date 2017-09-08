@@ -19,9 +19,9 @@ import (
 	"time"
 	"unsafe"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
@@ -549,7 +549,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 		return nil
 	}
 	go do.updateStatsWorker(ctx, lease)
-	go do.autoAnalyzeWorker(lease)
 	return nil
 }
 

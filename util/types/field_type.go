@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types/json"
 )
 
@@ -75,6 +76,7 @@ func AggFieldType(tps []*FieldType) *FieldType {
 		mtp := MergeFieldType(currType.Tp, t.Tp)
 		currType.Tp = mtp
 	}
+
 	return &currType
 }
 
@@ -131,8 +133,7 @@ func setTypeFlag(flag *uint, flagItem uint, on bool) {
 // ToClass maps the field type to a type class.
 func (ft *FieldType) ToClass() TypeClass {
 	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeBit, mysql.TypeYear:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeBit:
 		return ClassInt
 	case mysql.TypeNewDecimal:
 		return ClassDecimal
@@ -205,7 +206,7 @@ func (ft *FieldType) CompactStr() string {
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
 		es := make([]string, 0, len(ft.Elems))
 		for _, e := range ft.Elems {
-			e = strings.Replace(e, "'", "''", -1)
+			e = format.OutputFormat(e)
 			es = append(es, e)
 		}
 		suffix = fmt.Sprintf("('%s')", strings.Join(es, "','"))
@@ -284,6 +285,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeLonglong
 		tp.Flen = 1
 		tp.Decimal = 0
+		tp.Flag |= mysql.IsBooleanFlag
 		SetBinChsClnFlag(tp)
 	case int:
 		tp.Tp = mysql.TypeLonglong
@@ -312,23 +314,31 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeDouble
 		s := strconv.FormatFloat(x, 'f', -1, 64)
 		tp.Flen = len(s)
-		tp.Decimal = len(s) - 1 - strings.Index(s, ".")
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case []byte:
 		tp.Tp = mysql.TypeBlob
 		tp.Flen = len(x)
 		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
-	case Bit:
-		tp.Tp = mysql.TypeVarchar
-		tp.Flen = len(x.String())
-		tp.Decimal = UnspecifiedLength
+	case BitLiteral:
+		tp.Tp = mysql.TypeVarString
+		tp.Flen = len(x)
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
-	case Hex:
-		tp.Tp = mysql.TypeVarchar
-		tp.Flen = len(x.String())
-		tp.Decimal = UnspecifiedLength
+	case HexLiteral:
+		tp.Tp = mysql.TypeVarString
+		tp.Flen = len(x)
+		tp.Decimal = 0
+		tp.Flag |= mysql.UnsignedFlag
 		SetBinChsClnFlag(tp)
+	case BinaryLiteral:
+		tp.Tp = mysql.TypeBit
+		tp.Flen = len(x) * 8
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+		tp.Flag &= ^mysql.BinaryFlag
+		tp.Flag |= mysql.UnsignedFlag
 	case Time:
 		tp.Tp = x.Type
 		switch x.Type {
@@ -368,6 +378,10 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case json.JSON:
 		tp.Tp = mysql.TypeJSON
+		tp.Flen = UnspecifiedLength
+		tp.Decimal = 0
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CollationBin
 	default:
 		tp.Tp = mysql.TypeUnspecified
 		tp.Flen = UnspecifiedLength

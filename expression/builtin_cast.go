@@ -44,6 +44,7 @@ var (
 	_ functionClass = &castAsDecimalFunctionClass{}
 	_ functionClass = &castAsTimeFunctionClass{}
 	_ functionClass = &castAsDurationFunctionClass{}
+	_ functionClass = &castAsJSONFunctionClass{}
 )
 
 var (
@@ -110,7 +111,7 @@ type castAsIntFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsIntFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsIntFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -156,7 +157,7 @@ type castAsRealFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsRealFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsRealFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -202,7 +203,7 @@ type castAsDecimalFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsDecimalFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsDecimalFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -248,7 +249,7 @@ type castAsStringFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsStringFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsStringFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -277,6 +278,9 @@ func (c *castAsStringFunctionClass) getFunction(args []Expression, ctx context.C
 		} else if tp == mysql.TypeDuration {
 			sig = &builtinCastDurationAsStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsString)
+		} else if tp == mysql.TypeJSON {
+			sig = &builtinCastJSONAsStringSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsString)
 		} else {
 			sig = &builtinCastStringAsStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
@@ -291,7 +295,7 @@ type castAsTimeFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -337,7 +341,7 @@ type castAsDurationFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsDurationFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsDurationFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -383,7 +387,7 @@ type castAsJSONFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsJSONFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -502,7 +506,8 @@ type builtinCastIntAsTimeSig struct {
 }
 
 func (b *builtinCastIntAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
@@ -511,6 +516,7 @@ func (b *builtinCastIntAsTimeSig) evalTime(row []types.Datum) (res types.Time, i
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
+	res.TimeZone = sc.TimeZone
 	return res, false, errors.Trace(err)
 }
 
@@ -519,11 +525,20 @@ type builtinCastIntAsDurationSig struct {
 }
 
 func (b *builtinCastIntAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalInt(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(strconv.FormatInt(val, 10), b.tp.Decimal)
+	t, err := types.NumberToDuration(val, b.tp.Decimal)
+	if err != nil {
+		if types.ErrOverflow.Equal(err) {
+			err = sc.HandleOverflow(err, err)
+		}
+		return res, true, errors.Trace(err)
+	}
+
+	res, err = t.ConvertToDuration()
 	return res, false, errors.Trace(err)
 }
 
@@ -536,7 +551,9 @@ func (b *builtinCastIntAsJSONSig) evalJSON(row []types.Datum) (res json.JSON, is
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+	if mysql.HasIsBooleanFlag(b.args[0].GetType().Flag) {
+		res = json.CreateJSON(val != 0)
+	} else if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = json.CreateJSON(uint64(val))
 	} else {
 		res = json.CreateJSON(val)
@@ -577,10 +594,9 @@ func (b *builtinCastStringAsJSONSig) evalJSON(row []types.Datum) (res json.JSON,
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if b.tp.Decimal == 0 {
+	if mysql.HasParseToJSONFlag(b.tp.Flag) {
 		res, err = json.ParseFromString(val)
 	} else {
-		// This is a post-wrapped cast.
 		res = json.CreateJSON(val)
 	}
 	return res, false, errors.Trace(err)
@@ -680,12 +696,14 @@ type builtinCastRealAsTimeSig struct {
 }
 
 func (b *builtinCastRealAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalReal(row, sc)
 	res, err = types.ParseTime(strconv.FormatFloat(val, 'f', -1, 64), b.tp.Tp, b.tp.Decimal)
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
+	res.TimeZone = sc.TimeZone
 	return res, false, errors.Trace(err)
 }
 
@@ -779,7 +797,8 @@ type builtinCastDecimalAsTimeSig struct {
 }
 
 func (b *builtinCastDecimalAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalDecimal(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
@@ -788,6 +807,7 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row []types.Datum) (res types.Tim
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
+	res.TimeZone = sc.TimeZone
 	return res, false, errors.Trace(err)
 }
 
@@ -930,7 +950,8 @@ type builtinCastStringAsTimeSig struct {
 }
 
 func (b *builtinCastStringAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
@@ -939,6 +960,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(row []types.Datum) (res types.Time
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
+	res.TimeZone = sc.TimeZone
 	return res, false, errors.Trace(err)
 }
 
@@ -964,7 +986,8 @@ type builtinCastTimeAsTimeSig struct {
 }
 
 func (b *builtinCastTimeAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
-	res, isNull, err = b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	res, isNull, err = b.args[0].EvalTime(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
@@ -974,6 +997,7 @@ func (b *builtinCastTimeAsTimeSig) evalTime(row []types.Datum) (res types.Time, 
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 		res.Type = b.tp.Tp
 	}
+	res.TimeZone = sc.TimeZone
 	return res, false, errors.Trace(err)
 }
 
@@ -1128,7 +1152,8 @@ type builtinCastDurationAsTimeSig struct {
 }
 
 func (b *builtinCastDurationAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalDuration(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
@@ -1137,6 +1162,7 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row []types.Datum) (res types.Ti
 		return res, false, errors.Trace(err)
 	}
 	res, err = res.RoundFrac(b.tp.Decimal)
+	res.TimeZone = sc.TimeZone
 	return res, false, errors.Trace(err)
 }
 
@@ -1226,6 +1252,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row []types.Datum) (res types.Time, 
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
+	res.TimeZone = sc.TimeZone
 	return
 }
 
@@ -1270,7 +1297,7 @@ func buildCastFunction(expr Expression, tp *types.FieldType, ctx context.Context
 			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		}
 	}
-	f, _ := fc.getFunction([]Expression{expr}, ctx)
+	f, _ := fc.getFunction(ctx, []Expression{expr})
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
@@ -1337,7 +1364,7 @@ func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Contex
 	exprTp := expr.GetType().Tp
 	if tp.Tp == exprTp {
 		return expr
-	} else if exprTp == mysql.TypeDate && tp.Tp == mysql.TypeDatetime {
+	} else if (exprTp == mysql.TypeDate || exprTp == mysql.TypeTimestamp) && tp.Tp == mysql.TypeDatetime {
 		return expr
 	}
 	switch x := expr.GetType(); x.Tp {
@@ -1388,10 +1415,9 @@ func WrapWithCastAsJSON(expr Expression, ctx context.Context) Expression {
 		return expr
 	}
 	tp := &types.FieldType{
-		Tp:   mysql.TypeJSON,
-		Flen: 12582912,
-		// Here we set decimal to -1 to indicate this is a post-wrapped cast.
-		Decimal: -1,
+		Tp:      mysql.TypeJSON,
+		Flen:    12582912, // FIXME: Here the Flen is not trusted.
+		Decimal: 0,
 		Charset: charset.CharsetUTF8,
 		Collate: charset.CollationUTF8,
 		Flag:    mysql.BinaryFlag,
