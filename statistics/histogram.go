@@ -389,7 +389,7 @@ func MergeHistograms(sc *variable.StatementContext, lh *Histogram, rh *Histogram
 		rh.mergeBuckets(int64(len(rh.Buckets)) - 1)
 	}
 	lCount := lh.Buckets[len(lh.Buckets)-1].Count
-	rCount := rh.Buckets[len(lh.Buckets)-1].Count
+	rCount := rh.Buckets[len(rh.Buckets)-1].Count
 	lAvg := float64(lCount) / float64(len(lh.Buckets))
 	rAvg := float64(rCount) / float64(len(rh.Buckets))
 	for len(lh.Buckets) > 1 && lAvg*2 <= rAvg {
