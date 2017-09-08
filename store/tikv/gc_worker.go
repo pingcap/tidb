@@ -71,7 +71,7 @@ func (w *GCWorker) StartSafePointChecker() {
 			} else {
 				log.Error("[safepoint] read error:", cacheErr)
 			}
-			time.Sleep(5 * time.Second) // this is configurable
+			time.Sleep(gcSafePointUpdateInterval)
 		}
 	}
 }
@@ -132,10 +132,12 @@ const (
 	gcDefaultRunInterval = time.Minute * 10
 	gcWaitTime           = time.Minute * 10
 
-	gcLifeTimeKey     = "tikv_gc_life_time"
-	gcDefaultLifeTime = time.Minute * 10
-	gcSafePointKey    = "tikv_gc_safe_point"
-	gcSavedSafePoint  = "tikv_gc_saved_safe_point"
+	gcLifeTimeKey             = "tikv_gc_life_time"
+	gcDefaultLifeTime         = time.Minute * 10
+	gcSafePointKey            = "tikv_gc_safe_point"
+	gcSavedSafePoint          = "tikv_gc_saved_safe_point"
+	gcSafePointCacheInterval  = time.Second * 100
+	gcSafePointUpdateInterval = time.Second * 10
 )
 
 var gcVariableComments = map[string]string{
@@ -515,7 +517,7 @@ func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier stri
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
 	store.gcWorker.saveSafePoint(gcSavedSafePoint, safePoint)
-	time.Sleep(100 * time.Second)
+	time.Sleep(gcSafePointCacheInterval)
 
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
