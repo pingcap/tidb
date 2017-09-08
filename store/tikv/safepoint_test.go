@@ -64,6 +64,21 @@ func mymakeKeys(rowNum int, prefix string) []kv.Key {
 	return keys
 }
 
+func (s *testSafePointSuite) waitUntilErrorPlugIn(t uint64) {
+	for {
+		s.gcWorker.saveSafePoint(gcSavedSafePoint, t+10)
+		cachedTime := time.Now()
+		newSafePoint, err := s.gcWorker.loadSafePoint(gcSavedSafePoint)
+		if err == nil {
+			s.store.UpdateSPCache(newSafePoint, cachedTime)
+			break
+		} else {
+			log.Error(err)
+			time.Sleep(time.Second)
+		}
+	}
+}
+
 func (s *testSafePointSuite) TestSafePoint(c *C) {
 	txn := s.beginTxn(c)
 	for i := 0; i < 10; i++ {
@@ -78,40 +93,15 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	_, err = txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
 	c.Assert(err, IsNil)
 
-	for {
-		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn2.startTS+10)
-		newSafePoint, err := s.gcWorker.loadSafePoint(gcSavedSafePoint)
-		if err == nil {
-			s.store.spMutex.Lock()
-			s.store.safePoint = newSafePoint
-			s.store.spTime = time.Now()
-			s.store.spMutex.Unlock()
-			break
-		} else {
-			log.Error(err)
-			time.Sleep(5 * time.Second)
-		}
-	}
+	s.waitUntilErrorPlugIn(txn2.startTS)
 
 	_, geterr2 := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
 	c.Assert(geterr2, NotNil)
 
 	// for txn seek
 	txn3 := s.beginTxn(c)
-	for {
-		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn3.startTS+10)
 
-		newSafePoint, loaderr := s.gcWorker.loadSafePoint(gcSavedSafePoint)
-		if loaderr == nil {
-			s.store.spMutex.Lock()
-			s.store.safePoint = newSafePoint
-			s.store.spTime = time.Now()
-			s.store.spMutex.Unlock()
-			break
-		} else {
-			time.Sleep(5 * time.Second)
-		}
-	}
+	s.waitUntilErrorPlugIn(txn3.startTS)
 
 	_, seekerr := txn3.Seek(encodeKey(s.prefix, ""))
 	c.Assert(seekerr, NotNil)
@@ -119,20 +109,8 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	// for snapshot batchGet
 	keys := mymakeKeys(10, s.prefix)
 	txn4 := s.beginTxn(c)
-	for {
-		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn4.startTS+10)
 
-		newSafePoint, loaderr := s.gcWorker.loadSafePoint(gcSavedSafePoint)
-		if loaderr == nil {
-			s.store.spMutex.Lock()
-			s.store.safePoint = newSafePoint
-			s.store.spTime = time.Now()
-			s.store.spMutex.Unlock()
-			break
-		} else {
-			time.Sleep(5 * time.Second)
-		}
-	}
+	s.waitUntilErrorPlugIn(txn4.startTS)
 
 	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn4.StartTS()})
 	_, batchgeterr := snapshot.BatchGet(keys)
