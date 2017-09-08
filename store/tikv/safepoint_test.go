@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,10 +23,10 @@ import (
 )
 
 type testSafePointSuite struct {
-	store    *tikvStore
+	store   *tikvStore
 	oracle   *mockOracle
 	gcWorker *GCWorker
-	prefix   string
+	prefix  string
 }
 
 var _ = Suite(&testSafePointSuite{})
@@ -78,7 +78,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	c.Assert(geterr, IsNil)
 
 	for {
-		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn2.startTS+10)
+		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn2.startTS + 10)
 		newSafePoint, loaderr := s.gcWorker.loadSafePoint(gcSavedSafePoint)
 		if loaderr == nil {
 			s.store.spMutex.Lock()
@@ -93,11 +93,11 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 
 	_, geterr2 := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
 	c.Assert(geterr2, NotNil)
-
+	
 	// for txn seek
 	txn3 := s.beginTxn(c)
 	for {
-		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn3.startTS+10)
+		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn3.startTS + 10)
 
 		newSafePoint, loaderr := s.gcWorker.loadSafePoint(gcSavedSafePoint)
 		if loaderr == nil {
@@ -118,7 +118,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	keys := mymakeKeys(10, s.prefix)
 	txn4 := s.beginTxn(c)
 	for {
-		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn4.startTS+10)
+		s.gcWorker.saveSafePoint(gcSavedSafePoint, txn4.startTS + 10)
 
 		newSafePoint, loaderr := s.gcWorker.loadSafePoint(gcSavedSafePoint)
 		if loaderr == nil {

@@ -111,24 +111,25 @@ type tikvStore struct {
 	mock         bool
 	enableGC     bool
 
-	safePoint uint64
-	spTime    time.Time
-	spSession tidb.Session // this is used to obtain safePoint from remote
-	spMutex   sync.Mutex   // this is used to update safePoint and spTime
-	spMsg     chan string  // this is used to nofity when the store is closed
+
+	safePoint	 uint64
+	spTime       time.Time
+	spSession    tidb.Session // this is used to obtain safePoint from remote
+	spMutex		 sync.RWMutex   // this is used to update safePoint and spTime
+	spMsg		 chan struct{}  // this is used to nofity when the store is closed
 }
 
 func (s *tikvStore) CheckVisibility() (uint64, error) {
-	s.spMutex.Lock()
+	s.spMutex.RLock()
 	cachedSafePoint := s.safePoint
 	cachedTime := s.spTime
-	s.spMutex.Unlock()
+	s.spMutex.RUnlock()
 	diff := time.Since(cachedTime)
-
-	if diff > 100*time.Second {
+	
+	if diff > 100 * time.Second {
 		return 0, errors.New("start timestamp may fall behind safepoint")
 	}
-
+	
 	return cachedSafePoint, nil
 }
 
@@ -147,9 +148,9 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		regionCache: NewRegionCache(pdClient),
 		mock:        mock,
 
-		safePoint: 0,
-		spTime:    time.Now(),
-		spMsg:     make(chan string),
+		safePoint:    0,
+		spTime:       time.Now(),
+		spMsg:        make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
@@ -290,6 +291,7 @@ func (s *tikvStore) Close() error {
 		s.gcWorker.Close()
 	}
 
+	
 	close(s.spMsg)
 
 	if err := s.client.Close(); err != nil {

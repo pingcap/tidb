@@ -84,8 +84,8 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 
 	if checkerr != nil {
 		return nil, checkerr
-	}
-
+	} 
+	
 	if s.version.Ver < safePoint {
 		return nil, errors.New("start timestamp falls behind safepoint")
 	}

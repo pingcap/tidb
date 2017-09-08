@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
@@ -85,7 +84,6 @@ func (r readRecords) Less(i, j int) bool { return r[i].startTS <= r[j].startTS }
 
 func (s *testIsolationSuite) GetWithRetry(c *C, k []byte) readRecord {
 	for {
-		log.Error("[isolation_test] start retry\n")
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 
@@ -96,7 +94,6 @@ func (s *testIsolationSuite) GetWithRetry(c *C, k []byte) readRecord {
 				value:   val,
 			}
 		}
-		log.Error("[isolation_test] get error:", err)
 		c.Assert(kv.IsRetryableError(err), IsTrue)
 	}
 }
@@ -175,7 +172,6 @@ func (s *testIsolationSuite) TestReadWriteConflict(c *C) {
 		}()
 	}
 	wg.Wait()
-	log.Error("[isolation_test] 1\n")
 
 	sort.Sort(readRecords(reads))
 

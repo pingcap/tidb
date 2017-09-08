@@ -36,17 +36,17 @@ import (
 
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
-	uuid  string
-	desc  string
-	store *tikvStore
+	uuid        string
+	desc        string
+	store       *tikvStore
 
 	/*
 	 * gc worker uses "session"
 	 * safepoint checker uses "spSession"
 	 * so there is no race
 	 */
-	session   tidb.Session
-	spSession tidb.Session
+	session     tidb.Session
+	spSession	tidb.Session
 
 	gcIsRunning bool
 	lastFinish  time.Time
@@ -98,6 +98,7 @@ func NewGCWorker(store kv.Storage, enableGC bool) (*GCWorker, error) {
 	ctx, worker.cancel = goctx.WithCancel(goctx.Background())
 	var wg sync.WaitGroup
 
+	
 	if enableGC {
 		wg.Add(1)
 		go worker.start(ctx, &wg)
@@ -176,7 +177,7 @@ func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func createSession(store kv.Storage) tidb.Session {
+func createSession(store kv.Storage) tidb.Session{
 	for {
 		retSession, sessionErr := tidb.CreateSession(store)
 		if sessionErr != nil {
@@ -227,7 +228,7 @@ func (w *GCWorker) storeIsBootstrapped() bool {
 
 // Leader of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx goctx.Context) error {
-
+	
 	if w.gcIsRunning {
 		return nil
 	}
@@ -514,7 +515,7 @@ func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier stri
 
 	store.gcWorker.saveSafePoint(gcSavedSafePoint, safePoint)
 	time.Sleep(100 * time.Second)
-
+	
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
 		GC: &kvrpcpb.GCRequest{
@@ -708,7 +709,7 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 
 func (w *GCWorker) loadValueFromSysTable(key string, s tidb.Session) (string, error) {
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := s.Execute(stmt)
+	rs, err :=s.Execute(stmt)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
