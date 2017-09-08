@@ -97,8 +97,6 @@ func kindToFieldType(kind byte) types.FieldType {
 	case types.KindUint64:
 		ft.Tp = mysql.TypeLonglong
 		ft.Flag |= mysql.UnsignedFlag
-	case types.KindMysqlHex:
-		ft.Tp = mysql.TypeLonglong
 	case types.KindMinNotNull:
 		ft.Tp = mysql.TypeLonglong
 	case types.KindMaxValue:
@@ -111,8 +109,6 @@ func kindToFieldType(kind byte) types.FieldType {
 		ft.Tp = mysql.TypeVarString
 	case types.KindBytes:
 		ft.Tp = mysql.TypeVarString
-	case types.KindMysqlBit:
-		ft.Tp = mysql.TypeBit
 	case types.KindMysqlEnum:
 		ft.Tp = mysql.TypeEnum
 	case types.KindMysqlSet:
@@ -127,6 +123,10 @@ func kindToFieldType(kind byte) types.FieldType {
 		ft.Tp = mysql.TypeDuration
 	case types.KindMysqlTime:
 		ft.Tp = mysql.TypeDatetime
+	case types.KindBinaryLiteral:
+		ft.Tp = mysql.TypeVarString
+	case types.KindMysqlBit:
+		ft.Tp = mysql.TypeBit
 	}
 	return ft
 }

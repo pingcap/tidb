@@ -204,11 +204,10 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 	case types.KindMysqlSet:
 		data.SetUint64(data.GetMysqlSet().Value)
 		return data, nil
-	case types.KindMysqlBit:
-		data.SetUint64(data.GetMysqlBit().Value)
-		return data, nil
-	case types.KindMysqlHex:
-		data.SetInt64(data.GetMysqlHex().Value)
+	case types.KindBinaryLiteral, types.KindMysqlBit:
+		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
+		val, _ := data.GetBinaryLiteral().ToInt()
+		data.SetUint64(val)
 		return data, nil
 	default:
 		return data, nil
@@ -406,9 +405,9 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetValue(set)
 		return datum, nil
 	case mysql.TypeBit:
-		bit := types.Bit{Value: datum.GetUint64(), Width: ft.Flen}
-		datum.SetValue(bit)
-		return datum, nil
+		val := datum.GetUint64()
+		byteSize := (ft.Flen + 7) >> 3
+		datum.SetMysqlBit(types.NewBinaryLiteralFromUint(val, byteSize))
 	}
 	return datum, nil
 }
