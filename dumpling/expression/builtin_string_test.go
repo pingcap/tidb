@@ -650,6 +650,8 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		fc := funcs[ast.Convert]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(v.str, v.cs)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
@@ -668,6 +670,8 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		fc := funcs[ast.Convert]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(v.str, v.cs)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		_, err = f.eval(nil)
 		c.Assert(err, NotNil)
 	}
