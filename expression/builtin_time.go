@@ -139,7 +139,6 @@ var (
 	_ builtinFunc = &builtinUTCDateSig{}
 	_ builtinFunc = &builtinUTCTimestampWithArgSig{}
 	_ builtinFunc = &builtinUTCTimestampWithoutArgSig{}
-	_ builtinFunc = &builtinExtractSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 	_ builtinFunc = &builtinUnixTimestampCurrentSig{}
 	_ builtinFunc = &builtinUnixTimestampIntSig{}
@@ -167,6 +166,8 @@ var (
 	_ builtinFunc = &builtinStrToDateDurationSig{}
 	_ builtinFunc = &builtinFromUnixTime1ArgSig{}
 	_ builtinFunc = &builtinFromUnixTime2ArgSig{}
+	_ builtinFunc = &builtinExtractDatetimeSig{}
+	_ builtinFunc = &builtinExtractDurationSig{}
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.
@@ -1840,71 +1841,81 @@ type extractFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *extractFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *extractFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinExtractSig{newBaseBuiltinFunc(args, ctx)}
+
+	datetimeUnits := map[string]struct{}{
+		"DAY":             {},
+		"WEEK":            {},
+		"MONTH":           {},
+		"QUARTER":         {},
+		"YEAR":            {},
+		"DAY_MICROSECOND": {},
+		"DAY_SECOND":      {},
+		"DAY_MINUTE":      {},
+		"DAY_HOUR":        {},
+		"YEAR_MONTH":      {},
+	}
+	isDatetimeUnit := true
+	args[0] = WrapWithCastAsString(args[0], ctx)
+	if _, isCon := args[0].(*Constant); isCon {
+		unit, _, err1 := args[0].EvalString(nil, ctx.GetSessionVars().StmtCtx)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		_, isDatetimeUnit = datetimeUnits[unit]
+	}
+	var bf baseBuiltinFunc
+	if isDatetimeUnit {
+		bf = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpDatetime)
+		sig = &builtinExtractDatetimeSig{baseIntBuiltinFunc{bf}}
+	} else {
+		bf = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpDuration)
+		sig = &builtinExtractDurationSig{baseIntBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinExtractSig struct {
-	baseBuiltinFunc
+type builtinExtractDatetimeSig struct {
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinExtractSig.
+// evalInt evals a builtinExtractDatetimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
-func (b *builtinExtractSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinExtractDatetimeSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	unit, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	unit := args[0].GetString()
-	vd := args[1]
-
-	if vd.IsNull() {
-		d.SetNull()
-		return
+	dt, isNull, err := b.args[1].EvalTime(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-
-	f := types.NewFieldType(mysql.TypeDatetime)
-	f.Decimal = types.MaxFsp
-	val, err := vd.ConvertTo(b.ctx.GetSessionVars().StmtCtx, f)
-	if err != nil {
-		d.SetNull()
-		return d, errors.Trace(err)
-	}
-	if val.IsNull() {
-		d.SetNull()
-		return
-	}
-
-	if val.Kind() != types.KindMysqlTime {
-		d.SetNull()
-		return d, errors.Errorf("need time type, but got %T", val)
-	}
-	t := val.GetMysqlTime()
-	n, err1 := types.ExtractTimeNum(unit, t)
-	if err1 != nil {
-		d.SetNull()
-		return d, errors.Trace(err1)
-	}
-	d.SetInt64(n)
-	return
+	res, err := types.ExtractDatetimeNum(&dt, unit)
+	return res, false, errors.Trace(err)
 }
 
-// TODO: duplicate with types.CheckFsp, better use types.CheckFsp.
-func checkFsp(sc *variable.StatementContext, arg types.Datum) (int, error) {
-	fsp, err := arg.ToInt64(sc)
-	if err != nil {
-		return 0, errors.Trace(err)
+type builtinExtractDurationSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals a builtinExtractDurationSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
+func (b *builtinExtractDurationSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	unit, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	if int(fsp) > types.MaxFsp {
-		return 0, errors.Errorf("Too big precision %d specified. Maximum is 6.", fsp)
-	} else if fsp < 0 {
-		return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+	dur, isNull, err := b.args[1].EvalDuration(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	return int(fsp), nil
+	res, err := types.ExtractDurationNum(&dur, unit)
+	return res, false, errors.Trace(err)
 }
 
 type dateArithFunctionClass struct {
@@ -2302,12 +2313,11 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row []types.Datum) (types.Time, bool
 	if !isDuration(arg1) {
 		return types.Time{}, true, nil
 	}
-	tmpDuration := tm.Add(duration)
-	result, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
+	tmp, err := tm.Add(duration)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
-	return result, false, nil
+	return tmp, false, nil
 }
 
 func getFsp(s string) (fsp int) {
@@ -2340,17 +2350,17 @@ func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, 
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	tmpDuration := arg0.Add(arg1)
-	resultDuration, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
-	if err != nil {
-		return result, errors.Trace(err)
+	tmp, err1 := arg0.Add(arg1)
+	if err1 != nil {
+		err = errors.Trace(err)
+		return
 	}
 	if getFsp(d) != 0 {
-		tmpDuration.Fsp = types.MaxFsp
+		tmp.Fsp = types.MaxFsp
 	} else {
-		tmpDuration.Fsp = types.MinFsp
+		tmp.Fsp = types.MinFsp
 	}
-	result.SetString(resultDuration.String())
+	result.SetString(tmp.String())
 	return
 }
 
@@ -2464,8 +2474,7 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	switch tp := args[0].Kind(); tp {
 	case types.KindMysqlTime:
 		arg0 := args[0].GetMysqlTime()
-		tmpDuration := arg0.Add(arg1)
-		result, err := tmpDuration.ConvertToTime(arg0.Type)
+		result, err := arg0.Add(arg1)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
