@@ -313,6 +313,7 @@ func extractHandlesFromNewIndexSubResult(subResult distsql.NewPartialResult) ([]
 		handles     []int64
 		handleDatum types.Datum
 	)
+	handleType := types.NewFieldType(mysql.TypeLonglong)
 	for {
 		data, err := subResult.Next()
 		if err != nil {
@@ -322,7 +323,7 @@ func extractHandlesFromNewIndexSubResult(subResult distsql.NewPartialResult) ([]
 			break
 		}
 		l := len(data)
-		handleDatum, err = tablecodec.DecodeColumnValue(data[l-1].GetRaw(), types.NewFieldType(mysql.TypeLonglong), nil)
+		handleDatum, err = tablecodec.DecodeColumnValue(data[l-1].GetRaw(), handleType, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
