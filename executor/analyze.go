@@ -38,7 +38,7 @@ type AnalyzeExec struct {
 
 const (
 	maxSampleSize = 10000
-	maxSketchSize = 1000
+	maxSketchSize = 10000
 	maxBucketSize = 256
 )
 
