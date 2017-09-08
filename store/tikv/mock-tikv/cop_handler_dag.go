@@ -75,11 +75,8 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		rowCnt int
 	)
 	for {
-		var (
-			handle int64
-			row    [][]byte
-		)
-		handle, row, err = e.Next()
+		var row [][]byte
+		row, err = e.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -90,7 +87,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		for _, offset := range dagReq.OutputOffsets {
 			data = append(data, row[offset]...)
 		}
-		chunks, rowCnt = newAppendRow(chunks, handle, data, rowCnt)
+		chunks, rowCnt = appendRow(chunks, data, rowCnt)
 	}
 	return buildResp(chunks, err)
 }
@@ -393,17 +390,7 @@ func reverseKVRanges(kvRanges []kv.KeyRange) {
 
 const rowsPerChunk = 64
 
-func appendRow(chunks []tipb.Chunk, handle int64, data []byte) []tipb.Chunk {
-	if len(chunks) == 0 || len(chunks[len(chunks)-1].RowsMeta) >= rowsPerChunk {
-		chunks = append(chunks, tipb.Chunk{})
-	}
-	cur := &chunks[len(chunks)-1]
-	cur.RowsMeta = append(cur.RowsMeta, tipb.RowMeta{Handle: handle, Length: int64(len(data))})
-	cur.RowsData = append(cur.RowsData, data...)
-	return chunks
-}
-
-func newAppendRow(chunks []tipb.Chunk, handle int64, data []byte, rowCnt int) ([]tipb.Chunk, int) {
+func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) ([]tipb.Chunk, int) {
 	if rowCnt == 0 {
 		chunks = append(chunks, tipb.Chunk{})
 	}

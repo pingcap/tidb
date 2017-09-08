@@ -33,7 +33,7 @@ import (
 
 type executor interface {
 	SetSrcExec(executor)
-	Next() (int64, [][]byte, error)
+	Next() ([][]byte, error)
 }
 
 type tableScanExec struct {
@@ -53,53 +53,53 @@ func (e *tableScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *tableScanExec) Next() (handle int64, value [][]byte, err error) {
+func (e *tableScanExec) Next() (value [][]byte, err error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		if ran.IsPoint() {
-			handle, value, err = e.getRowFromPoint(ran)
+			value, err = e.getRowFromPoint(ran)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			e.seekKey = nil
 			e.cursor++
-			return handle, value, nil
+			return value, nil
 		}
 
-		handle, value, err = e.getRowFromRange(ran)
+		value, err = e.getRowFromRange(ran)
 		if err != nil {
-			return 0, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if value == nil {
 			e.seekKey = nil
 			e.cursor++
 			continue
 		}
-		return handle, value, nil
+		return value, nil
 	}
 
-	return 0, nil, nil
+	return nil, nil
 }
 
-func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error) {
+func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
 	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel)
 	if len(val) == 0 {
-		return 0, nil, nil
+		return nil, nil
 	} else if err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	handle, err := tablecodec.DecodeRowKey(kv.Key(ran.StartKey))
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	row, err := getRowData(e.Columns, e.colIDs, handle, val)
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return handle, row, nil
+	return row, nil
 }
 
-func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error) {
+func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 	if e.seekKey == nil {
 		if e.Desc {
 			e.seekKey = ran.EndKey
@@ -119,32 +119,32 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	}
 	if pair.Err != nil {
 		// TODO: Handle lock error.
-		return 0, nil, errors.Trace(pair.Err)
+		return nil, errors.Trace(pair.Err)
 	}
 	if pair.Key == nil {
-		return 0, nil, nil
+		return nil, nil
 	}
 	if e.Desc {
 		if bytes.Compare(pair.Key, ran.StartKey) < 0 {
-			return 0, nil, nil
+			return nil, nil
 		}
 		e.seekKey = []byte(tablecodec.TruncateToRowKeyLen(kv.Key(pair.Key)))
 	} else {
 		if bytes.Compare(pair.Key, ran.EndKey) >= 0 {
-			return 0, nil, nil
+			return nil, nil
 		}
 		e.seekKey = []byte(kv.Key(pair.Key).PrefixNext())
 	}
 
 	handle, err := tablecodec.DecodeRowKey(pair.Key)
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	row, err := getRowData(e.Columns, e.colIDs, handle, pair.Value)
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return handle, row, nil
+	return row, nil
 }
 
 const (
@@ -171,25 +171,25 @@ func (e *indexScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *indexScanExec) Next() (handle int64, value [][]byte, err error) {
+func (e *indexScanExec) Next() (value [][]byte, err error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
-		handle, value, err = e.getRowFromRange(ran)
+		value, err = e.getRowFromRange(ran)
 		if err != nil {
-			return 0, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if value == nil {
 			e.cursor++
 			e.seekKey = nil
 			continue
 		}
-		return handle, value, nil
+		return value, nil
 	}
 
-	return 0, nil, nil
+	return nil, nil
 }
 
-func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error) {
+func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 	if e.seekKey == nil {
 		if e.Desc {
 			e.seekKey = ran.EndKey
@@ -209,39 +209,35 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	}
 	if pair.Err != nil {
 		// TODO: Handle lock error.
-		return 0, nil, errors.Trace(pair.Err)
+		return nil, errors.Trace(pair.Err)
 	}
 	if pair.Key == nil {
-		return 0, nil, nil
+		return nil, nil
 	}
 	if e.Desc {
 		if bytes.Compare(pair.Key, ran.StartKey) < 0 {
-			return 0, nil, nil
+			return nil, nil
 		}
 		e.seekKey = pair.Key
 	} else {
 		if bytes.Compare(pair.Key, ran.EndKey) >= 0 {
-			return 0, nil, nil
+			return nil, nil
 		}
 		e.seekKey = []byte(kv.Key(pair.Key).PrefixNext())
 	}
 
 	values, b, err := tablecodec.CutIndexKeyNew(pair.Key, e.colsLen)
-	var handle int64
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if len(b) > 0 {
-		var handleDatum types.Datum
-		_, handleDatum, err = codec.DecodeOne(b)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		handle = handleDatum.GetInt64()
 		if e.pkStatus != pkColNotExists {
 			values = append(values, b)
 		}
 	} else {
-		handle, err = decodeHandle(pair.Value)
+		handle, err := decodeHandle(pair.Value)
 		if err != nil {
-			return 0, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if e.pkStatus != pkColNotExists {
 			var handleDatum types.Datum
@@ -252,13 +248,13 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 			}
 			handleBytes, err := codec.EncodeValue(b, handleDatum)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			values = append(values, handleBytes)
 		}
 	}
 
-	return handle, values, nil
+	return values, nil
 }
 
 type selectionExec struct {
@@ -296,26 +292,26 @@ func evalBool(exprs []expression.Expression, row []types.Datum, ctx *variable.St
 	return true, nil
 }
 
-func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
+func (e *selectionExec) Next() (value [][]byte, err error) {
 	for {
-		handle, value, err = e.src.Next()
+		value, err = e.src.Next()
 		if err != nil {
-			return 0, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if value == nil {
-			return 0, nil, nil
+			return nil, nil
 		}
 
 		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 		if err != nil {
-			return 0, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		match, err := evalBool(e.conditions, e.row, e.evalCtx.sc)
 		if err != nil {
-			return 0, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if match {
-			return handle, value, nil
+			return value, nil
 		}
 	}
 }
@@ -340,7 +336,7 @@ func (e *aggregateExec) SetSrcExec(exec executor) {
 }
 
 func (e *aggregateExec) innerNext() (bool, error) {
-	_, values, err := e.src.Next()
+	values, err := e.src.Next()
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -354,12 +350,12 @@ func (e *aggregateExec) innerNext() (bool, error) {
 	return true, nil
 }
 
-func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
+func (e *aggregateExec) Next() (value [][]byte, err error) {
 	if !e.executed {
 		for {
 			hasMore, err := e.innerNext()
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			if !hasMore {
 				break
@@ -369,7 +365,7 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	}
 
 	if e.currGroupIdx >= len(e.groups) {
-		return 0, nil, nil
+		return nil, nil
 	}
 	gk := e.groupKeys[e.currGroupIdx]
 	value = make([][]byte, 0, len(e.groupByExprs)+2*len(e.aggExprs))
@@ -378,7 +374,7 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 		for _, result := range partialResults {
 			data, err := codec.EncodeValue(nil, result)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			value = append(value, data)
 		}
@@ -386,7 +382,7 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	value = append(value, e.groupKeyRows[e.currGroupIdx]...)
 	e.currGroupIdx++
 
-	return 0, value, nil
+	return value, nil
 }
 
 func (e *aggregateExec) getGroupKey() ([]byte, [][]byte, error) {
@@ -457,26 +453,26 @@ func (e *topNExec) SetSrcExec(src executor) {
 }
 
 func (e *topNExec) innerNext() (bool, error) {
-	handle, value, err := e.src.Next()
+	value, err := e.src.Next()
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if value == nil {
 		return false, nil
 	}
-	err = e.evalTopN(handle, value)
+	err = e.evalTopN(value)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	return true, nil
 }
 
-func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
+func (e *topNExec) Next() (value [][]byte, err error) {
 	if !e.executed {
 		for {
 			hasMore, err := e.innerNext()
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			if !hasMore {
 				break
@@ -485,21 +481,20 @@ func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
 		e.executed = true
 	}
 	if e.cursor >= len(e.heap.rows) {
-		return 0, nil, nil
+		return nil, nil
 	}
 	sort.Sort(&e.heap.topNSorter)
 	row := e.heap.rows[e.cursor]
 	e.cursor++
 
-	return row.meta.Handle, row.data, nil
+	return row.data, nil
 }
 
 // evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
 // And this function will check if this record can replace one of the old records.
-func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
+func (e *topNExec) evalTopN(value [][]byte) error {
 	newRow := &sortRow{
-		meta: tipb.RowMeta{Handle: handle},
-		key:  make([]types.Datum, len(value)),
+		key: make([]types.Datum, len(value)),
 	}
 	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 	if err != nil {
@@ -515,7 +510,6 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 	if e.heap.tryToAddRow(newRow) {
 		for _, val := range value {
 			newRow.data = append(newRow.data, val)
-			newRow.meta.Length += int64(len(val))
 		}
 	}
 	return errors.Trace(e.heap.err)
@@ -532,20 +526,20 @@ func (e *limitExec) SetSrcExec(src executor) {
 	e.src = src
 }
 
-func (e *limitExec) Next() (handle int64, value [][]byte, err error) {
+func (e *limitExec) Next() (value [][]byte, err error) {
 	if e.cursor >= e.limit {
-		return 0, nil, nil
+		return nil, nil
 	}
 
-	handle, value, err = e.src.Next()
+	value, err = e.src.Next()
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if value == nil {
-		return 0, nil, nil
+		return nil, nil
 	}
 	e.cursor++
-	return handle, value, nil
+	return value, nil
 }
 
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {

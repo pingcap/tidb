@@ -24,7 +24,6 @@ import (
 
 type sortRow struct {
 	key  []types.Datum
-	meta tipb.RowMeta
 	data [][]byte
 }
 
