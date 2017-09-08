@@ -14,45 +14,13 @@
 package executor_test
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
-
-func (s *testSuite) TestAnalyzeTable(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int)")
-	tk.MustExec("create index ind_a on t1 (a)")
-	tk.MustExec("insert into t1 (a) values (1)")
-	result := tk.MustQuery("explain select * from t1 where t1.a = 1")
-	rowStr := fmt.Sprintf("%s", result.Rows())
-	c.Check(rowStr, Equals, "[[IndexScan_7   cop table:t1, index:a, range:[1,1], out of order:true 10] [IndexReader_8   root index:IndexScan_7 10]]")
-	tk.MustExec("analyze table t1")
-	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
-	rowStr = fmt.Sprintf("%s", result.Rows())
-	c.Check(rowStr, Equals, "[[TableScan_4 Selection_5  cop table:t1, range:(-inf,+inf), keep order:false 1] [Selection_5  TableScan_4 cop eq(test.t1.a, 1) 1] [TableReader_6   root data:Selection_5 1]]")
-
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int)")
-	tk.MustExec("create index ind_a on t1 (a)")
-	tk.MustExec("insert into t1 (a) values (1)")
-	tk.MustExec("analyze table t1 index ind_a")
-	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
-	rowStr = fmt.Sprintf("%s", result.Rows())
-	c.Check(rowStr, Equals, "[[TableScan_4 Selection_5  cop table:t1, range:(-inf,+inf), keep order:false 1] [Selection_5  TableScan_4 cop eq(test.t1.a, 1) 1] [TableReader_6   root data:Selection_5 1]]")
-}
 
 type recordSet struct {
 	data   []types.Datum
