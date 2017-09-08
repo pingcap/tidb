@@ -228,9 +228,12 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
+	originTZ := sc.TimeZone
 	sc.IgnoreTruncate = true
+	sc.TimeZone = time.Local
 	defer func() {
 		sc.IgnoreTruncate = originIgnoreTruncate
+		sc.TimeZone = originTZ
 	}()
 	var sig builtinFunc
 
@@ -737,6 +740,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalTime(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
+		c.Assert(res.TimeZone, Equals, sc.TimeZone)
 		c.Assert(res.String(), Equals, t.after.String())
 	}
 
@@ -819,6 +823,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalTime(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
+		c.Assert(res.TimeZone, Equals, sc.TimeZone)
 		resAfter := t.after.String()
 		if t.fsp > 0 {
 			resAfter += "."
@@ -1076,9 +1081,9 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 			123, 123, types.NewDecFromStringForTest("123"), "a",
 		},
 		{
-			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewDatum(types.Hex{Value: 0x61})},
+			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0x61, -1))},
 			nil,
-			97, 97, types.NewDecFromInt(97), "a",
+			97, 97, types.NewDecFromInt(0x61), "a",
 		},
 	}
 	for _, t := range cases {

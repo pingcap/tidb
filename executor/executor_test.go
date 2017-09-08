@@ -672,6 +672,15 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustExec("insert into t values(2, 2, 2)")
 	tk.MustExec("insert into t values(3, 1, 3)")
 	tk.MustQuery("select * from t use index(idx) order by a desc limit 1").Check(testkit.Rows("3 1 3"))
+
+	// Test double read which needs to keep order.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key b (b))")
+	tk.Se.GetSessionVars().IndexLookupSize = 3
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, 10-i))
+	}
+	tk.MustQuery("select a from t use index(b) order by b").Check(testkit.Rows("9", "8", "7", "6", "5", "4", "3", "2", "1", "0"))
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {
