@@ -581,7 +581,7 @@ type PhysicalAggregation struct {
 	GroupByItems []expression.Expression
 
 	propKeys    []*expression.Column
-	childCount  float64
+	childCount  float64 // childCount is the child plan's count.
 	cardinality float64
 }
 

@@ -157,7 +157,6 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	}
 	var cardinality = 1.0
 	for _, idx := range indices {
-		log.Warnf("idx %v, col %v, cardinality %v", idx, schema.Columns[idx], profile.cardinality[idx])
 		if cardinality < profile.cardinality[idx] {
 			// It is a very elementary estimation.
 			cardinality = profile.cardinality[idx]
