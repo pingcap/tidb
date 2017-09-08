@@ -1347,6 +1347,32 @@ func (s *testDBSuite) TestIssue2858And2717(c *C) {
 	s.tk.MustExec(`alter table t_issue_2858_hex alter column a set default 0x321`)
 }
 
+func (s *testDBSuite) TestIssue4432(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("create table tx (col bit(10) default 'a')")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
+
+	s.tk.MustExec("create table tx (col bit(10) default 0x61)")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
+
+	s.tk.MustExec("create table tx (col bit(10) default 97)")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
+
+	s.tk.MustExec("create table tx (col bit(10) default 0b1100001)")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
+}
+
 func (s *testDBSuite) TestChangeColumnPosition(c *C) {
 	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)

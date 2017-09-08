@@ -30,7 +30,6 @@ type SortedBuilder struct {
 	lastNumber      int64
 	bucketIdx       int64
 	Count           int64
-	isPK            bool
 	hist            *Histogram
 }
 

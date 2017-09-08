@@ -86,8 +86,7 @@ func buildFMSketch(values []types.Datum, maxSize int) (*FMSketch, int64, error) 
 	return s, s.NDV(), nil
 }
 
-// MergeFMSketch merges FMSketch.
-func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
+func (s *FMSketch) mergeFMSketch(rs *FMSketch) {
 	if s.mask < rs.mask {
 		s.mask = rs.mask
 		for key := range s.hashset {

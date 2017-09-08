@@ -835,6 +835,30 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select quote(0121), quote(0000), quote("中文"), quote(NULL);`)
 	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 
+	// for convert
+	result = tk.MustQuery(`select convert("中文" using "utf8"), convert(cast("中文" as binary) using "utf8");`)
+	result.Check(testkit.Rows("中文 中文"))
+
+	// for insert
+	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
+	result.Check(testkit.Rows("aaa文 ba aaa ba"))
+	result = tk.MustQuery(`select insert("bb", NULL, 1, "aa"), insert("bb", 1, NULL, "aa"), insert(NULL, 1, 1, "aaa"), insert("bb", 1, 1, NULL);`)
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+
+	// for export_set
+	result = tk.MustQuery(`select export_set(7, "1", "0", ",", 65);`)
+	result.Check(testkit.Rows("1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"))
+	result = tk.MustQuery(`select export_set(7, "1", "0", ",", -1);`)
+	result.Check(testkit.Rows("1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"))
+	result = tk.MustQuery(`select export_set(7, "1", "0", ",");`)
+	result.Check(testkit.Rows("1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"))
+	result = tk.MustQuery(`select export_set(7, "1", "0");`)
+	result.Check(testkit.Rows("1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"))
+	result = tk.MustQuery(`select export_set(NULL, "1", "0", ",", 65);`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select export_set(7, "1", "0", ",", 1);`)
+	result.Check(testkit.Rows("1"))
+
 	// for format
 	result = tk.MustQuery(`select format(12332.1, 4), format(12332.2, 0), format(12332.2, 2,'en_US');`)
 	result.Check(testkit.Rows("12,332.1000 12,332 12,332.20"))
@@ -845,6 +869,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "not support for the specific locale")
+
+	// for field
+	result = tk.MustQuery(`select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);`)
+	result.Check(testkit.Rows("2 0 3 0"))
+	result = tk.MustQuery(`select field("1", 2, 1), field(1, "0", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);`)
+	result.Check(testkit.Rows("2 0 3 0"))
+	result = tk.MustQuery(`select field("1", 2, 1), field(1, "abc", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);`)
+	result.Check(testkit.Rows("2 0 3 0"))
+	result = tk.MustQuery(`select field("abc", "a", 1), field(1.3, "1.3", 1.5);`)
+	result.Check(testkit.Rows("1 1"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
