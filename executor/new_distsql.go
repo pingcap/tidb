@@ -550,6 +550,8 @@ func (e *IndexLookUpExecutor) Schema() *expression.Schema {
 func (e *IndexLookUpExecutor) Close() error {
 	if e.finished != nil {
 		close(e.finished)
+		// Drain the resultCh and discard the result, in case that Next() doesn't fully
+		// consume the data, background worker still writing to resultCh and block forever.
 		for range e.resultCh {
 		}
 		e.indexWorker.close()
