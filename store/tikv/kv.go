@@ -118,6 +118,13 @@ type tikvStore struct {
 	spMsg     chan struct{} // this is used to nofity when the store is closed
 }
 
+func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
+	s.spMutex.Lock()
+	s.safePoint = cachedSP
+	s.spTime = cachedTime
+	s.spMutex.Unlock()
+}
+
 func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	s.spMutex.RLock()
 	cachedSafePoint := s.safePoint

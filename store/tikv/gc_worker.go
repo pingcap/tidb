@@ -63,12 +63,9 @@ func (w *GCWorker) StartSafePointChecker() {
 				spCachedTime := time.Now()
 				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
 				if err == nil {
-					w.store.spMutex.Lock()
-					w.store.safePoint = cachedSafePoint
-					w.store.spTime = spCachedTime
-					w.store.spMutex.Unlock()
+					w.store.UpdateSPCache(cachedSafePoint, spCachedTime)
 				} else {
-					log.Error("[safepoint] read error:", err)
+					log.Warnf("There is no safepoint or the read fails")
 				}
 				time.Sleep(gcSafePointUpdateInterval)
 			}
@@ -151,7 +148,6 @@ var gcVariableComments = map[string]string{
 func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 	log.Infof("[gc worker] %s start.", w.uuid)
 
-	w.session = createSession(w.store)
 	w.tick(ctx) // Immediately tick once to initialize configs.
 	wg.Done()
 
@@ -177,15 +173,15 @@ func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 
 func createSession(store kv.Storage) tidb.Session {
 	for {
-		retSession, sessionErr := tidb.CreateSession(store)
-		if sessionErr != nil {
-			log.Warnf("[gc worker] create session err: %v", sessionErr)
+		session, err := tidb.CreateSession(store)
+		if err != nil {
+			log.Warnf("[gc worker] create session err: %v", err)
 			continue
 		}
 		// Disable privilege check for gc worker session.
-		privilege.BindPrivilegeManager(retSession, nil)
-		retSession.GetSessionVars().InRestrictedSQL = true
-		return retSession
+		privilege.BindPrivilegeManager(session, nil)
+		session.GetSessionVars().InRestrictedSQL = true
+		return session
 	}
 }
 
