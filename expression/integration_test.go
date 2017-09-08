@@ -835,6 +835,10 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select quote(0121), quote(0000), quote("中文"), quote(NULL);`)
 	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 
+	// for convert
+	result = tk.MustQuery(`select convert("中文" using "utf8"), convert(cast("中文" as binary) using "utf8");`)
+	result.Check(testkit.Rows("中文 中文"))
+
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
 	result.Check(testkit.Rows("aaa文 ba aaa ba"))
@@ -865,6 +869,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "not support for the specific locale")
+
+	// for field
+	result = tk.MustQuery(`select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);`)
+	result.Check(testkit.Rows("2 0 3 0"))
+	result = tk.MustQuery(`select field("1", 2, 1), field(1, "0", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);`)
+	result.Check(testkit.Rows("2 0 3 0"))
+	result = tk.MustQuery(`select field("1", 2, 1), field(1, "abc", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);`)
+	result.Check(testkit.Rows("2 0 3 0"))
+	result = tk.MustQuery(`select field("abc", "a", 1), field(1.3, "1.3", 1.5);`)
+	result.Check(testkit.Rows("1 1"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {

@@ -650,6 +650,8 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		fc := funcs[ast.Convert]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(v.str, v.cs)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
@@ -668,6 +670,8 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		fc := funcs[ast.Convert]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(v.str, v.cs)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		_, err = f.eval(nil)
 		c.Assert(err, NotNil)
 	}
@@ -1193,6 +1197,12 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 
 func (s *testEvaluatorSuite) TestField(c *C) {
 	defer testleak.AfterTest(c)()
+	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+	origin := stmtCtx.IgnoreTruncate
+	stmtCtx.IgnoreTruncate = true
+	defer func() {
+		stmtCtx.IgnoreTruncate = origin
+	}()
 
 	tbl := []struct {
 		argLst []interface{}
@@ -1213,6 +1223,8 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		fc := funcs[ast.Field]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.argLst...)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
