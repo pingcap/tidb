@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"math"
 	"sort"
 	"sync"
 	"time"
@@ -86,7 +85,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			if col.Flen != types.UnspecifiedLength {
 				// Special case for the bit type.
 				if col.FieldType.Tp == mysql.TypeBit {
-					sumLength += int(math.Ceil(float64(col.Flen+7) / float64(8)))
+					sumLength += (col.Flen + 7) >> 3
 				} else {
 					sumLength += col.Flen
 				}

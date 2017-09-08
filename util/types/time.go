@@ -1343,17 +1343,9 @@ func checkDatetimeType(t TimeInternal, allowZeroDate bool) error {
 	return nil
 }
 
-// ExtractTimeNum extracts time value number from time unit and format.
-func ExtractTimeNum(unit string, t Time) (int64, error) {
+// ExtractDatetimeNum extracts time value number from datetime unit and format.
+func ExtractDatetimeNum(t *Time, unit string) (int64, error) {
 	switch strings.ToUpper(unit) {
-	case "MICROSECOND":
-		return int64(t.Time.Microsecond()), nil
-	case "SECOND":
-		return int64(t.Time.Second()), nil
-	case "MINUTE":
-		return int64(t.Time.Minute()), nil
-	case "HOUR":
-		return int64(t.Time.Hour()), nil
 	case "DAY":
 		return int64(t.Time.Day()), nil
 	case "WEEK":
@@ -1375,23 +1367,6 @@ func ExtractTimeNum(unit string, t Time) (int64, error) {
 		return (m + 2) / 3, nil
 	case "YEAR":
 		return int64(t.Time.Year()), nil
-	case "SECOND_MICROSECOND":
-		return int64(t.Time.Second())*1000000 + int64(t.Time.Microsecond()), nil
-	case "MINUTE_MICROSECOND":
-		_, m, s := t.Clock()
-		return int64(m)*100000000 + int64(s)*1000000 + int64(t.Time.Microsecond()), nil
-	case "MINUTE_SECOND":
-		_, m, s := t.Clock()
-		return int64(m*100 + s), nil
-	case "HOUR_MICROSECOND":
-		h, m, s := t.Clock()
-		return int64(h)*10000000000 + int64(m)*100000000 + int64(s)*1000000 + int64(t.Time.Microsecond()), nil
-	case "HOUR_SECOND":
-		h, m, s := t.Clock()
-		return int64(h)*10000 + int64(m)*100 + int64(s), nil
-	case "HOUR_MINUTE":
-		h, m, _ := t.Clock()
-		return int64(h)*100 + int64(m), nil
 	case "DAY_MICROSECOND":
 		h, m, s := t.Clock()
 		d := t.Time.Day()
@@ -1411,6 +1386,34 @@ func ExtractTimeNum(unit string, t Time) (int64, error) {
 	case "YEAR_MONTH":
 		y, m := t.Time.Year(), t.Time.Month()
 		return int64(y)*100 + int64(m), nil
+	default:
+		return 0, errors.Errorf("invalid unit %s", unit)
+	}
+}
+
+// ExtractDurationNum extracts duration value number from duration unit and format.
+func ExtractDurationNum(d *Duration, unit string) (int64, error) {
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND":
+		return int64(d.MicroSecond()), nil
+	case "SECOND":
+		return int64(d.Second()), nil
+	case "MINUTE":
+		return int64(d.Minute()), nil
+	case "HOUR":
+		return int64(d.Hour()), nil
+	case "SECOND_MICROSECOND":
+		return int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+	case "MINUTE_MICROSECOND":
+		return int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+	case "MINUTE_SECOND":
+		return int64(d.Minute()*100 + d.Second()), nil
+	case "HOUR_MICROSECOND":
+		return int64(d.Hour())*10000000000 + int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+	case "HOUR_SECOND":
+		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
+	case "HOUR_MINUTE":
+		return int64(d.Hour())*100 + int64(d.Minute()), nil
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)
 	}

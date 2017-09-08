@@ -97,7 +97,7 @@ func (ts *TidbTestSuite) TestPreparedString(c *C) {
 
 func (ts *TidbTestSuite) TestLoadData(c *C) {
 	c.Parallel()
-	runTestLoadData(c)
+	runTestLoadData(c, suite.server)
 }
 
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
