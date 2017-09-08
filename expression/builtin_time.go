@@ -24,9 +24,9 @@ import (
 	"strings"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -2274,12 +2274,11 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row []types.Datum) (types.Time, bool
 	if !isDuration(arg1) {
 		return types.Time{}, true, nil
 	}
-	tmpDuration := tm.Add(duration)
-	result, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
+	tmp, err := tm.Add(duration)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
-	return result, false, nil
+	return tmp, false, nil
 }
 
 func getFsp(s string) (fsp int) {
@@ -2312,17 +2311,17 @@ func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, 
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	tmpDuration := arg0.Add(arg1)
-	resultDuration, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
-	if err != nil {
-		return result, errors.Trace(err)
+	tmp, err1 := arg0.Add(arg1)
+	if err1 != nil {
+		err = errors.Trace(err)
+		return
 	}
 	if getFsp(d) != 0 {
-		tmpDuration.Fsp = types.MaxFsp
+		tmp.Fsp = types.MaxFsp
 	} else {
-		tmpDuration.Fsp = types.MinFsp
+		tmp.Fsp = types.MinFsp
 	}
-	result.SetString(resultDuration.String())
+	result.SetString(tmp.String())
 	return
 }
 
@@ -2436,8 +2435,7 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	switch tp := args[0].Kind(); tp {
 	case types.KindMysqlTime:
 		arg0 := args[0].GetMysqlTime()
-		tmpDuration := arg0.Add(arg1)
-		result, err := tmpDuration.ConvertToTime(arg0.Type)
+		result, err := arg0.Add(arg1)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
