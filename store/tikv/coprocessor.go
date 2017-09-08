@@ -438,13 +438,9 @@ func (it *copIterator) Next() ([]byte, error) {
 		return []byte{}, nil
 	}
 
-	safePoint, err := it.store.CheckVisibility()
+	err := it.store.CheckVisibility(it.req.StartTs)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	if it.req.StartTs <= safePoint {
-		return nil, errors.New("start timestamp falls behind safepoint")
 	}
 
 	return resp.Data, nil

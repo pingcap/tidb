@@ -76,15 +76,10 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var safePoint uint64
-	safePoint, err = txn.store.CheckVisibility()
+	checkerr := txn.store.CheckVisibility(txn.startTS)
 
-	if err != nil {
-		return nil, err
-	}
-
-	if txn.startTS < safePoint {
-		return nil, errors.New("start timestamp falls behind safepoint")
+	if checkerr != nil {
+		return nil, errors.Trace(checkerr)
 	}
 
 	return ret, nil

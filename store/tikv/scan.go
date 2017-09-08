@@ -168,15 +168,10 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(errBodyMissing)
 		}
 
-		var safePoint uint64
-		safePoint, checkerr := s.snapshot.store.CheckVisibility()
+		checkerr := s.snapshot.store.CheckVisibility(s.startTS())
 
 		if checkerr != nil {
-			return checkerr
-		}
-
-		if s.startTS() < safePoint {
-			return errors.New("start timestamp falls behind safepoint")
+			return errors.Trace(checkerr)
 		}
 
 		kvPairs := cmdScanResp.Pairs

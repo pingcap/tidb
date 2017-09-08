@@ -118,7 +118,7 @@ type tikvStore struct {
 	spMsg     chan struct{} // this is used to nofity when the store is closed
 }
 
-func (s *tikvStore) CheckVisibility() (uint64, error) {
+func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	s.spMutex.RLock()
 	cachedSafePoint := s.safePoint
 	cachedTime := s.spTime
@@ -127,10 +127,14 @@ func (s *tikvStore) CheckVisibility() (uint64, error) {
 
 	// the magic number "5" is used to compensate the inaccuracy of CPU clock
 	if diff > (gcSafePointCacheInterval - 5) {
-		return 0, errors.New("start timestamp may fall behind safepoint")
+		return errors.New("start timestamp may fall behind safepoint")
 	}
 
-	return cachedSafePoint, nil
+	if startTime < cachedSafePoint {
+		return errors.New("start timestamp falls behind safepoint")
+	}
+
+	return nil
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {

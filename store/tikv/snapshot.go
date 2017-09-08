@@ -79,15 +79,10 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var safePoint uint64
-	safePoint, checkerr := s.store.CheckVisibility()
+	checkerr := s.store.CheckVisibility(s.version.Ver)
 
 	if checkerr != nil {
-		return nil, checkerr
-	}
-
-	if s.version.Ver < safePoint {
-		return nil, errors.New("start timestamp falls behind safepoint")
+		return nil, errors.Trace(checkerr)
 	}
 
 	return m, nil
