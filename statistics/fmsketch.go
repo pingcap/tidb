@@ -85,17 +85,16 @@ func buildFMSketch(values []types.Datum, maxSize int) (*FMSketch, int64, error) 
 	return s, s.NDV(), nil
 }
 
-func mergeFMSketches(sketches []*FMSketch, maxSize int) (*FMSketch, int64) {
-	s := NewFMSketch(maxSize)
-	for _, sketch := range sketches {
-		if s.mask < sketch.mask {
-			s.mask = sketch.mask
+func (s *FMSketch) mergeFMSketch(rs *FMSketch) {
+	if s.mask < rs.mask {
+		s.mask = rs.mask
+		for key := range s.hashset {
+			if (key & s.mask) != 0 {
+				delete(s.hashset, key)
+			}
 		}
 	}
-	for _, sketch := range sketches {
-		for key := range sketch.hashset {
-			s.insertHashValue(key)
-		}
+	for key := range rs.hashset {
+		s.insertHashValue(key)
 	}
-	return s, s.NDV()
 }
