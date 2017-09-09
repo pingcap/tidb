@@ -2389,10 +2389,9 @@ func strDatetimeAddDuration(d string, arg1 types.Duration) (string, error) {
 	if ret.Time.Microsecond() == 0 {
 		fsp = types.MinFsp
 	}
-    ret.Fsp = fsp
+	ret.Fsp = fsp
 	return ret.String(), nil
 }
-
 
 // strDurationAddDuration adds duration to duration string, returns a string value.
 func strDurationAddDuration(d string, arg1 types.Duration) (string, error) {
