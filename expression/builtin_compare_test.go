@@ -143,7 +143,7 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 	}
 
 	for _, t := range tests {
-		bf, err := funcs[t.funcName].getFunction(primitiveValsToConstants([]interface{}{t.arg0, t.arg1}), s.ctx)
+		bf, err := funcs[t.funcName].getFunction(s.ctx, primitiveValsToConstants([]interface{}{t.arg0, t.arg1}))
 		c.Assert(err, IsNil)
 		args := bf.getArgs()
 		c.Assert(args[0].GetType().Tp, Equals, t.tp)
@@ -156,7 +156,7 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 
 	// test <non-const decimal expression> <cmp> <const string expression>
 	decimalCol, stringCon := &Column{RetType: types.NewFieldType(mysql.TypeNewDecimal)}, &Constant{RetType: types.NewFieldType(mysql.TypeVarchar)}
-	bf, err := funcs[ast.LT].getFunction([]Expression{decimalCol, stringCon}, s.ctx)
+	bf, err := funcs[ast.LT].getFunction(s.ctx, []Expression{decimalCol, stringCon})
 	c.Assert(err, IsNil)
 	args := bf.getArgs()
 	c.Assert(args[0].GetType().Tp, Equals, mysql.TypeNewDecimal)
@@ -164,7 +164,7 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 
 	// test <time column> <cmp> <non-time const>
 	timeCol := &Column{RetType: types.NewFieldType(mysql.TypeDatetime)}
-	bf, err = funcs[ast.LT].getFunction([]Expression{timeCol, stringCon}, s.ctx)
+	bf, err = funcs[ast.LT].getFunction(s.ctx, []Expression{timeCol, stringCon})
 	c.Assert(err, IsNil)
 	args = bf.getArgs()
 	c.Assert(args[0].GetType().Tp, Equals, mysql.TypeDatetime)
@@ -212,7 +212,51 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Length].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
 	c.Assert(f.canBeFolded(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
+	defer testleak.AfterTest(c)()
+	sc := s.ctx.GetSessionVars().StmtCtx
+	origin := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = origin
+	}()
+
+	for _, t := range []struct {
+		args []types.Datum
+		ret  int64
+	}{
+		{types.MakeDatums(nil, 1, 2), -1},
+		{types.MakeDatums(1, 2, 3), 0},
+		{types.MakeDatums(2, 1, 3), 1},
+		{types.MakeDatums(3, 1, 2), 2},
+		{types.MakeDatums(0, "b", "1", "2"), 1},
+		{types.MakeDatums("a", "b", "1", "2"), 1},
+		{types.MakeDatums(23, 1, 23, 23, 23, 30, 44, 200), 4},
+		{types.MakeDatums(23, 1.7, 15.3, 23.1, 30, 44, 200), 2},
+		{types.MakeDatums(9007199254740992, 9007199254740993), 0},
+		{types.MakeDatums(uint64(9223372036854775808), uint64(9223372036854775809)), 0},
+		{types.MakeDatums(9223372036854775807, uint64(9223372036854775808)), 0},
+		{types.MakeDatums(-9223372036854775807, uint64(9223372036854775808)), 0},
+		{types.MakeDatums(uint64(9223372036854775806), 9223372036854775807), 0},
+		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1},
+		{types.MakeDatums("9007199254740991", "9007199254740992"), 0},
+
+		// tests for appropriate precision loss
+		{types.MakeDatums(9007199254740992, "9007199254740993"), 1},
+		{types.MakeDatums("9007199254740992", 9007199254740993), 1},
+		{types.MakeDatums("9007199254740992", "9007199254740993"), 1},
+	} {
+		fc := funcs[ast.Interval]
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t.args))
+		c.Assert(err, IsNil)
+		c.Assert(f.canBeFolded(), IsTrue)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v.GetInt64(), Equals, t.ret)
+	}
 }

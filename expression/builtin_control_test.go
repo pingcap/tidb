@@ -40,14 +40,14 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	}
 	fc := funcs[ast.Case]
 	for _, t := range tbl {
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg...)), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.Arg...)))
 		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)), s.ctx)
+	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
@@ -81,18 +81,18 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 
 	fc := funcs[ast.If]
 	for _, t := range tbl {
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)))
 		c.Assert(err, IsNil)
 		c.Assert(f.canBeFolded(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)), s.ctx)
+	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
-	_, err = fc.getFunction(datumsToConstants(types.MakeDatums(1, 2)), s.ctx)
+	_, err = fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(1, 2)))
 	c.Assert(err, NotNil)
 }
 
@@ -111,8 +111,7 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 		{tm, nil, tm, false, false},
 		{nil, duration, duration, false, false},
 		{nil, types.NewDecFromFloatForTest(123.123), types.NewDecFromFloatForTest(123.123), false, false},
-		{nil, types.Bit{Value: 1, Width: 8}, "\x01", false, false},
-		{nil, types.Hex{Value: 1}, "\x01", false, false},
+		{nil, types.NewBinaryLiteralFromUint(0x01, -1), uint64(1), false, false},
 		{nil, types.Set{Value: 1, Name: "abc"}, "abc", false, false},
 		{nil, jsonInt.GetMysqlJSON(), jsonInt.GetMysqlJSON(), false, false},
 		{"abc", nil, "abc", false, false},
@@ -135,10 +134,10 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Ifnull].getFunction([]Expression{Zero, Zero}, s.ctx)
+	f, err := funcs[ast.Ifnull].getFunction(s.ctx, []Expression{Zero, Zero})
 	c.Assert(err, IsNil)
 	c.Assert(f.canBeFolded(), IsTrue)
 
-	f, err = funcs[ast.Ifnull].getFunction([]Expression{Zero}, s.ctx)
+	f, err = funcs[ast.Ifnull].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, NotNil)
 }
