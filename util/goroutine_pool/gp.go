@@ -15,6 +15,7 @@ package gp
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,22 +26,22 @@ type Pool struct {
 	count       int
 	idleTimeout time.Duration
 	sync.Mutex
-
-	// gcWorker marks whether there is a gcWorker currently.
-	// only gc worker goroutine can modify it, others just read it.
-	gcWorker struct {
-		sync.RWMutex
-		value bool
-	}
 }
 
 // goroutine is actually a background goroutine, with a channel binded for communication.
 type goroutine struct {
-	ch      chan func()
-	lastRun time.Time
-	pool    *Pool
-	next    *goroutine
+	ch     chan func()
+	pool   *Pool
+	next   *goroutine
+	status int32
 }
+
+const (
+	statusIdle  int32 = 0
+	statusInUse int32 = 1
+	statusDying int32 = 2 // Intermediate state used to avoid race: Idle => Dying => Dead
+	statusDead  int32 = 3
+)
 
 // New returns a new *Pool object.
 func New(idleTimeout time.Duration) *Pool {
@@ -54,7 +55,18 @@ func New(idleTimeout time.Duration) *Pool {
 // Go works like go func(), but goroutines are pooled for reusing.
 // This strategy can avoid runtime.morestack, because pooled goroutine is already enlarged.
 func (pool *Pool) Go(f func()) {
-	g := pool.get()
+	var g *goroutine
+	for {
+		g = pool.get()
+		if atomic.CompareAndSwapInt32(&g.status, statusIdle, statusInUse) {
+			break
+		}
+		// Status already changed from statusIdle => statusDying, delete this goroutine.
+		if atomic.LoadInt32(&g.status) == statusDying {
+			g.status = statusDead
+		}
+	}
+
 	g.ch <- f
 	// When the goroutine finish f(), it will be put back to pool automatically,
 	// so it doesn't need to call pool.put() here.
@@ -85,14 +97,8 @@ func (pool *Pool) put(p *goroutine) {
 	pool.tail.next = p
 	pool.tail = p
 	pool.count++
+	p.status = statusIdle
 	pool.Unlock()
-
-	pool.gcWorker.RLock()
-	gcWorker := pool.gcWorker.value
-	pool.gcWorker.RUnlock()
-	if !gcWorker {
-		go pool.gcLoop()
-	}
 }
 
 func (pool *Pool) alloc() *goroutine {
@@ -101,81 +107,32 @@ func (pool *Pool) alloc() *goroutine {
 		pool: pool,
 	}
 	go func(g *goroutine) {
-		for work := range g.ch {
-			work()
-			g.lastRun = time.Now()
-			// Put g back to the pool.
-			// This is the normal usage for a resource pool:
-			//
-			//     obj := pool.get()
-			//     use(obj)
-			//     pool.put(obj)
-			//
-			// But when goroutine is used as a resource, we can't pool.put() immediately,
-			// because the resource(goroutine) maybe still in use.
-			// So, put back resource is done here,  when the goroutine finish its work.
-			pool.put(g)
+		timer := time.NewTimer(pool.idleTimeout)
+		for {
+			select {
+			case <-timer.C:
+				// Check to avoid a corner case that the goroutine is take out from pool,
+				// and get this signal at the same time.
+				succ := atomic.CompareAndSwapInt32(&g.status, statusIdle, statusDying)
+				if succ {
+					return
+				}
+			case work := <-g.ch:
+				work()
+				// Put g back to the pool.
+				// This is the normal usage for a resource pool:
+				//
+				//     obj := pool.get()
+				//     use(obj)
+				//     pool.put(obj)
+				//
+				// But when goroutine is used as a resource, we can't pool.put() immediately,
+				// because the resource(goroutine) maybe still in use.
+				// So, put back resource is done here,  when the goroutine finish its work.
+				pool.put(g)
+			}
+			timer.Reset(pool.idleTimeout)
 		}
 	}(g)
 	return g
-}
-
-func (pool *Pool) gcLoop() {
-	pool.gcWorker.Lock()
-	if pool.gcWorker.value == true {
-		pool.gcWorker.Unlock()
-		return
-	}
-	pool.gcWorker.value = true
-	pool.gcWorker.Unlock()
-
-	for {
-		finish, more := pool.gcOnce(30)
-		if finish {
-			pool.gcWorker.Lock()
-			pool.gcWorker.value = false
-			pool.gcWorker.Unlock()
-			return
-		}
-		if more {
-			time.Sleep(min(pool.idleTimeout/10, 500*time.Millisecond))
-		} else {
-			time.Sleep(min(5*time.Second, pool.idleTimeout/3))
-		}
-	}
-}
-
-// gcOnce runs gc once, recycles at most count goroutines.
-// finish indicates there're no more goroutines in the pool after gc,
-// more indicates there're still many goroutines to be recycled.
-func (pool *Pool) gcOnce(count int) (finish bool, more bool) {
-	now := time.Now()
-	i := 0
-	pool.Lock()
-	head := &pool.head
-	for head.next != nil && i < count {
-		save := head.next
-		duration := now.Sub(save.lastRun)
-		if duration < pool.idleTimeout {
-			break
-		}
-		close(save.ch)
-		head.next = save.next
-		pool.count--
-		i++
-	}
-	if head.next == nil {
-		finish = true
-		pool.tail = head
-	}
-	pool.Unlock()
-	more = (i == count)
-	return
-}
-
-func min(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
 }
