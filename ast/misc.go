@@ -408,7 +408,7 @@ type SetPwdStmt struct {
 	Password string
 }
 
-// SecureString overloads Node interface method.
+// SecureString implements SensitiveStatement interface.
 func (n *SetPwdStmt) SecureString() string {
 	return fmt.Sprintf("set password for user %s", n.User)
 }
@@ -462,7 +462,7 @@ func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// SecureString overloads Node interface method.
+// SecureString implements SensitiveStatement interface.
 func (n *CreateUserStmt) SecureString() string {
 	var buf bytes.Buffer
 	buf.WriteString("create user")
@@ -483,7 +483,7 @@ type AlterUserStmt struct {
 	Specs       []*UserSpec
 }
 
-// SecureString overloads Node interface method.
+// SecureString implements SensitiveStatement interface.
 func (n *AlterUserStmt) SecureString() string {
 	var buf bytes.Buffer
 	buf.WriteString("alter user")
@@ -678,7 +678,7 @@ type GrantStmt struct {
 	WithGrant  bool
 }
 
-// SecureString overloads Node interface method.
+// SecureString implements SensitiveStatement interface.
 func (n *GrantStmt) SecureString() string {
 	text := n.text
 	// Filter "identified by xxx" because it would expose password information.
