@@ -46,36 +46,34 @@ const (
 )
 
 func fieldTp2EvalTp(tp *types.FieldType) evalTp {
-	switch tp.ToClass() {
-	case types.ClassInt:
+	switch tp.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeBit, mysql.TypeYear:
 		return tpInt
-	case types.ClassReal:
+	case mysql.TypeFloat, mysql.TypeDouble:
 		return tpReal
-	case types.ClassDecimal:
+	case mysql.TypeNewDecimal:
 		return tpDecimal
-	case types.ClassString:
-		switch tp.Tp {
-		case mysql.TypeDate, mysql.TypeDatetime:
-			return tpDatetime
-		case mysql.TypeTimestamp:
-			return tpTimestamp
-		case mysql.TypeDuration:
-			return tpDuration
-		case mysql.TypeJSON:
-			return tpJSON
-		}
+	case mysql.TypeDate, mysql.TypeDatetime:
+		return tpDatetime
+	case mysql.TypeTimestamp:
+		return tpTimestamp
+	case mysql.TypeDuration:
+		return tpDuration
+	case mysql.TypeJSON:
+		return tpJSON
 	}
 	return tpString
 }
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args          []Expression
-	argValues     []types.Datum
-	ctx           context.Context
-	deterministic bool
-	tp            *types.FieldType
-	pbCode        tipb.ScalarFuncSig
+	args      []Expression
+	argValues []types.Datum
+	ctx       context.Context
+	foldable  bool // Default value is true because many expressions are foldable.
+	tp        *types.FieldType
+	pbCode    tipb.ScalarFuncSig
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
 	self builtinFunc
@@ -91,11 +89,11 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 
 func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
 	return baseBuiltinFunc{
-		args:          args,
-		argValues:     make([]types.Datum, len(args)),
-		ctx:           ctx,
-		deterministic: true,
-		tp:            types.NewFieldType(mysql.TypeUnspecified),
+		args:      args,
+		argValues: make([]types.Datum, len(args)),
+		ctx:       ctx,
+		foldable:  true,
+		tp:        types.NewFieldType(mysql.TypeUnspecified),
 	}
 }
 
@@ -192,11 +190,11 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ev
 		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
 	}
 	return baseBuiltinFunc{
-		args:          args,
-		argValues:     make([]types.Datum, len(args)),
-		ctx:           ctx,
-		deterministic: true,
-		tp:            fieldType,
+		args:      args,
+		argValues: make([]types.Datum, len(args)),
+		ctx:       ctx,
+		foldable:  true,
+		tp:        fieldType,
 	}
 }
 
@@ -215,9 +213,8 @@ func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err erro
 	return b.argValues, nil
 }
 
-// isDeterministic will be true by default. Non-deterministic function will override this function.
-func (b *baseBuiltinFunc) isDeterministic() bool {
-	return b.deterministic
+func (b *baseBuiltinFunc) canBeFolded() bool {
+	return b.foldable
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -297,10 +294,8 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	return b.tp
 }
 
-// equal only checks if both functions are non-deterministic and if these arguments are same.
-// Function name will be checked outside.
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
-	if !b.isDeterministic() || !fun.isDeterministic() {
+	if !b.canBeFolded() || !fun.canBeFolded() {
 		return false
 	}
 	funArgs := fun.getArgs()
@@ -656,10 +651,8 @@ type builtinFunc interface {
 	evalJSON(row []types.Datum) (val json.JSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
-	// isDeterministic checks if a function is deterministic.
-	// A function is deterministic if it returns the same result whenever it's called with the same inputs.
-	// e.g. SUBSTR, CONCAT is deterministic, but RANDOM, SYSDATE is not.
-	isDeterministic() bool
+	// canBeFolded checks whether a function can be folded in constant folding.
+	canBeFolded() bool
 	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
@@ -692,7 +685,7 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
-	getFunction(args []Expression, ctx context.Context) (builtinFunc, error)
+	getFunction(ctx context.Context, args []Expression) (builtinFunc, error)
 }
 
 // funcs holds all registered builtin functions.
@@ -808,7 +801,7 @@ var funcs = map[string]functionClass{
 	ast.Field:           &fieldFunctionClass{baseFunctionClass{ast.Field, 2, -1}},
 	ast.Format:          &formatFunctionClass{baseFunctionClass{ast.Format, 2, 3}},
 	ast.FromBase64:      &fromBase64FunctionClass{baseFunctionClass{ast.FromBase64, 1, 1}},
-	ast.InsertFunc:      &insertFuncFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
+	ast.InsertFunc:      &insertFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
 	ast.Instr:           &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 2}},
 	ast.Lcase:           &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
 	ast.Left:            &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
@@ -912,7 +905,7 @@ var funcs = map[string]functionClass{
 	ast.Mod:        &arithmeticFunctionClass{baseFunctionClass{ast.Mod, 2, 2}, opcode.Mod},
 	ast.Div:        &arithmeticDivideFunctionClass{baseFunctionClass{ast.Div, 2, 2}},
 	ast.Mul:        &arithmeticMultiplyFunctionClass{baseFunctionClass{ast.Mul, 2, 2}},
-	ast.IntDiv:     &arithmeticFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}, opcode.IntDiv},
+	ast.IntDiv:     &arithmeticIntDivideFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}},
 	ast.BitNeg:     &bitNegFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}},
 	ast.And:        &bitAndFunctionClass{baseFunctionClass{ast.And, 2, 2}},
 	ast.LeftShift:  &leftShiftFunctionClass{baseFunctionClass{ast.LeftShift, 2, 2}},
@@ -960,6 +953,6 @@ var funcs = map[string]functionClass{
 	ast.JSONReplace: &jsonReplaceFunctionClass{baseFunctionClass{ast.JSONReplace, 3, -1}},
 	ast.JSONRemove:  &jsonRemoveFunctionClass{baseFunctionClass{ast.JSONRemove, 2, -1}},
 	ast.JSONMerge:   &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
-	ast.JSONObject:  &jsonObjectFunctionClass{baseFunctionClass{ast.JSONObject, 2, -1}},
-	ast.JSONArray:   &jsonArrayFunctionClass{baseFunctionClass{ast.JSONArray, 1, -1}},
+	ast.JSONObject:  &jsonObjectFunctionClass{baseFunctionClass{ast.JSONObject, 0, -1}},
+	ast.JSONArray:   &jsonArrayFunctionClass{baseFunctionClass{ast.JSONArray, 0, -1}},
 }
