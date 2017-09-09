@@ -117,13 +117,6 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			err = errors.Errorf(unknownTypeCodeErrorMsg, j1.TypeCode)
 			return
 		}
-	} else if (precedence1 == jsonTypePrecedences["BOOLEAN"] && precedence2 == jsonTypePrecedences["INTEGER"]) ||
-		(precedence1 == jsonTypePrecedences["INTEGER"] && precedence2 == jsonTypePrecedences["BOOLEAN"]) {
-		// tidb treat boolean as integer, but boolean is different from integer in JSON.
-		// so we need convert them to same type and then compare.
-		left := i64AsFloat64(j1.I64, j1.TypeCode)
-		right := i64AsFloat64(j2.I64, j2.TypeCode)
-		cmp = compareFloat64PrecisionLoss(left, right)
 	} else {
 		cmp = precedence1 - precedence2
 	}

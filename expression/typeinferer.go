@@ -335,7 +335,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.Weekday, ast.WeekOfYear, ast.YearWeek, ast.DateDiff,
 		ast.FoundRows, ast.Length, ast.ASCII, ast.Extract, ast.Locate, ast.UnixTimestamp, ast.Quarter, ast.IsIPv4, ast.ToDays,
 		ast.ToSeconds, ast.Strcmp, ast.IsNull, ast.BitLength, ast.CharLength, ast.CRC32, ast.TimestampDiff,
-		ast.Sign, ast.IsIPv6, ast.Ord, ast.Instr, ast.BitCount, ast.TimeToSec, ast.FindInSet, ast.Field,
+		ast.Sign, ast.IsIPv6, ast.Ord, ast.Instr, ast.BitCount, ast.FindInSet, ast.Field,
 		ast.GetLock, ast.ReleaseLock, ast.Interval, ast.Position, ast.PeriodAdd, ast.PeriodDiff, ast.IsIPv4Mapped, ast.IsIPv4Compat, ast.UncompressedLength:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case ast.ConnectionID, ast.InetAton:
@@ -362,7 +362,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
 		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
-	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime, ast.UTCTime, ast.Time:
+	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.UTCTime, ast.Time:
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
 	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate, ast.LastDay:
@@ -491,7 +491,7 @@ func (v *typeInferrer) addCastToString(expr ast.ExprNode) ast.ExprNode {
 // For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
 // it will cause an error if we convert ENUM/SET to int as a string value.
 //
-// For Bit/Hex, we will get a wrong result if we convert it to int as a string value.
+// For BinaryLiteral/MysqlBit, we will get a wrong result if we convert it to int as a string value.
 // For example, when convert `0b101` to int, the result should be 5, but we will get 101 if we regard it as a string.
 func IsHybridType(expr Expression) bool {
 	switch expr.GetType().Tp {
@@ -499,10 +499,10 @@ func IsHybridType(expr Expression) bool {
 		return true
 	}
 
-	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is `HEX` or `BIT`.
+	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is BinaryLiteral
 	if con, ok := expr.(*Constant); ok {
 		switch con.Value.Kind() {
-		case types.KindMysqlHex, types.KindMysqlBit:
+		case types.KindBinaryLiteral:
 			return true
 		}
 	}

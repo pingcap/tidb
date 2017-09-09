@@ -23,8 +23,8 @@ import (
 	gotime "time"
 	"unicode"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 )
 
@@ -514,12 +514,32 @@ func (t *Time) Sub(t1 *Time) Duration {
 	}
 }
 
-// Add adds d to t, returns a duration value.
-// Note that add should not be done on different time types.
-func (t *Time) Add(d Duration) Duration {
-	d.Duration = gotime.Duration(-int64(d.Duration))
-	t2, _ := d.ConvertToTime(t.Type)
-	return t.Sub(&t2)
+// Add adds d to t, returns the result time value.
+func (t *Time) Add(d Duration) (Time, error) {
+	sign, hh, mm, ss, micro := splitDuration(d.Duration)
+	seconds, microseconds, _ := calcTimeDiff(t.Time, FromDate(0, 0, 0, hh, mm, ss, micro), -sign)
+	days := seconds / secondsIn24Hour
+	year, month, day := getDateFromDaynr(uint(days))
+	var tm mysqlTime
+	tm.year, tm.month, tm.day = uint16(year), uint8(month), uint8(day)
+	calcTimeFromSec(&tm, seconds%secondsIn24Hour, microseconds)
+	if t.Type == mysql.TypeDate {
+		tm.hour = 0
+		tm.minute = 0
+		tm.second = 0
+		tm.microsecond = 0
+	}
+	fsp := t.Fsp
+	if d.Fsp > fsp {
+		fsp = d.Fsp
+	}
+	ret := Time{
+		Time:     tm,
+		Type:     t.Type,
+		Fsp:      fsp,
+		TimeZone: t.TimeZone,
+	}
+	return ret, ret.Check()
 }
 
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
@@ -1343,17 +1363,9 @@ func checkDatetimeType(t TimeInternal, allowZeroDate bool) error {
 	return nil
 }
 
-// ExtractTimeNum extracts time value number from time unit and format.
-func ExtractTimeNum(unit string, t Time) (int64, error) {
+// ExtractDatetimeNum extracts time value number from datetime unit and format.
+func ExtractDatetimeNum(t *Time, unit string) (int64, error) {
 	switch strings.ToUpper(unit) {
-	case "MICROSECOND":
-		return int64(t.Time.Microsecond()), nil
-	case "SECOND":
-		return int64(t.Time.Second()), nil
-	case "MINUTE":
-		return int64(t.Time.Minute()), nil
-	case "HOUR":
-		return int64(t.Time.Hour()), nil
 	case "DAY":
 		return int64(t.Time.Day()), nil
 	case "WEEK":
@@ -1375,23 +1387,6 @@ func ExtractTimeNum(unit string, t Time) (int64, error) {
 		return (m + 2) / 3, nil
 	case "YEAR":
 		return int64(t.Time.Year()), nil
-	case "SECOND_MICROSECOND":
-		return int64(t.Time.Second())*1000000 + int64(t.Time.Microsecond()), nil
-	case "MINUTE_MICROSECOND":
-		_, m, s := t.Clock()
-		return int64(m)*100000000 + int64(s)*1000000 + int64(t.Time.Microsecond()), nil
-	case "MINUTE_SECOND":
-		_, m, s := t.Clock()
-		return int64(m*100 + s), nil
-	case "HOUR_MICROSECOND":
-		h, m, s := t.Clock()
-		return int64(h)*10000000000 + int64(m)*100000000 + int64(s)*1000000 + int64(t.Time.Microsecond()), nil
-	case "HOUR_SECOND":
-		h, m, s := t.Clock()
-		return int64(h)*10000 + int64(m)*100 + int64(s), nil
-	case "HOUR_MINUTE":
-		h, m, _ := t.Clock()
-		return int64(h)*100 + int64(m), nil
 	case "DAY_MICROSECOND":
 		h, m, s := t.Clock()
 		d := t.Time.Day()
@@ -1411,6 +1406,34 @@ func ExtractTimeNum(unit string, t Time) (int64, error) {
 	case "YEAR_MONTH":
 		y, m := t.Time.Year(), t.Time.Month()
 		return int64(y)*100 + int64(m), nil
+	default:
+		return 0, errors.Errorf("invalid unit %s", unit)
+	}
+}
+
+// ExtractDurationNum extracts duration value number from duration unit and format.
+func ExtractDurationNum(d *Duration, unit string) (int64, error) {
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND":
+		return int64(d.MicroSecond()), nil
+	case "SECOND":
+		return int64(d.Second()), nil
+	case "MINUTE":
+		return int64(d.Minute()), nil
+	case "HOUR":
+		return int64(d.Hour()), nil
+	case "SECOND_MICROSECOND":
+		return int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+	case "MINUTE_MICROSECOND":
+		return int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+	case "MINUTE_SECOND":
+		return int64(d.Minute()*100 + d.Second()), nil
+	case "HOUR_MICROSECOND":
+		return int64(d.Hour())*10000000000 + int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+	case "HOUR_SECOND":
+		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
+	case "HOUR_MINUTE":
+		return int64(d.Hour())*100 + int64(d.Minute()), nil
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)
 	}
@@ -2145,7 +2168,7 @@ func hour24TwoDigits(t *mysqlTime, input string, ctx map[string]int) (string, bo
 	if !succ || v >= 24 {
 		return input, false
 	}
-	t.hour = uint16(v)
+	t.hour = v
 	return input[2:], true
 }
 
@@ -2192,9 +2215,9 @@ func time12Hour(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	remain := skipWhiteSpace(input[8:])
 	switch {
 	case strings.HasPrefix(remain, "AM"):
-		t.hour = uint16(hour)
+		t.hour = hour
 	case strings.HasPrefix(remain, "PM"):
-		t.hour = uint16(hour + 12)
+		t.hour = hour + 12
 	default:
 		return input, false
 	}
@@ -2227,7 +2250,7 @@ func time24Hour(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 		return input, false
 	}
 
-	t.hour = uint16(hour)
+	t.hour = hour
 	t.minute = uint8(minute)
 	t.second = uint8(second)
 	return input[8:], true
@@ -2294,7 +2317,7 @@ func hour24Numeric(t *mysqlTime, input string, ctx map[string]int) (string, bool
 	if len(remain) == len(input) || v > 23 {
 		return input, false
 	}
-	t.hour = uint16(v)
+	t.hour = v
 	return remain, true
 }
 
@@ -2304,7 +2327,7 @@ func hour12Numeric(t *mysqlTime, input string, ctx map[string]int) (string, bool
 	if len(remain) == len(input) || v > 12 || v == 0 {
 		return input, false
 	}
-	t.hour = uint16(v)
+	t.hour = v
 	return remain, true
 }
 
