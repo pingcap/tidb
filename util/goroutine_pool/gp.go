@@ -38,8 +38,7 @@ type goroutine struct {
 const (
 	statusIdle  int32 = 0
 	statusInUse int32 = 1
-	statusDying int32 = 2 // Intermediate state used to avoid race: Idle => Dying => Dead
-	statusDead  int32 = 3
+	statusDead  int32 = 2
 )
 
 // New returns a new *Pool object.
@@ -60,10 +59,7 @@ func (pool *Pool) Go(f func()) {
 		if atomic.CompareAndSwapInt32(&g.status, statusIdle, statusInUse) {
 			break
 		}
-		// Status already changed from statusIdle => statusDying, delete this goroutine.
-		if atomic.LoadInt32(&g.status) == statusDying {
-			g.status = statusDead
-		}
+		// Status already changed from statusIdle => statusDead, drop it, find next one.
 	}
 
 	g.ch <- f
@@ -115,7 +111,7 @@ func (g *goroutine) workLoop(pool *Pool) {
 		case <-timer.C:
 			// Check to avoid a corner case that the goroutine is take out from pool,
 			// and get this signal at the same time.
-			succ := atomic.CompareAndSwapInt32(&g.status, statusIdle, statusDying)
+			succ := atomic.CompareAndSwapInt32(&g.status, statusIdle, statusDead)
 			if succ {
 				return
 			}
