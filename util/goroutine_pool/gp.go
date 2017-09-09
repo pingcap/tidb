@@ -53,18 +53,14 @@ func New(idleTimeout time.Duration) *Pool {
 // Go works like go func(), but goroutines are pooled for reusing.
 // This strategy can avoid runtime.morestack, because pooled goroutine is already enlarged.
 func (pool *Pool) Go(f func()) {
-	var g *goroutine
 	for {
-		g = pool.get()
+		g := pool.get()
 		if atomic.CompareAndSwapInt32(&g.status, statusIdle, statusInUse) {
-			break
+			g.ch <- f
+			return
 		}
 		// Status already changed from statusIdle => statusDead, drop it, find next one.
 	}
-
-	g.ch <- f
-	// When the goroutine finish f(), it will be put back to pool automatically,
-	// so it doesn't need to call pool.put() here.
 }
 
 func (pool *Pool) get() *goroutine {
