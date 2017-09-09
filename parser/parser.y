@@ -2634,7 +2634,7 @@ ReplacePriority:
 Literal:
 	"FALSE"
 	{
-		$$ = int64(0)
+		$$ = false
 	}
 |	"NULL"
 	{
@@ -2642,15 +2642,11 @@ Literal:
 	}
 |	"TRUE"
 	{
-		$$ = int64(1)
+		$$ = true
 	}
 |	floatLit
 |	decLit
 |	intLit
-	{
-		expr := ast.NewValueExpr($1)
-		$$ = expr
-	}
 |	StringLiteral %prec lowerThanStringLitToken
 	{
 		$$ = $1
@@ -4247,7 +4243,7 @@ CastType:
 |	"JSON"
 	{
 		x := types.NewFieldType(mysql.TypeJSON)
-		x.Flag |= mysql.BinaryFlag
+		x.Flag |= mysql.BinaryFlag | (mysql.ParseToJSONFlag)
 		x.Charset = charset.CharsetUTF8
 		x.Collate = charset.CollationUTF8
 		$$ = x

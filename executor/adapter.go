@@ -18,8 +18,8 @@ import (
 	"math"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
