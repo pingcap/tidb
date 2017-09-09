@@ -44,9 +44,9 @@ type idAllocator struct {
 	id int
 }
 
-func (a *idAllocator) allocID() string {
+func (a *idAllocator) allocID() int {
 	a.id++
-	return fmt.Sprintf("_%d", a.id)
+	return a.id
 }
 
 func (p *LogicalAggregation) collectGroupByColumns() {
@@ -92,7 +92,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			agg.AggFuncs = append(agg.AggFuncs, newFunc)
 			schema.Append(&expression.Column{
 				FromID:      agg.id,
-				ColName:     model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, position)),
+				ColName:     model.NewCIStr(fmt.Sprintf("%d_col_%d", agg.id, position)),
 				Position:    position,
 				IsAggOrSubq: true,
 				RetType:     newFunc.GetType()})
@@ -462,7 +462,7 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 }
 
 // buildProjectionField builds the field object according to SelectField in projection.
-func (b *planBuilder) buildProjectionField(id string, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
+func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
 	var tblName, colName model.CIStr
 	if field.AsName.L != "" {
 		// Field has alias.
@@ -615,6 +615,11 @@ func (by *ByItems) String() string {
 		return fmt.Sprintf("%s true", by.Expr)
 	}
 	return by.Expr.String()
+}
+
+// Clone makes a copy of ByItems.
+func (by *ByItems) Clone() *ByItems {
+	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
 }
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
@@ -1340,7 +1345,7 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	join := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	ap := &LogicalApply{LogicalJoin: *join}
 	ap.tp = TypeApply
-	ap.id = ap.tp + ap.allocator.allocID()
+	ap.id = ap.allocator.allocID()
 	ap.self = ap
 	ap.children[0].SetParents(ap)
 	ap.children[1].SetParents(ap)
@@ -1397,7 +1402,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		newSchema := outerPlan.Schema().Clone()
 		newSchema.Append(&expression.Column{
 			FromID:      joinPlan.id,
-			ColName:     model.NewCIStr(fmt.Sprintf("%s_aux_0", joinPlan.id)),
+			ColName:     model.NewCIStr(fmt.Sprintf("%d_aux_0", joinPlan.id)),
 			RetType:     types.NewFieldType(mysql.TypeTiny),
 			IsAggOrSubq: true,
 		})
@@ -1453,7 +1458,11 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		return nil
 	}
 	p = np
-	updt := Update{OrderedList: orderedList}.init(b.allocator, b.ctx)
+
+	updt := Update{
+		OrderedList: orderedList,
+		IgnoreErr:   update.IgnoreErr,
+	}.init(b.allocator, b.ctx)
 	addChild(updt, p)
 	updt.SetSchema(p.Schema())
 	return updt
