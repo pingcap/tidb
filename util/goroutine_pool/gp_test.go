@@ -48,13 +48,13 @@ func TestGC(t *testing.T) {
 	gp.Lock()
 	count := gp.count
 	gp.Unlock()
-	if count != 1 {
+	if count > 1 {
 		t.Error("all goroutines should be recycled", count)
 	}
 }
 
 func TestRace(t *testing.T) {
-	gp := New(200 * time.Millisecond)
+	gp := New(8 * time.Millisecond)
 	var wg sync.WaitGroup
 	begin := make(chan struct{})
 	wg.Add(500)

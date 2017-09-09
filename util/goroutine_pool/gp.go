@@ -92,7 +92,6 @@ func (pool *Pool) alloc() *goroutine {
 
 func (g *goroutine) put(pool *Pool) {
 	g.status = statusIdle
-	g.next = nil
 	pool.Lock()
 	pool.tail.next = g
 	pool.tail = g
