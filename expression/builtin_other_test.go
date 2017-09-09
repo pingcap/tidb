@@ -54,10 +54,10 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 	}
 	for _, test := range bitCountCases {
 		in := types.NewDatum(test.origin)
-		f, err := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{in}))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		count, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if count.IsNull() {
@@ -87,7 +87,7 @@ func (s *testEvaluatorSuite) TestRowFunc(c *C) {
 		{[]interface{}{"1", 1.2, true, 120}},
 	}
 	for _, tc := range testCases {
-		fn, err := fc.getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		fn, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		d, err := fn.eval(types.MakeDatums(tc.args...))
 		c.Assert(err, IsNil)
@@ -112,9 +112,9 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 		{[]interface{}{"c", "dEf"}, "dEf"},
 	}
 	for _, tc := range testCases {
-		fn, err := fc.getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		fn, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		c.Assert(fn.isDeterministic(), Equals, false)
+		c.Assert(fn.canBeFolded(), IsFalse)
 		d, err := fn.eval(types.MakeDatums(tc.args...))
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
@@ -154,9 +154,9 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		{[]interface{}{"d"}, ""},
 	}
 	for _, tc := range testCases {
-		fn, err := fc.getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		fn, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		c.Assert(fn.isDeterministic(), Equals, false)
+		c.Assert(fn.canBeFolded(), IsFalse)
 		d, err := fn.eval(types.MakeDatums(tc.args...))
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
@@ -166,11 +166,11 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 func (s *testEvaluatorSuite) TestValues(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1}
-	_, err := fc.getFunction(datumsToConstants(types.MakeDatums("")), s.ctx)
+	_, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums("")))
 	c.Assert(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'values'")
-	sig, err := fc.getFunction(datumsToConstants(types.MakeDatums()), s.ctx)
+	sig, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums()))
 	c.Assert(err, IsNil)
-	c.Assert(sig.isDeterministic(), Equals, false)
+	c.Assert(sig.canBeFolded(), IsFalse)
 	_, err = sig.eval(nil)
 	c.Assert(err.Error(), Equals, "Session current insert values is nil")
 	s.ctx.GetSessionVars().CurrInsertValues = types.MakeDatums("1")
