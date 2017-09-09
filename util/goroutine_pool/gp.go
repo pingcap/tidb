@@ -31,7 +31,6 @@ type Pool struct {
 // goroutine is actually a background goroutine, with a channel binded for communication.
 type goroutine struct {
 	ch     chan func()
-	pool   *Pool
 	next   *goroutine
 	status int32
 }
@@ -91,48 +90,49 @@ func (pool *Pool) get() *goroutine {
 	return ret
 }
 
-func (pool *Pool) put(p *goroutine) {
-	p.next = nil
+func (pool *Pool) alloc() *goroutine {
+	g := &goroutine{
+		ch: make(chan func()),
+	}
+	go g.workLoop(pool)
+	return g
+}
+
+func (g *goroutine) put(pool *Pool) {
+	g.status = statusIdle
+	g.next = nil
 	pool.Lock()
-	pool.tail.next = p
-	pool.tail = p
+	pool.tail.next = g
+	pool.tail = g
 	pool.count++
-	p.status = statusIdle
 	pool.Unlock()
 }
 
-func (pool *Pool) alloc() *goroutine {
-	g := &goroutine{
-		ch:   make(chan func()),
-		pool: pool,
-	}
-	go func(g *goroutine) {
-		timer := time.NewTimer(pool.idleTimeout)
-		for {
-			select {
-			case <-timer.C:
-				// Check to avoid a corner case that the goroutine is take out from pool,
-				// and get this signal at the same time.
-				succ := atomic.CompareAndSwapInt32(&g.status, statusIdle, statusDying)
-				if succ {
-					return
-				}
-			case work := <-g.ch:
-				work()
-				// Put g back to the pool.
-				// This is the normal usage for a resource pool:
-				//
-				//     obj := pool.get()
-				//     use(obj)
-				//     pool.put(obj)
-				//
-				// But when goroutine is used as a resource, we can't pool.put() immediately,
-				// because the resource(goroutine) maybe still in use.
-				// So, put back resource is done here,  when the goroutine finish its work.
-				pool.put(g)
+func (g *goroutine) workLoop(pool *Pool) {
+	timer := time.NewTimer(pool.idleTimeout)
+	for {
+		select {
+		case <-timer.C:
+			// Check to avoid a corner case that the goroutine is take out from pool,
+			// and get this signal at the same time.
+			succ := atomic.CompareAndSwapInt32(&g.status, statusIdle, statusDying)
+			if succ {
+				return
 			}
-			timer.Reset(pool.idleTimeout)
+		case work := <-g.ch:
+			work()
+			// Put g back to the pool.
+			// This is the normal usage for a resource pool:
+			//
+			//     obj := pool.get()
+			//     use(obj)
+			//     pool.put(obj)
+			//
+			// But when goroutine is used as a resource, we can't pool.put() immediately,
+			// because the resource(goroutine) maybe still in use.
+			// So, put back resource is done here,  when the goroutine finish its work.
+			g.put(pool)
 		}
-	}(g)
-	return g
+		timer.Reset(pool.idleTimeout)
+	}
 }
