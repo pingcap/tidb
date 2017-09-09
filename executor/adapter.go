@@ -148,8 +148,10 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		pi = raw
 		sql := a.OriginText()
 		if simple, ok := a.plan.(*plan.Simple); ok && simple.Statement != nil {
-			// Use SecureString to avoid leak password information.
-			sql = simple.Statement.SecureText()
+			if ss, ok := simple.Statement.(ast.SensitiveStatement); ok {
+				// Use SecureString to avoid leak password information.
+				sql = ss.SecureText()
+			}
 		}
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql)

@@ -37,8 +37,6 @@ type Node interface {
 	Text() string
 	// SetText sets original text to the Node.
 	SetText(text string)
-	// SecureText is different from Text that it hide password information.
-	SecureText() string
 }
 
 // Flags indicates whether an expression contains certain types of expression.
@@ -155,6 +153,13 @@ type ResultSetNode interface {
 	GetResultFields() []*ResultField
 	// SetResultFields sets result fields.
 	SetResultFields(fields []*ResultField)
+}
+
+// SensitiveStatement overloads Statement and provides a SecureText method.
+type SensitiveStatement interface {
+	Statement
+	// SecureText is different from Text that it hide password information.
+	SecureText() string
 }
 
 // Statement is an interface for SQL execution.
