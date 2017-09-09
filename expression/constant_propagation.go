@@ -14,7 +14,7 @@
 package expression
 
 import (
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -226,7 +226,7 @@ func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
 	s.propagateEQ()
 	s.propagateInEQ()
 	for i, cond := range s.conditions {
-		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.OrOr {
+		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
 				dnfItems[j] = ComposeCNFCondition(s.ctx, PropagateConstant(s.ctx, []Expression{item})...)

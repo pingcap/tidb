@@ -16,8 +16,8 @@ package tables
 import (
 	"sync"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -122,6 +122,16 @@ func (t *MemoryTable) Indices() []table.Index {
 	return nil
 }
 
+// WritableIndices implements table.Table WritableIndices interface.
+func (t *MemoryTable) WritableIndices() []table.Index {
+	return nil
+}
+
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (t *MemoryTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 // Meta implements table.Table Meta interface.
 func (t *MemoryTable) Meta() *model.TableInfo {
 	return t.meta
@@ -163,7 +173,7 @@ func (t *MemoryTable) Truncate() {
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum, newData []types.Datum, touched map[int]bool) error {
+func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	item := t.tree.Get(itemKey(h))

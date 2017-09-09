@@ -18,8 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
@@ -39,9 +39,12 @@ type Handle struct {
 	// PrevLastVersion will be assigned by LastVersion every time Update is called.
 	PrevLastVersion uint64
 	statsCache      atomic.Value
-	// ddlEventCh is a channel to notify a ddl operation has happened. It is sent only by owner and read by stats handle.
+	// ddlEventCh is a channel to notify a ddl operation has happened.
+	// It is sent only by owner or the drop stats executor, and read by stats handle.
 	ddlEventCh chan *ddl.Event
-
+	// analyzeResultCh is a channel to notify an analyze index or column operation has ended.
+	// We need this to avoid updating the stats simultaneously.
+	analyzeResultCh chan *AnalyzeResult
 	// All the stats collector required by session are maintained in this list.
 	listHead *SessionStatsCollector
 	// We collect the delta map and merge them with globalMap.
@@ -55,19 +58,33 @@ func (h *Handle) Clear() {
 	h.statsCache.Store(statsCache{})
 	h.LastVersion = 0
 	h.PrevLastVersion = 0
+	for len(h.ddlEventCh) > 0 {
+		<-h.ddlEventCh
+	}
+	for len(h.analyzeResultCh) > 0 {
+		<-h.analyzeResultCh
+	}
+	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap)}
+	h.globalMap = make(tableDeltaMap)
 }
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 	handle := &Handle{
-		ctx:        ctx,
-		ddlEventCh: make(chan *ddl.Event, 100),
-		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap)},
-		globalMap:  make(tableDeltaMap),
-		Lease:      lease,
+		ctx:             ctx,
+		ddlEventCh:      make(chan *ddl.Event, 100),
+		analyzeResultCh: make(chan *AnalyzeResult, 100),
+		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
+		globalMap:       make(tableDeltaMap),
+		Lease:           lease,
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
+}
+
+// AnalyzeResultCh returns analyze result channel in handle.
+func (h *Handle) AnalyzeResultCh() chan *AnalyzeResult {
+	return h.analyzeResultCh
 }
 
 // Update reads stats meta from store and updates the stats map.
@@ -82,6 +99,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		version, tableID, modifyCount, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64(), row.Data[3].GetInt64()
+		h.LastVersion = version
 		table, ok := is.TableByID(tableID)
 		if !ok {
 			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
@@ -92,7 +110,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl, err := h.tableStatsFromStorage(tableInfo)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
+			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, errors.ErrorStack(err))
 			continue
 		}
 		if tbl == nil {
@@ -103,7 +121,6 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.Count = count
 		tbl.ModifyCount = modifyCount
 		tables = append(tables, tbl)
-		h.LastVersion = version
 	}
 	h.UpdateTableStats(tables, deletedTableIDs)
 	return nil

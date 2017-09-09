@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testkit"
@@ -65,7 +66,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		expr string
 		tp   byte
 		chs  string
-		flag int
+		flag uint
 	}{
 		{"c_int", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag},
 		{"+1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -343,6 +344,10 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`json_insert('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
 		{`json_replace('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
 		{`json_merge('{"a": 1}', '3')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{"-9223372036854775809", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
+		{"-9223372036854775808", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"--9223372036854775809", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
+		{"--9223372036854775808", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -405,8 +410,8 @@ func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
 		{"c_enum", mysql.TypeEnum, true},
 		{"c_set", mysql.TypeSet, true},
 		{"c_bit", mysql.TypeBit, true},
-		{"0b1001", mysql.TypeVarchar, true},
-		{"0xFFFF", mysql.TypeVarchar, true},
+		{"0b1001", mysql.TypeVarString, true},
+		{"0xFFFF", mysql.TypeVarString, true},
 		{"c_dt", mysql.TypeDatetime, false},
 		{"c_date", mysql.TypeDate, false},
 		{"c_time", mysql.TypeDuration, false},
@@ -432,10 +437,11 @@ func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := tikv.NewMockTikvStore()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tidb.SetSchemaLease(0)
 	_, err = tidb.BootstrapSession(store)
 	return store, errors.Trace(err)
 }

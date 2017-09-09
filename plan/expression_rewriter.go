@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -93,8 +94,8 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-	result := expression.FoldConstant(er.ctxStack[0])
-	return result, er.p, nil
+
+	return er.ctxStack[0], er.p, nil
 }
 
 type expressionRewriter struct {
@@ -143,7 +144,11 @@ func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Exp
 		return ret, errors.Trace(err)
 	}
 	c, _ := e.(*expression.Constant)
-	ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
+	if getRowLen(c) == 2 {
+		ret = &expression.Constant{Value: c.Value.GetRow()[1], RetType: c.GetType()}
+	} else {
+		ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
+	}
 	return
 }
 
@@ -186,11 +191,12 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 			expr1, _ = expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 			expr2, _ = expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		}
-		l, err := popRowArg(er.ctx, l)
+		var err error
+		l, err = popRowArg(er.ctx, l)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		r, err := popRowArg(er.ctx, r)
+		r, err = popRowArg(er.ctx, r)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -675,9 +681,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
 	case *ast.ValueExpr:
-		tp := &types.FieldType{}
-		types.DefaultTypeForValue(v.GetValue(), tp)
-		value := &expression.Constant{Value: v.Datum, RetType: tp}
+		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
@@ -747,21 +751,16 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				er.ctxStack[stkLen-1])
 			return
 		}
-		if _, ok := sessionVars.Users[name]; ok {
-			f, err := expression.NewFunction(er.ctx,
-				ast.GetVar,
-				// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
-				types.NewFieldType(mysql.TypeString),
-				datumToConstant(types.NewStringDatum(name), mysql.TypeString))
-			if err != nil {
-				er.err = errors.Trace(err)
-				return
-			}
-			er.ctxStack = append(er.ctxStack, f)
-		} else {
-			// select null user vars is permitted.
-			er.ctxStack = append(er.ctxStack, &expression.Constant{RetType: types.NewFieldType(mysql.TypeNull)})
+		f, err := expression.NewFunction(er.ctx,
+			ast.GetVar,
+			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
+			types.NewFieldType(mysql.TypeString),
+			datumToConstant(types.NewStringDatum(name), mysql.TypeString))
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
 		}
+		er.ctxStack = append(er.ctxStack, f)
 		return
 	}
 	var val string
@@ -880,8 +879,9 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-// inToExpression convert in expression to a scalar function. The argument lLen means the length of in list.
+// inToExpression converts in expression to a scalar function. The argument lLen means the length of in list.
 // The argument not means if the expression is not in. The tp stands for the expression type, which is always bool.
+// a in (b, c, d) will be rewritted as `(a = b) or (a = c) or (a = d)`.
 func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	l := getRowLen(er.ctxStack[stkLen-lLen-1])
@@ -891,7 +891,37 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			return
 		}
 	}
-	function := er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
+	// a in (b, c, d)
+	leftArg := er.ctxStack[stkLen-lLen-1]
+	// function ==> a = b
+	function, err := er.constructBinaryOpFunction(leftArg, er.ctxStack[stkLen-lLen], ast.EQ)
+	if err != nil {
+		er.err = err
+		return
+	}
+	// function ==> (a = b) or (a = c) or (a = d)
+	for i := stkLen - lLen + 1; i < stkLen; i++ {
+		var expr expression.Expression
+		expr, err = er.constructBinaryOpFunction(leftArg, er.ctxStack[i], ast.EQ)
+		if err != nil {
+			er.err = err
+			return
+		}
+		fieldTp := &types.FieldType{Tp: mysql.TypeLonglong, Flen: 1, Decimal: 0, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag}
+		function, err = expression.NewFunction(er.ctx, ast.LogicOr, fieldTp, function, expr)
+		if err != nil {
+			er.err = err
+			return
+		}
+	}
+	if not {
+		tp := *function.GetType()
+		function, err = expression.NewFunction(er.ctx, ast.UnaryNot, &tp, function)
+		if err != nil {
+			er.err = err
+			return
+		}
+	}
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -1000,7 +1030,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	if er.err == nil {
 		r, er.err = expression.NewFunction(er.ctx, ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
 	}
-	op = ast.AndAnd
+	op = ast.LogicAnd
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
 		return
@@ -1030,11 +1060,54 @@ func (er *expressionRewriter) checkArgsOneColumn(args ...expression.Expression) 
 	}
 }
 
+// rewriteFuncCall handles a FuncCallExpr and generates a customized function.
+// It should return true if for the given FuncCallExpr a rewrite is performed so that original behavior is skipped.
+// Otherwise it should return false to indicate (the caller) that original behavior needs to be performed.
+func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
+	switch v.FnName.L {
+	case ast.Nullif:
+		if len(v.Args) != 2 {
+			er.err = expression.ErrIncorrectParameterCount.GenByArgs(v.FnName.O)
+			return true
+		}
+		stackLen := len(er.ctxStack)
+		param1 := er.ctxStack[stackLen-2]
+		param2 := er.ctxStack[stackLen-1]
+		// param1 = param2
+		funcCompare, err := er.constructBinaryOpFunction(param1, param2, ast.EQ)
+		if err != nil {
+			er.err = err
+			return true
+		}
+		// NULL
+		nullTp := types.NewFieldType(mysql.TypeNull)
+		nullTp.Flen, nullTp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
+		paramNull := &expression.Constant{
+			Value:   types.NewDatum(nil),
+			RetType: nullTp,
+		}
+		// if(param1 = param2, NULL, param1)
+		funcIf, err := expression.NewFunction(er.ctx, ast.If, &v.Type, funcCompare, paramNull, param1)
+		if err != nil {
+			er.err = err
+			return true
+		}
+		er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
+		er.ctxStack = append(er.ctxStack, funcIf)
+		return true
+	default:
+		return false
+	}
+}
+
 func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	stackLen := len(er.ctxStack)
 	args := er.ctxStack[stackLen-len(v.Args):]
 	er.checkArgsOneColumn(args...)
 	if er.err != nil {
+		return
+	}
+	if er.rewriteFuncCall(v) {
 		return
 	}
 	var function expression.Expression
@@ -1061,7 +1134,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		if err != nil {
-			er.err = errors.Trace(err)
+			er.err = ErrAmbiguous.GenByArgs(v.Name)
 			return
 		}
 	}
@@ -1076,5 +1149,5 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-	er.err = errors.Errorf("Unknown column %s %s %s.", v.Schema.L, v.Table.L, v.Name.L)
+	er.err = ErrUnknownColumn.GenByArgs(v.Text(), "field list")
 }

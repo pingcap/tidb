@@ -29,19 +29,29 @@ import (
 type TypeCode byte
 
 const (
-	typeCodeObject  TypeCode = 0x01
-	typeCodeArray   TypeCode = 0x03
-	typeCodeLiteral TypeCode = 0x04
-	typeCodeInt64   TypeCode = 0x09
-	typeCodeUint64  TypeCode = 0x0a
-	typeCodeFloat64 TypeCode = 0x0b
-	typeCodeString  TypeCode = 0x0c
+	// TypeCodeObject indicates the JSON is an object.
+	TypeCodeObject TypeCode = 0x01
+	// TypeCodeArray indicates the JSON is an array.
+	TypeCodeArray TypeCode = 0x03
+	// TypeCodeLiteral indicates the JSON is a literal.
+	TypeCodeLiteral TypeCode = 0x04
+	// TypeCodeInt64 indicates the JSON is a signed integer.
+	TypeCodeInt64 TypeCode = 0x09
+	// TypeCodeUint64 indicates the JSON is a unsigned integer.
+	TypeCodeUint64 TypeCode = 0x0a
+	// TypeCodeFloat64 indicates the JSON is a double float number.
+	TypeCodeFloat64 TypeCode = 0x0b
+	// TypeCodeString indicates the JSON is a string.
+	TypeCodeString TypeCode = 0x0c
 )
 
 const (
-	jsonLiteralNil   byte = 0x00
-	jsonLiteralTrue  byte = 0x01
-	jsonLiteralFalse byte = 0x02
+	// LiteralNil represents JSON null.
+	LiteralNil byte = 0x00
+	// LiteralTrue represents JSON true.
+	LiteralTrue byte = 0x01
+	// LiteralFalse represents JSON false.
+	LiteralFalse byte = 0x02
 )
 
 const unknownTypeCodeErrorMsg = "unknown type code: %d"
@@ -49,11 +59,11 @@ const unknownTypeErrorMsg = "unknown type: %s"
 
 // JSON is for MySQL JSON type.
 type JSON struct {
-	typeCode TypeCode
-	i64      int64
-	str      string
-	object   map[string]JSON
-	array    []JSON
+	TypeCode TypeCode
+	I64      int64
+	Str      string
+	Object   map[string]JSON
+	Array    []JSON
 }
 
 // CreateJSON creates a JSON from in. Panic if any error occurs.
@@ -81,32 +91,32 @@ func ParseFromString(s string) (j JSON, err error) {
 
 // MarshalJSON implements Marshaler interface.
 func (j JSON) MarshalJSON() ([]byte, error) {
-	switch j.typeCode {
-	case typeCodeObject:
-		return json.Marshal(j.object)
-	case typeCodeArray:
-		return json.Marshal(j.array)
-	case typeCodeLiteral:
-		switch byte(j.i64) {
-		case jsonLiteralNil:
+	switch j.TypeCode {
+	case TypeCodeObject:
+		return json.Marshal(j.Object)
+	case TypeCodeArray:
+		return json.Marshal(j.Array)
+	case TypeCodeLiteral:
+		switch byte(j.I64) {
+		case LiteralNil:
 			return []byte("null"), nil
-		case jsonLiteralTrue:
+		case LiteralTrue:
 			return []byte("true"), nil
 		default:
 			return []byte("false"), nil
 		}
-	case typeCodeInt64:
-		return json.Marshal(j.i64)
-	case typeCodeUint64:
-		u64 := *(*uint64)(unsafe.Pointer(&j.i64))
+	case TypeCodeInt64:
+		return json.Marshal(j.I64)
+	case TypeCodeUint64:
+		u64 := *(*uint64)(unsafe.Pointer(&j.I64))
 		return json.Marshal(u64)
-	case typeCodeFloat64:
-		f64 := *(*float64)(unsafe.Pointer(&j.i64))
+	case TypeCodeFloat64:
+		f64 := *(*float64)(unsafe.Pointer(&j.I64))
 		return json.Marshal(f64)
-	case typeCodeString:
-		return json.Marshal(j.str)
+	case TypeCodeString:
+		return json.Marshal(j.Str)
 	default:
-		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.typeCode)
+		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.TypeCode)
 		panic(msg)
 	}
 }

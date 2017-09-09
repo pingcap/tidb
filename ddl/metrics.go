@@ -22,7 +22,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "waiting_jobs",
 			Help:      "Gauge of jobs.",
-		}, []string{"type", "action"})
+		}, []string{"action"})
 
 	// handle job result state.
 	handleJobSucc      = "handle_job_succ"
@@ -34,7 +34,7 @@ var (
 			Name:      "handle_job_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle jobs",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
-		}, []string{"type", "action", "result_state"})
+		}, []string{"action", "result_state"})
 
 	// handle batch data type.
 	batchAddCol              = "batch_add_col"

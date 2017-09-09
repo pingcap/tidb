@@ -42,12 +42,16 @@ func mockFactory() (pools.Resource, error) {
 	return nil, errors.New("mock factory should not be called")
 }
 
+func sysMockFactory(dom *Domain) (pools.Resource, error) {
+	return nil, nil
+}
+
 func (*testSuite) TestT(c *C) {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
 	defer testleak.AfterTest(c)()
-	dom, err := NewDomain(store, 80*time.Millisecond, 0, mockFactory)
+	dom, err := NewDomain(store, 80*time.Millisecond, 0, mockFactory, sysMockFactory)
 	c.Assert(err, IsNil)
 	store = dom.Store()
 	ctx := mock.NewContext()
@@ -91,10 +95,6 @@ func (*testSuite) TestT(c *C) {
 	err = dom.Reload()
 	c.Assert(err, IsNil)
 	succ = dom.SchemaValidator.Check(ts, schemaVer)
-	c.Assert(succ, IsTrue)
-	ver, err = store.CurrentVersion()
-	c.Assert(err, IsNil)
-	succ = dom.SchemaValidator.Check(ver.Ver, schemaVer)
 	c.Assert(succ, IsTrue)
 
 	err = store.Close()

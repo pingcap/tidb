@@ -39,6 +39,8 @@ var (
 type SelectResult interface {
 	// Next gets the next partial result.
 	Next() (PartialResult, error)
+	// NextRaw gets the next raw result.
+	NextRaw() ([]byte, error)
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
@@ -66,7 +68,7 @@ type selectResult struct {
 }
 
 type resultWithErr struct {
-	result PartialResult
+	result []byte
 	err    error
 }
 
@@ -90,11 +92,9 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 		if resultSubset == nil {
 			return
 		}
-		pr := &partialResult{}
-		pr.unmarshal(resultSubset)
 
 		select {
-		case r.results <- resultWithErr{result: pr}:
+		case r.results <- resultWithErr{result: resultSubset}:
 		case <-r.closed:
 			// if selectResult called Close() already, make fetch goroutine exit
 			return
@@ -106,6 +106,20 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 
 // Next returns the next row.
 func (r *selectResult) Next() (PartialResult, error) {
+	re := <-r.results
+	if re.err != nil {
+		return nil, errors.Trace(re.err)
+	}
+	if re.result == nil {
+		return nil, nil
+	}
+	pr := &partialResult{}
+	err := pr.unmarshal(re.result)
+	return pr, errors.Trace(err)
+}
+
+// NextRaw returns the next raw partial result.
+func (r *selectResult) NextRaw() ([]byte, error) {
 	re := <-r.results
 	return re.result, errors.Trace(re.err)
 }
@@ -184,7 +198,7 @@ func (pr *partialResult) Close() error {
 // concurrency: The max concurrency for underlying coprocessor request.
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
-func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
+func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, isolationLevel kv.IsoLevel, priority int) (SelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics
@@ -196,7 +210,7 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 	}()
 
 	// Convert tipb.*Request to kv.Request.
-	kvReq, err1 := composeRequest(req, keyRanges, concurrency, keepOrder)
+	kvReq, err1 := composeRequest(req, keyRanges, concurrency, keepOrder, isolationLevel, priority)
 	if err1 != nil {
 		err = errors.Trace(err1)
 		return nil, err
@@ -204,8 +218,7 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
-		err = errors.New("client returns nil response")
-		return nil, err
+		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
 		resp:    resp,
@@ -229,7 +242,7 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 // concurrency: The max concurrency for underlying coprocessor request.
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
-func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, desc bool) (SelectResult, error) {
+func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, desc bool, isolationLevel kv.IsoLevel, priority int) (SelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics.
@@ -241,11 +254,13 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 	}()
 
 	kvReq := &kv.Request{
-		Tp:          kv.ReqTypeDAG,
-		Concurrency: concurrency,
-		KeepOrder:   keepOrder,
-		KeyRanges:   keyRanges,
-		Desc:        desc,
+		Tp:             kv.ReqTypeDAG,
+		Concurrency:    concurrency,
+		KeepOrder:      keepOrder,
+		KeyRanges:      keyRanges,
+		Desc:           desc,
+		IsolationLevel: isolationLevel,
+		Priority:       priority,
 	}
 	kvReq.Data, err = dag.Marshal()
 	if err != nil {
@@ -254,8 +269,7 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
-		err = errors.New("client returns nil response")
-		return nil, errors.Trace(err)
+		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
 		label:   "dag",
@@ -266,12 +280,52 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 	return result, nil
 }
 
-// Convert tipb.Request to kv.Request.
-func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (*kv.Request, error) {
+// Analyze do a analyze request.
+func Analyze(client kv.Client, ctx goctx.Context, req *tipb.AnalyzeReq, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, priority int) (SelectResult, error) {
+	var err error
+	defer func() {
+		// Add metrics.
+		if err != nil {
+			queryCounter.WithLabelValues(queryFailed).Inc()
+		} else {
+			queryCounter.WithLabelValues(querySucc).Inc()
+		}
+	}()
 	kvReq := &kv.Request{
-		Concurrency: concurrency,
-		KeepOrder:   keepOrder,
-		KeyRanges:   keyRanges,
+		Tp:             kv.ReqTypeAnalyze,
+		Concurrency:    concurrency,
+		KeepOrder:      keepOrder,
+		KeyRanges:      keyRanges,
+		Desc:           false,
+		IsolationLevel: kv.RC,
+		Priority:       priority,
+	}
+	kvReq.Data, err = req.Marshal()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	resp := client.Send(ctx, kvReq)
+	if resp == nil {
+		return nil, errors.New("client returns nil response")
+	}
+	result := &selectResult{
+		label:   "analyze",
+		resp:    resp,
+		results: make(chan resultWithErr, concurrency),
+		closed:  make(chan struct{}),
+	}
+	return result, nil
+}
+
+// Convert tipb.Request to kv.Request.
+func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, isolationLevel kv.IsoLevel, priority int) (*kv.Request, error) {
+	kvReq := &kv.Request{
+		Concurrency:    concurrency,
+		KeepOrder:      keepOrder,
+		KeyRanges:      keyRanges,
+		IsolationLevel: isolationLevel,
+		Priority:       priority,
 	}
 	if req.IndexInfo != nil {
 		kvReq.Tp = kv.ReqTypeIndex
@@ -299,6 +353,7 @@ const (
 func FieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 	return &types.FieldType{
 		Tp:      byte(col.GetTp()),
+		Flag:    uint(col.Flag),
 		Flen:    int(col.GetColumnLen()),
 		Decimal: int(col.GetDecimal()),
 		Elems:   col.Elems,

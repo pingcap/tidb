@@ -45,7 +45,7 @@ type testColumnSuite struct {
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_column")
-	s.d = newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	s.d = testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
@@ -110,7 +110,6 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	ctx := testNewContext(s.d)
 
 	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
-
 	t := testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 
 	num := 10
@@ -228,7 +227,6 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	values, err = t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
-
 	c.Assert(values, HasLen, 5)
 	c.Assert(values[0].GetInt64(), Equals, int64(202))
 	c.Assert(values[4].GetInt64(), Equals, int64(101))
@@ -739,7 +737,7 @@ func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool
 
 func (s *testColumnSuite) TestAddColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(d)
 
@@ -763,7 +761,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	var hookErr error
 	checkOK := false
 
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -792,7 +790,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 		}
 	}
 
-	d.setHook(tc)
+	d.SetHook(tc)
 
 	// Use local ddl for callback test.
 	s.d.Stop()
@@ -825,7 +823,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 4)
 	ctx := testNewContext(d)
 
@@ -833,7 +831,6 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	colName := "c4"
@@ -849,7 +846,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	var hookErr error
 	var mu sync.Mutex
 
-	tc := &testDDLCallback{}
+	tc := &TestDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -868,7 +865,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 		}
 	}
 
-	d.setHook(tc)
+	d.SetHook(tc)
 
 	// Use local ddl for callback test.
 	s.d.Stop()
@@ -899,7 +896,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
-	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	tests := []struct {
 		origin string

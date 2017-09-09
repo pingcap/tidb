@@ -58,8 +58,12 @@ var (
 	_ PhysicalPlan = &Insert{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
+	_ PhysicalPlan = &PhysicalTableReader{}
+	_ PhysicalPlan = &PhysicalIndexReader{}
+	_ PhysicalPlan = &PhysicalIndexLookUpReader{}
 	_ PhysicalPlan = &PhysicalAggregation{}
 	_ PhysicalPlan = &PhysicalApply{}
+	_ PhysicalPlan = &PhysicalIndexJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalHashSemiJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
@@ -75,6 +79,9 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -96,6 +103,9 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -117,6 +127,9 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -164,6 +177,9 @@ type PhysicalMemTable struct {
 	Columns     []*model.ColumnInfo
 	Ranges      []types.IntColumnRange
 	TableAsName *model.CIStr
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -242,6 +258,12 @@ type physicalTableSource struct {
 
 	// filterCondition is only used by new planner.
 	filterCondition []expression.Expression
+
+	// NeedColHandle is used in execution phase.
+	NeedColHandle bool
+
+	// TODO: This should be removed after old planner was removed.
+	unionScanSchema *expression.Schema
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -314,16 +336,18 @@ func needValue(af expression.AggregationFunction) bool {
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
 }
 
-func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) PhysicalPlan {
+func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan, s *expression.Schema) PhysicalPlan {
 	if p.readOnly {
 		return resultPlan
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := PhysicalUnionScan{
-		Conditions: append(conditions, p.AccessCondition...),
+		Conditions:    append(conditions, p.AccessCondition...),
+		NeedColHandle: p.NeedColHandle,
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
-	us.SetSchema(resultPlan.Schema())
+	us.SetSchema(s)
+	p.NeedColHandle = true
 	return us
 }
 
@@ -446,6 +470,8 @@ type PhysicalApply struct {
 
 	PhysicalJoin PhysicalPlan
 	OuterSchema  []*expression.CorrelatedColumn
+
+	rightChOffset int
 }
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
@@ -477,6 +503,9 @@ type PhysicalIndexJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 	outerIndex      int
+	KeepOrder       bool
+	outerSchema     *expression.Schema
+	innerPlan       PhysicalPlan
 
 	DefaultValues []types.Datum
 }
@@ -495,6 +524,9 @@ type PhysicalMergeJoin struct {
 
 	DefaultValues []types.Datum
 	Desc          bool
+
+	leftKeys  []*expression.Column
+	rightKeys []*expression.Column
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.
@@ -509,6 +541,8 @@ type PhysicalHashSemiJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+
+	rightChOffset int
 }
 
 // AggregationType stands for the mode of aggregation plan.
@@ -522,6 +556,19 @@ const (
 	// CompleteAgg supposes its input is original results.
 	CompleteAgg
 )
+
+// String implements fmt.Stringer interface.
+func (at AggregationType) String() string {
+	switch at {
+	case StreamedAgg:
+		return "stream"
+	case FinalAgg:
+		return "final"
+	case CompleteAgg:
+		return "complete"
+	}
+	return "unsupported aggregation type"
+}
 
 // PhysicalAggregation is Aggregation's physical plan.
 type PhysicalAggregation struct {
@@ -539,7 +586,8 @@ type PhysicalUnionScan struct {
 	*basePlan
 	basePhysicalPlan
 
-	Conditions []expression.Expression
+	NeedColHandle bool
+	Conditions    []expression.Expression
 }
 
 // Cache plan is a physical plan which stores the result of its child node.
@@ -735,18 +783,18 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 			buffer.WriteString(fmt.Sprintf(
 				"\"innerPlan\": \"%s\",\n "+
 					"\"outerPlan\": \"%s\",\n "+
-					"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
+					"\"join\": %s\n}", p.children[1].ExplainID(), p.children[0].ExplainID(), join))
 		} else {
 			buffer.WriteString(fmt.Sprintf(
 				"\"innerPlan\": \"%s\",\n "+
 					"\"outerPlan\": \"%s\",\n "+
-					"\"join\": %s\n}", p.children[0].ID(), p.children[1].ID(), join))
+					"\"join\": %s\n}", p.children[0].ExplainID(), p.children[1].ExplainID(), join))
 		}
 	case *PhysicalHashSemiJoin:
 		buffer.WriteString(fmt.Sprintf(
 			"\"innerPlan\": \"%s\",\n "+
 				"\"outerPlan\": \"%s\",\n "+
-				"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
+				"\"join\": %s\n}", p.children[1].ExplainID(), p.children[0].ExplainID(), join))
 	}
 	return buffer.Bytes(), nil
 }
@@ -790,7 +838,7 @@ func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
 			"\"leftPlan\": \"%s\",\n "+
 			"\"rightPlan\": \"%s\""+
 			"}",
-		p.WithAux, p.Anti, eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID()))
+		p.WithAux, p.Anti, eqConds, leftConds, rightConds, otherConds, leftChild.ExplainID(), rightChild.ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -847,7 +895,7 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 			"\"leftPlan\": \"%s\",\n "+
 			"\"rightPlan\": \"%s\""+
 			"}",
-		eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID()))
+		eqConds, leftConds, rightConds, otherConds, leftChild.ExplainID(), rightChild.ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -881,7 +929,7 @@ func (p *PhysicalMergeJoin) MarshalJSON() ([]byte, error) {
 			"\"rightPlan\": \"%s\",\n"+
 			"\"desc\": \"%v\""+
 			"}",
-		eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID(), p.Desc))
+		eqConds, leftConds, rightConds, otherConds, leftChild.ExplainID(), rightChild.ExplainID(), p.Desc))
 	return buffer.Bytes(), nil
 }
 
@@ -904,7 +952,7 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(""+
 		" \"condition\": %s,\n"+
 		" \"scanController\": %v,"+
-		" \"child\": \"%s\"\n}", conds, p.controllerStatus != notController, p.children[0].ID()))
+		" \"child\": \"%s\"\n}", conds, p.controllerStatus != notController, p.children[0].ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -926,7 +974,7 @@ func (p *Projection) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
-			" \"child\": \"%s\"\n}", exprs, p.children[0].ID()))
+			" \"child\": \"%s\"\n}", exprs, p.children[0].ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -973,7 +1021,7 @@ func (p *Limit) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		" \"limit\": %d,\n"+
 			" \"offset\": %d,\n"+
-			" \"child\": \"%s\"}", p.Count, p.Offset, child.ID()))
+			" \"child\": \"%s\"}", p.Count, p.Offset, child.ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -1021,7 +1069,7 @@ func (p *Sort) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
 			" \"limit\": %s,\n"+
-			" \"child\": \"%s\"}", exprs, limitCount, p.children[0].ID()))
+			" \"child\": \"%s\"}", exprs, limitCount, p.children[0].ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -1065,7 +1113,7 @@ func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		"\"AggFuncs\": %s,\n"+
 			"\"GroupByItems\": %s,\n"+
-			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].ID()))
+			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].ExplainID()))
 	return buffer.Bytes(), nil
 }
 
@@ -1110,4 +1158,44 @@ func (p *Cache) Copy() PhysicalPlan {
 	np.basePlan = p.basePlan.copy()
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
+}
+
+func buildSchema(p PhysicalPlan) {
+	switch x := p.(type) {
+	case *Limit, *TopN, *Sort, *Selection, *MaxOneRow, *SelectLock:
+		p.SetSchema(p.Children()[0].Schema())
+	case *PhysicalHashJoin, *PhysicalMergeJoin, *PhysicalIndexJoin:
+		p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
+	case *PhysicalApply:
+		buildSchema(x.PhysicalJoin)
+		x.schema = x.PhysicalJoin.Schema()
+	case *PhysicalHashSemiJoin:
+		if x.WithAux {
+			auxCol := x.schema.Columns[x.Schema().Len()-1]
+			x.SetSchema(x.children[0].Schema().Clone())
+			x.schema.Append(auxCol)
+		} else {
+			x.SetSchema(x.children[0].Schema().Clone())
+		}
+	case *Union:
+		panic("Union shouldn't rebuild schema")
+	}
+}
+
+// rebuildSchema rebuilds the schema for physical plans, because new planner may change indexjoin's schema.
+func rebuildSchema(p PhysicalPlan) bool {
+	needRebuild := false
+	for _, ch := range p.Children() {
+		needRebuild = needRebuild || rebuildSchema(ch.(PhysicalPlan))
+	}
+	if needRebuild {
+		buildSchema(p)
+	}
+	switch p.(type) {
+	case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin:
+		needRebuild = true
+	case *Projection, *PhysicalAggregation:
+		needRebuild = false
+	}
+	return needRebuild
 }

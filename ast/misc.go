@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/auth"
 )
 
 var (
@@ -43,6 +44,14 @@ var (
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
+)
+
+// Isolation level constants.
+const (
+	ReadCommitted   = "READ-COMMITTED"
+	ReadUncommitted = "READ-UNCOMMITTED"
+	Serializable    = "SERIALIZABLE"
+	RepeatableRead  = "REPEATABLE-READ"
 )
 
 // TypeOpt is used for parsing data type option from SQL.
@@ -393,7 +402,7 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 type SetPwdStmt struct {
 	stmtNode
 
-	User     string
+	User     *auth.UserIdentity
 	Password string
 }
 
@@ -409,7 +418,7 @@ func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
 
 // UserSpec is used for parsing create user statement.
 type UserSpec struct {
-	User    string
+	User    *auth.UserIdentity
 	AuthOpt *AuthOption
 }
 
@@ -424,7 +433,7 @@ func (u *UserSpec) SecurityString() string {
 	if withPassword {
 		return fmt.Sprintf("{%s password = ***}", u.User)
 	}
-	return u.User
+	return u.User.String()
 }
 
 // CreateUserStmt creates user account.
@@ -472,7 +481,7 @@ type DropUserStmt struct {
 	stmtNode
 
 	IfExists bool
-	UserList []string
+	UserList []*auth.UserIdentity
 }
 
 // Accept implements Node Accept interface.
@@ -516,6 +525,7 @@ type AdminStmtType int
 const (
 	AdminShowDDL = iota + 1
 	AdminCheckTable
+	AdminShowDDLJobs
 )
 
 // AdminStmt is the struct for Admin statement.
@@ -673,7 +683,7 @@ func (i Ident) Full(ctx context.Context) (full Ident) {
 	return
 }
 
-// String implements fmt.Stringer interface
+// String implements fmt.Stringer interface.
 func (i Ident) String() string {
 	if i.Schema.O == "" {
 		return i.Name.O

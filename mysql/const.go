@@ -14,19 +14,23 @@
 package mysql
 
 import (
+	"fmt"
 	"strings"
 )
 
-// Version informations.
+// Version information.
 const (
 	MinProtocolVersion byte = 10
 	MaxPayloadLen      int  = 1<<24 - 1
 	// The version number should be three digits.
 	// See https://dev.mysql.com/doc/refman/5.7/en/which-version.html
-	ServerVersion string = "5.7.1-TiDB-1.0"
+	TiDBReleaseVersion string = "0.9.0"
 )
 
-// Header informations.
+// ServerVersion is the version information of this tidb-server in MySQL's format.
+var ServerVersion = fmt.Sprintf("5.7.1-TiDB-%s", TiDBReleaseVersion)
+
+// Header information.
 const (
 	OKHeader          byte = 0x00
 	ErrHeader         byte = 0xff
@@ -34,7 +38,7 @@ const (
 	LocalInFileHeader byte = 0xfb
 )
 
-// Server informations.
+// Server information.
 const (
 	ServerStatusInTrans            uint16 = 0x0001
 	ServerStatusAutocommit         uint16 = 0x0002
@@ -55,9 +59,10 @@ const (
 	MaxTableNameLength    int = 64
 	MaxDatabaseNameLength int = 64
 	MaxColumnNameLength   int = 64
+	MaxKeyParts           int = 16
 )
 
-// Command informations.
+// Command information.
 const (
 	ComSleep byte = iota
 	ComQuit
@@ -93,7 +98,7 @@ const (
 	ComResetConnection
 )
 
-// Client informations.
+// Client information.
 const (
 	ClientLongPassword uint32 = 1 << iota
 	ClientFoundRows
@@ -119,12 +124,12 @@ const (
 	ClientPluginAuthLenencClientData
 )
 
-// Cache type informations.
+// Cache type information.
 const (
 	TypeNoCache byte = 0xff
 )
 
-// Auth name informations.
+// Auth name information.
 const (
 	AuthName = "mysql_native_password"
 )
@@ -201,13 +206,30 @@ const (
 
 	MaxIntWidth             = 20
 	MaxRealWidth            = 23
+	MaxDecimalScale         = 30
+	MaxDecimalWidth         = 65
 	MaxDateWidth            = 10 // YYYY-MM-DD.
 	MaxDatetimeWidthNoFsp   = 19 // YYYY-MM-DD HH:MM:SS
 	MaxDatetimeWidthWithFsp = 26 // YYYY-MM-DD HH:MM:SS[.fraction]
-	MaxDurationWidthNoFsp   = 9  // HH:MM:SS
+	MaxDurationWidthNoFsp   = 10 // HH:MM:SS
 	MaxDurationWidthWithFsp = 15 // HH:MM:SS[.fraction]
 	MaxBlobWidth            = 16777216
 )
+
+// MySQL max type field length.
+const (
+	MaxFieldCharLength    = 255
+	MaxFieldVarCharLength = 65535
+)
+
+// MySQL precision.
+const (
+	PrecisionForDouble = 53
+	PrecisionForFloat  = 24
+)
+
+// MaxTypeSetMembers is the number of set members.
+const MaxTypeSetMembers = 64
 
 // PWDHashLen is the length of password's hash.
 const PWDHashLen = 40
@@ -466,4 +488,9 @@ const (
 	LowPriority
 	HighPriority
 	DelayedPriority
+)
+
+// PrimaryKeyName defines primary key name.
+const (
+	PrimaryKeyName = "PRIMARY"
 )

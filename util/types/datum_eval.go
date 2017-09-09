@@ -16,6 +16,7 @@ package types
 import (
 	"math"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -54,12 +55,10 @@ func CoerceArithmetic(sc *variable.StatementContext, a Datum) (d Datum, err erro
 		}
 		d.SetMysqlDecimal(de)
 		return d, nil
-	case KindMysqlHex:
-		d.SetFloat64(a.GetMysqlHex().ToNumber())
-		return d, nil
-	case KindMysqlBit:
-		d.SetFloat64(a.GetMysqlBit().ToNumber())
-		return d, nil
+	case KindBinaryLiteral, KindMysqlBit:
+		val, err1 := a.GetBinaryLiteral().ToInt()
+		d.SetUint64(val)
+		return d, err1
 	case KindMysqlEnum:
 		d.SetFloat64(a.GetMysqlEnum().ToNumber())
 		return d, nil
@@ -109,6 +108,7 @@ func ComputePlus(a, b Datum) (d Datum, err error) {
 			r := new(MyDecimal)
 			err = DecimalAdd(a.GetMysqlDecimal(), b.GetMysqlDecimal(), r)
 			d.SetMysqlDecimal(r)
+			d.SetFrac(mathutil.Max(a.Frac(), b.Frac()))
 			return d, err
 		}
 	}
@@ -405,7 +405,8 @@ func decimal2RoundUint(x *MyDecimal) (uint64, error) {
 		err   error
 	)
 	if roundX.IsNegative() {
-		intX, err := roundX.ToInt()
+		var intX int64
+		intX, err = roundX.ToInt()
 		if err != nil && err != ErrTruncated {
 			return 0, errors.Trace(err)
 		}

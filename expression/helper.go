@@ -71,7 +71,7 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 		if upperX == CurrentTimestamp {
 			value.Time = types.FromGoTime(defaultTime)
 			if tp == mysql.TypeTimestamp {
-				err := value.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
+				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
 				if err != nil {
 					return d, errors.Trace(err)
 				}

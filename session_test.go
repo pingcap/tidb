@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -72,6 +73,49 @@ func (s *testSessionSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
+	defer testleak.AfterTest(c)()
+	lease := 5 * time.Millisecond
+	validator := domain.NewSchemaValidator(lease)
+	checker := &schemaLeaseChecker{SchemaValidator: validator}
+
+	// Add some schema versions and delta table IDs.
+	ts := uint64(time.Now().UnixNano())
+	validator.Update(ts, 0, 2, []int64{1})
+	validator.Update(ts, 2, 4, []int64{2})
+
+	// checker's schema version is the same as the current schema version.
+	checker.schemaVer = 4
+	err := checker.checkOnce(ts)
+	c.Assert(err, IsNil)
+
+	// checker's schema version is less than the current schema version, and it doesn't exist in validator's items.
+	// checker's related table ID isn't in validator's changed table IDs.
+	checker.schemaVer = 2
+	checker.relatedTableIDs = []int64{3}
+	err = checker.checkOnce(ts)
+	c.Assert(err, IsNil)
+	// The checker's schema version isn't in validator's items.
+	checker.schemaVer = 1
+	checker.relatedTableIDs = []int64{3}
+	err = checker.checkOnce(ts)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
+	// checker's related table ID is in validator's changed table IDs.
+	checker.relatedTableIDs = []int64{2}
+	err = checker.checkOnce(ts)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
+
+	// validator's latest schema version is expired.
+	time.Sleep(lease + time.Microsecond)
+	checker.schemaVer = 2
+	checker.relatedTableIDs = []int64{3}
+	err = checker.checkOnce(ts)
+	c.Assert(err, IsNil)
+	nowTS := uint64(time.Now().UnixNano())
+	err = checker.checkOnce(nowTS)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaExpired), IsTrue)
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
@@ -1273,10 +1317,49 @@ func (s *testSessionSuite) TestBit(c *C) {
 	mustExecSQL(c, se, "insert into t values (0), (1), (2), (3)")
 	_, err := exec(se, "insert into t values (4)")
 	c.Assert(err, NotNil)
+	_, err = exec(se, "insert into t values ('a')")
+	c.Assert(err, NotNil)
 	r := mustExecSQL(c, se, "select * from t where c1 = 2")
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlBit(), Equals, types.Bit{Value: 2, Width: 2})
+	c.Assert(row.Data[0].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(31))")
+	mustExecSQL(c, se, "insert into t values (0x7fffffff)")
+	_, err = exec(se, "insert into t values (0x80000000)")
+	c.Assert(err, NotNil)
+	_, err = exec(se, "insert into t values (0xffffffff)")
+	c.Assert(err, NotNil)
+	mustExecSQL(c, se, "insert into t values ('123')")
+	mustExecSQL(c, se, "insert into t values ('1234')")
+	_, err = exec(se, "insert into t values ('12345)")
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(62))")
+	mustExecSQL(c, se, "insert into t values ('12345678')")
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(61))")
+	_, err = exec(se, "insert into t values ('12345678')")
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(32))")
+	mustExecSQL(c, se, "insert into t values (0x7fffffff)")
+	mustExecSQL(c, se, "insert into t values (0xffffffff)")
+	_, err = exec(se, "insert into t values (0x1ffffffff)")
+	c.Assert(err, NotNil)
+	mustExecSQL(c, se, "insert into t values ('1234')")
+	_, err = exec(se, "insert into t values ('12345')")
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(64))")
+	mustExecSQL(c, se, "insert into t values (0xffffffffffffffff)")
+	mustExecSQL(c, se, "insert into t values ('12345678')")
+	_, err = exec(se, "insert into t values ('123456789')")
+	c.Assert(err, NotNil)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -1546,7 +1629,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	c.Assert(row.Data[0].GetValue(), IsNil)
 	fs, err := rs.Fields()
 	c.Assert(err, IsNil)
-	c.Assert(fs[0].Column.FieldType.Tp, Equals, mysql.TypeString)
+	c.Assert(fs[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -1681,6 +1764,13 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 		{"select (1+1)", "(1+1)"},
 		{"select a from t", "a"},
 		{"select        ((a+1))     from t", "((a+1))"},
+		{"select 1 /*!32301 +1 */;", "1  +1 "},
+		{"select /*!32301 1  +1 */;", "1  +1 "},
+		{"/*!32301 select 1  +1 */;", "1  +1 "},
+		{"select 1 + /*!32301 1 +1 */;", "1 +  1 +1 "},
+		{"select 1 /*!32301 + 1, 1 */;", "1  + 1"},
+		{"select /*!32301 1, 1 +1 */;", "1"},
+		{"select /*!32301 1 + 1, */ +1;", "1 + 1"},
 	}
 	for _, tt := range tests {
 		results, err := se.Execute(tt.sql)
@@ -2015,7 +2105,7 @@ func (s *testSessionSuite) TestSessionAuth(c *C) {
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
 	se := newSession(c, s.store, dbName)
 	defer se.Close()
-	c.Assert(se.Auth("Any not exist username with zero password! @anyhost", []byte(""), []byte("")), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")), IsFalse)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -2031,11 +2121,11 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 
 	privileges.Enable = true
 	privileges.SkipWithGrant = false
-	c.Assert(se.Auth("user_not_exist", []byte("yyy"), []byte("zzz")), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")), IsFalse)
 
 	privileges.SkipWithGrant = true
-	c.Assert(se.Auth(`xxx@%`, []byte("yyy"), []byte("zzz")), IsTrue)
-	c.Assert(se.Auth(`root@%`, []byte(""), []byte("")), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "%"}, []byte("yyy"), []byte("zzz")), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "create table t (id int)")
 
 	privileges.Enable = save1
@@ -2113,7 +2203,7 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	//mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
 	sql = "select c1 from t where c1 in (1.1) and c2 > 3"
-	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[]->Projection")
+	checkPlan(c, se, sql, "Table(t)->Selection->Projection")
 	mustExecMatch(c, se, sql, [][]interface{}{})
 
 	// Test varchar type.
@@ -2189,7 +2279,11 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
 
-	_, err = exec(se, "create table t (c1 varchar(3068), c2 bit(26), index(c1, c2));")
+	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(26), index(c1, c2));") // 26 bit = 4 bytes
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(32), index(c1, c2));") // 32 bit = 4 bytes
+	mustExecSQL(c, se, "drop table if exists t;")
+	_, err = exec(se, "create table t (c1 varchar(3068), c2 bit(33), index(c1, c2));")
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
 
@@ -2219,12 +2313,6 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 timestamp(1));")
-	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(26));")
 	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)

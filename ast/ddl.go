@@ -234,10 +234,6 @@ const (
 	ColumnOptionNotNull
 	ColumnOptionAutoIncrement
 	ColumnOptionDefaultValue
-	ColumnOptionUniq
-	ColumnOptionIndex
-	ColumnOptionUniqIndex
-	ColumnOptionKey
 	ColumnOptionUniqKey
 	ColumnOptionNull
 	ColumnOptionOnUpdate // For Timestamp and Datetime only.
@@ -473,6 +469,9 @@ type RenameTableStmt struct {
 
 	OldTable *TableName
 	NewTable *TableName
+	// TODO: Refactor this when you are going to add full support for multiple schema changes.
+	// Currently it is only useful for syncer which depends heavily on tidb parser to do some dirty work.
+	TableToTables []*TableToTable
 }
 
 // Accept implements Node Accept interface.
@@ -482,6 +481,42 @@ func (n *RenameTableStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*RenameTableStmt)
+	node, ok := n.OldTable.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.OldTable = node.(*TableName)
+	node, ok = n.NewTable.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.NewTable = node.(*TableName)
+
+	for i, t := range n.TableToTables {
+		node, ok := t.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.TableToTables[i] = node.(*TableToTable)
+	}
+
+	return v.Leave(n)
+}
+
+// TableToTable represents renaming old table to new table used in RenameTableStmt.
+type TableToTable struct {
+	node
+	OldTable *TableName
+	NewTable *TableName
+}
+
+// Accept implements Node Accept interface.
+func (n *TableToTable) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*TableToTable)
 	node, ok := n.OldTable.Accept(v)
 	if !ok {
 		return n, false
@@ -504,6 +539,7 @@ type CreateIndexStmt struct {
 	Table         *TableName
 	Unique        bool
 	IndexColNames []*IndexColName
+	IndexOption   *IndexOption
 }
 
 // Accept implements Node Accept interface.
@@ -524,6 +560,13 @@ func (n *CreateIndexStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.IndexColNames[i] = node.(*IndexColName)
+	}
+	if n.IndexOption != nil {
+		node, ok := n.IndexOption.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.IndexOption = node.(*IndexOption)
 	}
 	return v.Leave(n)
 }

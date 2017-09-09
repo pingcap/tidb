@@ -18,8 +18,8 @@ import (
 	"reflect"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -64,22 +64,46 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-// GetBgDDLInfo returns background DDL information.
-func GetBgDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
-	var err error
-	info := &DDLInfo{}
+// GetDDLJobs returns the DDL jobs and an error.
+func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
-
-	info.Job, err = t.GetBgJob(0)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	info.SchemaVer, err = t.GetSchemaVersion()
+	cnt, err := t.DDLJobQueueLen()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return info, nil
+	jobs := make([]*model.Job, cnt)
+	for i := range jobs {
+		jobs[i], err = t.GetDDLJob(int64(i))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return jobs, nil
+}
+
+const maxHistoryJobs = 10
+
+// GetHistoryDDLJobs returns the DDL history jobs and an error.
+// The maximum count of history jobs is maxHistoryJobs.
+func GetHistoryDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
+	t := meta.NewMeta(txn)
+	jobs, err := t.GetAllHistoryDDLJobs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	jobsLen := len(jobs)
+	if jobsLen > maxHistoryJobs {
+		start := jobsLen - maxHistoryJobs
+		jobs = jobs[start:]
+	}
+	jobsLen = len(jobs)
+	ret := make([]*model.Job, 0, jobsLen)
+	for i := jobsLen - 1; i >= 0; i-- {
+		ret = append(ret, jobs[i])
+	}
+	return ret, nil
 }
 
 func nextIndexVals(data []types.Datum) []types.Datum {
@@ -185,7 +209,7 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx table.Index) err
 		}
 
 		vals2, err := rowWithCols(txn, t, h, cols)
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
+		if kv.ErrNotExist.Equal(err) {
 			record := &RecordData{Handle: h, Values: vals1}
 			err = errDateNotEqual.Gen("index:%v != record:%v", record, nil)
 		}
@@ -211,7 +235,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx table.Index) err
 	startKey := t.RecordKey(0)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		isExist, h2, err := idx.Exist(txn, vals1, h1)
-		if terror.ErrorEqual(err, kv.ErrKeyExists) {
+		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
 			return false, errDateNotEqual.Gen("index:%v != record:%v", record2, record1)
