@@ -2724,7 +2724,7 @@ func (b *builtinMakeTimeSig) evalDuration(row []types.Datum) (types.Duration, bo
 		minute = 59
 		second = 59
 	}
-	fsp := b.self.getRetTp().Decimal
+	fsp := b.tp.Decimal
 	dur, err = types.ParseDuration(fmt.Sprintf("%02d:%02d:%v", hour, minute, second), fsp)
 	if err != nil {
 		return dur, true, errors.Trace(err)
