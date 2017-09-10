@@ -31,6 +31,8 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
+const newSessionRetryInterval = 200 * time.Millisecond
+
 // Manager is used to campaign the owner and manage the owner information.
 type Manager interface {
 	// ID returns the ID of the manager.
@@ -120,6 +122,8 @@ func setManagerSessionTTL() error {
 func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
 	var err error
 	var etcdSession *concurrency.Session
+	failedCnt := 0
+	intervalCnt := int(3 * time.Second / newSessionRetryInterval)
 	for i := 0; i < retryCnt; i++ {
 		if isContextDone(ctx) {
 			return etcdSession, errors.Trace(ctx.Err())
@@ -130,8 +134,11 @@ func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, r
 		if err == nil {
 			break
 		}
-		log.Warnf("%s failed to new session, err %v", logPrefix, err)
+		if failedCnt%intervalCnt == 0 {
+			log.Warnf("%s failed to new session, err %v", logPrefix, err)
+		}
 		time.Sleep(200 * time.Millisecond)
+		failedCnt++
 	}
 	return etcdSession, errors.Trace(err)
 }
