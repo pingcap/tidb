@@ -103,7 +103,7 @@ func (b *builtinSetVarSig) evalString(row []types.Datum) (res string, isNull boo
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
-	varName, res = strings.ToLower(varName), strings.ToLower(res)
+	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
 	sessionVars.Users[varName] = res
 	sessionVars.UsersLock.Unlock()
