@@ -174,67 +174,6 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestAffectedRows(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_affect_rows"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, s.createTableSQL)
-	mustExecSQL(c, se, `INSERT INTO t VALUES ("a");`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `INSERT INTO t VALUES ("b");`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `UPDATE t set id = 'c' where id = 'a';`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `UPDATE t set id = 'a' where id = 'a';`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-	mustExecSQL(c, se, `SELECT * from t;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, data int)")
-	mustExecSQL(c, se, `INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where data = 0;`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, c1 timestamp);")
-	mustExecSQL(c, se, `insert t values(1, 0);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where id = 1;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-
-	// With ON DUPLICATE KEY UPDATE, the affected-rows value per row is 1 if the row is inserted as a new row,
-	// 2 if an existing row is updated, and 0 if an existing row is set to its current values.
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (c1 int PRIMARY KEY, c2 int);")
-	mustExecSQL(c, se, `insert t values(1, 1);`)
-	mustExecSQL(c, se, `insert into t values (1, 1) on duplicate key update c2=2;`)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-	mustExecSQL(c, se, `insert into t values (1, 1) on duplicate key update c2=2;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-	createSQL := `CREATE TABLE IF NOT EXISTS test (
-	  id        VARCHAR(36) PRIMARY KEY NOT NULL,
-	  factor    INTEGER                 NOT NULL                   DEFAULT 2);`
-	mustExecSQL(c, se, createSQL)
-	insertSQL := `INSERT INTO test(id) VALUES('id') ON DUPLICATE KEY UPDATE factor=factor+3;`
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-
-	se.SetClientCapability(mysql.ClientFoundRows)
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, data int)")
-	mustExecSQL(c, se, `INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where data = 0;`)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-
-	sessionExec(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestString(c *C) {
 	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
@@ -1317,10 +1256,49 @@ func (s *testSessionSuite) TestBit(c *C) {
 	mustExecSQL(c, se, "insert into t values (0), (1), (2), (3)")
 	_, err := exec(se, "insert into t values (4)")
 	c.Assert(err, NotNil)
+	_, err = exec(se, "insert into t values ('a')")
+	c.Assert(err, NotNil)
 	r := mustExecSQL(c, se, "select * from t where c1 = 2")
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlBit(), Equals, types.Bit{Value: 2, Width: 2})
+	c.Assert(row.Data[0].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(31))")
+	mustExecSQL(c, se, "insert into t values (0x7fffffff)")
+	_, err = exec(se, "insert into t values (0x80000000)")
+	c.Assert(err, NotNil)
+	_, err = exec(se, "insert into t values (0xffffffff)")
+	c.Assert(err, NotNil)
+	mustExecSQL(c, se, "insert into t values ('123')")
+	mustExecSQL(c, se, "insert into t values ('1234')")
+	_, err = exec(se, "insert into t values ('12345)")
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(62))")
+	mustExecSQL(c, se, "insert into t values ('12345678')")
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(61))")
+	_, err = exec(se, "insert into t values ('12345678')")
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(32))")
+	mustExecSQL(c, se, "insert into t values (0x7fffffff)")
+	mustExecSQL(c, se, "insert into t values (0xffffffff)")
+	_, err = exec(se, "insert into t values (0x1ffffffff)")
+	c.Assert(err, NotNil)
+	mustExecSQL(c, se, "insert into t values ('1234')")
+	_, err = exec(se, "insert into t values ('12345')")
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(64))")
+	mustExecSQL(c, se, "insert into t values (0xffffffffffffffff)")
+	mustExecSQL(c, se, "insert into t values ('12345678')")
+	_, err = exec(se, "insert into t values ('123456789')")
+	c.Assert(err, NotNil)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -2094,52 +2072,6 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestErrorRollback(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_error_rollback"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	s1 := newSession(c, s.store, dbName)
-
-	defer s1.Close()
-
-	mustExecSQL(c, s1, "drop table if exists t_rollback")
-	mustExecSQL(c, s1, "create table t_rollback (c1 int, c2 int, primary key(c1))")
-
-	_, err := s1.Execute("insert into t_rollback values (0, 0)")
-	c.Assert(err, IsNil)
-
-	var wg sync.WaitGroup
-	cnt := 4
-	wg.Add(cnt)
-	num := 100
-
-	for i := 0; i < cnt; i++ {
-		go func() {
-			defer wg.Done()
-			se := newSession(c, s.store, dbName)
-			// retry forever
-			se.(*session).unlimitedRetryCount = true
-			defer se.Close()
-
-			for j := 0; j < num; j++ {
-				// force generate a txn in session for later insert use.
-				se.(*session).GetTxn(false)
-
-				se.Execute("insert into t_rollback values (1, 1)")
-
-				_, err1 := se.Execute("update t_rollback set c2 = c2 + 1 where c1 = 0")
-				c.Assert(err1, IsNil)
-			}
-		}()
-	}
-
-	wg.Wait()
-
-	mustExecMatch(c, s1, "select c2 from t_rollback where c1 = 0", [][]interface{}{{cnt * num}})
-
-	mustExecSQL(c, s1, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_multi_column_index"
@@ -2240,7 +2172,11 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
 
-	_, err = exec(se, "create table t (c1 varchar(3068), c2 bit(26), index(c1, c2));")
+	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(26), index(c1, c2));") // 26 bit = 4 bytes
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(32), index(c1, c2));") // 32 bit = 4 bytes
+	mustExecSQL(c, se, "drop table if exists t;")
+	_, err = exec(se, "create table t (c1 varchar(3068), c2 bit(33), index(c1, c2));")
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
 
@@ -2270,12 +2206,6 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 timestamp(1));")
-	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(26));")
 	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)

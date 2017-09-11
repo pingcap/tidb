@@ -36,6 +36,7 @@ package server
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -45,8 +46,8 @@ import (
 	"strings"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -56,17 +57,12 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
-	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
-	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts | mysql.ClientPluginAuth
-
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
-	pkt          *packetIO // a helper to read and write data in packet format.
-	conn         net.Conn
+	pkt          *packetIO         // a helper to read and write data in packet format.
+	bufReadConn  *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
+	tlsConn      *tls.Conn         // TLS connection, nil if not TLS.
 	server       *Server           // a reference of server instance.
 	capability   uint32            // client capability affects the way server handles client request.
 	connectionID uint32            // atomically allocated by a global variable, unique in process scope.
@@ -84,7 +80,7 @@ type clientConn struct {
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
 	return fmt.Sprintf("id:%d, addr:%s status:%d, collation:%s, user:%s",
-		cc.connectionID, cc.conn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
+		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
 }
 
@@ -95,7 +91,7 @@ func (cc *clientConn) handshake() error {
 	if err := cc.writeInitialHandshake(); err != nil {
 		return errors.Trace(err)
 	}
-	if err := cc.readHandshakeResponse(); err != nil {
+	if err := cc.readOptionalSSLRequestAndHandshakeResponse(); err != nil {
 		cc.writeError(err)
 		return errors.Trace(err)
 	}
@@ -122,7 +118,7 @@ func (cc *clientConn) Close() error {
 	connections := len(cc.server.clients)
 	cc.server.rwlock.Unlock()
 	connGauge.Set(float64(connections))
-	cc.conn.Close()
+	cc.bufReadConn.Close()
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -146,24 +142,23 @@ func (cc *clientConn) writeInitialHandshake() error {
 	// filler [00]
 	data = append(data, 0)
 	// capability flag lower 2 bytes, using default capability here
-	data = append(data, byte(defaultCapability), byte(defaultCapability>>8))
+	data = append(data, byte(cc.server.capability), byte(cc.server.capability>>8))
 	// charset
 	if cc.collation == 0 {
 		cc.collation = uint8(mysql.DefaultCollationID)
 	}
 	data = append(data, cc.collation)
-	//status
+	// status
 	data = append(data, dumpUint16(mysql.ServerStatusAutocommit)...)
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
-	data = append(data, byte(defaultCapability>>16), byte(defaultCapability>>24))
-	// filler [0x15], for wireshark dump, value is 0x15
-	data = append(data, 0x15)
+	data = append(data, byte(cc.server.capability>>16), byte(cc.server.capability>>24))
+	// length of auth-plugin-data
+	data = append(data, byte(len(cc.salt)+1))
 	// reserved 10 [00]
 	data = append(data, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 	// auth-plugin-data-part-2
 	data = append(data, cc.salt[8:]...)
-	// filler [00]
 	data = append(data, 0)
 	// auth-plugin name
 	data = append(data, []byte("mysql_native_password")...)
@@ -192,7 +187,33 @@ type handshakeResponse41 struct {
 	Attrs      map[string]string
 }
 
-func handshakeResponseFromData(packet *handshakeResponse41, data []byte) (err error) {
+// parseHandshakeResponseHeader parses the common header of SSLRequest and HandshakeResponse41.
+func parseHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
+	// Ensure there are enough data to read:
+	// http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
+	if len(data) < 4+4+1+23 {
+		log.Errorf("Got malformed handshake response, packet data: %v", data)
+		return 0, mysql.ErrMalformPacket
+	}
+
+	offset := 0
+	// capability
+	capability := binary.LittleEndian.Uint32(data[:4])
+	packet.Capability = capability
+	offset += 4
+	// skip max packet size
+	offset += 4
+	// charset, skip, if you want to use another charset, use set names
+	packet.Collation = data[offset]
+	offset++
+	// skip reserved 23[00]
+	offset += 23
+
+	return offset, nil
+}
+
+// Parse the HandshakeResponse (except the common header part).
+func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset int) (err error) {
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
@@ -200,74 +221,63 @@ func handshakeResponseFromData(packet *handshakeResponse41, data []byte) (err er
 			err = mysql.ErrMalformPacket
 		}
 	}()
-	pos := 0
-	// capability
-	capability := binary.LittleEndian.Uint32(data[:4])
-	packet.Capability = capability
-	pos += 4
-	// skip max packet size
-	pos += 4
-	// charset
-	packet.Collation = data[pos]
-	pos++
-	// skip reserved 23[00]
-	pos += 23
 	// user name
-	packet.User = string(data[pos : pos+bytes.IndexByte(data[pos:], 0)])
-	pos += len(packet.User) + 1
+	packet.User = string(data[offset : offset+bytes.IndexByte(data[offset:], 0)])
+	offset += len(packet.User) + 1
 
-	if capability&mysql.ClientPluginAuthLenencClientData > 0 {
+	if packet.Capability&mysql.ClientPluginAuthLenencClientData > 0 {
 		// MySQL client sets the wrong capability, it will set this bit even server doesn't
 		// support ClientPluginAuthLenencClientData.
 		// https://github.com/mysql/mysql-server/blob/5.7/sql-common/client.c#L3478
-		num, null, off := parseLengthEncodedInt(data[pos:])
-		pos += off
+		num, null, off := parseLengthEncodedInt(data[offset:])
+		offset += off
 		if !null {
-			packet.Auth = data[pos : pos+int(num)]
-			pos += int(num)
+			packet.Auth = data[offset : offset+int(num)]
+			offset += int(num)
 		}
-	} else if capability&mysql.ClientSecureConnection > 0 {
+	} else if packet.Capability&mysql.ClientSecureConnection > 0 {
 		// auth length and auth
-		authLen := int(data[pos])
-		pos++
-		packet.Auth = data[pos : pos+authLen]
-		pos += authLen
+		authLen := int(data[offset])
+		offset++
+		packet.Auth = data[offset : offset+authLen]
+		offset += authLen
 	} else {
-		packet.Auth = data[pos : pos+bytes.IndexByte(data[pos:], 0)]
-		pos += len(packet.Auth) + 1
+		packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
+		offset += len(packet.Auth) + 1
 	}
 
-	if capability&mysql.ClientConnectWithDB > 0 {
-		if len(data[pos:]) > 0 {
-			idx := bytes.IndexByte(data[pos:], 0)
-			packet.DBName = string(data[pos : pos+idx])
-			pos = pos + idx + 1
+	if packet.Capability&mysql.ClientConnectWithDB > 0 {
+		if len(data[offset:]) > 0 {
+			idx := bytes.IndexByte(data[offset:], 0)
+			packet.DBName = string(data[offset : offset+idx])
+			offset = offset + idx + 1
 		}
 	}
 
-	if capability&mysql.ClientPluginAuth > 0 {
+	if packet.Capability&mysql.ClientPluginAuth > 0 {
 		// TODO: Support mysql.ClientPluginAuth, skip it now
-		idx := bytes.IndexByte(data[pos:], 0)
-		pos = pos + idx + 1
+		idx := bytes.IndexByte(data[offset:], 0)
+		offset = offset + idx + 1
 	}
 
-	if capability&mysql.ClientConnectAtts > 0 {
-		if len(data[pos:]) == 0 {
+	if packet.Capability&mysql.ClientConnectAtts > 0 {
+		if len(data[offset:]) == 0 {
 			// Defend some ill-formated packet, connection attribute is not important and can be ignored.
 			return nil
 		}
-		if num, null, off := parseLengthEncodedInt(data[pos:]); !null {
-			pos += off
-			kv := data[pos : pos+int(num)]
+		if num, null, off := parseLengthEncodedInt(data[offset:]); !null {
+			offset += off
+			kv := data[offset : offset+int(num)]
 			attrs, err := parseAttrs(kv)
 			if err != nil {
 				log.Warn("parse attrs error:", errors.ErrorStack(err))
 				return nil
 			}
 			packet.Attrs = attrs
-			pos += int(num)
+			offset += int(num)
 		}
 	}
+
 	return nil
 }
 
@@ -291,35 +301,65 @@ func parseAttrs(data []byte) (map[string]string, error) {
 	return attrs, nil
 }
 
-func (cc *clientConn) readHandshakeResponse() error {
+func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
+	// Read a packet. It may be a SSLRequest or HandshakeResponse.
 	data, err := cc.readPacket()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	var p handshakeResponse41
-	if err = handshakeResponseFromData(&p, data); err != nil {
+	var resp handshakeResponse41
+
+	pos, err := parseHandshakeResponseHeader(&resp, data)
+	if err != nil {
 		return errors.Trace(err)
 	}
-	cc.capability = p.Capability & defaultCapability
-	cc.user = p.User
-	cc.dbname = p.DBName
-	cc.collation = p.Collation
-	cc.attrs = p.Attrs
 
-	// Open session and do auth
-	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname)
+	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.tlsConfig != nil {
+		// The packet is a SSLRequest, let's switch to TLS.
+		if err = cc.upgradeToTLS(cc.server.tlsConfig); err != nil {
+			return errors.Trace(err)
+		}
+		// Read the following HandshakeResponse packet.
+		data, err = cc.readPacket()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		pos, err = parseHandshakeResponseHeader(&resp, data)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// Read the remaining part of the packet.
+	if err = parseHandshakeResponseBody(&resp, data, pos); err != nil {
+		return errors.Trace(err)
+	}
+
+	cc.capability = resp.Capability & cc.server.capability
+	cc.user = resp.User
+	cc.dbname = resp.DBName
+	cc.collation = resp.Collation
+	cc.attrs = resp.Attrs
+
+	// Open session and do auth.
+	var tlsStatePtr *tls.ConnectionState
+	if cc.tlsConn != nil {
+		tlsState := cc.tlsConn.ConnectionState()
+		tlsStatePtr = &tlsState
+	}
+	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname, tlsStatePtr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if !cc.server.skipAuth() {
-		// Do Auth
-		addr := cc.conn.RemoteAddr().String()
+		// Do Auth.
+		addr := cc.bufReadConn.RemoteAddr().String()
 		host, _, err1 := net.SplitHostPort(addr)
 		if err1 != nil {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
 		}
-		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, p.Auth, cc.salt) {
+		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, resp.Auth, cc.salt) {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
 		}
 	}
@@ -818,4 +858,25 @@ func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
 		}
 	}
 	return cc.writeOK()
+}
+
+func (cc *clientConn) setConn(conn net.Conn) {
+	cc.bufReadConn = newBufferedReadConn(conn)
+	if cc.pkt == nil {
+		cc.pkt = newPacketIO(cc.bufReadConn)
+	} else {
+		// Preserve current sequence number.
+		cc.pkt.setBufferedReadConn(cc.bufReadConn)
+	}
+}
+
+func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
+	// Important: read from buffered reader instead of the original net.Conn because it may contain data we need.
+	tlsConn := tls.Server(cc.bufReadConn, tlsConfig)
+	if err := tlsConn.Handshake(); err != nil {
+		return errors.Trace(err)
+	}
+	cc.setConn(tlsConn)
+	cc.tlsConn = tlsConn
+	return nil
 }

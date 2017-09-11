@@ -46,24 +46,22 @@ const (
 )
 
 func fieldTp2EvalTp(tp *types.FieldType) evalTp {
-	switch tp.ToClass() {
-	case types.ClassInt:
+	switch tp.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeBit, mysql.TypeYear:
 		return tpInt
-	case types.ClassReal:
+	case mysql.TypeFloat, mysql.TypeDouble:
 		return tpReal
-	case types.ClassDecimal:
+	case mysql.TypeNewDecimal:
 		return tpDecimal
-	case types.ClassString:
-		switch tp.Tp {
-		case mysql.TypeDate, mysql.TypeDatetime:
-			return tpDatetime
-		case mysql.TypeTimestamp:
-			return tpTimestamp
-		case mysql.TypeDuration:
-			return tpDuration
-		case mysql.TypeJSON:
-			return tpJSON
-		}
+	case mysql.TypeDate, mysql.TypeDatetime:
+		return tpDatetime
+	case mysql.TypeTimestamp:
+		return tpTimestamp
+	case mysql.TypeDuration:
+		return tpDuration
+	case mysql.TypeJSON:
+		return tpJSON
 	}
 	return tpString
 }
@@ -803,7 +801,7 @@ var funcs = map[string]functionClass{
 	ast.Field:           &fieldFunctionClass{baseFunctionClass{ast.Field, 2, -1}},
 	ast.Format:          &formatFunctionClass{baseFunctionClass{ast.Format, 2, 3}},
 	ast.FromBase64:      &fromBase64FunctionClass{baseFunctionClass{ast.FromBase64, 1, 1}},
-	ast.InsertFunc:      &insertFuncFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
+	ast.InsertFunc:      &insertFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
 	ast.Instr:           &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 2}},
 	ast.Lcase:           &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
 	ast.Left:            &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},

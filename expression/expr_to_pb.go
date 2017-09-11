@@ -16,7 +16,7 @@ package expression
 import (
 	"time"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"

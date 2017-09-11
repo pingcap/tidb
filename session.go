@@ -18,6 +18,7 @@
 package tidb
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -26,8 +27,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -72,6 +73,7 @@ type Session interface {
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
+	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
 	Close()
@@ -181,6 +183,17 @@ func (s *session) SetClientCapability(capability uint32) {
 
 func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
+}
+
+func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
+	// If user is not connected via TLS, then tlsState == nil.
+	if tlsState != nil {
+		s.sessionVars.TLSConnectionState = tlsState
+	}
+}
+
+func (s *session) GetTLSState() *tls.ConnectionState {
+	return s.sessionVars.TLSConnectionState
 }
 
 func (s *session) SetCollation(coID int) error {
@@ -767,41 +780,6 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	}
 	vars.RetryInfo.DroppedPreparedStmtIDs = append(vars.RetryInfo.DroppedPreparedStmtIDs, stmtID)
 	return nil
-}
-
-// GetTxn gets the current transaction or creates a new transaction.
-// If forceNew is true, GetTxn() must return a new transaction.
-// In this situation, if current transaction is still in progress,
-// there will be an implicit commit and create a new transaction.
-func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
-	if s.txn != nil && !forceNew {
-		return s.txn, nil
-	}
-
-	var err error
-	var force string
-	if s.txn == nil {
-		err = s.loadCommonGlobalVariablesIfNeeded()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else if forceNew {
-		err = s.CommitTxn()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		force = "force"
-	}
-	s.txn, err = s.store.Begin()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	ac := s.sessionVars.IsAutocommit()
-	if !ac {
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-	}
-	log.Infof("[%d] %s new txn:%s", s.sessionVars.ConnectionID, force, s.txn)
-	return s.txn, nil
 }
 
 func (s *session) Txn() kv.Transaction {

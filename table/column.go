@@ -21,8 +21,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -189,7 +189,7 @@ const defaultPrivileges string = "select,insert,update,references"
 // GetTypeDesc gets the description for column type.
 func (c *Column) GetTypeDesc() string {
 	desc := c.FieldType.CompactStr()
-	if mysql.HasUnsignedFlag(c.Flag) {
+	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit {
 		desc += " UNSIGNED"
 	}
 	return desc
@@ -373,7 +373,7 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeDatetime:
 		d.SetMysqlTime(types.ZeroDatetime)
 	case mysql.TypeBit:
-		d.SetMysqlBit(types.Bit{Value: 0, Width: types.MinBitWidth})
+		d.SetMysqlBit(types.ZeroBinaryLiteral)
 	case mysql.TypeSet:
 		d.SetMysqlSet(types.Set{})
 	case mysql.TypeEnum:
