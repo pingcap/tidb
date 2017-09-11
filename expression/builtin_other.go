@@ -81,7 +81,7 @@ func (c *setVarFunctionClass) getFunction(ctx context.Context, args []Expression
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
-	bf.foldable = false
+	bf.tp.Flen, bf.foldable = args[1].GetType().Flen, false
 	// TODO: we should consider the type of the argument, but not take it as string for all situations.
 	sig = &builtinSetVarSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), errors.Trace(err)
