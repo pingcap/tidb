@@ -382,14 +382,32 @@ func MergeHistograms(sc *variable.StatementContext, lh *Histogram, rh *Histogram
 	if len(rh.Buckets) == 0 {
 		return lh, nil
 	}
+	lh.NDV += rh.NDV
+	lLen := len(lh.Buckets)
+	cmp, err := lh.Buckets[lLen-1].UpperBound.CompareDatum(sc, rh.Buckets[0].LowerBound)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	offset := int64(0)
+	if cmp == 0 {
+		lh.NDV--
+		lh.Buckets[lLen-1].UpperBound = rh.Buckets[0].UpperBound
+		lh.Buckets[lLen-1].Repeats = rh.Buckets[0].Repeats
+		lh.Buckets[lLen-1].Count += rh.Buckets[0].Count
+		offset = rh.Buckets[0].Count
+		rh.Buckets = rh.Buckets[1:]
+	}
 	for len(lh.Buckets) > bucketSize {
 		lh.mergeBuckets(int64(len(lh.Buckets)) - 1)
+	}
+	if len(rh.Buckets) == 0 {
+		return lh, nil
 	}
 	for len(rh.Buckets) > bucketSize {
 		rh.mergeBuckets(int64(len(rh.Buckets)) - 1)
 	}
 	lCount := lh.Buckets[len(lh.Buckets)-1].Count
-	rCount := rh.Buckets[len(rh.Buckets)-1].Count
+	rCount := rh.Buckets[len(rh.Buckets)-1].Count - offset
 	lAvg := float64(lCount) / float64(len(lh.Buckets))
 	rAvg := float64(rCount) / float64(len(rh.Buckets))
 	for len(lh.Buckets) > 1 && lAvg*2 <= rAvg {
@@ -400,21 +418,8 @@ func MergeHistograms(sc *variable.StatementContext, lh *Histogram, rh *Histogram
 		rh.mergeBuckets(int64(len(rh.Buckets)) - 1)
 		rAvg *= 2
 	}
-	lh.NDV += rh.NDV
-	lLen := len(lh.Buckets)
-	cmp, err := lh.Buckets[lLen-1].UpperBound.CompareDatum(sc, rh.Buckets[0].LowerBound)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if cmp == 0 {
-		lh.NDV--
-		lh.Buckets[lLen-1].UpperBound = rh.Buckets[0].UpperBound
-		lh.Buckets[lLen-1].Repeats = rh.Buckets[0].Repeats
-		lh.Buckets[lLen-1].Count += rh.Buckets[0].Count
-		rh.Buckets = rh.Buckets[1:]
-	}
 	for _, bkt := range rh.Buckets {
-		bkt.Count = bkt.Count + lCount
+		bkt.Count = bkt.Count + lCount - offset
 		lh.Buckets = append(lh.Buckets, bkt)
 	}
 	for len(lh.Buckets) > bucketSize {
