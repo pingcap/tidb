@@ -24,9 +24,9 @@ import (
 	"strings"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -128,7 +128,6 @@ var (
 	_ builtinFunc = &builtinYearSig{}
 	_ builtinFunc = &builtinYearWeekWithModeSig{}
 	_ builtinFunc = &builtinYearWeekWithoutModeSig{}
-	_ builtinFunc = &builtinFromUnixTimeSig{}
 	_ builtinFunc = &builtinGetFormatSig{}
 	_ builtinFunc = &builtinSysDateWithFspSig{}
 	_ builtinFunc = &builtinSysDateWithoutFspSig{}
@@ -163,6 +162,8 @@ var (
 	_ builtinFunc = &builtinStrToDateDateSig{}
 	_ builtinFunc = &builtinStrToDateDatetimeSig{}
 	_ builtinFunc = &builtinStrToDateDurationSig{}
+	_ builtinFunc = &builtinFromUnixTime1ArgSig{}
+	_ builtinFunc = &builtinFromUnixTime2ArgSig{}
 	_ builtinFunc = &builtinExtractDatetimeSig{}
 	_ builtinFunc = &builtinExtractDurationSig{}
 )
@@ -1107,40 +1108,56 @@ type fromUnixTimeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *fromUnixTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *fromUnixTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinFromUnixTimeSig{newBaseBuiltinFunc(args, ctx)}
+
+	retTp, argTps := tpDatetime, make([]evalTp, 0, len(args))
+	argTps = append(argTps, tpDecimal)
+	if len(args) == 2 {
+		retTp = tpString
+		argTps = append(argTps, tpString)
+	}
+
+	_, isArg0Con := args[0].(*Constant)
+	isArg0Str := fieldTp2EvalTp(args[0].GetType()) == tpString
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTps...)
+	if len(args) == 1 {
+		if isArg0Str {
+			bf.tp.Decimal = types.MaxFsp
+		} else if isArg0Con {
+			arg0, _, err1 := args[0].EvalDecimal(nil, ctx.GetSessionVars().StmtCtx)
+			if err1 != nil {
+				return sig, errors.Trace(err1)
+			}
+			fsp := int(arg0.GetDigitsFrac())
+			if fsp > types.MaxFsp {
+				fsp = types.MaxFsp
+			}
+			bf.tp.Decimal = fsp
+		}
+		sig = &builtinFromUnixTime1ArgSig{baseTimeBuiltinFunc{bf}}
+	} else {
+		bf.tp.Flen = args[1].GetType().Flen
+		sig = &builtinFromUnixTime2ArgSig{baseStringBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinFromUnixTimeSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinFromUnixTimeSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
-func (b *builtinFromUnixTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	unixTimeStamp, err := args[0].ToDecimal(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+func evalFromUnixTime(ctx context.Context, fsp int, row []types.Datum, arg Expression) (res types.Time, isNull bool, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	unixTimeStamp, isNull, err := arg.EvalDecimal(row, sc)
+	if err != nil || isNull {
+		return res, isNull, errors.Trace(err)
 	}
 	// 0 <= unixTimeStamp <= INT32_MAX
 	if unixTimeStamp.IsNegative() {
-		return
+		return res, true, nil
 	}
 	integralPart, err := unixTimeStamp.ToInt()
-	if err == types.ErrTruncated {
-		err = nil
-	}
-	if err != nil {
-		return d, errors.Trace(err)
+	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
+		return res, true, errors.Trace(err)
 	}
 	if integralPart > int64(math.MaxInt32) {
 		return
@@ -1153,41 +1170,63 @@ func (b *builtinFromUnixTimeSig) eval(row []types.Datum) (d types.Datum, err err
 	fracDecimalTp := new(types.MyDecimal)
 	err = types.DecimalSub(unixTimeStamp, integerDecimalTp, fracDecimalTp)
 	if err != nil {
-		return d, errors.Trace(err)
+		return res, true, errors.Trace(err)
 	}
 	nano := new(types.MyDecimal).FromInt(int64(time.Second))
 	x := new(types.MyDecimal)
 	err = types.DecimalMul(fracDecimalTp, nano, x)
 	if err != nil {
-		return d, errors.Trace(err)
+		return res, true, errors.Trace(err)
 	}
 	fractionalPart, err := x.ToInt() // here fractionalPart is result multiplying the original fractional part by 10^9.
-	if err == types.ErrTruncated {
-		err = nil
+	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
+		return res, true, errors.Trace(err)
 	}
-	if err != nil {
-		return d, errors.Trace(err)
+	fracDigitsNumber := int(unixTimeStamp.GetDigitsFrac())
+	if fsp < 0 {
+		fsp = types.MaxFsp
 	}
-
-	_, fracDigitsNumber := unixTimeStamp.PrecisionAndFrac()
-	fsp := fracDigitsNumber
-	if fracDigitsNumber > types.MaxFsp {
+	fsp = mathutil.Max(fracDigitsNumber, fsp)
+	if fsp > types.MaxFsp {
 		fsp = types.MaxFsp
 	}
 
-	t, err := convertTimeToMysqlTime(time.Unix(integralPart, fractionalPart), fsp)
+	tmp := time.Unix(integralPart, fractionalPart).In(sc.TimeZone)
+	t, err := convertTimeToMysqlTime(tmp, fsp)
 	if err != nil {
-		return d, errors.Trace(err)
+		return res, true, errors.Trace(err)
 	}
+	return t, false, nil
+}
 
-	if args[0].Kind() == types.KindString { // Keep consistent with MySQL.
-		t.Fsp = types.MaxFsp
+type builtinFromUnixTime1ArgSig struct {
+	baseTimeBuiltinFunc
+}
+
+// evalTime evals a builtinFromUnixTime1ArgSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
+func (b *builtinFromUnixTime1ArgSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
+	return evalFromUnixTime(b.ctx, b.tp.Decimal, row, b.args[0])
+}
+
+type builtinFromUnixTime2ArgSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinFromUnixTime2ArgSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
+func (b *builtinFromUnixTime2ArgSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	format, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	d.SetMysqlTime(t)
-	if len(args) == 1 {
-		return
+	t, isNull, err := evalFromUnixTime(b.ctx, b.tp.Decimal, row, b.args[0])
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	return builtinDateFormat(b.ctx, []types.Datum{d, args[1]})
+	res, err = t.DateFormat(format)
+	return res, err != nil, errors.Trace(err)
 }
 
 type getFormatFunctionClass struct {
