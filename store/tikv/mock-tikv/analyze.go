@@ -139,7 +139,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	numCols := len(columns)
 	if columns[0].GetPkHandle() {
 		pkID = columns[0].ColumnId
-		numCols -= 1
+		numCols--
 	}
 	colReq := analyzeReq.ColReq
 	builder := statistics.SampleBuilder{
