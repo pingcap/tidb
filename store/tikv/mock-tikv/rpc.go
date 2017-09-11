@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
@@ -571,7 +572,13 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 		}
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
 		handler.rawEndKey = MvccKey(handler.endKey).Raw()
-		res, err := handler.handleCopDAGRequest(r)
+		var err error
+		var res *coprocessor.Response
+		if r.GetTp() == kv.ReqTypeDAG {
+			res, err = handler.handleCopDAGRequest(r)
+		} else {
+			res, err = handler.handleCopAnalyzeRequest(r)
+		}
 		if err != nil {
 			return nil, err
 		}
