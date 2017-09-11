@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
@@ -38,6 +39,32 @@ func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
 	for _, val := range rc.Samples {
 		c.collect(val)
 	}
+}
+
+// SampleCollectorToProto converts SampleCollector to its protobuf representation.
+func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
+	collector := &tipb.SampleCollector{
+		NullCount: c.NullCount,
+		Count:     c.Count,
+		Sketch:    FMSketchToProto(c.Sketch),
+	}
+	for _, sample := range c.Samples {
+		collector.Samples = append(collector.Samples, sample.GetBytes())
+	}
+	return collector
+}
+
+// SampleCollectorFromProto converts SampleCollector from its protobuf representation.
+func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector {
+	s := &SampleCollector{
+		NullCount: collector.NullCount,
+		Count:     collector.Count,
+		Sketch:    FMSketchFromProto(collector.Sketch),
+	}
+	for _, val := range collector.Samples {
+		s.Samples = append(s.Samples, types.NewBytesDatum(val))
+	}
+	return s
 }
 
 func (c *SampleCollector) collect(d types.Datum) error {
