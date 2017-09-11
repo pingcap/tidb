@@ -52,10 +52,10 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 		err             error
 	}{
 		// test extract with only one path expression.
-		{j1, []string{"$.a"}, j1.object["a"], true, nil},
+		{j1, []string{"$.a"}, j1.Object["a"], true, nil},
 		{j2, []string{"$.a"}, CreateJSON(nil), false, nil},
 		{j1, []string{"$[0]"}, j1, true, nil}, // in Extract, autowraped j1 as an array.
-		{j2, []string{"$[0]"}, j2.array[0], true, nil},
+		{j2, []string{"$[0]"}, j2.Array[0], true, nil},
 		{j1, []string{"$.a[2].aa"}, CreateJSON("bb"), true, nil},
 		{j1, []string{"$.a[*].aa"}, mustParseFromString(`["bb", "cc"]`), true, nil},
 		{j1, []string{"$.*[0]"}, mustParseFromString(`["world", 1, true, "d"]`), true, nil},

@@ -135,6 +135,9 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{".1C23", int('.')},    // `.`, `1C23`
 		{".1\u0081", int('.')}, // `.`, `1\u0081`
 		{".1\uff34", int('.')}, // `.`, `1\uff34`
+		{`b''`, bitLit},
+		{`b'0101'`, bitLit},
+		{`0b0101`, bitLit},
 	}
 	runTest(c, table)
 }
@@ -184,8 +187,6 @@ func (s *testLexerSuite) TestscanString(c *C) {
 		expect string
 	}{
 		{`' \n\tTest String'`, " \n\tTest String"},
-		{`'a' ' ' 'string'`, "a string"},
-		{`'a' " " "string"`, "a string"},
 		{`'\x\B'`, "xB"},
 		{`'\0\'\"\b\n\r\t\\'`, "\000'\"\b\n\r\t\\"},
 		{`'\Z'`, string(26)},
@@ -315,7 +316,6 @@ func (s *testLexerSuite) TestSQLModeANSIQuotes(c *C) {
 		{"`identifier`", identifier, "identifier"},
 		{`"identifier""and"`, identifier, `identifier"and`},
 		{`'string''string'`, stringLit, "string'string"},
-		{`'string' 'string'`, stringLit, "stringstring"},
 		{`"identifier"'and'`, identifier, "identifier"},
 		{`'string'"identifier"`, stringLit, "string"},
 	}
@@ -328,6 +328,14 @@ func (s *testLexerSuite) TestSQLModeANSIQuotes(c *C) {
 		c.Assert(tok, Equals, t.tok)
 		c.Assert(v.ident, Equals, t.ident)
 	}
+	scanner.reset(`'string' 'string'`)
+	var v yySymType
+	tok := scanner.Lex(&v)
+	c.Assert(tok, Equals, stringLit)
+	c.Assert(v.ident, Equals, "string")
+	tok = scanner.Lex(&v)
+	c.Assert(tok, Equals, stringLit)
+	c.Assert(v.ident, Equals, "string")
 }
 
 func (s *testLexerSuite) TestIllegal(c *C) {

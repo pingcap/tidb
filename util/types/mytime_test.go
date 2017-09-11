@@ -77,6 +77,12 @@ func (s *testMyTimeSuite) TestCalcTimeDiff(c *C) {
 			1,
 			mysqlTime{0, 0, 0, 10, 0, 2, 0},
 		},
+		{
+			mysqlTime{0, 0, 0, 1, 2, 3, 0},
+			mysqlTime{0, 0, 0, 5, 2, 0, 0},
+			-1,
+			mysqlTime{0, 0, 0, 6, 4, 3, 0},
+		},
 	}
 
 	for i, tt := range tests {
@@ -177,5 +183,30 @@ func (s *testMyTimeSuite) TestMixDateAndTime(c *C) {
 	for ith, t := range tests {
 		mixDateAndTime(&t.date, &t.time, t.neg)
 		c.Assert(compareTime(&t.date, &t.expect), Equals, 0, Commentf("%d", ith))
+	}
+}
+
+func (s *testMyTimeSuite) TestIsLeapYear(c *C) {
+	tests := []struct {
+		T      mysqlTime
+		Expect bool
+	}{
+		{mysqlTime{1960, 1, 1, 0, 0, 0, 0}, true},
+		{mysqlTime{1963, 2, 21, 0, 0, 0, 0}, false},
+		{mysqlTime{2008, 11, 25, 0, 0, 0, 0}, true},
+		{mysqlTime{2017, 4, 24, 0, 0, 0, 0}, false},
+		{mysqlTime{1988, 2, 29, 0, 0, 0, 0}, true},
+		{mysqlTime{2000, 3, 15, 0, 0, 0, 0}, true},
+		{mysqlTime{1992, 5, 3, 0, 0, 0, 0}, true},
+		{mysqlTime{2024, 10, 1, 0, 0, 0, 0}, true},
+		{mysqlTime{2016, 6, 29, 0, 0, 0, 0}, true},
+		{mysqlTime{2015, 6, 29, 0, 0, 0, 0}, false},
+		{mysqlTime{2014, 9, 31, 0, 0, 0, 0}, false},
+		{mysqlTime{2001, 12, 7, 0, 0, 0, 0}, false},
+		{mysqlTime{1989, 7, 6, 0, 0, 0, 0}, false},
+	}
+
+	for _, tt := range tests {
+		c.Assert(tt.T.IsLeapYear(), Equals, tt.Expect)
 	}
 }

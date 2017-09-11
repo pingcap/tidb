@@ -14,6 +14,10 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/binary"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 )
@@ -22,10 +26,17 @@ type ConnTestSuite struct{}
 
 var _ = Suite(ConnTestSuite{})
 
-func (ts ConnTestSuite) TestHandshakeResponseFromData(c *C) {
+func (ts ConnTestSuite) TestMalformHandshakeHeader(c *C) {
+	c.Parallel()
+	data := []byte{0x00}
+	var p handshakeResponse41
+	_, err := parseHandshakeResponseHeader(&p, data)
+	c.Assert(err, NotNil)
+}
+
+func (ts ConnTestSuite) TestParseHandshakeResponse(c *C) {
 	c.Parallel()
 	// test data from http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse41
-	var p handshakeResponse41
 	data := []byte{
 		0x85, 0xa2, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x40, 0x08, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -40,9 +51,12 @@ func (ts ConnTestSuite) TestHandshakeResponseFromData(c *C) {
 		0x6c, 0x61, 0x74, 0x66, 0x6f, 0x72, 0x6d, 0x06, 0x78, 0x38, 0x36, 0x5f, 0x36, 0x34, 0x03, 0x66,
 		0x6f, 0x6f, 0x03, 0x62, 0x61, 0x72,
 	}
-	err := handshakeResponseFromData(&p, data)
+	var p handshakeResponse41
+	offset, err := parseHandshakeResponseHeader(&p, data)
 	c.Assert(err, IsNil)
 	c.Assert(p.Capability&mysql.ClientConnectAtts, Equals, mysql.ClientConnectAtts)
+	err = parseHandshakeResponseBody(&p, data, offset)
+	c.Assert(err, IsNil)
 	eq := mapIdentical(p.Attrs, map[string]string{
 		"_client_version": "5.6.6-m9",
 		"_platform":       "x86_64",
@@ -61,13 +75,15 @@ func (ts ConnTestSuite) TestHandshakeResponseFromData(c *C) {
 		0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x00,
 	}
 	p = handshakeResponse41{}
-	err = handshakeResponseFromData(&p, data)
+	offset, err = parseHandshakeResponseHeader(&p, data)
 	c.Assert(err, IsNil)
 	capability := mysql.ClientProtocol41 |
 		mysql.ClientPluginAuth |
 		mysql.ClientSecureConnection |
 		mysql.ClientConnectWithDB
 	c.Assert(p.Capability&capability, Equals, capability)
+	err = parseHandshakeResponseBody(&p, data, offset)
+	c.Assert(err, IsNil)
 	c.Assert(p.User, Equals, "pam")
 	c.Assert(p.DBName, Equals, "test")
 }
@@ -91,10 +107,46 @@ func (ts ConnTestSuite) TestIssue1768(c *C) {
 		0x79, 0x73, 0x71, 0x6c,
 	}
 	p := handshakeResponse41{}
-	err := handshakeResponseFromData(&p, data)
+	offset, err := parseHandshakeResponseHeader(&p, data)
 	c.Assert(err, IsNil)
 	c.Assert(p.Capability&mysql.ClientPluginAuthLenencClientData, Equals, mysql.ClientPluginAuthLenencClientData)
+	err = parseHandshakeResponseBody(&p, data, offset)
+	c.Assert(err, IsNil)
 	c.Assert(len(p.Auth) > 0, IsTrue)
+}
+
+func (ts ConnTestSuite) TestInitialHandshake(c *C) {
+	c.Parallel()
+	var outBuffer bytes.Buffer
+	cc := &clientConn{
+		connectionID: 1,
+		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
+		server: &Server{
+			capability: defaultCapability,
+		},
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(&outBuffer),
+		},
+	}
+	err := cc.writeInitialHandshake()
+	c.Assert(err, IsNil)
+
+	expected := new(bytes.Buffer)
+	expected.WriteByte(0x0a)                                                                             // Protocol
+	expected.WriteString(mysql.ServerVersion)                                                            // Version
+	expected.WriteByte(0x00)                                                                             // NULL
+	binary.Write(expected, binary.LittleEndian, uint32(1))                                               // Connection ID
+	expected.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00})                         // Salt
+	binary.Write(expected, binary.LittleEndian, uint16(defaultCapability&0xFFFF))                        // Server Capability
+	expected.WriteByte(uint8(mysql.DefaultCollationID))                                                  // Server Language
+	binary.Write(expected, binary.LittleEndian, mysql.ServerStatusAutocommit)                            // Server Status
+	binary.Write(expected, binary.LittleEndian, uint16((defaultCapability>>16)&0xFFFF))                  // Extended Server Capability
+	expected.WriteByte(0x15)                                                                             // Authentication Plugin Length
+	expected.Write([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})                   // Unused
+	expected.Write([]byte{0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x00}) // Salt
+	expected.WriteString("mysql_native_password")                                                        // Authentication Plugin
+	expected.WriteByte(0x00)                                                                             // NULL
+	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
 }
 
 func mapIdentical(m1, m2 map[string]string) bool {

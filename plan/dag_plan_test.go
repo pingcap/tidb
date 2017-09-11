@@ -71,6 +71,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.b limit 1",
 			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->TopN([test.t.b],0,1))->TopN([test.t.b],0,1)",
 		},
+		// Test Null Range
+		{
+			sql:  "select * from t where t.c is null",
+			best: "IndexLookUp(Index(t.c_d_e)[[<nil>,<nil>]], Table(t))",
+		},
 		// Test TopN to index branch in double read.
 		{
 			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.e limit 1",
@@ -146,6 +151,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			sql:  "select c from t where t.c = 1 and t.a = 1 order by t.d limit 1",
 			best: "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.a, 1)])->Limit)->Limit->Projection",
 		},
+		// Test composed index.
+		// FIXME: The TopN didn't be pushed.
+		{
+			sql:  "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
+			best: "IndexReader(Index(t.c_d_e)[[1 1,1 1]])->TopN([test.t.a],0,1)->Projection",
+		},
 		// Test PK in index double read.
 		{
 			sql:  "select * from t where t.c = 1 and t.a = 1 order by t.d limit 1",
@@ -212,6 +223,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.b,t2.a)->Limit",
 		},
 		{
+			sql:  "select * from t t1 join t t2 on t1.b = t2.a and t1.c = 1 and t1.d = 1 and t1.e = 1 order by t1.a limit 1",
+			best: "IndexJoin{IndexLookUp(Index(t.c_d_e)[[1 1 1,1 1 1]], Table(t))->TableReader(Table(t))}(t1.b,t2.a)->TopN([t1.a],0,1)",
+		},
+		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.b join t t3 on t1.b = t3.b",
 			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.b,t2.b)->TableReader(Table(t))}(t1.b,t3.b)",
 		},
@@ -245,6 +260,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a",
 			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+		},
+		// Test Single Merge Join + Sort + desc.
+		{
+			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a desc",
+			best: "MergeJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort",
 		},
 		// Test Multi Merge Join.
 		{
@@ -357,10 +377,15 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 			sql:  "select * from t where a in (select s.a from t s) order by t.a",
 			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)",
 		},
+		// Test Nested sub query.
 		{
-			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
 			best: "SemiJoin{TableReader(Table(t))->Projection->SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(s.d,k.d)(s.c,k.c)->HashAgg}(cast(test.t.a),sel_agg_1)->Projection",
+		},
+		// Test Semi Join + Order by.
+		{
+			sql:  "select * from t where a in (select a from t) order by b",
+			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Sort",
 		},
 		// Test Apply.
 		{
@@ -414,6 +439,22 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 		{
 			sql:  "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b limit 1",
 			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->TableReader(Table(t))}(t1.b,t2.b)->TableReader(Table(t))}(t2.b,t3.b)->Limit",
+		},
+		{
+			sql:  "select * from t where b = 1 and c = 1 order by c limit 1",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->Limit",
+		},
+		{
+			sql:  "select * from t where c = 1 order by c limit 1",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))->Limit",
+		},
+		{
+			sql:  "select * from t order by a limit 1",
+			best: "TableReader(Table(t)->Limit)->Limit",
+		},
+		{
+			sql:  "select c from t order by c limit 1",
+			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)->Limit",
 		},
 	}
 	for _, tt := range tests {
@@ -664,6 +705,243 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		{
 			sql:  "select sum(to_base64(e)) from t where c = 1",
 			best: "IndexReader(Index(t.c_d_e)[[1,1]])->HashAgg",
+		},
+	}
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := plan.MockResolve(stmt)
+		c.Assert(err, IsNil)
+		p, err := plan.Optimize(se, stmt, is)
+		c.Assert(err, IsNil)
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+	}
+}
+
+func (s *testPlanSuite) TestRefine(c *C) {
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select a from t where c is not null",
+			best: "TableReader(Table(t)->Sel([not(isnull(test.t.c))]))->Projection",
+		},
+		{
+			sql:  "select a from t where c >= 4",
+			best: "IndexReader(Index(t.c_d_e)[[4,+inf]])->Projection",
+		},
+		{
+			sql:  "select a from t where c <= 4",
+			best: "IndexReader(Index(t.c_d_e)[[-inf,4]])->Projection",
+		},
+		{
+			sql:  "select a from t where c = 4 and d = 5 and e = 6",
+			best: "IndexReader(Index(t.c_d_e)[[4 5 6,4 5 6]])->Projection",
+		},
+		{
+			sql:  "select a from t where d = 4 and c = 5",
+			best: "IndexReader(Index(t.c_d_e)[[5 4,5 4]])->Projection",
+		},
+		{
+			sql:  "select a from t where c = 4 and e < 5",
+			best: "IndexReader(Index(t.c_d_e)[[4,4]]->Sel([lt(test.t.e, 5)]))->Projection",
+		},
+		{
+			sql:  "select a from t where c = 4 and d <= 5 and d > 3",
+			best: "IndexReader(Index(t.c_d_e)[(4 3,4 5]])->Projection",
+		},
+		{
+			sql:  "select a from t where d <= 5 and d > 3",
+			best: "TableReader(Table(t)->Sel([le(test.t.d, 5) gt(test.t.d, 3)]))->Projection",
+		},
+		{
+			sql:  "select a from t where c between 1 and 2",
+			best: "IndexReader(Index(t.c_d_e)[[1,2]])->Projection",
+		},
+		{
+			sql:  "select a from t where c not between 1 and 2",
+			best: "IndexReader(Index(t.c_d_e)[[-inf,1) (2,+inf]])->Projection",
+		},
+		{
+			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
+			best: "IndexReader(Index(t.c_d_e)[[3,5]]->Sel([eq(test.t.d, 1)]))->Projection",
+		},
+		{
+			sql:  "select a from t where c = 1 or c = 2 or c = 3",
+			best: "IndexReader(Index(t.c_d_e)[[1,1] [2,2] [3,3]])->Projection",
+		},
+		{
+			sql:  "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1] [2,2] [3,3] [4,4] [5,5]], Table(t))->Projection",
+		},
+		{
+			sql:  "select a from t where c = 5",
+			best: "IndexReader(Index(t.c_d_e)[[5,5]])->Projection",
+		},
+		{
+			sql:  "select a from t where c = 5 and b = 1",
+			best: "IndexLookUp(Index(t.c_d_e)[[5,5]], Table(t)->Sel([eq(test.t.b, 1)]))->Projection",
+		},
+		{
+			sql:  "select a from t where not a",
+			best: "TableReader(Table(t)->Sel([not(test.t.a)]))",
+		},
+		{
+			sql:  "select a from t where c in (1)",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->Projection",
+		},
+		{
+			sql:  "select a from t where c in ('1')",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->Projection",
+		},
+		{
+			sql:  "select a from t where c = 1.0",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->Projection",
+		},
+		{
+			sql:  "select a from t where c in (1) and d > 3",
+			best: "IndexReader(Index(t.c_d_e)[(1 3,1 +inf]])->Projection",
+		},
+		// TODO: func in is rewritten to DNF which will influence the extraction behavior of accessCondition.
+		//{
+		//	sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
+		//	best: "Index(t.c_d_e)[(1 3 +inf,1 4 <nil>) (1 5 +inf,1 6 <nil>) (2 3 +inf,2 4 <nil>) (2 5 +inf,2 6 <nil>) (3 3 +inf,3 4 <nil>) (3 5 +inf,3 6 <nil>)]->Projection",
+		//},
+		{
+			sql:  "select a from t where c in (1, 2, 3)",
+			best: "IndexReader(Index(t.c_d_e)[[1,1] [2,2] [3,3]])->Projection",
+		},
+		// TODO: func in is rewritten to DNF which will influence the extraction behavior of accessCondition.
+		//{
+		//	sql:  "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
+		//	best: "Index(t.c_d_e)[[1 1 1,1 1 1] [1 2 1,1 2 1] [2 1 1,2 1 1] [2 2 1,2 2 1] [3 1 1,3 1 1] [3 2 1,3 2 1]]->Projection",
+		//},
+		{
+			sql:  "select a from t where d in (1, 2, 3)",
+			best: "TableReader(Table(t)->Sel([or(or(eq(test.t.d, 1), eq(test.t.d, 2)), eq(test.t.d, 3))]))->Projection",
+		},
+		// TODO: func in is rewritten to DNF which will influence the extraction behavior of accessCondition.
+		//{
+		//	sql:  "select a from t where c not in (1)",
+		//	best: "Table(t)->Projection",
+		//},
+		// test like
+		{
+			sql:  "select a from t use index(c_d_e) where c != 1",
+			best: "IndexReader(Index(t.c_d_e)[[-inf,1) (1,+inf]])->Projection",
+		},
+		{
+			sql:  "select a from t where c_str like ''",
+			best: "IndexReader(Index(t.c_d_e_str)[[,]])->Projection",
+		},
+		{
+			sql:  "select a from t where c_str like 'abc'",
+			best: "IndexReader(Index(t.c_d_e_str)[[abc,abc]])->Projection",
+		},
+		{
+			sql:  "select a from t where c_str not like 'abc'",
+			best: "TableReader(Table(t)->Sel([not(like(test.t.c_str, abc, 92))]))->Projection",
+		},
+		{
+			sql:  "select a from t where not (c_str like 'abc' or c_str like 'abd')",
+			best: "TableReader(Table(t)->Sel([and(not(like(test.t.c_str, abc, 92)), not(like(test.t.c_str, abd, 92)))]))->Projection",
+		},
+		{
+			sql:  "select a from t where c_str like '_abc'",
+			best: "TableReader(Table(t))->Sel([like(test.t.c_str, _abc, 92)])->Projection",
+		},
+		{
+			sql:  "select a from t where c_str like 'abc%'",
+			best: "IndexReader(Index(t.c_d_e_str)[[abc,abd)])->Projection",
+		},
+		{
+			// FIXME: Should use index reader.
+			sql:  "select a from t where c_str like 'abc_'",
+			best: "TableReader(Table(t))->Sel([like(test.t.c_str, abc_, 92)])->Projection",
+		},
+		{
+			sql:  "select a from t where c_str like 'abc%af'",
+			best: "TableReader(Table(t))->Sel([like(test.t.c_str, abc%af, 92)])->Projection",
+			//			best: "Index(t.c_d_e_str)[[abc <nil>,abd <nil>)]->Selection->Projection",
+		},
+		{
+			sql:  `select a from t where c_str like 'abc\\_' escape ''`,
+			best: "TableReader(Table(t))->Sel([like(test.t.c_str, abc\\_, 92)])->Projection",
+			//			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
+		},
+		//{
+		//	sql:  `select a from t where c_str like 'abc\\_'`,
+		//	best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
+		//},
+		//{
+		//	sql:  `select a from t where c_str like 'abc\\\\_'`,
+		//	best: "Index(t.c_d_e_str)[(abc\\ +inf,abc] <nil>)]->Selection->Projection",
+		//},
+		//{
+		//	sql:  `select a from t where c_str like 'abc\\_%'`,
+		//	best: "Index(t.c_d_e_str)[[abc_ <nil>,abc` <nil>)]->Projection",
+		//},
+		//{
+		//	sql:  `select a from t where c_str like 'abc=_%' escape '='`,
+		//	best: "Index(t.c_d_e_str)[[abc_ <nil>,abc` <nil>)]->Projection",
+		//},
+		//{
+		//	sql:  `select a from t where c_str like 'abc\\__'`,
+		//	best: "Index(t.c_d_e_str)[(abc_ +inf,abc` <nil>)]->Selection->Projection",
+		//},
+		//{
+		//	// Check that 123 is converted to string '123'. index can be used.
+		//	sql:  `select a from t where c_str like 123`,
+		//	best: "Index(t.c_d_e_str)[[123,123]]->Projection",
+		//},
+		// c is type int which will be added cast to specified type when building function signature, no index can be used.
+		//{
+		//	sql:  `select a from t where c like '1'`,
+		//	best: "Table(t)->Selection->Projection",
+		//},
+		//{
+		//	sql:  `select a from t where c = 1.1 and d > 3`,
+		//	best: "Index(t.c_d_e)[]->Projection",
+		//},
+		//{
+		//	sql:  `select a from t where c = 1.9 and d > 3`,
+		//	best: "Index(t.c_d_e)[]->Projection",
+		//},
+		{
+			sql:  `select a from t where c < 1.1`,
+			best: "IndexReader(Index(t.c_d_e)[[-inf,2)])->Projection",
+		},
+		{
+			sql:  `select a from t where c <= 1.9`,
+			best: "IndexReader(Index(t.c_d_e)[[-inf,1]])->Projection",
+		},
+		{
+			sql:  `select a from t where c >= 1.1`,
+			best: "IndexReader(Index(t.c_d_e)[[2,+inf]])->Projection",
+		},
+		{
+			sql:  `select a from t where c > 1.9`,
+			best: "IndexReader(Index(t.c_d_e)[(1,+inf]])->Projection",
+		},
+		{
+			sql:  `select a from t where c = 123456789098765432101234`,
+			best: "TableReader(Table(t))->Sel([eq(cast(test.t.c), 123456789098765432101234)])->Projection",
+		},
+		{
+			sql:  `select a from t where c = 'hanfei'`,
+			best: "TableReader(Table(t))->Sel([eq(cast(test.t.c), cast(hanfei))])->Projection",
 		},
 	}
 	for _, tt := range tests {

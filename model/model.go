@@ -79,6 +79,11 @@ func (c *ColumnInfo) Clone() *ColumnInfo {
 	return &nc
 }
 
+// IsGenerated returns true if the column is generated column.
+func (c *ColumnInfo) IsGenerated() bool {
+	return len(c.GeneratedExprString) != 0
+}
+
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
 // for use of execution phase.
 const ExtraHandleID = -1

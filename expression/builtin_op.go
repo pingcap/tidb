@@ -22,14 +22,14 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
 	_ functionClass = &logicAndFunctionClass{}
 	_ functionClass = &logicOrFunctionClass{}
 	_ functionClass = &logicXorFunctionClass{}
-	_ functionClass = &isTrueOpFunctionClass{}
-	_ functionClass = &unaryOpFunctionClass{}
+	_ functionClass = &isTrueOrFalseFunctionClass{}
 	_ functionClass = &unaryMinusFunctionClass{}
 	_ functionClass = &isNullFunctionClass{}
 	_ functionClass = &unaryNotFunctionClass{}
@@ -39,10 +39,19 @@ var (
 	_ builtinFunc = &builtinLogicAndSig{}
 	_ builtinFunc = &builtinLogicOrSig{}
 	_ builtinFunc = &builtinLogicXorSig{}
-	_ builtinFunc = &builtinIsTrueOpSig{}
-	_ builtinFunc = &builtinUnaryOpSig{}
+	_ builtinFunc = &builtinRealIsTrueSig{}
+	_ builtinFunc = &builtinDecimalIsTrueSig{}
+	_ builtinFunc = &builtinIntIsTrueSig{}
+	_ builtinFunc = &builtinRealIsFalseSig{}
+	_ builtinFunc = &builtinDecimalIsFalseSig{}
+	_ builtinFunc = &builtinIntIsFalseSig{}
 	_ builtinFunc = &builtinUnaryMinusIntSig{}
-	_ builtinFunc = &builtinIsNullSig{}
+	_ builtinFunc = &builtinDecimalIsNullSig{}
+	_ builtinFunc = &builtinDurationIsNullSig{}
+	_ builtinFunc = &builtinIntIsNullSig{}
+	_ builtinFunc = &builtinRealIsNullSig{}
+	_ builtinFunc = &builtinStringIsNullSig{}
+	_ builtinFunc = &builtinTimeIsNullSig{}
 	_ builtinFunc = &builtinUnaryNotSig{}
 )
 
@@ -50,16 +59,14 @@ type logicAndFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *logicAndFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *logicAndFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinLogicAndSig{baseIntBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_LogicalAnd)
 	sig.tp.Flen = 1
 	return sig.setSelf(sig), nil
 }
@@ -88,17 +95,15 @@ type logicOrFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *logicOrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *logicOrFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	bf.tp.Flen = 1
 	sig := &builtinLogicOrSig{baseIntBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_LogicalOr)
 	return sig.setSelf(sig), nil
 }
 
@@ -132,16 +137,14 @@ type logicXorFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *logicXorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *logicXorFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinLogicXorSig{baseIntBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_LogicalXor)
 	sig.tp.Flen = 1
 	return sig.setSelf(sig), nil
 }
@@ -170,15 +173,12 @@ type bitAndFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitAndFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *bitAndFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitAndSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
@@ -205,15 +205,12 @@ type bitOrFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitOrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *bitOrFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitOrSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
@@ -240,15 +237,12 @@ type bitXorFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitXorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *bitXorFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitXorSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
@@ -275,15 +269,12 @@ type leftShiftFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leftShiftFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *leftShiftFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinLeftShiftSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
@@ -310,15 +301,12 @@ type rightShiftFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rightShiftFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *rightShiftFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinRightShiftSig{baseIntBuiltinFunc{bf}}
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
@@ -341,54 +329,149 @@ func (b *builtinRightShiftSig) evalInt(row []types.Datum) (int64, bool, error) {
 	return int64(uint64(arg0) >> uint64(arg1)), false, nil
 }
 
-type isTrueOpFunctionClass struct {
+type isTrueOrFalseFunctionClass struct {
 	baseFunctionClass
-
 	op opcode.Op
 }
 
-func (c *isTrueOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsTrueOpSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *isTrueOrFalseFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	argTp := tpInt
+	switch args[0].GetTypeClass() {
+	case types.ClassReal:
+		argTp = tpReal
+	case types.ClassDecimal:
+		argTp = tpDecimal
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp)
+	bf.tp.Flen = 1
+
+	var sig builtinFunc
+	switch c.op {
+	case opcode.IsTruth:
+		switch argTp {
+		case tpReal:
+			sig = &builtinRealIsTrueSig{baseIntBuiltinFunc{bf}}
+		case tpDecimal:
+			sig = &builtinDecimalIsTrueSig{baseIntBuiltinFunc{bf}}
+		case tpInt:
+			sig = &builtinIntIsTrueSig{baseIntBuiltinFunc{bf}}
+		}
+	case opcode.IsFalsity:
+		switch argTp {
+		case tpReal:
+			sig = &builtinRealIsFalseSig{baseIntBuiltinFunc{bf}}
+		case tpDecimal:
+			sig = &builtinDecimalIsFalseSig{baseIntBuiltinFunc{bf}}
+		case tpInt:
+			sig = &builtinIntIsFalseSig{baseIntBuiltinFunc{bf}}
+		}
+	}
+	return sig.setSelf(sig), nil
 }
 
-type builtinIsTrueOpSig struct {
-	baseBuiltinFunc
-
-	op opcode.Op
+type builtinRealIsTrueSig struct {
+	baseIntBuiltinFunc
 }
 
-func (b *builtinIsTrueOpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinRealIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
-	var boolVal bool
-	if !args[0].IsNull() {
-		iVal, err := args[0].ToBool(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		if (b.op == opcode.IsTruth && iVal == 1) || (b.op == opcode.IsFalsity && iVal == 0) {
-			boolVal = true
-		}
+	if isNull || input == 0 {
+		return 0, false, nil
 	}
-	d.SetInt64(boolToInt64(boolVal))
-	return
+	return 1, false, nil
+}
+
+type builtinDecimalIsTrueSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinDecimalIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull || input.IsZero() {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+type builtinIntIsTrueSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinIntIsTrueSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull || input == 0 {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+type builtinRealIsFalseSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinRealIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull || input != 0 {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+type builtinDecimalIsFalseSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinDecimalIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull || !input.IsZero() {
+		return 0, false, nil
+	}
+	return 1, false, nil
+}
+
+type builtinIntIsFalseSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinIntIsFalseSig) evalInt(row []types.Datum) (int64, bool, error) {
+	input, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull || input != 0 {
+		return 0, false, nil
+	}
+	return 1, false, nil
 }
 
 type bitNegFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitNegFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *bitNegFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinBitNegSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -407,90 +490,20 @@ func (b *builtinBitNegSig) evalInt(row []types.Datum) (int64, bool, error) {
 	return ^arg, false, nil
 }
 
-type unaryOpFunctionClass struct {
-	baseFunctionClass
-
-	op opcode.Op
-}
-
-func (c *unaryOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinUnaryOpSig{newBaseBuiltinFunc(args, ctx), c.op}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinUnaryOpSig struct {
-	baseBuiltinFunc
-
-	op opcode.Op
-}
-
-func (b *builtinUnaryOpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	defer func() {
-		if er := recover(); er != nil {
-			err = errors.Errorf("%v", er)
-		}
-	}()
-	aDatum := args[0]
-	if aDatum.IsNull() {
-		return
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	switch b.op {
-	case opcode.Not:
-		var n int64
-		n, err = aDatum.ToBool(sc)
-		if err != nil {
-			err = errors.Trace(err)
-		} else if n == 0 {
-			d.SetInt64(1)
-		} else {
-			d.SetInt64(0)
-		}
-	case opcode.Plus:
-		switch aDatum.Kind() {
-		case types.KindInt64,
-			types.KindUint64,
-			types.KindFloat64,
-			types.KindFloat32,
-			types.KindMysqlDuration,
-			types.KindMysqlTime,
-			types.KindString,
-			types.KindMysqlDecimal,
-			types.KindBytes,
-			types.KindMysqlHex,
-			types.KindMysqlBit,
-			types.KindMysqlEnum,
-			types.KindMysqlSet:
-			d = aDatum
-		default:
-			return d, errInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
-		}
-	default:
-		return d, errInvalidOperation.Gen("Unsupported op %v for unary op", b.op)
-	}
-	return
-}
-
 type unaryNotFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *unaryNotFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *unaryNotFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
 	bf.tp.Flen = 1
 
 	sig := &builtinUnaryNotSig{baseIntBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_UnaryNot)
 	return sig.setSelf(sig), nil
 }
 
@@ -514,7 +527,7 @@ type unaryMinusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (b *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow bool) {
+func (c *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow bool) {
 	if mysql.HasUnsignedFlag(arg.GetType().Flag) {
 		uval := arg.Value.GetUint64()
 		// -math.MinInt64 is 9223372036854775808, so if uval is more than 9223372036854775808, like
@@ -535,7 +548,7 @@ func (b *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow boo
 
 // typeInfer infers unaryMinus function return type. when the arg is an int constant and overflow,
 // typerInfer will infers the return type as tpDecimal, not tpInt.
-func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Context) (evalTp, bool) {
+func (c *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Context) (evalTp, bool) {
 	tp := tpInt
 	switch argExpr.GetTypeClass() {
 	case types.ClassString, types.ClassReal:
@@ -549,7 +562,7 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Cont
 	// TODO: Handle float overflow.
 	if arg, ok := argExpr.(*Constant); sc.InSelectStmt && ok &&
 		arg.GetTypeClass() == types.ClassInt {
-		overflow = b.handleIntOverflow(arg)
+		overflow = c.handleIntOverflow(arg)
 		if overflow {
 			tp = tpDecimal
 		}
@@ -557,41 +570,46 @@ func (b *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Cont
 	return tp, overflow
 }
 
-func (b *unaryMinusFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
-	err = b.verifyArgs(args)
-	if err != nil {
+func (c *unaryMinusFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	argExpr, argExprTp := args[0], args[0].GetType()
-	retTp, intOverflow := b.typeInfer(argExpr, ctx)
+	retTp, intOverflow := c.typeInfer(argExpr, ctx)
 
 	var bf baseBuiltinFunc
 	switch argExpr.GetTypeClass() {
 	case types.ClassInt:
 		if intOverflow {
-			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
 			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, true}
+			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 		} else {
-			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
 			sig = &builtinUnaryMinusIntSig{baseIntBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusInt)
 		}
 		bf.tp.Decimal = 0
 	case types.ClassDecimal:
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
 		bf.tp.Decimal = argExprTp.Decimal
 		sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
+		sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 	case types.ClassReal:
-		bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
 		sig = &builtinUnaryMinusRealSig{baseRealBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 	case types.ClassString:
 		tp := argExpr.GetType().Tp
 		if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
-			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
 			sig = &builtinUnaryMinusDecimalSig{baseDecimalBuiltinFunc{bf}, false}
+			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 		} else {
-			bf, err = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
 			sig = &builtinUnaryMinusRealSig{baseRealBuiltinFunc{bf}}
+			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 		}
 	}
 	bf.tp.Flen = argExprTp.Flen + 1
@@ -646,38 +664,127 @@ type builtinUnaryMinusRealSig struct {
 	baseRealBuiltinFunc
 }
 
-func (b *builtinUnaryMinusRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
+func (b *builtinUnaryMinusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	var val float64
-	val, isNull, err = b.args[0].EvalReal(row, sc)
-	res = -val
-	return
+	val, isNull, err := b.args[0].EvalReal(row, sc)
+	return -val, isNull, errors.Trace(err)
 }
 
 type isNullFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsNullSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *isNullFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	tc := args[0].GetType().ToClass()
+	var argTp evalTp
+	switch tc {
+	case types.ClassInt:
+		argTp = tpInt
+	case types.ClassDecimal:
+		argTp = tpDecimal
+	case types.ClassReal:
+		argTp = tpReal
+	default:
+		tp := args[0].GetType().Tp
+		if types.IsTypeTime(tp) {
+			argTp = tpDatetime
+		} else if tp == mysql.TypeDuration {
+			argTp = tpDuration
+		} else {
+			argTp = tpString
+		}
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp)
+	bf.tp.Flen = 1
+	var sig builtinFunc
+	switch argTp {
+	case tpInt:
+		sig = &builtinIntIsNullSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_IntIsNull)
+	case tpDecimal:
+		sig = &builtinDecimalIsNullSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_DecimalIsNull)
+	case tpReal:
+		sig = &builtinRealIsNullSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_RealIsNull)
+	case tpDatetime:
+		sig = &builtinTimeIsNullSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_TimeIsNull)
+	case tpDuration:
+		sig = &builtinDurationIsNullSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_DurationIsNull)
+	case tpString:
+		sig = &builtinStringIsNullSig{baseIntBuiltinFunc{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_StringIsNull)
+	default:
+		panic("unexpected evalTp")
+	}
+	return sig.setSelf(sig), nil
 }
 
-type builtinIsNullSig struct {
-	baseBuiltinFunc
+type builtinDecimalIsNullSig struct {
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinIsNullSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
-func (b *builtinIsNullSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func evalIsNull(isNull bool, err error) (int64, bool, error) {
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		d.SetInt64(1)
-	} else {
-		d.SetInt64(0)
+	if isNull {
+		return 1, false, nil
 	}
-	return d, nil
+	return 0, false, nil
+}
+
+func (b *builtinDecimalIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalDecimal(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
+}
+
+type builtinDurationIsNullSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinDurationIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalDuration(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
+}
+
+type builtinIntIsNullSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinIntIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalInt(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
+}
+
+type builtinRealIsNullSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinRealIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalReal(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
+}
+
+type builtinStringIsNullSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinStringIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
+}
+
+type builtinTimeIsNullSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinTimeIsNullSig) evalInt(row []types.Datum) (int64, bool, error) {
+	_, isNull, err := b.args[0].EvalTime(row, b.ctx.GetSessionVars().StmtCtx)
+	return evalIsNull(isNull, err)
 }

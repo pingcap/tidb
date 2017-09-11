@@ -31,21 +31,21 @@ import (
 )
 
 func (s *testSuite) TestNestedLoopJoin(c *C) {
-	bigExec := &MockExec{Rows: []*executor.Row{
-		{Data: types.MakeDatums(1)},
-		{Data: types.MakeDatums(2)},
-		{Data: types.MakeDatums(3)},
-		{Data: types.MakeDatums(4)},
-		{Data: types.MakeDatums(5)},
-		{Data: types.MakeDatums(6)},
+	bigExec := &MockExec{Rows: []executor.Row{
+		types.MakeDatums(1),
+		types.MakeDatums(2),
+		types.MakeDatums(3),
+		types.MakeDatums(4),
+		types.MakeDatums(5),
+		types.MakeDatums(6),
 	}}
-	smallExec := &MockExec{Rows: []*executor.Row{
-		{Data: types.MakeDatums(1)},
-		{Data: types.MakeDatums(2)},
-		{Data: types.MakeDatums(3)},
-		{Data: types.MakeDatums(4)},
-		{Data: types.MakeDatums(5)},
-		{Data: types.MakeDatums(6)},
+	smallExec := &MockExec{Rows: []executor.Row{
+		types.MakeDatums(1),
+		types.MakeDatums(2),
+		types.MakeDatums(3),
+		types.MakeDatums(4),
+		types.MakeDatums(5),
+		types.MakeDatums(6),
 	}}
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
@@ -64,23 +64,23 @@ func (s *testSuite) TestNestedLoopJoin(c *C) {
 	row, err := join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "1 1")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "1 1")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "2 2")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "2 2")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "3 3")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "3 3")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "4 4")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "4 4")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row.Data[0].GetValue(), row.Data[1].GetValue()), Equals, "5 5")
+	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "5 5")
 	row, err = join.Next()
 	c.Check(err, IsNil)
 	c.Check(row, IsNil)
@@ -230,6 +230,21 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t.a, t.b from t join t1 on t.a=t1.a where t1.b = 4 limit 1").Check(testkit.Rows("3 1"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("<nil> <nil> 0 0", "3 1 3 4", "1 3 1 2", "1 3 1 3"))
 
+	// join reorder will disorganize the resulting schema
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t values(1,2)")
+	tk.MustExec("insert into t1 values(3,4)")
+	tk.MustQuery("select (select t1.a from t1 , t where t.a = s.a limit 2) from t as s").Check(testkit.Rows("3"))
+
+	// test index join bug
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int, b int, key s1(a,b), key s2(b))")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t values(1,2), (5,3), (6,4)")
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t1.a from t1, t where t.a = 5 and t.b = t1.a").Check(testkit.Rows("3"))
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
@@ -285,6 +300,17 @@ func (s *testSuite) TestJoinCast(c *C) {
 	tk.MustExec("insert into t1 values(0), (9)")
 	result = tk.MustQuery("select /*+ TIDB_INLJ(t) */ * from t left join t1 on t1.c1 = t.c1")
 	result.Sort().Check(testkit.Rows("0.0 0.00", "2.0 <nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 char(10))")
+	tk.MustExec("create table t1(c1 char(10))")
+	tk.MustExec("create table t2(c1 char(10))")
+	tk.MustExec("insert into t values('abd')")
+	tk.MustExec("insert into t1 values('abc')")
+	tk.MustExec("insert into t2 values('abc')")
+	result = tk.MustQuery("select * from (select * from t union all select * from t1) t1 join t2 on t1.c1 = t2.c1")
+	result.Sort().Check(testkit.Rows("abc abc"))
 }
 
 func (s *testSuite) TestUsing(c *C) {
@@ -324,6 +350,19 @@ func (s *testSuite) TestUsing(c *C) {
 	tk.MustQuery("select * from t1 join t2 using (b, a)").Check(testkit.Rows("2 1 4 5"))
 
 	tk.MustExec("select * from (t1 join t2 using (a)) join (t3 join t4 using (a)) on (t2.a = t4.a and t1.a = t3.a)")
+
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table tt(b int, a int)")
+	tk.MustExec("insert into t (a, b) values(1, 1)")
+	tk.MustExec("insert into tt (a, b) values(1, 2)")
+	tk.MustQuery("select * from t join tt using(a)").Check(testkit.Rows("1 1 2"))
+
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a float, b int)")
+	tk.MustExec("create table tt(b bigint, a int)")
+	// Check whether this sql can execute successfully.
+	tk.MustExec("select * from t join tt using(a)")
 }
 
 func (s *testSuite) TestNaturalJoin(c *C) {
@@ -649,6 +688,16 @@ func (s *testSuite) TestInSubquery(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
 	result.Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, key b (a))")
+	tk.MustExec("create table t2 (a int, key b (a))")
+	tk.MustExec("insert into t1 values (1),(2),(2)")
+	tk.MustExec("insert into t2 values (1),(2),(2)")
+	result = tk.MustQuery("select * from t1 where a in (select * from t2) order by a desc")
+	result.Check(testkit.Rows("2", "2", "1"))
+	result = tk.MustQuery("select * from t1 where a in (select count(*) from t2 where t1.a = t2.a) order by a desc")
+	result.Check(testkit.Rows("2", "2", "1"))
 }
 
 func (s *testSuite) TestJoinLeak(c *C) {

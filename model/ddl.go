@@ -100,6 +100,13 @@ func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
 	h.TableInfo = tblInfo
 }
 
+// Clean cleans history information.
+func (h *HistoryInfo) Clean() {
+	h.SchemaVersion = 0
+	h.DBInfo = nil
+	h.TableInfo = nil
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID       int64         `json:"id"`
@@ -125,6 +132,9 @@ type Job struct {
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
+
+	// Version indicates the DDL job version. For old jobs, it will be 0.
+	Version int64 `json:"version"`
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.

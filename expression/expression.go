@@ -15,7 +15,7 @@ package expression
 
 import (
 	"bytes"
-	"encoding/json"
+	goJSON "encoding/json"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -27,13 +27,18 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // Error instances.
 var (
-	errInvalidOperation        = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
-	errIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count in the call to native function '%s'")
-	errFunctionNotExists       = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
+	ErrIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count in the call to native function '%s'")
+
+	errInvalidOperation    = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
+	errFunctionNotExists   = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
+	errZlibZData           = terror.ClassTypes.New(codeZlibZData, "ZLIB: Input data corrupted")
+	errIncorrectArgs       = terror.ClassExpression.New(codeIncorrectArgs, mysql.MySQLErrName[mysql.ErrWrongArguments])
+	errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
 )
 
 // Error codes.
@@ -41,10 +46,22 @@ const (
 	codeInvalidOperation        terror.ErrCode = 1
 	codeIncorrectParameterCount                = 1582
 	codeFunctionNotExists                      = 1305
+	codeZlibZData                              = mysql.ErrZlibZData
+	codeIncorrectArgs                          = mysql.ErrWrongArguments
 )
 
+func init() {
+	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
+		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
+		codeZlibZData:               mysql.ErrZlibZData,
+		codeIncorrectArgs:           mysql.ErrWrongArguments,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
+}
+
 // TurnOnNewExprEval indicates whether turn on the new expression evaluation architecture.
-var TurnOnNewExprEval bool
+var TurnOnNewExprEval int32
 
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
@@ -52,7 +69,7 @@ var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
-	json.Marshaler
+	goJSON.Marshaler
 
 	// Eval evaluates an expression through a row.
 	Eval(row []types.Datum) (types.Datum, error)
@@ -74,6 +91,9 @@ type Expression interface {
 
 	// EvalDuration returns the duration representation of expression.
 	EvalDuration(row []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
+
+	// EvalJSON returns the JSON representation of expression.
+	EvalJSON(row []types.Datum, sc *variable.StatementContext) (val json.JSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -143,11 +163,11 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if expr.GetTypeClass() == types.ClassInt {
-		return val.GetInt64(), false, nil
-	} else if IsHybridType(expr) {
+	if IsHybridType(expr) {
 		res, err = val.ToInt64(sc)
 		return res, false, errors.Trace(err)
+	} else if expr.GetTypeClass() == types.ClassInt {
+		return val.GetInt64(), false, nil
 	}
 	panic(fmt.Sprintf("cannot get INT result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
@@ -159,7 +179,9 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 		return res, val.IsNull(), errors.Trace(err)
 	}
 	if expr.GetTypeClass() == types.ClassReal {
-		return val.GetFloat64(), false, nil
+		// TODO: fix this to val.GetFloat64() after all built-in functions been rewritten.
+		res, err = val.ToFloat64(sc)
+		return res, false, errors.Trace(err)
 	} else if IsHybridType(expr) {
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
@@ -182,7 +204,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 		// we infer the result type of the sql as `mysql.TypeNewDecimal` which is consistent with MySQL,
 		// but what we actually get is store as float64 in Datum.
 		// So if we wrap `CastDecimalAsInt` upon the result, we'll get <nil> when call `arg.EvalDecimal()`.
-		// This will be fixed after all built-in functions be rewrite correctlly.
+		// This will be fixed after all built-in functions be rewrite correctly.
 	} else if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
@@ -235,6 +257,21 @@ func evalExprToDuration(expr Expression, row []types.Datum, _ *variable.Statemen
 		return val.GetMysqlDuration(), false, nil
 	}
 	panic(fmt.Sprintf("cannot get DURATION result from %s expression", types.TypeStr(expr.GetType().Tp)))
+}
+
+// evalExprToJSON evaluates `expr` to JSON type.
+func evalExprToJSON(expr Expression, row []types.Datum, _ *variable.StatementContext) (res json.JSON, isNull bool, err error) {
+	if IsHybridType(expr) {
+		return res, true, nil
+	}
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return res, val.IsNull(), errors.Trace(err)
+	}
+	if expr.GetType().Tp == mysql.TypeJSON {
+		return val.GetMysqlJSON(), false, nil
+	}
+	panic(fmt.Sprintf("cannot get JSON result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
 // One stands for a number 1.
@@ -295,37 +332,61 @@ func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 
 // EvalInt returns int representation of Constant.
 func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return 0, true, nil
+	}
 	val, isNull, err := evalExprToInt(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
 // EvalReal returns real representation of Constant.
 func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return 0, true, nil
+	}
 	val, isNull, err := evalExprToReal(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
 // EvalString returns string representation of Constant.
 func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return "", true, nil
+	}
 	val, isNull, err := evalExprToString(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
 // EvalDecimal returns decimal representation of Constant.
 func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return nil, true, nil
+	}
 	val, isNull, err := evalExprToDecimal(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
-func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
-	val, isNull, err := evalExprToTime(c, nil, sc)
+func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (val types.Time, isNull bool, err error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return val, true, nil
+	}
+	val, isNull, err = evalExprToTime(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
 // EvalDuration returns Duration representation of Constant.
-func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
-	val, isNull, err := evalExprToDuration(c, nil, sc)
+func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error) {
+	if c.GetType().Tp == mysql.TypeNull {
+		return val, true, nil
+	}
+	val, isNull, err = evalExprToDuration(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalJSON returns JSON representation of Constant.
+func (c *Constant) EvalJSON(_ []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	val, isNull, err := evalExprToJSON(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
@@ -522,38 +583,17 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 }
 
 // NewCastFunc creates a new cast function.
-func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) (sf Expression) {
-	// TODO: we do not support CastAsJson in new expression evaluation architecture now.
-	if tp.Tp == mysql.TypeJSON {
-		bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
-		sf = &ScalarFunction{
-			FuncName: model.NewCIStr(ast.Cast),
-			RetType:  tp,
-			Function: bt.setSelf(bt),
-		}
-	} else {
-		// We ignore error here because buildCastFunction will only get errIncorrectParameterCount
-		// which can be guaranteed to not happen.
-		sf, _ = buildCastFunction(arg, tp, ctx)
-	}
-	return FoldConstant(sf)
+func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) Expression {
+	return FoldConstant(buildCastFunction(arg, tp, ctx))
 }
 
 // NewValuesFunc creates a new values function.
 func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset}
-	bt, _ := fc.getFunction(nil, ctx)
+	bt, _ := fc.getFunction(ctx, nil)
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
 		Function: bt.setSelf(bt),
 	}
-}
-
-func init() {
-	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
-		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }

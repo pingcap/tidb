@@ -22,17 +22,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func (s *testEvaluatorSuite) TestNewCastFunc(c *C) {
-	defer testleak.AfterTest(c)()
-
-	res := NewCastFunc(types.NewFieldType(mysql.TypeJSON), &Column{RetType: types.NewFieldType(mysql.TypeLonglong)}, s.ctx)
-	castFunc := res.(*ScalarFunction)
-	c.Assert(castFunc.FuncName.L, Equals, "cast")
-	c.Assert(castFunc.RetType.Tp, Equals, mysql.TypeJSON)
-	_, ok := castFunc.Function.(*builtinCastSig)
-	c.Assert(ok, IsTrue)
-}
-
 func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 	defer testleak.AfterTest(c)()
 
@@ -46,8 +35,8 @@ func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	defer testleak.AfterTest(c)()
 
-	col0 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: "DataSource_0", Position: 0, ColName: model.NewCIStr("col0")}
-	col1 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: "DataSource_0", Position: 1, ColName: model.NewCIStr("col1")}
+	col0 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 0, ColName: model.NewCIStr("col0")}
+	col1 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 1, ColName: model.NewCIStr("col1")}
 	ifnullInner := newFunction(ast.Ifnull, col1, One)
 	ifnullOuter := newFunction(ast.Ifnull, col0, ifnullInner)
 

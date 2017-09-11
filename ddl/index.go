@@ -14,13 +14,12 @@
 package ddl
 
 import (
-	"math"
 	"sort"
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -87,7 +85,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			if col.Flen != types.UnspecifiedLength {
 				// Special case for the bit type.
 				if col.FieldType.Tp == mysql.TypeBit {
-					sumLength += int(math.Ceil(float64(col.Flen+7) / float64(8)))
+					sumLength += (col.Flen + 7) >> 3
 				} else {
 					sumLength += col.Flen
 				}
@@ -271,11 +269,11 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
 		})
 		if err != nil {
-			if terror.ErrorEqual(err, errWaitReorgTimeout) {
+			if errWaitReorgTimeout.Equal(err) {
 				// if timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
-			if terror.ErrorEqual(err, kv.ErrKeyExists) {
+			if kv.ErrKeyExists.Equal(err) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
 				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo)
 			}
@@ -357,16 +355,6 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		err = d.runReorgJob(job, func() error {
-			return d.dropTableIndex(indexInfo, job)
-		})
-		if err != nil {
-			// If the timeout happens, we should return.
-			// Then check for the owner and re-wait job to finish.
-			return ver, errors.Trace(filterError(err, errWaitReorgTimeout))
-		}
-
-		// All reorganization jobs are done, drop this index.
 		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 		for _, idx := range tblInfo.Indices {
 			if idx.Name.L != indexName.L {
@@ -390,6 +378,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.State = model.JobDone
 		}
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		job.Args = append(job.Args, indexInfo.ID)
 		d.asyncNotifyEvent(&Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
@@ -646,7 +635,7 @@ func (d *ddl) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, st
 	ret := new(taskResult)
 	handleInfo := &handleInfo{startHandle: startHandle}
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		err1 := d.isReorgRunnable(txn, ddlJobFlag)
+		err1 := d.isReorgRunnable(txn)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -691,7 +680,7 @@ func (d *ddl) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, taskOp
 		// Create the index.
 		handle, err := taskOpInfo.tblIndex.Create(txn, idxRecord.vals, idxRecord.handle)
 		if err != nil {
-			if terror.ErrorEqual(err, kv.ErrKeyExists) && idxRecord.handle == handle {
+			if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
 				// Index already exists, skip it.
 				continue
 			}
@@ -700,14 +689,6 @@ func (d *ddl) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, taskOp
 		}
 	}
 	return taskRet
-}
-
-func (d *ddl) dropTableIndex(indexInfo *model.IndexInfo, job *model.Job) error {
-	startKey := tablecodec.EncodeTableIndexPrefix(job.TableID, indexInfo.ID)
-	// It's asynchronous so it doesn't need to consider if it completes.
-	deleteAll := -1
-	_, _, err := d.delKeysWithStartKey(startKey, startKey, ddlJobFlag, job, deleteAll)
-	return errors.Trace(err)
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
@@ -760,7 +741,7 @@ func (d *ddl) iterateSnapshotRows(t table.Table, version uint64, seekHandle int6
 
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
-			if terror.ErrorEqual(err, kv.ErrNotExist) {
+			if kv.ErrNotExist.Equal(err) {
 				break
 			}
 			return errors.Trace(err)

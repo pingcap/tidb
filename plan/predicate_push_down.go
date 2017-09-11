@@ -72,19 +72,17 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	if !UseDAGPlanBuilder(p.ctx) { // close join reorder for new plan.
-		groups, valid := tryToGetJoinGroup(p)
-		if valid {
-			e := joinReOrderSolver{allocator: p.allocator, ctx: p.ctx}
-			e.reorderJoin(groups, predicates)
-			newJoin := e.resultJoin
-			if len(p.parents) > 0 {
-				parent := p.parents[0]
-				newJoin.SetParents(parent)
-				parent.ReplaceChild(p, newJoin)
-			}
-			return newJoin.PredicatePushDown(predicates)
+	groups, valid := tryToGetJoinGroup(p)
+	if valid {
+		e := joinReOrderSolver{allocator: p.allocator, ctx: p.ctx}
+		e.reorderJoin(groups, predicates)
+		newJoin := e.resultJoin
+		if len(p.parents) > 0 {
+			parent := p.parents[0]
+			newJoin.SetParents(parent)
+			parent.ReplaceChild(p, newJoin)
 		}
+		return newJoin.PredicatePushDown(predicates)
 	}
 	var leftCond, rightCond []expression.Expression
 	retPlan = p

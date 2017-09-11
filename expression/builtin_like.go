@@ -29,6 +29,7 @@ var (
 
 var (
 	_ builtinFunc = &builtinLikeSig{}
+	_ builtinFunc = &builtinRegexpBinarySig{}
 	_ builtinFunc = &builtinRegexpSig{}
 )
 
@@ -36,18 +37,18 @@ type likeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *likeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
 	argTp := []evalTp{tpString, tpString}
 	if len(args) == 3 {
 		argTp = append(argTp, tpInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp...)
 	bf.tp.Flen = 1
 	sig := &builtinLikeSig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	return sig.setSelf(sig), nil
 }
 
 type builtinLikeSig struct {
@@ -87,39 +88,69 @@ type regexpFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRegexpSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *regexpFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
+	bf.tp.Flen = 1
+	var sig builtinFunc
+	if types.IsBinaryStr(args[0].GetType()) {
+		sig = &builtinRegexpBinarySig{baseIntBuiltinFunc{bf}}
+	} else {
+		sig = &builtinRegexpSig{baseIntBuiltinFunc{bf}}
+	}
+	return sig.setSelf(sig), nil
+}
+
+type builtinRegexpBinarySig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinRegexpBinarySig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	expr, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	pat, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	// TODO: We don't need to compile pattern if it has been compiled or it is static.
+	re, err := regexp.Compile(pat)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	return boolToInt64(re.MatchString(expr)), false, nil
 }
 
 type builtinRegexpSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinRegexpSig.
+// evalInt evals `expr REGEXP pat`, or `expr RLIKE pat`.
 // See https://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
-func (b *builtinRegexpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// TODO: We don't need to compile pattern if it has been compiled or it is static.
-	if args[0].IsNull() || args[1].IsNull() {
-		return
+func (b *builtinRegexpSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	expr, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(err)
 	}
 
-	targetStr, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[0], args[0])
+	pat, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, true, errors.Trace(err)
 	}
-	patternStr, err := args[1].ToString()
+
+	// TODO: We don't need to compile pattern if it has been compiled or it is static.
+	re, err := regexp.Compile("(?i)" + pat)
 	if err != nil {
-		return d, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", args[1], args[1])
+		return 0, true, errors.Trace(err)
 	}
-	re, err := regexp.Compile(patternStr)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetInt64(boolToInt64(re.MatchString(targetStr)))
-	return
+	return boolToInt64(re.MatchString(expr)), false, nil
 }

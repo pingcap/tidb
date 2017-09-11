@@ -36,7 +36,6 @@ import (
 
 var (
 	_ Executor = &CheckTableExec{}
-	_ Executor = &DummyScanExec{}
 	_ Executor = &ExistsExec{}
 	_ Executor = &HashAggExec{}
 	_ Executor = &LimitExec{}
@@ -45,6 +44,7 @@ var (
 	_ Executor = &SelectionExec{}
 	_ Executor = &SelectLockExec{}
 	_ Executor = &ShowDDLExec{}
+	_ Executor = &ShowDDLJobsExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
@@ -95,10 +95,7 @@ const (
 // If there is sort need in the double read, then the table scan of the double read must store the handle.
 // If there is a select for update. then we need to store the handle until the lock plan. But if there is aggregation, the handle info can be removed.
 // Otherwise the executor's returned rows don't need to store the handle information.
-type Row struct {
-	// Data is the output record data for current Plan.
-	Data []types.Datum
-}
+type Row []types.Datum
 
 type baseExecutor struct {
 	children []Executor
@@ -146,7 +143,7 @@ func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ..
 
 // Executor executes a query.
 type Executor interface {
-	Next() (*Row, error)
+	Next() (Row, error)
 	Close() error
 	Open() error
 	Schema() *expression.Schema
@@ -157,15 +154,13 @@ type ShowDDLExec struct {
 	baseExecutor
 
 	ddlOwnerID string
-	bgOwnerID  string
 	selfID     string
 	ddlInfo    *inspectkv.DDLInfo
-	bgInfo     *inspectkv.DDLInfo
 	done       bool
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowDDLExec) Next() (*Row, error) {
+func (e *ShowDDLExec) Next() (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -174,22 +169,35 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	if e.ddlInfo.Job != nil {
 		ddlJob = e.ddlInfo.Job.String()
 	}
-	var bgJob string
-	if e.bgInfo.Job != nil {
-		bgJob = e.bgInfo.Job.String()
-	}
 
-	row := &Row{}
-	row.Data = types.MakeDatums(
+	row := types.MakeDatums(
 		e.ddlInfo.SchemaVer,
 		e.ddlOwnerID,
 		ddlJob,
-		e.bgInfo.SchemaVer,
-		e.bgOwnerID,
-		bgJob,
 		e.selfID,
 	)
 	e.done = true
+
+	return row, nil
+}
+
+// ShowDDLJobsExec represent a show DDL jobs executor.
+type ShowDDLJobsExec struct {
+	baseExecutor
+
+	cursor int
+	jobs   []*model.Job
+}
+
+// Next implements the Executor Next interface.
+func (e *ShowDDLJobsExec) Next() (Row, error) {
+	if e.cursor >= len(e.jobs) {
+		return nil, nil
+	}
+
+	job := e.jobs[e.cursor]
+	row := types.MakeDatums(job.String(), job.State.String())
+	e.cursor++
 
 	return row, nil
 }
@@ -207,7 +215,7 @@ type CheckTableExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *CheckTableExec) Next() (*Row, error) {
+func (e *CheckTableExec) Next() (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -250,7 +258,7 @@ type SelectLockExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SelectLockExec) Next() (*Row, error) {
+func (e *SelectLockExec) Next() (Row, error) {
 	row, err := e.children[0].Next()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -267,7 +275,7 @@ func (e *SelectLockExec) Next() (*Row, error) {
 	txnCtx.ForUpdate = true
 	for id, cols := range e.Schema().TblID2Handle {
 		for _, col := range cols {
-			handle := row.Data[col.Index].GetInt64()
+			handle := row[col.Index].GetInt64()
 			lockKey := tablecodec.EncodeRowKeyWithHandle(id, handle)
 			err = txn.LockKeys(lockKey)
 			if err != nil {
@@ -291,7 +299,7 @@ type LimitExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *LimitExec) Next() (*Row, error) {
+func (e *LimitExec) Next() (Row, error) {
 	for e.Idx < e.Offset {
 		srcRow, err := e.children[0].Next()
 		if err != nil {
@@ -348,7 +356,7 @@ func init() {
 			if row == nil {
 				return rows, errors.Trace(exec.Close())
 			}
-			rows = append(rows, row.Data)
+			rows = append(rows, row)
 		}
 	}
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
@@ -367,7 +375,7 @@ type ProjectionExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ProjectionExec) Next() (retRow *Row, err error) {
+func (e *ProjectionExec) Next() (retRow Row, err error) {
 	srcRow, err := e.children[0].Next()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -375,15 +383,13 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 	if srcRow == nil {
 		return nil, nil
 	}
-	row := &Row{
-		Data: make([]types.Datum, 0, len(e.exprs)),
-	}
+	row := make([]types.Datum, 0, len(e.exprs))
 	for _, expr := range e.exprs {
-		val, err := expr.Eval(srcRow.Data)
+		val, err := expr.Eval(srcRow)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row.Data = append(row.Data, val)
+		row = append(row, val)
 	}
 	return row, nil
 }
@@ -403,12 +409,12 @@ func (e *TableDualExec) Open() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *TableDualExec) Next() (*Row, error) {
+func (e *TableDualExec) Next() (Row, error) {
 	if e.returnCnt >= e.rowCount {
 		return nil, nil
 	}
 	e.returnCnt++
-	return &Row{}, nil
+	return Row{}, nil
 }
 
 // SelectionExec represents a filter executor.
@@ -467,7 +473,7 @@ func (e *SelectionExec) initController() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *SelectionExec) Next() (*Row, error) {
+func (e *SelectionExec) Next() (Row, error) {
 	if e.scanController && !e.controllerInit {
 		err := e.initController()
 		if err != nil {
@@ -483,7 +489,7 @@ func (e *SelectionExec) Next() (*Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		match, err := expression.EvalBool(e.Conditions, srcRow.Data, e.ctx)
+		match, err := expression.EvalBool(e.Conditions, srcRow, e.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -526,7 +532,7 @@ func (e *TableScanExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor interface.
-func (e *TableScanExec) Next() (*Row, error) {
+func (e *TableScanExec) Next() (Row, error) {
 	if e.isInfoSchema {
 		return e.nextForInfoSchema()
 	}
@@ -569,7 +575,7 @@ func (e *TableScanExec) Next() (*Row, error) {
 	}
 }
 
-func (e *TableScanExec) nextForInfoSchema() (*Row, error) {
+func (e *TableScanExec) nextForInfoSchema() (Row, error) {
 	if e.infoSchemaRows == nil {
 		columns := make([]*table.Column, e.schema.Len())
 		for i, v := range e.columns {
@@ -586,7 +592,7 @@ func (e *TableScanExec) nextForInfoSchema() (*Row, error) {
 	if e.infoSchemaCursor >= len(e.infoSchemaRows) {
 		return nil, nil
 	}
-	row := &Row{Data: e.infoSchemaRows[e.infoSchemaCursor]}
+	row := e.infoSchemaRows[e.infoSchemaCursor]
 	e.infoSchemaCursor++
 	return row, nil
 }
@@ -610,15 +616,12 @@ func (e *TableScanExec) seekRange(handle int64) (inRange bool) {
 	}
 }
 
-func (e *TableScanExec) getRow(handle int64) (*Row, error) {
-	row := &Row{}
-	var err error
-
+func (e *TableScanExec) getRow(handle int64) (Row, error) {
 	columns := make([]*table.Column, e.schema.Len())
 	for i, v := range e.columns {
 		columns[i] = table.ToColumn(v)
 	}
-	row.Data, err = e.t.RowWithCols(e.ctx, handle, columns)
+	row, err := e.t.RowWithCols(e.ctx, handle, columns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -648,14 +651,14 @@ func (e *ExistsExec) Open() error {
 
 // Next implements the Executor Next interface.
 // We always return one row with one column which has true or false value.
-func (e *ExistsExec) Next() (*Row, error) {
+func (e *ExistsExec) Next() (Row, error) {
 	if !e.evaluated {
 		e.evaluated = true
 		srcRow, err := e.children[0].Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return &Row{Data: []types.Datum{types.NewDatum(srcRow != nil)}}, nil
+		return Row{types.NewDatum(srcRow != nil)}, nil
 	}
 	return nil, nil
 }
@@ -675,7 +678,7 @@ func (e *MaxOneRowExec) Open() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *MaxOneRowExec) Next() (*Row, error) {
+func (e *MaxOneRowExec) Next() (Row, error) {
 	if !e.evaluated {
 		e.evaluated = true
 		srcRow, err := e.children[0].Next()
@@ -683,7 +686,7 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if srcRow == nil {
-			return &Row{Data: make([]types.Datum, e.schema.Len())}, nil
+			return make([]types.Datum, e.schema.Len()), nil
 		}
 		srcRow1, err := e.children[0].Next()
 		if err != nil {
@@ -705,14 +708,14 @@ type UnionExec struct {
 
 	finished atomic.Value
 	resultCh chan *execResult
-	rows     []*Row
+	rows     []Row
 	cursor   int
 	wg       sync.WaitGroup
 	closedCh chan struct{}
 }
 
 type execResult struct {
-	rows []*Row
+	rows []Row
 	err  error
 }
 
@@ -731,7 +734,7 @@ func (e *UnionExec) fetchData(idx int) {
 	defer e.wg.Done()
 	for {
 		result := &execResult{
-			rows: make([]*Row, 0, batchSize),
+			rows: make([]Row, 0, batchSize),
 			err:  nil,
 		}
 		for i := 0; i < batchSize; i++ {
@@ -752,16 +755,16 @@ func (e *UnionExec) fetchData(idx int) {
 				return
 			}
 			// TODO: Add cast function in plan building phase.
-			for j := range row.Data {
+			for j := range row {
 				col := e.schema.Columns[j]
-				val, err := row.Data[j].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
+				val, err := row[j].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
 				if err != nil {
 					e.finished.Store(true)
 					result.err = err
 					e.resultCh <- result
 					return
 				}
-				row.Data[j] = val
+				row[j] = val
 			}
 			result.rows = append(result.rows, row)
 		}
@@ -789,7 +792,7 @@ func (e *UnionExec) Open() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *UnionExec) Next() (*Row, error) {
+func (e *UnionExec) Next() (Row, error) {
 	if e.cursor >= len(e.rows) {
 		result, ok := <-e.resultCh
 		if !ok {
@@ -817,23 +820,12 @@ func (e *UnionExec) Close() error {
 	return errors.Trace(e.baseExecutor.Close())
 }
 
-// DummyScanExec returns zero results, when some where condition never match, there won't be any
-// rows to return, so DummyScan is used to avoid real scan on KV.
-type DummyScanExec struct {
-	baseExecutor
-}
-
-// Next implements the Executor Next interface.
-func (e *DummyScanExec) Next() (*Row, error) {
-	return nil, nil
-}
-
 // CacheExec represents Cache executor.
 // it stores the return values of the executor of its child node.
 type CacheExec struct {
 	baseExecutor
 
-	storedRows  []*Row
+	storedRows  []Row
 	cursor      int
 	srcFinished bool
 }
@@ -845,7 +837,7 @@ func (e *CacheExec) Open() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *CacheExec) Next() (*Row, error) {
+func (e *CacheExec) Next() (Row, error) {
 	if e.srcFinished && e.cursor >= len(e.storedRows) {
 		return nil, nil
 	}

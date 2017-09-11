@@ -14,12 +14,14 @@
 package variable
 
 import (
+	"crypto/tls"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 )
 
 const (
@@ -127,11 +129,14 @@ type SessionVars struct {
 	// ClientCapability is client's capability.
 	ClientCapability uint32
 
+	// TLSConnectionState is the TLS connection state (nil if not using TLS).
+	TLSConnectionState *tls.ConnectionState
+
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
-	// User is the username with which the session login.
-	User string
+	// User is the user identity with which the session login.
+	User *auth.UserIdentity
 
 	// CurrentDB is the default database of this session.
 	CurrentDB string
@@ -208,6 +213,9 @@ type SessionVars struct {
 
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
+
+	// BatchDelete indicates if we should split delete data into multiple batches.
+	BatchDelete bool
 
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
@@ -346,6 +354,7 @@ type StatementContext struct {
 
 	// Copied from SessionVars.TimeZone.
 	TimeZone *time.Location
+	Priority mysql.PriorityEnum
 }
 
 // AddAffectedRows adds affected rows.
@@ -451,4 +460,14 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.foundRows = 0
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
+}
+
+// MostRestrictStateContext gets a most restrict StatementContext.
+func MostRestrictStateContext() *StatementContext {
+	return &StatementContext{
+		IgnoreTruncate:    false,
+		OverflowAsWarning: false,
+		TruncateAsWarning: false,
+		TimeZone:          time.UTC,
+	}
 }

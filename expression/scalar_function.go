@@ -16,6 +16,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // ScalarFunction is the function that returns a value.
@@ -76,14 +78,14 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
-	f, err := fc.getFunction(funcArgs, ctx)
+	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
-	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified {
+	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
@@ -111,8 +113,7 @@ func (sf *ScalarFunction) Clone() Expression {
 	}
 	switch sf.FuncName.L {
 	case ast.Cast:
-		newFunc, _ := buildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
-		return newFunc
+		return buildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
 	case ast.Values:
 		v := sf.Function.(*builtinValuesSig)
 		return NewValuesFunc(v.offset, sf.GetType(), sf.GetCtx())
@@ -163,7 +164,7 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
-	if !TurnOnNewExprEval {
+	if atomic.LoadInt32(&TurnOnNewExprEval) == 0 {
 		return sf.Function.eval(row)
 	}
 	sc := sf.GetCtx().GetSessionVars().StmtCtx
@@ -191,6 +192,8 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 			res, isNull, err = sf.EvalTime(row, sc)
 		case mysql.TypeDuration:
 			res, isNull, err = sf.EvalDuration(row, sc)
+		case mysql.TypeJSON:
+			res, isNull, err = sf.EvalJSON(row, sc)
 		default:
 			res, isNull, err = sf.EvalString(row, sc)
 		}
@@ -232,6 +235,11 @@ func (sf *ScalarFunction) EvalTime(row []types.Datum, sc *variable.StatementCont
 // EvalDuration implements Expression interface.
 func (sf *ScalarFunction) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
 	return sf.Function.evalDuration(row)
+}
+
+// EvalJSON implements Expression interface.
+func (sf *ScalarFunction) EvalJSON(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	return sf.Function.evalJSON(row)
 }
 
 // HashCode implements Expression interface.

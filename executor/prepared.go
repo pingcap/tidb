@@ -93,7 +93,7 @@ func (e *PrepareExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next() (*Row, error) {
+func (e *PrepareExec) Next() (Row, error) {
 	e.DoPrepare()
 	return nil, e.Err
 }
@@ -202,7 +202,7 @@ func (e *ExecuteExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next() (*Row, error) {
+func (e *ExecuteExec) Next() (Row, error) {
 	// Will never be called.
 	return nil, nil
 }
@@ -272,7 +272,7 @@ func (e *ExecuteExec) Build() error {
 	e.Stmt = prepared.Stmt
 	e.Plan = p
 	ResetStmtCtx(e.Ctx, e.Stmt)
-	stmtCount(e.Stmt, e.Plan)
+	stmtCount(e.Stmt, e.Plan, e.Ctx.GetSessionVars().InRestrictedSQL)
 	return nil
 }
 
@@ -289,7 +289,7 @@ func (e *DeallocateExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next() (*Row, error) {
+func (e *DeallocateExec) Next() (Row, error) {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
@@ -335,7 +335,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sc := new(variable.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
 
-	switch s.(type) {
+	switch stmt := s.(type) {
 	case *ast.UpdateStmt, *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
@@ -366,6 +366,9 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		// Return warning for truncate error in selection.
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = true
+		if opts := stmt.SelectStmtOpts; opts != nil {
+			sc.Priority = opts.Priority
+		}
 	default:
 		sc.IgnoreTruncate = true
 		sc.OverflowAsWarning = false

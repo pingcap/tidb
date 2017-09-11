@@ -484,6 +484,9 @@ func checkIndexInfo(indexName string, indexColNames []*ast.IndexColName) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return ddl.ErrWrongNameForIndex.GenByArgs(indexName)
 	}
+	if len(indexColNames) > mysql.MaxKeyParts {
+		return infoschema.ErrTooManyKeyParts.GenByArgs(mysql.MaxKeyParts)
+	}
 	return checkDuplicateColumnName(indexColNames)
 }
 
@@ -494,6 +497,10 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	cName := colDef.Name.Name.String()
 	if isIncorrectName(cName) {
 		return ddl.ErrWrongColumnName.GenByArgs(cName)
+	}
+
+	if isInvalidDefaultValue(colDef) {
+		return types.ErrInvalidDefault.GenByArgs(colDef.Name.Name.O)
 	}
 
 	// Check column type.
@@ -545,6 +552,33 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		// TODO: Add more types.
 	}
 	return nil
+}
+
+// isNowSymFunc checks whether defaul value is a NOW() builtin function.
+func isDefaultValNowSymFunc(expr ast.ExprNode) bool {
+	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
+		// Default value NOW() is transformed to CURRENT_TIMESTAMP() in parser.
+		if funcCall.FnName.L == ast.CurrentTimestamp {
+			return true
+		}
+	}
+	return false
+}
+
+func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
+	tp := colDef.Tp
+	// Check the last default value.
+	for i := len(colDef.Options) - 1; i >= 0; i-- {
+		columnOpt := colDef.Options[i]
+		if columnOpt.Tp == ast.ColumnOptionDefaultValue {
+			if !(tp.Tp == mysql.TypeTimestamp || tp.Tp == mysql.TypeDatetime) && isDefaultValNowSymFunc(columnOpt.Expr) {
+				return true
+			}
+			break
+		}
+	}
+
+	return false
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html

@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -68,7 +68,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	err = util.RunWithRetry(defaultMaxRetries, retryInterval, func() (retry bool, err1 error) {
 		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
 		factory := createSessionFunc(store)
-		d, err1 = domain.NewDomain(store, ddlLease, statisticLease, factory)
+		sysFactory := createSessionWithDomainFunc(store)
+		d, err1 = domain.NewDomain(store, ddlLease, statisticLease, factory, sysFactory)
 		return true, errors.Trace(err1)
 	})
 	if err != nil {

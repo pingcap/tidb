@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -409,6 +409,10 @@ func (s *dbStore) writeBatch(b engine.Batch) error {
 	}
 
 	return nil
+}
+
+func (s *dbStore) SupportDeleteRange() (supported bool) {
+	return false
 }
 
 func (s *dbStore) newBatch() engine.Batch {

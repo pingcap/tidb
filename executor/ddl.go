@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -45,7 +44,7 @@ func (e *DDLExec) Schema() *expression.Schema {
 }
 
 // Next implements Execution Next interface.
-func (e *DDLExec) Next() (*Row, error) {
+func (e *DDLExec) Next() (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -128,7 +127,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	}
 	err := sessionctx.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt)
 	if err != nil {
-		if terror.ErrorEqual(err, infoschema.ErrDatabaseExists) && s.IfNotExists {
+		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil
 		}
 	}
@@ -144,7 +143,7 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
 		err = sessionctx.GetDomain(e.ctx).DDL().CreateTableWithLike(e.ctx, ident, referIdent)
 	}
-	if terror.ErrorEqual(err, infoschema.ErrTableExists) {
+	if infoschema.ErrTableExists.Equal(err) {
 		if s.IfNotExists {
 			return nil
 		}
@@ -162,7 +161,7 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	dbName := model.NewCIStr(s.Name)
 	err := sessionctx.GetDomain(e.ctx).DDL().DropSchema(e.ctx, dbName)
-	if terror.ErrorEqual(err, infoschema.ErrDatabaseNotExists) {
+	if infoschema.ErrDatabaseNotExists.Equal(err) {
 		if s.IfExists {
 			err = nil
 		} else {
