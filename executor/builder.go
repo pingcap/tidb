@@ -952,6 +952,27 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
 	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
+	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeIdx) {
+		e := &AnalyzeIndexExec{
+			ctx:         b.ctx,
+			tblInfo:     tblInfo,
+			idxInfo:     idxInfo,
+			concurrency: scanConcurrency,
+			priority:    b.priority,
+			ranges:      []*types.IndexRange{idxRange},
+			analyzePB: &tipb.AnalyzeReq{
+				Tp:             tipb.AnalyzeType_TypeIndex,
+				StartTs:        b.getStartTS(),
+				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+				TimeZoneOffset: timeZoneOffset(b.ctx),
+			},
+		}
+		e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
+			BucketSize: maxBucketSize,
+			NumColumns: int32(len(idxInfo.Columns)),
+		}
+		return e
+	}
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &IndexReaderExecutor{
 			table:     table,
@@ -1021,6 +1042,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 			src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
 			indexInfo: task.IndexInfo,
 			tableInfo: task.TableInfo,
+			pushdown:  b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeIdx),
 		})
 	}
 	return e

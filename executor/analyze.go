@@ -142,10 +142,15 @@ type analyzeTask struct {
 	Columns   []*model.ColumnInfo
 	PKInfo    *model.ColumnInfo
 	src       Executor
+	pushdown  bool
 }
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
 	for task := range taskCh {
+		if task.pushdown {
+			resultCh <- e.handleAnalyzePushDown(task)
+			continue
+		}
 		switch task.taskType {
 		case colTask:
 			resultCh <- e.analyzeColumns(task)
