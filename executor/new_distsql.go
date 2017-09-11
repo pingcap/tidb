@@ -18,8 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -300,7 +300,7 @@ type IndexLookUpExecutor struct {
 	tableWorker
 	finished chan struct{}
 
-	resultChan <-chan *lookupTableTask
+	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
 }
 
@@ -317,28 +317,33 @@ func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh ch
 		return errors.Trace(err)
 	}
 	result.Fetch(e.ctx.GoCtx())
-	ih := &e.indexWorker
-	ih.wg.Add(1)
+	worker := &e.indexWorker
+	worker.wg.Add(1)
 	go func() {
 		ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
-		ih.fetchHandles(e, result, workCh, ctx, finished)
+		worker.fetchHandles(e, result, workCh, ctx, finished)
 		cancel()
 		if err := result.Close(); err != nil {
 			log.Error("close SelectDAG result failed:", errors.ErrorStack(err))
 		}
 		close(workCh)
-		ih.wg.Done()
+		close(e.resultCh)
+		worker.wg.Done()
 	}()
 	return nil
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
-func (ih *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
+// The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
+// at the same time to keep data ordered.
+func (worker *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.SelectResult, workCh chan<- *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(result)
 		if err != nil {
-			workCh <- &lookupTableTask{
-				tasksErr: errors.Trace(err),
+			doneCh := make(chan error, 1)
+			doneCh <- errors.Trace(err)
+			e.resultCh <- &lookupTableTask{
+				doneCh: doneCh,
 			}
 			return
 		}
@@ -353,75 +358,56 @@ func (ih *indexWorker) fetchHandles(e *IndexLookUpExecutor, result distsql.Selec
 			case <-finished:
 				return
 			case workCh <- task:
+				e.resultCh <- task
 			}
 		}
 	}
 }
 
-func (ih *indexWorker) close() {
-	ih.wg.Wait()
-}
-
-func (e *IndexLookUpExecutor) waitIndexWorker() {
-	e.indexWorker.close()
+func (worker *indexWorker) close() {
+	worker.wg.Wait()
 }
 
 // tableWorker is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableWorker struct {
-	resultCh chan<- *lookupTableTask
-	wg       sync.WaitGroup
+	wg sync.WaitGroup
 }
 
-// startTableWorker launch some background goroutines which pick tasks from workCh,
-// execute the task and store the results in IndexLookUpExecutor's resultCh.
+// startTableWorker launch some background goroutines which pick tasks from workCh and execute the task.
 func (e *IndexLookUpExecutor) startTableWorker(workCh <-chan *lookupTableTask, finished <-chan struct{}) {
-	resultCh := make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
-	th := &e.tableWorker
-	th.resultCh = resultCh
-	e.resultChan = resultCh
+	worker := &e.tableWorker
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
-	th.wg.Add(lookupConcurrencyLimit)
+	worker.wg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		ctx, cancel := goctx.WithCancel(e.ctx.GoCtx())
 		go func() {
-			th.pickAndExecTask(e, workCh, ctx, finished)
+			worker.pickAndExecTask(e, workCh, ctx, finished)
 			cancel()
-			th.wg.Done()
+			worker.wg.Done()
 		}()
 	}
-	go func() {
-		th.wg.Wait()
-		close(th.resultCh)
-	}()
 }
 
-// pickAndExecTask picks tasks from workCh, execute them, and send the result to tableWorker's taskCh.
-func (th *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
+// pickAndExecTask picks tasks from workCh, and execute them.
+func (worker *tableWorker) pickAndExecTask(e *IndexLookUpExecutor, workCh <-chan *lookupTableTask, ctx goctx.Context, finished <-chan struct{}) {
 	for {
+		// Don't check ctx.Done() on purpose. If background worker get the signal and all
+		// exit immediately, session's goroutine doesn't know this and still calling Next(),
+		// it may block reading task.doneCh forever.
 		select {
 		case task, ok := <-workCh:
 			if !ok {
 				return
 			}
-			if task.tasksErr != nil {
-				th.resultCh <- task
-				return
-			}
-
-			// TODO: The results can be simplified when new_distsql.go replace distsql.go totally.
 			e.executeTask(task, ctx)
-			th.resultCh <- task
-		case <-ctx.Done():
-			return
 		case <-finished:
 			return
 		}
 	}
 }
 
-func (e *IndexLookUpExecutor) waitTableWorker() {
-	for range e.resultChan {
-	}
+func (worker *tableWorker) close() {
+	worker.wg.Wait()
 }
 
 // Open implements the Executor Open interface.
@@ -437,6 +423,7 @@ func (e *IndexLookUpExecutor) open(kvRanges []kv.KeyRange) error {
 	e.finished = make(chan struct{})
 	e.indexWorker = indexWorker{}
 	e.tableWorker = tableWorker{}
+	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
@@ -563,8 +550,12 @@ func (e *IndexLookUpExecutor) Schema() *expression.Schema {
 func (e *IndexLookUpExecutor) Close() error {
 	if e.finished != nil {
 		close(e.finished)
-		e.waitIndexWorker()
-		e.waitTableWorker()
+		// Drain the resultCh and discard the result, in case that Next() doesn't fully
+		// consume the data, background worker still writing to resultCh and block forever.
+		for range e.resultCh {
+		}
+		e.indexWorker.close()
+		e.tableWorker.close()
 		e.finished = nil
 	}
 	return nil
@@ -574,12 +565,9 @@ func (e *IndexLookUpExecutor) Close() error {
 func (e *IndexLookUpExecutor) Next() (Row, error) {
 	for {
 		if e.resultCurr == nil {
-			resultCurr, ok := <-e.resultChan
+			resultCurr, ok := <-e.resultCh
 			if !ok {
 				return nil, nil
-			}
-			if resultCurr.tasksErr != nil {
-				return nil, errors.Trace(resultCurr.tasksErr)
 			}
 			e.resultCurr = resultCurr
 		}

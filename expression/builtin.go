@@ -801,7 +801,7 @@ var funcs = map[string]functionClass{
 	ast.Field:           &fieldFunctionClass{baseFunctionClass{ast.Field, 2, -1}},
 	ast.Format:          &formatFunctionClass{baseFunctionClass{ast.Format, 2, 3}},
 	ast.FromBase64:      &fromBase64FunctionClass{baseFunctionClass{ast.FromBase64, 1, 1}},
-	ast.InsertFunc:      &insertFuncFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
+	ast.InsertFunc:      &insertFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
 	ast.Instr:           &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 2}},
 	ast.Lcase:           &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
 	ast.Left:            &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
