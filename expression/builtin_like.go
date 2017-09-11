@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -41,13 +42,11 @@ func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	argTp := []evalTp{tpString, tpString}
-	if len(args) == 3 {
-		argTp = append(argTp, tpInt)
-	}
+	argTp := []evalTp{tpString, tpString, tpInt}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp...)
 	bf.tp.Flen = 1
 	sig := &builtinLikeSig{baseIntBuiltinFunc{bf}}
+	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
 	return sig.setSelf(sig), nil
 }
 
@@ -69,16 +68,11 @@ func (b *builtinLikeSig) evalInt(row []types.Datum) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	var escape byte = '\\'
-	// If this function is called by mock tikv, the args len will be 2 and the escape will be `\\`.
-	// TODO: Remove this after remove old evaluator logic.
-	if len(b.args) >= 3 {
-		val, isNull, err := b.args[2].EvalInt(row, sc)
-		if isNull || err != nil {
-			return 0, isNull, errors.Trace(err)
-		}
-		escape = byte(val)
+	val, isNull, err := b.args[2].EvalInt(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
+	escape := byte(val)
 	patChars, patTypes := stringutil.CompilePattern(patternStr, escape)
 	match := stringutil.DoMatch(valStr, patChars, patTypes)
 	return boolToInt64(match), false, nil

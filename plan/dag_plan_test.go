@@ -860,57 +860,54 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c_str like '_abc'",
-			best: "TableReader(Table(t))->Sel([like(test.t.c_str, _abc, 92)])->Projection",
+			best: "TableReader(Table(t)->Sel([like(test.t.c_str, _abc, 92)]))->Projection",
 		},
 		{
 			sql:  "select a from t where c_str like 'abc%'",
 			best: "IndexReader(Index(t.c_d_e_str)[[abc,abd)])->Projection",
 		},
 		{
-			// FIXME: Should use index reader.
 			sql:  "select a from t where c_str like 'abc_'",
-			best: "TableReader(Table(t))->Sel([like(test.t.c_str, abc_, 92)])->Projection",
+			best: "IndexReader(Index(t.c_d_e_str)[(abc,abd)]->Sel([like(test.t.c_str, abc_, 92)]))->Projection",
 		},
 		{
 			sql:  "select a from t where c_str like 'abc%af'",
-			best: "TableReader(Table(t))->Sel([like(test.t.c_str, abc%af, 92)])->Projection",
-			//			best: "Index(t.c_d_e_str)[[abc <nil>,abd <nil>)]->Selection->Projection",
+			best: "IndexReader(Index(t.c_d_e_str)[[abc,abd)]->Sel([like(test.t.c_str, abc%af, 92)]))->Projection",
 		},
 		{
 			sql:  `select a from t where c_str like 'abc\\_' escape ''`,
-			best: "TableReader(Table(t))->Sel([like(test.t.c_str, abc\\_, 92)])->Projection",
-			//			best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
+			best: "IndexReader(Index(t.c_d_e_str)[[abc_,abc_]])->Projection",
 		},
-		//{
-		//	sql:  `select a from t where c_str like 'abc\\_'`,
-		//	best: "Index(t.c_d_e_str)[[abc_,abc_]]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c_str like 'abc\\\\_'`,
-		//	best: "Index(t.c_d_e_str)[(abc\\ +inf,abc] <nil>)]->Selection->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c_str like 'abc\\_%'`,
-		//	best: "Index(t.c_d_e_str)[[abc_ <nil>,abc` <nil>)]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c_str like 'abc=_%' escape '='`,
-		//	best: "Index(t.c_d_e_str)[[abc_ <nil>,abc` <nil>)]->Projection",
-		//},
-		//{
-		//	sql:  `select a from t where c_str like 'abc\\__'`,
-		//	best: "Index(t.c_d_e_str)[(abc_ +inf,abc` <nil>)]->Selection->Projection",
-		//},
-		//{
-		//	// Check that 123 is converted to string '123'. index can be used.
-		//	sql:  `select a from t where c_str like 123`,
-		//	best: "Index(t.c_d_e_str)[[123,123]]->Projection",
-		//},
+		{
+			sql:  `select a from t where c_str like 'abc\\_'`,
+			best: "IndexReader(Index(t.c_d_e_str)[[abc_,abc_]])->Projection",
+		},
+//		{
+//			sql:  `select a from t where c_str like 'abc\\\\_'`,
+//			best: "IndexReader(Index(t.c_d_e_str)[(abc\\ +inf,abc] <nil>)])->Selection->Projection",
+//		},
+		{
+			sql:  `select a from t where c_str like 'abc\\_%'`,
+			best: "IndexReader(Index(t.c_d_e_str)[[abc_,abc`)])->Projection",
+		},
+		{
+			sql:  `select a from t where c_str like 'abc=_%' escape '='`,
+			best: "IndexReader(Index(t.c_d_e_str)[[abc_,abc`)])->Projection",
+		},
+		{
+			sql:  `select a from t where c_str like 'abc\\__'`,
+			best: "IndexReader(Index(t.c_d_e_str)[(abc_,abc`)]->Sel([like(test.t.c_str, abc\\__, 92)]))->Projection",
+		},
+		{
+			// Check that 123 is converted to string '123'. index can be used.
+			sql:  `select a from t where c_str like 123`,
+			best: "IndexReader(Index(t.c_d_e_str)[[123,123]])->Projection",
+		},
 		// c is type int which will be added cast to specified type when building function signature, no index can be used.
-		//{
-		//	sql:  `select a from t where c like '1'`,
-		//	best: "Table(t)->Selection->Projection",
-		//},
+		{
+			sql:  `select a from t where c like '1'`,
+			best: "TableReader(Table(t))->Sel([like(cast(test.t.c), 1, 92)])->Projection",
+		},
 		//{
 		//	sql:  `select a from t where c = 1.1 and d > 3`,
 		//	best: "Index(t.c_d_e)[]->Projection",

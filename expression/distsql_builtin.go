@@ -446,6 +446,10 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinIfNullTimeSig{baseTimeBuiltinFunc{base}}
 	case tipb.ScalarFuncSig_IfNullDuration:
 		f = &builtinIfNullTimeSig{baseTimeBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_IfNullJson:
+		f = &builtinIfNullJSONSig{baseJSONBuiltinFunc{base}}
+
+
 	case tipb.ScalarFuncSig_IfReal:
 		f = &builtinIfRealSig{baseRealBuiltinFunc{base}}
 	case tipb.ScalarFuncSig_IfInt:
@@ -458,6 +462,8 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinIfTimeSig{baseTimeBuiltinFunc{base}}
 	case tipb.ScalarFuncSig_IfDuration:
 		f = &builtinIfDurationSig{baseDurationBuiltinFunc{base}}
+	case tipb.ScalarFuncSig_IfJson:
+		f = &builtinIfJSONSig{baseJSONBuiltinFunc{base}}
 
 	case tipb.ScalarFuncSig_JsonTypeSig:
 		f = &builtinJSONTypeSig{baseStringBuiltinFunc{base}}
@@ -479,6 +485,9 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinJSONRemoveSig{baseJSONBuiltinFunc{base}}
 	case tipb.ScalarFuncSig_JsonMergeSig:
 		f = &builtinJSONMergeSig{baseJSONBuiltinFunc{base}}
+
+	case tipb.ScalarFuncSig_LikeSig:
+		f = &builtinLikeSig{baseIntBuiltinFunc{base}}
 
 	default:
 		e = errFunctionNotExists.GenByArgs(sigCode)
