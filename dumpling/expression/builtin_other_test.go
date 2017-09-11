@@ -74,27 +74,9 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 func (s *testEvaluatorSuite) TestRowFunc(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.RowFunc]
-	testCases := []struct {
-		args []interface{}
-	}{
-		{[]interface{}{nil, nil}},
-		{[]interface{}{1, 2}},
-		{[]interface{}{"1", 2}},
-		{[]interface{}{"1", 2, true}},
-		{[]interface{}{"1", nil, true}},
-		{[]interface{}{"1", nil, true, nil}},
-		{[]interface{}{"1", 1.2, true, 120}},
-	}
-	for _, tc := range testCases {
-		fn, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
-		c.Assert(err, IsNil)
-		d, err := fn.eval(types.MakeDatums(tc.args...))
-		c.Assert(err, IsNil)
-		c.Assert(d.Kind(), Equals, types.KindRow)
-		cmp, err := types.EqualDatums(nil, d.GetRow(), types.MakeDatums(tc.args...))
-		c.Assert(err, IsNil)
-		c.Assert(cmp, Equals, true)
-	}
+	fn, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums([]interface{}{"1", 1.2, true, 120}...)))
+	c.Assert(err, IsNil)
+	c.Assert(fn.canBeFolded(), IsFalse)
 }
 
 func (s *testEvaluatorSuite) TestSetVar(c *C) {
