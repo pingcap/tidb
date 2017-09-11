@@ -2376,8 +2376,8 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 
 	// for setvar, getvar
 	tk.MustExec(`set @varname = "abc"`)
-	result = tk.MustQuery(`select @varname`)
-	result.Check(testkit.Rows("abc"))
+	result = tk.MustQuery(`select @varname, @VARNAME`)
+	result.Check(testkit.Rows("abc abc"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
