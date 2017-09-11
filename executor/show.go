@@ -429,7 +429,13 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
 				default:
-					buf.WriteString(fmt.Sprintf(" DEFAULT '%v'", col.DefaultValue))
+					defaultValStr := fmt.Sprintf("%v", col.DefaultValue)
+					if col.Tp == mysql.TypeBit {
+						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
+						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true)))
+					} else {
+						buf.WriteString(fmt.Sprintf(" DEFAULT '%s'", format.OutputFormat(defaultValStr)))
+					}
 				}
 			}
 			if mysql.HasOnUpdateNowFlag(col.Flag) {
@@ -437,7 +443,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 		}
 		if len(col.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", col.Comment))
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
 		}
 		if i != len(tb.Cols())-1 {
 			buf.WriteString(",\n")

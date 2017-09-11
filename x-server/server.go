@@ -20,8 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/util"

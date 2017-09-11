@@ -63,8 +63,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, "0.1", 0)
 	testDatumToBool(c, []byte{}, 0)
 	testDatumToBool(c, []byte("0.1"), 0)
-	testDatumToBool(c, Hex{Value: 0}, 0)
-	testDatumToBool(c, Bit{Value: 0, Width: 8}, 0)
+	testDatumToBool(c, NewBinaryLiteralFromUint(0, -1), 0)
 	testDatumToBool(c, Enum{Name: "a", Value: 1}, 1)
 	testDatumToBool(c, Set{Name: "a", Value: 1}, 1)
 
@@ -140,8 +139,7 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, uint64(0), int64(0))
 	testDatumToInt64(c, float32(3.1), int64(3))
 	testDatumToInt64(c, float64(3.1), int64(3))
-	testDatumToInt64(c, Hex{Value: 100}, int64(100))
-	testDatumToInt64(c, Bit{Value: 100, Width: 8}, int64(100))
+	testDatumToInt64(c, NewBinaryLiteralFromUint(100, -1), int64(100))
 	testDatumToInt64(c, Enum{Name: "a", Value: 1}, int64(1))
 	testDatumToInt64(c, Set{Name: "a", Value: 1}, int64(1))
 
@@ -209,7 +207,6 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 		{NewStringDatum("\"hello, 世界\""), `"hello, 世界"`, true},
 		{NewStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
 		{NewStringDatum("{}"), `{}`, true},
-		{NewIntDatum(1), `true`, true},
 		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
 
 		// can not parse JSON from this string, so error occurs.
@@ -379,16 +376,6 @@ func mustParseDurationDatum(str string, fsp int) Datum {
 	return NewDurationDatum(dur)
 }
 
-func mustParseHexDatum(str string) Datum {
-	hex, err := ParseHex(str)
-	if err != nil {
-		panic(err)
-	}
-	var d Datum
-	d.SetMysqlHex(hex)
-	return d
-}
-
 func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
 	sc := &variable.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
@@ -403,8 +390,8 @@ func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
 		{mustParseTimeIntoDatum("2017-07-18 17:21:42.32172", mysql.TypeDatetime, 0), NewIntDatum(20170718172142), false},
 		{mustParseDurationDatum("10:10:10", 0), NewIntDatum(101010), false},
 		{mustParseDurationDatum("10:10:10.100", 3), NewDatum(NewDecFromStringForTest("101010.100")), false},
-		{mustParseHexDatum("x'4D7953514C'"), NewFloat64Datum(332747985228), false},
-		{NewDatum(Bit{Value: 1, Width: 8}), NewFloat64Datum(1), false},
+		{NewBinaryLiteralDatum(NewBinaryLiteralFromUint(0x4D7953514C, -1)), NewUintDatum(332747985228), false},
+		{NewBinaryLiteralDatum(NewBinaryLiteralFromUint(1, -1)), NewUintDatum(1), false},
 		{NewDatum(Enum{"xxx", 1}), NewFloat64Datum(1), false},
 		{NewDatum(Set{"xxx", 1}), NewFloat64Datum(1), false},
 		{NewIntDatum(5), NewIntDatum(5), false},
@@ -570,5 +557,30 @@ func (ts *testDatumSuite) TestComputeIntDiv(c *C) {
 		v, err := got.CompareDatum(sc, tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
+	}
+}
+
+func (ts *testDatumSuite) TestCopyDatum(c *C) {
+	var raw Datum
+	raw.b = []byte("raw")
+	raw.k = KindRaw
+	tests := []Datum{
+		NewIntDatum(72),
+		NewUintDatum(72),
+		NewStringDatum("abcd"),
+		NewBytesDatum([]byte("abcd")),
+		raw,
+	}
+
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	for _, tt := range tests {
+		tt1 := CopyDatum(tt)
+		res, err := tt.CompareDatum(sc, tt1)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, 0)
+		if tt.b != nil {
+			c.Assert(&tt.b[0], Not(Equals), &tt1.b[0])
+		}
 	}
 }
