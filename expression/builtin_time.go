@@ -2560,94 +2560,113 @@ type convertTzFunctionClass struct {
 	baseFunctionClass
 }
 
+func (c *convertTzFunctionClass) getDecimal(ctx context.Context, arg Expression) int {
+	decimal := types.MaxFsp
+	if dt, isConstant := arg.(*Constant); isConstant {
+		switch fieldTp2EvalTp(arg.GetType()) {
+		case tpInt:
+			decimal = 0
+		case tpReal, tpDecimal:
+			decimal = arg.GetType().Decimal
+		case tpString:
+			str, isNull, err := dt.EvalString(nil, ctx.GetSessionVars().StmtCtx)
+			if err == nil && !isNull {
+				decimal = types.DateFSP(str)
+			}
+		}
+	}
+	if decimal > types.MaxFsp {
+		return types.MaxFsp
+	}
+	if decimal < types.MinFsp {
+		return types.MinFsp
+	}
+	return decimal
+}
+
 func (c *convertTzFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinConvertTzSig{newBaseBuiltinFunc(args, ctx)}
+	// tzRegex holds the regex to check whether a string is a time zone.
+	tzRegex, err := regexp.Compile(`(^(\+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^\+13:00$)`)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	decimal := c.getDecimal(ctx, args[0])
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpDatetime, tpString, tpString)
+	bf.tp.Decimal = decimal
+	sig := &builtinConvertTzSig{
+		baseTimeBuiltinFunc: baseTimeBuiltinFunc{bf},
+		timezoneRegex:       tzRegex,
+	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinConvertTzSig struct {
-	baseBuiltinFunc
+	baseTimeBuiltinFunc
+	timezoneRegex *regexp.Regexp
 }
 
-// eval evals a builtinConvertTzSig.
+// evalTime evals CONVERT_TZ(dt,from_tz,to_tz).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_convert-tz
-func (b *builtinConvertTzSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if args[0].IsNull() || args[1].IsNull() || args[2].IsNull() {
-		return
-	}
-
+func (b *builtinConvertTzSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
-	fsp := 0
-	if args[0].Kind() == types.KindString {
-		fsp = types.DateFSP(args[0].GetString())
+	dt, isNull, err := b.args[0].EvalTime(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
 	}
 
-	arg0, err := convertToTimeWithFsp(sc, args[0], mysql.TypeDatetime, fsp)
-	if err != nil {
-		return d, errors.Trace(err)
+	fromTzStr, isNull, err := b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
 	}
 
-	if arg0.IsNull() {
-		return
+	toTzStr, isNull, err := b.args[2].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
 	}
 
-	dt := arg0.GetMysqlTime()
+	fromTzMatched := b.timezoneRegex.MatchString(fromTzStr)
+	toTzMatched := b.timezoneRegex.MatchString(toTzStr)
 
-	fromTZ := args[1].GetString()
-	toTZ := args[2].GetString()
-
-	const tzArgReg = `(^(\+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^\+13:00$)`
-	r, _ := regexp.Compile(tzArgReg)
-	fmatch := r.MatchString(fromTZ)
-	tmatch := r.MatchString(toTZ)
-
-	if !fmatch && !tmatch {
-		ftz, err := time.LoadLocation(fromTZ)
+	if !fromTzMatched && !toTzMatched {
+		fromTz, err := time.LoadLocation(fromTzStr)
 		if err != nil {
-			return d, errors.Trace(err)
+			return types.Time{}, true, errors.Trace(err)
 		}
 
-		ttz, err := time.LoadLocation(toTZ)
+		toTz, err := time.LoadLocation(toTzStr)
 		if err != nil {
-			return d, errors.Trace(err)
+			return types.Time{}, true, errors.Trace(err)
 		}
 
-		t, err := dt.Time.GoTime(ftz)
+		t, err := dt.Time.GoTime(fromTz)
 		if err != nil {
-			return d, errors.Trace(err)
+			return types.Time{}, true, errors.Trace(err)
 		}
 
-		d.SetMysqlTime(types.Time{
-			Time: types.FromGoTime(t.In(ttz)),
+		return types.Time{
+			Time: types.FromGoTime(t.In(toTz)),
 			Type: mysql.TypeDatetime,
-			Fsp:  dt.Fsp,
-		})
-		return d, nil
+			Fsp:  b.tp.Decimal,
+		}, false, nil
 	}
-
-	if fmatch && tmatch {
+	if fromTzMatched && toTzMatched {
 		t, err := dt.Time.GoTime(time.Local)
 		if err != nil {
-			return d, errors.Trace(err)
+			return types.Time{}, true, errors.Trace(err)
 		}
 
-		d.SetMysqlTime(types.Time{
-			Time: types.FromGoTime(t.Add(timeZone2Duration(toTZ) - timeZone2Duration(fromTZ))),
+		return types.Time{
+			Time: types.FromGoTime(t.Add(timeZone2Duration(toTzStr) - timeZone2Duration(fromTzStr))),
 			Type: mysql.TypeDatetime,
-			Fsp:  dt.Fsp,
-		})
+			Fsp:  b.tp.Decimal,
+		}, false, nil
 	}
-
-	return
+	return types.Time{}, true, nil
 }
 
 type makeDateFunctionClass struct {
