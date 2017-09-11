@@ -20,7 +20,7 @@ import (
 )
 
 func TestSystimeMonitor(t *testing.T) {
-	var jumpForward int32 = 0
+	var jumpForward int32
 
 	trigged := false
 	go StartMonitor(
