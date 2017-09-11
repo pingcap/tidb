@@ -16,7 +16,6 @@ package expression
 import (
 	"fmt"
 	"math"
-	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -123,7 +122,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 			c.Assert(ok, Equals, true)
 			val, ok := tc.res.(string)
 			c.Assert(ok, Equals, true)
-			c.Assert(s.ctx.GetSessionVars().Users[key], Equals, strings.ToLower(val))
+			c.Assert(s.ctx.GetSessionVars().Users[key], Equals, val)
 		}
 	}
 }
