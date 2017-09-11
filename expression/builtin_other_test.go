@@ -77,8 +77,6 @@ func (s *testEvaluatorSuite) TestRowFunc(c *C) {
 	fn, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums([]interface{}{"1", 1.2, true, 120}...)))
 	c.Assert(err, IsNil)
 	c.Assert(fn.canBeFolded(), IsFalse)
-	_, err = fn.eval(nil)
-	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestSetVar(c *C) {
