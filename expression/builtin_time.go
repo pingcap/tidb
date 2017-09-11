@@ -2677,8 +2677,8 @@ func (c *makeTimeFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	evelTp, flen, decimal := fieldTp2EvalTp(args[2].GetType()), 10, 0
-	switch evelTp {
+	tp, flen, decimal := fieldTp2EvalTp(args[2].GetType()), 10, 0
+	switch tp {
 	case tpInt:
 	case tpReal, tpDecimal:
 		decimal = args[2].GetType().Decimal
