@@ -82,10 +82,11 @@ func (e *tableScanExec) Next() (handle int64, value [][]byte, err error) {
 
 func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error) {
 	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
 	if len(val) == 0 {
 		return 0, nil, nil
-	} else if err != nil {
-		return 0, nil, errors.Trace(err)
 	}
 	handle, err := tablecodec.DecodeRowKey(kv.Key(ran.StartKey))
 	if err != nil {
