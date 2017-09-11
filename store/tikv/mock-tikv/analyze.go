@@ -89,7 +89,7 @@ type analyzeColumnsExec struct {
 	*tableScanExec
 }
 
-// Fields implements the ast.RecordSet Field interface.
+// Fields implements the ast.RecordSet Fields interface.
 func (e *analyzeColumnsExec) Fields() (fields []*ast.ResultField, err error) {
 	return nil, nil
 }
