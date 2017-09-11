@@ -2378,6 +2378,8 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b double, c varchar(20), d datetime, e time)")
 	tk.MustExec("insert into t value(1, 2, 'string', '2017-01-01 12:12:12', '12:12:12')")
+
+	// for in
 	result := tk.MustQuery("select 1 in (a, b, c), 'string' in (a, b, c), '2017-01-01 12:12:12' in (c, d, e), '12:12:12' in (c, d, e) from t")
 	result.Check(testkit.Rows("1 1 1 1"))
 	result = tk.MustQuery("select 1 in (null, c), 2 in (null, c) from t")
@@ -2389,6 +2391,11 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 
 	result = tk.MustQuery(`select bit_count(121), bit_count(-1), bit_count(null), bit_count("1231aaa");`)
 	result.Check(testkit.Rows("5 64 <nil> 7"))
+
+	// for setvar, getvar
+	tk.MustExec(`set @varname = "Abc"`)
+	result = tk.MustQuery(`select @varname, @VARNAME`)
+	result.Check(testkit.Rows("Abc Abc"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
