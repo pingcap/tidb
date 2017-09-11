@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
@@ -2133,53 +2132,6 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_multi_column_index"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c1 int, c2 int);")
-	mustExecSQL(c, se, "create index idx_c1_c2 on t (c1, c2)")
-	mustExecSQL(c, se, "insert into t values (1, 5)")
-
-	sql := "select c1 from t where c1 in (1) and c2 < 10"
-	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[[1 -inf,1 10)]->Projection")
-	mustExecMatch(c, se, sql, [][]interface{}{{1}})
-
-	sql = "select c1 from t where c1 in (1) and c2 > 3"
-	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[(1 3,1 +inf]]->Projection")
-	mustExecMatch(c, se, sql, [][]interface{}{{1}})
-
-	// TODO: c2 is int which will be added cast to real when building LT, thus we cannot extract access condition for it.
-	//sql = "select c1 from t where c1 in (1) and c2 < 5.1"
-	//checkPlan(c, se, sql, "Index(t.idx_c1_c2)[[1 -inf,1 5]]->Projection")
-	//mustExecMatch(c, se, sql, [][]interface{}{{1}})
-
-	sql = "select c1 from t where c1 in (1.1) and c2 > 3"
-	checkPlan(c, se, sql, "Table(t)->Selection->Projection")
-	mustExecMatch(c, se, sql, [][]interface{}{})
-
-	// Test varchar type.
-	mustExecSQL(c, se, "drop table t;")
-	mustExecSQL(c, se, "create table t (id int unsigned primary key auto_increment, c1 varchar(64), c2 varchar(64), index c1_c2 (c1, c2));")
-	mustExecSQL(c, se, "insert into t (c1, c2) values ('abc', 'def')")
-	sql = "select c1 from t where c1 = 'abc'"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}})
-
-	mustExecSQL(c, se, "insert into t (c1, c2) values ('abc', 'xyz')")
-	mustExecSQL(c, se, "insert into t (c1, c2) values ('abd', 'abc')")
-	mustExecSQL(c, se, "insert into t (c1, c2) values ('abd', 'def')")
-	sql = "select c1 from t where c1 >= 'abc' and c2 = 'def'"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}, {[]byte("abd")}})
-
-	sql = "select c1, c2 from t where c1 = 'abc' and id < 2"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc"), []byte("def")}})
-
-	mustExecSQL(c, se, dropDBSQL)
-	se.Close()
-}
-
 func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_substring_index_expr"
@@ -2488,19 +2440,6 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func checkPlan(c *C, se Session, sql, explain string) {
-	ctx := se.(context.Context)
-	stmts, err := Parse(ctx, sql)
-	c.Assert(err, IsNil)
-	stmt := stmts[0]
-	is := sessionctx.GetDomain(ctx).InfoSchema()
-	err = plan.PrepareStmt(is, ctx, stmt)
-	c.Assert(err, IsNil)
-	p, err := plan.Optimize(ctx, stmt, is)
-	c.Assert(err, IsNil)
-	c.Assert(plan.ToString(p), Equals, explain)
-}
-
 func mustExecMultiSQL(c *C, se Session, sql string) {
 	ss := strings.Split(sql, "\n")
 	for _, s := range ss {
@@ -2524,96 +2463,6 @@ func (s *testSessionSuite) TestSqlLogicTestCase(c *C) {
 
 	sql := "SELECT col0 FROM tab1 WHERE 71*22 >= col1"
 	mustExecMatch(c, se, sql, [][]interface{}{{"26"}})
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestXAggregateWithIndexScan(c *C) {
-	initSQL := `
-		drop table IF EXISTS t;
-		CREATE TABLE t(c INT, index cidx (c));
-		INSERT INTO t VALUES(1), (null), (2);`
-	dbName := "test_xaggregate_with_index_scan"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecMultiSQL(c, se, initSQL)
-	sql := "SELECT COUNT(c) FROM t WHERE c > 0;"
-	mustExecMatch(c, se, sql, [][]interface{}{{"2"}})
-
-	initSQL = `
-	Drop table if exists tab1;
-	CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);
-	CREATE INDEX idx_tab1_3 on tab1 (col3);
-	INSERT INTO tab1 VALUES(0,656,638.70,'zsiag',614,231.92,'dkfhp');
-	`
-	mustExecMultiSQL(c, se, initSQL)
-	sql = "SELECT DISTINCT + - COUNT( col3 ) AS col1 FROM tab1 AS cor0 WHERE col3 > 0;"
-	mustExecMatch(c, se, sql, [][]interface{}{{"-1"}})
-
-	sql = "SELECT DISTINCT + - COUNT( col3 ) AS col1 FROM tab1 AS cor0 WHERE col3 > 0 group by col0;"
-	mustExecMatch(c, se, sql, [][]interface{}{{"-1"}})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// TestXAggregateWithoutAggFunc tests select with groupby but without aggregate function.
-func (s *testSessionSuite) TestXAggregateWithoutAggFunc(c *C) {
-	// TableScan
-	initSQL := `
-		drop table IF EXISTS t;
-		CREATE TABLE t (c INT);
-		INSERT INTO t VALUES(1), (2), (3), (3);`
-	dbName := "test_xaggregate_without_agg_func"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecMultiSQL(c, se, initSQL)
-	sql := "SELECT 18 FROM t group by c;"
-	mustExecMatch(c, se, sql, [][]interface{}{{"18"}, {"18"}, {"18"}})
-
-	// IndexScan
-	initSQL = `
-		drop table IF EXISTS t;
-		CREATE TABLE t(c INT, index cidx (c));
-		INSERT INTO t VALUES(1), (2), (3), (3);`
-	mustExecMultiSQL(c, se, initSQL)
-	sql = "SELECT 18 FROM t where c > 1 group by c;"
-	mustExecMatch(c, se, sql, [][]interface{}{{"18"}, {"18"}})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// TestSelectHaving tests select with having.
-// Move from executor to prevent from using mock-tikv.
-func (s *testSessionSuite) TestSelectHaving(c *C) {
-	defer testleak.AfterTest(c)()
-	table := "select_having_test"
-	initSQL := fmt.Sprintf(`use test;
-		drop table if exists %s;
-		create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));
-		insert INTO %s VALUES (1, "hello");
-		insert into %s VALUES (2, "hello");`,
-		table, table, table, table)
-	dbName := "test_select_having"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecMultiSQL(c, se, initSQL)
-	sql := "select id, name from select_having_test where id in (1,3) having name like 'he%';"
-	mustExecMatch(c, se, sql, [][]interface{}{{"1", fmt.Sprintf("%v", []byte("hello"))}})
-	mustExecMultiSQL(c, se, "select * from select_having_test group by id having null is not null;")
-	mustExecMultiSQL(c, se, "drop table select_having_test")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestQueryString(c *C) {
-	dbName := "test_query_string"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	_, err := se.Execute("create table mutil1 (a int);create table multi2 (a int)")
-	c.Assert(err, IsNil)
-	ctx := se.(context.Context)
-	queryStr := ctx.Value(context.QueryString)
-	c.Assert(queryStr, Equals, "create table multi2 (a int)")
-
 	mustExecSQL(c, se, dropDBSQL)
 }
 

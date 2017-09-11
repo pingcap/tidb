@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -87,4 +88,14 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 
 	wg.Wait()
 	tk.MustQuery("select c2 from t_rollback where c1 = 0").Check(testkit.Rows(fmt.Sprint(cnt * num)))
+}
+
+func (s *testSessionSuite) TestQueryString(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
+	queryStr := tk.Se.Value(context.QueryString)
+	c.Assert(queryStr, Equals, "create table multi2 (a int)")
 }
