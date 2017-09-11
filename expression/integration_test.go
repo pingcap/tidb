@@ -1616,6 +1616,8 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select cast(8385960 as time);`)
 	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select cast(cast('2017-01-01 01:01:11.12' as date) as datetime(2));`)
+	result.Check(testkit.Rows("2017-01-01 00:00:00.00"))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
