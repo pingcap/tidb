@@ -149,3 +149,64 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 	tk.MustExec(`UPDATE t set id = 1 where data = 0;`)
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
 }
+
+// See http://dev.mysql.com/doc/refman/5.7/en/commit.html
+func (s *testSessionSuite) testRowLock(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
+	tk.MustExec("insert t values (11, 2, 3)")
+	tk.MustExec("insert t values (12, 2, 3)")
+	tk.MustExec("insert t values (13, 2, 3)")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set c2=21 where c1=11")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=211 where c1=11")
+	tk2.MustExec("commit")
+
+	// se1 will retry and the final value is 21
+	tk1.MustExec("commit")
+	// Check the result is correct
+	tk.MustQuery("select c2 from t where c1=11").Check(testkit.Rows("211"))
+}
+
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
+func (s *testSessionSuite) TestAutocommit(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t;")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("insert t values ()")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("begin")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("insert t values ()")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("drop table if exists t")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("set autocommit=0")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Equals, 0)
+	tk.MustExec("insert t values ()")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Equals, 0)
+	tk.MustExec("commit")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Equals, 0)
+	tk.MustExec("drop table if exists t")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Equals, 0)
+	tk.MustExec("set autocommit='On'")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+}
