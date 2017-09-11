@@ -2504,7 +2504,7 @@ type convertTzFunctionClass struct {
 }
 
 func (c *convertTzFunctionClass) getDecimal(ctx context.Context, arg Expression) int {
-	decimal := 6
+	decimal := types.MaxFsp
 	if dt, isConstant := arg.(*Constant); isConstant {
 		switch fieldTp2EvalTp(arg.GetType()) {
 		case tpInt:
@@ -2531,7 +2531,7 @@ func (c *convertTzFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	// tzRegex holds the regex to check whether a string is a time zone
+	// tzRegex holds the regex to check whether a string is a time zone.
 	tzRegex, err := regexp.Compile(`(^(\+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^\+13:00$)`)
 	if err != nil {
 		return nil, errors.Trace(err)
