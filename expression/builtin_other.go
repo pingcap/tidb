@@ -66,7 +66,7 @@ type builtinRowSig struct {
 
 // rowFunc should always be flattened in expression rewrite phrase.
 func (b *builtinRowSig) evalString(row []types.Datum) (string, bool, error) {
-	return "", false, errors.New("`builtinRowSig.evalString()` should never be called.")
+	return "", false, errors.New("should never be called")
 }
 
 type setVarFunctionClass struct {
