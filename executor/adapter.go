@@ -148,8 +148,8 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		pi = raw
 		sql := a.OriginText()
 		if simple, ok := a.plan.(*plan.Simple); ok && simple.Statement != nil {
-			if ss, ok := simple.Statement.(ast.SensitiveStatement); ok {
-				// Use SecureString to avoid leak password information.
+			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
+				// Use SecureText to avoid leak password information.
 				sql = ss.SecureText()
 			}
 		}

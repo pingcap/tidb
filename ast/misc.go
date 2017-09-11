@@ -408,8 +408,8 @@ type SetPwdStmt struct {
 	Password string
 }
 
-// SecureString implements SensitiveStatement interface.
-func (n *SetPwdStmt) SecureString() string {
+// SecureText implements SensitiveStatement interface.
+func (n *SetPwdStmt) SecureText() string {
 	return fmt.Sprintf("set password for user %s", n.User)
 }
 
@@ -462,8 +462,8 @@ func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// SecureString implements SensitiveStatement interface.
-func (n *CreateUserStmt) SecureString() string {
+// SecureText implements SensitiveStatement interface.
+func (n *CreateUserStmt) SecureText() string {
 	var buf bytes.Buffer
 	buf.WriteString("create user")
 	for _, user := range n.Specs {
@@ -483,8 +483,8 @@ type AlterUserStmt struct {
 	Specs       []*UserSpec
 }
 
-// SecureString implements SensitiveStatement interface.
-func (n *AlterUserStmt) SecureString() string {
+// SecureText implements SensitiveStatement interface.
+func (n *AlterUserStmt) SecureText() string {
 	var buf bytes.Buffer
 	buf.WriteString("alter user")
 	for _, user := range n.Specs {
@@ -678,8 +678,8 @@ type GrantStmt struct {
 	WithGrant  bool
 }
 
-// SecureString implements SensitiveStatement interface.
-func (n *GrantStmt) SecureString() string {
+// SecureText implements SensitiveStatement interface.
+func (n *GrantStmt) SecureText() string {
 	text := n.text
 	// Filter "identified by xxx" because it would expose password information.
 	idx := strings.Index(strings.ToLower(text), "identified")

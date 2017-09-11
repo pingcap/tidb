@@ -1263,7 +1263,7 @@ func logCrucialStmt(node ast.StmtNode) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
-		if ss, ok := node.(ast.SensitiveStatement); ok {
+		if ss, ok := node.(ast.SensitiveStmtNode); ok {
 			log.Infof("[CRUCIAL OPERATION] %s.", ss.SecureText())
 		} else {
 			log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())

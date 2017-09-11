@@ -155,9 +155,9 @@ type ResultSetNode interface {
 	SetResultFields(fields []*ResultField)
 }
 
-// SensitiveStatement overloads Statement and provides a SecureText method.
-type SensitiveStatement interface {
-	Statement
+// SensitiveStmtNode overloads StmtNode and provides a SecureText method.
+type SensitiveStmtNode interface {
+	StmtNode
 	// SecureText is different from Text that it hide password information.
 	SecureText() string
 }
