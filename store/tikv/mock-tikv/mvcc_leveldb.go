@@ -426,14 +426,17 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 			break
 		}
 
+		if bytes.Compare(key, helper.currKey) != 0 {
+			helper.finishEntry(key)
+		}
 		if ver == lockVer {
 			var lock mvccLock
 			err = lock.UnmarshalBinary(iter.Value())
-			helper.addLock(key, &lock)
+			helper.addLock(&lock)
 		} else {
 			var value mvccValue
 			err = value.UnmarshalBinary(iter.Value())
-			helper.addKV(key, ver, value)
+			helper.addKV(ver, value)
 		}
 		succ = iter.Prev()
 	}
@@ -451,17 +454,11 @@ type reverseScanHelper struct {
 	pairs    []Pair
 }
 
-func (helper *reverseScanHelper) addLock(key []byte, lock *mvccLock) {
-	if bytes.Compare(key, helper.currKey) != 0 {
-		helper.finishEntry(key)
-	}
+func (helper *reverseScanHelper) addLock(lock *mvccLock) {
 	helper.entry.lock = lock
 }
 
-func (helper *reverseScanHelper) addKV(key []byte, ver uint64, value mvccValue) {
-	if bytes.Compare(key, helper.currKey) != 0 {
-		helper.finishEntry(key)
-	}
+func (helper *reverseScanHelper) addKV(ver uint64, value mvccValue) {
 	helper.entry.values = append(helper.entry.values, value)
 }
 
