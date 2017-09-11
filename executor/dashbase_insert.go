@@ -36,7 +36,7 @@ type DashbaseInsertExec struct {
 }
 
 // Next implements Execution Next interface.Insert
-func (e *DashbaseInsertExec) Next() (*Row, error) {
+func (e *DashbaseInsertExec) Next() (Row, error) {
 	if e.finished {
 		return nil, nil
 	}

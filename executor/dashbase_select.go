@@ -35,12 +35,12 @@ type DashbaseSelectExec struct {
 	SQL             string
 
 	fetched bool
-	rows    []*Row
+	rows    []Row
 	cursor  int
 }
 
 // Next implements Execution Next interface.
-func (e *DashbaseSelectExec) Next() (*Row, error) {
+func (e *DashbaseSelectExec) Next() (Row, error) {
 	if e.rows == nil {
 		err := e.fetchAll()
 		if err != nil {
@@ -88,7 +88,7 @@ func (e *DashbaseSelectExec) fetchAll() error {
 				datums[i] = e.Lo2HiConverters[i](raw)
 			}
 		}
-		e.rows = append(e.rows, &Row{Data: datums})
+		e.rows = append(e.rows, datums)
 	}
 	return nil
 }
