@@ -137,7 +137,7 @@ func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, r
 		if failedCnt%intervalCnt == 0 {
 			log.Warnf("%s failed to new session, err %v", logPrefix, err)
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(newSessionRetryInterval)
 		failedCnt++
 	}
 	return etcdSession, errors.Trace(err)
