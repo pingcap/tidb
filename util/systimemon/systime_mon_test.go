@@ -14,12 +14,14 @@
 package systimemon
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestSystimeMonitor(t *testing.T) {
-	jumpForward := false
+	var jumpForward int32 = 0
+
 	trigged := false
 	go StartMonitor(
 		func() time.Time {
@@ -30,12 +32,12 @@ func TestSystimeMonitor(t *testing.T) {
 
 			return time.Now().Add(-2 * time.Second)
 		}, func() {
-			jumpForward = true
+			atomic.StoreInt32(&jumpForward, 1)
 		})
 
 	time.Sleep(1 * time.Second)
 
-	if !jumpForward {
+	if atomic.LoadInt32(&jumpForward) != 1 {
 		t.Error("should detect time error")
 	}
 }
