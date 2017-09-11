@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/testkit"
@@ -98,4 +99,64 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
 	queryStr := tk.Se.Value(context.QueryString)
 	c.Assert(queryStr, Equals, "create table multi2 (a int)")
+}
+
+func (s *testSessionSuite) TestAffectedRows(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id TEXT)")
+	tk.MustExec(`INSERT INTO t VALUES ("a");`)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 1)
+	tk.MustExec(`INSERT INTO t VALUES ("b");`)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 1)
+	tk.MustExec(`UPDATE t set id = 'c' where id = 'a';`)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 1)
+	tk.MustExec(`UPDATE t set id = 'a' where id = 'a';`)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 0)
+	tk.MustQuery(`SELECT * from t`).Check(testkit.Rows("c", "b"))
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 0)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, data int)")
+	tk.MustExec(`INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
+	tk.MustExec(`UPDATE t set id = 1 where data = 0;`)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 1)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, c1 timestamp);")
+	tk.MustExec(`insert t values(1, 0);`)
+	tk.MustExec(`UPDATE t set id = 1 where id = 1;`)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 0)
+
+	// With ON DUPLICATE KEY UPDATE, the affected-rows value per row is 1 if the row is inserted as a new row,
+	// 2 if an existing row is updated, and 0 if an existing row is set to its current values.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int PRIMARY KEY, c2 int);")
+	tk.MustExec(`insert t values(1, 1);`)
+	tk.MustExec(`insert into t values (1, 1) on duplicate key update c2=2;`)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
+	tk.MustExec(`insert into t values (1, 1) on duplicate key update c2=2;`)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 0)
+	tk.MustExec("drop table if exists test")
+	createSQL := `CREATE TABLE test (
+	  id        VARCHAR(36) PRIMARY KEY NOT NULL,
+	  factor    INTEGER                 NOT NULL                   DEFAULT 2);`
+	tk.MustExec(createSQL)
+	insertSQL := `INSERT INTO test(id) VALUES('id') ON DUPLICATE KEY UPDATE factor=factor+3;`
+	tk.MustExec(insertSQL)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 1)
+	tk.MustExec(insertSQL)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
+	tk.MustExec(insertSQL)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
+
+	tk.Se.SetClientCapability(mysql.ClientFoundRows)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, data int)")
+	tk.MustExec(`INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
+	tk.MustExec(`UPDATE t set id = 1 where data = 0;`)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
 }
