@@ -174,67 +174,6 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestAffectedRows(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_affect_rows"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, s.createTableSQL)
-	mustExecSQL(c, se, `INSERT INTO t VALUES ("a");`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `INSERT INTO t VALUES ("b");`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `UPDATE t set id = 'c' where id = 'a';`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `UPDATE t set id = 'a' where id = 'a';`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-	mustExecSQL(c, se, `SELECT * from t;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, data int)")
-	mustExecSQL(c, se, `INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where data = 0;`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, c1 timestamp);")
-	mustExecSQL(c, se, `insert t values(1, 0);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where id = 1;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-
-	// With ON DUPLICATE KEY UPDATE, the affected-rows value per row is 1 if the row is inserted as a new row,
-	// 2 if an existing row is updated, and 0 if an existing row is set to its current values.
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (c1 int PRIMARY KEY, c2 int);")
-	mustExecSQL(c, se, `insert t values(1, 1);`)
-	mustExecSQL(c, se, `insert into t values (1, 1) on duplicate key update c2=2;`)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-	mustExecSQL(c, se, `insert into t values (1, 1) on duplicate key update c2=2;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-	createSQL := `CREATE TABLE IF NOT EXISTS test (
-	  id        VARCHAR(36) PRIMARY KEY NOT NULL,
-	  factor    INTEGER                 NOT NULL                   DEFAULT 2);`
-	mustExecSQL(c, se, createSQL)
-	insertSQL := `INSERT INTO test(id) VALUES('id') ON DUPLICATE KEY UPDATE factor=factor+3;`
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-
-	se.SetClientCapability(mysql.ClientFoundRows)
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, data int)")
-	mustExecSQL(c, se, `INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where data = 0;`)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-
-	sessionExec(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestString(c *C) {
 	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
