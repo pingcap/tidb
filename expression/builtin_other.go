@@ -18,13 +18,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
 	_ functionClass = &rowFunctionClass{}
-	_ functionClass = &castFunctionClass{}
 	_ functionClass = &setVarFunctionClass{}
 	_ functionClass = &getVarFunctionClass{}
 	_ functionClass = &lockFunctionClass{}
@@ -36,7 +35,6 @@ var (
 var (
 	_ builtinFunc = &builtinSleepSig{}
 	_ builtinFunc = &builtinRowSig{}
-	_ builtinFunc = &builtinCastSig{}
 	_ builtinFunc = &builtinSetVarSig{}
 	_ builtinFunc = &builtinGetVarSig{}
 	_ builtinFunc = &builtinLockSig{}
@@ -49,7 +47,7 @@ type rowFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rowFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *rowFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -61,7 +59,7 @@ type builtinRowSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRowSig) isDeterministic() bool {
+func (b *builtinRowSig) canBeFolded() bool {
 	return false
 }
 
@@ -78,64 +76,73 @@ type setVarFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *setVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinSetVarSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+func (c *setVarFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
+	bf.tp.Flen, bf.foldable = args[1].GetType().Flen, false
+	// TODO: we should consider the type of the argument, but not take it as string for all situations.
+	sig = &builtinSetVarSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), errors.Trace(err)
 }
 
 type builtinSetVarSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-func (b *builtinSetVarSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
+func (b *builtinSetVarSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	var varName string
 	sessionVars := b.ctx.GetSessionVars()
-	varName, _ := args[0].ToString()
-	if !args[1].IsNull() {
-		strVal, err := args[1].ToString()
-		if err != nil {
-			return types.Datum{}, errors.Trace(err)
-		}
-		sessionVars.UsersLock.Lock()
-		sessionVars.Users[varName] = strings.ToLower(strVal)
-		sessionVars.UsersLock.Unlock()
+	sc := sessionVars.StmtCtx
+	varName, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	return args[1], nil
+	res, isNull, err = b.args[1].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	varName = strings.ToLower(varName)
+	sessionVars.UsersLock.Lock()
+	sessionVars.Users[varName] = res
+	sessionVars.UsersLock.Unlock()
+	return res, false, nil
 }
 
 type getVarFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *getVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinGetVarSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+func (c *getVarFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, err
+	}
+	// TODO: we should consider the type of the argument, but not take it as string for all situations.
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	bf.tp.Flen, bf.foldable = mysql.MaxFieldVarCharLength, false
+	sig = &builtinGetVarSig{baseStringBuiltinFunc{bf}}
+	return sig.setSelf(sig), nil
 }
 
 type builtinGetVarSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
-func (b *builtinGetVarSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
+func (b *builtinGetVarSig) evalString(row []types.Datum) (string, bool, error) {
 	sessionVars := b.ctx.GetSessionVars()
-	varName, _ := args[0].ToString()
+	sc := sessionVars.StmtCtx
+	varName, isNull, err := b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if v, ok := sessionVars.Users[varName]; ok {
-		return types.NewDatum(v), nil
+		return v, false, nil
 	}
-	return types.Datum{}, nil
+	return "", true, nil
 }
 
 type valuesFunctionClass struct {
@@ -144,10 +151,10 @@ type valuesFunctionClass struct {
 	offset int
 }
 
-func (c *valuesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *valuesFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinValuesSig{newBaseBuiltinFunc(args, ctx), c.offset}
-	bt.deterministic = false
+	bt.foldable = false
 	return bt.setSelf(bt), errors.Trace(err)
 }
 
@@ -173,45 +180,36 @@ type bitCountFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitCountFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *bitCountFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinBitCountSig{newBaseBuiltinFunc(args, ctx)}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+	bf.tp.Flen = 2
+	sig := &builtinBitCountSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinBitCountSig struct {
-	baseBuiltinFunc
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinBitCountSig.
+// evalInt evals BIT_COUNT(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-functions.html#function_bit-count
-func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-	sc := new(variable.StatementContext)
-	sc.IgnoreTruncate = true
-	bin, err := arg.ToInt64(sc)
-	if err != nil {
-		if types.ErrOverflow.Equal(err) {
-			d.SetInt64(64)
-			return d, nil
+func (b *builtinBitCountSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
 
+	n, isNull, err := b.args[0].EvalInt(row, sc)
+	if err != nil || isNull {
+		if err != nil && types.ErrOverflow.Equal(err) {
+			return 64, false, nil
 		}
-		return d, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
+
 	var count int64
-	for bin != 0 {
+	for ; n != 0; n = (n - 1) & n {
 		count++
-		bin = (bin - 1) & bin
 	}
-	d.SetInt64(count)
-	return d, nil
+	return count, false, nil
 }

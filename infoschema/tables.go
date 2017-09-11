@@ -667,9 +667,7 @@ func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForColumnsInTable(schema, table)
-			for _, r := range rs {
-				rows = append(rows, r)
-			}
+			rows = append(rows, rs...)
 		}
 	}
 	return rows
@@ -678,13 +676,13 @@ func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
 	rows := [][]types.Datum{}
 	for i, col := range tbl.Columns {
-		colLen := col.Flen
+		colLen, decimal := col.Flen, col.Decimal
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
 		if colLen == types.UnspecifiedLength {
-			colLen = mysql.GetDefaultFieldLength(col.Tp)
+			colLen = defaultFlen
 		}
-		decimal := col.Decimal
 		if decimal == types.UnspecifiedLength {
-			decimal = 0
+			decimal = defaultDecimal
 		}
 		columnType := col.FieldType.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
@@ -724,9 +722,7 @@ func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForStatisticsInTable(schema, table)
-			for _, r := range rs {
-				rows = append(rows, r)
-			}
+			rows = append(rows, rs...)
 		}
 	}
 	return rows

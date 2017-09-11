@@ -46,7 +46,7 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Abs]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -111,9 +111,9 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 		}
 
 		for _, exp := range exps {
-			f, err := funcs[funcName].getFunction([]Expression{exp}, s.ctx)
+			f, err := funcs[funcName].getFunction(s.ctx, []Expression{exp})
 			c.Assert(err, IsNil)
-			c.Assert(f.isDeterministic(), IsTrue)
+			c.Assert(f.canBeFolded(), IsTrue)
 		}
 	}
 
@@ -165,9 +165,9 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Exp].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Exp].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestFloor(c *C) {
@@ -239,9 +239,9 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 			RetType: types.NewFieldType(mysql.TypeFloat),
 		},
 	} {
-		f, err := funcs[ast.Floor].getFunction([]Expression{exp}, s.ctx)
+		f, err := funcs[ast.Floor].getFunction(s.ctx, []Expression{exp})
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 	}
 }
 
@@ -283,9 +283,9 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Log].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Log].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLog2(c *C) {
@@ -322,9 +322,9 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Log2].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Log2].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLog10(c *C) {
@@ -361,24 +361,24 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Log10].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Log10].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Rand]
-	f, err := fc.getFunction(nil, s.ctx)
+	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsFalse)
+	c.Assert(f.canBeFolded(), IsFalse)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Less, float64(1))
 	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
 
 	// issue 3211
-	f2, err := fc.getFunction([]Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}}, s.ctx)
+	f2, err := fc.getFunction(s.ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
 	c.Assert(err, IsNil)
 	randGen := rand.New(rand.NewSource(20160101))
 	for i := 0; i < 3; i++ {
@@ -404,9 +404,9 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Pow]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
@@ -423,7 +423,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 	errDtbl := tblToDtbl(errTbl)
 	for _, t := range errDtbl {
 		fc := funcs[ast.Pow]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		_, err = f.eval(nil)
 		c.Assert(err, NotNil)
@@ -458,7 +458,7 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Round]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -498,10 +498,10 @@ func (s *testEvaluatorSuite) TestTruncate(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Truncate]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
@@ -527,9 +527,9 @@ func (s *testEvaluatorSuite) TestCRC32(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.CRC32]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
@@ -596,9 +596,9 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		c.Assert(r, Equals, t.ret)
 	}
 
-	f, err := funcs[ast.Conv].getFunction([]Expression{Zero, Zero, Zero}, s.ctx)
+	f, err := funcs[ast.Conv].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSign(c *C) {
@@ -629,9 +629,9 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 		{[]interface{}{uint64(9223372036854775808)}, int64(1)},
 	} {
 		fc := funcs[ast.Sign]
-		f, err := fc.getFunction(primitiveValsToConstants(t.num), s.ctx)
+		f, err := fc.getFunction(s.ctx, primitiveValsToConstants(t.num))
 		c.Assert(err, IsNil, Commentf("%v", t))
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil, Commentf("%v", t))
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret), Commentf("%v", t))
@@ -675,9 +675,9 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 			}
 		}
 	}
-	f, err := funcs[ast.Degrees].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Degrees].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestSqrt(c *C) {
@@ -696,9 +696,9 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 
 	for _, t := range tbl {
 		fc := funcs[ast.Sqrt]
-		f, err := fc.getFunction(primitiveValsToConstants(t.Arg), s.ctx)
+		f, err := fc.getFunction(s.ctx, primitiveValsToConstants(t.Arg))
 		c.Assert(err, IsNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Ret), Commentf("%v", t))
@@ -707,9 +707,9 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 
 func (s *testEvaluatorSuite) TestPi(c *C) {
 	defer testleak.AfterTest(c)()
-	f, err := funcs[ast.PI].getFunction(nil, s.ctx)
+	f, err := funcs[ast.PI].getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 
 	pi, err := f.eval(nil)
 	c.Assert(err, IsNil)
@@ -732,10 +732,10 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 	Dtbl := tblToDtbl(tbl)
 	for _, t := range Dtbl {
 		fc := funcs[ast.Radians]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		c.Assert(f.isDeterministic(), IsTrue)
+		c.Assert(f.canBeFolded(), IsTrue)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
@@ -743,7 +743,7 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 
 	invalidArg := "notNum"
 	fc := funcs[ast.Radians]
-	f, err := fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}), s.ctx)
+	f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
@@ -787,9 +787,9 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Sin].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Sin].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestCos(c *C) {
@@ -827,9 +827,9 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Cos].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Cos].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {
@@ -866,9 +866,9 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Acos].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Acos].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAsin(c *C) {
@@ -905,9 +905,9 @@ func (s *testEvaluatorSuite) TestAsin(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Asin].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Asin].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestAtan(c *C) {
@@ -944,9 +944,9 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Atan].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Atan].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestTan(c *C) {
@@ -983,9 +983,9 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Tan].getFunction([]Expression{Zero}, s.ctx)
+	f, err := funcs[ast.Tan].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestCot(c *C) {
@@ -1028,7 +1028,7 @@ func (s *testEvaluatorSuite) TestCot(c *C) {
 		}
 	}
 
-	f, err := funcs[ast.Cot].getFunction([]Expression{One}, s.ctx)
+	f, err := funcs[ast.Cot].getFunction(s.ctx, []Expression{One})
 	c.Assert(err, IsNil)
-	c.Assert(f.isDeterministic(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }

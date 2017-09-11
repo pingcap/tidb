@@ -51,7 +51,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			sql:       "select distinct a,b from t",
 			best:      "Table(t)->HashAgg",
 			aggFuns:   "[firstrow(test.t.a) firstrow(test.t.b)]",
-			aggFields: "[blob int int]",
+			aggFields: "[blob int(11) int(11)]",
 			gbyItems:  "[test.t.a test.t.b]",
 		},
 		{
@@ -65,7 +65,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			sql:       "select max(b + c), min(case when b then 1 else 2 end) from t group by d + e, a",
 			best:      "Table(t)->HashAgg->Projection",
 			aggFuns:   "[max(plus(test.t.b, test.t.c)) min(case(test.t.b, 1, 2))]",
-			aggFields: "[blob bigint(20,0) BINARY bigint(1,0) BINARY]",
+			aggFields: "[blob bigint(20) BINARY bigint(1) BINARY]",
 			gbyItems:  "[plus(test.t.d, test.t.e) test.t.a]",
 		},
 	}
@@ -681,11 +681,11 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		if i == len(tests)-2 {
 			c.Assert(len(info.p.Schema().Columns), Equals, 1)
 			c.Assert(info.p.Schema().Columns[0].ColName.O, Equals, "count(*)")
-			c.Assert(info.p.Schema().Columns[0].FromID, Equals, "Projection_5")
+			c.Assert(info.p.Schema().Columns[0].FromID, Equals, 5)
 		} else if i == len(tests)-1 {
 			c.Assert(len(info.p.Schema().Columns), Equals, 1)
 			c.Assert(info.p.Schema().Columns[0].ColName.O, Equals, "c1")
-			c.Assert(info.p.Schema().Columns[0].FromID, Equals, "TableScan_1")
+			c.Assert(info.p.Schema().Columns[0].FromID, Equals, 1)
 		}
 	}
 }

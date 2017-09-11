@@ -121,7 +121,7 @@ func (e *IndexLookUpJoin) Next() (Row, error) {
 					}
 					joinDatums = append(joinDatums, innerDatum)
 				}
-				joinOuterEncodeKey, err := codec.EncodeValue(nil, joinDatums...)
+				joinOuterEncodeKey, err := codec.EncodeKey(nil, joinDatums...)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -152,7 +152,7 @@ func getUniqueDatums(rows orderedRows) [][]types.Datum {
 	datums := make([][]types.Datum, 0, rows.Len())
 	sort.Sort(rows)
 	for i := range rows {
-		if i > 0 && bytes.Compare(rows[i-1].key, rows[i].key) == 0 {
+		if i > 0 && bytes.Equal(rows[i-1].key, rows[i].key) {
 			continue
 		}
 		datums = append(datums, rows[i].row)
@@ -187,7 +187,7 @@ func (e *IndexLookUpJoin) doJoin() error {
 			datum, _ := col.Eval(innerRow)
 			joinDatums = append(joinDatums, datum)
 		}
-		joinKey, err := codec.EncodeValue(nil, joinDatums...)
+		joinKey, err := codec.EncodeKey(nil, joinDatums...)
 		if err != nil {
 			return errors.Trace(err)
 		}

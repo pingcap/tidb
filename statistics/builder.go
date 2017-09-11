@@ -30,37 +30,33 @@ type SortedBuilder struct {
 	lastNumber      int64
 	bucketIdx       int64
 	Count           int64
-	isPK            bool
-	Hist            *Histogram
+	hist            *Histogram
 }
 
 // NewSortedBuilder creates a new SortedBuilder.
-func NewSortedBuilder(ctx context.Context, numBuckets, id int64, isPK bool) *SortedBuilder {
+func NewSortedBuilder(sc *variable.StatementContext, numBuckets, id int64) *SortedBuilder {
 	return &SortedBuilder{
-		sc:              ctx.GetSessionVars().StmtCtx,
+		sc:              sc,
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
-		isPK:            isPK,
-		Hist: &Histogram{
+		hist: &Histogram{
 			ID:      id,
 			Buckets: make([]Bucket, 1, numBuckets),
 		},
 	}
 }
 
-// Iterate updates the histogram incrementally.
-func (b *SortedBuilder) Iterate(datums []types.Datum) error {
-	var data types.Datum
-	if b.isPK {
-		data = datums[0]
-	} else {
-		bytes, err := codec.EncodeKey(nil, datums...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		data = types.NewBytesDatum(bytes)
+// Hist returns the histogram built by SortedBuilder.
+func (b *SortedBuilder) Hist() *Histogram {
+	if b.Count == 0 {
+		return &Histogram{ID: b.hist.ID}
 	}
-	cmp, err := b.Hist.Buckets[b.bucketIdx].UpperBound.CompareDatum(b.sc, data)
+	return b.hist
+}
+
+// Iterate updates the histogram incrementally.
+func (b *SortedBuilder) Iterate(data types.Datum) error {
+	cmp, err := b.hist.Buckets[b.bucketIdx].UpperBound.CompareDatum(b.sc, data)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -69,52 +65,52 @@ func (b *SortedBuilder) Iterate(datums []types.Datum) error {
 		// The new item has the same value as current bucket value, to ensure that
 		// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 		// valuesPerBucket.
-		b.Hist.Buckets[b.bucketIdx].Count++
-		b.Hist.Buckets[b.bucketIdx].Repeats++
-	} else if b.Hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
+		b.hist.Buckets[b.bucketIdx].Count++
+		b.hist.Buckets[b.bucketIdx].Repeats++
+	} else if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
 		// The bucket still have room to store a new item, update the bucket.
-		b.Hist.Buckets[b.bucketIdx].Count++
-		b.Hist.Buckets[b.bucketIdx].UpperBound = data
-		b.Hist.Buckets[b.bucketIdx].Repeats = 1
-		if b.bucketIdx == 0 && b.Hist.Buckets[0].Count == 1 {
-			b.Hist.Buckets[0].LowerBound = data
+		b.hist.Buckets[b.bucketIdx].Count++
+		b.hist.Buckets[b.bucketIdx].UpperBound = data
+		b.hist.Buckets[b.bucketIdx].Repeats = 1
+		if b.bucketIdx == 0 && b.hist.Buckets[0].Count == 1 {
+			b.hist.Buckets[0].LowerBound = data
 		}
-		b.Hist.NDV++
+		b.hist.NDV++
 	} else {
 		// All buckets are full, we should merge buckets.
 		if b.bucketIdx+1 == b.numBuckets {
-			b.Hist.mergeBuckets(b.bucketIdx)
+			b.hist.mergeBuckets(b.bucketIdx)
 			b.valuesPerBucket *= 2
 			b.bucketIdx = b.bucketIdx / 2
 			if b.bucketIdx == 0 {
 				b.lastNumber = 0
 			} else {
-				b.lastNumber = b.Hist.Buckets[b.bucketIdx-1].Count
+				b.lastNumber = b.hist.Buckets[b.bucketIdx-1].Count
 			}
 		}
 		// We may merge buckets, so we should check it again.
-		if b.Hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
-			b.Hist.Buckets[b.bucketIdx].Count++
-			b.Hist.Buckets[b.bucketIdx].UpperBound = data
-			b.Hist.Buckets[b.bucketIdx].Repeats = 1
+		if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
+			b.hist.Buckets[b.bucketIdx].Count++
+			b.hist.Buckets[b.bucketIdx].UpperBound = data
+			b.hist.Buckets[b.bucketIdx].Repeats = 1
 		} else {
-			b.lastNumber = b.Hist.Buckets[b.bucketIdx].Count
+			b.lastNumber = b.hist.Buckets[b.bucketIdx].Count
 			b.bucketIdx++
-			b.Hist.Buckets = append(b.Hist.Buckets, Bucket{
+			b.hist.Buckets = append(b.hist.Buckets, Bucket{
 				Count:      b.lastNumber + 1,
 				UpperBound: data,
 				LowerBound: data,
 				Repeats:    1,
 			})
 		}
-		b.Hist.NDV++
+		b.hist.NDV++
 	}
 	return nil
 }
 
 // BuildIndex builds histogram for index.
 func BuildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
-	b := NewSortedBuilder(ctx, numBuckets, id, false)
+	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id)
 	for {
 		row, err := records.Next()
 		if err != nil {
@@ -123,12 +119,17 @@ func BuildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet
 		if row == nil {
 			break
 		}
-		err = b.Iterate(row.Data)
+		bytes, err := codec.EncodeKey(nil, row.Data...)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
+		data := types.NewBytesDatum(bytes)
+		err = b.Iterate(data)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
 	}
-	return int64(b.Hist.totalRowCount()), b.Hist, nil
+	return b.Count, b.Hist(), nil
 }
 
 // BuildColumn builds histogram from samples for column.

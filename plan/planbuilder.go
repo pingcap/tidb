@@ -368,6 +368,9 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	case ast.AdminShowDDL:
 		p = &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
+	case ast.AdminShowDDLJobs:
+		p = &ShowDDLJobs{}
+		p.SetSchema(buildShowDDLJobsFields())
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
@@ -453,11 +456,19 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
 }
 
 func buildShowDDLFields() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 7)...)
+	schema := expression.NewSchema(make([]*expression.Column, 0, 4)...)
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "JOB", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn("", "SELF_ID", mysql.TypeVarchar, 64))
+
+	return schema
+}
+
+func buildShowDDLJobsFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
+	schema.Append(buildColumn("", "JOBS", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
 
 	return schema
 }
@@ -686,7 +697,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		tableSchema: schema,
 		IsReplace:   insert.IsReplace,
 		Priority:    insert.Priority,
-		Ignore:      insert.Ignore,
+		IgnoreErr:   insert.IgnoreErr,
 	}.init(b.allocator, b.ctx)
 
 	b.visitInfo = append(b.visitInfo, visitInfo{
@@ -970,7 +981,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		}
 		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
 		p.SetSchema(schema)
-		p.explainedPlans = map[string]bool{}
+		p.explainedPlans = map[int]bool{}
 		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
 	} else {
 		schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
@@ -1053,23 +1064,28 @@ func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
 		col := &expression.Column{
 			ColName: model.NewCIStr(name),
 		}
-		var retType types.FieldType
+		var retTp byte
 		if len(ftypes) == 0 || ftypes[i] == 0 {
 			// Use varchar as the default return column type.
-			retType.Tp = mysql.TypeVarchar
+			retTp = mysql.TypeVarchar
 		} else {
-			retType.Tp = ftypes[i]
+			retTp = ftypes[i]
 		}
-
-		if retType.Tp == mysql.TypeVarchar || retType.Tp == mysql.TypeString {
+		retType := types.NewFieldType(retTp)
+		if retTp == mysql.TypeVarchar || retTp == mysql.TypeString {
 			retType.Flen = 256
-		} else if retType.Tp == mysql.TypeDatetime {
+		} else if retTp == mysql.TypeDatetime {
 			retType.Flen = 19
-		} else {
-			retType.Flen = mysql.GetDefaultFieldLength(retType.Tp)
+		}
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(retType.Tp)
+		if retType.Flen == types.UnspecifiedLength {
+			retType.Flen = defaultFlen
+		}
+		if retType.Decimal == types.UnspecifiedLength {
+			retType.Decimal = defaultDecimal
 		}
 		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
-		col.RetType = &retType
+		col.RetType = retType
 		schema.Append(col)
 	}
 	return schema

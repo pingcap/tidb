@@ -16,7 +16,7 @@ package plan
 import (
 	"sort"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -47,7 +47,7 @@ func findColumnIndexByGroup(groups []LogicalPlan, col *expression.Column) int {
 			return i
 		}
 	}
-	log.Errorf("Unknown columns %s, from id %s, position %d", col, col.FromID, col.Position)
+	log.Errorf("Unknown columns %s, from id %d, position %d", col, col.FromID, col.Position)
 	return -1
 }
 
