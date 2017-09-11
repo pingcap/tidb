@@ -991,6 +991,10 @@ func (b *builtinCastTimeAsTimeSig) evalTime(row []types.Datum) (res types.Time, 
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
+
+	if res, err = res.Convert(b.tp.Tp); err != nil {
+		return res, true, errors.Trace(err)
+	}
 	res, err = res.RoundFrac(b.tp.Decimal)
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
