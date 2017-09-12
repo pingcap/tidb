@@ -2392,6 +2392,16 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	result = tk.MustQuery(`select bit_count(121), bit_count(-1), bit_count(null), bit_count("1231aaa");`)
 	result.Check(testkit.Rows("5 64 <nil> 7"))
 
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b time, c double, d varchar(10))")
+	tk.MustExec(`insert into t values(1, '01:01:01', 1.1, "1"), (2, '02:02:02', 2.2, "2")`)
+	tk.MustExec(`insert into t(a, b) values(1, '12:12:12') on duplicate key update a = values(b)`)
+	result = tk.MustQuery(`select a from t order by a`)
+	result.Check(testkit.Rows("2", "121212"))
+	tk.MustExec(`insert into t values(2, '12:12:12', 1.1, "3.3") on duplicate key update a = values(c) + values(d)`)
+	result = tk.MustQuery(`select a from t order by a`)
+	result.Check(testkit.Rows("4", "121212"))
+
 	// for setvar, getvar
 	tk.MustExec(`set @varname = "Abc"`)
 	result = tk.MustQuery(`select @varname, @VARNAME`)

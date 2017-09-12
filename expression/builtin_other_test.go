@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -146,7 +147,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 
 func (s *testEvaluatorSuite) TestValues(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1}
+	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
 	_, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums("")))
 	c.Assert(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'values'")
 	sig, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums()))
