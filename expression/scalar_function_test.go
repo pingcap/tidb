@@ -45,7 +45,7 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(newSf.FuncName.O, Equals, "values")
 	c.Assert(newSf.RetType.Tp, Equals, mysql.TypeLonglong)
-	_, ok = newSf.Function.(*builtinValuesSig)
+	_, ok = newSf.Function.(*builtinValuesIntSig)
 	c.Assert(ok, IsTrue)
 }
 
