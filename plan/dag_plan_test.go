@@ -686,6 +686,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 			sql:  "select sum(distinct a), avg(b + c) from t group by d",
 			best: "TableReader(Table(t))->HashAgg",
 		},
+		//  Test group by (c + d)
+		{
+			sql:  "select sum(e), avg(e + c) from t where c = 1 group by (c + d)",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]]->HashAgg)->HashAgg",
+		},
 		// Test stream agg + index single.
 		{
 			sql:  "select sum(e), avg(e + c) from t where c = 1 group by c",
@@ -724,6 +729,46 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		{
 			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
 			best: "Apply{TableReader(Table(t))->TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->StreamAgg->Sel([ne(k, 0)])}->Projection",
+		},
+		// Test stream agg + limit or sort
+		{
+			sql:  "select count(*) from t group by g order by g limit 10",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Limit->Projection",
+		},
+		{
+			sql:  "select count(*) from t group by g limit 10",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Limit",
+		},
+		{
+			sql:  "select count(*) from t group by g order by g",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Projection",
+		},
+		// Test hash agg + limit or sort
+		{
+			sql:  "select count(*) from t group by b order by b limit 10",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg->TopN([test.t.b],0,10)->Projection",
+		},
+		{
+			sql:  "select count(*) from t group by b order by b",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg->Sort->Projection",
+		},
+		{
+			sql:  "select count(*) from t group by b limit 10",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg->Limit",
+		},
+		// Test merge join + stream agg
+		{
+			sql:  "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g group by a.g",
+			best: "MergeJoin{IndexReader(Index(t.g)[[<nil>,+inf]])->IndexReader(Index(t.g)[[<nil>,+inf]])}(a.g,b.g)->StreamAgg",
+		},
+		// Test index join + stream agg
+		{
+			sql:  "select /*+ tidb_inlj(a,b) */ sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.g > 60 group by a.g order by a.g limit 1",
+			best: "IndexJoin{IndexReader(Index(t.g)[(60,+inf]])->IndexReader(Index(t.g)[[<nil>,+inf]]->Sel([gt(b.g, 60)]))}(a.g,b.g)->StreamAgg->Limit->Projection",
+		},
+		{
+			sql:  "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.a>5 group by a.g order by a.g limit 1",
+			best: "IndexJoin{IndexReader(Index(t.g)[[<nil>,+inf]]->Sel([gt(a.a, 5)]))->IndexReader(Index(t.g)[[<nil>,+inf]])}(a.g,b.g)->StreamAgg->Limit->Projection",
 		},
 	}
 	for _, tt := range tests {
