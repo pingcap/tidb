@@ -532,6 +532,7 @@ var tokenMap = map[string]int{
 	"YEAR":                       yearType,
 	"CHAR":                       charType,
 	"VARCHAR":                    varcharType,
+	"NVARCHAR":                   nvarcharType,
 	"BINARY":                     binaryType,
 	"VARBINARY":                  varbinaryType,
 	"TINYBLOB":                   tinyblobType,
