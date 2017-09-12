@@ -743,6 +743,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 			sql:  "select count(*) from t group by g order by g",
 			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Projection",
 		},
+		{
+			sql:  "select count(*) from t group by g order by g desc limit 1",
+			best: "IndexReader(Index(t.g)[[<nil>,+inf]])->StreamAgg->Limit->Projection",
+		},
 		// Test hash agg + limit or sort
 		{
 			sql:  "select count(*) from t group by b order by b limit 10",
