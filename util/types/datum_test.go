@@ -118,7 +118,7 @@ func (ts *testDatumSuite) TestEqualDatums(c *C) {
 func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
 	sc := new(variable.StatementContext)
 	sc.IgnoreTruncate = true
-	res, err := EqualDatums(sc, MakeDatums(a), MakeDatums(b))
+	res, err := EqualDatums(sc, MakeDatums(a...), MakeDatums(b...))
 	c.Assert(err, IsNil)
 	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
 }

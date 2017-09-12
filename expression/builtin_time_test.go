@@ -951,6 +951,12 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 		{true, 1451606400, 999999000, 1451606400.999999, "%Y %D %M %h:%i:%s %x", 26},
 		{true, 1451606400, 999999900, 1451606400.9999999, "%Y %D %M %h:%i:%s %x", 19},
 	}
+	sc := s.ctx.GetSessionVars().StmtCtx
+	originTZ := sc.TimeZone
+	sc.TimeZone = time.Local
+	defer func() {
+		sc.TimeZone = originTZ
+	}()
 	fc := funcs[ast.FromUnixTime]
 	for _, t := range tbl {
 		var timestamp types.Datum
@@ -982,6 +988,7 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 
 	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(-12345)))
 	c.Assert(err, IsNil)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
@@ -2061,7 +2068,7 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 			c.Assert(err, NotNil)
 		}
 		result, _ := d.ToString()
-		c.Assert(result, Equals, test.expect)
+		c.Assert(result, Equals, test.expect, Commentf("convert_tz(\"%v\", \"%s\", \"%s\")", test.t, test.fromTz, test.toTz))
 	}
 }
 

@@ -213,7 +213,12 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 
 	mvccStore := opt.mvccStore
 	if mvccStore == nil {
-		mvccStore = mocktikv.NewMvccStore()
+		// mvccStore = mocktikv.NewMvccStore()
+		var err error
+		mvccStore, err = mocktikv.NewMVCCLevelDB(opt.path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	client := Client(mocktikv.NewRPCClient(cluster, mvccStore))
