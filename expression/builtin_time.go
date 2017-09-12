@@ -1977,10 +1977,6 @@ func (b *builtinStringDateAddSig) evalTime(row []types.Datum) (types.Time, bool,
 	if !types.IsDateFormat(dateStr) {
 		dateTp = mysql.TypeDatetime
 	}
-	date, err := types.ParseTime(dateStr, dateTp, types.MaxFsp)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
 
 	interval, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
@@ -1989,6 +1985,14 @@ func (b *builtinStringDateAddSig) evalTime(row []types.Datum) (types.Time, bool,
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
 	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	if types.IsClockUnit(unit) {
+		dateTp = mysql.TypeDatetime
+	}
+	date, err := types.ParseTime(dateStr, dateTp, types.MaxFsp)
+	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
@@ -2033,10 +2037,6 @@ func (b *builtinIntDateAddSig) evalTime(row []types.Datum) (types.Time, bool, er
 			dateTp = mysql.TypeDatetime
 		}
 	}
-	date, err := types.ParseTime(strconv.FormatInt(dateInt, 10), dateTp, types.MaxFsp)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
 
 	interval, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
@@ -2045,6 +2045,14 @@ func (b *builtinIntDateAddSig) evalTime(row []types.Datum) (types.Time, bool, er
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
 	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	if types.IsClockUnit(unit) {
+		dateTp = mysql.TypeDatetime
+	}
+	date, err := types.ParseTime(strconv.FormatInt(dateInt, 10), dateTp, types.MaxFsp)
+	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
@@ -2092,6 +2100,10 @@ func (b *builtinDatetimeDateAddSig) evalTime(row []types.Datum) (types.Time, boo
 	unit, isNull, err := b.args[2].EvalString(row, sc)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
+	}
+
+	if types.IsClockUnit(unit) {
+		date.Type = mysql.TypeDatetime
 	}
 
 	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
@@ -2166,10 +2178,6 @@ func (b *builtinStringDateSubSig) evalTime(row []types.Datum) (types.Time, bool,
 	if !types.IsDateFormat(dateStr) {
 		dateTp = mysql.TypeDatetime
 	}
-	date, err := types.ParseTime(dateStr, dateTp, types.MaxFsp)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
 
 	interval, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
@@ -2178,6 +2186,14 @@ func (b *builtinStringDateSubSig) evalTime(row []types.Datum) (types.Time, bool,
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
 	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	if types.IsClockUnit(unit) {
+		dateTp = mysql.TypeDatetime
+	}
+	date, err := types.ParseTime(dateStr, dateTp, types.MaxFsp)
+	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
@@ -2223,10 +2239,6 @@ func (b *builtinIntDateSubSig) evalTime(row []types.Datum) (types.Time, bool, er
 			dateTp = mysql.TypeDatetime
 		}
 	}
-	date, err := types.ParseTime(strconv.FormatInt(dateInt, 10), dateTp, types.MaxFsp)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
 
 	interval, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
@@ -2235,6 +2247,14 @@ func (b *builtinIntDateSubSig) evalTime(row []types.Datum) (types.Time, bool, er
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
 	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	if types.IsClockUnit(unit) {
+		dateTp = mysql.TypeDatetime
+	}
+	date, err := types.ParseTime(strconv.FormatInt(dateInt, 10), dateTp, types.MaxFsp)
+	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
@@ -2283,6 +2303,10 @@ func (b *builtinDatetimeDateSubSig) evalTime(row []types.Datum) (types.Time, boo
 	unit, isNull, err := b.args[2].EvalString(row, sc)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
+	}
+
+	if types.IsClockUnit(unit) {
+		date.Type = mysql.TypeDatetime
 	}
 
 	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
