@@ -1939,11 +1939,11 @@ func (c *dateAddFunctionClass) getFunction(ctx context.Context, args []Expressio
 	argEvalTp := fieldTp2EvalTp(args[0].GetType())
 	switch argEvalTp {
 	case tpString:
-		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString, tpInt, tpString)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString, tpString, tpString)
 	case tpInt:
-		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpInt, tpInt, tpString)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpInt, tpString, tpString)
 	default:
-		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpDatetime, tpInt, tpString)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpDatetime, tpString, tpString)
 	}
 
 	bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeFullWidth, types.UnspecifiedLength
@@ -1982,7 +1982,7 @@ func (b *builtinStringDateAddSig) evalTime(row []types.Datum) (types.Time, bool,
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := b.args[1].EvalInt(row, sc)
+	interval, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -1992,7 +1992,7 @@ func (b *builtinStringDateAddSig) evalTime(row []types.Datum) (types.Time, bool,
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	year, month, day, dur, err := types.ExtractTimeValue(unit, fmt.Sprintf("%v", interval))
+	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2038,7 +2038,7 @@ func (b *builtinIntDateAddSig) evalTime(row []types.Datum) (types.Time, bool, er
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := b.args[1].EvalInt(row, sc)
+	interval, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2048,7 +2048,7 @@ func (b *builtinIntDateAddSig) evalTime(row []types.Datum) (types.Time, bool, er
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	year, month, day, dur, err := types.ExtractTimeValue(unit, fmt.Sprintf("%v", interval))
+	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2084,7 +2084,7 @@ func (b *builtinDatetimeDateAddSig) evalTime(row []types.Datum) (types.Time, boo
 		date.Type = mysql.TypeDatetime
 	}
 
-	interval, isNull, err := b.args[1].EvalInt(row, sc)
+	interval, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2094,7 +2094,7 @@ func (b *builtinDatetimeDateAddSig) evalTime(row []types.Datum) (types.Time, boo
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	year, month, day, dur, err := types.ExtractTimeValue(unit, fmt.Sprintf("%v", interval))
+	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2128,11 +2128,11 @@ func (c *dateSubFunctionClass) getFunction(ctx context.Context, args []Expressio
 	argEvalTp := fieldTp2EvalTp(args[0].GetType())
 	switch argEvalTp {
 	case tpString:
-		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString, tpInt, tpString)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString, tpString, tpString)
 	case tpInt:
-		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpInt, tpInt, tpString)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpInt, tpString, tpString)
 	default:
-		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpDatetime, tpInt, tpString)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpDatetime, tpString, tpString)
 	}
 
 	bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeFullWidth, types.UnspecifiedLength
@@ -2171,7 +2171,7 @@ func (b *builtinStringDateSubSig) evalTime(row []types.Datum) (types.Time, bool,
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := b.args[1].EvalInt(row, sc)
+	interval, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2181,7 +2181,7 @@ func (b *builtinStringDateSubSig) evalTime(row []types.Datum) (types.Time, bool,
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	year, month, day, dur, err := types.ExtractTimeValue(unit, fmt.Sprintf("%v", interval))
+	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2228,7 +2228,7 @@ func (b *builtinIntDateSubSig) evalTime(row []types.Datum) (types.Time, bool, er
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := b.args[1].EvalInt(row, sc)
+	interval, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2238,7 +2238,7 @@ func (b *builtinIntDateSubSig) evalTime(row []types.Datum) (types.Time, bool, er
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	year, month, day, dur, err := types.ExtractTimeValue(unit, fmt.Sprintf("%v", interval))
+	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2275,7 +2275,7 @@ func (b *builtinDatetimeDateSubSig) evalTime(row []types.Datum) (types.Time, boo
 		date.Type = mysql.TypeDatetime
 	}
 
-	interval, isNull, err := b.args[1].EvalInt(row, sc)
+	interval, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2285,7 +2285,7 @@ func (b *builtinDatetimeDateSubSig) evalTime(row []types.Datum) (types.Time, boo
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	year, month, day, dur, err := types.ExtractTimeValue(unit, fmt.Sprintf("%v", interval))
+	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
