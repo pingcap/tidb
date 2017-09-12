@@ -426,7 +426,7 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 			break
 		}
 
-		if bytes.Compare(key, helper.currKey) != 0 {
+		if !bytes.Equal(key, helper.currKey) {
 			helper.finishEntry()
 			helper.currKey = key
 		}
@@ -438,6 +438,10 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 			var value mvccValue
 			err = value.UnmarshalBinary(iter.Value())
 			helper.entry.values = append(helper.entry.values, value)
+		}
+		if err != nil {
+			log.Error("Unmarshal fail:", errors.Trace(err))
+			break
 		}
 		succ = iter.Prev()
 	}
