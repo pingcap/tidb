@@ -267,3 +267,7 @@ func (t *MemoryTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*
 	fn table.RecordIterFunc) error {
 	return nil
 }
+
+func (t *MemoryTable) TableType() table.TableType {
+	return table.MemoryTable
+}

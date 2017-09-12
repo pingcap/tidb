@@ -208,7 +208,14 @@ func (ps *perfSchema) buildTables() {
 			c.ID = autoid.GenLocalSchemaID()
 		}
 		alloc := autoid.NewMemoryAllocator(dbID)
-		ps.mTables[name] = tables.MemoryTableFromMeta(alloc, meta)
+		var tbl table.Table
+		switch name {
+		case TableSessionStatus:
+			tbl = createSysVarTable(meta, TableSessionStatus)
+		default:
+			tbl = tables.MemoryTableFromMeta(alloc, meta)
+		}
+		ps.mTables[name] = tbl
 	}
 	ps.dbInfo = &model.DBInfo{
 		ID:      dbID,
@@ -312,6 +319,7 @@ func (ps *perfSchema) initialize() {
 		stagesCurrentCols,
 		stagesCurrentCols, // same as above
 		stagesCurrentCols, // same as above
+		setupSessionStatusCols,
 	}
 
 	allColNames := [][]string{
@@ -332,6 +340,7 @@ func (ps *perfSchema) initialize() {
 		ColumnStagesCurrent,
 		ColumnStagesHistory,
 		ColumnStagesHistoryLong,
+		ColumnSessionStatus,
 	}
 
 	// initialize all table, column and result field definitions

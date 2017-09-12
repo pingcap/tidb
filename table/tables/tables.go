@@ -735,6 +735,10 @@ func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 	return handle, true, nil
 }
 
+func (t *Table) TableType() table.TableType {
+	return table.Normal
+}
+
 func shouldWriteBinlog(ctx context.Context) bool {
 	if ctx.GetSessionVars().BinlogClient == nil {
 		return false

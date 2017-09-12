@@ -27,6 +27,15 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+type TableType int16
+
+const (
+	Normal TableType = iota
+	SystemVarTale
+	BoundedTable
+	MemoryTable
+)
+
 var (
 	// errNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
 	// and it doesn't have a default value.
@@ -124,6 +133,9 @@ type Table interface {
 
 	// Seek returns the handle greater or equal to h.
 	Seek(ctx context.Context, h int64) (handle int64, found bool, err error)
+
+	// TableType returns the type of table
+	TableType() TableType
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
