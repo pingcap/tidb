@@ -734,6 +734,8 @@ func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err1 := d.GetBinaryLiteral().ToInt()
 		f, err = float64(val), err1
+	case KindMysqlJSON:
+		f, err = ConvertJSONToFloat(sc, d.GetMysqlJSON())
 	default:
 		return invalidConv(d, target.Tp)
 	}
@@ -895,6 +897,10 @@ func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) 
 		val, err = ConvertFloatToUint(sc, d.GetMysqlSet().ToNumber(), upperBound, tp)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err = d.GetBinaryLiteral().ToInt()
+	case KindMysqlJSON:
+		var i64 int64
+		i64, err = ConvertJSONToInt(sc, d.GetMysqlJSON(), true)
+		val = uint64(i64)
 	default:
 		return invalidConv(d, target.Tp)
 	}
@@ -1409,7 +1415,7 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		fval := d.GetMysqlSet().ToNumber()
 		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
 	case KindMysqlJSON:
-		return ConvertJSONToInt(sc, d.GetMysqlJSON(), true)
+		return ConvertJSONToInt(sc, d.GetMysqlJSON(), false)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err := d.GetBinaryLiteral().ToInt()
 		return int64(val), err
