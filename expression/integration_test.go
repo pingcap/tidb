@@ -1485,6 +1485,13 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	GET_FORMAT(TIME,'ISO'), GET_FORMAT(TIME,'EUR'), GET_FORMAT(TIME,'INTERNAL')`)
 	result.Check(testkit.Rows("%m.%d.%Y %Y-%m-%d %Y-%m-%d %d.%m.%Y %Y%m%d %Y-%m-%d %H.%i.%s %Y-%m-%d %H:%i:%s %Y-%m-%d %H:%i:%s %Y-%m-%d %H.%i.%s %Y%m%d%H%i%s %h:%i:%s %p %H:%i:%s %H:%i:%s %H.%i.%s %H%i%s"))
 
+	// for convert_tz
+	result = tk.MustQuery(`select convert_tz("2004-01-01 12:00:00", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00.01", "+00:00", "+10:32"), convert_tz("2004-01-01 12:00:00.01234567", "+00:00", "+10:32");`)
+	result.Check(testkit.Rows("2004-01-01 22:32:00 2004-01-01 22:32:00.01 2004-01-01 22:32:00.012346"))
+	// TODO: release the following test after fix #4462
+	//result = tk.MustQuery(`select convert_tz(20040101, "+00:00", "+10:32"), convert_tz(20040101.01, "+00:00", "+10:32"), convert_tz(20040101.01234567, "+00:00", "+10:32");`)
+	//result.Check(testkit.Rows("2004-01-01 10:32:00 2004-01-01 10:32:00.00 2004-01-01 10:32:00.000000"))
+
 	// for from_unixtime
 	tk.MustExec(`set @@session.time_zone = "+08:00"`)
 	result = tk.MustQuery(`select from_unixtime(20170101), from_unixtime(20170101.9999999), from_unixtime(20170101.999), from_unixtime(20170101.999, "%Y %D %M %h:%i:%s %x"), from_unixtime(20170101.999, "%Y %D %M %h:%i:%s %x")`)
@@ -1609,6 +1616,8 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select cast(8385960 as time);`)
 	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select cast(cast('2017-01-01 01:01:11.12' as date) as datetime(2));`)
+	result.Check(testkit.Rows("2017-01-01 00:00:00.00"))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
@@ -2369,6 +2378,8 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b double, c varchar(20), d datetime, e time)")
 	tk.MustExec("insert into t value(1, 2, 'string', '2017-01-01 12:12:12', '12:12:12')")
+
+	// for in
 	result := tk.MustQuery("select 1 in (a, b, c), 'string' in (a, b, c), '2017-01-01 12:12:12' in (c, d, e), '12:12:12' in (c, d, e) from t")
 	result.Check(testkit.Rows("1 1 1 1"))
 	result = tk.MustQuery("select 1 in (null, c), 2 in (null, c) from t")
@@ -2380,6 +2391,11 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 
 	result = tk.MustQuery(`select bit_count(121), bit_count(-1), bit_count(null), bit_count("1231aaa");`)
 	result.Check(testkit.Rows("5 64 <nil> 7"))
+
+	// for setvar, getvar
+	tk.MustExec(`set @varname = "Abc"`)
+	result = tk.MustQuery(`select @varname, @VARNAME`)
+	result.Check(testkit.Rows("Abc Abc"))
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
