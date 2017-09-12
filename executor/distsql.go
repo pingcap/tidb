@@ -322,8 +322,7 @@ func extractHandlesFromNewIndexSubResult(subResult distsql.NewPartialResult) ([]
 		if data == nil {
 			break
 		}
-		l := len(data)
-		handleDatum, err = tablecodec.DecodeColumnValue(data[l-1].GetRaw(), handleType, nil)
+		handleDatum, err = tablecodec.DecodeColumnValue(data[0].GetRaw(), handleType, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
