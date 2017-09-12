@@ -619,7 +619,7 @@ func getStrFsp(strArg string, fsp int) int {
 	if n := strings.IndexByte(strArg, '.'); n >= 0 {
 		lenStrFsp := len(strArg[n+1:])
 		if lenStrFsp <= types.MaxFsp {
-			fsp = int(math.Max(float64(lenStrFsp), float64(fsp)))
+			fsp = mathutil.Max(lenStrFsp, fsp)
 		}
 	}
 	return fsp
