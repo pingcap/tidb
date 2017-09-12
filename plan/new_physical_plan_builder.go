@@ -1155,14 +1155,9 @@ func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*
 		return props
 	}
 
-	reqProp := &requiredProp{taskTp: rootTaskType, cols: p.propKeys, expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count}
-	if !prop.isEmpty() {
-		if prop.desc {
-			return nil
-		}
-		if !prop.equal(reqProp) {
-			return nil
-		}
+	reqProp := &requiredProp{taskTp: rootTaskType, cols: p.propKeys, expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count, desc: prop.desc}
+	if !prop.isEmpty() && !prop.equal(reqProp) {
+		return nil
 	}
 	return [][]*requiredProp{{reqProp}}
 }
