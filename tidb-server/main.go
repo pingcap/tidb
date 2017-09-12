@@ -79,8 +79,8 @@ var (
 	sslCAPath       = flag.String("ssl-ca", "", "Path of file that contains list of trusted SSL CAs")
 	sslCertPath     = flag.String("ssl-cert", "", "Path of file that contains X509 certificate in PEM format")
 	sslKeyPath      = flag.String("ssl-key", "", "Path of file that contains X509 key in PEM format")
-  
-  proxyProtocolNetworks      = flag.String("proxy-protocol-networks", "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
+
+	proxyProtocolNetworks      = flag.String("proxy-protocol-networks", "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Int("proxy-protocol-header-timeout", 5, "proxy protocol header read timeout, unit is second.")
 
 	timeJumpBackCounter = prometheus.NewCounter(
