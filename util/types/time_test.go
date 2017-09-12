@@ -906,3 +906,35 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 		c.Assert(v2.Compare(result), Equals, 0)
 	}
 }
+
+func (s *testTimeSuite) TestTruncateOverflowMySQLTime(c *C) {
+	t := MaxTime + 1
+	res, err := TruncateOverflowMySQLTime(t)
+	c.Assert(ErrTruncatedWrongVal.Equal(err), IsTrue)
+	c.Assert(res, Equals, MaxTime)
+
+	t = MinTime - 1
+	res, err = TruncateOverflowMySQLTime(t)
+	c.Assert(ErrTruncatedWrongVal.Equal(err), IsTrue)
+	c.Assert(res, Equals, MinTime)
+
+	t = MaxTime
+	res, err = TruncateOverflowMySQLTime(t)
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, MaxTime)
+
+	t = MinTime
+	res, err = TruncateOverflowMySQLTime(t)
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, MinTime)
+
+	t = MaxTime - 1
+	res, err = TruncateOverflowMySQLTime(t)
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, MaxTime-1)
+
+	t = MinTime + 1
+	res, err = TruncateOverflowMySQLTime(t)
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, MinTime+1)
+}
