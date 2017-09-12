@@ -75,7 +75,7 @@ const (
 	nmJoinConcurrency = "join-concurrency"
 	nmCrossJoin       = "cross-join"
 	nmRetryLimit      = "retry-limit"
-	nmTcpKeepAlive    = "tcp-keep-alive"
+	nmTCPKeepAlive    = "tcp-keep-alive"
 	nmStartXServer    = "xserver"
 	nmXHost           = "xhost"
 	nmXPort           = "xP"
@@ -119,7 +119,7 @@ var (
 	joinCon      = flag.Int(nmJoinConcurrency, 5, "the number of goroutines that participate joining.")
 	crossJoin    = flagBoolean(nmCrossJoin, true, "whether support cartesian product or not.")
 	retryLimit   = flag.Int(nmRetryLimit, 10, "the maximum number of retries when commit a transaction")
-	tcpKeepAlive = flagBoolean(nmTcpKeepAlive, false, "set keep alive option for tcp connection.")
+	tcpKeepAlive = flagBoolean(nmTCPKeepAlive, false, "set keep alive option for tcp connection.")
 
 	// XProtocol
 	startXServer = flagBoolean(nmStartXServer, false, "start tidb x protocol server")
@@ -377,7 +377,7 @@ func overrideConfig() {
 	if actualFlags[nmRetryLimit] {
 		cfg.Performance.RetryLimit = *retryLimit
 	}
-	if actualFlags[nmTcpKeepAlive] {
+	if actualFlags[nmTCPKeepAlive] {
 		cfg.Performance.TCPKeepAlive = *tcpKeepAlive
 	}
 

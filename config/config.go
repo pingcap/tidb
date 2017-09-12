@@ -123,7 +123,7 @@ var defaultConf = Config{
 var globalConf = defaultConf
 
 // NewConfig creates a new config instance with default value.
-func NewConf() *Config {
+func NewConfig() *Config {
 	conf := defaultConf
 	return &conf
 }
