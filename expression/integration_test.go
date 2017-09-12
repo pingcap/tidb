@@ -1508,6 +1508,10 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
 	result.Check(testkit.Rows("1 1 1 1"))
+
+	// for current_timestamp, current_timestamp()
+	result = tk.MustQuery(`select current_timestamp() = now(), current_timestamp = now()`)
+	result.Check(testkit.Rows("1 1"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
