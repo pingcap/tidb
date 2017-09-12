@@ -3014,7 +3014,7 @@ FunctionCallKeyword:
 	}
 |	"YEAR" '(' ExpressionListOpt ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+= &ast.FuncCallExpr{FnName:model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"FORMAT" '(' ExpressionListOpt ')'
 	{
@@ -3024,13 +3024,21 @@ FunctionCallKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr(ast.InsertFunc), Args: $3.([]ast.ExprNode)}
 	}
-|	"LOCALTIME" '(' ExpressionListOpt ')'
+|	"LOCALTIME" FuncDatetimePrec
 	{
-		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+		args := []ast.ExprNode{}
+    	if $2 != nil {
+    		args = append(args, $2.(ast.ExprNode))
+    	}
+    	$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
-|	"LOCALTIMESTAMP" '(' ExpressionListOpt ')'
-	{
-		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+|	"LOCALTIMESTAMP" FuncDatetimePrec
+    {
+		args := []ast.ExprNode{}
+		if $2 != nil {
+			args = append(args, $2.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"QUARTER" '(' ExpressionListOpt ')'
 	{

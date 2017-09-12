@@ -1504,6 +1504,10 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for extract
 	result = tk.MustQuery(`select extract(day from '800:12:12'), extract(hour from '800:12:12'), extract(month from 20170101), extract(day_second from '2017-01-01 12:12:12')`)
 	result.Check(testkit.Rows("12 800 1 1121212"))
+
+	// for localtime, localtimestamp
+	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
+	result.Check(testkit.Rows("1 1 1 1"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
