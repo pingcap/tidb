@@ -18,14 +18,17 @@ import (
 	"math"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -56,8 +59,18 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	log.SetLevelByString(logLevel)
 }
 
+func (s *testSessionSuite) TearDownTest(c *C) {
+	testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+}
+
 func (s *testSessionSuite) TestErrorRollback(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -221,4 +234,86 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Equals, 0)
 	tk.MustExec("set autocommit='On'")
 	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+}
+
+func (s *testSessionSuite) TestSchemaCheckerSQL(c *C) {
+	store, err := tikv.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	tidb.SetStatsLease(0)
+	lease := 20 * time.Millisecond
+	tidb.SetSchemaLease(lease)
+	dom, err := tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+	defer store.Close()
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec(`use test`)
+	tk1 := testkit.NewTestKit(c, store)
+	tk1.MustExec("use test")
+
+	// create table
+	tk.MustExec(`create table t (id int, c int);`)
+	tk.MustExec(`create table t1 (id int, c int);`)
+	// insert data
+	tk.MustExec(`insert into t values(1, 1);`)
+
+	// The schema version is out of date in the first transaction, but the SQL can be retried.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table t add index idx(c);`)
+	time.Sleep(lease + 2*time.Millisecond)
+	tk.MustExec(`insert into t values(2, 2);`)
+	tk.MustExec(`commit;`)
+
+	// The schema version is out of date in the first transaction, and the SQL can't be retried.
+	tidb.SchemaChangedWithoutRetry = true
+	defer func() {
+		tidb.SchemaChangedWithoutRetry = false
+	}()
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table t modify column c bigint;`)
+	tk.MustExec(`insert into t values(3, 3);`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
+
+	// But the transaction related table IDs aren't in the updated table IDs.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table t add index idx2(c);`)
+	time.Sleep(lease + 2*time.Millisecond)
+	tk.MustExec(`insert into t1 values(4, 4);`)
+	tk.MustExec(`commit;`)
+
+	// Test for "select for update".
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table t add index idx3(c);`)
+	time.Sleep(lease + 2*time.Millisecond)
+	tk.MustQuery(`select * from t for update`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
+}
+
+func (s *testSessionSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int)")
+	tk1.MustExec("prepare stmt from 'insert into t values (?, ?)'")
+	tk1.MustExec("set @a = 1")
+
+	// Commit find unrelated schema change.
+	tk1.MustExec("begin")
+	tk.MustExec("create table t1 (id int)")
+	tk1.MustExec("execute stmt using @a, @a")
+	tk1.MustExec("commit")
+
+	// TODO: PrepareStmt should handle this.
+	//tk1.MustExec("begin")
+	//tk.MustExec("alter table t drop column b")
+	//tk1.MustExec("execute stmt using @a, @a")
+	//_, err := tk1.Exec("commit")
+	//c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }
