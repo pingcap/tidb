@@ -589,7 +589,7 @@ func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) Expre
 
 // NewValuesFunc creates a new values function.
 func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *ScalarFunction {
-	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset}
+	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
 	bt, _ := fc.getFunction(ctx, nil)
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),

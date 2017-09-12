@@ -113,8 +113,6 @@ func kindToFieldType(kind byte) types.FieldType {
 		ft.Tp = mysql.TypeEnum
 	case types.KindMysqlSet:
 		ft.Tp = mysql.TypeSet
-	case types.KindRow:
-		ft.Tp = mysql.TypeVarString
 	case types.KindInterface:
 		ft.Tp = mysql.TypeVarString
 	case types.KindMysqlDecimal:
