@@ -174,67 +174,6 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestAffectedRows(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_affect_rows"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, s.createTableSQL)
-	mustExecSQL(c, se, `INSERT INTO t VALUES ("a");`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `INSERT INTO t VALUES ("b");`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `UPDATE t set id = 'c' where id = 'a';`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `UPDATE t set id = 'a' where id = 'a';`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-	mustExecSQL(c, se, `SELECT * from t;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, data int)")
-	mustExecSQL(c, se, `INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where data = 0;`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, c1 timestamp);")
-	mustExecSQL(c, se, `insert t values(1, 0);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where id = 1;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-
-	// With ON DUPLICATE KEY UPDATE, the affected-rows value per row is 1 if the row is inserted as a new row,
-	// 2 if an existing row is updated, and 0 if an existing row is set to its current values.
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (c1 int PRIMARY KEY, c2 int);")
-	mustExecSQL(c, se, `insert t values(1, 1);`)
-	mustExecSQL(c, se, `insert into t values (1, 1) on duplicate key update c2=2;`)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-	mustExecSQL(c, se, `insert into t values (1, 1) on duplicate key update c2=2;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-	createSQL := `CREATE TABLE IF NOT EXISTS test (
-	  id        VARCHAR(36) PRIMARY KEY NOT NULL,
-	  factor    INTEGER                 NOT NULL                   DEFAULT 2);`
-	mustExecSQL(c, se, createSQL)
-	insertSQL := `INSERT INTO test(id) VALUES('id') ON DUPLICATE KEY UPDATE factor=factor+3;`
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-
-	se.SetClientCapability(mysql.ClientFoundRows)
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, data int)")
-	mustExecSQL(c, se, `INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where data = 0;`)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-
-	sessionExec(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestString(c *C) {
 	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
@@ -358,47 +297,6 @@ func checkTxn(c *C, se Session, stmt string, expectStatus uint16) {
 	}
 }
 
-func checkAutocommit(c *C, se Session, expectStatus uint16) {
-	ret := se.(*session).sessionVars.Status & mysql.ServerStatusAutocommit
-	c.Assert(ret, Equals, expectStatus)
-}
-
-// TestAutocommit ...
-// See https://dev.mysql.com/doc/internals/en/status-flags.html
-func (s *testSessionSuite) TestAutocommit(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_auto_commit"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	checkTxn(c, se, "drop table if exists t;", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "insert t values ()", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "begin", 1)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "insert t values ()", 1)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "drop table if exists t;", 0)
-	checkAutocommit(c, se, 2)
-
-	checkTxn(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "set autocommit=0;", 0)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "insert t values ()", 1)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "commit", 0)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "drop table if exists t;", 0)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "set autocommit='On';", 0)
-	checkAutocommit(c, se, 2)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func checkInTrans(c *C, se Session, stmt string, expectStatus uint16) {
 	checkTxn(c, se, stmt, expectStatus)
 	ret := se.(*session).sessionVars.Status & mysql.ServerStatusInTrans
@@ -436,51 +334,6 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	checkInTrans(c, se, "begin", 1)
 	checkInTrans(c, se, "insert t values ()", 1)
 	checkInTrans(c, se, "rollback", 0)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// testRowLock ...
-// See http://dev.mysql.com/doc/refman/5.7/en/commit.html
-func (s *testSessionSuite) testRowLock(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_row_lock"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	se1 := newSession(c, s.store, dbName)
-	se2 := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, IsNil)
-	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
-	mustExecSQL(c, se, "insert t values (11, 2, 3)")
-	mustExecSQL(c, se, "insert t values (12, 2, 3)")
-	mustExecSQL(c, se, "insert t values (13, 2, 3)")
-
-	mustExecSQL(c, se1, "begin")
-	mustExecSQL(c, se1, "update t set c2=21 where c1=11")
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
-	mustExecSQL(c, se2, "commit")
-
-	_, err := exec(se1, "commit")
-	// se1 will retry and the final value is 21
-	c.Assert(err, IsNil)
-	// Check the result is correct
-	se3 := newSession(c, s.store, dbName)
-	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
-	rows, err := GetRows(r)
-	matches(c, rows, [][]interface{}{{21}})
-
-	mustExecSQL(c, se1, "begin")
-	mustExecSQL(c, se1, "update t set c2=21 where c1=11")
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=22 where c1=12")
-	mustExecSQL(c, se2, "commit")
-
-	mustExecSQL(c, se1, "commit")
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -2131,52 +1984,6 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	privileges.Enable = save1
 	privileges.SkipWithGrant = save2
 	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestErrorRollback(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_error_rollback"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	s1 := newSession(c, s.store, dbName)
-
-	defer s1.Close()
-
-	mustExecSQL(c, s1, "drop table if exists t_rollback")
-	mustExecSQL(c, s1, "create table t_rollback (c1 int, c2 int, primary key(c1))")
-
-	_, err := s1.Execute("insert into t_rollback values (0, 0)")
-	c.Assert(err, IsNil)
-
-	var wg sync.WaitGroup
-	cnt := 4
-	wg.Add(cnt)
-	num := 100
-
-	for i := 0; i < cnt; i++ {
-		go func() {
-			defer wg.Done()
-			se := newSession(c, s.store, dbName)
-			// retry forever
-			se.(*session).unlimitedRetryCount = true
-			defer se.Close()
-
-			for j := 0; j < num; j++ {
-				// force generate a txn in session for later insert use.
-				se.(*session).GetTxn(false)
-
-				se.Execute("insert into t_rollback values (1, 1)")
-
-				_, err1 := se.Execute("update t_rollback set c2 = c2 + 1 where c1 = 0")
-				c.Assert(err1, IsNil)
-			}
-		}()
-	}
-
-	wg.Wait()
-
-	mustExecMatch(c, s1, "select c2 from t_rollback where c1 = 0", [][]interface{}{{cnt * num}})
-
-	mustExecSQL(c, s1, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
