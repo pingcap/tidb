@@ -904,7 +904,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk 
 			ranges:    ranges,
 			keepOrder: keepOrder,
 			dagPB: &tipb.DAGRequest{
-				StartTs:        b.getStartTS(),
+				StartTs:        startTS,
 				TimeZoneOffset: timeZoneOffset(b.ctx),
 				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			},
@@ -962,7 +962,7 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 			ranges:      []*types.IndexRange{idxRange},
 			analyzePB: &tipb.AnalyzeReq{
 				Tp:             tipb.AnalyzeType_TypeIndex,
-				StartTs:        b.getStartTS(),
+				StartTs:        startTS,
 				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 				TimeZoneOffset: timeZoneOffset(b.ctx),
 			},
@@ -981,7 +981,7 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 			ranges:    []*types.IndexRange{idxRange},
 			keepOrder: true,
 			dagPB: &tipb.DAGRequest{
-				StartTs:        b.getStartTS(),
+				StartTs:        startTS,
 				TimeZoneOffset: timeZoneOffset(b.ctx),
 				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			},
