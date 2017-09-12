@@ -106,10 +106,6 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{[]byte("123"), 1234, -1},
 		{[]byte{}, nil, 1},
 
-		{[]interface{}{1, 2, 3}, []interface{}{1, 2, 3}, 0},
-		{[]interface{}{1, 3, 3}, []interface{}{1, 2, 3}, 1},
-		{[]interface{}{1, 2, 3}, []interface{}{2, 2, 3}, -1},
-
 		{NewBinaryLiteralFromUint(1, -1), 1, 0},
 		{NewBinaryLiteralFromUint(0x4D7953514C, -1), "MySQL", 0},
 		{NewBinaryLiteralFromUint(0, -1), uint64(10), -1},
