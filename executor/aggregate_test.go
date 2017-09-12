@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 type MockExec struct {
@@ -63,14 +62,10 @@ func (s *testSuite) TestAggregation(c *C) {
 	// New expression evaluation architecture does not support aggregation functions now.
 	origin := atomic.LoadInt32(&expression.TurnOnNewExprEval)
 	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
-	defer func() {
-		atomic.StoreInt32(&expression.TurnOnNewExprEval, origin)
-	}()
 	plan.JoinConcurrency = 1
 	defer func() {
+		atomic.StoreInt32(&expression.TurnOnNewExprEval, origin)
 		plan.JoinConcurrency = 5
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -315,10 +310,6 @@ func (s *testSuite) TestAggregation(c *C) {
 }
 
 func (s *testSuite) TestAggPrune(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -337,10 +328,6 @@ func (s *testSuite) TestAggPrune(c *C) {
 }
 
 func (s *testSuite) TestSelectDistinct(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "select_distinct_test")
@@ -353,10 +340,6 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 }
 
 func (s *testSuite) TestAggPushDown(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, tt")
