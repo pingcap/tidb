@@ -939,7 +939,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk 
 	return e
 }
 
-func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) Executor {
+func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pushdown bool) Executor {
 	startTS := b.getStartTS()
 	if b.err != nil {
 		return nil
@@ -952,7 +952,7 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
 	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
-	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeIdx) {
+	if pushdown {
 		e := &AnalyzeIndexExec{
 			ctx:         b.ctx,
 			tblInfo:     tblInfo,
@@ -1039,10 +1039,10 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	for _, task := range v.IdxTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType:  idxTask,
-			src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
+			src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo, task.PushDown),
 			indexInfo: task.IndexInfo,
 			tableInfo: task.TableInfo,
-			pushdown:  b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeIdx),
+			pushdown:  task.PushDown,
 		})
 	}
 	return e
