@@ -178,6 +178,7 @@ func (b *builtinReleaseLockSig) evalInt(_ []types.Datum) (int64, bool, error) {
 	return 1, false, nil
 }
 
+// TODO: Remove this function.
 type anyValueFunctionClass struct {
 	baseFunctionClass
 }
@@ -187,8 +188,8 @@ func (c *anyValueFunctionClass) getFunction(ctx context.Context, args []Expressi
 		return nil, errors.Trace(err)
 	}
 	argTp := fieldTp2EvalTp(args[0].GetType())
-	bf := newBaseBuiltinFuncWithTp(args, ctx, argTp, argTp)
-	*bf.tp = *args[0].GetType()
+	bf := newBaseBuiltinFunc(args, ctx)
+	bf.tp = args[0].GetType()
 	var sig builtinFunc
 	switch argTp {
 	case tpDecimal:
