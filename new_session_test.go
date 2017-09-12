@@ -222,3 +222,10 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 	tk.MustExec("set autocommit='On'")
 	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
 }
+
+func (s *testSessionSuite) TestString(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("select 1")
+	// here to check the panic bug in String() when txn is nil after committed.
+	c.Log(tk.Se.String())
+}
