@@ -297,47 +297,6 @@ func checkTxn(c *C, se Session, stmt string, expectStatus uint16) {
 	}
 }
 
-func checkAutocommit(c *C, se Session, expectStatus uint16) {
-	ret := se.(*session).sessionVars.Status & mysql.ServerStatusAutocommit
-	c.Assert(ret, Equals, expectStatus)
-}
-
-// TestAutocommit ...
-// See https://dev.mysql.com/doc/internals/en/status-flags.html
-func (s *testSessionSuite) TestAutocommit(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_auto_commit"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	checkTxn(c, se, "drop table if exists t;", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "insert t values ()", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "begin", 1)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "insert t values ()", 1)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "drop table if exists t;", 0)
-	checkAutocommit(c, se, 2)
-
-	checkTxn(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "set autocommit=0;", 0)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "insert t values ()", 1)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "commit", 0)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "drop table if exists t;", 0)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "set autocommit='On';", 0)
-	checkAutocommit(c, se, 2)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func checkInTrans(c *C, se Session, stmt string, expectStatus uint16) {
 	checkTxn(c, se, stmt, expectStatus)
 	ret := se.(*session).sessionVars.Status & mysql.ServerStatusInTrans
@@ -375,51 +334,6 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	checkInTrans(c, se, "begin", 1)
 	checkInTrans(c, se, "insert t values ()", 1)
 	checkInTrans(c, se, "rollback", 0)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// testRowLock ...
-// See http://dev.mysql.com/doc/refman/5.7/en/commit.html
-func (s *testSessionSuite) testRowLock(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_row_lock"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	se1 := newSession(c, s.store, dbName)
-	se2 := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, IsNil)
-	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
-	mustExecSQL(c, se, "insert t values (11, 2, 3)")
-	mustExecSQL(c, se, "insert t values (12, 2, 3)")
-	mustExecSQL(c, se, "insert t values (13, 2, 3)")
-
-	mustExecSQL(c, se1, "begin")
-	mustExecSQL(c, se1, "update t set c2=21 where c1=11")
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
-	mustExecSQL(c, se2, "commit")
-
-	_, err := exec(se1, "commit")
-	// se1 will retry and the final value is 21
-	c.Assert(err, IsNil)
-	// Check the result is correct
-	se3 := newSession(c, s.store, dbName)
-	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
-	rows, err := GetRows(r)
-	matches(c, rows, [][]interface{}{{21}})
-
-	mustExecSQL(c, se1, "begin")
-	mustExecSQL(c, se1, "update t set c2=21 where c1=11")
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=22 where c1=12")
-	mustExecSQL(c, se2, "commit")
-
-	mustExecSQL(c, se1, "commit")
 
 	mustExecSQL(c, se, dropDBSQL)
 }
