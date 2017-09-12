@@ -151,12 +151,14 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/commit.html
-func (s *testSessionSuite) testRowLock(c *C) {
+func (s *testSessionSuite) TestRowLock(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk2 := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	c.Assert(tk.Se.Txn(), IsNil)
@@ -172,10 +174,11 @@ func (s *testSessionSuite) testRowLock(c *C) {
 	tk2.MustExec("update t set c2=211 where c1=11")
 	tk2.MustExec("commit")
 
-	// se1 will retry and the final value is 21
+	// tk1 will retry and the final value is 21
 	tk1.MustExec("commit")
+
 	// Check the result is correct
-	tk.MustQuery("select c2 from t where c1=11").Check(testkit.Rows("211"))
+	tk.MustQuery("select c2 from t where c1=11").Check(testkit.Rows("21"))
 }
 
 // See https://dev.mysql.com/doc/internals/en/status-flags.html
