@@ -179,6 +179,15 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 
 	// Check the result is correct
 	tk.MustQuery("select c2 from t where c1=11").Check(testkit.Rows("21"))
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set c2=21 where c1=11")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=22 where c1=12")
+	tk2.MustExec("commit")
+
+	tk1.MustExec("commit")
 }
 
 // See https://dev.mysql.com/doc/internals/en/status-flags.html
