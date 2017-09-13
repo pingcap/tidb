@@ -17,22 +17,19 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-var _ Executor = &AnalyzeIndexExec{}
-
-func (e *AnalyzeExec) analyzeIndexPushdown(task *analyzeTask) statistics.AnalyzeResult {
-	hist, err := task.src.(*AnalyzeIndexExec).buildHistogram()
+func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
+	hist, err := idxExec.buildHistogram()
 	if err != nil {
 		return statistics.AnalyzeResult{Err: err}
 	}
 	result := statistics.AnalyzeResult{
-		TableID: task.tableInfo.ID,
+		TableID: idxExec.tblInfo.ID,
 		Hist:    []*statistics.Histogram{hist},
 		IsIndex: 1,
 	}
@@ -47,25 +44,19 @@ type AnalyzeIndexExec struct {
 	ctx         context.Context
 	tblInfo     *model.TableInfo
 	idxInfo     *model.IndexInfo
-	ranges      []*types.IndexRange
 	concurrency int
 	priority    int
 	analyzePB   *tipb.AnalyzeReq
 	result      distsql.SelectResult
 }
 
-// Schema implements the Executor Schema interface.
-func (e *AnalyzeIndexExec) Schema() *expression.Schema {
-	return expression.NewSchema()
-}
-
-// Open implements the Executor Open interface.
-func (e *AnalyzeIndexExec) Open() error {
+func (e *AnalyzeIndexExec) open() error {
 	fieldTypes := make([]*types.FieldType, len(e.idxInfo.Columns))
 	for i, v := range e.idxInfo.Columns {
 		fieldTypes[i] = &(e.tblInfo.Columns[v.Offset].FieldType)
 	}
-	keyRanges, err := indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, e.ranges, fieldTypes)
+	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
+	keyRanges, err := indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*types.IndexRange{idxRange}, fieldTypes)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -77,22 +68,12 @@ func (e *AnalyzeIndexExec) Open() error {
 	return nil
 }
 
-// Close implements the Executor Close interface.
-func (e *AnalyzeIndexExec) Close() error {
-	return errors.Trace(e.result.Close())
-}
-
-// Next implements the Executor Next interface.
-func (e *AnalyzeIndexExec) Next() (Row, error) {
-	return nil, nil
-}
-
 func (e *AnalyzeIndexExec) buildHistogram() (hist *statistics.Histogram, err error) {
-	if err := e.Open(); err != nil {
+	if err := e.open(); err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer func() {
-		if err := e.Close(); err != nil {
+		if err := e.result.Close(); err != nil {
 			hist = nil
 			err = errors.Trace(err)
 		}

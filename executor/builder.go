@@ -939,7 +939,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk 
 	return e
 }
 
-func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pushdown bool) Executor {
+func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) Executor {
 	startTS := b.getStartTS()
 	if b.err != nil {
 		return nil
@@ -952,27 +952,6 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
 	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
-	if pushdown {
-		e := &AnalyzeIndexExec{
-			ctx:         b.ctx,
-			tblInfo:     tblInfo,
-			idxInfo:     idxInfo,
-			concurrency: scanConcurrency,
-			priority:    b.priority,
-			ranges:      []*types.IndexRange{idxRange},
-			analyzePB: &tipb.AnalyzeReq{
-				Tp:             tipb.AnalyzeType_TypeIndex,
-				StartTs:        startTS,
-				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
-				TimeZoneOffset: timeZoneOffset(b.ctx),
-			},
-		}
-		e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
-			BucketSize: maxBucketSize,
-			NumColumns: int32(len(idxInfo.Columns)),
-		}
-		return e
-	}
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &IndexReaderExecutor{
 			table:     table,
@@ -1022,6 +1001,31 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	return e
 }
 
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) *AnalyzeIndexExec {
+	startTS := b.getStartTS()
+	if b.err != nil {
+		return nil
+	}
+	e := &AnalyzeIndexExec{
+		ctx:         b.ctx,
+		tblInfo:     task.TableInfo,
+		idxInfo:     task.IndexInfo,
+		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency,
+		priority:    b.priority,
+		analyzePB: &tipb.AnalyzeReq{
+			Tp:             tipb.AnalyzeType_TypeIndex,
+			StartTs:        startTS,
+			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			TimeZoneOffset: timeZoneOffset(b.ctx),
+		},
+	}
+	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
+		BucketSize: maxBucketSize,
+		NumColumns: int32(len(task.IndexInfo.Columns)),
+	}
+	return e
+}
+
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		ctx:   b.ctx,
@@ -1037,13 +1041,19 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		})
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType:  idxTask,
-			src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo, task.PushDown),
-			indexInfo: task.IndexInfo,
-			tableInfo: task.TableInfo,
-			pushdown:  task.PushDown,
-		})
+		if task.PushDown {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: idxTask,
+				idxExec:  b.buildAnalyzeIndexPushdown(task),
+			})
+		} else {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType:  idxTask,
+				src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
+				indexInfo: task.IndexInfo,
+				tableInfo: task.TableInfo,
+			})
+		}
 	}
 	return e
 }
