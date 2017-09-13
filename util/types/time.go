@@ -103,8 +103,8 @@ var (
 var (
 	// minDatetime is the minimum for mysql datetime type.
 	minDatetime = FromDate(1000, 1, 1, 0, 0, 0, 0)
-	// maxDatetime is the maximum for mysql datetime type.
-	maxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
+	// MaxDatetime is the maximum for mysql datetime type.
+	MaxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
 	// minTimestamp is the minimum for mysql timestamp type.
 	minTimestamp = FromDate(1970, 1, 1, 0, 0, 1, 0)
@@ -1298,7 +1298,7 @@ func checkDateRange(t TimeInternal) error {
 	if t.Year() < 0 || t.Month() < 0 || t.Day() < 0 {
 		return errors.Trace(ErrInvalidTimeFormat)
 	}
-	if compareTime(t, maxDatetime) > 0 {
+	if compareTime(t, MaxDatetime) > 0 {
 		return errors.Trace(ErrInvalidTimeFormat)
 	}
 	return nil
