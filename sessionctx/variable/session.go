@@ -423,6 +423,13 @@ func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Unlock()
 }
 
+// SetIgnoreTruncate sets IgnoreTruncate
+func (sc *StatementContext) SetIgnoreTruncate(ignoreTruncate bool) {
+	sc.mu.Lock()
+	sc.IgnoreTruncate = ignoreTruncate
+	sc.mu.Unlock()
+}
+
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	// TODO: At present we have not checked whether the error can be ignored or treated as warning.

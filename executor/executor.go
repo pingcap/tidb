@@ -494,9 +494,9 @@ func (e *SelectionExec) Next() (Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if !e.ctx.GetSessionVars().StmtCtx.IgnoreTruncate {
-			e.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
-		}
+
+		// ignore the same truncate warning with different rows
+		e.ctx.GetSessionVars().StmtCtx.SetIgnoreTruncate(true)
 		if match {
 			return srcRow, nil
 		}
