@@ -169,8 +169,7 @@ func main() {
 	setupSignalHandler()
 	setupMetrics()
 	runServer()
-
-	dom.Close()
+	cleanup()
 	os.Exit(0)
 }
 
@@ -489,4 +488,9 @@ func runServer() {
 			log.Error(err)
 		}
 	}
+}
+
+func cleanup() {
+	dom.Close()
+	storage.Close()
 }
