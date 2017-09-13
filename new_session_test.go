@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
@@ -90,6 +91,16 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 	tk.MustQuery("select c2 from t_rollback where c1 = 0").Check(testkit.Rows(fmt.Sprint(cnt * num)))
 }
 
+func (s *testSessionSuite) TestQueryString(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
+	queryStr := tk.Se.Value(context.QueryString)
+	c.Assert(queryStr, Equals, "create table multi2 (a int)")
+}
+
 func (s *testSessionSuite) TestAffectedRows(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
@@ -148,4 +159,77 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 	tk.MustExec(`INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
 	tk.MustExec(`UPDATE t set id = 1 where data = 0;`)
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/commit.html
+func (s *testSessionSuite) TestRowLock(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
+	tk.MustExec("insert t values (11, 2, 3)")
+	tk.MustExec("insert t values (12, 2, 3)")
+	tk.MustExec("insert t values (13, 2, 3)")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set c2=21 where c1=11")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=211 where c1=11")
+	tk2.MustExec("commit")
+
+	// tk1 will retry and the final value is 21
+	tk1.MustExec("commit")
+
+	// Check the result is correct
+	tk.MustQuery("select c2 from t where c1=11").Check(testkit.Rows("21"))
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set c2=21 where c1=11")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=22 where c1=12")
+	tk2.MustExec("commit")
+
+	tk1.MustExec("commit")
+}
+
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
+func (s *testSessionSuite) TestAutocommit(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t;")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("insert t values ()")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("begin")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("insert t values ()")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("drop table if exists t")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+	tk.MustExec("set autocommit=0")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Equals, 0)
+	tk.MustExec("insert t values ()")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Equals, 0)
+	tk.MustExec("commit")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Equals, 0)
+	tk.MustExec("drop table if exists t")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Equals, 0)
+	tk.MustExec("set autocommit='On'")
+	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
 }
