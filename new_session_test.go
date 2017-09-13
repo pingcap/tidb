@@ -302,8 +302,7 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 	// The schema version is out of date in the first transaction, but the SQL can be retried.
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t add index idx(c);`)
-	time.Sleep(s.lease + 2*time.Millisecond)
-	tk.MustExec(`insert into t values(2, 2);`)
+	tk.MustExec(`insert into t1 values(2, 2);`)
 	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
@@ -320,14 +319,12 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 	// But the transaction related table IDs aren't in the updated table IDs.
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t add index idx2(c);`)
-	time.Sleep(s.lease + 2*time.Millisecond)
 	tk.MustExec(`insert into t1 values(4, 4);`)
 	tk.MustExec(`commit;`)
 
 	// Test for "select for update".
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t add index idx3(c);`)
-	time.Sleep(s.lease + 2*time.Millisecond)
 	tk.MustQuery(`select * from t for update`)
 	_, err = tk.Exec(`commit;`)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
@@ -340,14 +337,12 @@ func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
 	tk1.MustExec("use test")
 
 	tk.MustExec("create table t (a int, b int)")
-	time.Sleep(s.lease + 2*time.Millisecond)
 	tk1.MustExec("prepare stmt from 'insert into t values (?, ?)'")
 	tk1.MustExec("set @a = 1")
 
 	// Commit find unrelated schema change.
 	tk1.MustExec("begin")
 	tk.MustExec("create table t1 (id int)")
-	time.Sleep(s.lease + 2*time.Millisecond)
 	tk1.MustExec("execute stmt using @a, @a")
 	tk1.MustExec("commit")
 
@@ -366,14 +361,12 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 	tk1.MustExec("use test")
 	tk.MustExec("create table t (a int, b int)")
 
-	time.Sleep(s.lease + 2*time.Millisecond)
 	tk1.MustExec("begin")
 	tk1.MustExec("insert into t values (1, 1)")
 
 	tk.MustExec("alter table t drop column b")
 
 	// When s2 commit, it will find schema already changed.
-	time.Sleep(s.lease + 2*time.Millisecond)
 	tk1.MustExec("insert into t values (4, 4)")
 	_, err := tk1.Exec("commit")
 	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
