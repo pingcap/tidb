@@ -50,8 +50,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	handle, err := infoschema.NewHandle(store)
-	c.Assert(err, IsNil)
+	handle := infoschema.NewHandle(store)
 	dbName := model.NewCIStr("Test")
 	tbName := model.NewCIStr("T")
 	colName := model.NewCIStr("A")
@@ -217,8 +216,7 @@ func (testSuite) TestConcurrent(c *C) {
 	for _, store := range stores {
 		go func(s kv.Storage) {
 			defer wg.Done()
-			_, err := infoschema.NewHandle(s)
-			c.Assert(err, IsNil)
+			_ = infoschema.NewHandle(s)
 		}(store)
 	}
 	wg.Wait()
@@ -231,8 +229,7 @@ func (*testSuite) TestInfoTables(c *C) {
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
 	defer store.Close()
-	handle, err := infoschema.NewHandle(store)
-	c.Assert(err, IsNil)
+	handle := infoschema.NewHandle(store)
 	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, 0)
 	c.Assert(err, IsNil)
 	builder.Build()
