@@ -33,14 +33,13 @@ func (e *AnalyzeExec) handleAnalyzePushDown(task *analyzeTask) statistics.Analyz
 	if err := task.src.Open(); err != nil {
 		return statistics.AnalyzeResult{Err: err}
 	}
-	_, err := task.src.Next()
+	hist, err := task.src.(*AnalyzeIndexExec).getHist()
 	if e := task.src.Close(); e != nil {
 		return statistics.AnalyzeResult{Err: e}
 	}
 	if err != nil {
 		return statistics.AnalyzeResult{Err: err}
 	}
-	hist := task.src.(*AnalyzeIndexExec).hist
 	result := statistics.AnalyzeResult{
 		TableID: task.tableInfo.ID,
 		Hist:    []*statistics.Histogram{hist},
@@ -62,7 +61,6 @@ type AnalyzeIndexExec struct {
 	priority    int
 	analyzePB   *tipb.AnalyzeReq
 	result      distsql.SelectResult
-	hist        *statistics.Histogram
 }
 
 // Schema implements the Executor Schema interface.
@@ -95,7 +93,11 @@ func (e *AnalyzeIndexExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeIndexExec) Next() (Row, error) {
-	e.hist = &statistics.Histogram{}
+	return nil, nil
+}
+
+func (e *AnalyzeIndexExec) getHist() (*statistics.Histogram, error) {
+	hist := &statistics.Histogram{}
 	for {
 		data, err := e.result.NextRaw()
 		if err != nil {
@@ -109,11 +111,11 @@ func (e *AnalyzeIndexExec) Next() (Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, e.hist, statistics.HistogramFromProto(resp.Hist), maxBucketSize)
+		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), maxBucketSize)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	e.hist.ID = e.idxInfo.ID
-	return nil, nil
+	hist.ID = e.idxInfo.ID
+	return hist, nil
 }
