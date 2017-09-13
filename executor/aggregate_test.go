@@ -306,7 +306,11 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	tk.MustExec("create table idx_agg (a int, b int, index (b))")
 	tk.MustExec("insert idx_agg values (1, 1), (1, 2), (2, 2)")
-	tk.MustQuery("select sum(a), sum(b) from idx_agg where b > 0 and b < 10")
+	tk.MustQuery("select sum(a), sum(b) from idx_agg where b > 0 and b < 10").Check(testkit.Rows("4 5"))
+
+	// test without any aggregate function
+	tk.MustQuery("select 10 from idx_agg group by b").Check(testkit.Rows("10", "10"))
+	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
 }
 
 func (s *testSuite) TestAggPrune(c *C) {
