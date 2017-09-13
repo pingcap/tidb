@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -1143,32 +1144,48 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
+	var (
+		handleCol    *expression.Column
+		secondSchema *expression.Schema
+	)
 	table, _ := b.is.TableByID(is.Table.ID)
-	var handleCol *expression.Column
 	if v.NeedColHandle {
 		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
+	} else if !is.OutOfOrder {
+		secondSchema = v.Schema().Clone()
+		handleCol = &expression.Column{
+			ID:      model.ExtraHandleID,
+			ColName: model.NewCIStr("_rowid"),
+			Index:   v.Schema().Len(),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		secondSchema.Append(handleCol)
 	}
 
 	len := v.Schema().Len()
+	if secondSchema != nil {
+		len = secondSchema.Len()
+	}
 
 	for i := 0; i < len; i++ {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
 	e := &IndexLookUpExecutor{
-		ctx:          b.ctx,
-		schema:       v.Schema(),
-		dagPB:        indexReq,
-		tableID:      is.Table.ID,
-		table:        table,
-		index:        is.Index,
-		keepOrder:    !is.OutOfOrder,
-		desc:         is.Desc,
-		ranges:       is.Ranges,
-		tableRequest: tableReq,
-		columns:      is.Columns,
-		handleCol:    handleCol,
-		priority:     b.priority,
+		ctx:               b.ctx,
+		schema:            v.Schema(),
+		dagPB:             indexReq,
+		tableID:           is.Table.ID,
+		table:             table,
+		index:             is.Index,
+		keepOrder:         !is.OutOfOrder,
+		desc:              is.Desc,
+		ranges:            is.Ranges,
+		tableRequest:      tableReq,
+		columns:           is.Columns,
+		handleCol:         handleCol,
+		priority:          b.priority,
+		tableReaderSchema: secondSchema,
 	}
 	return e
 }

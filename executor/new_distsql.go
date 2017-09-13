@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -281,6 +280,9 @@ type IndexLookUpExecutor struct {
 	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol    *expression.Column
 	tableRequest *tipb.DAGRequest
+	// When we need to sort the data in the second read, we must use handle to do this,
+	// In this case, schema that the table reader use is different with executor's schema.
+	tableReaderSchema *expression.Schema
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
 	priority int
@@ -459,24 +461,15 @@ func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
 func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Context) {
-	var (
-		err       error
-		handleCol *expression.Column
-	)
-	schema := e.schema.Clone()
+	var err error
 	defer func() {
 		task.doneCh <- errors.Trace(err)
 	}()
-	if e.handleCol != nil {
-		handleCol = e.handleCol
-	} else if e.keepOrder {
-		handleCol = &expression.Column{
-			ID:      model.ExtraHandleID,
-			Index:   e.schema.Len(),
-			RetType: types.NewFieldType(mysql.TypeLonglong),
-		}
-		schema.Append(handleCol)
-		e.tableRequest.OutputOffsets = append(e.tableRequest.OutputOffsets, uint32(e.Schema().Len()))
+	var schema *expression.Schema
+	if e.tableReaderSchema != nil {
+		schema = e.tableReaderSchema
+	} else {
+		schema = e.schema
 	}
 	tableReader := &TableReaderExecutor{
 		table:     e.table,
@@ -484,7 +477,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		dagPB:     e.tableRequest,
 		schema:    schema,
 		ctx:       e.ctx,
-		handleCol: handleCol,
+		handleCol: e.handleCol,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {
@@ -501,9 +494,9 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 	if e.keepOrder {
 		// Restore the index order.
-		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: handleCol.Index}
+		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows, handleIdx: e.handleCol.Index}
 		sort.Sort(sorter)
-		if e.handleCol == nil {
+		if e.tableReaderSchema != nil {
 			for i, row := range task.rows {
 				task.rows[i] = row[:len(row)-1]
 			}
