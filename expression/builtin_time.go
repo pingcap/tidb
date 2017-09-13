@@ -403,26 +403,18 @@ type builtinDurationDurationTimeDiffSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinDurationDurationTimeDiffSig) evalDuration(row []types.Datum) (d types.Duration, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	val0, isNull, err := b.args[0].EvalDuration(row, sc)
+	lhs, isNull, err := b.args[0].EvalDuration(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	val1, isNull, err := b.args[1].EvalDuration(row, sc)
+	rhs, isNull, err := b.args[1].EvalDuration(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	d, err = val0.Sub(val1)
-	if err != nil {
-		return d, true, errors.Trace(err)
-	}
-
-	d.Duration, err = types.TruncateOverflowMySQLTime(d.Duration)
-	if types.ErrTruncatedWrongVal.Equal(err) {
-		err = sc.HandleTruncate(err)
-	}
-	return d, err != nil, errors.Trace(err)
+	d, isNull, err = calculateDurationTimeDiff(lhs, rhs, sc)
+	return d, isNull, errors.Trace(err)
 }
 
 type builtinTimeTimeTimeDiffSig struct {
@@ -433,17 +425,17 @@ type builtinTimeTimeTimeDiffSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinTimeTimeTimeDiffSig) evalDuration(row []types.Datum) (d types.Duration, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	val0, isNull, err := b.args[0].EvalTime(row, sc)
+	lhs, isNull, err := b.args[0].EvalTime(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	val1, isNull, err := b.args[1].EvalTime(row, sc)
+	rhs, isNull, err := b.args[1].EvalTime(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	d, isNull, err = calculateTimeDiff(val0, val1, sc)
+	d, isNull, err = calculateTimeDiff(lhs, rhs, sc)
 	return d, isNull, errors.Trace(err)
 }
 
@@ -455,26 +447,26 @@ type builtinDurationStringTimeDiffSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinDurationStringTimeDiffSig) evalDuration(row []types.Datum) (d types.Duration, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	val0, isNull, err := b.args[0].EvalDuration(row, sc)
+	lhs, isNull, err := b.args[0].EvalDuration(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	val1, isNull, err := b.args[1].EvalString(row, sc)
+	rhsStr, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	t0, err := val0.ConvertToTime(mysql.TypeDuration)
+	rhs, _, isDuration, err := convertStringToDuration(rhsStr, b.tp.Decimal, sc)
 	if err != nil {
 		return d, true, errors.Trace(err)
 	}
 
-	t1, err := convertStringToDuration(val1, b.tp.Decimal, sc)
-	if err != nil {
-		return d, true, errors.Trace(err)
+	if !isDuration {
+		return d, true, nil
 	}
-	d, isNull, err = calculateTimeDiff(t0, t1, sc)
+
+	d, isNull, err = calculateDurationTimeDiff(lhs, rhs, sc)
 	return d, isNull, errors.Trace(err)
 }
 
@@ -486,38 +478,43 @@ type builtinStringDurationTimeDiffSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinStringDurationTimeDiffSig) evalDuration(row []types.Datum) (d types.Duration, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	val0, isNull, err := b.args[0].EvalString(row, sc)
+	lhsStr, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	val1, isNull, err := b.args[1].EvalDuration(row, sc)
+	rhs, isNull, err := b.args[1].EvalDuration(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	t0, err := convertStringToDuration(val0, b.tp.Decimal, sc)
+	lhs, _, isDuration, err := convertStringToDuration(lhsStr, b.tp.Decimal, sc)
 	if err != nil {
 		return d, true, errors.Trace(err)
+	}
+	if !isDuration {
+		return d, true, nil
 	}
 
-	t1, err := val1.ConvertToTime(mysql.TypeDuration)
-	if err != nil {
-		return d, true, errors.Trace(err)
-	}
-	d, isNull, err = calculateTimeDiff(t0, t1, sc)
+	d, isNull, err = calculateDurationTimeDiff(lhs, rhs, sc)
 	return d, isNull, errors.Trace(err)
 }
 
 func calculateTimeDiff(t0, t1 types.Time, sc *variable.StatementContext) (d types.Duration, isNull bool, err error) {
-	if (types.IsTemporalWithDate(t0.Type) &&
-		t1.Type == mysql.TypeDuration) ||
-		(types.IsTemporalWithDate(t1.Type) &&
-			t0.Type == mysql.TypeDuration) {
-		return d, true, nil // Incompatible types, return NULL
+	d = t0.Sub(&t1)
+	d.Duration, err = types.TruncateOverflowMySQLTime(d.Duration)
+	if types.ErrTruncatedWrongVal.Equal(err) {
+		err = sc.HandleTruncate(err)
+	}
+	return d, err != nil, errors.Trace(err)
+}
+
+func calculateDurationTimeDiff(t0, t1 types.Duration, sc *variable.StatementContext) (d types.Duration, isNull bool, err error) {
+	d, err = t0.Sub(t1)
+	if err != nil {
+		return d, true, errors.Trace(err)
 	}
 
-	d = t0.Sub(&t1)
 	d.Duration, err = types.TruncateOverflowMySQLTime(d.Duration)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
@@ -533,21 +530,26 @@ type builtinTimeStringTimeDiffSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinTimeStringTimeDiffSig) evalDuration(row []types.Datum) (d types.Duration, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	val0, isNull, err := b.args[0].EvalTime(row, sc)
+	lhs, isNull, err := b.args[0].EvalTime(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	val1, isNull, err := b.args[1].EvalString(row, sc)
+	rhsStr, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	t1, err := convertStringToDuration(val1, b.tp.Decimal, sc)
+	_, rhs, isDuration, err := convertStringToDuration(rhsStr, b.tp.Decimal, sc)
 	if err != nil {
 		return d, true, errors.Trace(err)
 	}
-	d, isNull, err = calculateTimeDiff(val0, t1, sc)
+
+	if isDuration {
+		return d, true, nil
+	}
+
+	d, isNull, err = calculateTimeDiff(lhs, rhs, sc)
 	return d, isNull, errors.Trace(err)
 }
 
@@ -559,22 +561,26 @@ type builtinStringTimeTimeDiffSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinStringTimeTimeDiffSig) evalDuration(row []types.Datum) (d types.Duration, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	val0, isNull, err := b.args[0].EvalString(row, sc)
+	lhsStr, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	val1, isNull, err := b.args[1].EvalTime(row, sc)
+	rhs, isNull, err := b.args[1].EvalTime(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	t0, err := convertStringToDuration(val0, b.tp.Decimal, sc)
+	_, lhs, isDuration, err := convertStringToDuration(lhsStr, b.tp.Decimal, sc)
 	if err != nil {
 		return d, true, errors.Trace(err)
 	}
 
-	d, isNull, err = calculateTimeDiff(t0, val1, sc)
+	if isDuration {
+		return d, true, nil
+	}
+
+	d, isNull, err = calculateTimeDiff(lhs, rhs, sc)
 	return d, isNull, errors.Trace(err)
 }
 
@@ -586,28 +592,37 @@ type builtinStringStringTimeDiffSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinStringStringTimeDiffSig) evalDuration(row []types.Datum) (d types.Duration, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
-	val0, isNull, err := b.args[0].EvalString(row, sc)
+	lhs, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
-	val1, isNull, err := b.args[1].EvalString(row, sc)
+	rhs, isNull, err := b.args[1].EvalString(row, sc)
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
 
 	fsp := b.tp.Decimal
-	t0, err := convertStringToDuration(val0, fsp, sc)
+	d0, t0, isDuration0, err := convertStringToDuration(lhs, fsp, sc)
 	if err != nil {
-		return d, false, errors.Trace(err)
+		return d, true, errors.Trace(err)
 	}
 
-	t1, err := convertStringToDuration(val1, fsp, sc)
+	d1, t1, isDuration1, err := convertStringToDuration(rhs, fsp, sc)
 	if err != nil {
-		return d, false, errors.Trace(err)
+		return d, true, errors.Trace(err)
 	}
 
-	d, isNull, err = calculateTimeDiff(t0, t1, sc)
+	if isDuration0 != isDuration1 {
+		return d, true, nil
+	}
+
+	if isDuration0 {
+		d, isNull, err = calculateDurationTimeDiff(d0, d1, sc)
+	} else {
+		d, isNull, err = calculateTimeDiff(t0, t1, sc)
+	}
+
 	return d, isNull, errors.Trace(err)
 }
 
@@ -633,7 +648,8 @@ func getStrFsp(strArg string, fsp int) int {
 
 // convertStringToDuration converts string to duration, it return types.Time because in some case
 // it will converts string to datetime.
-func convertStringToDuration(str string, fsp int, sc *variable.StatementContext) (types.Time, error) {
+func convertStringToDuration(str string, fsp int, sc *variable.StatementContext) (d types.Duration, t types.Time,
+	isDuration bool, err error) {
 	fsp = getStrFsp(str, fsp)
 	return types.StrToDuration(sc, str, fsp)
 }
