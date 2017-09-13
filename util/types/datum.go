@@ -45,12 +45,11 @@ const (
 	KindMysqlBit      byte = 11 // Used for BIT table column values.
 	KindMysqlSet      byte = 12
 	KindMysqlTime     byte = 13
-	KindRow           byte = 14
-	KindInterface     byte = 15
-	KindMinNotNull    byte = 16
-	KindMaxValue      byte = 17
-	KindRaw           byte = 18
-	KindMysqlJSON     byte = 19
+	KindInterface     byte = 14
+	KindMinNotNull    byte = 15
+	KindMaxValue      byte = 16
+	KindRaw           byte = 17
+	KindMysqlJSON     byte = 18
 )
 
 // Datum is a data box holds different kind of data.
@@ -191,17 +190,6 @@ func (d *Datum) GetInterface() interface{} {
 func (d *Datum) SetInterface(x interface{}) {
 	d.k = KindInterface
 	d.x = x
-}
-
-// GetRow gets row value.
-func (d *Datum) GetRow() []Datum {
-	return d.x.([]Datum)
-}
-
-// SetRow sets row value.
-func (d *Datum) SetRow(ds []Datum) {
-	d.k = KindRow
-	d.x = ds
 }
 
 // SetNull sets datum to nil.
@@ -391,11 +379,6 @@ func (d *Datum) SetValue(val interface{}) {
 		d.SetMysqlJSON(x)
 	case Time:
 		d.SetMysqlTime(x)
-	case []Datum:
-		d.SetRow(x)
-	case []interface{}:
-		ds := MakeDatums(x...)
-		d.SetRow(ds)
 	default:
 		d.SetInterface(x)
 	}
@@ -450,8 +433,6 @@ func (d *Datum) CompareDatum(sc *variable.StatementContext, ad Datum) (int, erro
 		return d.compareMysqlJSON(sc, ad.GetMysqlJSON())
 	case KindMysqlTime:
 		return d.compareMysqlTime(sc, ad.GetMysqlTime())
-	case KindRow:
-		return d.compareRow(sc, ad.GetRow())
 	default:
 		return 0, nil
 	}
@@ -641,25 +622,6 @@ func (d *Datum) compareMysqlTime(sc *variable.StatementContext, time Time) (int,
 		fVal, _ := time.ToNumber().ToFloat64()
 		return d.compareFloat64(sc, fVal)
 	}
-}
-
-func (d *Datum) compareRow(sc *variable.StatementContext, row []Datum) (int, error) {
-	var dRow []Datum
-	if d.k == KindRow {
-		dRow = d.GetRow()
-	} else {
-		dRow = []Datum{*d}
-	}
-	for i := 0; i < len(row) && i < len(dRow); i++ {
-		cmp, err := dRow[i].CompareDatum(sc, row[i])
-		if err != nil {
-			return 0, err
-		}
-		if cmp != 0 {
-			return cmp, nil
-		}
-	}
-	return CompareInt64(int64(len(dRow)), int64(len(row))), nil
 }
 
 // ConvertTo converts a datum to the target field type.
