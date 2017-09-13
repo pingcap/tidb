@@ -2349,6 +2349,9 @@ func getFsp(s string) (fsp int) {
 	return
 }
 
+// getFsp4TimeAddSub is used to in function 'ADDTIME' and 'SUBTIME' to evalute `fsp` for the
+// second parameter. It's used only if the second parameter is of string type. It's different
+// from getFsp in that the result of getFsp4TimeAddSub is either 6 or 0.
 func getFsp4TimeAddSub(s string) int {
 	if len(s)-strings.Index(s, ".")-1 == len(s) {
 		return types.MinFsp
@@ -3339,10 +3342,7 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(row []types.Datum) (types.Ti
 	}
 	tmpDuration := arg0.Sub(&arg1time)
 	result, err := tmpDuration.ConvertToTime(arg0.Type)
-	if err != nil {
-		return result, true, errors.Trace(err)
-	}
-	return result, false, nil
+	return result, err != nil, errors.Trace(err)
 }
 
 type builtinSubDatetimeAndStringSig struct {
@@ -3377,10 +3377,7 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row []types.Datum) (types.Time
 	}
 	tmpDuration := arg0.Sub(&arg1time)
 	result, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
-	if err != nil {
-		return result, true, errors.Trace(err)
-	}
-	return result, false, nil
+	return result, err != nil, errors.Trace(err)
 }
 
 type builtinSubTimeDateTimeNullSig struct {
@@ -3402,10 +3399,10 @@ type builtinSubStringAndDurationSig struct {
 func (b *builtinSubStringAndDurationSig) evalString(row []types.Datum) (result string, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	var (
-		ss   string
+		arg0 string
 		arg1 types.Duration
 	)
-	ss, isNull, err = b.args[0].EvalString(row, sc)
+	arg0, isNull, err = b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
@@ -3413,18 +3410,15 @@ func (b *builtinSubStringAndDurationSig) evalString(row []types.Datum) (result s
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
-	if isDuration(ss) {
-		result, err = strDurationSubDuration(ss, arg1)
+	if isDuration(arg0) {
+		result, err = strDurationSubDuration(arg0, arg1)
 		if err != nil {
 			return "", true, errors.Trace(err)
 		}
 		return result, false, nil
 	}
-	result, err = strDatetimeSubDuration(ss, arg1)
-	if err != nil {
-		return "", true, errors.Trace(err)
-	}
-	return result, false, nil
+	result, err = strDatetimeSubDuration(arg0, arg1)
+	return result, err != nil, errors.Trace(err)
 }
 
 type builtinSubStringAndStringSig struct {
@@ -3436,10 +3430,10 @@ type builtinSubStringAndStringSig struct {
 func (b *builtinSubStringAndStringSig) evalString(row []types.Datum) (result string, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	var (
-		s, ss string
-		arg1  types.Duration
+		s, arg0 string
+		arg1    types.Duration
 	)
-	ss, isNull, err = b.args[0].EvalString(row, sc)
+	arg0, isNull, err = b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
@@ -3451,18 +3445,15 @@ func (b *builtinSubStringAndStringSig) evalString(row []types.Datum) (result str
 	if err != nil {
 		return "", true, errors.Trace(err)
 	}
-	if isDuration(ss) {
-		result, err = strDurationSubDuration(ss, arg1)
+	if isDuration(arg0) {
+		result, err = strDurationSubDuration(arg0, arg1)
 		if err != nil {
 			return "", true, errors.Trace(err)
 		}
 		return result, false, nil
 	}
-	result, err = strDatetimeSubDuration(ss, arg1)
-	if err != nil {
-		return "", true, errors.Trace(err)
-	}
-	return result, false, nil
+	result, err = strDatetimeSubDuration(arg0, arg1)
+	return result, err != nil, errors.Trace(err)
 }
 
 type builtinSubTimeStringNullSig struct {
@@ -3522,10 +3513,7 @@ func (b *builtinSubDurationAndStringSig) evalDuration(row []types.Datum) (types.
 		return types.ZeroDuration, true, errors.Trace(err)
 	}
 	result, err := arg0.Sub(arg1)
-	if err != nil {
-		return types.ZeroDuration, true, errors.Trace(err)
-	}
-	return result, false, nil
+	return result, err != nil, errors.Trace(err)
 }
 
 type builtinSubTimeDurationNullSig struct {
@@ -3555,10 +3543,7 @@ func (b *builtinSubDateAndDurationSig) evalString(row []types.Datum) (string, bo
 		return "", isNull, errors.Trace(err)
 	}
 	result, err := arg0.Sub(arg1)
-	if err != nil {
-		return "", true, errors.Trace(err)
-	}
-	return result.String(), false, nil
+	return result.String(), err != nil, errors.Trace(err)
 }
 
 type builtinSubDateAndStringSig struct {
