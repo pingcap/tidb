@@ -20,8 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
@@ -52,8 +52,9 @@ type lookupTableTask struct {
 	handles []int64
 	rows    []Row
 	cursor  int
-	done    bool
-	doneCh  chan error
+
+	done   bool
+	doneCh chan error
 
 	// indexOrder map is used to save the original index order for the handles.
 	// Without this map, the original index order might be lost.

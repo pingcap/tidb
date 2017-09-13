@@ -87,10 +87,6 @@ func (s *testSuite) TestNestedLoopJoin(c *C) {
 }
 
 func (s *testSuite) TestJoinPanic(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists events")
@@ -99,10 +95,6 @@ func (s *testSuite) TestJoinPanic(c *C) {
 }
 
 func (s *testSuite) TestJoin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_index_lookup_size = 2")
 	tk.MustExec("use test")
@@ -248,10 +240,6 @@ func (s *testSuite) TestJoin(c *C) {
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -314,10 +302,6 @@ func (s *testSuite) TestJoinCast(c *C) {
 }
 
 func (s *testSuite) TestUsing(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -366,10 +350,6 @@ func (s *testSuite) TestUsing(c *C) {
 }
 
 func (s *testSuite) TestNaturalJoin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -385,10 +365,6 @@ func (s *testSuite) TestNaturalJoin(c *C) {
 }
 
 func (s *testSuite) TestMultiJoin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t35(a35 int primary key, b35 int, x35 int)")
@@ -481,10 +457,6 @@ AND b44=a42`)
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -499,8 +471,6 @@ func (s *testSuite) TestSubquerySameTable(c *C) {
 func (s *testSuite) TestSubquery(c *C) {
 	plan.JoinConcurrency = 1
 	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
 		plan.JoinConcurrency = 5
 	}()
 	tk := testkit.NewTestKit(c, s.store)
@@ -631,7 +601,6 @@ func (s *testSuite) TestSubquery(c *C) {
 
 func (s *testSuite) TestInSubquery(c *C) {
 	defer func() {
-		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
@@ -705,8 +674,6 @@ func (s *testSuite) TestJoinLeak(c *C) {
 	plan.JoinConcurrency = 1
 	defer func() {
 		plan.JoinConcurrency = savedConcurrency
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

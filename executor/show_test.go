@@ -23,15 +23,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite) TestShow(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -150,10 +145,37 @@ func (s *testSuite) TestShow(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=4",
 	))
 
+	// Test show table with column's comment contain escape character
+	// for issue https://github.com/pingcap/tidb/issues/4411
+	tk.MustExec(`drop table if exists show_escape_character`)
+	tk.MustExec(`create table show_escape_character(id int comment 'a\rb\nc\td\0ef')`)
+	tk.MustQuery(`show create table show_escape_character`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_escape_character CREATE TABLE `show_escape_character` (\n"+
+			"  `id` int(11) DEFAULT NULL COMMENT 'a\\rb\\nc	d\\0ef'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+
+	// for issue https://github.com/pingcap/tidb/issues/4424
+	tk.MustExec("drop table if exists show_test")
+	testSQL = `create table show_test(
+		a varchar(10) COMMENT 'a\nb\rc\td\0e'
+	) COMMENT='a\nb\rc\td\0e';`
+	tk.MustExec(testSQL)
+	testSQL = "show create table show_test;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT NULL COMMENT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='a\\nb\\rc	d\\0e'"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
 	// for issue https://github.com/pingcap/tidb/issues/4425
 	tk.MustExec("drop table if exists show_test")
 	testSQL = `create table show_test(
-		a varchar(10) DEFAULT 'abc\ndef'
+		a varchar(10) DEFAULT 'a\nb\rc\td\0e'
 	);`
 	tk.MustExec(testSQL)
 	testSQL = "show create table show_test;"
@@ -161,7 +183,7 @@ func (s *testSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT 'abc\\ndef'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}

@@ -28,15 +28,15 @@ func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 	res := NewValuesFunc(0, types.NewFieldType(mysql.TypeLonglong), s.ctx)
 	c.Assert(res.FuncName.O, Equals, "values")
 	c.Assert(res.RetType.Tp, Equals, mysql.TypeLonglong)
-	_, ok := res.Function.(*builtinValuesSig)
+	_, ok := res.Function.(*builtinValuesIntSig)
 	c.Assert(ok, IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	defer testleak.AfterTest(c)()
 
-	col0 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: "DataSource_0", Position: 0, ColName: model.NewCIStr("col0")}
-	col1 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: "DataSource_0", Position: 1, ColName: model.NewCIStr("col1")}
+	col0 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 0, ColName: model.NewCIStr("col0")}
+	col1 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 1, ColName: model.NewCIStr("col1")}
 	ifnullInner := newFunction(ast.Ifnull, col1, One)
 	ifnullOuter := newFunction(ast.Ifnull, col0, ifnullInner)
 

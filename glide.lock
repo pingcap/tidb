@@ -1,5 +1,5 @@
-hash: 8a8dcce87b743988e8f76a05ddf91430ea0f5f4236b3c6dc09b72854d2e726bb
-updated: 2017-08-31T14:56:45.412923915+08:00
+hash: 53e36444b8a856c13d1891758782d802ffa9d7434e681f462d86e4ec67a858ac
+updated: 2017-09-13T00:11:08.041807161+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -9,6 +9,8 @@ imports:
   - quantile
 - name: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
+- name: github.com/BurntSushi/toml
+  version: a368813c5e648fee92e5f6c30e3944ff9d5e8895
 - name: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - name: github.com/coreos/etcd
@@ -23,6 +25,14 @@ imports:
   - mvcc/mvccpb
   - pkg/monotime
   - pkg/tlsutil
+- name: github.com/coreos/go-systemd
+  version: 48702e0da86bd25e76cfef347e2adeb434a0d0a6
+  subpackages:
+  - journal
+- name: github.com/coreos/pkg
+  version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
+  subpackages:
+  - capnslog
 - name: github.com/cznic/golex
   version: da5a7153a51074477ecac5c45a7e5182a0c72448
   subpackages:
@@ -83,14 +93,10 @@ imports:
   - pbutil
 - name: github.com/ngaut/deadline
   version: fae8f9dfd7048de16575b9d4c255278e38c28a4f
-- name: github.com/ngaut/log
-  version: cec23d3e10b016363780d894a0eb732a12c06e02
 - name: github.com/ngaut/pools
   version: 6352e005618615ffaf1cb1c6622b8e91435751fe
 - name: github.com/ngaut/sync2
   version: 7a24ed77b2efb460c1468b7dc917821c66e80e55
-- name: github.com/ngaut/systimemon
-  version: c2ca1c75c6af5556eb6ce67994120adf12f2ccef
 - name: github.com/petar/GoLLRB
   version: 53be0d36a84c2a886ca057d34b6aa4468df9ccb4
   subpackages:
@@ -129,8 +135,9 @@ imports:
   version: 38eb8a2e70dd39668a62d24a79f30596f204df14
   subpackages:
   - pd-client
+  - pkg/logutil
 - name: github.com/pingcap/tipb
-  version: ffbc1bb02a2425782286825eec276be817b7f93a
+  version: 0edd80335ab0c044ddcd9de57b63026ab7a209fa
   subpackages:
   - go-binlog
   - go-mysqlx
@@ -223,4 +230,6 @@ imports:
   - status
   - tap
   - transport
+- name: gopkg.in/natefinch/lumberjack.v2
+  version: dd45e6a67c53f673bb49ca8a001fd3a63ceb640e
 testImports: []

@@ -273,8 +273,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{uint64(1), ast.Plus, uint64(1), 2},
 		{uint64(1), ast.Plus, -1, 0},
 		{1, ast.Plus, []byte("1"), 2},
-		{1, ast.Plus, types.Hex{Value: 1}, 2},
-		{1, ast.Plus, types.Bit{Value: 1, Width: 1}, 2},
+		{1, ast.Plus, types.NewBinaryLiteralFromUint(1, -1), 2},
 		{1, ast.Plus, types.Enum{Name: "a", Value: 1}, 2},
 		{1, ast.Plus, types.Set{Name: "a", Value: 1}, 2},
 
@@ -317,7 +316,6 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{uint64(1), ast.IntDiv, 0, nil},
 		{uint64(1), ast.IntDiv, uint64(0), nil},
 		{1.0, ast.IntDiv, 2.0, 0},
-		{1.0, ast.IntDiv, 0, nil},
 
 		// mod
 		{10, ast.Mod, 2, 0},
@@ -466,8 +464,8 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{1, ast.UnaryNot, int64(0)},
 		{0, ast.UnaryNot, int64(1)},
 		{nil, ast.UnaryNot, nil},
-		{types.Hex{Value: 0}, ast.UnaryNot, int64(1)},
-		{types.Bit{Value: 0, Width: 1}, ast.UnaryNot, int64(1)},
+		{types.NewBinaryLiteralFromUint(0, -1), ast.UnaryNot, int64(1)},
+		{types.NewBinaryLiteralFromUint(1, -1), ast.UnaryNot, int64(0)},
 		{types.Enum{Name: "a", Value: 1}, ast.UnaryNot, int64(0)},
 		{types.Set{Name: "a", Value: 1}, ast.UnaryNot, int64(0)},
 
@@ -483,8 +481,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{uint64(1), ast.UnaryMinus, -int64(1)},
 		{"1.0", ast.UnaryMinus, -1.0},
 		{[]byte("1.0"), ast.UnaryMinus, -1.0},
-		{types.Hex{Value: 1}, ast.UnaryMinus, -1.0},
-		{types.Bit{Value: 1, Width: 1}, ast.UnaryMinus, -1.0},
+		{types.NewBinaryLiteralFromUint(1, -1), ast.UnaryMinus, -1.0},
 		{true, ast.UnaryMinus, int64(-1)},
 		{false, ast.UnaryMinus, int64(0)},
 		{types.Enum{Name: "a", Value: 1}, ast.UnaryMinus, -1.0},

@@ -167,6 +167,7 @@ import (
 	noWriteToBinLog 	"NO_WRITE_TO_BINLOG"
 	null			"NULL"
 	numericType		"NUMERIC"
+	nvarcharType		"NVARCHAR"
 	oct			"OCT"
 	octetLength		"OCTET_LENGTH"
 	on			"ON"
@@ -293,6 +294,7 @@ import (
 	insertFunc			"INSERT_FUNC"
 	instr				"INSTR"
 	isNull				"ISNULL"
+	jobs				"JOBS"
 	jsonExtract			"JSON_EXTRACT"
 	jsonUnquote			"JSON_UNQUOTE"
 	jsonTypeFunc			"JSON_TYPE"
@@ -853,6 +855,7 @@ import (
 	RegexpSym		"REGEXP or RLIKE"
 	IntoOpt			"INTO or EmptyString"
 	ValueSym		"Value or Values"
+	Varchar			"{NATIONAL VARCHAR|VARCHAR|NVARCHAR}"
 	TimeUnit		"Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
 	TimestampUnit		"Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
 	DeallocateSym		"Deallocate or drop"
@@ -2456,7 +2459,7 @@ ReservedKeyword:
 | "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTO" | "INTEGER"
 | "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "KILL" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
-| "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
+| "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC" | "NVARCHAR"
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ"
 | "REAL" | "REFERENCES" | "REGEXP" | "RENAME" | "REPEAT" | "REPLACE" | "RESTRICT" | "REVOKE" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
@@ -2481,7 +2484,7 @@ NotKeywordToken:
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE" | "LAST_DAY"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
 |	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
-|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY" | "TIDB_VERSION"
+|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE" | "JSON_REMOVE" | "JSON_OBJECT" | "JSON_ARRAY" | "TIDB_VERSION" | "JOBS"
 
 /************************************************************************************
  *
@@ -2633,7 +2636,7 @@ ReplacePriority:
 Literal:
 	"FALSE"
 	{
-		$$ = int64(0)
+		$$ = false
 	}
 |	"NULL"
 	{
@@ -2641,15 +2644,11 @@ Literal:
 	}
 |	"TRUE"
 	{
-		$$ = int64(1)
+		$$ = true
 	}
 |	floatLit
 |	decLit
 |	intLit
-	{
-		expr := ast.NewValueExpr($1)
-		$$ = expr
-	}
 |	StringLiteral %prec lowerThanStringLitToken
 	{
 		$$ = $1
@@ -3027,13 +3026,21 @@ FunctionCallKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr(ast.InsertFunc), Args: $3.([]ast.ExprNode)}
 	}
-|	"LOCALTIME" '(' ExpressionListOpt ')'
+|	"LOCALTIME" FuncDatetimePrec
 	{
-		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+		args := []ast.ExprNode{}
+    	if $2 != nil {
+    		args = append(args, $2.(ast.ExprNode))
+    	}
+    	$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
-|	"LOCALTIMESTAMP" '(' ExpressionListOpt ')'
+|	"LOCALTIMESTAMP" FuncDatetimePrec
 	{
-		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+		args := []ast.ExprNode{}
+		if $2 != nil {
+			args = append(args, $2.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"QUARTER" '(' ExpressionListOpt ')'
 	{
@@ -4246,7 +4253,7 @@ CastType:
 |	"JSON"
 	{
 		x := types.NewFieldType(mysql.TypeJSON)
-		x.Flag |= mysql.BinaryFlag
+		x.Flag |= mysql.BinaryFlag | (mysql.ParseToJSONFlag)
 		x.Charset = charset.CharsetUTF8
 		x.Collate = charset.CollationUTF8
 		$$ = x
@@ -5258,6 +5265,10 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDL}
 	}
+|	"ADMIN" "SHOW" "DDL" "JOBS"
+	{
+		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
+	}
 |	"ADMIN" "CHECK" "TABLE" TableNameList
 	{
 		$$ = &ast.AdminStmt{
@@ -6037,13 +6048,13 @@ StringType:
 		}
 		$$ = x
 	}
-|	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
+|	Varchar FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $3.(int)
-		x.Charset = $5.(string)
-		x.Collate = $6.(string)
-		if $4.(bool) {
+		x.Flen = $2.(int)
+		x.Charset = $4.(string)
+		x.Collate = $5.(string)
+		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
@@ -6112,6 +6123,12 @@ StringType:
 NationalOpt:
 	{}
 |	"NATIONAL"
+
+Varchar:
+"NATIONAL" "VARCHAR"
+| "VARCHAR"
+| "NVARCHAR"
+
 
 BlobType:
 	"TINYBLOB"
