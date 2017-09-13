@@ -1943,12 +1943,6 @@ func parseInterval4AddSubDate4DAY(interval string) string {
 	return reg.FindString(interval)
 }
 
-func parseInterval4AddSubDate4OTHER(interval string) string {
-	//intVal, _ := strconv.ParseInt(interval, 10, 64)
-	//return fmt.Sprintf("%v", intVal)
-	return interval
-}
-
 type dateAddFunctionClass struct {
 	baseFunctionClass
 }
@@ -2071,8 +2065,6 @@ func dateArithmeticalGetStringInterval(ctx context.Context, args []Expression, r
 	}
 	if strings.ToLower(unit) == "day" {
 		interval = parseInterval4AddSubDate4DAY(interval)
-	} else {
-		interval = parseInterval4AddSubDate4OTHER(interval)
 	}
 	return interval, false, nil
 }
