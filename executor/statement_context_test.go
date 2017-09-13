@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -31,10 +30,6 @@ const (
 )
 
 func (s *testSuite) TestStatementContext(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table sc (a int)")

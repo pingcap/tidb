@@ -19,11 +19,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestSetVar(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := "SET @a = 1;"
 	tk.MustExec(testSQL)
@@ -160,7 +158,6 @@ func (s *testSuite) TestSetVar(c *C) {
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`SET NAMES latin1`)
 

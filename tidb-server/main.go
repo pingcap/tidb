@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
@@ -48,7 +47,7 @@ import (
 
 var (
 	version         = flagBoolean("V", false, "print version information and exit")
-	store           = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]")
+	store           = flag.String("store", "mocktikv", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]")
 	storePath       = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel        = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
 	host            = flag.String("host", "0.0.0.0", "tidb server host")
@@ -60,7 +59,6 @@ var (
 	statsLease      = flag.String("statsLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
 	socket          = flag.String("socket", "", "The socket file to use for connection.")
 	xsocket         = flag.String("xsocket", "", "The socket file to use for x protocol connection.")
-	enablePS        = flagBoolean("perfschema", false, "If enable performance schema.")
 	enablePrivilege = flagBoolean("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
 	reportStatus    = flagBoolean("report-status", true, "If enable status report HTTP service.")
 	logFile         = flag.String("log-file", "", "log file path")
@@ -162,9 +160,6 @@ func main() {
 
 	store := createStore()
 
-	if *enablePS {
-		perfschema.EnablePerfSchema()
-	}
 	privileges.Enable = *enablePrivilege
 	privileges.SkipWithGrant = *skipGrantTable
 	if *binlogSocket != "" {
