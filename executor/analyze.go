@@ -147,15 +147,15 @@ type analyzeTask struct {
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
 	for task := range taskCh {
-		if task.pushdown {
-			resultCh <- e.handleAnalyzePushDown(task)
-			continue
-		}
 		switch task.taskType {
 		case colTask:
 			resultCh <- e.analyzeColumns(task)
 		case idxTask:
-			resultCh <- e.analyzeIndex(task)
+			if task.pushdown {
+				resultCh <- e.analyzeIndexPushdown(task)
+			} else {
+				resultCh <- e.analyzeIndex(task)
+			}
 		}
 	}
 }

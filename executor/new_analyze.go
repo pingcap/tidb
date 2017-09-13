@@ -26,17 +26,8 @@ import (
 
 var _ Executor = &AnalyzeIndexExec{}
 
-func (e *AnalyzeExec) handleAnalyzePushDown(task *analyzeTask) statistics.AnalyzeResult {
-	if task.taskType != idxTask {
-		return statistics.AnalyzeResult{}
-	}
-	if err := task.src.Open(); err != nil {
-		return statistics.AnalyzeResult{Err: err}
-	}
-	hist, err := task.src.(*AnalyzeIndexExec).getHist()
-	if e := task.src.Close(); e != nil {
-		return statistics.AnalyzeResult{Err: e}
-	}
+func (e *AnalyzeExec) analyzeIndexPushdown(task *analyzeTask) statistics.AnalyzeResult {
+	hist, err := task.src.(*AnalyzeIndexExec).buildHistogram()
 	if err != nil {
 		return statistics.AnalyzeResult{Err: err}
 	}
@@ -96,8 +87,17 @@ func (e *AnalyzeIndexExec) Next() (Row, error) {
 	return nil, nil
 }
 
-func (e *AnalyzeIndexExec) getHist() (*statistics.Histogram, error) {
-	hist := &statistics.Histogram{}
+func (e *AnalyzeIndexExec) buildHistogram() (hist *statistics.Histogram, err error) {
+	if err := e.Open(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		if err := e.Close(); err != nil {
+			hist = nil
+			err = errors.Trace(err)
+		}
+	}()
+	hist = &statistics.Histogram{}
 	for {
 		data, err := e.result.NextRaw()
 		if err != nil {
