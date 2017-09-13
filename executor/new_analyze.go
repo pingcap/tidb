@@ -73,9 +73,9 @@ func (e *AnalyzeIndexExec) buildHistogram() (hist *statistics.Histogram, err err
 		return nil, errors.Trace(err)
 	}
 	defer func() {
-		if err := e.result.Close(); err != nil {
+		if err1 := e.result.Close(); err1 != nil {
 			hist = nil
-			err = errors.Trace(err)
+			err = errors.Trace(err1)
 		}
 	}()
 	hist = &statistics.Histogram{}
