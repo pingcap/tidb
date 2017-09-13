@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 )
 
+// IsTypeString checks whether tp is a string type.
 func IsTypeString(tp byte) bool {
 	return IsTypeBlob(tp) || IsTypeChar(tp) || IsTypeVarchar(tp)
 }

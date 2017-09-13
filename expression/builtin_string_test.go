@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/ngaut/log"
 )
 
 func (s *testEvaluatorSuite) TestLength(c *C) {
@@ -51,7 +52,8 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{errors.New("must error"), 0, false, true},
 	}
 
-	for _, t := range cases {
+	for i, t := range cases {
+		log.Warn("case :", i)
 		f, err := newFunctionForTest(s.ctx, ast.Length, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(nil)
