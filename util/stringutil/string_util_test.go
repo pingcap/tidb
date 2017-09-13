@@ -108,6 +108,7 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		{`\\_a`, `\xa`, '\\', true},
 		{`\a\b`, `\a\b`, '\\', true},
 		{"%%_", `abc`, '\\', true},
+		{"%_%_aA", "aaaA", '\\', true},
 		{`+_a`, `_a`, '+', true},
 		{`+%a`, `%a`, '+', true},
 		{`\%a`, `%a`, '+', false},
