@@ -2,6 +2,8 @@ package: github.com/pingcap/tidb
 import:
 - package: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
+- package: github.com/BurntSushi/toml
+  version: a368813c5e648fee92e5f6c30e3944ff9d5e8895
 - package: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - package: github.com/coreos/etcd
@@ -37,8 +39,6 @@ import:
   version: b2c7a7da5b2995941048f60146e67702a292e468
 - package: github.com/ngaut/deadline
   version: fae8f9dfd7048de16575b9d4c255278e38c28a4f
-- package: github.com/ngaut/log
-  version: cec23d3e10b016363780d894a0eb732a12c06e02
 - package: github.com/ngaut/pools
   version: 6352e005618615ffaf1cb1c6622b8e91435751fe
 - package: github.com/ngaut/sync2
@@ -66,6 +66,8 @@ import:
   - leveldb/storage
   - leveldb/table
   - leveldb/util
+- package: github.com/Sirupsen/logrus
+  version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - package: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - package: golang.org/x/net
@@ -91,8 +93,6 @@ import:
   - naming
   - peer
   - transport
-- package: github.com/ngaut/systimemon
-  version: c2ca1c75c6af5556eb6ce67994120adf12f2ccef
 - package: github.com/cznic/mathutil
   version: 78ad7f262603437f0ecfebc835d80094f89c8f54
 - package: github.com/cznic/parser

@@ -23,9 +23,9 @@ import (
 	"syscall"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
-	"github.com/ngaut/systimemon"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/x-server"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
@@ -47,7 +48,7 @@ import (
 
 var (
 	version         = flagBoolean("V", false, "print version information and exit")
-	store           = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]")
+	store           = flag.String("store", "mocktikv", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]")
 	storePath       = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel        = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
 	host            = flag.String("host", "0.0.0.0", "tidb server host")
@@ -134,22 +135,30 @@ func main() {
 	}
 
 	// set log options
-	if len(*logFile) > 0 {
-		err := log.SetOutputByName(*logFile)
-		if err != nil {
-			log.Fatal(errors.ErrorStack(err))
-		}
-		log.SetRotateByDay()
-		log.SetHighlighting(false)
+	logConf := &logutil.LogConfig{
+		Level: *logLevel,
 	}
+	if len(*logFile) > 0 {
+		logConf.File = logutil.FileLogConfig{
+			Filename:  *logFile,
+			LogRotate: true,
+		}
+	}
+	err := logutil.InitLogger(logConf)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Make sure the TiDB info is always printed.
+	level := log.GetLevel()
+	log.SetLevel(log.InfoLevel)
+	printer.PrintTiDBInfo()
+	log.SetLevel(level)
 
 	if joinCon != nil && *joinCon > 0 {
 		plan.JoinConcurrency = *joinCon
 	}
 	plan.AllowCartesianProduct = *crossJoin
-	// Call this before setting log level to make sure that TiDB info could be printed.
-	printer.PrintTiDBInfo()
-	log.SetLevelByString(cfg.LogLevel)
 
 	store := createStore()
 
