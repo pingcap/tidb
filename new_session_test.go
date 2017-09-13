@@ -19,8 +19,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -54,7 +54,9 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	_, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	logLevel := os.Getenv("log_level")
-	log.SetLevelByString(logLevel)
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 }
 
 func (s *testSessionSuite) TestErrorRollback(c *C) {
