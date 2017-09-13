@@ -50,11 +50,11 @@ const ( // GET_FORMAT location.
 	internalLocation = "INTERNAL"
 )
 
-// DurationPattern determine whether to match the format of duration.
-var DurationPattern = regexp.MustCompile(`^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`)
+// durationPattern determine whether to match the format of duration.
+var durationPattern = regexp.MustCompile(`^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`)
 
-// DatePattern determine whether to match the format of date.
-var DatePattern = regexp.MustCompile(`^\s*((0*\d{1,4}([^\d]0*\d{1,2}){2})|(\d{2,4}(\d{2}){2}))\s*$`)
+// datePattern determine whether to match the format of date.
+var datePattern = regexp.MustCompile(`^\s*((0*\d{1,4}([^\d]0*\d{1,2}){2})|(\d{2,4}(\d{2}){2}))\s*$`)
 
 var (
 	_ functionClass = &dateFunctionClass{}
@@ -301,7 +301,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx context.Context, args []Expre
 		return nil, errors.Trace(types.ErrInvalidTimeFormat)
 	}
 	str := constant.Value.GetString()
-	if !DatePattern.MatchString(str) {
+	if !datePattern.MatchString(str) {
 		return nil, errors.Trace(types.ErrInvalidTimeFormat)
 	}
 	tm, err := types.ParseDate(str)
@@ -316,28 +316,13 @@ func (c *dateLiteralFunctionClass) getFunction(ctx context.Context, args []Expre
 
 type builtinDateLiteralSig struct {
 	baseTimeBuiltinFunc
-	tm types.Time
+	literal types.Time
 }
 
 // evalTime evals DATE 'stringLit'.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
 func (b *builtinDateLiteralSig) evalTime(row []types.Datum) (types.Time, bool, error) {
-	/*
-		sc := b.ctx.GetSessionVars().StmtCtx
-		str, isNull, err := b.args[0].EvalString(row, sc)
-		if isNull || err != nil {
-			return types.Time{}, true, errors.Trace(err)
-		}
-		if !DatePattern.MatchString(str) {
-			return types.Time{}, true, errors.Trace(types.ErrInvalidTimeFormat)
-		}
-		ret, err := types.ParseDate(str)
-		if err != nil {
-			return types.Time{}, true, errors.Trace(err)
-		}
-		return ret, false, nil
-	*/
-	return b.tm, false, nil
+	return b.literal, false, nil
 }
 
 func convertDatumToTime(sc *variable.StatementContext, d types.Datum) (t types.Time, err error) {
@@ -2398,7 +2383,7 @@ func getTimeZone(ctx context.Context) *time.Location {
 // isDuration returns a boolean indicating whether the str matches the format of duration.
 // See https://dev.mysql.com/doc/refman/5.7/en/time.html
 func isDuration(str string) bool {
-	return DurationPattern.MatchString(str)
+	return durationPattern.MatchString(str)
 }
 
 // strDatetimeAddDuration adds duration to datetime string, returns a datum value.
