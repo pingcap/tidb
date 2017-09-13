@@ -2946,34 +2946,54 @@ func (c *makeTimeFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinMakeTimeSig{newBaseBuiltinFunc(args, ctx)}
+	tp, flen, decimal := fieldTp2EvalTp(args[2].GetType()), 10, 0
+	switch tp {
+	case tpInt:
+	case tpReal, tpDecimal:
+		decimal = args[2].GetType().Decimal
+		if decimal > 6 || decimal == types.UnspecifiedLength {
+			decimal = 6
+		}
+		if decimal > 0 {
+			flen += 1 + decimal
+		}
+	default:
+		flen, decimal = 17, 6
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpInt, tpInt, tpReal)
+	bf.tp.Flen, bf.tp.Decimal = flen, decimal
+	sig := &builtinMakeTimeSig{baseDurationBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
 }
 
 type builtinMakeTimeSig struct {
-	baseBuiltinFunc
+	baseDurationBuiltinFunc
 }
 
-// eval evals a builtinMakeTimeSig.
+// evalDuration evals a builtinMakeTimeIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_maketime
-func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinMakeTimeSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	sc, dur := b.ctx.GetSessionVars().StmtCtx, types.ZeroDuration
+	dur.Fsp = types.MaxFsp
+	hour, isNull, err := b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	// MAKETIME(hour, minute, second)
-	if args[0].IsNull() || args[1].IsNull() || args[2].IsNull() {
-		return
+	minute, isNull, err := b.args[1].EvalInt(row, sc)
+	if isNull || err != nil {
+		return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-
-	var (
-		hour     int64
-		minute   int64
-		second   float64
-		overflow bool
-	)
-	sc := b.ctx.GetSessionVars().StmtCtx
-	hour, _ = args[0].ToInt64(sc)
+	if minute < 0 || minute >= 60 {
+		return dur, true, nil
+	}
+	second, isNull, err := b.args[2].EvalReal(row, sc)
+	if isNull || err != nil {
+		return dur, isNull, errors.Trace(err)
+	}
+	if second < 0 || second >= 60 {
+		return dur, true, nil
+	}
+	var overflow bool
 	// MySQL TIME datatype: https://dev.mysql.com/doc/refman/5.7/en/time.html
 	// ranges from '-838:59:59.000000' to '838:59:59.000000'
 	if hour < -838 {
@@ -2982,16 +3002,6 @@ func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) 
 	} else if hour > 838 {
 		hour = 838
 		overflow = true
-	}
-
-	minute, _ = args[1].ToInt64(sc)
-	if minute < 0 || minute >= 60 {
-		return
-	}
-
-	second, _ = args[2].ToFloat64(sc)
-	if second < 0 || second >= 60 {
-		return
 	}
 	if hour == -838 || hour == 838 {
 		if second > 59 {
@@ -3002,24 +3012,12 @@ func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) 
 		minute = 59
 		second = 59
 	}
-
-	var dur types.Duration
-	fsp := types.MaxFsp
-	if args[2].Kind() != types.KindString {
-		sec, _ := args[2].ToString()
-		secs := strings.Split(sec, ".")
-		if len(secs) <= 1 {
-			fsp = 0
-		} else if len(secs[1]) < fsp {
-			fsp = len(secs[1])
-		}
-	}
+	fsp := b.tp.Decimal
 	dur, err = types.ParseDuration(fmt.Sprintf("%02d:%02d:%v", hour, minute, second), fsp)
 	if err != nil {
-		return d, errors.Trace(err)
+		return dur, true, errors.Trace(err)
 	}
-	d.SetMysqlDuration(dur)
-	return
+	return dur, false, nil
 }
 
 type periodAddFunctionClass struct {

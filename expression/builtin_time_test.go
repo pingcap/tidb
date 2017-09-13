@@ -1619,10 +1619,10 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		{[]interface{}{12, 15, -30}, nil},
 
 		{[]interface{}{12, 15, "30.10"}, "12:15:30.100000"},
-		{[]interface{}{12, 15, "30.00"}, "12:15:30.000000"},
-		{[]interface{}{12, 15, 30.0000001}, "12:15:30.000000"},
+		{[]interface{}{12, 15, "30.20"}, "12:15:30.200000"},
+		{[]interface{}{12, 15, 30.3000001}, "12:15:30.300000"},
 		{[]interface{}{12, 15, 30.0000005}, "12:15:30.000001"},
-		{[]interface{}{"12", "15", 30.1}, "12:15:30.1"},
+		{[]interface{}{"12", "15", 30.1}, "12:15:30.100000"},
 
 		{[]interface{}{0, 58.4, 0}, "00:58:00"},
 		{[]interface{}{0, "58.4", 0}, "00:58:00"},
@@ -1630,26 +1630,24 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		{[]interface{}{0, "58.5", 1}, "00:58:01"},
 		{[]interface{}{0, 59.5, 1}, nil},
 		{[]interface{}{0, "59.5", 1}, "00:59:01"},
-		{[]interface{}{0, 1, 59.1}, "00:01:59.1"},
+		{[]interface{}{0, 1, 59.1}, "00:01:59.100000"},
 		{[]interface{}{0, 1, "59.1"}, "00:01:59.100000"},
-		{[]interface{}{0, 1, 59.5}, "00:01:59.5"},
+		{[]interface{}{0, 1, 59.5}, "00:01:59.500000"},
 		{[]interface{}{0, 1, "59.5"}, "00:01:59.500000"},
 		{[]interface{}{23.5, 1, 10}, "24:01:10"},
 		{[]interface{}{"23.5", 1, 10}, "23:01:10"},
 
 		{[]interface{}{0, 0, 0}, "00:00:00"},
-		{[]interface{}{"", "", ""}, "00:00:00.000000"},
-		{[]interface{}{"h", "m", "s"}, "00:00:00.000000"},
 
-		{[]interface{}{837, 59, 59.1}, "837:59:59.1"},
-		{[]interface{}{838, 59, 59.1}, "838:59:59.0"},
-		{[]interface{}{-838, 59, 59.1}, "-838:59:59.0"},
+		{[]interface{}{837, 59, 59.1}, "837:59:59.100000"},
+		{[]interface{}{838, 59, 59.1}, "838:59:59.000000"},
+		{[]interface{}{-838, 59, 59.1}, "-838:59:59.000000"},
 		{[]interface{}{1000, 1, 1}, "838:59:59"},
-		{[]interface{}{-1000, 1, 1.23}, "-838:59:59.00"},
+		{[]interface{}{-1000, 1, 1.23}, "-838:59:59.000000"},
 		{[]interface{}{1000, 59.1, 1}, "838:59:59"},
 		{[]interface{}{1000, 59.5, 1}, nil},
-		{[]interface{}{1000, 1, 59.1}, "838:59:59.0"},
-		{[]interface{}{1000, 1, 59.5}, "838:59:59.0"},
+		{[]interface{}{1000, 1, 59.1}, "838:59:59.000000"},
+		{[]interface{}{1000, 1, 59.5}, "838:59:59.000000"},
 
 		{[]interface{}{12, 15, 60}, nil},
 		{[]interface{}{12, 15, "60"}, nil},
@@ -1667,6 +1665,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 	for idx, t := range Dtbl {
 		f, err := maketime.getFunction(s.ctx, datumsToConstants(t["Args"]))
 		c.Assert(err, IsNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if t["Want"][0].Kind() == types.KindNull {
@@ -1676,6 +1675,25 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 			c.Assert(err, IsNil)
 			c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
 		}
+	}
+
+	tbl = []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{"", "", ""}, "00:00:00"},
+		{[]interface{}{"h", "m", "s"}, "00:00:00"},
+	}
+	Dtbl = tblToDtbl(tbl)
+	maketime = funcs[ast.MakeTime]
+	for idx, t := range Dtbl {
+		f, err := maketime.getFunction(s.ctx, datumsToConstants(t["Args"]))
+		c.Assert(err, IsNil)
+		c.Assert(f.canBeFolded(), IsTrue)
+		got, err := f.eval(nil)
+		c.Assert(err, NotNil)
+		want, err := t["Want"][0].ToString()
+		c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
 	}
 }
 

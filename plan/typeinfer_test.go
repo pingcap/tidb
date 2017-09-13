@@ -1787,6 +1787,13 @@ func (s *testPlanSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"period_diff(c_set        , c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 		{"period_diff(c_enum       , c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 
+		{"maketime(c_int_d, c_int_d, c_double_d)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"maketime(c_int_d, c_int_d, c_decimal)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"maketime(c_int_d, c_int_d, c_decimal_d)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"maketime(c_int_d, c_int_d, c_char)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"maketime(c_int_d, c_int_d, c_varchar)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
+		{"maketime(c_int_d, c_int_d, 1.2345)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
+
 		{"get_format(DATE, 'USA')", mysql.TypeVarString, charset.CharsetUTF8, 0, 17, types.UnspecifiedLength},
 
 		{"convert_tz(c_time_d, c_text_d, c_text_d)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthWithFsp, types.MaxFsp},

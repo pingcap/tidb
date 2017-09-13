@@ -1517,6 +1517,19 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("0000-00-01 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format"))
 
+	// for maketime
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a double, b float, c decimal(10,4));`)
+	tk.MustExec(`insert into t value(1.23, 2.34, 3.1415)`)
+	result = tk.MustQuery("select maketime(1,1,a), maketime(2,2,b), maketime(3,3,c) from t;")
+	result.Check(testkit.Rows("01:01:01.230000 02:02:02.340000 03:03:03.1415"))
+	result = tk.MustQuery("select maketime(12, 13, 14), maketime('12', '15', 30.1), maketime(0, 1, 59.1), maketime(0, 1, '59.1'), maketime(0, 1, 59.5)")
+	result.Check(testkit.Rows("12:13:14 12:15:30.1 00:01:59.1 00:01:59.100000 00:01:59.5"))
+	result = tk.MustQuery("select maketime(12, 15, 60), maketime(12, 15, '60'), maketime(12, 60, 0), maketime(12, 15, null)")
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery("select maketime('', '', ''), maketime('h', 'm', 's');")
+	result.Check(testkit.Rows("00:00:00.000000 00:00:00.000000"))
+
 	// for get_format
 	result = tk.MustQuery(`select GET_FORMAT(DATE,'USA'), GET_FORMAT(DATE,'JIS'), GET_FORMAT(DATE,'ISO'), GET_FORMAT(DATE,'EUR'),
 	GET_FORMAT(DATE,'INTERNAL'), GET_FORMAT(DATETIME,'USA') , GET_FORMAT(DATETIME,'JIS'), GET_FORMAT(DATETIME,'ISO'),
@@ -1543,6 +1556,14 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for extract
 	result = tk.MustQuery(`select extract(day from '800:12:12'), extract(hour from '800:12:12'), extract(month from 20170101), extract(day_second from '2017-01-01 12:12:12')`)
 	result.Check(testkit.Rows("12 800 1 1121212"))
+
+	// for localtime, localtimestamp
+	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
+	result.Check(testkit.Rows("1 1 1 1"))
+
+	// for current_timestamp, current_timestamp()
+	result = tk.MustQuery(`select current_timestamp() = now(), current_timestamp = now()`)
+	result.Check(testkit.Rows("1 1"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
@@ -2391,6 +2412,22 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows("1 1 1"))
 	result = tk.MustQuery(`select INTERVAL(100, NULL, NULL, NULL, NULL, NULL, 100);`)
 	result.Check(testkit.Rows("6"))
+
+	// for greatest
+	result = tk.MustQuery(`select greatest(1, 2, 3), greatest("a", "b", "c"), greatest(1.1, 1.2, 1.3), greatest("123a", 1, 2)`)
+	result.Check(testkit.Rows("3 c 1.3 123"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
+	result = tk.MustQuery(`select greatest(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), greatest(cast("2017-01-01" as date), "123", null)`)
+	// todo: MySQL returns "2018-01-01 <nil>"
+	result.Check(testkit.Rows("2018-01-01 00:00:00 <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format", "Warning|1105|invalid time format", "Warning|1105|invalid time format"))
+	// for least
+	result = tk.MustQuery(`select least(1, 2, 3), least("a", "b", "c"), least(1.1, 1.2, 1.3), least("123a", 1, 2)`)
+	result.Check(testkit.Rows("1 a 1.1 1"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
+	result = tk.MustQuery(`select least(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), least(cast("2017-01-01" as date), "123", null)`)
+	result.Check(testkit.Rows("123 <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format", "Warning|1105|invalid time format", "Warning|1105|invalid time format"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
@@ -2430,6 +2467,16 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 
 	result = tk.MustQuery(`select bit_count(121), bit_count(-1), bit_count(null), bit_count("1231aaa");`)
 	result.Check(testkit.Rows("5 64 <nil> 7"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b time, c double, d varchar(10))")
+	tk.MustExec(`insert into t values(1, '01:01:01', 1.1, "1"), (2, '02:02:02', 2.2, "2")`)
+	tk.MustExec(`insert into t(a, b) values(1, '12:12:12') on duplicate key update a = values(b)`)
+	result = tk.MustQuery(`select a from t order by a`)
+	result.Check(testkit.Rows("2", "121212"))
+	tk.MustExec(`insert into t values(2, '12:12:12', 1.1, "3.3") on duplicate key update a = values(c) + values(d)`)
+	result = tk.MustQuery(`select a from t order by a`)
+	result.Check(testkit.Rows("4", "121212"))
 
 	// for setvar, getvar
 	tk.MustExec(`set @varname = "Abc"`)

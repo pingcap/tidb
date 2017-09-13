@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -237,11 +236,6 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 	return snapHandle.Get(), nil
 }
 
-// PerfSchema gets performance schema from domain.
-func (do *Domain) PerfSchema() perfschema.PerfSchema {
-	return do.infoHandle.GetPerfHandle()
-}
-
 // DDL gets DDL from domain.
 func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
@@ -427,10 +421,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		}
 	}
 
-	d.infoHandle, err = infoschema.NewHandle(d.store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	d.infoHandle = infoschema.NewHandle(d.store)
 	ctx := goctx.Background()
 	callback := &ddlCallback{do: d}
 
