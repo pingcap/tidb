@@ -882,10 +882,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  `select a from t where c_str like 'abc\\_'`,
 			best: "IndexReader(Index(t.c_d_e_str)[[abc_,abc_]])->Projection",
 		},
-//		{
-//			sql:  `select a from t where c_str like 'abc\\\\_'`,
-//			best: "IndexReader(Index(t.c_d_e_str)[(abc\\ +inf,abc] <nil>)])->Selection->Projection",
-//		},
+		//		{
+		//			sql:  `select a from t where c_str like 'abc\\\\_'`,
+		//			best: "IndexReader(Index(t.c_d_e_str)[(abc\\ +inf,abc] <nil>)])->Selection->Projection",
+		//		},
 		{
 			sql:  `select a from t where c_str like 'abc\\_%'`,
 			best: "IndexReader(Index(t.c_d_e_str)[[abc_,abc`)])->Projection",

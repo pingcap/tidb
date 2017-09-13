@@ -166,8 +166,8 @@ func (pc pbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 
 	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		return &tipb.Expr{
-			Tp:  tipb.ExprType_ColumnRef,
-			Val: codec.EncodeInt(nil, int64(column.Index)),
+			Tp:        tipb.ExprType_ColumnRef,
+			Val:       codec.EncodeInt(nil, int64(column.Index)),
 			FieldType: toPBFieldType(column.RetType),
 		}
 	}

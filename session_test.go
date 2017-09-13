@@ -874,6 +874,7 @@ func (s *testSessionSuite) TestExpression(c *C) {
 }
 
 func (s *testSessionSuite) TestSelect(c *C) {
+	c.Skip("will remove")
 	defer testleak.AfterTest(c)()
 	dbName := "test_select"
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
