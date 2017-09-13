@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 )
@@ -283,15 +284,14 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
 }
 
 func (b *Builder) createSchemaTablesForPerfSchemaDB() {
-	perfHandle := b.handle.perfHandle
-	perfSchemaDB := perfHandle.GetDBMeta()
+	perfSchemaDB := perfschema.GetDBMeta()
 	perfSchemaTblNames := &schemaTables{
 		dbInfo: perfSchemaDB,
 		tables: make(map[string]table.Table, len(perfSchemaDB.Tables)),
 	}
 	b.is.schemaMap[perfSchemaDB.Name.L] = perfSchemaTblNames
 	for _, t := range perfSchemaDB.Tables {
-		tbl, ok := perfHandle.GetTable(t.Name.O)
+		tbl, ok := perfschema.GetTable(t.Name.O)
 		if !ok {
 			continue
 		}
