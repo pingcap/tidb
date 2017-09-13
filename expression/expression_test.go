@@ -28,7 +28,7 @@ func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 	res := NewValuesFunc(0, types.NewFieldType(mysql.TypeLonglong), s.ctx)
 	c.Assert(res.FuncName.O, Equals, "values")
 	c.Assert(res.RetType.Tp, Equals, mysql.TypeLonglong)
-	_, ok := res.Function.(*builtinValuesSig)
+	_, ok := res.Function.(*builtinValuesIntSig)
 	c.Assert(ok, IsTrue)
 }
 

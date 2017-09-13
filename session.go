@@ -1225,30 +1225,13 @@ func (s *session) ShowProcess() util.ProcessInfo {
 // logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc.
 func logCrucialStmt(node ast.StmtNode) {
 	switch stmt := node.(type) {
-	case *ast.CreateUserStmt:
-		for _, user := range stmt.Specs {
-			log.Infof("[CRUCIAL OPERATION] create user %s.", user.SecurityString())
-		}
-	case *ast.DropUserStmt:
-		log.Infof("[CRUCIAL OPERATION] drop user %v.", stmt.UserList)
-	case *ast.AlterUserStmt:
-		for _, user := range stmt.Specs {
-			log.Infof("[CRUCIAL OPERATION] alter user %s.", user.SecurityString())
-		}
-	case *ast.SetPwdStmt:
-		log.Infof("[CRUCIAL OPERATION] set password for user %s.", stmt.User)
-	case *ast.GrantStmt:
-		text := stmt.Text()
-		// Filter "identified by xxx" because it would expose password information.
-		idx := strings.Index(strings.ToLower(text), "identified")
-		if idx > 0 {
-			text = text[:idx]
-		}
-		log.Infof("[CRUCIAL OPERATION] %s.", text)
-	case *ast.RevokeStmt:
-		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
-	case *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
+	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
+		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
-		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
+		if ss, ok := node.(ast.SensitiveStmtNode); ok {
+			log.Infof("[CRUCIAL OPERATION] %s.", ss.SecureText())
+		} else {
+			log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
+		}
 	}
 }
