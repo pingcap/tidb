@@ -383,8 +383,10 @@ LOOP:
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
 				deletedKeys[n] = struct{}{}
-				s.mustExec(c, "delete from t1 where c1 = ?", n)
-				s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
+				sql := fmt.Sprintf("delete from t1 where c1 = %d", n)
+				s.mustExec(c, sql)
+				sql = fmt.Sprintf("insert into t1 values (%d, %d, %d)", i, i, i)
+				s.mustExec(c, sql)
 			}
 			num += step
 		}
