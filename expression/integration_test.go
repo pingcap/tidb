@@ -1569,15 +1569,13 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 		{"\"2011-11-11\"", "\"10.0000\"", "MINUTE_MICROSECOND", "<nil>", "<nil>"},
 		{"\"2011-11-11\"", "\"10:10:10\"", "MINUTE_MICROSECOND", "<nil>", "<nil>"},
 	}
-	for i, tc := range dateArithmeticalTests {
+	for _, tc := range dateArithmeticalTests {
 		dateAdd := fmt.Sprintf("select adddate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
-		//dateSub := fmt.Sprintf("select subdate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
-		fmt.Printf("CASE[%v]: %s\n", i, dateAdd)
-		//fmt.Printf("CASE[%v]: %s\n", i, dateSub)
+		dateSub := fmt.Sprintf("select subdate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
 		result = tk.MustQuery(dateAdd)
 		result.Check(testkit.Rows(tc.AddResult))
-		//result = tk.MustQuery(dateSub)
-		//result.Check(testkit.Rows(tc.SubResult))
+		result = tk.MustQuery(dateSub)
+		result.Check(testkit.Rows(tc.SubResult))
 	}
 
 	// for localtime, localtimestamp
