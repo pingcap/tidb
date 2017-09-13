@@ -341,8 +341,7 @@ type timeDiffFunctionClass struct {
 
 func (c *timeDiffFunctionClass) getArgEvalTp(fieldTp *types.FieldType) evalTp {
 	argTp := tpString
-	tp := fieldTp2EvalTp(fieldTp)
-	switch tp {
+	switch tp := fieldTp2EvalTp(fieldTp); tp {
 	case tpDuration, tpDatetime, tpTimestamp:
 		argTp = tp
 	}
@@ -416,14 +415,14 @@ func (b *builtinDurationDurationTimeDiffSig) evalDuration(row []types.Datum) (d 
 
 	d, err = val0.Sub(val1)
 	if err != nil {
-		return d, false, errors.Trace(err)
+		return d, true, errors.Trace(err)
 	}
 
 	d.Duration, err = types.TruncateOverflowMySQLTime(d.Duration)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}
-	return d, false, errors.Trace(err)
+	return d, err != nil, errors.Trace(err)
 }
 
 type builtinTimeTimeTimeDiffSig struct {
@@ -444,7 +443,8 @@ func (b *builtinTimeTimeTimeDiffSig) evalDuration(row []types.Datum) (d types.Du
 		return d, isNull, errors.Trace(err)
 	}
 
-	return calculateTimeDiff(val0, val1, sc)
+	d, isNull, err = calculateTimeDiff(val0, val1, sc)
+	return d, isNull, errors.Trace(err)
 }
 
 type builtinDurationStringTimeDiffSig struct {
@@ -467,14 +467,15 @@ func (b *builtinDurationStringTimeDiffSig) evalDuration(row []types.Datum) (d ty
 
 	t0, err := val0.ConvertToTime(mysql.TypeDuration)
 	if err != nil {
-		return d, false, errors.Trace(err)
+		return d, true, errors.Trace(err)
 	}
 
 	t1, err := convertStringToDuration(val1, b.tp.Decimal, sc)
 	if err != nil {
-		return d, false, errors.Trace(err)
+		return d, true, errors.Trace(err)
 	}
-	return calculateTimeDiff(t0, t1, sc)
+	d, isNull, err = calculateTimeDiff(t0, t1, sc)
+	return d, isNull, errors.Trace(err)
 }
 
 type builtinStringDurationTimeDiffSig struct {
@@ -497,14 +498,15 @@ func (b *builtinStringDurationTimeDiffSig) evalDuration(row []types.Datum) (d ty
 
 	t0, err := convertStringToDuration(val0, b.tp.Decimal, sc)
 	if err != nil {
-		return d, false, errors.Trace(err)
+		return d, true, errors.Trace(err)
 	}
 
 	t1, err := val1.ConvertToTime(mysql.TypeDuration)
 	if err != nil {
-		return d, false, errors.Trace(err)
+		return d, true, errors.Trace(err)
 	}
-	return calculateTimeDiff(t0, t1, sc)
+	d, isNull, err = calculateTimeDiff(t0, t1, sc)
+	return d, isNull, errors.Trace(err)
 }
 
 func calculateTimeDiff(t0, t1 types.Time, sc *variable.StatementContext) (d types.Duration, isNull bool, err error) {
@@ -520,7 +522,7 @@ func calculateTimeDiff(t0, t1 types.Time, sc *variable.StatementContext) (d type
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}
-	return d, false, errors.Trace(err)
+	return d, err != nil, errors.Trace(err)
 }
 
 type builtinTimeStringTimeDiffSig struct {
@@ -543,9 +545,10 @@ func (b *builtinTimeStringTimeDiffSig) evalDuration(row []types.Datum) (d types.
 
 	t1, err := convertStringToDuration(val1, b.tp.Decimal, sc)
 	if err != nil {
-		return d, false, errors.Trace(err)
+		return d, true, errors.Trace(err)
 	}
-	return calculateTimeDiff(val0, t1, sc)
+	d, isNull, err = calculateTimeDiff(val0, t1, sc)
+	return d, isNull, errors.Trace(err)
 }
 
 type builtinStringTimeTimeDiffSig struct {
@@ -568,9 +571,11 @@ func (b *builtinStringTimeTimeDiffSig) evalDuration(row []types.Datum) (d types.
 
 	t0, err := convertStringToDuration(val0, b.tp.Decimal, sc)
 	if err != nil {
-		return d, false, errors.Trace(err)
+		return d, true, errors.Trace(err)
 	}
-	return calculateTimeDiff(t0, val1, sc)
+
+	d, isNull, err = calculateTimeDiff(t0, val1, sc)
+	return d, isNull, errors.Trace(err)
 }
 
 type builtinStringStringTimeDiffSig struct {
@@ -602,7 +607,8 @@ func (b *builtinStringStringTimeDiffSig) evalDuration(row []types.Datum) (d type
 		return d, false, errors.Trace(err)
 	}
 
-	return calculateTimeDiff(t0, t1, sc)
+	d, isNull, err = calculateTimeDiff(t0, t1, sc)
+	return d, isNull, errors.Trace(err)
 }
 
 type builtinNullTimeDiffSig struct {
