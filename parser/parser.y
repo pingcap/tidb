@@ -167,6 +167,7 @@ import (
 	noWriteToBinLog 	"NO_WRITE_TO_BINLOG"
 	null			"NULL"
 	numericType		"NUMERIC"
+	nvarcharType		"NVARCHAR"
 	oct			"OCT"
 	octetLength		"OCTET_LENGTH"
 	on			"ON"
@@ -854,6 +855,7 @@ import (
 	RegexpSym		"REGEXP or RLIKE"
 	IntoOpt			"INTO or EmptyString"
 	ValueSym		"Value or Values"
+	Varchar			"{NATIONAL VARCHAR|VARCHAR|NVARCHAR}"
 	TimeUnit		"Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
 	TimestampUnit		"Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
 	DeallocateSym		"Deallocate or drop"
@@ -2458,7 +2460,7 @@ ReservedKeyword:
 | "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTO" | "INTEGER"
 | "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "KILL" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
-| "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
+| "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC" | "NVARCHAR"
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ"
 | "REAL" | "REFERENCES" | "REGEXP" | "RENAME" | "REPEAT" | "REPLACE" | "RESTRICT" | "REVOKE" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
@@ -3035,13 +3037,21 @@ FunctionCallKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr(ast.InsertFunc), Args: $3.([]ast.ExprNode)}
 	}
-|	"LOCALTIME" '(' ExpressionListOpt ')'
+|	"LOCALTIME" FuncDatetimePrec
 	{
-		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+		args := []ast.ExprNode{}
+    	if $2 != nil {
+    		args = append(args, $2.(ast.ExprNode))
+    	}
+    	$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
-|	"LOCALTIMESTAMP" '(' ExpressionListOpt ')'
+|	"LOCALTIMESTAMP" FuncDatetimePrec
 	{
-		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+		args := []ast.ExprNode{}
+		if $2 != nil {
+			args = append(args, $2.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"QUARTER" '(' ExpressionListOpt ')'
 	{
@@ -6049,13 +6059,13 @@ StringType:
 		}
 		$$ = x
 	}
-|	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
+|	Varchar FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $3.(int)
-		x.Charset = $5.(string)
-		x.Collate = $6.(string)
-		if $4.(bool) {
+		x.Flen = $2.(int)
+		x.Charset = $4.(string)
+		x.Collate = $5.(string)
+		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
@@ -6124,6 +6134,12 @@ StringType:
 NationalOpt:
 	{}
 |	"NATIONAL"
+
+Varchar:
+"NATIONAL" "VARCHAR"
+| "VARCHAR"
+| "NVARCHAR"
+
 
 BlobType:
 	"TINYBLOB"

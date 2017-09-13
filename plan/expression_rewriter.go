@@ -117,9 +117,6 @@ func getRowLen(e expression.Expression) int {
 	if f, ok := e.(*expression.ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
 		return len(f.GetArgs())
 	}
-	if c, ok := e.(*expression.Constant); ok && c.Value.Kind() == types.KindRow {
-		return len(c.Value.GetRow())
-	}
 	return 1
 }
 
@@ -127,9 +124,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 	if f, ok := e.(*expression.ScalarFunction); ok {
 		return f.GetArgs()[idx]
 	}
-	c, _ := e.(*expression.Constant)
-	d := c.Value.GetRow()[idx]
-	return &expression.Constant{Value: d, RetType: c.GetType()}
+	return nil
 }
 
 // popRowArg pops the first element and return the rest of row.
@@ -142,12 +137,6 @@ func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Exp
 		}
 		ret, err = expression.NewFunction(ctx, f.FuncName.L, f.GetType(), args[1:]...)
 		return ret, errors.Trace(err)
-	}
-	c, _ := e.(*expression.Constant)
-	if getRowLen(c) == 2 {
-		ret = &expression.Constant{Value: c.Value.GetRow()[1], RetType: c.GetType()}
-	} else {
-		ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
 	}
 	return
 }
@@ -881,7 +870,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 
 // inToExpression converts in expression to a scalar function. The argument lLen means the length of in list.
 // The argument not means if the expression is not in. The tp stands for the expression type, which is always bool.
-// a in (b, c, d) will be rewritted as `(a = b) or (a = c) or (a = d)`.
+// a in (b, c, d) will be rewritten as `(a = b) or (a = c) or (a = d)`.
 func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	l := getRowLen(er.ctxStack[stkLen-lLen-1])
