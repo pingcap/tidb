@@ -490,6 +490,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		{691231235959, false, "2069-12-31 23:59:59", true, zeroDatetimeStr, false, "2069-12-31"},
 		{370119031407, false, "2037-01-19 03:14:07", false, "2037-01-19 03:14:07", false, "2037-01-19"},
 		{380120031407, false, "2038-01-20 03:14:07", true, zeroDatetimeStr, false, "2038-01-20"},
+		{11111111111, false, "2001-11-11 11:11:11", false, "2001-11-11 11:11:11", false, "2001-11-11"},
 	}
 
 	for ith, test := range table {

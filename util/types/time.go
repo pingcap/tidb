@@ -593,7 +593,7 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(str string, fsp int) (Time, error) {
+func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 	// Try to split str with delimiter.
 	// TODO: only punctuation can be the delimiter for date parts or time parts.
 	// But only space and T can be the delimiter between the date and time part.
@@ -638,6 +638,18 @@ func parseDatetime(str string, fsp int) (Time, error) {
 			year = adjustYear(year)
 		} else {
 			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
+		}
+		if len(sep) == 6 || len(sep) == 8 {
+			// YYMMDD or YYYYMMDD
+			// We must handle float => string => datetime, the difference is that fractional
+			// part of float type is discarded directly, while fractional part of string type
+			// is parsed to HH:MM:SS.
+			if isFloat {
+				// 20170118.123423 => 2017-01-18 00:00:00
+			} else {
+				// '20170118.123423' => 2017-01-18 12:34:23.234
+				fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
+			}
 		}
 	case 3:
 		// YYYY-MM-DD
@@ -1201,13 +1213,22 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 // The valid datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.999999'.
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
-func ParseTime(str string, tp byte, fsp int) (Time, error) {
+func ParseTime(str string, tp byte, fst int) (Time, error) {
+	return parseTime1(str, tp, fst, false)
+}
+
+// ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
+func ParseTimeFromFloatString(str string, tp byte, fst int) (Time, error) {
+	return parseTime1(str, tp, fst, true)
+}
+
+func parseTime1(str string, tp byte, fsp int, isFloat bool) (Time, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
 
-	t, err := parseDatetime(str, fsp)
+	t, err := parseDatetime(str, fsp, isFloat)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
