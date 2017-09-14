@@ -31,6 +31,7 @@ package server
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net"
@@ -40,7 +41,6 @@ import (
 	// For pprof
 	_ "net/http/pprof"
 
-	"fmt"
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"

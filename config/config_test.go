@@ -31,7 +31,6 @@ func TestT(t *testing.T) {
 }
 
 func (s *testConfigSuite) TestConfig(c *C) {
-
 	conf := new(Config)
 	conf.BinlogSocket = "/tmp/socket"
 	conf.Performance.RetryLimit = 20
