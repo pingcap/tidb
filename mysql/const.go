@@ -424,11 +424,11 @@ const (
 func GetSQLMode(s string) (SQLMode, error) {
 	strs := strings.Split(s, ",")
 	var sqlMode SQLMode
-	for _, str := range strs {
-		upper := strings.ToUpper(str)
+	for i, length := 0, len(strs); i < length; i++ {
+		upper := strings.ToUpper(strs[i])
 		mode, ok := Str2SQLMode[upper]
-		if !ok && strings.TrimSpace(str) != "" {
-			return sqlMode, errors.Trace(newInvalidModeErr(str))
+		if !ok && strings.TrimSpace(strs[i]) != "" {
+			return sqlMode, errors.Trace(newInvalidModeErr(strs[i]))
 		}
 		sqlMode = sqlMode | mode
 	}

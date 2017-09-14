@@ -2666,6 +2666,12 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
-	_, err := tk.Exec("set sql_mod='adfasdfadsfdasd';")
+	_, err := tk.Exec("set sql_mode='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set @@sql_mode='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set @@global.sql_mode='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set @@session.sql_mode='adfasdfadsfdasd';")
 	c.Assert(err, NotNil)
 }
