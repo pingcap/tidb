@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
@@ -60,7 +59,6 @@ var (
 	statsLease      = flag.String("statsLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
 	socket          = flag.String("socket", "", "The socket file to use for connection.")
 	xsocket         = flag.String("xsocket", "", "The socket file to use for x protocol connection.")
-	enablePS        = flagBoolean("perfschema", false, "If enable performance schema.")
 	enablePrivilege = flagBoolean("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
 	reportStatus    = flagBoolean("report-status", true, "If enable status report HTTP service.")
 	logFile         = flag.String("log-file", "", "log file path")
@@ -162,9 +160,6 @@ func main() {
 
 	store := createStore()
 
-	if *enablePS {
-		perfschema.EnablePerfSchema()
-	}
 	privileges.Enable = *enablePrivilege
 	privileges.SkipWithGrant = *skipGrantTable
 	if *binlogSocket != "" {
