@@ -1120,9 +1120,6 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		// Test wrapping with CastAsString.
 		strExpr := WrapWithCastAsString(t.expr, ctx)
 		c.Assert(strExpr.GetTypeClass(), Equals, types.ClassString)
-		//_, ok = strExpr.(*ScalarFunction)
-		//c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassString)
-		_, ok = strExpr.(*ScalarFunction)
 		exprTp := t.expr.GetType().Tp
 		c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassString || types.IsTypeTime(exprTp) || exprTp == mysql.TypeDuration)
 		strRes, isNull, err := strExpr.EvalString(t.row, sc)
