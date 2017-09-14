@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/terror"
@@ -74,7 +76,6 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 func (s *testSessionSuite) TearDownTest(c *C) {
 	testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
@@ -84,7 +85,6 @@ func (s *testSessionSuite) TearDownTest(c *C) {
 
 func (s *testSessionSuite) TestErrorRollback(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t_rollback")
 	tk.MustExec("create table t_rollback (c1 int, c2 int, primary key(c1))")
@@ -103,7 +103,6 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 		go func() {
 			defer wg.Done()
 			localTk := testkit.NewTestKit(c, s.store)
-			localTk.MustExec("use test")
 			for j := 0; j < num; j++ {
 				localTk.Exec("insert into t_rollback values (1, 1)")
 				localTk.MustExec("update t_rollback set c2 = c2 + 1 where c1 = 0")
@@ -118,7 +117,6 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 func (s *testSessionSuite) TestQueryString(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
 
 	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
 	queryStr := tk.Se.Value(context.QueryString)
@@ -128,7 +126,6 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 func (s *testSessionSuite) TestAffectedRows(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id TEXT)")
@@ -189,11 +186,8 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 func (s *testSessionSuite) TestRowLock(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("use test")
 	tk2 := testkit.NewTestKit(c, s.store)
-	tk2.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	c.Assert(tk.Se.Txn(), IsNil)
@@ -229,7 +223,6 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 func (s *testSessionSuite) TestAutocommit(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t;")
 	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
@@ -258,6 +251,97 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
 }
 
+func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
+	varName := "max_allowed_packet"
+	varValue := "67108864" // This is the default value for max_allowed_packet
+	varValue1 := "4194305"
+	varValue2 := "4194306"
+
+	tk := testkit.NewTestKit(c, s.store)
+	se := tk.Se.(variable.GlobalVarAccessor)
+	// Get globalSysVar twice and get the same value
+	v, err := se.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue)
+	v, err = se.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue)
+	// Set global var to another value
+	err = se.SetGlobalSysVar(varName, varValue1)
+	c.Assert(err, IsNil)
+	v, err = se.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue1)
+	c.Assert(tk.Se.CommitTxn(), IsNil)
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	se1 := tk1.Se.(variable.GlobalVarAccessor)
+	v, err = se1.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue1)
+	err = se1.SetGlobalSysVar(varName, varValue2)
+	c.Assert(err, IsNil)
+	v, err = se1.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue2)
+	c.Assert(tk1.Se.CommitTxn(), IsNil)
+
+	// Make sure the change is visible to any client that accesses that global variable.
+	v, err = se.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue2)
+}
+
+func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se.Execute("create table retrytxn (a int unique, b int)")
+	tk.MustExec("insert retrytxn values (1, 1)")
+	tk.MustExec("begin")
+	tk.MustExec("update retrytxn set b = b + 1 where a = 1")
+
+	// Make retryable error.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("update retrytxn set b = b + 1 where a = 1")
+
+	err := tk.Se.CommitTxn()
+	c.Assert(err, IsNil)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+}
+
+func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create table retrytxn (a int unique, b int)")
+	tk.MustExec("insert retrytxn values (1, 1)")
+	tk.MustExec("begin")
+	tk.MustExec("update retrytxn set b = b + 1 where a = 1")
+
+	// Make retryable error.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("update retrytxn set b = b + 1 where a = 1")
+
+	// Hijack retry history, add a statement that returns error.
+	history := tidb.GetHistory(tk.Se)
+	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
+	c.Assert(err, IsNil)
+	stmt, _ := tidb.Compile(tk.Se, stmtNode)
+	executor.ResetStmtCtx(tk.Se, stmtNode)
+	history.Add(0, stmt, tk.Se.GetSessionVars().StmtCtx)
+	_, err = tk.Exec("commit")
+	c.Assert(err, NotNil)
+	c.Assert(tk.Se.Txn(), IsNil)
+	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
+}
+
+// TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
+func (s *testSessionSuite) TestTruncateAlloc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create table truncate_id (a int primary key auto_increment)")
+	tk.MustExec("insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
+	tk.MustExec("truncate table truncate_id")
+	tk.MustExec("insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
+	tk.MustQuery("select a from truncate_id where a > 11").Check(testkit.Rows())
+}
+
 func (s *testSessionSuite) TestString(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("select 1")
@@ -277,7 +361,6 @@ type testSchemaSuite struct {
 func (s *testSchemaSuite) TearDownTest(c *C) {
 	testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
@@ -305,9 +388,7 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 
 func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
 	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("use test")
 
 	// create table
 	tk.MustExec(`create table t (id int, c int);`)
@@ -348,9 +429,7 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 
 func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
 	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("use test")
 
 	tk.MustExec("create table t (a int, b int)")
 	tk1.MustExec("prepare stmt from 'insert into t values (?, ?)'")
@@ -372,9 +451,7 @@ func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
 
 func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
 	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("use test")
 	tk.MustExec("create table t (a int, b int)")
 
 	tk1.MustExec("begin")

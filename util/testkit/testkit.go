@@ -77,10 +77,13 @@ func (res *Result) Sort() *Result {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(c *check.C, store kv.Storage) *TestKit {
-	return &TestKit{
+	tk := &TestKit{
 		c:     c,
 		store: store,
 	}
+	// Use test and prepare a session.
+	tk.MustExec("use test")
+	return tk
 }
 
 var connectionID uint64
