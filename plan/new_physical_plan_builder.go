@@ -680,18 +680,7 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 	}.init(p.allocator, p.ctx)
 	is.filterCondition = p.pushedDownConds
 	is.profile = p.profile
-	var indexCols []*expression.Column
-	for _, col := range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-	}
-	setHandle := false
-	for _, col := range is.Columns {
-		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-			indexCols = append(indexCols, &expression.Column{FromID: p.id, ID: col.ID, Position: col.Offset})
-			setHandle = true
-			break
-		}
-	}
+	setHandle := is.initSchema(p.id, idx)
 	cop := &copTask{
 		indexPlan: is,
 	}
@@ -702,10 +691,9 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 		// If it's double read, the first index read must return handle, so we should add extra handle column
 		// if there isn't a handle column.
 		if !setHandle {
-			indexCols = append(indexCols, &expression.Column{FromID: p.id, ID: model.ExtraHandleID, Position: -1})
+			is.schema.Append(&expression.Column{FromID: p.id, ID: model.ExtraHandleID, Position: -1})
 		}
 	}
-	is.SetSchema(expression.NewSchema(indexCols...))
 	is.addPushedDownSelection(cop, p, math.MaxFloat64)
 	t := finishCopTask(cop, p.ctx, p.allocator)
 	return t.plan()
@@ -748,18 +736,8 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		}
 	}
 	is.profile = p.getStatsProfileByFilter(p.pushedDownConds)
-	var indexCols []*expression.Column
-	for _, col := range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-	}
-	setHandle := false
-	for _, col := range is.Columns {
-		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-			indexCols = append(indexCols, &expression.Column{FromID: p.id, ID: col.ID, Position: col.Offset})
-			setHandle = true
-			break
-		}
-	}
+	setHandle := is.initSchema(p.id, idx)
+
 	cop := &copTask{
 		indexPlan: is,
 	}
@@ -774,13 +752,12 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		// If it's double read, the first index read must return handle, so we should add extra handle column
 		// if there isn't a handle column.
 		if !setHandle {
-			indexCols = append(indexCols, &expression.Column{FromID: p.id, ID: model.ExtraHandleID, Position: -1})
+			is.schema.Append(&expression.Column{FromID: p.id, ID: model.ExtraHandleID, Position: -1})
 		}
 	} else if prop.taskTp == copDoubleReadTaskType {
 		// If it's parent requires double read task, return max cost.
 		return &copTask{cst: math.MaxFloat64}, nil
 	}
-	is.SetSchema(expression.NewSchema(indexCols...))
 	// Check if this plan matches the property.
 	matchProperty := false
 	if !prop.isEmpty() {
@@ -842,6 +819,23 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		return invalidTask, nil
 	}
 	return task, nil
+}
+
+func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo) bool {
+	var indexCols []*expression.Column
+	for _, col := range idx.Columns {
+		indexCols = append(indexCols, &expression.Column{FromID: id, Position: col.Offset})
+	}
+	setHandle := false
+	for _, col := range is.Columns {
+		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+			indexCols = append(indexCols, &expression.Column{FromID: id, ID: col.ID, Position: col.Offset})
+			setHandle = true
+			break
+		}
+	}
+	is.SetSchema(expression.NewSchema(indexCols...))
+	return setHandle
 }
 
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64) {
