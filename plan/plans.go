@@ -142,12 +142,14 @@ type AnalyzeColumnsTask struct {
 	TableInfo *model.TableInfo
 	PKInfo    *model.ColumnInfo
 	ColsInfo  []*model.ColumnInfo
+	PushDown  bool
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
 	TableInfo *model.TableInfo
 	IndexInfo *model.IndexInfo
+	PushDown  bool
 }
 
 // Analyze represents an analyze plan
