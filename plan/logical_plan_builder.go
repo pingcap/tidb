@@ -1322,6 +1322,8 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 	return proj
 }
 
+// wrapCastOnExpr wraps a CAST operation on the expression. It's used for generated columns
+// because the generation expression may has different field type with the column respectively.
 func wrapCastOnExpr(expr expression.Expression, ft *types.FieldType, ctx context.Context) expression.Expression {
 	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:

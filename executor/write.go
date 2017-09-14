@@ -943,7 +943,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 		offset := cols[len(vals)+i].Offset
 		row[offset] = val
 	}
-	// Here we needs do CastValues again, for generated columns.
+	// Here we needs to do CastValues again, for generated columns.
 	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
 		return nil, errors.Trace(err)
 	}
