@@ -30,7 +30,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git re
 
 TARGET = ""
 
-.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib checklist
+.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib checklist tidbctl
 
 default: server buildsucc
 
@@ -152,6 +152,9 @@ benchraw:
 
 benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
+
+tidbctl:
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/tidbctl cmd/tidb-ctl/main.go
 
 update:
 	which glide >/dev/null || curl https://glide.sh/get | sh
