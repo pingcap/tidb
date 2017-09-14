@@ -171,9 +171,11 @@ func StrToDateTime(str string, fsp int) (Time, error) {
 	return ParseTime(str, mysql.TypeDatetime, fsp)
 }
 
-// StrToDuration converts str to Duration.
+// StrToDuration converts str to Duration. It returns Duration in normal case,
+// and returns Time when str is in datetime format.
+// when isDuration is true, the d is returned, when it is false, the t is returned.
 // See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-literals.html.
-func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, err error) {
+func StrToDuration(sc *variable.StatementContext, str string, fsp int) (d Duration, t Time, isDuration bool, err error) {
 	str = strings.TrimSpace(str)
 	length := len(str)
 	if length > 0 && str[0] == '-' {
@@ -184,18 +186,15 @@ func StrToDuration(sc *variable.StatementContext, str string, fsp int) (t Time, 
 	if length >= 12 {
 		t, err = StrToDateTime(str, fsp)
 		if err == nil {
-			return t, nil
+			return d, t, false, nil
 		}
 	}
 
-	duration, err := ParseDuration(str, fsp)
+	d, err = ParseDuration(str, fsp)
 	if ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}
-	if err != nil {
-		return Time{}, errors.Trace(err)
-	}
-	return duration.ConvertToTime(mysql.TypeDuration)
+	return d, t, true, errors.Trace(err)
 }
 
 // NumberToDuration converts number to Duration.
@@ -437,9 +436,7 @@ func ToString(value interface{}) (string, error) {
 		return v.String(), nil
 	case *MyDecimal:
 		return v.String(), nil
-	case Hex:
-		return v.ToString(), nil
-	case Bit:
+	case BinaryLiteral:
 		return v.ToString(), nil
 	case Enum:
 		return v.String(), nil

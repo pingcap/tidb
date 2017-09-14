@@ -15,19 +15,15 @@ package tidb
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
@@ -174,75 +170,6 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestAffectedRows(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_affect_rows"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, s.createTableSQL)
-	mustExecSQL(c, se, `INSERT INTO t VALUES ("a");`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `INSERT INTO t VALUES ("b");`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `UPDATE t set id = 'c' where id = 'a';`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, `UPDATE t set id = 'a' where id = 'a';`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-	mustExecSQL(c, se, `SELECT * from t;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, data int)")
-	mustExecSQL(c, se, `INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where data = 0;`)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, c1 timestamp);")
-	mustExecSQL(c, se, `insert t values(1, 0);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where id = 1;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-
-	// With ON DUPLICATE KEY UPDATE, the affected-rows value per row is 1 if the row is inserted as a new row,
-	// 2 if an existing row is updated, and 0 if an existing row is set to its current values.
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (c1 int PRIMARY KEY, c2 int);")
-	mustExecSQL(c, se, `insert t values(1, 1);`)
-	mustExecSQL(c, se, `insert into t values (1, 1) on duplicate key update c2=2;`)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-	mustExecSQL(c, se, `insert into t values (1, 1) on duplicate key update c2=2;`)
-	c.Assert(int(se.AffectedRows()), Equals, 0)
-	createSQL := `CREATE TABLE IF NOT EXISTS test (
-	  id        VARCHAR(36) PRIMARY KEY NOT NULL,
-	  factor    INTEGER                 NOT NULL                   DEFAULT 2);`
-	mustExecSQL(c, se, createSQL)
-	insertSQL := `INSERT INTO test(id) VALUES('id') ON DUPLICATE KEY UPDATE factor=factor+3;`
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 1)
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-	mustExecSQL(c, se, insertSQL)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-
-	se.SetClientCapability(mysql.ClientFoundRows)
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int, data int)")
-	mustExecSQL(c, se, `INSERT INTO t VALUES (1, 0), (0, 0), (1, 1);`)
-	mustExecSQL(c, se, `UPDATE t set id = 1 where data = 0;`)
-	c.Assert(int(se.AffectedRows()), Equals, 2)
-
-	sessionExec(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestString(c *C) {
-	defer testleak.AfterTest(c)()
-	se := newSession(c, s.store, s.dbName)
-	sessionExec(c, se, "select 1")
-	// here to check the panic bug in String() when txn is nil after committed.
-	c.Log(se.String())
-}
-
 func (s *testSessionSuite) TestResultField(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_result_field"
@@ -358,47 +285,6 @@ func checkTxn(c *C, se Session, stmt string, expectStatus uint16) {
 	}
 }
 
-func checkAutocommit(c *C, se Session, expectStatus uint16) {
-	ret := se.(*session).sessionVars.Status & mysql.ServerStatusAutocommit
-	c.Assert(ret, Equals, expectStatus)
-}
-
-// TestAutocommit ...
-// See https://dev.mysql.com/doc/internals/en/status-flags.html
-func (s *testSessionSuite) TestAutocommit(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_auto_commit"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	checkTxn(c, se, "drop table if exists t;", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "insert t values ()", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "begin", 1)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "insert t values ()", 1)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "drop table if exists t;", 0)
-	checkAutocommit(c, se, 2)
-
-	checkTxn(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkAutocommit(c, se, 2)
-	checkTxn(c, se, "set autocommit=0;", 0)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "insert t values ()", 1)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "commit", 0)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "drop table if exists t;", 0)
-	checkAutocommit(c, se, 0)
-	checkTxn(c, se, "set autocommit='On';", 0)
-	checkAutocommit(c, se, 2)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func checkInTrans(c *C, se Session, stmt string, expectStatus uint16) {
 	checkTxn(c, se, stmt, expectStatus)
 	ret := se.(*session).sessionVars.Status & mysql.ServerStatusInTrans
@@ -436,51 +322,6 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	checkInTrans(c, se, "begin", 1)
 	checkInTrans(c, se, "insert t values ()", 1)
 	checkInTrans(c, se, "rollback", 0)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// testRowLock ...
-// See http://dev.mysql.com/doc/refman/5.7/en/commit.html
-func (s *testSessionSuite) testRowLock(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_row_lock"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	se1 := newSession(c, s.store, dbName)
-	se2 := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, IsNil)
-	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
-	mustExecSQL(c, se, "insert t values (11, 2, 3)")
-	mustExecSQL(c, se, "insert t values (12, 2, 3)")
-	mustExecSQL(c, se, "insert t values (13, 2, 3)")
-
-	mustExecSQL(c, se1, "begin")
-	mustExecSQL(c, se1, "update t set c2=21 where c1=11")
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
-	mustExecSQL(c, se2, "commit")
-
-	_, err := exec(se1, "commit")
-	// se1 will retry and the final value is 21
-	c.Assert(err, IsNil)
-	// Check the result is correct
-	se3 := newSession(c, s.store, dbName)
-	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
-	rows, err := GetRows(r)
-	matches(c, rows, [][]interface{}{{21}})
-
-	mustExecSQL(c, se1, "begin")
-	mustExecSQL(c, se1, "update t set c2=21 where c1=11")
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=22 where c1=12")
-	mustExecSQL(c, se2, "commit")
-
-	mustExecSQL(c, se1, "commit")
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -930,55 +771,6 @@ func (s *testSessionSuite) TestRow(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestIndex(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_index"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "create table if not exists test_index (c1 int, c double, index(c1), index(c))")
-	mustExecSQL(c, se, "insert into test_index values (1, 2), (3, null)")
-	r := mustExecSQL(c, se, "select c1 from test_index where c > 0")
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 1)
-	match(c, rows[0], 1)
-
-	mustExecSQL(c, se, "drop table if exists t1, t2")
-	mustExecSQL(c, se, `
-			create table t1 (c1 int, primary key(c1));
-			create table t2 (c2 int, primary key(c2));`)
-	mustExecSQL(c, se, `
-			insert into t1 values (1), (2);
-			insert into t2 values (2);`)
-
-	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 order by t1.c1")
-	rows, err = GetRows(r)
-	c.Assert(err, IsNil)
-	matches(c, rows, [][]interface{}{{1, nil}, {2, 2}})
-
-	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 where t2.c2 < 10")
-	rows, err = GetRows(r)
-	c.Assert(err, IsNil)
-	matches(c, rows, [][]interface{}{{2, 2}})
-
-	mustExecSQL(c, se, "create table if not exists test_varchar_index (c1 varchar(255), index(c1))")
-	mustExecSQL(c, se, "insert test_varchar_index values (''), ('a')")
-	mustExecMatch(c, se, "select * from test_varchar_index where c1 like ''", [][]interface{}{{[]byte("")}})
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 int, c2 int)")
-	mustExecSQL(c, se, "insert into t values (1,2), (1,2)")
-	mustExecSQL(c, se, "create index idx_0 on t(c1)")
-	mustExecSQL(c, se, "create index idx_1 on t(c2)")
-	r = mustExecSQL(c, se, "select c1 as c2 from t where c1 >= 2")
-	rows, err = GetRows(r)
-	c.Assert(err, IsNil)
-	matches(c, rows, [][]interface{}{})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_mysql_types"
@@ -997,222 +789,6 @@ func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	match(c, row.Data, 2, 1)
 	r.Close()
 
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestExpression(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_expression"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	r := mustExecSQL(c, se, `select + (1 > 0), -(1 >0), + (1 < 0), - (1 < 0)`)
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1, -1, 0, 0)
-	r.Close()
-
-	r = mustExecSQL(c, se, "select 1 <=> 1, 1 <=> null, null <=> null, null <=> (select null)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1, 0, 1, 1)
-	r.Close()
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSelect(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_select"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "create table if not exists t (c1 int, c2 int)")
-	mustExecSQL(c, se, "create table if not exists t1 (c1 int, c2 int)")
-
-	_, err := se.Execute("select * from t as a join t as a")
-	c.Assert(err, NotNil)
-
-	_, err = se.Execute("select * from t join t1 as t")
-	c.Assert(err, NotNil)
-
-	_, err = se.Execute("select * from t join test.t")
-	c.Assert(err, NotNil)
-
-	_, err = se.Execute("select * from t as a join (select 1) as a")
-	c.Assert(err, IsNil)
-
-	r := mustExecSQL(c, se, "select 1, 2 from dual")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1, 2)
-
-	// Testcase For https://github.com/pingcap/tidb/issues/1071
-	r = mustExecSQL(c, se, `select 1 from dual where "0.1"`)
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
-	r = mustExecSQL(c, se, "select 1 from dual where 0.8")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-	r = mustExecSQL(c, se, "select 1, count(*) from dual where 0.1")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1, 0)
-	r = mustExecSQL(c, se, "select count(*), 1 from dual where 0.8")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1, 1)
-	r = mustExecSQL(c, se, "select 1, 2 from dual where 0.1")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
-	mustExecSQL(c, se, "create table if not exists t2 (c1 int, c2 int)")
-	mustExecSQL(c, se, "insert into t2 (c1, c2) values(1, 1), (2, 2), (3, 3)")
-	r = mustExecSQL(c, se, "select 1 from t2 where 0.1")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
-	r = mustExecSQL(c, se, "select 1 from t2 where 0.9")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-	r = mustExecSQL(c, se, "select sum(c1) from t2 where 0.1")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, nil)
-	r = mustExecSQL(c, se, "select sum(c1), c2 from t2 where 0.1")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, nil, nil)
-	r = mustExecSQL(c, se, "select 1+2, count(c1) from t2 where 0.1")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 3, 0)
-
-	r = mustExecSQL(c, se, "select 1, 2 from dual where not exists (select * from t where c1=2)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1, 2)
-
-	r = mustExecSQL(c, se, "select 1, 2")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1, 2)
-
-	r = mustExecSQL(c, se, `select '''a''', """a""", 'pingcap ''-->'' tidb'`)
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, `'a'`, `"a"`, `pingcap '-->' tidb`)
-
-	r = mustExecSQL(c, se, `select '\'a\'', "\"a\"";`)
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, `'a'`, `"a"`)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c varchar(20))")
-	mustExecSQL(c, se, `insert t values("pingcap '-->' tidb")`)
-
-	r = mustExecSQL(c, se, `select * from t where c like 'pingcap ''-->'' tidb'`)
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, []byte(`pingcap '-->' tidb`))
-
-	mustExecSQL(c, se, "drop table if exists t1")
-	mustExecSQL(c, se, "drop table if exists t2")
-	mustExecSQL(c, se, "drop table if exists t3")
-	mustExecSQL(c, se, "create table t1 (c1 int, c11 int)")
-	mustExecSQL(c, se, "create table t2 (c2 int)")
-	mustExecSQL(c, se, "create table t3 (c3 int)")
-	mustExecSQL(c, se, "insert into t1 values (1, 1), (2, 2), (3, 3)")
-	mustExecSQL(c, se, "insert into t2 values (1), (1), (2)")
-	mustExecSQL(c, se, "insert into t3 values (1), (3)")
-
-	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 left join t3 on t1.c1 = t3.c3 order by t1.c1, t2.c2, t3.c3")
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 4)
-	match(c, rows[0], 1, 1, 1, 1)
-	match(c, rows[1], 1, 1, 1, 1)
-	match(c, rows[2], 2, 2, 2, nil)
-	match(c, rows[3], 3, 3, nil, 3)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c float(8))")
-	mustExecSQL(c, se, "insert into t values (3.12)")
-	r = mustExecSQL(c, se, "select * from t")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 3.12)
-
-	mustExecSQL(c, se, `drop table if exists t;create table t (c int);insert into t values (1);`)
-	r = mustExecSQL(c, se, "select a.c from t as a where c between null and 2")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
-
-	mustExecSQL(c, se, "drop table if exists t1, t2, t3")
-	mustExecSQL(c, se, `
-		create table t1 (c1 int);
-		create table t2 (c2 int);
-		create table t3 (c3 int);`)
-	mustExecSQL(c, se, `
-		insert into t1 values (1), (2);
-		insert into t2 values (2);
-		insert into t3 values (3);`)
-	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 left join t3 on t1.c1 = t3.c3 order by t1.c1")
-	rows, err = GetRows(r)
-	c.Assert(err, IsNil)
-	matches(c, rows, [][]interface{}{{1, nil, nil}, {2, 2, nil}})
-
-	mustExecFailed(c, se, "select * from t1 left join t2 on t1.c1 = t3.c3 left join on t3 on t1.c1 = t2.c2")
-
-	// For issue 393
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (b blob)")
-	mustExecSQL(c, se, `insert t values('\x01')`)
-
-	r = mustExecSQL(c, se, `select length(b) from t`)
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 3)
-
-	mustExecSQL(c, se, `select * from t1, t2 where t1.c1 is null`)
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSubQuery(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_subquery"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "create table if not exists t1 (c1 int, c2 int)")
-	mustExecSQL(c, se, "create table if not exists t2 (c1 int, c2 int)")
-	mustExecSQL(c, se, "insert into t1 values (1, 1), (2, 2)")
-	mustExecSQL(c, se, "insert into t2 values (1, 1), (1, 2)")
-
-	r := mustExecSQL(c, se, `select c1 from t1 where c1 = (select c2 from t2 where t1.c2 = t2.c2)`)
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-
-	r = mustExecSQL(c, se, `select (select count(c1) from t2 where t2.c1 != t1.c2) from t1`)
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 2)
-	match(c, rows[0], 0)
-	match(c, rows[1], 2)
-
-	mustExecMatch(c, se, "select a.c1, a.c2 from (select c1 as c1, c1 as c2 from t1) as a", [][]interface{}{{1, 1}, {2, 2}})
 	mustExecSQL(c, se, dropDBSQL)
 }
 
@@ -1279,33 +855,6 @@ func (s *testSessionSuite) TestShow(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestTimeFunc(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_time_func"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	last := time.Now().Format(types.TimeFormat)
-	r := mustExecSQL(c, se, "select now(), now(6), current_timestamp, current_timestamp(), current_timestamp(6), sysdate(), sysdate(6)")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	for _, t := range row.Data {
-		n := t.GetMysqlTime()
-		c.Assert(n.String(), GreaterEqual, last)
-	}
-
-	last = time.Now().Format(types.DateFormat)
-	r = mustExecSQL(c, se, "select current_date, current_date(), curdate()")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	for _, t := range row.Data {
-		n := t.GetMysqlTime()
-		c.Assert(n.String(), GreaterEqual, last)
-	}
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestBit(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_bit"
@@ -1317,10 +866,49 @@ func (s *testSessionSuite) TestBit(c *C) {
 	mustExecSQL(c, se, "insert into t values (0), (1), (2), (3)")
 	_, err := exec(se, "insert into t values (4)")
 	c.Assert(err, NotNil)
+	_, err = exec(se, "insert into t values ('a')")
+	c.Assert(err, NotNil)
 	r := mustExecSQL(c, se, "select * from t where c1 = 2")
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlBit(), Equals, types.Bit{Value: 2, Width: 2})
+	c.Assert(row.Data[0].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(31))")
+	mustExecSQL(c, se, "insert into t values (0x7fffffff)")
+	_, err = exec(se, "insert into t values (0x80000000)")
+	c.Assert(err, NotNil)
+	_, err = exec(se, "insert into t values (0xffffffff)")
+	c.Assert(err, NotNil)
+	mustExecSQL(c, se, "insert into t values ('123')")
+	mustExecSQL(c, se, "insert into t values ('1234')")
+	_, err = exec(se, "insert into t values ('12345)")
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(62))")
+	mustExecSQL(c, se, "insert into t values ('12345678')")
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(61))")
+	_, err = exec(se, "insert into t values ('12345678')")
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(32))")
+	mustExecSQL(c, se, "insert into t values (0x7fffffff)")
+	mustExecSQL(c, se, "insert into t values (0xffffffff)")
+	_, err = exec(se, "insert into t values (0x1ffffffff)")
+	c.Assert(err, NotNil)
+	mustExecSQL(c, se, "insert into t values ('1234')")
+	_, err = exec(se, "insert into t values ('12345')")
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(64))")
+	mustExecSQL(c, se, "insert into t values (0xffffffffffffffff)")
+	mustExecSQL(c, se, "insert into t values ('12345678')")
+	_, err = exec(se, "insert into t values ('123456789')")
+	c.Assert(err, NotNil)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -1470,33 +1058,6 @@ func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	r, _, err := se.ExecRestrictedSQL(se, "select 1;")
 	c.Assert(err, IsNil)
 	c.Assert(len(r), Equals, 1)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestGroupBy(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_groupby"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 int, c2 int)")
-	mustExecSQL(c, se, "insert into t values (1,1), (2,2), (1,2), (1,3)")
-	mustExecMatch(c, se, "select nullif (count(*), 2);", [][]interface{}{{1}})
-	mustExecMatch(c, se, "select 1 as a, sum(c1) as a from t group by a", [][]interface{}{{1, 5}})
-	mustExecMatch(c, se, "select c1 as a, 1 as a, sum(c1) as a from t group by a", [][]interface{}{{1, 1, 5}})
-	mustExecMatch(c, se, "select c1 as a, 1 as a, c2 as a from t group by a;", [][]interface{}{{1, 1, 1}})
-	mustExecMatch(c, se, "select c1 as c2, sum(c1) as c2 from t group by c2;", [][]interface{}{{1, 1}, {2, 3}, {1, 1}})
-
-	mustExecMatch(c, se, "select c1 as c2, c2 from t group by c2 + 1", [][]interface{}{{1, 1}, {2, 2}, {1, 3}})
-	mustExecMatch(c, se, "select c1 as c2, count(c1) from t group by c2", [][]interface{}{{1, 1}, {2, 2}, {1, 1}})
-	mustExecMatch(c, se, "select t.c1, c1 from t group by c1", [][]interface{}{{1, 1}, {2, 2}})
-	mustExecMatch(c, se, "select t.c1 as a, c1 as a from t group by a", [][]interface{}{{1, 1}, {2, 2}})
-
-	mustExecFailed(c, se, "select c1 as a, c2 as a from t group by a")
-	mustExecFailed(c, se, "select c1 as c2, c2 from t group by c2")
-	mustExecFailed(c, se, "select sum(c1) as a from t group by a")
-	mustExecFailed(c, se, "select sum(c1) as a from t group by a + 1")
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -1692,19 +1253,6 @@ func (s *testSessionSuite) TestIssue177(c *C) {
 	mustExecSQL(c, se, `EXECUTE my_stmt;`)
 	mustExecSQL(c, se, `deallocate prepare my_stmt;`)
 	mustExecSQL(c, se, `drop table t1,t2;`)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestBuiltin(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_builtin"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	// Testcase for https://github.com/pingcap/tidb/issues/382
-	mustExecFailed(c, se, `select cast("xxx 10:10:10" as datetime)`)
-	mustExecMatch(c, se, "select locate('bar', 'foobarbar')", [][]interface{}{{4}})
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -2094,99 +1642,6 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestErrorRollback(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_error_rollback"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	s1 := newSession(c, s.store, dbName)
-
-	defer s1.Close()
-
-	mustExecSQL(c, s1, "drop table if exists t_rollback")
-	mustExecSQL(c, s1, "create table t_rollback (c1 int, c2 int, primary key(c1))")
-
-	_, err := s1.Execute("insert into t_rollback values (0, 0)")
-	c.Assert(err, IsNil)
-
-	var wg sync.WaitGroup
-	cnt := 4
-	wg.Add(cnt)
-	num := 100
-
-	for i := 0; i < cnt; i++ {
-		go func() {
-			defer wg.Done()
-			se := newSession(c, s.store, dbName)
-			// retry forever
-			se.(*session).unlimitedRetryCount = true
-			defer se.Close()
-
-			for j := 0; j < num; j++ {
-				// force generate a txn in session for later insert use.
-				se.(*session).GetTxn(false)
-
-				se.Execute("insert into t_rollback values (1, 1)")
-
-				_, err1 := se.Execute("update t_rollback set c2 = c2 + 1 where c1 = 0")
-				c.Assert(err1, IsNil)
-			}
-		}()
-	}
-
-	wg.Wait()
-
-	mustExecMatch(c, s1, "select c2 from t_rollback where c1 = 0", [][]interface{}{{cnt * num}})
-
-	mustExecSQL(c, s1, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_multi_column_index"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c1 int, c2 int);")
-	mustExecSQL(c, se, "create index idx_c1_c2 on t (c1, c2)")
-	mustExecSQL(c, se, "insert into t values (1, 5)")
-
-	sql := "select c1 from t where c1 in (1) and c2 < 10"
-	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[[1 -inf,1 10)]->Projection")
-	mustExecMatch(c, se, sql, [][]interface{}{{1}})
-
-	sql = "select c1 from t where c1 in (1) and c2 > 3"
-	checkPlan(c, se, sql, "Index(t.idx_c1_c2)[(1 3,1 +inf]]->Projection")
-	mustExecMatch(c, se, sql, [][]interface{}{{1}})
-
-	// TODO: c2 is int which will be added cast to real when building LT, thus we cannot extract access condition for it.
-	//sql = "select c1 from t where c1 in (1) and c2 < 5.1"
-	//checkPlan(c, se, sql, "Index(t.idx_c1_c2)[[1 -inf,1 5]]->Projection")
-	//mustExecMatch(c, se, sql, [][]interface{}{{1}})
-
-	sql = "select c1 from t where c1 in (1.1) and c2 > 3"
-	checkPlan(c, se, sql, "Table(t)->Selection->Projection")
-	mustExecMatch(c, se, sql, [][]interface{}{})
-
-	// Test varchar type.
-	mustExecSQL(c, se, "drop table t;")
-	mustExecSQL(c, se, "create table t (id int unsigned primary key auto_increment, c1 varchar(64), c2 varchar(64), index c1_c2 (c1, c2));")
-	mustExecSQL(c, se, "insert into t (c1, c2) values ('abc', 'def')")
-	sql = "select c1 from t where c1 = 'abc'"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}})
-
-	mustExecSQL(c, se, "insert into t (c1, c2) values ('abc', 'xyz')")
-	mustExecSQL(c, se, "insert into t (c1, c2) values ('abd', 'abc')")
-	mustExecSQL(c, se, "insert into t (c1, c2) values ('abd', 'def')")
-	sql = "select c1 from t where c1 >= 'abc' and c2 = 'def'"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}, {[]byte("abd")}})
-
-	sql = "select c1, c2 from t where c1 = 'abc' and id < 2"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc"), []byte("def")}})
-
-	mustExecSQL(c, se, dropDBSQL)
-	se.Close()
-}
-
 func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_substring_index_expr"
@@ -2240,7 +1695,11 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
 
-	_, err = exec(se, "create table t (c1 varchar(3068), c2 bit(26), index(c1, c2));")
+	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(26), index(c1, c2));") // 26 bit = 4 bytes
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(32), index(c1, c2));") // 32 bit = 4 bytes
+	mustExecSQL(c, se, "drop table if exists t;")
+	_, err = exec(se, "create table t (c1 varchar(3068), c2 bit(33), index(c1, c2));")
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
 
@@ -2270,12 +1729,6 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 timestamp(1));")
-	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(26));")
 	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
 	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
@@ -2435,215 +1888,6 @@ func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestJoinSubquery(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_join_subquery"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "CREATE TABLE table1 (id INTEGER key AUTO_INCREMENT, data VARCHAR(30))")
-	mustExecSQL(c, se, "CREATE TABLE table2 (id INTEGER key AUTO_INCREMENT, data VARCHAR(30), t1id INTEGER)")
-	sqlTxt := `SELECT table1.id AS table1_id, table1.data AS table1_data FROM
-	table1 INNER JOIN (
-		SELECT table2.id AS id, table2.data AS data, table2.t1id AS t1id FROM table2
-	) AS anon_1 ON table1.id = anon_1.t1id;`
-	mustExecSQL(c, se, sqlTxt)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
-	defer testleak.AfterTest(c)()
-
-	varName := "max_allowed_packet"
-	varValue := "67108864" // This is the default value for max_allowed_packet
-	varValue1 := "4194305"
-	varValue2 := "4194306"
-
-	dbName := "test_global_var_accessor"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName).(*session)
-	// Get globalSysVar twice and get the same value
-	v, err := se.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue)
-	v, err = se.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue)
-	// Set global var to another value
-	err = se.SetGlobalSysVar(varName, varValue1)
-	c.Assert(err, IsNil)
-	v, err = se.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue1)
-	c.Assert(se.CommitTxn(), IsNil)
-
-	// Change global variable value in another session
-	se1 := newSession(c, s.store, dbName).(*session)
-	v, err = se1.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue1)
-	err = se1.SetGlobalSysVar(varName, varValue2)
-	c.Assert(err, IsNil)
-	v, err = se1.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue2)
-	c.Assert(se1.CommitTxn(), IsNil)
-
-	// Make sure the change is visible to any client that accesses that global variable.
-	v, err = se.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue2)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func checkPlan(c *C, se Session, sql, explain string) {
-	ctx := se.(context.Context)
-	stmts, err := Parse(ctx, sql)
-	c.Assert(err, IsNil)
-	stmt := stmts[0]
-	is := sessionctx.GetDomain(ctx).InfoSchema()
-	err = plan.PrepareStmt(is, ctx, stmt)
-	c.Assert(err, IsNil)
-	p, err := plan.Optimize(ctx, stmt, is)
-	c.Assert(err, IsNil)
-	c.Assert(plan.ToString(p), Equals, explain)
-}
-
-func mustExecMultiSQL(c *C, se Session, sql string) {
-	ss := strings.Split(sql, "\n")
-	for _, s := range ss {
-		s = strings.TrimSpace(s)
-		if len(s) == 0 {
-			continue
-		}
-		mustExecSQL(c, se, s)
-	}
-}
-
-func (s *testSessionSuite) TestSqlLogicTestCase(c *C) {
-	initSQL := `
-		CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT)
-		INSERT INTO tab1 VALUES(0,26,690.51)
-		CREATE INDEX idx_tab1_1 on tab1 (col1)`
-	dbName := "test_sql_logic_test_case"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecMultiSQL(c, se, initSQL)
-
-	sql := "SELECT col0 FROM tab1 WHERE 71*22 >= col1"
-	mustExecMatch(c, se, sql, [][]interface{}{{"26"}})
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestXAggregateWithIndexScan(c *C) {
-	initSQL := `
-		drop table IF EXISTS t;
-		CREATE TABLE t(c INT, index cidx (c));
-		INSERT INTO t VALUES(1), (null), (2);`
-	dbName := "test_xaggregate_with_index_scan"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecMultiSQL(c, se, initSQL)
-	sql := "SELECT COUNT(c) FROM t WHERE c > 0;"
-	mustExecMatch(c, se, sql, [][]interface{}{{"2"}})
-
-	initSQL = `
-	Drop table if exists tab1;
-	CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);
-	CREATE INDEX idx_tab1_3 on tab1 (col3);
-	INSERT INTO tab1 VALUES(0,656,638.70,'zsiag',614,231.92,'dkfhp');
-	`
-	mustExecMultiSQL(c, se, initSQL)
-	sql = "SELECT DISTINCT + - COUNT( col3 ) AS col1 FROM tab1 AS cor0 WHERE col3 > 0;"
-	mustExecMatch(c, se, sql, [][]interface{}{{"-1"}})
-
-	sql = "SELECT DISTINCT + - COUNT( col3 ) AS col1 FROM tab1 AS cor0 WHERE col3 > 0 group by col0;"
-	mustExecMatch(c, se, sql, [][]interface{}{{"-1"}})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// TestXAggregateWithoutAggFunc tests select with groupby but without aggregate function.
-func (s *testSessionSuite) TestXAggregateWithoutAggFunc(c *C) {
-	// TableScan
-	initSQL := `
-		drop table IF EXISTS t;
-		CREATE TABLE t (c INT);
-		INSERT INTO t VALUES(1), (2), (3), (3);`
-	dbName := "test_xaggregate_without_agg_func"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecMultiSQL(c, se, initSQL)
-	sql := "SELECT 18 FROM t group by c;"
-	mustExecMatch(c, se, sql, [][]interface{}{{"18"}, {"18"}, {"18"}})
-
-	// IndexScan
-	initSQL = `
-		drop table IF EXISTS t;
-		CREATE TABLE t(c INT, index cidx (c));
-		INSERT INTO t VALUES(1), (2), (3), (3);`
-	mustExecMultiSQL(c, se, initSQL)
-	sql = "SELECT 18 FROM t where c > 1 group by c;"
-	mustExecMatch(c, se, sql, [][]interface{}{{"18"}, {"18"}})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// TestSelectHaving tests select with having.
-// Move from executor to prevent from using mock-tikv.
-func (s *testSessionSuite) TestSelectHaving(c *C) {
-	defer testleak.AfterTest(c)()
-	table := "select_having_test"
-	initSQL := fmt.Sprintf(`use test;
-		drop table if exists %s;
-		create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));
-		insert INTO %s VALUES (1, "hello");
-		insert into %s VALUES (2, "hello");`,
-		table, table, table, table)
-	dbName := "test_select_having"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecMultiSQL(c, se, initSQL)
-	sql := "select id, name from select_having_test where id in (1,3) having name like 'he%';"
-	mustExecMatch(c, se, sql, [][]interface{}{{"1", fmt.Sprintf("%v", []byte("hello"))}})
-	mustExecMultiSQL(c, se, "select * from select_having_test group by id having null is not null;")
-	mustExecMultiSQL(c, se, "drop table select_having_test")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestQueryString(c *C) {
-	dbName := "test_query_string"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	_, err := se.Execute("create table mutil1 (a int);create table multi2 (a int)")
-	c.Assert(err, IsNil)
-	ctx := se.(context.Context)
-	queryStr := ctx.Value(context.QueryString)
-	c.Assert(queryStr, Equals, "create table multi2 (a int)")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
-func (s *testSessionSuite) TestTruncateAlloc(c *C) {
-	dbName := "test_truncate_alloc"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	_, err := se.Execute("create table truncate_id (a int primary key auto_increment)")
-	c.Assert(err, IsNil)
-	mustExecute(se, "insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
-	mustExecute(se, "truncate table truncate_id")
-	mustExecute(se, "insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
-	rset := mustExecSQL(c, se, "select a from truncate_id where a > 11")
-	row, err := rset.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 // TestISColumns tests information_schema.columns.
 func (s *testSessionSuite) TestISColumns(c *C) {
 	defer testleak.AfterTest(c)()
@@ -2654,94 +1898,4 @@ func (s *testSessionSuite) TestISColumns(c *C) {
 	mustExecSQL(c, se, sql)
 
 	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_retry_clean_txn"
-	se := newSession(c, s.store, dbName).(*session)
-	se.Execute("create table retrytxn (a int unique, b int)")
-	_, err := se.Execute("insert retrytxn values (1, 1)")
-	c.Assert(err, IsNil)
-	se.Execute("begin")
-	se.Execute("update retrytxn set b = b + 1 where a = 1")
-
-	// Make retryable error.
-	se2 := newSession(c, s.store, dbName)
-	se2.Execute("update retrytxn set b = b + 1 where a = 1")
-
-	// Hijack retry history, add a statement that returns error.
-	history := getHistory(se)
-	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
-	c.Assert(err, IsNil)
-	stmt, err := Compile(se, stmtNode)
-	executor.ResetStmtCtx(se, stmtNode)
-	history.add(0, stmt, se.sessionVars.StmtCtx)
-	_, err = se.Execute("commit")
-	c.Assert(err, NotNil)
-	c.Assert(se.Txn(), IsNil)
-	c.Assert(se.sessionVars.InTxn(), IsFalse)
-}
-
-func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_retry_reset_stmtctx"
-	se := newSession(c, s.store, dbName).(*session)
-	se.Execute("create table retrytxn (a int unique, b int)")
-	_, err := se.Execute("insert retrytxn values (1, 1)")
-	c.Assert(err, IsNil)
-	se.Execute("begin")
-	se.Execute("update retrytxn set b = b + 1 where a = 1")
-
-	// Make retryable error.
-	se2 := newSession(c, s.store, dbName)
-	se2.Execute("update retrytxn set b = b + 1 where a = 1")
-
-	err = se.CommitTxn()
-	c.Assert(err, IsNil)
-	c.Assert(se.AffectedRows(), Equals, uint64(1))
-}
-
-func (s *testSessionSuite) TestCommitWhenSchemaChanged(c *C) {
-	c.Skip("skip localstore when lease is 0")
-	defer testleak.AfterTest(c)()
-	dbName := "test_commit_when_schema_changed"
-	s1 := newSession(c, s.store, dbName)
-	mustExecSQL(c, s1, "create table t (a int, b int)")
-
-	s2 := newSession(c, s.store, dbName)
-	mustExecSQL(c, s2, "begin")
-	mustExecSQL(c, s2, "insert into t values (1, 1)")
-
-	mustExecSQL(c, s1, "alter table t drop column b")
-
-	// When s2 commit, it will find schema already changed.
-	mustExecSQL(c, s2, "insert into t values (4, 4)")
-	_, err := s2.Execute("commit")
-	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
-}
-
-func (s *testSessionSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_prepare_commit_when_schema_changed"
-	s1 := newSession(c, s.store, dbName)
-	mustExecSQL(c, s1, "create table t (a int, b int)")
-
-	s2 := newSession(c, s.store, dbName)
-	mustExecSQL(c, s2, "prepare stmt from 'insert into t values (?, ?)'")
-	mustExecSQL(c, s2, "set @a = 1")
-
-	// Commit find unrelated schema change.
-	mustExecSQL(c, s2, "begin")
-	mustExecSQL(c, s1, "create table t1 (id int)")
-	mustExecSQL(c, s2, "execute stmt using @a, @a")
-	_, err := s2.Execute("commit")
-	c.Assert(err, IsNil)
-
-	// TODO: PrepareStmt should handle this.
-	// mustExecSQL(c, s2, "begin")
-	// mustExecSQL(c, s1, "alter table t drop column b")
-	// mustExecSQL(c, s2, "execute stmt using @a, @a")
-	// _, err = s2.Execute("commit")
-	// c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
 }

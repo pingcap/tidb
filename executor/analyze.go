@@ -14,13 +14,11 @@
 package executor
 
 import (
-	"math/rand"
 	"strconv"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -28,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var _ Executor = &AnalyzeExec{}
@@ -40,9 +37,9 @@ type AnalyzeExec struct {
 }
 
 const (
-	maxSampleCount     = 10000
-	maxSketchSize      = 1000
-	defaultBucketCount = 256
+	maxSampleSize = 10000
+	maxSketchSize = 10000
+	maxBucketSize = 256
 )
 
 // Schema implements the Executor Schema interface.
@@ -145,6 +142,7 @@ type analyzeTask struct {
 	Columns   []*model.ColumnInfo
 	PKInfo    *model.ColumnInfo
 	src       Executor
+	idxExec   *AnalyzeIndexExec
 }
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
@@ -153,7 +151,11 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 		case colTask:
 			resultCh <- e.analyzeColumns(task)
 		case idxTask:
-			resultCh <- e.analyzeIndex(task)
+			if task.idxExec != nil {
+				resultCh <- analyzeIndexPushdown(task.idxExec)
+			} else {
+				resultCh <- e.analyzeIndex(task)
+			}
 		}
 	}
 }
@@ -162,7 +164,20 @@ func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) statistics.AnalyzeResult
 	if e := task.src.Open(); e != nil {
 		return statistics.AnalyzeResult{Err: e}
 	}
-	collectors, pkBuilder, err := CollectSamplesAndEstimateNDVs(e.ctx, &recordSet{executor: task.src}, len(task.Columns), task.PKInfo)
+	pkID := int64(-1)
+	if task.PKInfo != nil {
+		pkID = task.PKInfo.ID
+	}
+	builder := statistics.SampleBuilder{
+		Sc:            e.ctx.GetSessionVars().StmtCtx,
+		RecordSet:     &recordSet{executor: task.src},
+		ColLen:        len(task.Columns),
+		PkID:          pkID,
+		MaxBucketSize: maxBucketSize,
+		MaxSketchSize: maxSketchSize,
+		MaxSampleSize: maxSampleSize,
+	}
+	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
 	if e := task.src.Close(); e != nil {
 		return statistics.AnalyzeResult{Err: e}
 	}
@@ -172,12 +187,12 @@ func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) statistics.AnalyzeResult
 	result := statistics.AnalyzeResult{TableID: task.tableInfo.ID, IsIndex: 0}
 	if task.PKInfo != nil {
 		result.Count = pkBuilder.Count
-		result.Hist = []*statistics.Histogram{pkBuilder.Hist}
+		result.Hist = []*statistics.Histogram{pkBuilder.Hist()}
 	} else {
 		result.Count = collectors[0].Count + collectors[0].NullCount
 	}
 	for i, col := range task.Columns {
-		hg, err := statistics.BuildColumn(e.ctx, defaultBucketCount, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].samples)
+		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].Samples)
 		result.Hist = append(result.Hist, hg)
 		if err != nil && result.Err == nil {
 			result.Err = err
@@ -190,79 +205,9 @@ func (e *AnalyzeExec) analyzeIndex(task *analyzeTask) statistics.AnalyzeResult {
 	if e := task.src.Open(); e != nil {
 		return statistics.AnalyzeResult{Err: e}
 	}
-	count, hg, err := statistics.BuildIndex(e.ctx, defaultBucketCount, task.indexInfo.ID, &recordSet{executor: task.src})
+	count, hg, err := statistics.BuildIndex(e.ctx, maxBucketSize, task.indexInfo.ID, &recordSet{executor: task.src})
 	if e := task.src.Close(); e != nil {
 		return statistics.AnalyzeResult{Err: e}
 	}
 	return statistics.AnalyzeResult{TableID: task.tableInfo.ID, Hist: []*statistics.Histogram{hg}, Count: count, IsIndex: 1, Err: err}
-}
-
-// SampleCollector will collect samples and calculate the count and ndv of an attribute.
-type SampleCollector struct {
-	samples   []types.Datum
-	NullCount int64
-	Count     int64
-	Sketch    *statistics.FMSketch
-}
-
-func (c *SampleCollector) collect(d types.Datum) error {
-	if d.IsNull() {
-		c.NullCount++
-		return nil
-	}
-	c.Count++
-	// The following code use types.CopyDatum(d) because d may have a deep reference
-	// to the underlying slice, GC can't free them which lead to memory leak eventually.
-	// TODO: Refactor the proto to avoid copying here.
-	if len(c.samples) < maxSampleCount {
-		c.samples = append(c.samples, types.CopyDatum(d))
-	} else {
-		shouldAdd := rand.Int63n(c.Count) < maxSampleCount
-		if shouldAdd {
-			idx := rand.Intn(maxSampleCount)
-			c.samples[idx] = types.CopyDatum(d)
-		}
-	}
-	return errors.Trace(c.Sketch.InsertValue(d))
-}
-
-// CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
-// and estimates NDVs using FM Sketch during the collecting process. Also, if pkInfo is not nil, it will directly build
-// histogram for PK. It returns the sample collectors which contain total count, null count and distinct values count.
-// It also returns the statistic builder for PK which contains the histogram.
-// See https://en.wikipedia.org/wiki/Reservoir_sampling
-// Exported for test.
-func CollectSamplesAndEstimateNDVs(ctx context.Context, e ast.RecordSet, numCols int, pkInfo *model.ColumnInfo) ([]*SampleCollector, *statistics.SortedBuilder, error) {
-	var pkBuilder *statistics.SortedBuilder
-	if pkInfo != nil {
-		pkBuilder = statistics.NewSortedBuilder(ctx, defaultBucketCount, pkInfo.ID, true)
-	}
-	collectors := make([]*SampleCollector, numCols)
-	for i := range collectors {
-		collectors[i] = &SampleCollector{
-			Sketch: statistics.NewFMSketch(maxSketchSize),
-		}
-	}
-	for {
-		row, err := e.Next()
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		if row == nil {
-			return collectors, pkBuilder, nil
-		}
-		if pkInfo != nil {
-			err = pkBuilder.Iterate(row.Data)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			row.Data = row.Data[1:]
-		}
-		for i, val := range row.Data {
-			err = collectors[i].collect(val)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-		}
-	}
 }

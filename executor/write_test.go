@@ -27,15 +27,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testSuite) TestInsert(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -190,10 +185,6 @@ func (s *testSuite) TestInsert(c *C) {
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
@@ -327,10 +318,6 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 }
 
 func (s *testSuite) TestInsertIgnore(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
 	tk.MustExec("use test")
@@ -384,10 +371,6 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 }
 
 func (s *testSuite) TestReplace(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -509,10 +492,6 @@ func (s *testSuite) TestReplace(c *C) {
 }
 
 func (s *testSuite) TestUpdate(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "update_test")
@@ -596,6 +575,28 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 }
 
+// For issue #4514.
+func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table update_modified (col_1 int, col_2 enum('a', 'b'))")
+	tk.MustExec("set SQL_MODE=''")
+	tk.MustExec("insert into update_modified values (0, 3)")
+	r := tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("0 "))
+	tk.MustExec("set SQL_MODE=STRICT_ALL_TABLES")
+	tk.MustExec("update update_modified set col_1 = 1")
+	r = tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("1 "))
+	_, err := tk.Exec("update update_modified set col_1 = 2, col_2 = 'c'")
+	c.Assert(err, NotNil)
+	r = tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("1 "))
+	tk.MustExec("update update_modified set col_1 = 3, col_2 = 'a'")
+	r = tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("3 a"))
+}
+
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
 	// Create and fill table items
 	tk.MustExec("CREATE TABLE items (id int, price TEXT);")
@@ -608,10 +609,6 @@ func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
 }
 
 func (s *testSuite) TestMultipleTableUpdate(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillMultiTableForUpdate(tk)
@@ -669,10 +666,6 @@ func (s *testSuite) TestMultipleTableUpdate(c *C) {
 }
 
 func (s *testSuite) TestDelete(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	s.fillData(tk, "delete_test")
 
@@ -718,10 +711,6 @@ func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
 }
 
 func (s *testSuite) TestMultiTableDelete(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	s.fillDataMultiTable(tk)
 
@@ -734,10 +723,6 @@ func (s *testSuite) TestMultiTableDelete(c *C) {
 }
 
 func (s *testSuite) TestQualifiedDelete(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -774,10 +759,6 @@ func (s *testSuite) TestQualifiedDelete(c *C) {
 }
 
 func (s *testSuite) TestLoadData(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists load_data_test;
@@ -938,10 +919,6 @@ func (s *testSuite) TestLoadData(c *C) {
 }
 
 func (s *testSuite) TestLoadDataEscape(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
@@ -965,10 +942,6 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 
 // reuse TestLoadDataEscape's test case :-)
 func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
@@ -1016,8 +989,6 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	originBatch := executor.BatchInsertSize
 	originDeleteBatch := executor.BatchDeleteSize
 	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
 		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
 		executor.BatchInsertSize = originBatch
 		executor.BatchDeleteSize = originDeleteBatch
@@ -1111,10 +1082,6 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 }
 
 func (s *testSuite) TestNullDefault(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists test_null_default;")
 	tk.MustExec("set timestamp = 1234")
@@ -1177,10 +1144,6 @@ func assertEqualStrings(c *C, got []string, expect []string) {
 
 // Test issue https://github.com/pingcap/tidb/issues/4067
 func (s *testSuite) TestIssue4067(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")

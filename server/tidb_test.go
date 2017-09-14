@@ -28,7 +28,6 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
@@ -43,25 +42,27 @@ var suite = new(TidbTestSuite)
 var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	log.SetLevelByString("error")
 	store, err := tidb.NewStore("memory:///tmp/tidb")
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := &config.Config{
-		Addr:         ":4001",
-		LogLevel:     "debug",
-		StatusAddr:   ":10090",
-		ReportStatus: true,
-		TCPKeepAlive: true,
+		Port: 4001,
+		Status: config.Status{
+			ReportStatus: true,
+			StatusPort:   10090,
+		},
+		Performance: config.Performance{
+			TCPKeepAlive: true,
+		},
 	}
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
-	waitUntilServerOnline(cfg.StatusAddr)
+	waitUntilServerOnline(cfg.Status.StatusPort)
 
 	// Run this test here because parallel would affect the result of it.
 	runTestStmtCount(c)
@@ -97,7 +98,7 @@ func (ts *TidbTestSuite) TestPreparedString(c *C) {
 
 func (ts *TidbTestSuite) TestLoadData(c *C) {
 	c.Parallel()
-	runTestLoadData(c)
+	runTestLoadData(c, suite.server)
 }
 
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
@@ -144,9 +145,10 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 
 func (ts *TidbTestSuite) TestSocket(c *C) {
 	cfg := &config.Config{
-		LogLevel:   "debug",
-		StatusAddr: ":10091",
-		Socket:     "/tmp/tidbtest.sock",
+		Socket: "/tmp/tidbtest.sock",
+		Status: config.Status{
+			StatusPort: 10091,
+		},
 	}
 
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -278,10 +280,11 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.Addr = "localhost:4002"
 	}
 	cfg := &config.Config{
-		Addr:         ":4002",
-		LogLevel:     "debug",
-		StatusAddr:   ":10091",
-		ReportStatus: true,
+		Port: 4002,
+		Status: config.Status{
+			ReportStatus: true,
+			StatusPort:   10091,
+		},
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -298,12 +301,15 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.Addr = "localhost:4003"
 	}
 	cfg = &config.Config{
-		Addr:         ":4003",
-		LogLevel:     "debug",
-		StatusAddr:   ":10091",
-		ReportStatus: true,
-		SSLCertPath:  "/tmp/server-cert.pem",
-		SSLKeyPath:   "/tmp/server-key.pem",
+		Port: 4003,
+		Status: config.Status{
+			ReportStatus: true,
+			StatusPort:   10091,
+		},
+		Security: config.Security{
+			SSLCert: "/tmp/server-cert.pem",
+			SSLKey:  "/tmp/server-key.pem",
+		},
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -328,13 +334,16 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.Addr = "localhost:4004"
 	}
 	cfg = &config.Config{
-		Addr:         ":4004",
-		LogLevel:     "debug",
-		StatusAddr:   ":10091",
-		ReportStatus: true,
-		SSLCertPath:  "/tmp/server-cert.pem",
-		SSLKeyPath:   "/tmp/server-key.pem",
-		SSLCAPath:    "/tmp/ca-cert.pem",
+		Port: 4004,
+		Status: config.Status{
+			ReportStatus: true,
+			StatusPort:   10091,
+		},
+		Security: config.Security{
+			SSLCA:   "/tmp/ca-cert.pem",
+			SSLCert: "/tmp/server-cert.pem",
+			SSLKey:  "/tmp/server-key.pem",
+		},
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)

@@ -25,9 +25,10 @@ import (
 	"testing"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/go-sql-driver/mysql"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/executor"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/printer"
@@ -35,6 +36,10 @@ import (
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 	TestingT(t)
 }
 
@@ -295,7 +300,7 @@ func runTestPreparedString(t *C) {
 	})
 }
 
-func runTestLoadData(c *C) {
+func runTestLoadData(c *C, server *Server) {
 	// create a file and write data.
 	path := "/tmp/load_data_test.csv"
 	fp, err := os.Create(path)
@@ -427,7 +432,7 @@ func runTestLoadData(c *C) {
 	})
 
 	// unsupport ClientLocalFiles capability
-	suite.server.capability ^= tmysql.ClientLocalFiles
+	server.capability ^= tmysql.ClientLocalFiles
 	runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 	}, "LoadData", func(dbt *DBTest) {
@@ -436,7 +441,7 @@ func runTestLoadData(c *C) {
 		dbt.Assert(err, NotNil)
 		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
 	})
-	suite.server.capability |= tmysql.ClientLocalFiles
+	server.capability |= tmysql.ClientLocalFiles
 }
 
 func runTestConcurrentUpdate(c *C) {
@@ -740,7 +745,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 const retryTime = 100
 
-func waitUntilServerOnline(statusAddr string) {
+func waitUntilServerOnline(statusPort int) {
 	// connect server
 	retry := 0
 	for ; retry < retryTime; retry++ {
@@ -755,7 +760,7 @@ func waitUntilServerOnline(statusAddr string) {
 		log.Fatalf("Failed to connect db for %d retries in every 10 ms", retryTime)
 	}
 	// connect http status
-	statusURL := fmt.Sprintf("http://127.0.0.1%s/status", statusAddr)
+	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
 	for retry = 0; retry < retryTime; retry++ {
 		resp, err := http.Get(statusURL)
 		if err == nil {
