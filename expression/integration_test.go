@@ -1570,11 +1570,11 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 		{"\"2011-11-11\"", "\"10:10:10\"", "MINUTE_MICROSECOND", "<nil>", "<nil>"},
 	}
 	for _, tc := range dateArithmeticalTests {
-		dateAdd := fmt.Sprintf("select adddate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
-		dateSub := fmt.Sprintf("select subdate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
-		result = tk.MustQuery(dateAdd)
+		addDate := fmt.Sprintf("select adddate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
+		subDate := fmt.Sprintf("select subdate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
+		result = tk.MustQuery(addDate)
 		result.Check(testkit.Rows(tc.AddResult))
-		result = tk.MustQuery(dateSub)
+		result = tk.MustQuery(subDate)
 		result.Check(testkit.Rows(tc.SubResult))
 	}
 

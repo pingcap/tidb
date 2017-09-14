@@ -729,10 +729,10 @@ var funcs = map[string]functionClass{
 	ast.Truncate: &truncateFunctionClass{baseFunctionClass{ast.Truncate, 2, 2}},
 
 	// time functions
-	ast.AddDate:          &dateAddFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}},
-	ast.DateAdd:          &dateAddFunctionClass{baseFunctionClass{ast.DateAdd, 3, 3}},
-	ast.SubDate:          &dateSubFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}},
-	ast.DateSub:          &dateSubFunctionClass{baseFunctionClass{ast.DateSub, 3, 3}},
+	ast.AddDate:          &addDateFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}},
+	ast.DateAdd:          &addDateFunctionClass{baseFunctionClass{ast.DateAdd, 3, 3}},
+	ast.SubDate:          &subDateFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}},
+	ast.DateSub:          &subDateFunctionClass{baseFunctionClass{ast.DateSub, 3, 3}},
 	ast.AddTime:          &addTimeFunctionClass{baseFunctionClass{ast.AddTime, 2, 2}},
 	ast.ConvertTz:        &convertTzFunctionClass{baseFunctionClass{ast.ConvertTz, 3, 3}},
 	ast.Curdate:          &currentDateFunctionClass{baseFunctionClass{ast.Curdate, 0, 0}},

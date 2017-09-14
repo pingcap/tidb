@@ -103,8 +103,8 @@ var (
 	_ functionClass = &utcTimeFunctionClass{}
 	_ functionClass = &timestampFunctionClass{}
 	_ functionClass = &lastDayFunctionClass{}
-	_ functionClass = &dateAddFunctionClass{}
-	_ functionClass = &dateSubFunctionClass{}
+	_ functionClass = &addDateFunctionClass{}
+	_ functionClass = &subDateFunctionClass{}
 )
 
 var (
@@ -2061,11 +2061,11 @@ func (du *baseDateArithmitical) sub(ctx context.Context, date types.Time, interv
 	return date, false, nil
 }
 
-type dateAddFunctionClass struct {
+type addDateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *dateAddFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *addDateFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2293,11 +2293,11 @@ func (b *builtinAddDateDatetimeIntSig) evalTime(row []types.Datum) (types.Time, 
 	return result, isNull || err != nil, errors.Trace(err)
 }
 
-type dateSubFunctionClass struct {
+type subDateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *dateSubFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *subDateFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
