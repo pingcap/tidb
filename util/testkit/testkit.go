@@ -83,6 +83,14 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	}
 }
 
+// NewTestKitWithInit returns a new *TestKit and creates a session.
+func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
+	tk := NewTestKit(c, store)
+	// Use test and prepare a session.
+	tk.MustExec("use test")
+	return tk
+}
+
 var connectionID uint64
 
 // Exec executes a sql statement.
