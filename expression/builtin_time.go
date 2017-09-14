@@ -315,29 +315,25 @@ func (c *dateLiteralFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	zeroDate := tm.Time.Year() == 0 && tm.Time.Month() == 0 && tm.Time.Day() == 0
-	zeroInDate := (tm.Time.Month() == 0 || tm.Time.Day() == 0) && (!zeroDate)
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString)
 	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, 10, 0
-	sig := &builtinDateLiteralSig{baseTimeBuiltinFunc{bf}, tm, zeroDate, zeroInDate}
+	sig := &builtinDateLiteralSig{baseTimeBuiltinFunc{bf}, tm}
 	return sig.setSelf(sig), nil
 }
 
 type builtinDateLiteralSig struct {
 	baseTimeBuiltinFunc
-	literal    types.Time
-	zeroDate   bool
-	zeroInDate bool
+	literal types.Time
 }
 
 // evalTime evals DATE 'stringLit'.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
 func (b *builtinDateLiteralSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	mode := b.getCtx().GetSessionVars().SQLMode
-	if mode.IsNoZeroDateMode() && b.zeroDate {
+	if mode.IsNoZeroDateMode() && b.literal.IsZero() {
 		return b.literal, true, errors.Trace(types.ErrInvalidTimeFormat)
 	}
-	if mode.IsNoZeroInDateMode() && b.zeroInDate {
+	if mode.IsNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
 		return b.literal, true, errors.Trace(types.ErrInvalidTimeFormat)
 	}
 	return b.literal, false, nil
