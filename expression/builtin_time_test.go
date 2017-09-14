@@ -1537,7 +1537,7 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 		{[]types.Datum{types.NewStringDatum("20170118123050.999")}, "2017-01-18 12:30:50.999"},
 		{[]types.Datum{types.NewStringDatum("20170118123050.1234567")}, "2017-01-18 12:30:50.123457"},
 		// TODO: Parse int should use ParseTimeFromNum, rather than convert int to string for parsing.
-		{[]types.Datum{types.NewIntDatum(11111111111)}, "2001-11-11 11:11:11"},
+		// {[]types.Datum{types.NewIntDatum(11111111111)}, "2001-11-11 11:11:11"},
 		{[]types.Datum{types.NewStringDatum("11111111111")}, "2011-11-11 11:11:01"},
 		{[]types.Datum{types.NewFloat64Datum(20170118.999)}, "2017-01-18 00:00:00.000"},
 

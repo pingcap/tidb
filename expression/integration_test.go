@@ -1202,9 +1202,9 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2003-12-31 00:00:00 2004-01-01 00:00:00"))
 	result = tk.MustQuery("select timestamp(20170118123950.123), timestamp(20170118123950.999);")
 	result.Check(testkit.Rows("2017-01-18 12:39:50.123 2017-01-18 12:39:50.999"))
-	result = tk.MustQuery("select timestamp('2003-12-31', '01:01:01.01'), timestamp('2003-12-31.1234', '01:01:01.01')," +
+	result = tk.MustQuery("select timestamp('2003-12-31', '01:01:01.01'), timestamp('2003-12-31 12:34', '01:01:01.01')," +
 		" timestamp('2008-12-31','00:00:00.0'), timestamp('2008-12-31 00:00:00.000');")
-	result.Check(testkit.Rows("2003-12-31 01:01:01.01 2003-12-31 01:01:01.1334 2008-12-31 00:00:00.0 2008-12-31 00:00:00.000"))
+	result.Check(testkit.Rows("2003-12-31 01:01:01.01 2003-12-31 13:35:01.01 2008-12-31 00:00:00.0 2008-12-31 00:00:00.000"))
 	result = tk.MustQuery("select timestamp('2003-12-31', 1), timestamp('2003-12-31', -1);")
 	result.Check(testkit.Rows("2003-12-31 00:00:01 2003-12-30 23:59:59"))
 	result = tk.MustQuery("select timestamp('2003-12-31', '2000-12-12 01:01:01.01'), timestamp('2003-14-31','01:01:01.01');")
