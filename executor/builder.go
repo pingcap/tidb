@@ -1050,7 +1050,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:  maxBucketSize,
-		SampleSize:  maxSampleSize,
+		SampleSize:  maxRegionSampleSize,
 		SketchSize:  maxSketchSize,
 		ColumnsInfo: distsql.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
 	}

@@ -37,9 +37,10 @@ type AnalyzeExec struct {
 }
 
 const (
-	maxSampleSize = 10000
-	maxSketchSize = 10000
-	maxBucketSize = 256
+	maxSampleSize       = 10000
+	maxRegionSampleSize = 1000
+	maxSketchSize       = 10000
+	maxBucketSize       = 256
 )
 
 // Schema implements the Executor Schema interface.
