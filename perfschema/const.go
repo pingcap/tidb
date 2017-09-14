@@ -39,6 +39,7 @@ const (
 	TableStagesHistory          = "EVENTS_STAGES_HISTORY"
 	TableStagesHistoryLong      = "EVENTS_STAGES_HISTORY_LONG"
 	TableSessionStatus          = "SESSION_STATUS"
+	TableGlobalStatus           = "GLOBAL_STATUS"
 )
 
 // PerfSchemaTables is a shortcut to involve all table names.
@@ -61,6 +62,7 @@ var PerfSchemaTables = []string{
 	TableStagesHistory,
 	TableStagesHistoryLong,
 	TableSessionStatus,
+	TableGlobalStatus,
 }
 
 // ColumnGlobalStatus contains the column name definitions for table global_status, same as MySQL.

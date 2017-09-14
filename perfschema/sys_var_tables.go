@@ -26,12 +26,13 @@ import (
 	"github.com/juju/errors"
 )
 
-var setupSessionStatusCols = []columnInfo{
+//columns info for status
+var setupStatusCols = []columnInfo{
 	{mysql.TypeString, 60, mysql.NotNullFlag, `%`, nil},
 	{mysql.TypeString, 32, 0, `%`, nil},
 }
 
-var ColumnSessionStatus = []string{
+var ColumnStatus = []string{
 	"variable_name",
 	"variable_value",
 }
@@ -65,10 +66,45 @@ func (h *TableSessionStatusHandle) GetRows(ctx context.Context,
 	return rows, nil
 }
 
+//global status,
+type TableGlobalStatusHandle struct {
+}
+
+func (h *TableGlobalStatusHandle) GetRows(ctx context.Context,
+	cols []*table.Column) (fullRows [][]types.Datum, err error) {
+	sessionVars := ctx.GetSessionVars()
+	statusVars, err := variable.GetStatusVars(sessionVars)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	rows := [][]types.Datum{}
+	for status, v := range statusVars {
+		if v.Scope == variable.ScopeSession {
+			continue
+		}
+
+		switch v.Value.(type) {
+		case []interface{}, nil:
+			v.Value = fmt.Sprintf("%v", v.Value)
+		}
+		value, err := types.ToString(v.Value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		row := types.MakeDatums(status, value)
+		rows = append(rows, row)
+	}
+
+	return rows, nil
+}
+
 func createSysVarHandle(handleType string) tables.SysVarHandle{
 	switch handleType {
 	case TableSessionStatus:
 		return &TableSessionStatusHandle{}
+	case TableGlobalStatus:
+		return &TableGlobalStatusHandle{}
 	default:
 		log.Fatal("unexpected system variables handler type")
 	}

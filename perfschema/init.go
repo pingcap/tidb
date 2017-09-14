@@ -210,8 +210,9 @@ func (ps *perfSchema) buildTables() {
 		alloc := autoid.NewMemoryAllocator(dbID)
 		var tbl table.Table
 		switch name {
-		case TableSessionStatus:
-			tbl = createSysVarTable(meta, TableSessionStatus)
+		//@TODO in the furture, we need to add many SysVarTables, we may need to add new type for these tables.
+		case TableSessionStatus, TableGlobalStatus:
+			tbl = createSysVarTable(meta, name)
 		default:
 			tbl = tables.MemoryTableFromMeta(alloc, meta)
 		}
@@ -319,7 +320,8 @@ func (ps *perfSchema) initialize() {
 		stagesCurrentCols,
 		stagesCurrentCols, // same as above
 		stagesCurrentCols, // same as above
-		setupSessionStatusCols,
+		setupStatusCols,
+		setupStatusCols,
 	}
 
 	allColNames := [][]string{
@@ -340,7 +342,8 @@ func (ps *perfSchema) initialize() {
 		ColumnStagesCurrent,
 		ColumnStagesHistory,
 		ColumnStagesHistoryLong,
-		ColumnSessionStatus,
+		ColumnStatus,
+		ColumnStatus,
 	}
 
 	// initialize all table, column and result field definitions
