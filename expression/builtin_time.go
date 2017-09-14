@@ -1966,18 +1966,17 @@ func (du *baseDateArithmitical) getDateFromInt(ctx context.Context, args []Expre
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	dateTp := mysql.TypeDate
-	if t, err := types.ParseTimeFromInt64(dateInt); err == nil {
-		if (t.Type == mysql.TypeDatetime) || (t.Type == mysql.TypeTimestamp) {
-			dateTp = mysql.TypeDatetime
-		}
+	date, err := types.ParseTimeFromInt64(dateInt)
+	if err != nil {
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(ctx, err))
 	}
 
-	if types.IsClockUnit(unit) {
+	dateTp := mysql.TypeDate
+	if date.Type == mysql.TypeDatetime || date.Type == mysql.TypeTimestamp || types.IsClockUnit(unit) {
 		dateTp = mysql.TypeDatetime
 	}
-	date, err := types.ParseTime(strconv.FormatInt(dateInt, 10), dateTp, types.MaxFsp)
-	return date, err != nil, errors.Trace(handleInvalidTimeError(ctx, err))
+	date.Type = dateTp
+	return date, false, nil
 }
 
 func (du *baseDateArithmitical) getDateFromDatetime(ctx context.Context, args []Expression, row []types.Datum, unit string) (types.Time, bool, error) {
@@ -1985,8 +1984,6 @@ func (du *baseDateArithmitical) getDateFromDatetime(ctx context.Context, args []
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
-
-	fmt.Printf("%s\n", date.String())
 
 	dateTp := mysql.TypeDate
 	if date.Type == mysql.TypeDatetime || date.Type == mysql.TypeTimestamp || types.IsClockUnit(unit) {
