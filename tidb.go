@@ -161,7 +161,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	se := ctx.(*session)
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
-	getHistory(ctx).add(0, s, se.sessionVars.StmtCtx)
+	GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
@@ -173,12 +173,13 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	return rs, errors.Trace(err)
 }
 
-func getHistory(ctx context.Context) *stmtHistory {
-	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*stmtHistory)
+// GetHistory get all stmtHistory in current txn. Exported only for test.
+func GetHistory(ctx context.Context) *StmtHistory {
+	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*StmtHistory)
 	if ok {
 		return hist
 	}
-	hist = new(stmtHistory)
+	hist = new(StmtHistory)
 	ctx.GetSessionVars().TxnCtx.Histroy = hist
 	return hist
 }
