@@ -35,6 +35,17 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
+var once sync.Once
+
+func setLogLevelFromEnv() {
+	once.Do(func() {
+		logLevel := os.Getenv("log_level")
+		logutil.InitLogger(&logutil.LogConfig{
+			Level: logLevel,
+		})
+	})
+}
+
 var _ = Suite(&testSessionSuite{})
 
 type testSessionSuite struct {
@@ -57,10 +68,7 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	tidb.SetStatsLease(0)
 	_, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	setLogLevelFromEnv()
 }
 
 func (s *testSessionSuite) TearDownTest(c *C) {
@@ -285,10 +293,7 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	tidb.SetStatsLease(0)
 	_, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	setLogLevelFromEnv()
 }
 
 func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
