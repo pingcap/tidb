@@ -21,7 +21,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -75,7 +74,6 @@ func (s *testSafePointSuite) waitUntilErrorPlugIn(t uint64) {
 			s.store.UpdateSPCache(newSafePoint, cachedTime)
 			break
 		} else {
-			log.Error(err)
 			time.Sleep(time.Second)
 		}
 	}
