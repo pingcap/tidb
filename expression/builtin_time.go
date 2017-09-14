@@ -2364,6 +2364,8 @@ func getFsp4TimeAddSub(s string) int {
 	return types.MinFsp
 }
 
+// getBf4TimeAddSub parses input types, generates baseBuiltinFunc and set related attributes for
+// builtin function 'ADDTIME' and 'SUBTIME'
 func getBf4TimeAddSub(ctx context.Context, args []Expression) (tp1, tp2 *types.FieldType, bf baseBuiltinFunc) {
 	tp1, tp2 = args[0].GetType(), args[1].GetType()
 	var argTp1, argTp2, retTp evalTp
@@ -2388,7 +2390,7 @@ func getBf4TimeAddSub(ctx context.Context, args []Expression) (tp1, tp2 *types.F
 	if retTp == tpString {
 		bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeString, mysql.MaxDatetimeWidthWithFsp, types.UnspecifiedLength
 	}
-    return
+	return
 }
 
 func getTimeZone(ctx context.Context) *time.Location {
@@ -2488,7 +2490,7 @@ func (c *addTimeFunctionClass) getFunction(ctx context.Context, args []Expressio
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-    tp1, tp2, bf := getBf4TimeAddSub(ctx, args)
+	tp1, tp2, bf := getBf4TimeAddSub(ctx, args)
 	switch tp1.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		switch tp2.Tp {
@@ -3259,7 +3261,7 @@ func (c *subTimeFunctionClass) getFunction(ctx context.Context, args []Expressio
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-    tp1, tp2, bf := getBf4TimeAddSub(ctx, args)
+	tp1, tp2, bf := getBf4TimeAddSub(ctx, args)
 	switch tp1.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		switch tp2.Tp {
