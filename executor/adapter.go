@@ -259,11 +259,11 @@ func (a *statement) logSlowQuery() {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
 	sql := a.text
-	if len(sql) > cfg.QueryLogMaxlen {
-		sql = sql[:cfg.QueryLogMaxlen] + fmt.Sprintf("(len:%d)", len(sql))
+	if len(sql) > cfg.Log.QueryLogMaxLen {
+		sql = sql[:cfg.Log.QueryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
-	if costTime < time.Duration(cfg.SlowThreshold)*time.Millisecond {
+	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
 		log.Debugf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
 	} else {
 		log.Warnf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
