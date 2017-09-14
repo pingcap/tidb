@@ -31,6 +31,16 @@ type columnInfo struct {
 	elems []string
 }
 
+var globalStatusCols = []columnInfo{
+	{mysql.TypeString, 64, mysql.NotNullFlag, `%`, nil},
+	{mysql.TypeString, 1024, 0, `%`, nil},
+}
+
+var sessionStatusCols = []columnInfo{
+	{mysql.TypeString, 64, mysql.NotNullFlag, `%`, nil},
+	{mysql.TypeString, 1024, 0, `%`, nil},
+}
+
 var setupActorsCols = []columnInfo{
 	{mysql.TypeString, 60, mysql.NotNullFlag, `%`, nil},
 	{mysql.TypeString, 32, mysql.NotNullFlag, `%`, nil},
@@ -285,6 +295,8 @@ func (ps *perfSchema) initialize() {
 	ps.mTables = make(map[string]table.Table, len(ps.tables))
 
 	allColDefs := [][]columnInfo{
+		globalStatusCols,
+		sessionStatusCols,
 		setupActorsCols,
 		setupObjectsCols,
 		setupInstrumentsCols,
@@ -303,6 +315,8 @@ func (ps *perfSchema) initialize() {
 	}
 
 	allColNames := [][]string{
+		ColumnGlobalStatus,
+		ColumnSessionStatus,
 		ColumnSetupActors,
 		ColumnSetupObjects,
 		ColumnSetupInstruments,
