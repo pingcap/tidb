@@ -76,10 +76,6 @@ func (p *Limit) ToPB(ctx context.Context) (*tipb.Executor, error) {
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := p.Columns
-	// If there's no row data to be returned, we force to append one column.
-	if len(p.Columns) == 0 {
-		columns = []*model.ColumnInfo{{ID: model.ExtraHandleID, Name: model.NewCIStr("_rowid")}}
-	}
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
 		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),

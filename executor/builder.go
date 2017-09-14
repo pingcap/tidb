@@ -1088,13 +1088,8 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		priority:  b.priority,
 	}
 
-	if v.Schema().Len() > 0 {
-		for i := range v.Schema().Columns {
-			dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
-		}
-	} else {
-		e.zeroData = true
-		dagReq.OutputOffsets = append(dagReq.OutputOffsets, 0)
+	for i := range v.Schema().Columns {
+		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
 	return e

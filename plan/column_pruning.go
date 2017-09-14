@@ -166,15 +166,20 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	if p.unionScanSchema != nil {
 		used[handleIdx] = true
 	}
-	if handleIdx != -1 && !used[handleIdx] {
-		p.schema.TblID2Handle = nil
-		p.NeedColHandle = false
-	}
+	firstCol, firstColInfo := p.schema.Columns[0], p.Columns[0]
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
 		}
+	}
+	if handleIdx != -1 && !used[handleIdx] {
+		p.schema.TblID2Handle = nil
+		p.NeedColHandle = false
+	}
+	if p.schema.Len() == 0 {
+		p.schema.Append(firstCol)
+		p.Columns = append(p.Columns, firstColInfo)
 	}
 }
 

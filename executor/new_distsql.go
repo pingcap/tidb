@@ -66,9 +66,6 @@ type TableReaderExecutor struct {
 	columns []*model.ColumnInfo
 	// This is the column that represent the handle, we can use handleCol.Index to know its position.
 	handleCol *expression.Column
-	// There is some cases that we don't need the data of the row, just need the number of the row, e.g. select NULL from t;
-	// Currently we force to transfer one row from tikv, and remove it when do Next().
-	zeroData bool
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.NewSelectResult
@@ -114,9 +111,6 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 			e.partialResult.Close()
 			e.partialResult = nil
 			continue
-		}
-		if e.zeroData {
-			return Row{}, nil
 		}
 		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
