@@ -60,26 +60,11 @@ const (
 	nmRunDDL          = "run-ddl"
 	nmLogLevel        = "L"
 	nmLogFile         = "log-file"
-	nmSlowThreshold   = "slow-threshold"
-	nmQueryLogMaxLen  = "query-log-max-len"
-	nmSkipGrantTable  = "skip-grant-table"
-	nmSSLCA           = "ssl-ca"
-	nmSSLCert         = "ssl-cert"
-	nmSSLKey          = "ssl-key"
 	nmReportStatus    = "report-status"
 	nmStatusPort      = "status"
 	nmMetricsAddr     = "metrics-addr"
 	nmMetricsInterval = "metrics-interval"
 	nmDdlLease        = "lease"
-	nmStatsLease      = "statsLease"
-	nmJoinConcurrency = "join-concurrency"
-	nmCrossJoin       = "cross-join"
-	nmRetryLimit      = "retry-limit"
-	nmTCPKeepAlive    = "tcp-keep-alive"
-	nmStartXServer    = "xserver"
-	nmXHost           = "xhost"
-	nmXPort           = "xP"
-	nmXSocket         = "xsocket"
 )
 
 var (
@@ -94,38 +79,17 @@ var (
 	socket       = flag.String(nmSocket, "", "The socket file to use for connection.")
 	binlogSocket = flag.String(nmBinlogSocket, "", "socket file to write binlog")
 	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
+	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
 
 	// Log
-	logLevel       = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
-	logFile        = flag.String(nmLogFile, "", "log file path")
-	slowThreshold  = flag.Int(nmSlowThreshold, 300, "Queries with execution time greater than this value will be logged. (Milliseconds)")
-	queryLogMaxlen = flag.Int(nmQueryLogMaxLen, 2048, "Maximum query length recorded in log")
-
-	// Security
-	skipGrantTable = flagBoolean(nmSkipGrantTable, false, "This option causes the server to start without using the privilege system at all.")
-	sslCAPath      = flag.String(nmSSLCA, "", "Path of file that contains list of trusted SSL CAs")
-	sslCertPath    = flag.String(nmSSLCert, "", "Path of file that contains X509 certificate in PEM format")
-	sslKeyPath     = flag.String(nmSSLKey, "", "Path of file that contains X509 key in PEM format")
+	logLevel = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
+	logFile  = flag.String(nmLogFile, "", "log file path")
 
 	// Status
 	reportStatus    = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
 	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = flag.Int(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
-
-	// Performance
-	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
-	statsLease   = flag.String(nmStatsLease, "3s", "stats lease duration, which inflences the time of analyze and stats load.")
-	joinCon      = flag.Int(nmJoinConcurrency, 5, "the number of goroutines that participate joining.")
-	crossJoin    = flagBoolean(nmCrossJoin, true, "whether support cartesian product or not.")
-	retryLimit   = flag.Int(nmRetryLimit, 10, "the maximum number of retries when commit a transaction")
-	tcpKeepAlive = flagBoolean(nmTCPKeepAlive, false, "set keep alive option for tcp connection.")
-
-	// XProtocol
-	startXServer = flagBoolean(nmStartXServer, false, "start tidb x protocol server")
-	xhost        = flag.String(nmXHost, "0.0.0.0", "tidb x protocol server host")
-	xport        = flag.String(nmXPort, "14000", "tidb x protocol server port")
-	xsocket      = flag.String(nmXSocket, "", "The socket file to use for x protocol connection.")
 
 	// To be removed.
 	enablePrivilege = flagBoolean("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
@@ -325,26 +289,6 @@ func overrideConfig() {
 	if actualFlags[nmLogFile] {
 		cfg.Log.File.Filename = *logFile
 	}
-	if actualFlags[nmSlowThreshold] {
-		cfg.Log.SlowThreshold = *slowThreshold
-	}
-	if actualFlags[nmQueryLogMaxLen] {
-		cfg.Log.QueryLogMaxLen = *queryLogMaxlen
-	}
-
-	// Security
-	if actualFlags[nmSkipGrantTable] {
-		cfg.Security.SkipGrantTable = *skipGrantTable
-	}
-	if actualFlags[nmSSLCA] {
-		cfg.Security.SSLCA = *sslCAPath
-	}
-	if actualFlags[nmSSLCert] {
-		cfg.Security.SSLCert = *sslCertPath
-	}
-	if actualFlags[nmSSLKey] {
-		cfg.Security.SSLKey = *sslKeyPath
-	}
 
 	// Status
 	if actualFlags[nmReportStatus] {
@@ -361,40 +305,6 @@ func overrideConfig() {
 	}
 	if actualFlags[nmMetricsInterval] {
 		cfg.Status.MetricsInterval = *metricsInterval
-	}
-
-	// Performance
-	if actualFlags[nmStatsLease] {
-		cfg.Performance.StatsLease = *statsLease
-	}
-	if actualFlags[nmJoinConcurrency] {
-		cfg.Performance.JoinConcurrency = *joinCon
-	}
-	if actualFlags[nmCrossJoin] {
-		cfg.Performance.CrossJoin = *crossJoin
-	}
-	if actualFlags[nmRetryLimit] {
-		cfg.Performance.RetryLimit = *retryLimit
-	}
-	if actualFlags[nmTCPKeepAlive] {
-		cfg.Performance.TCPKeepAlive = *tcpKeepAlive
-	}
-
-	// XProtocol
-	if actualFlags[nmStartXServer] {
-		cfg.XProtocol.XServer = *startXServer
-	}
-	if actualFlags[nmXHost] {
-		cfg.XProtocol.XHost = *xhost
-	}
-	if actualFlags[nmXPort] {
-		cfg.XProtocol.XPort, err = strconv.Atoi(*xport)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-	if actualFlags[nmXSocket] {
-		cfg.XProtocol.XSocket = *xsocket
 	}
 }
 
