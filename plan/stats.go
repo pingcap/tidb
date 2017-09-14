@@ -186,15 +186,16 @@ func (p *LogicalAggregation) prepareStatsProfile() *statsProfile {
 		cols := expression.ExtractColumns(gbyExpr)
 		gbyCols = append(gbyCols, cols...)
 	}
-	count := getCardinality(gbyCols, p.children[0].Schema(), childProfile)
+	cardinality := getCardinality(gbyCols, p.children[0].Schema(), childProfile)
 	p.profile = &statsProfile{
-		count:       count,
+		count:       cardinality,
 		cardinality: make([]float64, p.schema.Len()),
 	}
 	// We cannot estimate the cardinality for every output, so we use a conservative strategy.
 	for i := range p.profile.cardinality {
-		p.profile.cardinality[i] = count
+		p.profile.cardinality[i] = cardinality
 	}
+	p.inputCount = childProfile.count
 	return p.profile
 }
 
