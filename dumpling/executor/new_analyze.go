@@ -69,7 +69,7 @@ func (e *AnalyzeIndexExec) open() error {
 }
 
 func (e *AnalyzeIndexExec) buildHistogram() (hist *statistics.Histogram, err error) {
-	if err := e.open(); err != nil {
+	if err = e.open(); err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer func() {
