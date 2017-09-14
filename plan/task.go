@@ -103,10 +103,11 @@ func attachPlan2Task(p PhysicalPlan, t task) task {
 // finishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.
 func (t *copTask) finishIndexPlan() {
 	if !t.indexPlanFinished {
-		t.cst += t.count() * (netWorkFactor + scanFactor)
+		t.cst += t.count() * netWorkFactor
 		t.indexPlanFinished = true
 		if t.tablePlan != nil {
 			t.tablePlan.(*PhysicalTableScan).profile = t.indexPlan.statsProfile()
+			t.cst += t.count() * scanFactor
 		}
 	}
 }
@@ -481,7 +482,7 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 	if tasks[0].plan() == nil {
 		return tasks[0]
 	}
-	// TODO: We only consider hash aggregation here.
+	cardinality := p.statsProfile().count
 	task := tasks[0].copy()
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
@@ -490,19 +491,22 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 				cop.finishIndexPlan()
 				partialAgg.SetChildren(cop.tablePlan)
 				cop.tablePlan = partialAgg
-				cop.cst += cop.count() * cpuFactor
 			} else {
 				partialAgg.SetChildren(cop.indexPlan)
 				cop.indexPlan = partialAgg
-				cop.cst += cop.count() * cpuFactor
 			}
 		}
 		task = finishCopTask(cop, p.ctx, p.allocator)
+		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 		attachPlan2Task(finalAgg, task)
 	} else {
 		np := p.Copy()
 		attachPlan2Task(np, task)
-		task.addCost(task.count() * cpuFactor)
+		if p.AggType == StreamedAgg {
+			task.addCost(task.count() * cpuFactor)
+		} else {
+			task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
+		}
 	}
 	return task
 }

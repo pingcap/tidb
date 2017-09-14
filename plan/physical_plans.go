@@ -579,6 +579,9 @@ type PhysicalAggregation struct {
 	AggType      AggregationType
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
+
+	propKeys   []*expression.Column
+	inputCount float64 // inputCount is the input count of this plan.
 }
 
 // PhysicalUnionScan represents a union scan operator.
