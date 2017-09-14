@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
-	
 )
 
 type storeCache struct {
@@ -88,10 +87,10 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	spkv := &EtcdSafePointKV {
-		cli:	etcdcli,
+	spkv := &EtcdSafePointKV{
+		cli: etcdcli,
 	}
-	
+
 	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(), !disableGC)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -134,12 +133,12 @@ type tikvStore struct {
 	mock         bool
 	enableGC     bool
 
-	kv			 SafePointKV
-	safePoint	 uint64
-	spTime       time.Time
-	spSession    tidb.Session // this is used to obtain safePoint from remote
-	spMutex		 sync.RWMutex   // this is used to update safePoint and spTime
-	spMsg		 chan struct{}  // this is used to nofity when the store is closed
+	kv        SafePointKV
+	safePoint uint64
+	spTime    time.Time
+	spSession tidb.Session  // this is used to obtain safePoint from remote
+	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
+	spMsg     chan struct{} // this is used to nofity when the store is closed
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
@@ -155,7 +154,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	cachedTime := s.spTime
 	s.spMutex.RUnlock()
 	diff := time.Since(cachedTime)
-	
+
 	if diff > (gcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
 		return errMayFallBehind
 	}
@@ -163,7 +162,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	if startTime < cachedSafePoint {
 		return errFallBehind
 	}
-	
+
 	return nil
 }
 
@@ -181,10 +180,10 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		pdClient:    pdClient,
 		regionCache: NewRegionCache(pdClient),
 		mock:        mock,
-		kv:			 spkv,
-		safePoint:    0,
-		spTime:       time.Now(),
-		spMsg:        make(chan struct{}),
+		kv:          spkv,
+		safePoint:   0,
+		spTime:      time.Now(),
+		spMsg:       make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
@@ -286,8 +285,8 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		pdCli = opt.pdClientHijack(pdCli)
 	}
 
-	spkv := &MockSafePointKV {
-		store:	make(map[string]string),
+	spkv := &MockSafePointKV{
+		store: make(map[string]string),
 	}
 
 	return newTikvStore(uuid, pdCli, spkv, client, false)
@@ -329,7 +328,6 @@ func (s *tikvStore) Close() error {
 		s.gcWorker.Close()
 	}
 
-	
 	close(s.spMsg)
 
 	if err := s.client.Close(); err != nil {
