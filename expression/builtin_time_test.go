@@ -1251,29 +1251,45 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 	tests := []struct {
-		t1        string
-		t2        string
+		args      []interface{}
 		expectStr string
+		isNil     bool
+		fsp       int
+		getErr    bool
 	}{
-		{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001", "-00:00:00.000001"},
-		{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002", "46:58:57.999999"},
-		{"2016-12-00 12:00:00", "2016-12-01 12:00:00", "-24:00:00"},
+		{[]interface{}{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"}, "-00:00:00.000001", false, 6, false},
+		{[]interface{}{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002"}, "46:58:57.999999", false, 6, false},
+		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, false},
+		{[]interface{}{"10:10:10", "10:9:0"}, "00:01:10", false, 0, false},
+		{[]interface{}{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, false},
+		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, false},
 	}
-	fc := funcs[ast.TimeDiff]
-	for _, test := range tests {
-		t1 := types.NewStringDatum(test.t1)
-		t2 := types.NewStringDatum(test.t2)
-		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{t1, t2}))
+
+	for _, t := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.TimeDiff, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		result, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(result.GetMysqlDuration().String(), Equals, test.expectStr)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeDuration)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, mysql.MaxDurationWidthWithFsp)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetMysqlDuration().String(), Equals, t.expectStr)
+				c.Assert(d.GetMysqlDuration().Fsp, Equals, t.fsp)
+			}
+		}
 	}
-	f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{{}, types.NewStringDatum("2017-01-01")}))
+	f, err := funcs[ast.TimeDiff].getFunction(s.ctx, []Expression{Zero, Zero})
 	c.Assert(err, IsNil)
-	d, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.IsNull(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestWeek(c *C) {
@@ -1471,6 +1487,8 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	args := types.MakeDatums(date[0], 1, "DAY")
 	f, err := fcAdd.getFunction(s.ctx, datumsToConstants(args))
 	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime().String(), Equals, date[1])
@@ -1478,6 +1496,8 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	args = types.MakeDatums(date[1], 1, "DAY")
 	f, err = fcSub.getFunction(s.ctx, datumsToConstants(args))
 	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime().String(), Equals, date[0])
@@ -1485,6 +1505,8 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	args = types.MakeDatums(date[0], nil, "DAY")
 	f, err = fcAdd.getFunction(s.ctx, datumsToConstants(args))
 	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
@@ -1492,6 +1514,8 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	args = types.MakeDatums(date[1], nil, "DAY")
 	f, err = fcSub.getFunction(s.ctx, datumsToConstants(args))
 	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)

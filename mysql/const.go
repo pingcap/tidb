@@ -211,6 +211,7 @@ const (
 	MaxDateWidth            = 10 // YYYY-MM-DD.
 	MaxDatetimeWidthNoFsp   = 19 // YYYY-MM-DD HH:MM:SS
 	MaxDatetimeWidthWithFsp = 26 // YYYY-MM-DD HH:MM:SS[.fraction]
+	MaxDatetimeFullWidth    = 29 // YYYY-MM-DD HH:MM:SS.###### AM
 	MaxDurationWidthNoFsp   = 10 // HH:MM:SS
 	MaxDurationWidthWithFsp = 15 // HH:MM:SS[.fraction]
 	MaxBlobWidth            = 16777216
