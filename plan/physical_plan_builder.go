@@ -16,8 +16,8 @@ package plan
 import (
 	"math"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -614,9 +614,7 @@ func (p *LogicalJoin) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*
 	if selection.controllerStatus == notController {
 		return nil, nil
 	}
-	for _, cond := range innerConditions {
-		conds = append(conds, cond)
-	}
+	conds = append(conds, innerConditions...)
 	for _, cond := range p.OtherConditions {
 		newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
 		newCond.ResolveIndices(innerChild.Schema())

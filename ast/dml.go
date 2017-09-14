@@ -717,7 +717,7 @@ type InsertStmt struct {
 	dmlNode
 
 	IsReplace   bool
-	Ignore      bool
+	IgnoreErr   bool
 	Table       *TableRefsClause
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
@@ -856,7 +856,7 @@ type UpdateStmt struct {
 	Order         *OrderByClause
 	Limit         *Limit
 	LowPriority   bool
-	Ignore        bool
+	IgnoreErr     bool
 	MultipleTable bool
 }
 
@@ -963,6 +963,7 @@ const (
 	ShowStatsMeta
 	ShowStatsHistograms
 	ShowStatsBuckets
+	ShowPlugins
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.

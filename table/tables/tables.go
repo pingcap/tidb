@@ -20,8 +20,8 @@ package tables
 import (
 	"strings"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -76,7 +76,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		}
 
 		col := table.ToColumn(colInfo)
-		if len(colInfo.GeneratedExprString) != 0 {
+		if col.IsGenerated() {
 			expr, err := parseExpression(colInfo.GeneratedExprString)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -765,7 +765,7 @@ func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
 	if col.DefaultValue == nil && value.IsNull() {
 		return true
 	}
-	if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+	if col.IsGenerated() && !col.GeneratedStored {
 		return true
 	}
 	return false
@@ -773,7 +773,7 @@ func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
 
 // canSkipUpdateBinlog checks whether the column can be skiped or not.
 func (t *Table) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
-	if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+	if col.IsGenerated() && !col.GeneratedStored {
 		return true
 	}
 	return false

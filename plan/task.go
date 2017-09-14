@@ -44,6 +44,8 @@ type copTask struct {
 	cst       float64
 	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
+	// keepOrder indicates if the plan scans data by order.
+	keepOrder bool
 }
 
 func (t *copTask) invalid() bool {
@@ -128,13 +130,8 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(tasks[p.outerIndex].copy(), p.ctx, p.allocator)
-	innerTask := tasks[1-p.outerIndex]
-	if innerTask.invalid() {
-		return invalidTask
-	}
-	rTask := finishCopTask(innerTask.copy(), p.ctx, p.allocator)
 	np := p.Copy()
-	np.SetChildren(lTask.plan(), rTask.plan())
+	np.SetChildren(lTask.plan(), p.innerPlan)
 	return &rootTask{
 		p:   np,
 		cst: lTask.cost() + p.getCost(lTask.count()),
@@ -281,16 +278,18 @@ func (p *Limit) attach2Task(tasks ...task) task {
 	}
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		// If the task is copTask, the Limit can always be pushed down.
-		// When limit be pushed down, it should remove its offset.
-		pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
-		pushedDownLimit.profile = p.profile
-		if cop.tablePlan != nil {
-			pushedDownLimit.SetSchema(cop.tablePlan.Schema())
-		} else {
-			pushedDownLimit.SetSchema(cop.indexPlan.Schema())
+		// If the table/index scans data by order and applies a double read, the limit cannot be pushed to the table side.
+		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
+			// When limit be pushed down, it should remove its offset.
+			pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
+			pushedDownLimit.profile = p.profile
+			if cop.tablePlan != nil {
+				pushedDownLimit.SetSchema(cop.tablePlan.Schema())
+			} else {
+				pushedDownLimit.SetSchema(cop.indexPlan.Schema())
+			}
+			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
-		cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		t = finishCopTask(cop, p.ctx, p.allocator)
 	}
 	if !p.partial {
@@ -344,6 +343,11 @@ func (p *TopN) attach2Task(tasks ...task) task {
 	// This is a topN plan.
 	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
 		pushedDownTopN := p.Copy().(*TopN)
+		newByItems := make([]*ByItems, 0, len(p.ByItems))
+		for _, expr := range p.ByItems {
+			newByItems = append(newByItems, expr.Clone())
+		}
+		pushedDownTopN.ByItems = newByItems
 		// When topN is pushed down, it should remove its offset.
 		pushedDownTopN.Count, pushedDownTopN.Offset = p.Count+p.Offset, 0
 		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and

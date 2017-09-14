@@ -18,8 +18,8 @@ import (
 	"math"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 type processinfoSetter interface {
@@ -116,6 +117,23 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
 	a.ctx = ctx
 
+	if _, ok := a.plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
+		oriStats := ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency]
+		oriScan := ctx.GetSessionVars().DistSQLScanConcurrency
+		oriIndex := ctx.GetSessionVars().IndexSerialScanConcurrency
+		oriIso := ctx.GetSessionVars().Systems[variable.TxnIsolation]
+		ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency] = "1"
+		ctx.GetSessionVars().DistSQLScanConcurrency = 1
+		ctx.GetSessionVars().IndexSerialScanConcurrency = 1
+		ctx.GetSessionVars().Systems[variable.TxnIsolation] = ast.ReadCommitted
+		defer func() {
+			ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency] = oriStats
+			ctx.GetSessionVars().DistSQLScanConcurrency = oriScan
+			ctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
+			ctx.GetSessionVars().Systems[variable.TxnIsolation] = oriIso
+		}()
+	}
+
 	e, err := a.buildExecutor(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -128,10 +146,16 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	var pi processinfoSetter
 	if raw, ok := ctx.(processinfoSetter); ok {
 		pi = raw
+		sql := a.OriginText()
+		if simple, ok := a.plan.(*plan.Simple); ok && simple.Statement != nil {
+			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
+				// Use SecureText to avoid leak password information.
+				sql = ss.SecureText()
+			}
+		}
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(a.OriginText())
+		pi.SetProcessInfo(sql)
 	}
-
 	// Fields or Schema are only used for statements that return result set.
 	if e.Schema().Len() == 0 {
 		return a.handleNoDelayExecutor(e, ctx, pi)

@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"crypto/tls"
 	"math"
 	"sync"
 	"time"
@@ -127,6 +128,9 @@ type SessionVars struct {
 
 	// ClientCapability is client's capability.
 	ClientCapability uint32
+
+	// TLSConnectionState is the TLS connection state (nil if not using TLS).
+	TLSConnectionState *tls.ConnectionState
 
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
@@ -456,4 +460,14 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.foundRows = 0
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
+}
+
+// MostRestrictStateContext gets a most restrict StatementContext.
+func MostRestrictStateContext() *StatementContext {
+	return &StatementContext{
+		IgnoreTruncate:    false,
+		OverflowAsWarning: false,
+		TruncateAsWarning: false,
+		TimeZone:          time.UTC,
+	}
 }

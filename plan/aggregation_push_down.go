@@ -171,7 +171,7 @@ func (a *aggregationOptimizer) checkValidJoin(join *LogicalJoin) bool {
 
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
 // there are no differences between partial mode and complete mode, so we can confuse them.
-func (a *aggregationOptimizer) decompose(aggFunc expression.AggregationFunction, schema *expression.Schema, id string) ([]expression.AggregationFunction, *expression.Schema) {
+func (a *aggregationOptimizer) decompose(aggFunc expression.AggregationFunction, schema *expression.Schema, id int) ([]expression.AggregationFunction, *expression.Schema) {
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
 	result := []expression.AggregationFunction{aggFunc.Clone()}
 	for _, aggFunc := range result {

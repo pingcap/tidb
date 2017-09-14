@@ -165,6 +165,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}{
 		{"10:11:12", "10:11:12"},
 		{"101112", "10:11:12"},
+		{"020005", "02:00:05"},
 		{"112", "00:01:12"},
 		{"10:11", "10:11:00"},
 		{"101112.123456", "10:11:12"},
@@ -838,8 +839,8 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 	}
 
 	for _, test := range tests {
-		t1 := Time{test.t1, mysql.TypeDatetime, 6, nil}
-		t2 := Time{test.t2, mysql.TypeDatetime, 6, nil}
+		t1 := Time{test.t1, mysql.TypeDatetime, 6, nil, false}
+		t2 := Time{test.t2, mysql.TypeDatetime, 6, nil, false}
 		c.Assert(TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}
 }
@@ -878,5 +879,32 @@ func (s *testTimeSuite) TestConvertTimeZone(c *C) {
 		t.Time = test.input
 		t.ConvertTimeZone(test.from, test.to)
 		c.Assert(compareTime(t.Time, test.expect), Equals, 0)
+	}
+}
+
+func (s *testTimeSuite) TestTimeAdd(c *C) {
+	tbl := []struct {
+		Arg1 string
+		Arg2 string
+		Ret  string
+	}{
+		{"2017-01-18", "12:30:59", "2017-01-18 12:30:59"},
+		{"2017-01-18 01:01:01", "12:30:59", "2017-01-18 13:32:00"},
+		{"2017-01-18 01:01:01.123457", "12:30:59", "2017-01-18 13:32:0.123457"},
+		{"2017-01-18 01:01:01", "838:59:59", "2017-02-22 00:01:00"},
+		{"2017-08-21 15:34:42", "-838:59:59", "2017-07-17 16:34:43"},
+		{"2017-08-21", "01:01:01.001", "2017-08-21 01:01:01.001"},
+	}
+
+	for _, t := range tbl {
+		v1, err := ParseTime(t.Arg1, mysql.TypeDatetime, MaxFsp)
+		c.Assert(err, IsNil)
+		dur, err := ParseDuration(t.Arg2, MaxFsp)
+		c.Assert(err, IsNil)
+		result, err := ParseTime(t.Ret, mysql.TypeDatetime, MaxFsp)
+		c.Assert(err, IsNil)
+		v2, err := v1.Add(dur)
+		c.Assert(err, IsNil)
+		c.Assert(v2.Compare(result), Equals, 0)
 	}
 }
