@@ -1604,7 +1604,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 		{"cast(\"2011-11-11 00:00:00\" as date)", "\"10\"", "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00"},
 		{"cast(\"2011-11-11 00:00:00\" as date)", "\"10\"", "SECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50"},
 	}
-	for i, tc := range dateArithmeticalTests {
+	for _, tc := range dateArithmeticalTests {
 		addDate := fmt.Sprintf("select adddate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
 		subDate := fmt.Sprintf("select subdate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
 		result = tk.MustQuery(addDate)
