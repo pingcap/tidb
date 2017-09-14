@@ -493,6 +493,7 @@ func (b *builtinStringDurationTimeDiffSig) evalDuration(row []types.Datum) (d ty
 	return d, isNull, errors.Trace(err)
 }
 
+// calculateTimeDiff calculates interval difference of two types.Time.
 func calculateTimeDiff(sc *variable.StatementContext, lhs, rhs types.Time) (d types.Duration, isNull bool, err error) {
 	d = lhs.Sub(&rhs)
 	d.Duration, err = types.TruncateOverflowMySQLTime(d.Duration)
@@ -502,6 +503,7 @@ func calculateTimeDiff(sc *variable.StatementContext, lhs, rhs types.Time) (d ty
 	return d, err != nil, errors.Trace(err)
 }
 
+// calculateTimeDiff calculates interval difference of two types.Duration.
 func calculateDurationTimeDiff(sc *variable.StatementContext, lhs, rhs types.Duration) (d types.Duration, isNull bool, err error) {
 	d, err = lhs.Sub(rhs)
 	if err != nil {
