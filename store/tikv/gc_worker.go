@@ -133,8 +133,7 @@ func (w *GCWorker) StartSafePointChecker() {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ticker.C:
-				spCachedTime := time.Now()
+			case spCachedTime := <-ticker.C:
 				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
 				if err == nil {
 					w.store.UpdateSPCache(cachedSafePoint, spCachedTime)
@@ -202,7 +201,7 @@ const (
 	gcLifeTimeKey             = "tikv_gc_life_time"
 	gcDefaultLifeTime         = time.Minute * 10
 	gcSafePointKey            = "tikv_gc_safe_point"
-	gcSavedSafePoint          = "tikv_gc_saved_safe_point"
+	gcSavedSafePoint          = "/tidb/store/gcworker/saved_safe_point"
 	gcSafePointCacheInterval  = time.Second * 100
 	gcSafePointUpdateInterval = time.Second * 10
 	gcCPUTimeInaccuracyBound  = time.Second
@@ -597,10 +596,10 @@ func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier stri
 		leftTime := gcSafePointCacheInterval
 		for {
 			time.Sleep(leftTime)
-			if time.Since(startTime) > gcSafePointCacheInterval {
+			leftTime = time.Since(startTime) - gcSafePointCacheInterval
+			if leftTime <= 0 {
 				break
 			}
-			leftTime = leftTime - time.Since(startTime)
 		}
 	}
 
@@ -733,7 +732,6 @@ func (w *GCWorker) saveSafePoint(key string, t uint64) error {
 		log.Error("save safepoint failed:", err)
 		return errors.Trace(err)
 	}
-	//log.Error("write safe point:", s)
 	return nil
 }
 
@@ -752,7 +750,6 @@ func (w *GCWorker) loadSafePoint(key string) (uint64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	//log.Error("read safe point:", t)
 	return t, nil
 }
 
