@@ -740,7 +740,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 const retryTime = 100
 
-func waitUntilServerOnline(statusAddr string) {
+func waitUntilServerOnline(statusPort int) {
 	// connect server
 	retry := 0
 	for ; retry < retryTime; retry++ {
@@ -755,7 +755,7 @@ func waitUntilServerOnline(statusAddr string) {
 		log.Fatalf("Failed to connect db for %d retries in every 10 ms", retryTime)
 	}
 	// connect http status
-	statusURL := fmt.Sprintf("http://127.0.0.1%s/status", statusAddr)
+	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
 	for retry = 0; retry < retryTime; retry++ {
 		resp, err := http.Get(statusURL)
 		if err == nil {
