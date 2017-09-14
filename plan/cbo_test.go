@@ -200,7 +200,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		store.Close()
 	}()
 	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t, t1, t2")
+	testKit.MustExec("drop table if exists t, t1, t2, t3")
 	testKit.MustExec("create table t (a int, b int)")
 	testKit.MustExec("create index a on t (a)")
 	testKit.MustExec("create index b on t (b)")
@@ -218,10 +218,16 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("insert into t2 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
 	testKit.MustExec("analyze table t2 index a")
 
+	testKit.MustExec("create table t3 (a int, b int)")
+	testKit.MustExec("create index a on t3 (a)")
 	tests := []struct {
 		sql  string
 		best string
 	}{
+		{
+			sql:  "analyze table t3",
+			best: "Analyze{Index(true, t3.a),Table(false, t3.b)}",
+		},
 		// Test analyze full table.
 		{
 			sql:  "select * from t where t.a <= 2",
