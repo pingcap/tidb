@@ -609,12 +609,6 @@ func (p *LogicalJoin) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*
 		conds = append(conds, newCond)
 	}
 	selection.Conditions = conds
-	// Currently only eq conds will be considered when we call checkScanController, and innerConds from the below sel may contain correlated column,
-	// which will have side effect when we do check. So we do check before append other conditions into selection.
-	selection.controllerStatus = selection.checkScanController()
-	if selection.controllerStatus == notController {
-		return nil, nil
-	}
 	conds = append(conds, innerConditions...)
 	for _, cond := range p.OtherConditions {
 		newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)

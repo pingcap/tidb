@@ -597,6 +597,11 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("insert into s values(2)")
 	result = tk.MustQuery("select (select id from s where s.id = t.id order by s.id) from t")
 	result.Check(testkit.Rows("2", "2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(dt datetime)")
+	result = tk.MustQuery("select (select 1 from t where DATE_FORMAT(o.dt,'%Y-%m')) from t o")
+	result.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
