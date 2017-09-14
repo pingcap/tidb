@@ -14,12 +14,15 @@
 package ddl
 
 import (
+	"os"
+	"runtime/pprof"
 	"sort"
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	//	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -389,16 +392,22 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *indexTaskOpInfo, handleInfo *handleInfo) (
 	[]*indexRecord, *taskResult) {
 	startTime := time.Now()
-	handleCnt := defaultTaskHandleCnt
-	rawRecords := make([][]byte, 0, handleCnt)
-	idxRecords := make([]*indexRecord, 0, handleCnt)
+	rawRecords := make([][]byte, 0, taskOpInfo.taskBatch)
+	idxRecords := make([]*indexRecord, 0, taskOpInfo.taskBatch)
 	ret := &taskResult{doneHandle: handleInfo.startHandle}
+	isEnd := true
 	err := d.iterateSnapshotRows(t, txn.StartTS(), handleInfo.startHandle,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
+			if h >= handleInfo.startHandle+taskOpInfo.taskBatch {
+				ret.doneHandle = h - 1
+				isEnd = false
+				return false, nil
+			}
 			rawRecords = append(rawRecords, rawRecord)
 			indexRecord := &indexRecord{handle: h, key: rowKey}
 			idxRecords = append(idxRecords, indexRecord)
-			if len(idxRecords) == handleCnt || handleInfo.isFinished(h) {
+			ret.doneHandle = h
+			if handleInfo.isFinished(h) {
 				return false, nil
 			}
 			return true, nil
@@ -408,21 +417,18 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 		return nil, ret
 	}
 
-	ret.count = len(idxRecords)
-	if ret.count > 0 {
-		ret.doneHandle = idxRecords[ret.count-1].handle
-	}
-	// Be sure to do this operation only once.
 	if !handleInfo.isSent {
-		// Notice to start the next task operation.
-		taskOpInfo.nextCh <- ret.doneHandle
 		// Record the last handle.
 		// Ensure that the handle scope of the task doesn't change,
 		// even if the transaction retries it can't effect the other tasks.
 		handleInfo.endHandle = ret.doneHandle
-		handleInfo.isSent = true
+		if isEnd {
+			ret.isAllDone = true
+		}
 	}
-	log.Debugf("[ddl] txn %v fetches handle info %v takes time %v", txn.StartTS(), handleInfo, time.Since(startTime))
+	ret.count = len(idxRecords)
+	log.Debugf("[ddl] txn %v fetches handle info %v, ret %v, takes time %v", txn.StartTS(), handleInfo, ret, time.Since(startTime))
+	handleInfo.isSent = true
 	if ret.count == 0 {
 		return nil, ret
 	}
@@ -482,6 +488,7 @@ const (
 type taskResult struct {
 	count      int   // The number of records that has been processed in the task.
 	doneHandle int64 // This is the last reorg handle that has been processed.
+	isAllDone  bool
 	err        error
 }
 
@@ -503,7 +510,7 @@ type indexTaskOpInfo struct {
 	tblIndex  table.Index
 	colMap    map[int64]*types.FieldType // It's the index columns map.
 	taskRetCh chan *taskResult           // Get the results of all tasks.
-	nextCh    chan int64                 // It notifies to start the next task.
+	taskBatch int64
 }
 
 // addTableIndex adds index into table.
@@ -536,32 +543,40 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	taskOpInfo := &indexTaskOpInfo{
 		tblIndex:  tables.NewIndex(t.Meta(), indexInfo),
 		colMap:    colMap,
-		nextCh:    make(chan int64, 1),
 		taskRetCh: make(chan *taskResult, taskCnt),
+		taskBatch: defaultTaskHandleCnt,
 	}
 
 	addedCount := job.GetRowCount()
-	taskStartHandle := reorgInfo.Handle
+	// TODO: handle may be negative.
+	baseHandle := reorgInfo.Handle
 
+	f, err := os.Create("cpuprofile.out")
+	if err != nil {
+		log.Errorf("err %v", err)
+	} else {
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatal("could not start CPU profile: ", err)
+		}
+		defer pprof.StopCPUProfile()
+	}
 	for {
 		startTime := time.Now()
 		wg := sync.WaitGroup{}
 		for i := 0; i < taskCnt; i++ {
 			wg.Add(1)
+			taskStartHandle := baseHandle + int64(i)*taskOpInfo.taskBatch
+			log.Debugf("start handle %d", taskStartHandle)
 			go d.doBackfillIndexTask(t, taskOpInfo, taskStartHandle, &wg)
-			doneHandle := <-taskOpInfo.nextCh
-			// There is no data to seek.
-			if doneHandle == taskStartHandle {
-				break
-			}
-			taskStartHandle = doneHandle + 1
 		}
+		baseHandle += int64(taskCnt) * taskOpInfo.taskBatch
 		wg.Wait()
+		insertTime := time.Since(startTime).Seconds()
 
-		retCnt := len(taskOpInfo.taskRetCh)
-		taskAddedCount, doneHandle, err := getCountAndHandle(taskOpInfo)
+		taskAddedCount, doneHandle, isEnd, err := getCountAndHandle(taskOpInfo)
 		// Update the reorg handle that has been processed.
 		if taskAddedCount != 0 {
+			// TODO: Move it to the last batch.
 			err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 				return errors.Trace(reorgInfo.UpdateHandle(txn, doneHandle+1))
 			})
@@ -583,10 +598,14 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		}
 		d.setReorgRowCount(addedCount)
 		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
-		log.Infof("[ddl] total added index for %d rows, this task added index for %d rows, take time %v",
-			addedCount, taskAddedCount, sub)
+		log.Infof("[ddl] total added index for %d rows, this task added index for %d rows, insert time %v, take time %v",
+			addedCount, taskAddedCount, insertTime, sub)
 
-		if retCnt < taskCnt {
+		if baseHandle < doneHandle+1 {
+			baseHandle = doneHandle + 1
+		}
+		//		log.Warnf("is end %v, base handle %d, done handle %d", isEnd, baseHandle, doneHandle)
+		if isEnd {
 			return nil
 		}
 	}
@@ -600,13 +619,13 @@ type handleInfo struct {
 }
 
 func (h *handleInfo) isFinished(input int64) bool {
-	if !h.isSent || input < h.endHandle {
+	if !h.isSent || input < h.endHandle-1 {
 		return false
 	}
 	return true
 }
 
-func getCountAndHandle(taskOpInfo *indexTaskOpInfo) (int64, int64, error) {
+func getCountAndHandle(taskOpInfo *indexTaskOpInfo) (int64, int64, bool, error) {
 	l := len(taskOpInfo.taskRetCh)
 	taskRets := make([]*taskResult, 0, l)
 	for i := 0; i < l; i++ {
@@ -617,6 +636,7 @@ func getCountAndHandle(taskOpInfo *indexTaskOpInfo) (int64, int64, error) {
 
 	taskAddedCount, currHandle := int64(0), int64(0)
 	var err error
+	var isEnd bool
 	for _, ret := range taskRets {
 		if ret.err != nil {
 			err = ret.err
@@ -624,15 +644,16 @@ func getCountAndHandle(taskOpInfo *indexTaskOpInfo) (int64, int64, error) {
 		}
 		taskAddedCount += int64(ret.count)
 		currHandle = ret.doneHandle
+		isEnd = ret.isAllDone
 	}
-	return taskAddedCount, currHandle, errors.Trace(err)
+	return taskAddedCount, currHandle, isEnd, errors.Trace(err)
 }
 
 func (d *ddl) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, startHandle int64, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	startTime := time.Now()
-	ret := new(taskResult)
+	var ret *taskResult
 	handleInfo := &handleInfo{startHandle: startHandle}
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		err1 := d.isReorgRunnable(txn)
@@ -649,14 +670,9 @@ func (d *ddl) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, st
 		ret.err = errors.Trace(err)
 	}
 
-	// It's failed to fetch row keys.
-	if !handleInfo.isSent {
-		taskOpInfo.nextCh <- startHandle
-	}
-
 	taskOpInfo.taskRetCh <- ret
-	log.Debugf("[ddl] add index completes backfill index task %v takes time %v",
-		handleInfo, time.Since(startTime))
+	log.Debugf("[ddl] add index completes backfill index task %v takes time %v err %v",
+		handleInfo, time.Since(startTime), ret.err)
 }
 
 // doBackfillIndexTaskInTxn deals with a part of backfilling index data in a Transaction.
