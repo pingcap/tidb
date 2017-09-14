@@ -137,8 +137,10 @@ func (w *GCWorker) StartSafePointChecker() {
 				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
 				if err == nil {
 					w.store.UpdateSPCache(cachedSafePoint, spCachedTime)
+					ticker = time.NewTicker(gcSafePointUpdateInterval)
 				} else {
 					log.Error("The read fails:", errors.ErrorStack(err))
+					ticker = time.NewTicker(gcSafePointQuickRepeatInterval)
 				}
 			case <-w.store.spMsg:
 				return
@@ -198,13 +200,14 @@ const (
 	gcDefaultRunInterval = time.Minute * 10
 	gcWaitTime           = time.Minute * 10
 
-	gcLifeTimeKey             = "tikv_gc_life_time"
-	gcDefaultLifeTime         = time.Minute * 10
-	gcSafePointKey            = "tikv_gc_safe_point"
-	gcSavedSafePoint          = "/tidb/store/gcworker/saved_safe_point"
-	gcSafePointCacheInterval  = time.Second * 100
-	gcSafePointUpdateInterval = time.Second * 10
-	gcCPUTimeInaccuracyBound  = time.Second
+	gcLifeTimeKey                  = "tikv_gc_life_time"
+	gcDefaultLifeTime              = time.Minute * 10
+	gcSafePointKey                 = "tikv_gc_safe_point"
+	gcSavedSafePoint               = "/tidb/store/gcworker/saved_safe_point"
+	gcSafePointCacheInterval       = time.Second * 100
+	gcSafePointUpdateInterval      = time.Second * 10
+	gcSafePointQuickRepeatInterval = time.Second
+	gcCPUTimeInaccuracyBound       = time.Second
 )
 
 var gcVariableComments = map[string]string{
