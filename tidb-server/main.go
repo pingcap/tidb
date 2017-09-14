@@ -66,6 +66,7 @@ const (
 	nmMetricsInterval = "metrics-interval"
 	nmDdlLease        = "lease"
 	nmJoinConcurrency = "join-concurrency"
+	nmStatsLease      = "statsLease"
 )
 
 var (
@@ -83,7 +84,8 @@ var (
 	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
 
 	// Performance
-	joinCon = flag.Int(nmJoinConcurrency, 5, "the number of goroutines that participate joining.")
+	joinCon    = flag.Int(nmJoinConcurrency, 5, "the number of goroutines that participate joining.")
+	statsLease = flag.String(nmStatsLease, "3s", "stats lease duration, which inflences the time of analyze and stats load.")
 
 	// Log
 	logLevel = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -312,6 +314,9 @@ func overrideConfig() {
 	}
 
 	// Performance
+	if actualFlags[nmStatsLease] {
+		cfg.Performance.StatsLease = *statsLease
+	}
 	if actualFlags[nmJoinConcurrency] {
 		cfg.Performance.JoinConcurrency = *joinCon
 	}
