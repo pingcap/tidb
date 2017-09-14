@@ -413,7 +413,7 @@ func (b *builtinDurationDurationTimeDiffSig) evalDuration(row []types.Datum) (d 
 		return d, isNull, errors.Trace(err)
 	}
 
-	d, isNull, err = calculateDurationTimeDiff(lhs, rhs, sc)
+	d, isNull, err = calculateDurationTimeDiff(sc, lhs, rhs)
 	return d, isNull, errors.Trace(err)
 }
 
@@ -435,7 +435,7 @@ func (b *builtinTimeTimeTimeDiffSig) evalDuration(row []types.Datum) (d types.Du
 		return d, isNull, errors.Trace(err)
 	}
 
-	d, isNull, err = calculateTimeDiff(lhs, rhs, sc)
+	d, isNull, err = calculateTimeDiff(sc, lhs, rhs)
 	return d, isNull, errors.Trace(err)
 }
 
@@ -457,16 +457,12 @@ func (b *builtinDurationStringTimeDiffSig) evalDuration(row []types.Datum) (d ty
 		return d, isNull, errors.Trace(err)
 	}
 
-	rhs, _, isDuration, err := convertStringToDuration(rhsStr, b.tp.Decimal, sc)
-	if err != nil {
+	rhs, _, isDuration, err := convertStringToDuration(sc, rhsStr, b.tp.Decimal)
+	if err != nil || !isDuration {
 		return d, true, errors.Trace(err)
 	}
 
-	if !isDuration {
-		return d, true, nil
-	}
-
-	d, isNull, err = calculateDurationTimeDiff(lhs, rhs, sc)
+	d, isNull, err = calculateDurationTimeDiff(sc, lhs, rhs)
 	return d, isNull, errors.Trace(err)
 }
 
@@ -488,20 +484,17 @@ func (b *builtinStringDurationTimeDiffSig) evalDuration(row []types.Datum) (d ty
 		return d, isNull, errors.Trace(err)
 	}
 
-	lhs, _, isDuration, err := convertStringToDuration(lhsStr, b.tp.Decimal, sc)
-	if err != nil {
+	lhs, _, isDuration, err := convertStringToDuration(sc, lhsStr, b.tp.Decimal)
+	if err != nil || !isDuration {
 		return d, true, errors.Trace(err)
 	}
-	if !isDuration {
-		return d, true, nil
-	}
 
-	d, isNull, err = calculateDurationTimeDiff(lhs, rhs, sc)
+	d, isNull, err = calculateDurationTimeDiff(sc, lhs, rhs)
 	return d, isNull, errors.Trace(err)
 }
 
-func calculateTimeDiff(t0, t1 types.Time, sc *variable.StatementContext) (d types.Duration, isNull bool, err error) {
-	d = t0.Sub(&t1)
+func calculateTimeDiff(sc *variable.StatementContext, lhs, rhs types.Time) (d types.Duration, isNull bool, err error) {
+	d = lhs.Sub(&rhs)
 	d.Duration, err = types.TruncateOverflowMySQLTime(d.Duration)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
@@ -509,8 +502,8 @@ func calculateTimeDiff(t0, t1 types.Time, sc *variable.StatementContext) (d type
 	return d, err != nil, errors.Trace(err)
 }
 
-func calculateDurationTimeDiff(t0, t1 types.Duration, sc *variable.StatementContext) (d types.Duration, isNull bool, err error) {
-	d, err = t0.Sub(t1)
+func calculateDurationTimeDiff(sc *variable.StatementContext, lhs, rhs types.Duration) (d types.Duration, isNull bool, err error) {
+	d, err = lhs.Sub(rhs)
 	if err != nil {
 		return d, true, errors.Trace(err)
 	}
@@ -540,16 +533,12 @@ func (b *builtinTimeStringTimeDiffSig) evalDuration(row []types.Datum) (d types.
 		return d, isNull, errors.Trace(err)
 	}
 
-	_, rhs, isDuration, err := convertStringToDuration(rhsStr, b.tp.Decimal, sc)
-	if err != nil {
+	_, rhs, isDuration, err := convertStringToDuration(sc, rhsStr, b.tp.Decimal)
+	if err != nil || isDuration {
 		return d, true, errors.Trace(err)
 	}
 
-	if isDuration {
-		return d, true, nil
-	}
-
-	d, isNull, err = calculateTimeDiff(lhs, rhs, sc)
+	d, isNull, err = calculateTimeDiff(sc, lhs, rhs)
 	return d, isNull, errors.Trace(err)
 }
 
@@ -571,16 +560,12 @@ func (b *builtinStringTimeTimeDiffSig) evalDuration(row []types.Datum) (d types.
 		return d, isNull, errors.Trace(err)
 	}
 
-	_, lhs, isDuration, err := convertStringToDuration(lhsStr, b.tp.Decimal, sc)
-	if err != nil {
+	_, lhs, isDuration, err := convertStringToDuration(sc, lhsStr, b.tp.Decimal)
+	if err != nil || isDuration {
 		return d, true, errors.Trace(err)
 	}
 
-	if isDuration {
-		return d, true, nil
-	}
-
-	d, isNull, err = calculateTimeDiff(lhs, rhs, sc)
+	d, isNull, err = calculateTimeDiff(sc, lhs, rhs)
 	return d, isNull, errors.Trace(err)
 }
 
@@ -603,24 +588,24 @@ func (b *builtinStringStringTimeDiffSig) evalDuration(row []types.Datum) (d type
 	}
 
 	fsp := b.tp.Decimal
-	d0, t0, isDuration0, err := convertStringToDuration(lhs, fsp, sc)
+	lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(sc, lhs, fsp)
 	if err != nil {
 		return d, true, errors.Trace(err)
 	}
 
-	d1, t1, isDuration1, err := convertStringToDuration(rhs, fsp, sc)
+	rhsDur, rhsTime, rhsIsDuration, err := convertStringToDuration(sc, rhs, fsp)
 	if err != nil {
 		return d, true, errors.Trace(err)
 	}
 
-	if isDuration0 != isDuration1 {
+	if lhsIsDuration != rhsIsDuration {
 		return d, true, nil
 	}
 
-	if isDuration0 {
-		d, isNull, err = calculateDurationTimeDiff(d0, d1, sc)
+	if lhsIsDuration {
+		d, isNull, err = calculateDurationTimeDiff(sc, lhsDur, rhsDur)
 	} else {
-		d, isNull, err = calculateTimeDiff(t0, t1, sc)
+		d, isNull, err = calculateTimeDiff(sc, lhsTime, rhsTime)
 	}
 
 	return d, isNull, errors.Trace(err)
@@ -636,21 +621,16 @@ func (b *builtinNullTimeDiffSig) evalDuration(row []types.Datum) (d types.Durati
 	return d, true, nil
 }
 
-func getStrFsp(strArg string, fsp int) int {
-	if n := strings.IndexByte(strArg, '.'); n >= 0 {
-		lenStrFsp := len(strArg[n+1:])
+// convertStringToDuration converts string to duration, it return types.Time because in some case
+// it will converts string to datetime.
+func convertStringToDuration(sc *variable.StatementContext, str string, fsp int) (d types.Duration, t types.Time,
+	isDuration bool, err error) {
+	if n := strings.IndexByte(str, '.'); n >= 0 {
+		lenStrFsp := len(str[n+1:])
 		if lenStrFsp <= types.MaxFsp {
 			fsp = mathutil.Max(lenStrFsp, fsp)
 		}
 	}
-	return fsp
-}
-
-// convertStringToDuration converts string to duration, it return types.Time because in some case
-// it will converts string to datetime.
-func convertStringToDuration(str string, fsp int, sc *variable.StatementContext) (d types.Duration, t types.Time,
-	isDuration bool, err error) {
-	fsp = getStrFsp(str, fsp)
 	return types.StrToDuration(sc, str, fsp)
 }
 
