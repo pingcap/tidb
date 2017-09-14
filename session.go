@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
@@ -130,9 +129,7 @@ type session struct {
 	// unlimitedRetryCount is used for test only.
 	unlimitedRetryCount bool
 
-	// For performance_schema only.
-	stmtState *perfschema.StatementState
-	parser    *parser.Parser
+	parser *parser.Parser
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -658,8 +655,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
 	var rs []ast.RecordSet
-	ph := sessionctx.GetDomain(s).PerfSchema()
-	for i, rst := range rawStmts {
+	for _, rst := range rawStmts {
 		s.PrepareTxnCtx()
 		startTS := time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
@@ -672,12 +668,10 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		}
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
-		s.stmtState = ph.StartStatement(sql, connID, perfschema.CallerNameSessionExecute, rawStmts[i])
 		s.SetValue(context.QueryString, st.OriginText())
 
 		startTS = time.Now()
 		r, err := runStmt(s, st)
-		ph.EndStatement(s.stmtState)
 		if err != nil {
 			if !kv.ErrKeyExists.Equal(err) {
 				log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
