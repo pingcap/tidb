@@ -65,6 +65,7 @@ const (
 	nmMetricsAddr     = "metrics-addr"
 	nmMetricsInterval = "metrics-interval"
 	nmDdlLease        = "lease"
+	nmJoinConcurrency = "join-concurrency"
 )
 
 var (
@@ -80,6 +81,9 @@ var (
 	binlogSocket = flag.String(nmBinlogSocket, "", "socket file to write binlog")
 	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
+
+	// Performance
+	joinCon      = flag.Int(nmJoinConcurrency, 5, "the number of goroutines that participate joining.")
 
 	// Log
 	logLevel = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -305,6 +309,11 @@ func overrideConfig() {
 	}
 	if actualFlags[nmMetricsInterval] {
 		cfg.Status.MetricsInterval = *metricsInterval
+	}
+
+	// Performance
+	if actualFlags[nmJoinConcurrency] {
+		cfg.Performance.JoinConcurrency = *joinCon
 	}
 }
 
