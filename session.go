@@ -96,11 +96,13 @@ type stmtRecord struct {
 	params  []interface{}
 }
 
-type stmtHistory struct {
+// StmtHistory holds all histories of statements in a txn.
+type StmtHistory struct {
 	history []*stmtRecord
 }
 
-func (h *stmtHistory) add(stmtID uint32, st ast.Statement, stmtCtx *variable.StatementContext, params ...interface{}) {
+// Add appends a stmt to history list.
+func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *variable.StatementContext, params ...interface{}) {
 	s := &stmtRecord{
 		stmtID:  stmtID,
 		st:      st,
@@ -403,7 +405,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
-	nh := getHistory(s)
+	nh := GetHistory(s)
 	var err error
 	for {
 		s.PrepareTxnCtx()
