@@ -1352,7 +1352,8 @@ func WrapWithCastAsDecimal(expr Expression, ctx context.Context) Expression {
 // of expr is not type string,
 // otherwise, returns `expr` directly.
 func WrapWithCastAsString(expr Expression, ctx context.Context) Expression {
-	if types.IsTypeString(expr.GetType().Tp) || expr.GetType().Tp == mysql.TypeNull {
+	exprTp := expr.GetType().Tp
+	if expr.GetTypeClass() == types.ClassString && !types.IsTypeTime(exprTp) && exprTp != mysql.TypeDuration {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)

@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -52,8 +51,7 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{errors.New("must error"), 0, false, true},
 	}
 
-	for i, t := range cases {
-		log.Warn("case :", i)
+	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Length, primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(nil)

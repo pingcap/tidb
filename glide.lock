@@ -1,5 +1,5 @@
-hash: 12d6d4f999def45ff7abfba9826f38d0931b5611050b74b25c2ff25daa89d093
-updated: 2017-09-06T16:45:49.726923497+08:00
+hash: 8b12997361571a6e37bbfb9603d618cd7960c3fbc7a3f7d41fdd01bdd954df15
+updated: 2017-09-13T20:38:12.425606898+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -9,6 +9,8 @@ imports:
   - quantile
 - name: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
+- name: github.com/BurntSushi/toml
+  version: a368813c5e648fee92e5f6c30e3944ff9d5e8895
 - name: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - name: github.com/coreos/etcd
@@ -104,7 +106,7 @@ imports:
 - name: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - name: github.com/pingcap/goleveldb
-  version: 158edde5a354460121af007d02a00b01c8d03443
+  version: f654717c3ea2e4e33f46e6b90e9cd872ee022ccb
   subpackages:
   - leveldb
   - leveldb/cache
