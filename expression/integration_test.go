@@ -1607,7 +1607,6 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	for i, tc := range dateArithmeticalTests {
 		addDate := fmt.Sprintf("select adddate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
 		subDate := fmt.Sprintf("select subdate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
-		fmt.Printf("[TEST CASE %v]\n%s\n%s\n", i, addDate, subDate)
 		result = tk.MustQuery(addDate)
 		result.Check(testkit.Rows(tc.AddResult))
 		result = tk.MustQuery(subDate)
