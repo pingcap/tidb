@@ -1213,10 +1213,12 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select addtime(cast('01:01:11.00' as date), cast('00:00:01' as time));")
 	result.Check(testkit.Rows("00:00:01"))
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a datetime, b timestamp)")
-	tk.MustExec(`insert into t values("2017 01-01 12:30:31", "2017 01-01 12:30:31")`)
-	result = tk.MustQuery("select addtime(a, b), addtime(cast(a as date), b) from t;")
-	result.Check(testkit.Rows("<nil> <nil>"))
+	tk.MustExec("create table t(a datetime, b timestamp, c time)")
+	tk.MustExec(`insert into t values("2017 01-01 12:30:31", "2017 01-01 12:30:31", "01:01:01")`)
+	result = tk.MustQuery("select addtime(a, b), addtime(cast(a as date), b), addtime(b,a), addtime(a,c), addtime(b," +
+		"c), addtime(c,a), addtime(c,b)" +
+		" from t;")
+	result.Check(testkit.Rows("<nil> <nil> <nil> 2017-01-01 13:31:32 2017-01-01 13:31:32 <nil> <nil>"))
 
 	// for SUBTIME
 	result = tk.MustQuery("select subtime('01:01:11', '00:00:01.013'), subtime('01:01:11.00', '00:00:01'), subtime" +
@@ -1234,8 +1236,9 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2001-01-10 23:59:59.000 2001-01-10 23:59:59.00000"))
 	result = tk.MustQuery("select subtime(cast('01:01:11.00' as date), cast('00:00:01' as time));")
 	result.Check(testkit.Rows("-00:00:01"))
-	result = tk.MustQuery("select subtime(a, b), subtime(cast(a as date), b) from t;")
-	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery("select subtime(a, b), subtime(cast(a as date), b), subtime(b,a), subtime(a,c), subtime(b," +
+		"c), subtime(c,a), subtime(c,b) from t;")
+	result.Check(testkit.Rows("<nil> <nil> <nil> 2017-01-01 11:29:30 2017-01-01 11:29:30 <nil> <nil>"))
 
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")

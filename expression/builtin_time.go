@@ -2487,36 +2487,36 @@ func (c *addTimeFunctionClass) getFunction(ctx context.Context, args []Expressio
 	switch tp1.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		switch tp2.Tp {
-		case mysql.TypeDatetime, mysql.TypeDuration:
+		case mysql.TypeDuration:
 			sig = &builtinAddDatetimeAndDurationSig{baseTimeBuiltinFunc{bf}}
-		case mysql.TypeTimestamp:
+		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			sig = &builtinAddTimeDateTimeNullSig{baseTimeBuiltinFunc{bf}}
 		default:
 			sig = &builtinAddDatetimeAndStringSig{baseTimeBuiltinFunc{bf}}
 		}
 	case mysql.TypeDate:
 		switch tp2.Tp {
-		case mysql.TypeDatetime, mysql.TypeDuration:
+		case mysql.TypeDuration:
 			sig = &builtinAddDateAndDurationSig{baseStringBuiltinFunc{bf}}
-		case mysql.TypeTimestamp:
+		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			sig = &builtinAddTimeStringNullSig{baseStringBuiltinFunc{bf}}
 		default:
 			sig = &builtinAddDateAndStringSig{baseStringBuiltinFunc{bf}}
 		}
 	case mysql.TypeDuration:
 		switch tp2.Tp {
-		case mysql.TypeDatetime, mysql.TypeDuration:
+		case mysql.TypeDuration:
 			sig = &builtinAddDurationAndDurationSig{baseDurationBuiltinFunc{bf}}
-		case mysql.TypeTimestamp:
+		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			sig = &builtinAddTimeDurationNullSig{baseDurationBuiltinFunc{bf}}
 		default:
 			sig = &builtinAddDurationAndStringSig{baseDurationBuiltinFunc{bf}}
 		}
 	default:
 		switch tp2.Tp {
-		case mysql.TypeDatetime, mysql.TypeDuration:
+		case mysql.TypeDuration:
 			sig = &builtinAddStringAndDurationSig{baseStringBuiltinFunc{bf}}
-		case mysql.TypeTimestamp:
+		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			sig = &builtinAddTimeStringNullSig{baseStringBuiltinFunc{bf}}
 		default:
 			sig = &builtinAddStringAndStringSig{baseStringBuiltinFunc{bf}}
@@ -3280,36 +3280,36 @@ func (c *subTimeFunctionClass) getFunction(ctx context.Context, args []Expressio
 	switch tp1.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		switch tp2.Tp {
-		case mysql.TypeDatetime, mysql.TypeDuration:
+		case mysql.TypeDuration:
 			sig = &builtinSubDatetimeAndDurationSig{baseTimeBuiltinFunc{bf}}
-		case mysql.TypeTimestamp:
+		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			sig = &builtinSubTimeDateTimeNullSig{baseTimeBuiltinFunc{bf}}
 		default:
 			sig = &builtinSubDatetimeAndStringSig{baseTimeBuiltinFunc{bf}}
 		}
 	case mysql.TypeDate:
 		switch tp2.Tp {
-		case mysql.TypeDatetime, mysql.TypeDuration:
+		case mysql.TypeDuration:
 			sig = &builtinSubDateAndDurationSig{baseStringBuiltinFunc{bf}}
-		case mysql.TypeTimestamp:
+		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			sig = &builtinSubTimeStringNullSig{baseStringBuiltinFunc{bf}}
 		default:
 			sig = &builtinSubDateAndStringSig{baseStringBuiltinFunc{bf}}
 		}
 	case mysql.TypeDuration:
 		switch tp2.Tp {
-		case mysql.TypeDatetime, mysql.TypeDuration:
+		case mysql.TypeDuration:
 			sig = &builtinSubDurationAndDurationSig{baseDurationBuiltinFunc{bf}}
-		case mysql.TypeTimestamp:
+		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			sig = &builtinSubTimeDurationNullSig{baseDurationBuiltinFunc{bf}}
 		default:
 			sig = &builtinSubDurationAndStringSig{baseDurationBuiltinFunc{bf}}
 		}
 	default:
 		switch tp2.Tp {
-		case mysql.TypeDatetime, mysql.TypeDuration:
+		case mysql.TypeDuration:
 			sig = &builtinSubStringAndDurationSig{baseStringBuiltinFunc{bf}}
-		case mysql.TypeTimestamp:
+		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			sig = &builtinSubTimeStringNullSig{baseStringBuiltinFunc{bf}}
 		default:
 			sig = &builtinSubStringAndStringSig{baseStringBuiltinFunc{bf}}
