@@ -96,11 +96,13 @@ type stmtRecord struct {
 	params  []interface{}
 }
 
-type stmtHistory struct {
+// StmtHistory holds all histories of statements in a txn.
+type StmtHistory struct {
 	history []*stmtRecord
 }
 
-func (h *stmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *variable.StatementContext, params ...interface{}) {
+// Add appends a stmt to history list.
+func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *variable.StatementContext, params ...interface{}) {
 	s := &stmtRecord{
 		stmtID:  stmtID,
 		st:      st,

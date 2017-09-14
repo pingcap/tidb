@@ -174,12 +174,12 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
-func GetHistory(ctx context.Context) *stmtHistory {
-	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*stmtHistory)
+func GetHistory(ctx context.Context) *StmtHistory {
+	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*StmtHistory)
 	if ok {
 		return hist
 	}
-	hist = new(stmtHistory)
+	hist = new(StmtHistory)
 	ctx.GetSessionVars().TxnCtx.Histroy = hist
 	return hist
 }
