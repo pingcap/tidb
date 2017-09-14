@@ -47,8 +47,6 @@ type GCWorker struct {
 	done        chan error
 
 	session tidb.Session
-
-	checkerLock sync.Mutex
 }
 
 // SafePointKV is used for a seamingless integration for mockTest and runtime.
@@ -59,17 +57,29 @@ type SafePointKV interface {
 
 // MockSafePointKV implements SafePointKV at mock test
 type MockSafePointKV struct {
-	store map[string]string
+	store    map[string]string
+	mockLock sync.RWMutex
+}
+
+// NewMockSafePointKV creates an instance of MockSafePointKV
+func NewMockSafePointKV() *MockSafePointKV {
+	return &MockSafePointKV{
+		store: make(map[string]string),
+	}
 }
 
 // Put implements the Put method for SafePointKV
 func (w *MockSafePointKV) Put(k string, v string) error {
+	w.mockLock.Lock()
+	defer w.mockLock.Unlock()
 	w.store[k] = v
 	return nil
 }
 
 // Get implements the Get method for SafePointKV
 func (w *MockSafePointKV) Get(k string) (string, error) {
+	w.mockLock.RLock()
+	defer w.mockLock.RUnlock()
 	elem, ok := w.store[k]
 	if !ok {
 		return "", nil
@@ -80,6 +90,15 @@ func (w *MockSafePointKV) Get(k string) (string, error) {
 // EtcdSafePointKV implements SafePointKV at runtime
 type EtcdSafePointKV struct {
 	cli *clientv3.Client
+}
+
+// NewEtcdSafePointKV creates an instance of EtcdSafePointKV
+func NewEtcdSafePointKV(addrs []string) (*EtcdSafePointKV, error) {
+	etcdCli, err := createEtcdKV(addrs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &EtcdSafePointKV{cli: etcdCli}, nil
 }
 
 // Put implements the Put method for SafePointKV
@@ -101,8 +120,8 @@ func (w *EtcdSafePointKV) Get(k string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	for _, ev := range resp.Kvs {
-		return string(ev.Value), nil
+	if len(resp.Kvs) > 0 {
+		return string(resp.Kvs[0].Value), nil
 	}
 	return "", nil
 }
@@ -708,8 +727,6 @@ func (w *GCWorker) checkLeader() (bool, error) {
 }
 
 func (w *GCWorker) saveSafePoint(key string, t uint64) error {
-	w.checkerLock.Lock()
-	defer w.checkerLock.Unlock()
 	s := strconv.FormatUint(t, 10)
 	err := w.store.kv.Put(gcSavedSafePoint, s)
 	if err != nil {
@@ -721,9 +738,6 @@ func (w *GCWorker) saveSafePoint(key string, t uint64) error {
 }
 
 func (w *GCWorker) loadSafePoint(key string) (uint64, error) {
-	w.checkerLock.Lock()
-	defer w.checkerLock.Unlock()
-
 	str, err := w.store.kv.Get(gcSavedSafePoint)
 
 	if err != nil {

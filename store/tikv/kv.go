@@ -82,13 +82,9 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return store, nil
 	}
 
-	etcdcli, err := createEtcdKV(etcdAddrs)
+	spkv, err := NewEtcdSafePointKV(etcdAddrs)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	spkv := &EtcdSafePointKV{
-		cli: etcdcli,
 	}
 
 	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(), !disableGC)
@@ -285,9 +281,7 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		pdCli = opt.pdClientHijack(pdCli)
 	}
 
-	spkv := &MockSafePointKV{
-		store: make(map[string]string),
-	}
+	spkv := NewMockSafePointKV()
 
 	return newTikvStore(uuid, pdCli, spkv, client, false)
 }
