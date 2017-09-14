@@ -1986,10 +1986,13 @@ func (du *baseDateArithmitical) getDateFromDatetime(ctx context.Context, args []
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date.Type = mysql.TypeDate
+	fmt.Printf("%s\n", date.String())
+
+	dateTp := mysql.TypeDate
 	if date.Type == mysql.TypeDatetime || date.Type == mysql.TypeTimestamp || types.IsClockUnit(unit) {
-		date.Type = mysql.TypeDatetime
+		dateTp = mysql.TypeDatetime
 	}
+	date.Type = dateTp
 	return date, false, nil
 }
 
