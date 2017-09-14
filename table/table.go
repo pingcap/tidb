@@ -32,7 +32,6 @@ type TableType int16
 const (
 	Normal TableType = iota
 	SystemVarTale
-	BoundedTable
 	MemoryTable
 )
 
