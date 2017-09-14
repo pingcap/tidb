@@ -581,6 +581,28 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 }
 
+// For issue #4514.
+func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table update_modified (col_1 int, col_2 enum('a', 'b'))")
+	tk.MustExec("set SQL_MODE=''")
+	tk.MustExec("insert into update_modified values (0, 3)")
+	r := tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("0 "))
+	tk.MustExec("set SQL_MODE=STRICT_ALL_TABLES")
+	tk.MustExec("update update_modified set col_1 = 1")
+	r = tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("1 "))
+	_, err := tk.Exec("update update_modified set col_1 = 2, col_2 = 'c'")
+	c.Assert(err, NotNil)
+	r = tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("1 "))
+	tk.MustExec("update update_modified set col_1 = 3, col_2 = 'a'")
+	r = tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("3 a"))
+}
+
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
 	// Create and fill table items
 	tk.MustExec("CREATE TABLE items (id int, price TEXT);")
