@@ -170,18 +170,18 @@ var (
 	_ builtinFunc = &builtinFromUnixTime2ArgSig{}
 	_ builtinFunc = &builtinExtractDatetimeSig{}
 	_ builtinFunc = &builtinExtractDurationSig{}
-	_ builtinFunc = &builtinDateAddStringStringSig{}
-	_ builtinFunc = &builtinDateAddStringIntSig{}
-	_ builtinFunc = &builtinDateAddIntStringSig{}
-	_ builtinFunc = &builtinDateAddIntIntSig{}
-	_ builtinFunc = &builtinDateAddDatetimeStringSig{}
-	_ builtinFunc = &builtinDateAddDatetimeIntSig{}
-	_ builtinFunc = &builtinDateSubStringStringSig{}
-	_ builtinFunc = &builtinDateSubStringIntSig{}
-	_ builtinFunc = &builtinDateSubIntStringSig{}
-	_ builtinFunc = &builtinDateSubIntIntSig{}
-	_ builtinFunc = &builtinDateSubDatetimeStringSig{}
-	_ builtinFunc = &builtinDateSubDatetimeIntSig{}
+	_ builtinFunc = &builtinAddDateStringStringSig{}
+	_ builtinFunc = &builtinAddDateStringIntSig{}
+	_ builtinFunc = &builtinAddDateIntStringSig{}
+	_ builtinFunc = &builtinAddDateIntIntSig{}
+	_ builtinFunc = &builtinAddDateDatetimeStringSig{}
+	_ builtinFunc = &builtinAddDateDatetimeIntSig{}
+	_ builtinFunc = &builtinSubDateStringStringSig{}
+	_ builtinFunc = &builtinSubDateStringIntSig{}
+	_ builtinFunc = &builtinSubDateIntStringSig{}
+	_ builtinFunc = &builtinSubDateIntIntSig{}
+	_ builtinFunc = &builtinSubDateDatetimeStringSig{}
+	_ builtinFunc = &builtinSubDateDatetimeIntSig{}
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.
@@ -1448,7 +1448,7 @@ func (b *builtinStrToDateDurationSig) evalDuration(row []types.Datum) (types.Dur
 	}
 	t.Fsp = b.tp.Decimal
 	dur, err := t.ConvertToDuration()
-	return dur, false, errors.Trace(err)
+	return dur, err != nil, errors.Trace(err)
 }
 
 type sysDateFunctionClass struct {
@@ -1909,7 +1909,7 @@ func (b *builtinExtractDatetimeSig) evalInt(row []types.Datum) (int64, bool, err
 		return 0, isNull, errors.Trace(err)
 	}
 	res, err := types.ExtractDatetimeNum(&dt, unit)
-	return res, false, errors.Trace(err)
+	return res, err != nil, errors.Trace(err)
 }
 
 type builtinExtractDurationSig struct {
@@ -1929,18 +1929,136 @@ func (b *builtinExtractDurationSig) evalInt(row []types.Datum) (int64, bool, err
 		return 0, isNull, errors.Trace(err)
 	}
 	res, err := types.ExtractDurationNum(&dur, unit)
-	return res, false, errors.Trace(err)
+	return res, err != nil, errors.Trace(err)
 }
 
-var reg = regexp.MustCompile(`[\d]+`)
+type baseDateArithmitical struct {
+	intervalRegexp *regexp.Regexp
+}
 
-func parseInterval4AddSubDate4DAY(interval string) string {
-	if strings.ToLower(interval) == "true" {
-		return "1"
-	} else if strings.ToLower(interval) == "false" {
-		return "0"
+func newDateArighmeticalUtil() baseDateArithmitical {
+	return baseDateArithmitical{
+		intervalRegexp: regexp.MustCompile(`[\d]+`),
 	}
-	return reg.FindString(interval)
+}
+
+func (du *baseDateArithmitical) getDateFromString(ctx context.Context, args []Expression, row []types.Datum, unit string) (types.Time, bool, error) {
+	dateStr, isNull, err := args[0].EvalString(row, ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	dateTp := mysql.TypeDate
+	if !types.IsDateFormat(dateStr) || types.IsClockUnit(unit) {
+		dateTp = mysql.TypeDatetime
+	}
+
+	date, err := types.ParseTime(dateStr, dateTp, types.MaxFsp)
+	return date, err != nil, errors.Trace(handleInvalidTimeError(ctx, err))
+}
+
+func (du *baseDateArithmitical) getDateFromInt(ctx context.Context, args []Expression, row []types.Datum, unit string) (types.Time, bool, error) {
+	dateInt, isNull, err := args[0].EvalInt(row, ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	dateTp := mysql.TypeDate
+	if t, err := types.ParseTimeFromInt64(dateInt); err == nil {
+		if (t.Type == mysql.TypeDatetime) || (t.Type == mysql.TypeTimestamp) {
+			dateTp = mysql.TypeDatetime
+		}
+	}
+
+	if types.IsClockUnit(unit) {
+		dateTp = mysql.TypeDatetime
+	}
+	date, err := types.ParseTime(strconv.FormatInt(dateInt, 10), dateTp, types.MaxFsp)
+	return date, err != nil, errors.Trace(handleInvalidTimeError(ctx, err))
+}
+
+func (du *baseDateArithmitical) getDateFromDatetime(ctx context.Context, args []Expression, row []types.Datum, unit string) (types.Time, bool, error) {
+	date, isNull, err := args[0].EvalTime(row, ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	date.Type = mysql.TypeDate
+	if date.Type == mysql.TypeDatetime || date.Type == mysql.TypeTimestamp || types.IsClockUnit(unit) {
+		date.Type = mysql.TypeDatetime
+	}
+	return date, false, nil
+}
+
+func (du *baseDateArithmitical) getIntervalFromString(ctx context.Context, args []Expression, row []types.Datum, unit string) (string, bool, error) {
+	interval, isNull, err := args[1].EvalString(row, ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	// unit "DAY" has to be specially handled.
+	if strings.ToLower(unit) == "day" {
+		if strings.ToLower(interval) == "true" {
+			interval = "1"
+		} else if strings.ToLower(interval) == "false" {
+			interval = "0"
+		} else {
+			interval = du.intervalRegexp.FindString(interval)
+		}
+	}
+	return interval, false, nil
+}
+
+func (du *baseDateArithmitical) getIntervalFromInt(ctx context.Context, args []Expression, row []types.Datum, unit string) (string, bool, error) {
+	interval, isNull, err := args[1].EvalInt(row, ctx.GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	return fmt.Sprintf("%v", interval), false, nil
+}
+
+func (du *baseDateArithmitical) add(ctx context.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
+	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
+	if err != nil {
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(ctx, err))
+	}
+
+	goTime, err := date.Time.GoTime(time.Local)
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	goTime = goTime.Add(dur)
+	goTime = goTime.AddDate(int(year), int(month), int(day))
+
+	if goTime.Nanosecond() == 0 {
+		date.Fsp = 0
+	}
+
+	date.Time = types.FromGoTime(goTime)
+	return date, false, nil
+}
+
+func (du *baseDateArithmitical) sub(ctx context.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
+	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
+	if err != nil {
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(ctx, err))
+	}
+	year, month, day, dur = -year, -month, -day, -dur
+
+	goTime, err := date.Time.GoTime(time.Local)
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	goTime = goTime.Add(dur)
+	goTime = goTime.AddDate(int(year), int(month), int(day))
+
+	if goTime.Nanosecond() == 0 {
+		date.Fsp = 0
+	}
+
+	date.Time = types.FromGoTime(goTime)
+	return date, false, nil
 }
 
 type dateAddFunctionClass struct {
@@ -1968,163 +2086,47 @@ func (c *dateAddFunctionClass) getFunction(ctx context.Context, args []Expressio
 
 	switch {
 	case dateEvalTp == tpString && intervalEvalTp == tpString:
-		sig = &builtinDateAddStringStringSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinAddDateStringStringSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == tpString && intervalEvalTp == tpInt:
-		sig = &builtinDateAddStringIntSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinAddDateStringIntSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == tpInt && intervalEvalTp == tpString:
-		sig = &builtinDateAddIntStringSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinAddDateIntStringSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == tpInt && intervalEvalTp == tpInt:
-		sig = &builtinDateAddIntIntSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinAddDateIntIntSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == tpDatetime && intervalEvalTp == tpString:
-		sig = &builtinDateAddDatetimeStringSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinAddDateDatetimeStringSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == tpDatetime && intervalEvalTp == tpInt:
-		sig = &builtinDateAddDatetimeIntSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinAddDateDatetimeIntSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinDateAddStringStringSig struct {
+type builtinAddDateStringStringSig struct {
 	baseTimeBuiltinFunc
-}
-type builtinDateAddStringIntSig struct {
-	baseTimeBuiltinFunc
-}
-type builtinDateAddIntStringSig struct {
-	baseTimeBuiltinFunc
-}
-type builtinDateAddIntIntSig struct {
-	baseTimeBuiltinFunc
-}
-type builtinDateAddDatetimeStringSig struct {
-	baseTimeBuiltinFunc
-}
-type builtinDateAddDatetimeIntSig struct {
-	baseTimeBuiltinFunc
-}
-
-func dateArithmeticalGetStringDate(ctx context.Context, args []Expression, row []types.Datum, unit string) (types.Time, bool, error) {
-	dateStr, isNull, err := args[0].EvalString(row, ctx.GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-
-	dateTp := mysql.TypeDate
-	if !types.IsDateFormat(dateStr) || types.IsClockUnit(unit) {
-		dateTp = mysql.TypeDatetime
-	}
-
-	date, err := types.ParseTime(dateStr, dateTp, types.MaxFsp)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(handleInvalidTimeError(ctx, err))
-	}
-	return date, false, nil
-}
-
-func dateArithmeticalGetIntDate(ctx context.Context, args []Expression, row []types.Datum, unit string) (types.Time, bool, error) {
-	dateInt, isNull, err := args[0].EvalInt(row, ctx.GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-
-	dateTp := mysql.TypeDate
-	if t, err := types.ParseTimeFromInt64(dateInt); err == nil {
-		if (t.Type == mysql.TypeDatetime) || (t.Type == mysql.TypeTimestamp) {
-			dateTp = mysql.TypeDatetime
-		}
-	}
-
-	if types.IsClockUnit(unit) {
-		dateTp = mysql.TypeDatetime
-	}
-	date, err := types.ParseTime(strconv.FormatInt(dateInt, 10), dateTp, types.MaxFsp)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(handleInvalidTimeError(ctx, err))
-	}
-	return date, false, nil
-}
-
-func dateArithmeticalGetDatetimeDate(ctx context.Context, args []Expression, row []types.Datum, unit string) (types.Time, bool, error) {
-	date, isNull, err := args[0].EvalTime(row, ctx.GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-
-	if date.Type == mysql.TypeDatetime || date.Type == mysql.TypeTimestamp || types.IsClockUnit(unit) {
-		date.Type = mysql.TypeDatetime
-	} else {
-		date.Type = mysql.TypeDate
-	}
-
-	return date, false, nil
-}
-
-func dateArithmeticalGetStringInterval(ctx context.Context, args []Expression, row []types.Datum, unit string) (string, bool, error) {
-	interval, isNull, err := args[1].EvalString(row, ctx.GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return "", true, errors.Trace(err)
-	}
-	if strings.ToLower(unit) == "day" {
-		interval = parseInterval4AddSubDate4DAY(interval)
-	}
-	return interval, false, nil
-}
-
-func dateArithmeticalGetIntInterval(ctx context.Context, args []Expression, row []types.Datum, unit string) (string, bool, error) {
-	interval, isNull, err := args[1].EvalInt(row, ctx.GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return "", true, errors.Trace(err)
-	}
-	return fmt.Sprintf("%v", interval), false, nil
-}
-
-func dateArithmeticalCalculateDateAdd(ctx context.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
-	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(handleInvalidTimeError(ctx, err))
-	}
-
-	goTime, err := date.Time.GoTime(time.Local)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-
-	goTime = goTime.Add(dur)
-	goTime = goTime.AddDate(int(year), int(month), int(day))
-
-	if goTime.Nanosecond() == 0 {
-		date.Fsp = 0
-	}
-
-	date.Time = types.FromGoTime(goTime)
-	return date, false, nil
-}
-
-func dateArithmeticalCalculateDateSub(ctx context.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
-	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(handleInvalidTimeError(ctx, err))
-	}
-	year, month, day, dur = -year, -month, -day, -dur
-
-	goTime, err := date.Time.GoTime(time.Local)
-	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-
-	goTime = goTime.Add(dur)
-	goTime = goTime.AddDate(int(year), int(month), int(day))
-
-	if goTime.Nanosecond() == 0 {
-		date.Fsp = 0
-	}
-
-	date.Time = types.FromGoTime(goTime)
-	return date, false, nil
+	baseDateArithmitical
 }
 
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
-func (b *builtinDateAddStringStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *builtinAddDateStringStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
@@ -2132,47 +2134,28 @@ func (b *builtinDateAddStringStringSig) evalTime(row []types.Datum) (types.Time,
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date, isNull, err := dateArithmeticalGetStringDate(b.ctx, b.args, row, unit)
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := dateArithmeticalGetStringInterval(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, isNull, err := dateArithmeticalCalculateDateAdd(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, errors.Trace(err)
 }
 
-// evalTime evals ADDDATE(date,INTERVAL expr unit).
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
-func (b *builtinDateAddStringIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-
-	unit, isNull, err := b.args[2].EvalString(row, sc)
-	if isNull || err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-
-	date, isNull, err := dateArithmeticalGetStringDate(b.ctx, b.args, row, unit)
-	if isNull || err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-
-	interval, isNull, err := dateArithmeticalGetIntInterval(b.ctx, b.args, row, unit)
-	if isNull || err != nil {
-		return types.Time{}, true, errors.Trace(err)
-	}
-
-	result, isNull, err := dateArithmeticalCalculateDateAdd(b.ctx, date, interval, unit)
-	return result, isNull || err != nil, errors.Trace(err)
+type builtinAddDateStringIntSig struct {
+	baseTimeBuiltinFunc
+	baseDateArithmitical
 }
 
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
-func (b *builtinDateAddIntStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *builtinAddDateStringIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
@@ -2180,23 +2163,28 @@ func (b *builtinDateAddIntStringSig) evalTime(row []types.Datum) (types.Time, bo
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date, isNull, err := dateArithmeticalGetIntDate(b.ctx, b.args, row, unit)
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := dateArithmeticalGetStringInterval(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, isNull, err := dateArithmeticalCalculateDateAdd(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, errors.Trace(err)
+}
+
+type builtinAddDateIntStringSig struct {
+	baseTimeBuiltinFunc
+	baseDateArithmitical
 }
 
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
-func (b *builtinDateAddIntIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *builtinAddDateIntStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
@@ -2204,23 +2192,28 @@ func (b *builtinDateAddIntIntSig) evalTime(row []types.Datum) (types.Time, bool,
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date, isNull, err := dateArithmeticalGetIntDate(b.ctx, b.args, row, unit)
+	date, isNull, err := b.getDateFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := dateArithmeticalGetIntInterval(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, isNull, err := dateArithmeticalCalculateDateAdd(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, errors.Trace(err)
+}
+
+type builtinAddDateIntIntSig struct {
+	baseTimeBuiltinFunc
+	baseDateArithmitical
 }
 
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
-func (b *builtinDateAddDatetimeStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *builtinAddDateIntIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
@@ -2228,23 +2221,28 @@ func (b *builtinDateAddDatetimeStringSig) evalTime(row []types.Datum) (types.Tim
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date, isNull, err := dateArithmeticalGetDatetimeDate(b.ctx, b.args, row, unit)
+	date, isNull, err := b.getDateFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := dateArithmeticalGetStringInterval(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, isNull, err := dateArithmeticalCalculateDateAdd(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, errors.Trace(err)
+}
+
+type builtinAddDateDatetimeStringSig struct {
+	baseTimeBuiltinFunc
+	baseDateArithmitical
 }
 
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
-func (b *builtinDateAddDatetimeIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *builtinAddDateDatetimeStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
@@ -2252,17 +2250,46 @@ func (b *builtinDateAddDatetimeIntSig) evalTime(row []types.Datum) (types.Time, 
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date, isNull, err := dateArithmeticalGetDatetimeDate(b.ctx, b.args, row, unit)
+	date, isNull, err := b.getDateFromDatetime(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := dateArithmeticalGetIntInterval(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, isNull, err := dateArithmeticalCalculateDateAdd(b.ctx, date, interval, unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	return result, isNull || err != nil, errors.Trace(err)
+}
+
+type builtinAddDateDatetimeIntSig struct {
+	baseTimeBuiltinFunc
+	baseDateArithmitical
+}
+
+// evalTime evals ADDDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
+func (b *builtinAddDateDatetimeIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	unit, isNull, err := b.args[2].EvalString(row, sc)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	date, isNull, err := b.getDateFromDatetime(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, errors.Trace(err)
 }
 
@@ -2291,43 +2318,47 @@ func (c *dateSubFunctionClass) getFunction(ctx context.Context, args []Expressio
 
 	switch {
 	case dateEvalTp == tpString && intervalEvalTp == tpString:
-		sig = &builtinDateSubStringStringSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinSubDateStringStringSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == tpString && intervalEvalTp == tpInt:
-		sig = &builtinDateSubStringIntSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinSubDateStringIntSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == tpInt && intervalEvalTp == tpString:
-		sig = &builtinDateSubIntStringSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinSubDateIntStringSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == tpInt && intervalEvalTp == tpInt:
-		sig = &builtinDateSubIntIntSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinSubDateIntIntSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == tpDatetime && intervalEvalTp == tpString:
-		sig = &builtinDateSubDatetimeStringSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinSubDateDatetimeStringSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == tpDatetime && intervalEvalTp == tpInt:
-		sig = &builtinDateSubDatetimeIntSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinSubDateDatetimeIntSig{
+			baseTimeBuiltinFunc:  baseTimeBuiltinFunc{bf},
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinDateSubStringStringSig struct {
+type builtinSubDateStringStringSig struct {
 	baseTimeBuiltinFunc
-}
-type builtinDateSubStringIntSig struct {
-	baseTimeBuiltinFunc
-}
-type builtinDateSubIntStringSig struct {
-	baseTimeBuiltinFunc
-}
-type builtinDateSubIntIntSig struct {
-	baseTimeBuiltinFunc
-}
-type builtinDateSubDatetimeStringSig struct {
-	baseTimeBuiltinFunc
-}
-type builtinDateSubDatetimeIntSig struct {
-	baseTimeBuiltinFunc
+	baseDateArithmitical
 }
 
 // evalTime evals SUBDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
-func (b *builtinDateSubStringStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+func (b *builtinSubDateStringStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
@@ -2335,23 +2366,28 @@ func (b *builtinDateSubStringStringSig) evalTime(row []types.Datum) (types.Time,
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date, isNull, err := dateArithmeticalGetStringDate(b.ctx, b.args, row, unit)
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := dateArithmeticalGetStringInterval(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, isNull, err := dateArithmeticalCalculateDateSub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, errors.Trace(err)
 }
 
-// evaltime evals subdate(date,interval expr unit).
-// see https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
-func (b *builtinDateSubStringIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+type builtinSubDateStringIntSig struct {
+	baseTimeBuiltinFunc
+	baseDateArithmitical
+}
+
+// evalTime evals SUBDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+func (b *builtinSubDateStringIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
@@ -2359,23 +2395,28 @@ func (b *builtinDateSubStringIntSig) evalTime(row []types.Datum) (types.Time, bo
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date, isNull, err := dateArithmeticalGetStringDate(b.ctx, b.args, row, unit)
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := dateArithmeticalGetIntInterval(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, isNull, err := dateArithmeticalCalculateDateSub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, errors.Trace(err)
 }
 
-// evaltime evals subdate(date,interval expr unit).
-// see https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
-func (b *builtinDateSubIntStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+type builtinSubDateIntStringSig struct {
+	baseTimeBuiltinFunc
+	baseDateArithmitical
+}
+
+// evalTime evals SUBDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+func (b *builtinSubDateIntStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
@@ -2383,23 +2424,28 @@ func (b *builtinDateSubIntStringSig) evalTime(row []types.Datum) (types.Time, bo
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date, isNull, err := dateArithmeticalGetIntDate(b.ctx, b.args, row, unit)
+	date, isNull, err := b.getDateFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := dateArithmeticalGetStringInterval(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, isNull, err := dateArithmeticalCalculateDateSub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, errors.Trace(err)
 }
 
-// evaltime evals subdate(date,interval expr unit).
-// see https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
-func (b *builtinDateSubIntIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+type builtinSubDateIntIntSig struct {
+	baseTimeBuiltinFunc
+	baseDateArithmitical
+}
+
+// evalTime evals SUBDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+func (b *builtinSubDateIntIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
@@ -2407,23 +2453,28 @@ func (b *builtinDateSubIntIntSig) evalTime(row []types.Datum) (types.Time, bool,
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date, isNull, err := dateArithmeticalGetIntDate(b.ctx, b.args, row, unit)
+	date, isNull, err := b.getDateFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := dateArithmeticalGetIntInterval(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, isNull, err := dateArithmeticalCalculateDateSub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, errors.Trace(err)
 }
 
-// evaltime evals subdate(date,interval expr unit).
-// see https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
-func (b *builtinDateSubDatetimeStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+type builtinSubDateDatetimeStringSig struct {
+	baseTimeBuiltinFunc
+	baseDateArithmitical
+}
+
+// evalTime evals SUBDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+func (b *builtinSubDateDatetimeStringSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
@@ -2431,23 +2482,28 @@ func (b *builtinDateSubDatetimeStringSig) evalTime(row []types.Datum) (types.Tim
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date, isNull, err := dateArithmeticalGetDatetimeDate(b.ctx, b.args, row, unit)
+	date, isNull, err := b.getDateFromDatetime(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := dateArithmeticalGetIntInterval(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, isNull, err := dateArithmeticalCalculateDateSub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, errors.Trace(err)
 }
 
-// evaltime evals subdate(date,interval expr unit).
-// see https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
-func (b *builtinDateSubDatetimeIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+type builtinSubDateDatetimeIntSig struct {
+	baseTimeBuiltinFunc
+	baseDateArithmitical
+}
+
+// evalTime evals SUBDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+func (b *builtinSubDateDatetimeIntSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	unit, isNull, err := b.args[2].EvalString(row, sc)
@@ -2455,17 +2511,17 @@ func (b *builtinDateSubDatetimeIntSig) evalTime(row []types.Datum) (types.Time, 
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	date, isNull, err := dateArithmeticalGetDatetimeDate(b.ctx, b.args, row, unit)
+	date, isNull, err := b.getDateFromDatetime(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := dateArithmeticalGetIntInterval(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	result, isNull, err := dateArithmeticalCalculateDateSub(b.ctx, date, interval, unit)
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, errors.Trace(err)
 }
 
@@ -3390,7 +3446,7 @@ func (b *builtinSecToTimeSig) evalDuration(row []types.Datum) (types.Duration, b
 	var dur types.Duration
 	dur, err = types.ParseDuration(fmt.Sprintf("%s%02d:%02d:%v", negative, hour, minute, secondDemical), b.tp.Decimal)
 	if err != nil {
-		return types.Duration{}, false, errors.Trace(err)
+		return types.Duration{}, err != nil, errors.Trace(err)
 	}
 	return dur, false, nil
 }
