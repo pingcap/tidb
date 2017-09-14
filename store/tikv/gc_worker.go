@@ -129,18 +129,17 @@ func (w *EtcdSafePointKV) Get(k string) (string, error) {
 // StartSafePointChecker triggers SafePoint Checker on each tidb
 func (w *GCWorker) StartSafePointChecker() {
 	go func() {
-		ticker := time.NewTicker(gcSafePointUpdateInterval)
-		defer ticker.Stop()
 		for {
+			d := gcSafePointUpdateInterval
 			select {
-			case spCachedTime := <-ticker.C:
+			case spCachedTime := <-time.After(d):
 				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
 				if err == nil {
 					w.store.UpdateSPCache(cachedSafePoint, spCachedTime)
-					ticker = time.NewTicker(gcSafePointUpdateInterval)
+					d = gcSafePointUpdateInterval
 				} else {
 					log.Error("The read fails:", errors.ErrorStack(err))
-					ticker = time.NewTicker(gcSafePointQuickRepeatInterval)
+					d = gcSafePointQuickRepeatInterval
 				}
 			case <-w.store.spMsg:
 				return
