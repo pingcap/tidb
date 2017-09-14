@@ -2469,8 +2469,45 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	r = tk.MustQuery("select date'2017/12-12'")
 	r.Check(testkit.Rows("2017-12-12"))
 
+	tk.MustExec("set sql_mode = ''")
 	r = tk.MustQuery("select date '0000-00-00';")
 	r.Check(testkit.Rows("0000-00-00"))
+
+	tk.MustExec("set sql_mode = 'NO_ZERO_IN_DATE'")
+	r = tk.MustQuery("select date '0000-00-00';")
+	r.Check(testkit.Rows("0000-00-00"))
+
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
+	rs, err := tk.Exec("select date '0000-00-00';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	tk.MustExec("set sql_mode = ''")
+	r = tk.MustQuery("select date '2007-10-00';")
+	r.Check(testkit.Rows("2007-10-00"))
+
+	tk.MustExec("set sql_mode = 'NO_ZERO_IN_DATE'")
+	rs, _ = tk.Exec("select date '2007-10-00';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
+	r = tk.MustQuery("select date '2007-10-00';")
+	r.Check(testkit.Rows("2007-10-00"))
+
+	tk.MustExec("set sql_mode = 'NO_ZERO_IN_DATE,NO_ZERO_DATE'")
+
+	rs, _ = tk.Exec("select date '2007-10-00';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	rs, err = tk.Exec("select date '0000-00-00';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
 	r = tk.MustQuery("select date'1998~01~02'")
 	r.Check(testkit.Rows("1998-01-02"))
@@ -2478,7 +2515,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	r = tk.MustQuery("select date'731124', date '011124'")
 	r.Check(testkit.Rows("1973-11-24 2001-11-24"))
 
-	_, err := tk.Exec("select date '0000-00-00 00:00:00';")
+	_, err = tk.Exec("select date '0000-00-00 00:00:00';")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
