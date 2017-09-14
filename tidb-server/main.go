@@ -83,7 +83,7 @@ var (
 	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
 
 	// Performance
-	joinCon      = flag.Int(nmJoinConcurrency, 5, "the number of goroutines that participate joining.")
+	joinCon = flag.Int(nmJoinConcurrency, 5, "the number of goroutines that participate joining.")
 
 	// Log
 	logLevel = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
