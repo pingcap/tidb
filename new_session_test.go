@@ -75,7 +75,7 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 
 func (s *testSessionSuite) TearDownTest(c *C) {
 	testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
@@ -84,8 +84,7 @@ func (s *testSessionSuite) TearDownTest(c *C) {
 }
 
 func (s *testSessionSuite) TestErrorRollback(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t_rollback")
 	tk.MustExec("create table t_rollback (c1 int, c2 int, primary key(c1))")
 	tk.MustExec("insert into t_rollback values (0, 0)")
@@ -102,7 +101,7 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 	for i := 0; i < cnt; i++ {
 		go func() {
 			defer wg.Done()
-			localTk := testkit.NewTestKit(c, s.store)
+			localTk := testkit.NewTestKitWithInit(c, s.store)
 			for j := 0; j < num; j++ {
 				localTk.Exec("insert into t_rollback values (1, 1)")
 				localTk.MustExec("update t_rollback set c2 = c2 + 1 where c1 = 0")
@@ -115,8 +114,7 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 }
 
 func (s *testSessionSuite) TestQueryString(c *C) {
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
 	queryStr := tk.Se.Value(context.QueryString)
@@ -124,8 +122,7 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 }
 
 func (s *testSessionSuite) TestAffectedRows(c *C) {
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id TEXT)")
@@ -184,10 +181,9 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 
 // See http://dev.mysql.com/doc/refman/5.7/en/commit.html
 func (s *testSessionSuite) TestRowLock(c *C) {
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk2 := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
 	c.Assert(tk.Se.Txn(), IsNil)
@@ -221,8 +217,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 
 // See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestAutocommit(c *C) {
-	defer testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t;")
 	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
@@ -257,7 +252,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	varValue1 := "4194305"
 	varValue2 := "4194306"
 
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	se := tk.Se.(variable.GlobalVarAccessor)
 	// Get globalSysVar twice and get the same value
 	v, err := se.GetGlobalSysVar(varName)
@@ -274,7 +269,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	c.Assert(v, Equals, varValue1)
 	c.Assert(tk.Se.CommitTxn(), IsNil)
 
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	se1 := tk1.Se.(variable.GlobalVarAccessor)
 	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
@@ -293,14 +288,14 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.Execute("create table retrytxn (a int unique, b int)")
 	tk.MustExec("insert retrytxn values (1, 1)")
 	tk.MustExec("begin")
 	tk.MustExec("update retrytxn set b = b + 1 where a = 1")
 
 	// Make retryable error.
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("update retrytxn set b = b + 1 where a = 1")
 
 	err := tk.Se.CommitTxn()
@@ -309,14 +304,14 @@ func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 }
 
 func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table retrytxn (a int unique, b int)")
 	tk.MustExec("insert retrytxn values (1, 1)")
 	tk.MustExec("begin")
 	tk.MustExec("update retrytxn set b = b + 1 where a = 1")
 
 	// Make retryable error.
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("update retrytxn set b = b + 1 where a = 1")
 
 	// Hijack retry history, add a statement that returns error.
@@ -334,7 +329,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 
 // TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
 func (s *testSessionSuite) TestTruncateAlloc(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table truncate_id (a int primary key auto_increment)")
 	tk.MustExec("insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
 	tk.MustExec("truncate table truncate_id")
@@ -343,7 +338,7 @@ func (s *testSessionSuite) TestTruncateAlloc(c *C) {
 }
 
 func (s *testSessionSuite) TestString(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("select 1")
 	// here to check the panic bug in String() when txn is nil after committed.
 	c.Log(tk.Se.String())
@@ -360,7 +355,7 @@ type testSchemaSuite struct {
 
 func (s *testSchemaSuite) TearDownTest(c *C) {
 	testleak.AfterTest(c)()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
@@ -387,8 +382,8 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
 
 	// create table
 	tk.MustExec(`create table t (id int, c int);`)
@@ -428,8 +423,8 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 }
 
 func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table t (a int, b int)")
 	tk1.MustExec("prepare stmt from 'insert into t values (?, ?)'")
@@ -450,8 +445,8 @@ func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
 }
 
 func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (a int, b int)")
 
 	tk1.MustExec("begin")

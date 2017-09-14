@@ -77,10 +77,15 @@ func (res *Result) Sort() *Result {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(c *check.C, store kv.Storage) *TestKit {
-	tk := &TestKit{
+	return &TestKit{
 		c:     c,
 		store: store,
 	}
+}
+
+// NewTestKitWithInit returns a new *TestKit and creates a session.
+func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
+	tk := NewTestKit(c, store)
 	// Use test and prepare a session.
 	tk.MustExec("use test")
 	return tk
