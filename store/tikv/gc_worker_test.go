@@ -35,7 +35,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.store.oracle = s.oracle
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	gcWorker, err := NewGCWorker(s.store, false)
+	gcWorker, err := NewGCWorker(s.store, true)
 	c.Assert(err, IsNil)
 	s.gcWorker = gcWorker
 }

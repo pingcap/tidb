@@ -168,10 +168,9 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(errBodyMissing)
 		}
 
-		checkerr := s.snapshot.store.CheckVisibility(s.startTS())
-
-		if checkerr != nil {
-			return errors.Trace(checkerr)
+		err = s.snapshot.store.CheckVisibility(s.startTS())
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		kvPairs := cmdScanResp.Pairs

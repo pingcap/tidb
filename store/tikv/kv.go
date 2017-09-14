@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -43,6 +44,17 @@ var mc storeCache
 
 // Driver implements engine Driver.
 type Driver struct {
+}
+
+func createEtcdKV(addrs []string) (*clientv3.Client, error) {
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   addrs,
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return cli, nil
 }
 
 // Open opens or creates an TiKV storage with given path.
@@ -70,11 +82,21 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return store, nil
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC)
+	etcdcli, err := createEtcdKV(etcdAddrs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	spkv := &EtcdSafePointKV{
+		cli: etcdcli,
+	}
+
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(), !disableGC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	s.etcdAddrs = etcdAddrs
+
 	mc.cache[uuid] = s
 	return s, nil
 }
@@ -111,6 +133,7 @@ type tikvStore struct {
 	mock         bool
 	enableGC     bool
 
+	kv        SafePointKV
 	safePoint uint64
 	spTime    time.Time
 	spSession tidb.Session  // this is used to obtain safePoint from remote
@@ -133,17 +156,17 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	diff := time.Since(cachedTime)
 
 	if diff > (gcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
-		return errors.New("start timestamp may fall behind safepoint")
+		return errMayFallBehind
 	}
 
 	if startTime < cachedSafePoint {
-		return errors.New("start timestamp falls behind safepoint")
+		return errFallBehind
 	}
 
 	return nil
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool) (*tikvStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -157,10 +180,10 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		pdClient:    pdClient,
 		regionCache: NewRegionCache(pdClient),
 		mock:        mock,
-
-		safePoint: 0,
-		spTime:    time.Now(),
-		spMsg:     make(chan struct{}),
+		kv:          spkv,
+		safePoint:   0,
+		spTime:      time.Now(),
+		spMsg:       make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
@@ -262,7 +285,11 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		pdCli = opt.pdClientHijack(pdCli)
 	}
 
-	return newTikvStore(uuid, pdCli, client, false)
+	spkv := &MockSafePointKV{
+		store: make(map[string]string),
+	}
+
+	return newTikvStore(uuid, pdCli, spkv, client, false)
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {

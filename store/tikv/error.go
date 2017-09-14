@@ -24,6 +24,8 @@ var (
 	errInvalidResponse = errors.New("invalid response")
 	// errBodyMissing response body is missing error
 	errBodyMissing = errors.New("response body is missing")
+	errMayFallBehind = errors.New("start timestamp may fall behind safe point")
+	errFallBehind = errors.New("start timestamp fall behind safe point")
 )
 
 // TiDB decides whether to retry transaction by checking if error message contains
