@@ -36,11 +36,11 @@ func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
 		arg string
 	}{
 		{"NO_ZERO_DATE"},
+		{",,NO_ZERO_DATE"},
 		{"NO_ZERO_DATE,NO_ZERO_IN_DATE"},
 		{""},
 		{", "},
 		{","},
-		{" ,"},
 	}
 
 	for _, t := range positiveCases {
@@ -52,7 +52,9 @@ func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
 		arg string
 	}{
 		{"NO_ZERO_DATE, NO_ZERO_IN_DATE"},
-		{"NO_ZERO_DATE, adfadsdfasdfads"},
+		{"NO_ZERO_DATE,adfadsdfasdfads"},
+		{", ,NO_ZERO_DATE"},
+		{" ,"},
 	}
 
 	for _, t := range negativeCases {

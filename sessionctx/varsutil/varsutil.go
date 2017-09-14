@@ -25,6 +25,23 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// formatSQLModeStr re-formate 'SQL_MODE' variable.
+func formatSQLModeStr(s string) (ret string) {
+	parts := strings.Split(s, ",")
+	parts[len(parts)-1] = strings.TrimSpace(parts[len(parts)-1])
+	for i := 0; i < len(parts); i++ {
+		if len(parts[i]) == 0 {
+			continue
+		}
+		if len(ret) == 0 {
+			ret = parts[i]
+		} else {
+			ret = ret + "," + parts[i]
+		}
+	}
+	return
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -39,16 +56,25 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	case variable.TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), nil
 	}
-
+	isSQLModeVar := key == variable.SQLModeVar
 	sVal, ok := s.Systems[key]
+	if isSQLModeVar {
+		sVal = formatSQLModeStr(sVal)
+	}
 	if ok {
 		return sVal, nil
 	}
 	if sysVar.Scope&variable.ScopeGlobal == 0 {
+		if isSQLModeVar {
+			return formatSQLModeStr(sysVar.Value), nil
+		}
 		// None-Global variable can use pre-defined default value.
 		return sysVar.Value, nil
 	}
 	gVal, err := s.GlobalVarsAccessor.GetGlobalSysVar(key)
+	if isSQLModeVar {
+		gVal = formatSQLModeStr(gVal)
+	}
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -59,6 +85,7 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 // GetGlobalSystemVar gets a global system variable.
 func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
+	isSQLModeVar := key == variable.SQLModeVar
 	sysVar := variable.SysVars[key]
 	if sysVar == nil {
 		return "", variable.UnknownSystemVar.GenByArgs(key)
@@ -66,9 +93,19 @@ func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 	if sysVar.Scope == variable.ScopeSession {
 		return "", variable.ErrIncorrectScope
 	} else if sysVar.Scope == variable.ScopeNone {
+		if isSQLModeVar {
+			return formatSQLModeStr(sysVar.Value), nil
+		}
 		return sysVar.Value, nil
 	}
-	return s.GlobalVarsAccessor.GetGlobalSysVar(key)
+	gVal, err := s.GlobalVarsAccessor.GetGlobalSysVar(key)
+	if isSQLModeVar {
+		gVal = formatSQLModeStr(gVal)
+	}
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return gVal, nil
 }
 
 // epochShiftBits is used to reserve logical part of the timestamp.
