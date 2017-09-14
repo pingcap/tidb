@@ -142,6 +142,7 @@ type analyzeTask struct {
 	Columns   []*model.ColumnInfo
 	PKInfo    *model.ColumnInfo
 	src       Executor
+	idxExec   *AnalyzeIndexExec
 }
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
@@ -150,7 +151,11 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 		case colTask:
 			resultCh <- e.analyzeColumns(task)
 		case idxTask:
-			resultCh <- e.analyzeIndex(task)
+			if task.idxExec != nil {
+				resultCh <- analyzeIndexPushdown(task.idxExec)
+			} else {
+				resultCh <- e.analyzeIndex(task)
+			}
 		}
 	}
 }
