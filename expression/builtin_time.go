@@ -186,7 +186,7 @@ var (
 
 // handleInvalidTimeError reports error or warning depend on the context.
 func handleInvalidTimeError(ctx context.Context, err error) error {
-	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue)) {
+	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err)) {
 		return err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
@@ -1932,7 +1932,10 @@ func (b *builtinExtractDurationSig) evalInt(row []types.Datum) (int64, bool, err
 	return res, err != nil, errors.Trace(err)
 }
 
+// baseDateArithmitical is the base class for all "builtinAddDateXXXSig" and "builtinSubDateXXXSig",
+// which provides parameter getter and date arithmetical calculate functions.
 type baseDateArithmitical struct {
+	// intervalRegexp is "*Regexp" used to extract string interval for "DAY" unit.
 	intervalRegexp *regexp.Regexp
 }
 
@@ -2013,7 +2016,7 @@ func (du *baseDateArithmitical) getIntervalFromInt(ctx context.Context, args []E
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
-	return fmt.Sprintf("%v", interval), false, nil
+	return strconv.FormatInt(interval, 10), false, nil
 }
 
 func (du *baseDateArithmitical) add(ctx context.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
@@ -2487,7 +2490,7 @@ func (b *builtinSubDateDatetimeStringSig) evalTime(row []types.Datum) (types.Tim
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
+	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
