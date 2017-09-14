@@ -19,7 +19,6 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-
 }
 
 func (*testSuite) TestSessionStatus(c *C) {

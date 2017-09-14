@@ -14,28 +14,16 @@
 package perfschema
 
 import (
+	"fmt"
+	log "github.com/Sirupsen/logrus"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/model"
-	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"fmt"
-	"github.com/juju/errors"
 )
-
-//columns info for status
-var setupStatusCols = []columnInfo{
-	{mysql.TypeString, 60, mysql.NotNullFlag, `%`, nil},
-	{mysql.TypeString, 32, 0, `%`, nil},
-}
-
-var ColumnStatus = []string{
-	"variable_name",
-	"variable_value",
-}
 
 type TableSessionStatusHandle struct {
 }
@@ -99,7 +87,7 @@ func (h *TableGlobalStatusHandle) GetRows(ctx context.Context,
 	return rows, nil
 }
 
-func createSysVarHandle(handleType string) tables.SysVarHandle{
+func createSysVarHandle(handleType string) tables.SysVarHandle {
 	switch handleType {
 	case TableSessionStatus:
 		return &TableSessionStatusHandle{}

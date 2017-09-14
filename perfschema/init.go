@@ -320,8 +320,6 @@ func (ps *perfSchema) initialize() {
 		stagesCurrentCols,
 		stagesCurrentCols, // same as above
 		stagesCurrentCols, // same as above
-		setupStatusCols,
-		setupStatusCols,
 	}
 
 	allColNames := [][]string{
@@ -342,8 +340,6 @@ func (ps *perfSchema) initialize() {
 		ColumnStagesCurrent,
 		ColumnStagesHistory,
 		ColumnStagesHistoryLong,
-		ColumnStatus,
-		ColumnStatus,
 	}
 
 	// initialize all table, column and result field definitions
