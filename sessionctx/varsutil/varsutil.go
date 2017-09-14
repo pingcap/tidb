@@ -107,10 +107,9 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 			vars.StrictSQLMode = false
 		}
 		// Modes is a list of different modes separated by commas.
-		modes := strings.Split(sVal, ",")
-		var sqlMode mysql.SQLMode
-		for _, mode := range modes {
-			sqlMode = sqlMode | mysql.GetSQLMode(mode)
+		sqlMode, err2 := mysql.GetSQLMode(sVal)
+		if err2 != nil {
+			return errors.Trace(err2)
 		}
 		vars.SQLMode = sqlMode
 	case variable.TiDBSnapshot:

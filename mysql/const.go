@@ -15,8 +15,13 @@ package mysql
 
 import (
 	"fmt"
+	"github.com/juju/errors"
 	"strings"
 )
+
+func newInvalidModeErr(s string) error {
+	return NewErr(ErrWrongValueForVar, "sql_mode", s)
+}
 
 // Version information.
 const (
@@ -415,14 +420,19 @@ const (
 	ModePadCharToFullLength
 )
 
-// GetSQLMode gets the sql mode for string literal.
-func GetSQLMode(str string) SQLMode {
-	str = strings.ToUpper(str)
-	mode, ok := Str2SQLMode[str]
-	if !ok {
-		return ModeNone
+// GetSQLMode gets the sql mode for string literal. SQL_mode is a list of different modes separated by commas.
+func GetSQLMode(s string) (SQLMode, error) {
+	strs := strings.Split(s, ",")
+	var sqlMode SQLMode
+	for _, str := range strs {
+		upper := strings.ToUpper(str)
+		mode, ok := Str2SQLMode[upper]
+		if !ok && strings.TrimSpace(str) != "" {
+			return sqlMode, errors.Trace(newInvalidModeErr(str))
+		}
+		sqlMode = sqlMode | mode
 	}
-	return mode
+	return sqlMode, nil
 }
 
 // Str2SQLMode is the string represent of sql_mode to sql_mode map.

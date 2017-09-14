@@ -2659,3 +2659,13 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r = tk.MustQuery(`select json_extract(json_object(1,2,3,4), '$."1"')`)
 	r.Check(testkit.Rows("2"))
 }
+
+func (s *testIntegrationSuite) TestSetVariables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	_, err := tk.Exec("set sql_mod='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+}
