@@ -129,8 +129,8 @@ func (w *EtcdSafePointKV) Get(k string) (string, error) {
 // StartSafePointChecker triggers SafePoint Checker on each tidb
 func (w *GCWorker) StartSafePointChecker() {
 	go func() {
+		d := gcSafePointUpdateInterval
 		for {
-			d := gcSafePointUpdateInterval
 			select {
 			case spCachedTime := <-time.After(d):
 				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
