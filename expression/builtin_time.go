@@ -330,10 +330,10 @@ type builtinDateLiteralSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
 func (b *builtinDateLiteralSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	mode := b.getCtx().GetSessionVars().SQLMode
-	if mode.IsNoZeroDateMode() && b.literal.IsZero() {
+	if mode.HasNoZeroDateMode() && b.literal.IsZero() {
 		return b.literal, true, errors.Trace(types.ErrInvalidTimeFormat)
 	}
-	if mode.IsNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
+	if mode.HasNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
 		return b.literal, true, errors.Trace(types.ErrInvalidTimeFormat)
 	}
 	return b.literal, false, nil
