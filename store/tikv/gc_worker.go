@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
-	"github.com/coreos/etcd/clientv3"
 )
 
 // GCWorker periodically triggers GC process on tikv server.
@@ -46,9 +46,9 @@ type GCWorker struct {
 	cancel      goctx.CancelFunc
 	done        chan error
 
-	session     tidb.Session
+	session tidb.Session
 
-	checkerLock	sync.Mutex
+	checkerLock sync.Mutex
 }
 
 // SafePointKV is used for a seamingless integration for mockTest and runtime.
@@ -79,13 +79,13 @@ func (w *MockSafePointKV) Get(k string) (string, error) {
 
 // EtcdSafePointKV implements SafePointKV at runtime
 type EtcdSafePointKV struct {
-	cli	*clientv3.Client
+	cli *clientv3.Client
 }
 
 // Put implements the Put method for SafePointKV
 func (w *EtcdSafePointKV) Put(k string, v string) error {
-	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second * 5)
-	_, err := w.cli.Put(ctx,k, v)
+	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second*5)
+	_, err := w.cli.Put(ctx, k, v)
 	cancel()
 	if err != nil {
 		return errors.Trace(err)
@@ -95,7 +95,7 @@ func (w *EtcdSafePointKV) Put(k string, v string) error {
 
 // Get implements the Get method for SafePointKV
 func (w *EtcdSafePointKV) Get(k string) (string, error) {
-	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second * 5)
+	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second*5)
 	resp, err := w.cli.Get(ctx, k)
 	cancel()
 	if err != nil {
@@ -168,7 +168,7 @@ func (w *GCWorker) Close() {
 }
 
 const (
-	gcTimeFormat = "20060102-15:04:05 -0700 MST"
+	gcTimeFormat         = "20060102-15:04:05 -0700 MST"
 	gcWorkerTickInterval = time.Minute
 	gcWorkerLease        = time.Minute * 2
 	gcLeaderUUIDKey      = "tikv_gc_leader_uuid"
@@ -180,13 +180,13 @@ const (
 	gcDefaultRunInterval = time.Minute * 10
 	gcWaitTime           = time.Minute * 10
 
-	gcLifeTimeKey     = "tikv_gc_life_time"
-	gcDefaultLifeTime = time.Minute * 10
-	gcSafePointKey    = "tikv_gc_safe_point"
-	gcSavedSafePoint  = "tikv_gc_saved_safe_point"
-	gcSafePointCacheInterval = time.Second * 100
+	gcLifeTimeKey             = "tikv_gc_life_time"
+	gcDefaultLifeTime         = time.Minute * 10
+	gcSafePointKey            = "tikv_gc_safe_point"
+	gcSavedSafePoint          = "tikv_gc_saved_safe_point"
+	gcSafePointCacheInterval  = time.Second * 100
 	gcSafePointUpdateInterval = time.Second * 10
-	gcCPUTimeInaccuracyBound = time.Second
+	gcCPUTimeInaccuracyBound  = time.Second
 )
 
 var gcVariableComments = map[string]string{
@@ -228,7 +228,7 @@ func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func createSession(store kv.Storage) tidb.Session{
+func createSession(store kv.Storage) tidb.Session {
 	for {
 		session, err := tidb.CreateSession(store)
 		if err != nil {
@@ -346,11 +346,11 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	
+
 	if lastRun != nil && lastRun.Add(*runInterval).After(now) {
 		return false, nil
 	}
-	
+
 	return true, nil
 }
 
@@ -579,13 +579,12 @@ func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier stri
 		for {
 			time.Sleep(leftTime)
 			if time.Since(startTime) > gcSafePointCacheInterval {
-				break;
+				break
 			}
 			leftTime = leftTime - time.Since(startTime)
 		}
 	}
-	
-	
+
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
 		GC: &kvrpcpb.GCRequest{
@@ -724,7 +723,7 @@ func (w *GCWorker) saveSafePoint(key string, t uint64) error {
 func (w *GCWorker) loadSafePoint(key string) (uint64, error) {
 	w.checkerLock.Lock()
 	defer w.checkerLock.Unlock()
-	
+
 	str, err := w.store.kv.Get(gcSavedSafePoint)
 
 	if err != nil {
@@ -800,7 +799,7 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 
 func (w *GCWorker) loadValueFromSysTable(key string, s tidb.Session) (string, error) {
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err :=s.Execute(stmt)
+	rs, err := s.Execute(stmt)
 	if err != nil {
 		return "", errors.Trace(err)
 	}

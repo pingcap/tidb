@@ -17,18 +17,18 @@ import (
 	"fmt"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/juju/errors"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
 )
 
 type testSafePointSuite struct {
-	store   *tikvStore
+	store    *tikvStore
 	oracle   *mockOracle
 	gcWorker *GCWorker
-	prefix  string
+	prefix   string
 }
 
 var _ = Suite(&testSafePointSuite{})
@@ -67,7 +67,7 @@ func mymakeKeys(rowNum int, prefix string) []kv.Key {
 
 func (s *testSafePointSuite) waitUntilErrorPlugIn(t uint64) {
 	for {
-		s.gcWorker.saveSafePoint(gcSavedSafePoint, t + 10)
+		s.gcWorker.saveSafePoint(gcSavedSafePoint, t+10)
 		cachedTime := time.Now()
 		newSafePoint, err := s.gcWorker.loadSafePoint(gcSavedSafePoint)
 		if err == nil {
@@ -101,10 +101,10 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	isMayFallBehind := terror.ErrorEqual(errors.Cause(geterr2), errMayFallBehind)
 	isBehind := isFallBehind || isMayFallBehind
 	c.Assert(isBehind, IsTrue)
-	
+
 	// for txn seek
 	txn3 := s.beginTxn(c)
-	
+
 	s.waitUntilErrorPlugIn(txn3.startTS)
 
 	_, seekerr := txn3.Seek(encodeKey(s.prefix, ""))
@@ -117,7 +117,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 	// for snapshot batchGet
 	keys := mymakeKeys(10, s.prefix)
 	txn4 := s.beginTxn(c)
-	
+
 	s.waitUntilErrorPlugIn(txn4.startTS)
 
 	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: txn4.StartTS()})
