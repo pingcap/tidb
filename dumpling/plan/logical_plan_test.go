@@ -677,10 +677,6 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "select substr(\"abc\", 1)",
 			plan: "Dual->Projection",
 		},
-		{
-			sql:  "analyze table t, t",
-			plan: "*plan.Analyze",
-		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
