@@ -226,7 +226,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}{
 		{
 			sql:  "analyze table t3",
-			best: "Analyze{Index(true, t3.a),Table(false, t3.b)}",
+			best: "Analyze{Index(true, t3.a),Table(true, t3.b)}",
 		},
 		// Test analyze full table.
 		{
