@@ -432,9 +432,7 @@ const (
 // GetSQLMode gets the sql mode for string literal. SQL_mode is a list of different modes separated by commas.
 func GetSQLMode(s string) (SQLMode, error) {
 	strs := strings.Split(s, ",")
-	if strings.Count(strs[len(strs)-1], " ") == len(strs[len(strs)-1]) {
-		strs[len(strs)-1] = ""
-	}
+	strs[len(strs)-1] = strings.TrimRight(strs[len(strs)-1], " ")
 	var sqlMode SQLMode
 	for i, length := 0, len(strs); i < length; i++ {
 		upper := strings.ToUpper(strs[i])

@@ -26,20 +26,17 @@ import (
 )
 
 // formatSQLModeStr re-formate 'SQL_MODE' variable.
-func formatSQLModeStr(s string) (ret string) {
+func formatSQLModeStr(s string) string {
+	s = strings.TrimRight(s, " ")
 	parts := strings.Split(s, ",")
-	parts[len(parts)-1] = strings.TrimSpace(parts[len(parts)-1])
+	var nonEmptyParts []string
 	for i := 0; i < len(parts); i++ {
 		if len(parts[i]) == 0 {
 			continue
 		}
-		if len(ret) == 0 {
-			ret = parts[i]
-		} else {
-			ret = ret + "," + parts[i]
-		}
+		nonEmptyParts = append(nonEmptyParts, parts[i])
 	}
-	return
+	return strings.Join(nonEmptyParts, ",")
 }
 
 // GetSessionSystemVar gets a system variable.
