@@ -41,6 +41,8 @@ type testSessionSuite struct {
 	cluster   *mocktikv.Cluster
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
+	dom       *domain.Domain
+	checkLeak func()
 }
 
 func (s *testSessionSuite) SetUpSuite(c *C) {
@@ -55,18 +57,27 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.store = store
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(0)
-	_, err = tidb.BootstrapSession(s.store)
+	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *testSessionSuite) SetUpTest(c *C) {
+	s.checkLeak = testleak.AfterTest(c)
+}
+
 func (s *testSessionSuite) TearDownTest(c *C) {
-	testleak.AfterTest(c)()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
+	s.checkLeak()
 }
 
 func (s *testSessionSuite) TestErrorRollback(c *C) {
@@ -337,16 +348,22 @@ type testSchemaSuite struct {
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
 	lease     time.Duration
+	dom       *domain.Domain
+	checkLeak func()
+}
+
+func (s *testSchemaSuite) SetUpTest(c *C) {
+	s.checkLeak = testleak.AfterTest(c)
 }
 
 func (s *testSchemaSuite) TearDownTest(c *C) {
-	testleak.AfterTest(c)()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
+	s.checkLeak()
 }
 
 func (s *testSchemaSuite) SetUpSuite(c *C) {
@@ -364,6 +381,11 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	tidb.SetStatsLease(0)
 	_, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+}
+
+func (s *testSchemaSuite) TearDownSuite(c *C) {
+	s.store.Close()
+	s.dom.Close()
 }
 
 func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
