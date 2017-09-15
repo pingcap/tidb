@@ -343,11 +343,11 @@ func (b *builtinDateDiffSig) evalInt(row []types.Datum) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	if lhs.Time.Month() == 0 || lhs.Time.Day() == 0 || rhs.Time.Month() == 0 || rhs.Time.Day() == 0 {
-		if lhs.Time.Month() == 0 || lhs.Time.Day() == 0 {
+	if invalidLHS, invalidRHS := lhs.InvalidZero(), rhs.InvalidZero(); invalidLHS || invalidRHS {
+		if invalidLHS {
 			err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(lhs.String()))
 		}
-		if rhs.Time.Month() == 0 || rhs.Time.Day() == 0 {
+		if invalidRHS {
 			err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(rhs.String()))
 		}
 		return 0, true, errors.Trace(err)
@@ -2784,24 +2784,24 @@ func (b *builtinTimestampDiffSig) evalInt(row []types.Datum) (int64, bool, error
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	t1, isNull, err := b.args[1].EvalTime(row, ctx)
+	lhs, isNull, err := b.args[1].EvalTime(row, ctx)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(handleInvalidTimeError(b.getCtx(), err))
 	}
-	t2, isNull, err := b.args[2].EvalTime(row, ctx)
+	rhs, isNull, err := b.args[2].EvalTime(row, ctx)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(handleInvalidTimeError(b.getCtx(), err))
 	}
-	if t1.InvalidZero() || t2.InvalidZero() {
-		if t1.InvalidZero() {
-			err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(t1.String()))
+	if invalidLHS, invalidRHS := lhs.InvalidZero(), rhs.InvalidZero(); invalidLHS || invalidRHS {
+		if invalidLHS {
+			err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(lhs.String()))
 		}
-		if t2.InvalidZero() {
-			err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(t2.String()))
+		if invalidRHS {
+			err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(rhs.String()))
 		}
 		return 0, true, errors.Trace(err)
 	}
-	return types.TimestampDiff(unit, t1, t2), false, nil
+	return types.TimestampDiff(unit, lhs, rhs), false, nil
 }
 
 type unixTimestampFunctionClass struct {
