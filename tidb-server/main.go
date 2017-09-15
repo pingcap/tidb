@@ -65,8 +65,6 @@ const (
 	nmMetricsAddr     = "metrics-addr"
 	nmMetricsInterval = "metrics-interval"
 	nmDdlLease        = "lease"
-	nmJoinConcurrency = "join-concurrency"
-	nmStatsLease      = "statsLease"
 )
 
 var (
@@ -83,10 +81,6 @@ var (
 	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
 
-	// Performance
-	joinCon    = flag.Int(nmJoinConcurrency, 5, "the number of goroutines that participate joining.")
-	statsLease = flag.String(nmStatsLease, "3s", "stats lease duration, which inflences the time of analyze and stats load.")
-
 	// Log
 	logLevel = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
 	logFile  = flag.String(nmLogFile, "", "log file path")
@@ -96,9 +90,6 @@ var (
 	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = flag.Int(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
-
-	// To be removed.
-	enablePrivilege = flagBoolean("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
 
 	timeJumpBackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -311,14 +302,6 @@ func overrideConfig() {
 	}
 	if actualFlags[nmMetricsInterval] {
 		cfg.Status.MetricsInterval = *metricsInterval
-	}
-
-	// Performance
-	if actualFlags[nmStatsLease] {
-		cfg.Performance.StatsLease = *statsLease
-	}
-	if actualFlags[nmJoinConcurrency] {
-		cfg.Performance.JoinConcurrency = *joinCon
 	}
 }
 
