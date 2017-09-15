@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -342,6 +343,35 @@ func (s *testSessionSuite) TestString(c *C) {
 	tk.MustExec("select 1")
 	// here to check the panic bug in String() when txn is nil after committed.
 	c.Log(tk.Se.String())
+}
+
+func (s *testSessionSuite) TestDatabase(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// Test database.
+	tk.MustExec("create database xxx")
+	tk.MustExec("drop database xxx")
+
+	tk.MustExec("drop database if exists xxx")
+	tk.MustExec("create database xxx")
+	tk.MustExec("create database if not exists xxx")
+	tk.MustExec("drop database if exists xxx")
+
+	// Test schema.
+	tk.MustExec("create schema xxx")
+	tk.MustExec("drop schema xxx")
+
+	tk.MustExec("drop schema if exists xxx")
+	tk.MustExec("create schema xxx")
+	tk.MustExec("create schema if not exists xxx")
+	tk.MustExec("drop schema if exists xxx")
+}
+
+func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	r, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(tk.Se, "select 1;")
+	c.Assert(err, IsNil)
+	c.Assert(len(r), Equals, 1)
 }
 
 var _ = Suite(&testSchemaSuite{})

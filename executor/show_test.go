@@ -361,3 +361,33 @@ func (s *testSuite) TestIssue3641(c *C) {
 	_, err = tk.Exec("show table status;")
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 }
+
+// TestShow2 is moved from session_test
+func (s *testSuite) TestShow2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("set global autocommit=1")
+	tk.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
+	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
+
+	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
+
+	tk.MustQuery("show tables").Check(testkit.Rows("t"))
+	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE"))
+
+	r, err := tk.Exec("show table status from test like 't'")
+	c.Assert(err, IsNil)
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, HasLen, 18)
+	c.Assert(row.Data[0].GetString(), Equals, "t")
+	c.Assert(row.Data[17].GetString(), Equals, "注释")
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.MustExec("grant all on *.* to 'root'@'%'")
+	tk.MustQuery("show grants").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'"))
+}
