@@ -50,11 +50,13 @@ const ( // GET_FORMAT location.
 	internalLocation = "INTERNAL"
 )
 
-// DurationPattern checks whether a string matchs the format of duration.
-var DurationPattern = regexp.MustCompile(`^\s*[-]?(((\d{1,2}\s+)?0*\d{0,3}(:0*\d{1,2}){0,2})|(\d{1,7}))?(\.\d*)?\s*$`)
+var (
+    // durationPattern checks whether a string matchs the format of duration.
+    durationPattern = regexp.MustCompile(`^\s*[-]?(((\d{1,2}\s+)?0*\d{0,3}(:0*\d{1,2}){0,2})|(\d{1,7}))?(\.\d*)?\s*$`)
 
-// TimestampPattern checks whether a string matchs the format of timestamp.
-var TimestampPattern = regexp.MustCompile(`^\s*0*\d{1,4}([^\d]0*\d{1,2}){2}\s+(0*\d{0,2}([^\d]0*\d{1,2}){2})?(\.\d*)?\s*$`)
+    // timestampPattern checks whether a string matchs the format of timestamp.
+    timestampPattern = regexp.MustCompile(`^\s*0*\d{1,4}([^\d]0*\d{1,2}){2}\s+(0*\d{0,2}([^\d]0*\d{1,2}){2})?(\.\d*)?\s*$`)
+)
 
 var (
 	_ functionClass = &dateFunctionClass{}
@@ -3080,7 +3082,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx context.Context, args []
 		return nil, errors.Trace(types.ErrInvalidTimeFormat)
 	}
 	str := constant.Value.GetString()
-	if !TimestampPattern.MatchString(str) {
+	if !timestampPattern.MatchString(str) {
 		return nil, errors.Trace(types.ErrInvalidTimeFormat)
 	}
 	tm, err := types.ParseTime(str, mysql.TypeTimestamp, getFsp(str))
@@ -3128,7 +3130,7 @@ func getTimeZone(ctx context.Context) *time.Location {
 // isDuration returns a boolean indicating whether the str matches the format of duration.
 // See https://dev.mysql.com/doc/refman/5.7/en/time.html
 func isDuration(str string) bool {
-	return DurationPattern.MatchString(str)
+	return durationPattern.MatchString(str)
 }
 
 // strDatetimeAddDuration adds duration to datetime string, returns a datum value.
