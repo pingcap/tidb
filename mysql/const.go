@@ -15,8 +15,8 @@ package mysql
 
 import (
 	"fmt"
-	"strings"
 	"github.com/juju/errors"
+	"strings"
 )
 
 func newInvalidModeErr(s string) error {
