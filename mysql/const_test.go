@@ -44,7 +44,7 @@ func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
 	}
 
 	for _, t := range positiveCases {
-		_, err := GetSQLMode(t.arg)
+		_, err := GetSQLMode(FormatSQLModeStr(t.arg))
 		c.Assert(err, IsNil)
 	}
 
@@ -58,7 +58,7 @@ func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
 	}
 
 	for _, t := range negativeCases {
-		_, err := GetSQLMode(t.arg)
+		_, err := GetSQLMode(FormatSQLModeStr(t.arg))
 		c.Assert(err, NotNil)
 	}
 }

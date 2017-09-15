@@ -25,20 +25,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// FormatSQLModeStr re-formate 'SQL_MODE' variable.
-func FormatSQLModeStr(s string) string {
-	s = strings.TrimRight(s, " ")
-	parts := strings.Split(s, ",")
-	var nonEmptyParts []string
-	for i := 0; i < len(parts); i++ {
-		if len(parts[i]) == 0 {
-			continue
-		}
-		nonEmptyParts = append(nonEmptyParts, parts[i])
-	}
-	return strings.Join(nonEmptyParts, ",")
-}
-
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -117,7 +103,7 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		}
 	case variable.SQLModeVar:
 		sVal = strings.ToUpper(sVal)
-		sVal = FormatSQLModeStr(sVal)
+		sVal = mysql.FormatSQLModeStr(sVal)
 		// TODO: Remove this latter.
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
 			vars.StrictSQLMode = true

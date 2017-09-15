@@ -429,10 +429,24 @@ const (
 	ModePadCharToFullLength
 )
 
+// FormatSQLModeStr re-formate 'SQL_MODE' variable.
+func FormatSQLModeStr(s string) string {
+	s = strings.ToUpper(strings.TrimRight(s, " "))
+	parts := strings.Split(s, ",")
+	var nonEmptyParts []string
+	for i := 0; i < len(parts); i++ {
+		if len(parts[i]) == 0 {
+			continue
+		}
+		nonEmptyParts = append(nonEmptyParts, parts[i])
+	}
+	return strings.Join(nonEmptyParts, ",")
+}
+
 // GetSQLMode gets the sql mode for string literal. SQL_mode is a list of different modes separated by commas.
+// The input string must be formatted by 'FormatSQLModeStr'
 func GetSQLMode(s string) (SQLMode, error) {
 	strs := strings.Split(s, ",")
-	strs[len(strs)-1] = strings.TrimRight(strs[len(strs)-1], " ")
 	var sqlMode SQLMode
 	for i, length := 0, len(strs); i < length; i++ {
 		upper := strings.ToUpper(strs[i])
