@@ -639,7 +639,7 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 		schema:       v.Schema(),
 		seekHandle:   math.MinInt64,
 		ranges:       v.Ranges,
-		isInfoSchema: tb.TableType() == table.SystemVarTale,
+		isInfoSchema: tb.Type() == table.VirtualTale,
 	}
 	return ts
 }

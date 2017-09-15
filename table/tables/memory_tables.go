@@ -268,6 +268,7 @@ func (t *MemoryTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*
 	return nil
 }
 
-func (t *MemoryTable) TableType() table.TableType {
+// Type implements table.Table Type interface.
+func (t *MemoryTable) Type() table.Type {
 	return table.MemoryTable
 }

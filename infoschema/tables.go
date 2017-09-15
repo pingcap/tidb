@@ -1169,6 +1169,6 @@ func (it *infoschemaTable) Seek(ctx context.Context, h int64) (int64, bool, erro
 	return 0, false, table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) TableType() table.TableType {
-	return table.SystemVarTale
+func (it *infoschemaTable) Type() table.Type {
+	return table.VirtualTale
 }

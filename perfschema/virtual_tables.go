@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -10,7 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//
+
 package perfschema
 
 import (
@@ -25,11 +25,15 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-type TableSessionStatusHandle struct {
+// session status
+type sessionStatusDataSource struct {
+	meta *model.TableInfo
+	cols []*table.Column
 }
 
-func (h *TableSessionStatusHandle) GetRows(ctx context.Context,
-	cols []*table.Column) (fullRows [][]types.Datum, err error) {
+// GetRows implement the interface of VirtualDataSource
+func (h *sessionStatusDataSource) GetRows(ctx context.Context) (fullRows [][]types.Datum,
+	err error) {
 	sessionVars := ctx.GetSessionVars()
 	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
@@ -54,12 +58,25 @@ func (h *TableSessionStatusHandle) GetRows(ctx context.Context,
 	return rows, nil
 }
 
-//global status,
-type TableGlobalStatusHandle struct {
+// Meta implement the interface of VirtualDataSource
+func (h *sessionStatusDataSource) Meta() *model.TableInfo {
+	return h.meta
 }
 
-func (h *TableGlobalStatusHandle) GetRows(ctx context.Context,
-	cols []*table.Column) (fullRows [][]types.Datum, err error) {
+// Cols implement the interface of VirtualDataSource
+func (h *sessionStatusDataSource) Cols() []*table.Column {
+	return h.cols
+}
+
+//global status
+type globalStatusDataSource struct {
+	meta *model.TableInfo
+	cols []*table.Column
+}
+
+// GetRows implement the interface of VirtualDataSource
+func (h *globalStatusDataSource) GetRows(ctx context.Context) (fullRows [][]types.Datum,
+	err error) {
 	sessionVars := ctx.GetSessionVars()
 	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
@@ -87,12 +104,28 @@ func (h *TableGlobalStatusHandle) GetRows(ctx context.Context,
 	return rows, nil
 }
 
-func createSysVarHandle(handleType string) tables.SysVarHandle {
-	switch handleType {
+// Meta implement the interface of VirtualDataSource
+func (h *globalStatusDataSource) Meta() *model.TableInfo {
+	return h.meta
+}
+
+// Cols implement the interface of VirtualDataSource
+func (h *globalStatusDataSource) Cols() []*table.Column {
+	return h.cols
+}
+
+func createSysVarHandle(tableName string, meta *model.TableInfo) tables.VirtualDataSource {
+	columns := make([]*table.Column, 0, len(meta.Columns))
+	for _, colInfo := range meta.Columns {
+		col := table.ToColumn(colInfo)
+		columns = append(columns, col)
+	}
+
+	switch tableName {
 	case TableSessionStatus:
-		return &TableSessionStatusHandle{}
+		return &sessionStatusDataSource{meta: meta, cols: columns}
 	case TableGlobalStatus:
-		return &TableGlobalStatusHandle{}
+		return &globalStatusDataSource{meta: meta, cols: columns}
 	default:
 		log.Fatal("unexpected system variables handler type")
 	}
@@ -100,10 +133,10 @@ func createSysVarHandle(handleType string) tables.SysVarHandle {
 	return nil
 }
 
-func createSysVarTable(meta *model.TableInfo, handleType string) table.Table {
-	handle := createSysVarHandle(handleType)
+func createSysVarTable(meta *model.TableInfo, tableName string) table.Table {
+	handle := createSysVarHandle(tableName, meta)
 	if handle == nil {
 		log.Fatal("unexpected system variables handler type")
 	}
-	return tables.CreateSysVarTable(handle, meta)
+	return tables.CreateVirtualTable(handle)
 }

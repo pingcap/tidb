@@ -27,11 +27,15 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-type TableType int16
+// Type , the type of table, store data in different ways.
+type Type int16
 
 const (
-	Normal TableType = iota
-	SystemVarTale
+	// Normal , store data in tikv, mocktikv and so on.
+	Normal Type = iota
+	// VirtualTale , store no data, just extract data from the memory struct.
+	VirtualTale
+	// MemoryTable , store data only in local memory.
 	MemoryTable
 )
 
@@ -133,8 +137,8 @@ type Table interface {
 	// Seek returns the handle greater or equal to h.
 	Seek(ctx context.Context, h int64) (handle int64, found bool, err error)
 
-	// TableType returns the type of table
-	TableType() TableType
+	// Type returns the type of table
+	Type() Type
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

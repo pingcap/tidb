@@ -735,7 +735,8 @@ func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 	return handle, true, nil
 }
 
-func (t *Table) TableType() table.TableType {
+// Type implements table.Table Type interface.
+func (t *Table) Type() table.Type {
 	return table.Normal
 }
 
