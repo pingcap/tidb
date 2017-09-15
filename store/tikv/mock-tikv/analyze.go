@@ -57,7 +57,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 	}
 	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0)
 	for {
-		_, values, err := e.Next()
+		values, err := e.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
