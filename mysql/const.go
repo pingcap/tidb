@@ -429,7 +429,7 @@ const (
 	ModePadCharToFullLength
 )
 
-// FormatSQLModeStr re-formate 'SQL_MODE' variable.
+// FormatSQLModeStr re-format 'SQL_MODE' variable.
 func FormatSQLModeStr(s string) string {
 	s = strings.ToUpper(strings.TrimRight(s, " "))
 	parts := strings.Split(s, ",")
@@ -449,8 +449,7 @@ func GetSQLMode(s string) (SQLMode, error) {
 	strs := strings.Split(s, ",")
 	var sqlMode SQLMode
 	for i, length := 0, len(strs); i < length; i++ {
-		upper := strings.ToUpper(strs[i])
-		mode, ok := Str2SQLMode[upper]
+		mode, ok := Str2SQLMode[strs[i]]
 		if !ok && strs[i] != "" {
 			return sqlMode, newInvalidModeErr(strs[i])
 		}

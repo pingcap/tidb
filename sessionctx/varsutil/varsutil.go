@@ -102,7 +102,6 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 			return errors.Trace(err)
 		}
 	case variable.SQLModeVar:
-		sVal = strings.ToUpper(sVal)
 		sVal = mysql.FormatSQLModeStr(sVal)
 		// TODO: Remove this latter.
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
