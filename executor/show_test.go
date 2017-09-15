@@ -275,7 +275,7 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 	tk.MustExec(testSQL)
 	testSQL = `drop table if exists t1`
 	tk.MustExec(testSQL)
-	testSQL = `CREATE TABLE t1 (id int PRIMARY KEY AUTO_INCREMENT)`
+	testSQL = `CREATE TABLE t1 (pk int PRIMARY KEY AUTO_INCREMENT)`
 	tk.MustExec(testSQL)
 
 	// For table with single fk.
@@ -283,7 +283,7 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 		"CREATE TABLE `show_test` (",
 		"  `id` int(11) NOT NULL AUTO_INCREMENT,",
 		"  PRIMARY KEY (`id`),",
-		"  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE",
+		"  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`pk`) ON DELETE CASCADE ON UPDATE CASCADE",
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	}
 	testSQL = strings.Join(sqlLines, "\n")
@@ -327,14 +327,14 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
-	testSQL = "ALTER TABLE SHOW_TEST ADD CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n "
+	testSQL = "ALTER TABLE SHOW_TEST ADD CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`pk`) ON DELETE CASCADE ON UPDATE CASCADE\n "
 	tk.MustExec(testSQL)
 	testSQL = "show create table show_test;"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`id`),\n  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`id`),\n  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`pk`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
