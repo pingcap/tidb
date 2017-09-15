@@ -2896,7 +2896,7 @@ FunctionCallConflict:
 |	"DATE"  stringLit
 	{
 		expr := ast.NewValueExpr($2)
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Date), Args: []ast.ExprNode{expr}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.DateLiteral), Args: []ast.ExprNode{expr}}
 	}
 
 DistinctKwd:
