@@ -79,7 +79,7 @@ func (s *testMySQLConstSuite) TestSQLMode(c *C) {
 	}
 
 	for _, t := range tests {
-        sqlMode, _ := GetSQLMode(t.arg)
+		sqlMode, _ := GetSQLMode(t.arg)
 		c.Assert(sqlMode.HasNoZeroDateMode(), Equals, t.hasNoZeroDateMode)
 		c.Assert(sqlMode.HasNoZeroInDateMode(), Equals, t.hasNoZeroInDateMode)
 	}

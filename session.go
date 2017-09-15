@@ -619,7 +619,7 @@ func (s *session) SetGlobalSysVar(name string, value string) error {
 	if name == variable.SQLModeVar {
 		if _, err := mysql.GetSQLMode(value); err != nil {
 			return errors.Trace(err)
-        }
+		}
 	}
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), value)
