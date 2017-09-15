@@ -511,7 +511,7 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return FoldConstant(newFunc), nil
+		return newFunc, nil
 	case *Column:
 		if !schema.Contains(x) {
 			return x, nil
