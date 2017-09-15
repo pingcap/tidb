@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@ package mysql
 
 import (
 	"fmt"
-	"github.com/juju/errors"
 	"strings"
 )
 
@@ -383,6 +382,16 @@ var DefaultLengthOfTimeFraction = map[int]int{
 // See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html
 type SQLMode int
 
+// HasNoZeroDateMode detects if 'NO_ZERO_DATE' mode is set in SQLMode
+func (m SQLMode) HasNoZeroDateMode() bool {
+	return m&ModeNoZeroDate == ModeNoZeroDate
+}
+
+// HasNoZeroInDateMode detects if 'NO_ZERO_IN_DATE' mode is set in SQLMode
+func (m SQLMode) HasNoZeroInDateMode() bool {
+	return m&ModeNoZeroInDate == ModeNoZeroInDate
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0
@@ -423,15 +432,13 @@ const (
 // GetSQLMode gets the sql mode for string literal. SQL_mode is a list of different modes separated by commas.
 func GetSQLMode(s string) (SQLMode, error) {
 	strs := strings.Split(s, ",")
-	if strings.Count(strs[len(strs)-1], " ") == len(strs[len(strs)-1]) {
-		strs[len(strs)-1] = ""
-	}
+	strs[len(strs)-1] = strings.TrimRight(strs[len(strs)-1], " ")
 	var sqlMode SQLMode
 	for i, length := 0, len(strs); i < length; i++ {
 		upper := strings.ToUpper(strs[i])
 		mode, ok := Str2SQLMode[upper]
 		if !ok && strs[i] != "" {
-			return sqlMode, errors.Trace(newInvalidModeErr(strs[i]))
+			return sqlMode, newInvalidModeErr(strs[i])
 		}
 		sqlMode = sqlMode | mode
 	}

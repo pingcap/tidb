@@ -616,9 +616,9 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(name string, value string) error {
-	if strings.ToLower(name) == variable.SQLModeVar {
-		_, err := mysql.GetSQLMode(value)
-		if err != nil {
+	if name == variable.SQLModeVar {
+		value = varsutil.FormatSQLModeStr(value)
+		if _, err := mysql.GetSQLMode(value); err != nil {
 			return errors.Trace(err)
 		}
 	}
