@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,10 @@ import (
 	"fmt"
 	"strings"
 )
+
+func newInvalidModeErr(s string) error {
+	return NewErr(ErrWrongValueForVar, "sql_mode", s)
+}
 
 // Version information.
 const (
@@ -425,14 +429,33 @@ const (
 	ModePadCharToFullLength
 )
 
-// GetSQLMode gets the sql mode for string literal.
-func GetSQLMode(str string) SQLMode {
-	str = strings.ToUpper(str)
-	mode, ok := Str2SQLMode[str]
-	if !ok {
-		return ModeNone
+// FormatSQLModeStr re-format 'SQL_MODE' variable.
+func FormatSQLModeStr(s string) string {
+	s = strings.ToUpper(strings.TrimRight(s, " "))
+	parts := strings.Split(s, ",")
+	var nonEmptyParts []string
+	for i := 0; i < len(parts); i++ {
+		if len(parts[i]) == 0 {
+			continue
+		}
+		nonEmptyParts = append(nonEmptyParts, parts[i])
 	}
-	return mode
+	return strings.Join(nonEmptyParts, ",")
+}
+
+// GetSQLMode gets the sql mode for string literal. SQL_mode is a list of different modes separated by commas.
+// The input string must be formatted by 'FormatSQLModeStr'
+func GetSQLMode(s string) (SQLMode, error) {
+	strs := strings.Split(s, ",")
+	var sqlMode SQLMode
+	for i, length := 0, len(strs); i < length; i++ {
+		mode, ok := Str2SQLMode[strs[i]]
+		if !ok && strs[i] != "" {
+			return sqlMode, newInvalidModeErr(strs[i])
+		}
+		sqlMode = sqlMode | mode
+	}
+	return sqlMode, nil
 }
 
 // Str2SQLMode is the string represent of sql_mode to sql_mode map.

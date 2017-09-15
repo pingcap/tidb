@@ -2751,3 +2751,24 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r = tk.MustQuery(`select json_extract(json_object(1,2,3,4), '$."1"')`)
 	r.Check(testkit.Rows("2"))
 }
+
+func (s *testIntegrationSuite) TestSetVariables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	_, err := tk.Exec("set sql_mode='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set @@sql_mode='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set @@global.sql_mode='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set @@session.sql_mode='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+
+	var r *testkit.Result
+	_, err = tk.Exec("set @@session.sql_mode=',NO_ZERO_DATE';")
+	r = tk.MustQuery(`select @@session.sql_mode`)
+	r.Check(testkit.Rows("NO_ZERO_DATE"))
+}
