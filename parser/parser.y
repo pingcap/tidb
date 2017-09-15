@@ -1765,6 +1765,8 @@ DefaultKwdOpt:
 
 PartitionOpt:
 	{}
+|	"PARTITION" "BY" "KEY" '(' ColumnNameList ')' PartitionNumOpt PartitionDefinitionListOpt
+	{}
 |	"PARTITION" "BY" "HASH" '(' Expression ')' PartitionNumOpt PartitionDefinitionListOpt
 	{}
 |	"PARTITION" "BY" "RANGE" '(' Expression ')' PartitionNumOpt  PartitionDefinitionListOpt
@@ -2894,7 +2896,7 @@ FunctionCallConflict:
 |	"DATE"  stringLit
 	{
 		expr := ast.NewValueExpr($2)
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Date), Args: []ast.ExprNode{expr}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.DateLiteral), Args: []ast.ExprNode{expr}}
 	}
 
 DistinctKwd:
