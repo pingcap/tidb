@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-// var _ = Suite(&testSessionSuite{})
+var _ = Suite(&testSessionSuite{})
 
 type testSessionSuite struct {
 	cluster   *mocktikv.Cluster
@@ -341,7 +341,7 @@ func (s *testSessionSuite) TestString(c *C) {
 	c.Log(tk.Se.String())
 }
 
-// var _ = Suite(&testSchemaSuite{})
+var _ = Suite(&testSchemaSuite{})
 
 type testSchemaSuite struct {
 	cluster   *mocktikv.Cluster

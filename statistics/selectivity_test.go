@@ -184,11 +184,3 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, comment)
 	}
 }
-
-func (s *testSelectivitySuite) TestXXX(c *C) {
-	defer testleak.AfterTest(c)()
-	store, do, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	do.Close()
-	store.Close()
-}
