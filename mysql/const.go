@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@ package mysql
 
 import (
 	"fmt"
-	"github.com/juju/errors"
 	"strings"
 )
 
@@ -431,7 +430,7 @@ func GetSQLMode(s string) (SQLMode, error) {
 		upper := strings.ToUpper(strs[i])
 		mode, ok := Str2SQLMode[upper]
 		if !ok && strs[i] != "" {
-			return sqlMode, errors.Trace(newInvalidModeErr(strs[i]))
+			return sqlMode, newInvalidModeErr(strs[i])
 		}
 		sqlMode = sqlMode | mode
 	}
