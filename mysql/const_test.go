@@ -62,3 +62,25 @@ func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
 		c.Assert(err, NotNil)
 	}
 }
+
+func (s *testMySQLConstSuite) TestSQLMode(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tests := []struct {
+		arg                 string
+		hasNoZeroDateMode   bool
+		hasNoZeroInDateMode bool
+	}{
+		{"NO_ZERO_DATE", true, false},
+		{"NO_ZERO_IN_DATE", false, true},
+		{"NO_ZERO_IN_DATE,NO_ZERO_DATE", true, true},
+		{"NO_ZERO_DATE,NO_ZERO_IN_DATE", true, true},
+		{"", false, false},
+	}
+
+	for _, t := range tests {
+        sqlMode, _ := GetSQLMode(t.arg)
+		c.Assert(sqlMode.HasNoZeroDateMode(), Equals, t.hasNoZeroDateMode)
+		c.Assert(sqlMode.HasNoZeroInDateMode(), Equals, t.hasNoZeroInDateMode)
+	}
+}
