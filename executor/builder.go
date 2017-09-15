@@ -905,7 +905,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk 
 			ranges:    ranges,
 			keepOrder: keepOrder,
 			dagPB: &tipb.DAGRequest{
-				StartTs:        b.getStartTS(),
+				StartTs:        startTS,
 				TimeZoneOffset: timeZoneOffset(b.ctx),
 				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			},
@@ -961,7 +961,7 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 			ranges:    []*types.IndexRange{idxRange},
 			keepOrder: true,
 			dagPB: &tipb.DAGRequest{
-				StartTs:        b.getStartTS(),
+				StartTs:        startTS,
 				TimeZoneOffset: timeZoneOffset(b.ctx),
 				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			},
@@ -1002,6 +1002,31 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	return e
 }
 
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) *AnalyzeIndexExec {
+	startTS := b.getStartTS()
+	if b.err != nil {
+		return nil
+	}
+	e := &AnalyzeIndexExec{
+		ctx:         b.ctx,
+		tblInfo:     task.TableInfo,
+		idxInfo:     task.IndexInfo,
+		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency,
+		priority:    b.priority,
+		analyzePB: &tipb.AnalyzeReq{
+			Tp:             tipb.AnalyzeType_TypeIndex,
+			StartTs:        startTS,
+			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			TimeZoneOffset: timeZoneOffset(b.ctx),
+		},
+	}
+	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
+		BucketSize: maxBucketSize,
+		NumColumns: int32(len(task.IndexInfo.Columns)),
+	}
+	return e
+}
+
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		ctx:   b.ctx,
@@ -1017,12 +1042,19 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		})
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType:  idxTask,
-			src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
-			indexInfo: task.IndexInfo,
-			tableInfo: task.TableInfo,
-		})
+		if task.PushDown {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: idxTask,
+				idxExec:  b.buildAnalyzeIndexPushdown(task),
+			})
+		} else {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType:  idxTask,
+				src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
+				indexInfo: task.IndexInfo,
+				tableInfo: task.TableInfo,
+			})
+		}
 	}
 	return e
 }

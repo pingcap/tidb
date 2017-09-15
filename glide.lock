@@ -1,5 +1,5 @@
-hash: 53e36444b8a856c13d1891758782d802ffa9d7434e681f462d86e4ec67a858ac
-updated: 2017-09-13T00:11:08.041807161+08:00
+hash: 8b12997361571a6e37bbfb9603d618cd7960c3fbc7a3f7d41fdd01bdd954df15
+updated: 2017-09-13T20:38:12.425606898+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -106,7 +106,7 @@ imports:
 - name: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - name: github.com/pingcap/goleveldb
-  version: 158edde5a354460121af007d02a00b01c8d03443
+  version: f654717c3ea2e4e33f46e6b90e9cd872ee022ccb
   subpackages:
   - leveldb
   - leveldb/cache
