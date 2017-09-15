@@ -378,6 +378,16 @@ var DefaultLengthOfTimeFraction = map[int]int{
 // See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html
 type SQLMode int
 
+// HasNoZeroDateMode detects if 'NO_ZERO_DATE' mode is set in SQLMode
+func (m SQLMode) HasNoZeroDateMode() bool {
+	return m&ModeNoZeroDate == ModeNoZeroDate
+}
+
+// HasNoZeroInDateMode detects if 'NO_ZERO_IN_DATE' mode is set in SQLMode
+func (m SQLMode) HasNoZeroInDateMode() bool {
+	return m&ModeNoZeroInDate == ModeNoZeroInDate
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0
