@@ -20,9 +20,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -422,7 +422,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
 	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
 	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
-	isPrimary := bytes.Compare(batch.keys[0], c.primary()) == 0
+	isPrimary := bytes.Equal(batch.keys[0], c.primary())
 
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
@@ -571,7 +571,7 @@ func (c *twoPhaseCommitter) execute() error {
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS
-	if err := c.checkSchemaValid(); err != nil {
+	if err = c.checkSchemaValid(); err != nil {
 		return errors.Trace(err)
 	}
 

@@ -17,13 +17,14 @@ import (
 	"bytes"
 	"fmt"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -79,6 +80,12 @@ func (col *CorrelatedColumn) EvalDuration(row []types.Datum, sc *variable.Statem
 	return val, isNull, errors.Trace(err)
 }
 
+// EvalJSON returns JSON representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalJSON(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	val, isNull, err := evalExprToJSON(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
 // Equal implements Expression interface.
 func (col *CorrelatedColumn) Equal(expr Expression, ctx context.Context) bool {
 	if cc, ok := expr.(*CorrelatedColumn); ok {
@@ -106,7 +113,7 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 
 // Column represents a column.
 type Column struct {
-	FromID  string
+	FromID  int
 	ColName model.CIStr
 	DBName  model.CIStr
 	TblName model.CIStr
@@ -203,6 +210,12 @@ func (col *Column) EvalDuration(row []types.Datum, sc *variable.StatementContext
 	return val, isNull, errors.Trace(err)
 }
 
+// EvalJSON returns JSON representation of Column.
+func (col *Column) EvalJSON(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
+	val, isNull, err := evalExprToJSON(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
 // Clone implements Expression interface.
 func (col *Column) Clone() Expression {
 	newCol := *col
@@ -224,7 +237,9 @@ func (col *Column) HashCode() []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
-	col.hashcode, _ = codec.EncodeValue(col.hashcode, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
+	col.hashcode = make([]byte, 0, 16)
+	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.FromID))
+	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.Position))
 	return col.hashcode
 }
 

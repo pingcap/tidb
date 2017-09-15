@@ -257,6 +257,13 @@ func (c *rpcClient) callRPC(ctx goctx.Context, client tikvpb.TikvClient, req *ti
 		}
 		resp.GC = r
 		return resp, nil
+	case tikvrpc.CmdDeleteRange:
+		r, err := client.KvDeleteRange(ctx, req.DeleteRange)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.DeleteRange = r
+		return resp, nil
 	case tikvrpc.CmdRawGet:
 		r, err := client.RawGet(ctx, req.RawGet)
 		if err != nil {
@@ -291,6 +298,20 @@ func (c *rpcClient) callRPC(ctx goctx.Context, client tikvpb.TikvClient, req *ti
 			return nil, errors.Trace(err)
 		}
 		resp.Cop = r
+		return resp, nil
+	case tikvrpc.CmdMvccGetByKey:
+		r, err := client.MvccGetByKey(ctx, req.MvccGetByKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.MvccGetByKey = r
+		return resp, nil
+	case tikvrpc.CmdMvccGetByStartTs:
+		r, err := client.MvccGetByStartTs(ctx, req.MvccGetByStartTs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.MvccGetByStartTS = r
 		return resp, nil
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)

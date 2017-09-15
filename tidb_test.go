@@ -24,14 +24,15 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -40,7 +41,9 @@ var store = flag.String("store", "memory", "registered store name, [memory, gole
 
 func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
-	log.SetLevelByString(logLevel)
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 	CustomVerboseFlag = true
 	TestingT(t)
 }
@@ -395,7 +398,8 @@ func newStore(c *C, dbPath string) kv.Storage {
 
 func newStoreWithBootstrap(c *C, dbPath string) kv.Storage {
 	store := newStore(c, dbPath)
-	BootstrapSession(store)
+	_, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
 	return store
 }
 
@@ -406,7 +410,7 @@ func newSession(c *C, store kv.Storage, dbName string) Session {
 	id := atomic.AddUint64(&testConnID, 1)
 	se.SetConnectionID(id)
 	c.Assert(err, IsNil)
-	se.Auth(`root@%`, nil, []byte("012345678901234567890"))
+	se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
 	mustExecSQL(c, se, "create database if not exists "+dbName)
 	mustExecSQL(c, se, "use "+dbName)
 	return se

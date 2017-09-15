@@ -634,27 +634,27 @@ func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			record := types.MakeDatums(
-				catalogVal,          // TABLE_CATALOG
-				schema.Name.O,       // TABLE_SCHEMA
-				table.Name.O,        // TABLE_NAME
-				"BASE TABLE",        // TABLE_TYPE
-				"InnoDB",            // ENGINE
-				uint64(10),          // VERSION
-				"Compact",           // ROW_FORMAT
-				uint64(0),           // TABLE_ROWS
-				uint64(0),           // AVG_ROW_LENGTH
-				uint64(16384),       // DATA_LENGTH
-				uint64(0),           // MAX_DATA_LENGTH
-				uint64(0),           // INDEX_LENGTH
-				uint64(0),           // DATA_FREE
-				nil,                 // AUTO_INCREMENT
-				nil,                 // CREATE_TIME
-				nil,                 // UPDATE_TIME
-				nil,                 // CHECK_TIME
-				"latin1_swedish_ci", // TABLE_COLLATION
-				nil,                 // CHECKSUM
-				"",                  // CREATE_OPTIONS
-				"",                  // TABLE_COMMENT
+				catalogVal,      // TABLE_CATALOG
+				schema.Name.O,   // TABLE_SCHEMA
+				table.Name.O,    // TABLE_NAME
+				"BASE TABLE",    // TABLE_TYPE
+				"InnoDB",        // ENGINE
+				uint64(10),      // VERSION
+				"Compact",       // ROW_FORMAT
+				uint64(0),       // TABLE_ROWS
+				uint64(0),       // AVG_ROW_LENGTH
+				uint64(16384),   // DATA_LENGTH
+				uint64(0),       // MAX_DATA_LENGTH
+				uint64(0),       // INDEX_LENGTH
+				uint64(0),       // DATA_FREE
+				table.AutoIncID, // AUTO_INCREMENT
+				nil,             // CREATE_TIME
+				nil,             // UPDATE_TIME
+				nil,             // CHECK_TIME
+				table.Collate,   // TABLE_COLLATION
+				nil,             // CHECKSUM
+				"",              // CREATE_OPTIONS
+				table.Comment,   // TABLE_COMMENT
 			)
 			rows = append(rows, record)
 		}
@@ -667,9 +667,7 @@ func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForColumnsInTable(schema, table)
-			for _, r := range rs {
-				rows = append(rows, r)
-			}
+			rows = append(rows, rs...)
 		}
 	}
 	return rows
@@ -678,15 +676,15 @@ func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
 	rows := [][]types.Datum{}
 	for i, col := range tbl.Columns {
-		colLen := col.Flen
+		colLen, decimal := col.Flen, col.Decimal
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
 		if colLen == types.UnspecifiedLength {
-			colLen = mysql.GetDefaultFieldLength(col.Tp)
+			colLen = defaultFlen
 		}
-		decimal := col.Decimal
 		if decimal == types.UnspecifiedLength {
-			decimal = 0
+			decimal = defaultDecimal
 		}
-		columnType := col.FieldType.CompactStr()
+		columnType := col.FieldType.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
@@ -712,7 +710,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDesc.Key,                    // COLUMN_KEY
 			columnDesc.Extra,                  // EXTRA
 			"select,insert,update,references", // PRIVILEGES
-			"", // COLUMN_COMMENT
+			columnDesc.Comment,                // COLUMN_COMMENT
 		)
 		rows = append(rows, record)
 	}
@@ -724,9 +722,7 @@ func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForStatisticsInTable(schema, table)
-			for _, r := range rs {
-				rows = append(rows, r)
-			}
+			rows = append(rows, rs...)
 		}
 	}
 	return rows
@@ -813,7 +809,7 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 				record := types.MakeDatums(
 					catalogVal,           // CONSTRAINT_CATALOG
 					schema.Name.O,        // CONSTRAINT_SCHEMA
-					table.PrimaryKeyName, // CONSTRAINT_NAME
+					mysql.PrimaryKeyName, // CONSTRAINT_NAME
 					schema.Name.O,        // TABLE_SCHEMA
 					tbl.Name.O,           // TABLE_NAME
 					primaryKeyType,       // CONSTRAINT_TYPE
@@ -824,7 +820,7 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 			for _, idx := range tbl.Indices {
 				var cname, ctype string
 				if idx.Primary {
-					cname = table.PrimaryKeyName
+					cname = mysql.PrimaryKeyName
 					ctype = primaryKeyType
 				} else if idx.Unique {
 					cname = idx.Name.O
@@ -1116,6 +1112,14 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+func (it *infoschemaTable) WritableIndices() []table.Index {
+	return nil
+}
+
+func (it *infoschemaTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
 }
@@ -1140,7 +1144,7 @@ func (it *infoschemaTable) RemoveRecord(ctx context.Context, h int64, r []types.
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum, newData []types.Datum, touched map[int]bool) error {
+func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 

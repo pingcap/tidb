@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
@@ -71,7 +72,9 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 func datumsToConstants(datums []types.Datum) []Expression {
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
-		constants = append(constants, &Constant{Value: d, RetType: types.NewFieldType(kindToMysqlType[d.Kind()])})
+		ft := kindToFieldType(d.Kind())
+		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
+		constants = append(constants, &Constant{Value: d, RetType: &ft})
 	}
 	return constants
 }
@@ -84,25 +87,46 @@ func primitiveValsToConstants(args []interface{}) []Expression {
 	return cons
 }
 
-var kindToMysqlType = map[byte]byte{
-	types.KindNull:          mysql.TypeNull,
-	types.KindInt64:         mysql.TypeLonglong,
-	types.KindUint64:        mysql.TypeLonglong,
-	types.KindMysqlHex:      mysql.TypeLonglong,
-	types.KindMinNotNull:    mysql.TypeLonglong,
-	types.KindMaxValue:      mysql.TypeLonglong,
-	types.KindFloat32:       mysql.TypeDouble,
-	types.KindFloat64:       mysql.TypeDouble,
-	types.KindString:        mysql.TypeVarString,
-	types.KindBytes:         mysql.TypeVarString,
-	types.KindMysqlBit:      mysql.TypeBit,
-	types.KindMysqlEnum:     mysql.TypeEnum,
-	types.KindMysqlSet:      mysql.TypeSet,
-	types.KindRow:           mysql.TypeVarString,
-	types.KindInterface:     mysql.TypeVarString,
-	types.KindMysqlDecimal:  mysql.TypeNewDecimal,
-	types.KindMysqlDuration: mysql.TypeDuration,
-	types.KindMysqlTime:     mysql.TypeDatetime,
+func kindToFieldType(kind byte) types.FieldType {
+	ft := types.FieldType{}
+	switch kind {
+	case types.KindNull:
+		ft.Tp = mysql.TypeNull
+	case types.KindInt64:
+		ft.Tp = mysql.TypeLonglong
+	case types.KindUint64:
+		ft.Tp = mysql.TypeLonglong
+		ft.Flag |= mysql.UnsignedFlag
+	case types.KindMinNotNull:
+		ft.Tp = mysql.TypeLonglong
+	case types.KindMaxValue:
+		ft.Tp = mysql.TypeLonglong
+	case types.KindFloat32:
+		ft.Tp = mysql.TypeDouble
+	case types.KindFloat64:
+		ft.Tp = mysql.TypeDouble
+	case types.KindString:
+		ft.Tp = mysql.TypeVarString
+	case types.KindBytes:
+		ft.Tp = mysql.TypeVarString
+	case types.KindMysqlEnum:
+		ft.Tp = mysql.TypeEnum
+	case types.KindMysqlSet:
+		ft.Tp = mysql.TypeSet
+	case types.KindInterface:
+		ft.Tp = mysql.TypeVarString
+	case types.KindMysqlDecimal:
+		ft.Tp = mysql.TypeNewDecimal
+	case types.KindMysqlDuration:
+		ft.Tp = mysql.TypeDuration
+	case types.KindMysqlTime:
+		ft.Tp = mysql.TypeDatetime
+	case types.KindBinaryLiteral:
+		ft.Tp = mysql.TypeVarString
+	case types.KindMysqlBit:
+		ft.Tp = mysql.TypeBit
+	}
+	return ft
 }
 
 // calculateSum adds v to sum.
@@ -298,6 +322,17 @@ var oppositeOp = map[string]string{
 	ast.NE: ast.EQ,
 }
 
+// a op b is equal to b symmetricOp a
+var symmetricOp = map[opcode.Op]opcode.Op{
+	opcode.LT:     opcode.GT,
+	opcode.GE:     opcode.LE,
+	opcode.GT:     opcode.LT,
+	opcode.LE:     opcode.GE,
+	opcode.EQ:     opcode.EQ,
+	opcode.NE:     opcode.NE,
+	opcode.NullEQ: opcode.NullEQ,
+}
+
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 	if f, ok := expr.(*ScalarFunction); ok {
@@ -313,26 +348,26 @@ func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
 			}
 			return f
-		case ast.AndAnd:
+		case ast.LogicAnd:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.OrOr, f.GetType(), args...)
+				nf, _ := NewFunction(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {
 				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
 			}
 			return f
-		case ast.OrOr:
+		case ast.LogicOr:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
 					args[i] = PushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := NewFunction(f.GetCtx(), ast.AndAnd, f.GetType(), args...)
+				nf, _ := NewFunction(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {

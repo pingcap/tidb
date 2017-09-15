@@ -50,8 +50,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	handle, err := infoschema.NewHandle(store)
-	c.Assert(err, IsNil)
+	handle := infoschema.NewHandle(store)
 	dbName := model.NewCIStr("Test")
 	tbName := model.NewCIStr("T")
 	colName := model.NewCIStr("A")
@@ -186,13 +185,13 @@ func (*testSuite) TestT(c *C) {
 
 func checkApplyCreateNonExistsSchemaDoesNotPanic(c *C, txn kv.Transaction, builder *infoschema.Builder) {
 	m := meta.NewMeta(txn)
-	err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999})
+	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999})
 	c.Assert(infoschema.ErrDatabaseNotExists.Equal(err), IsTrue)
 }
 
 func checkApplyCreateNonExistsTableDoesNotPanic(c *C, txn kv.Transaction, builder *infoschema.Builder, dbID int64) {
 	m := meta.NewMeta(txn)
-	err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999})
+	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999})
 	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
 }
 
@@ -217,8 +216,7 @@ func (testSuite) TestConcurrent(c *C) {
 	for _, store := range stores {
 		go func(s kv.Storage) {
 			defer wg.Done()
-			_, err := infoschema.NewHandle(s)
-			c.Assert(err, IsNil)
+			_ = infoschema.NewHandle(s)
 		}(store)
 	}
 	wg.Wait()
@@ -231,8 +229,7 @@ func (*testSuite) TestInfoTables(c *C) {
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
 	defer store.Close()
-	handle, err := infoschema.NewHandle(store)
-	c.Assert(err, IsNil)
+	handle := infoschema.NewHandle(store)
 	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, 0)
 	c.Assert(err, IsNil)
 	builder.Build()

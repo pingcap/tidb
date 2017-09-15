@@ -144,14 +144,17 @@ type Client interface {
 
 // ReqTypes.
 const (
-	ReqTypeSelect = 101
-	ReqTypeIndex  = 102
-	ReqTypeDAG    = 103
+	ReqTypeSelect  = 101
+	ReqTypeIndex   = 102
+	ReqTypeDAG     = 103
+	ReqTypeAnalyze = 104
 
-	ReqSubTypeBasic   = 0
-	ReqSubTypeDesc    = 10000
-	ReqSubTypeGroupBy = 10001
-	ReqSubTypeTopN    = 10002
+	ReqSubTypeBasic      = 0
+	ReqSubTypeDesc       = 10000
+	ReqSubTypeGroupBy    = 10001
+	ReqSubTypeTopN       = 10002
+	ReqSubTypeSignature  = 10003
+	ReqSubTypeAnalyzeIdx = 10004
 )
 
 // Request represents a kv request.
@@ -170,6 +173,8 @@ type Request struct {
 	Concurrency int
 	// IsolationLevel is the isolation level, default is SI.
 	IsolationLevel IsoLevel
+	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
+	Priority int
 }
 
 // Response represents the response returned from KV layer.
@@ -216,6 +221,8 @@ type Storage interface {
 	CurrentVersion() (Version, error)
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle
+	// SupportDeleteRange gets the storage support delete range or not.
+	SupportDeleteRange() (supported bool)
 }
 
 // FnKeyCmp is the function for iterator the keys

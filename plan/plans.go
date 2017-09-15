@@ -14,15 +14,26 @@
 package plan
 
 import (
+	"encoding/json"
+	"strings"
+
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
+	basePlan
+}
+
+// ShowDDLJobs is for showing DDL job list.
+type ShowDDLJobs struct {
 	basePlan
 }
 
@@ -40,16 +51,6 @@ type SelectLock struct {
 	basePhysicalPlan
 
 	Lock ast.SelectLockType
-}
-
-// Limit represents offset and limit plan.
-type Limit struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
-
-	Offset uint64
-	Count  uint64
 }
 
 // Prepare represents prepare plan.
@@ -88,7 +89,7 @@ type Show struct {
 	Column *ast.ColumnName // Used for `desc table column`.
 	Flag   int             // Some flag parsed from sql, such as FULL.
 	Full   bool
-	User   string // Used for show grants.
+	User   *auth.UserIdentity // Used for show grants.
 
 	// Used by show variables
 	GlobalScope bool
@@ -108,6 +109,14 @@ type Simple struct {
 	Statement ast.StmtNode
 }
 
+// InsertGeneratedColumns is for completing generated columns in Insert.
+// We resolve generation expressions in plan, and eval those in executor.
+type InsertGeneratedColumns struct {
+	Columns      []*ast.ColumnName
+	Exprs        []expression.Expression
+	OnDuplicates []*expression.Assignment
+}
+
 // Insert represents an insert plan.
 type Insert struct {
 	*basePlan
@@ -123,32 +132,30 @@ type Insert struct {
 
 	IsReplace bool
 	Priority  mysql.PriorityEnum
-	Ignore    bool
-}
+	IgnoreErr bool
 
-// AnalyzePKTask is used for analyze pk. Used only when pk is handle.
-type AnalyzePKTask struct {
-	TableInfo *model.TableInfo
-	PKInfo    *model.ColumnInfo
+	GenCols InsertGeneratedColumns
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
 	TableInfo *model.TableInfo
+	PKInfo    *model.ColumnInfo
 	ColsInfo  []*model.ColumnInfo
+	PushDown  bool
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
 	TableInfo *model.TableInfo
 	IndexInfo *model.IndexInfo
+	PushDown  bool
 }
 
 // Analyze represents an analyze plan
 type Analyze struct {
 	basePlan
 
-	PkTasks  []AnalyzePKTask
 	ColTasks []AnalyzeColumnsTask
 	IdxTasks []AnalyzeIndexTask
 }
@@ -163,6 +170,8 @@ type LoadData struct {
 	Columns    []*ast.ColumnName
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
+
+	GenCols InsertGeneratedColumns
 }
 
 // DDL represents a DDL statement plan.
@@ -176,5 +185,76 @@ type DDL struct {
 type Explain struct {
 	basePlan
 
-	StmtPlan Plan
+	StmtPlan       Plan
+	Rows           [][]types.Datum
+	explainedPlans map[int]bool
+}
+
+func (e *Explain) prepareExplainInfo(p Plan, parent Plan) error {
+	for _, child := range p.Children() {
+		err := e.prepareExplainInfo(child, p)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	explain, err := json.MarshalIndent(p, "", "    ")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	parentStr := ""
+	if parent != nil {
+		parentStr = parent.ExplainID()
+	}
+	row := types.MakeDatums(p.ExplainID(), string(explain), parentStr)
+	e.Rows = append(e.Rows, row)
+	return nil
+}
+
+// prepareExplainInfo4DAGTask generates the following information for every plan:
+// ["id", "parents", "task", "operator info"].
+func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
+	parents := p.Parents()
+	parentIDs := make([]string, 0, len(parents))
+	for _, parent := range parents {
+		parentIDs = append(parentIDs, parent.ExplainID())
+	}
+	childrenIDs := make([]string, 0, len(p.Children()))
+	for _, ch := range p.Children() {
+		childrenIDs = append(childrenIDs, ch.ExplainID())
+	}
+	parentInfo := strings.Join(parentIDs, ",")
+	childrenInfo := strings.Join(childrenIDs, ",")
+	operatorInfo := p.ExplainInfo()
+	count := p.statsProfile().count
+	row := types.MakeDatums(p.ExplainID(), parentInfo, childrenInfo, taskType, operatorInfo, count)
+	e.Rows = append(e.Rows, row)
+}
+
+// prepareCopTaskInfo generates explain information for cop-tasks.
+// Only PhysicalTableReader, PhysicalIndexReader and PhysicalIndexLookUpReader have cop-tasks currently.
+func (e *Explain) prepareCopTaskInfo(plans []PhysicalPlan) {
+	for _, p := range plans {
+		e.prepareExplainInfo4DAGTask(p, "cop")
+	}
+}
+
+// prepareRootTaskInfo generates explain information for root-tasks.
+func (e *Explain) prepareRootTaskInfo(p PhysicalPlan) {
+	e.explainedPlans[p.ID()] = true
+	for _, child := range p.Children() {
+		if e.explainedPlans[child.ID()] {
+			continue
+		}
+		e.prepareRootTaskInfo(child.(PhysicalPlan))
+	}
+	switch copPlan := p.(type) {
+	case *PhysicalTableReader:
+		e.prepareCopTaskInfo(copPlan.TablePlans)
+	case *PhysicalIndexReader:
+		e.prepareCopTaskInfo(copPlan.IndexPlans)
+	case *PhysicalIndexLookUpReader:
+		e.prepareCopTaskInfo(copPlan.IndexPlans)
+		e.prepareCopTaskInfo(copPlan.TablePlans)
+	}
+	e.prepareExplainInfo4DAGTask(p, "root")
 }

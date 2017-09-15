@@ -15,6 +15,8 @@ package mocktikv
 
 import (
 	"bytes"
+	"encoding/binary"
+	"io"
 	"sort"
 	"sync"
 
@@ -53,9 +55,145 @@ type mvccEntry struct {
 	lock   *mvccLock
 }
 
+// MarshalBinary implements encoding.BinaryMarshaler interface.
+func (l *mvccLock) MarshalBinary() ([]byte, error) {
+	var (
+		mh  marshalHelper
+		buf bytes.Buffer
+	)
+	mh.WriteNumber(&buf, l.startTS)
+	mh.WriteSlice(&buf, l.primary)
+	mh.WriteSlice(&buf, l.value)
+	mh.WriteNumber(&buf, l.op)
+	mh.WriteNumber(&buf, l.ttl)
+	return buf.Bytes(), errors.Trace(mh.err)
+}
+
+// UnmarshalBinary implements encoding.BinaryUnmarshaler interface.
+func (l *mvccLock) UnmarshalBinary(data []byte) error {
+	var mh marshalHelper
+	buf := bytes.NewBuffer(data)
+	mh.ReadNumber(buf, &l.startTS)
+	mh.ReadSlice(buf, &l.primary)
+	mh.ReadSlice(buf, &l.value)
+	mh.ReadNumber(buf, &l.op)
+	mh.ReadNumber(buf, &l.ttl)
+	return errors.Trace(mh.err)
+}
+
+// MarshalBinary implements encoding.BinaryMarshaler interface.
+func (v mvccValue) MarshalBinary() ([]byte, error) {
+	var (
+		mh  marshalHelper
+		buf bytes.Buffer
+	)
+	mh.WriteNumber(&buf, int64(v.valueType))
+	mh.WriteNumber(&buf, v.startTS)
+	mh.WriteNumber(&buf, v.commitTS)
+	mh.WriteSlice(&buf, v.value)
+	return buf.Bytes(), errors.Trace(mh.err)
+}
+
+// UnmarshalBinary implements encoding.BinaryUnmarshaler interface.
+func (v *mvccValue) UnmarshalBinary(data []byte) error {
+	var mh marshalHelper
+	buf := bytes.NewBuffer(data)
+	var vt int64
+	mh.ReadNumber(buf, &vt)
+	v.valueType = mvccValueType(vt)
+	mh.ReadNumber(buf, &v.startTS)
+	mh.ReadNumber(buf, &v.commitTS)
+	mh.ReadSlice(buf, &v.value)
+	return errors.Trace(mh.err)
+}
+
+type marshalHelper struct {
+	err error
+}
+
+func (mh *marshalHelper) WriteSlice(buf io.Writer, slice []byte) {
+	if mh.err != nil {
+		return
+	}
+	var tmp [binary.MaxVarintLen64]byte
+	off := binary.PutUvarint(tmp[:], uint64(len(slice)))
+	if err := writeFull(buf, tmp[:off]); err != nil {
+		mh.err = errors.Trace(err)
+		return
+	}
+	if err := writeFull(buf, slice); err != nil {
+		mh.err = errors.Trace(err)
+	}
+}
+
+func (mh *marshalHelper) WriteNumber(buf io.Writer, n interface{}) {
+	if mh.err != nil {
+		return
+	}
+	err := binary.Write(buf, binary.LittleEndian, n)
+	if err != nil {
+		mh.err = errors.Trace(err)
+	}
+}
+
+func writeFull(w io.Writer, slice []byte) error {
+	written := 0
+	for written < len(slice) {
+		n, err := w.Write(slice[written:])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		written += n
+	}
+	return nil
+}
+
+func (mh *marshalHelper) ReadNumber(r io.Reader, n interface{}) {
+	if mh.err != nil {
+		return
+	}
+	err := binary.Read(r, binary.LittleEndian, n)
+	if err != nil {
+		mh.err = errors.Trace(err)
+	}
+}
+
+func (mh *marshalHelper) ReadSlice(r *bytes.Buffer, slice *[]byte) {
+	if mh.err != nil {
+		return
+	}
+	sz, err := binary.ReadUvarint(r)
+	if err != nil {
+		mh.err = errors.Trace(err)
+		return
+	}
+	const c10M = 10 * 1024 * 1024
+	if sz > c10M {
+		mh.err = errors.New("too large slice, maybe something wrong")
+		return
+	}
+	data := make([]byte, sz)
+	if _, err := io.ReadFull(r, data); err != nil {
+		mh.err = errors.Trace(err)
+		return
+	}
+	*slice = data
+}
+
 func newEntry(key MvccKey) *mvccEntry {
 	return &mvccEntry{
 		key: key,
+	}
+}
+
+// lockErr returns ErrLocked.
+// Note that parameter key is raw key, while key in ErrLocked is mvcc key.
+func (l *mvccLock) lockErr(key []byte) error {
+	return &ErrLocked{
+		Key:     mvccEncode(key, lockVer),
+		Primary: l.primary,
+		StartTS: l.startTS,
+		TTL:     l.ttl,
 	}
 }
 
@@ -206,6 +344,59 @@ func (e *mvccEntry) addValue(v mvccValue) {
 	}
 }
 
+func (e *mvccEntry) containsStartTS(startTS uint64) bool {
+	if e.lock != nil && e.lock.startTS == startTS {
+		return true
+	}
+	for _, item := range e.values {
+		if item.startTS == startTS {
+			return true
+		}
+		if item.commitTS < startTS {
+			return false
+		}
+	}
+	return false
+}
+
+func (e *mvccEntry) dumpMvccInfo() *kvrpcpb.MvccInfo {
+	info := &kvrpcpb.MvccInfo{}
+	if e.lock != nil {
+		info.Lock = &kvrpcpb.LockInfo{
+			Key:         e.key,
+			PrimaryLock: e.lock.primary,
+			LockVersion: e.lock.startTS,
+			LockTtl:     e.lock.ttl,
+		}
+	}
+
+	info.Writes = make([]*kvrpcpb.WriteInfo, len(e.values))
+	info.Values = make([]*kvrpcpb.ValueInfo, len(e.values))
+
+	for id, item := range e.values {
+		var tp kvrpcpb.Op
+		switch item.valueType {
+		case typePut:
+			tp = kvrpcpb.Op_Put
+		case typeDelete:
+			tp = kvrpcpb.Op_Del
+		case typeRollback:
+			tp = kvrpcpb.Op_Rollback
+		}
+		info.Writes[id] = &kvrpcpb.WriteInfo{
+			StartTs:  item.startTS,
+			Type:     tp,
+			CommitTs: item.commitTS,
+		}
+
+		info.Values[id] = &kvrpcpb.ValueInfo{
+			Value: item.value,
+			Ts:    item.startTS,
+		}
+	}
+	return info
+}
+
 type rawEntry struct {
 	key   []byte
 	value []byte
@@ -219,6 +410,34 @@ func newRawEntry(key []byte) *rawEntry {
 
 func (e *rawEntry) Less(than llrb.Item) bool {
 	return bytes.Compare(e.key, than.(*rawEntry).key) < 0
+}
+
+// MVCCStore is a mvcc key-value storage.
+type MVCCStore interface {
+	Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error)
+	Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
+	ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
+	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
+	Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64) []error
+	Commit(keys [][]byte, startTS, commitTS uint64) error
+	Rollback(keys [][]byte, startTS uint64) error
+	Cleanup(key []byte, startTS uint64) error
+	ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error)
+	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
+}
+
+// RawKV is a key-value storage. MVCCStore can be implemented upon it with timestamp encoded into key.
+type RawKV interface {
+	RawGet(key []byte) []byte
+	RawScan(startKey, endKey []byte, limit int) []Pair
+	RawPut(key, value []byte)
+	RawDelete(key []byte)
+}
+
+// MVCCDebugger is for debugging.
+type MVCCDebugger interface {
+	MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte)
+	MvccGetByKey(key []byte) *kvrpcpb.MvccInfo
 }
 
 // MvccStore is an in-memory, multi-versioned, transaction-supported kv storage.
@@ -545,6 +764,42 @@ func (s *MvccStore) RawScan(startKey, endKey []byte, limit int) []Pair {
 	}
 	s.rawkv.AscendGreaterOrEqual(newRawEntry(startKey), iterator)
 	return pairs
+}
+
+// MvccGetByStartTS gets mvcc info for the primary key with startTS
+func (s *MvccStore) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte) {
+	s.RLock()
+	defer s.RUnlock()
+
+	var info *kvrpcpb.MvccInfo
+	var key []byte
+	iterator := func(item llrb.Item) bool {
+		k := item.(*mvccEntry)
+		if !regionContains(startKey, endKey, k.key) {
+			return false
+		}
+		if k.containsStartTS(starTS) {
+			info = k.dumpMvccInfo()
+			key = k.key
+			return false
+		}
+		return true
+	}
+	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
+	return info, key
+}
+
+// MvccGetByKey gets mvcc info for the key
+func (s *MvccStore) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
+	s.RLock()
+	defer s.RUnlock()
+
+	resp := s.tree.Get(newEntry(NewMvccKey(key)))
+	if resp == nil {
+		return nil
+	}
+	entry := resp.(*mvccEntry)
+	return entry.dumpMvccInfo()
 }
 
 // MvccKey is the encoded key type.

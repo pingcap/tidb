@@ -106,34 +106,21 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{[]byte("123"), 1234, -1},
 		{[]byte{}, nil, 1},
 
-		{[]interface{}{1, 2, 3}, []interface{}{1, 2, 3}, 0},
-		{[]interface{}{1, 3, 3}, []interface{}{1, 2, 3}, 1},
-		{[]interface{}{1, 2, 3}, []interface{}{2, 2, 3}, -1},
-
-		{Hex{Value: 1}, 1, 0},
-		{Hex{Value: 0x4D7953514C}, "MySQL", 0},
-		{Hex{Value: 0}, uint64(10), -1},
-		{Hex{Value: 1}, float64(0), 1},
-		{Hex{Value: 1}, NewDecFromInt(1), 0},
-		{Hex{Value: 1}, Bit{Value: 0, Width: 1}, 1},
-		{Hex{Value: 1}, Hex{Value: 1}, 0},
-
-		{Bit{Value: 1, Width: 1}, 1, 0},
-		{Bit{Value: 0x41, Width: 8}, "A", 0},
-		{Bit{Value: 1, Width: 1}, uint64(10), -1},
-		{Bit{Value: 1, Width: 1}, float64(0), 1},
-		{Bit{Value: 1, Width: 1}, NewDecFromInt(1), 0},
-		{Bit{Value: 1, Width: 1}, Hex{Value: 2}, -1},
-		{Bit{Value: 1, Width: 1}, Bit{Value: 1, Width: 1}, 0},
+		{NewBinaryLiteralFromUint(1, -1), 1, 0},
+		{NewBinaryLiteralFromUint(0x4D7953514C, -1), "MySQL", 0},
+		{NewBinaryLiteralFromUint(0, -1), uint64(10), -1},
+		{NewBinaryLiteralFromUint(1, -1), float64(0), 1},
+		{NewBinaryLiteralFromUint(1, -1), NewDecFromInt(1), 0},
+		{NewBinaryLiteralFromUint(1, -1), NewBinaryLiteralFromUint(0, -1), 1},
+		{NewBinaryLiteralFromUint(1, -1), NewBinaryLiteralFromUint(1, -1), 0},
 
 		{Enum{Name: "a", Value: 1}, 1, 0},
 		{Enum{Name: "a", Value: 1}, "a", 0},
 		{Enum{Name: "a", Value: 1}, uint64(10), -1},
 		{Enum{Name: "a", Value: 1}, float64(0), 1},
 		{Enum{Name: "a", Value: 1}, NewDecFromInt(1), 0},
-		{Enum{Name: "a", Value: 1}, Hex{Value: 2}, -1},
-		{Enum{Name: "a", Value: 1}, Bit{Value: 1, Width: 1}, 0},
-		{Enum{Name: "a", Value: 1}, Hex{Value: 1}, 0},
+		{Enum{Name: "a", Value: 1}, NewBinaryLiteralFromUint(2, -1), -1},
+		{Enum{Name: "a", Value: 1}, NewBinaryLiteralFromUint(1, -1), 0},
 		{Enum{Name: "a", Value: 1}, Enum{Name: "a", Value: 1}, 0},
 
 		{Set{Name: "a", Value: 1}, 1, 0},
@@ -141,11 +128,13 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{Set{Name: "a", Value: 1}, uint64(10), -1},
 		{Set{Name: "a", Value: 1}, float64(0), 1},
 		{Set{Name: "a", Value: 1}, NewDecFromInt(1), 0},
-		{Set{Name: "a", Value: 1}, Hex{Value: 2}, -1},
-		{Set{Name: "a", Value: 1}, Bit{Value: 1, Width: 1}, 0},
-		{Set{Name: "a", Value: 1}, Hex{Value: 1}, 0},
+		{Set{Name: "a", Value: 1}, NewBinaryLiteralFromUint(2, -1), -1},
+		{Set{Name: "a", Value: 1}, NewBinaryLiteralFromUint(1, -1), 0},
 		{Set{Name: "a", Value: 1}, Enum{Name: "a", Value: 1}, 0},
 		{Set{Name: "a", Value: 1}, Set{Name: "a", Value: 1}, 0},
+
+		{"hello", NewDecFromInt(0), 0}, // compatible with MySQL.
+		{NewDecFromInt(0), "hello", 0},
 	}
 
 	for i, t := range cmpTbl {

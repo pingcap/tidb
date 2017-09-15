@@ -19,8 +19,8 @@ import (
 	"runtime"
 	"strconv"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 )
 
@@ -85,49 +85,34 @@ const (
 	// Add more as needed.
 )
 
+var errClz2Str = map[ErrClass]string{
+	ClassAutoid:        "autoid",
+	ClassDDL:           "ddl",
+	ClassDomain:        "domain",
+	ClassExecutor:      "executor",
+	ClassExpression:    "expression",
+	ClassInspectkv:     "inspectkv",
+	ClassMeta:          "meta",
+	ClassKV:            "kv",
+	ClassOptimizer:     "optimizer",
+	ClassOptimizerPlan: "plan",
+	ClassParser:        "parser",
+	ClassPerfSchema:    "perfschema",
+	ClassPrivilege:     "privilege",
+	ClassSchema:        "schema",
+	ClassServer:        "server",
+	ClassStructure:     "structure",
+	ClassVariable:      "variable",
+	ClassTable:         "table",
+	ClassTypes:         "types",
+	ClassGlobal:        "global",
+	ClassMockTikv:      "mocktikv",
+}
+
 // String implements fmt.Stringer interface.
 func (ec ErrClass) String() string {
-	switch ec {
-	case ClassAutoid:
-		return "autoid"
-	case ClassDDL:
-		return "ddl"
-	case ClassDomain:
-		return "domain"
-	case ClassExecutor:
-		return "executor"
-	case ClassExpression:
-		return "expression"
-	case ClassInspectkv:
-		return "inspectkv"
-	case ClassMeta:
-		return "meta"
-	case ClassKV:
-		return "kv"
-	case ClassOptimizer:
-		return "optimizer"
-	case ClassParser:
-		return "parser"
-	case ClassPerfSchema:
-		return "perfschema"
-	case ClassPrivilege:
-		return "privilege"
-	case ClassSchema:
-		return "schema"
-	case ClassServer:
-		return "server"
-	case ClassStructure:
-		return "structure"
-	case ClassVariable:
-		return "variable"
-	case ClassTable:
-		return "table"
-	case ClassTypes:
-		return "types"
-	case ClassGlobal:
-		return "global"
-	case ClassMockTikv:
-		return "mocktikv"
+	if s, exists := errClz2Str[ec]; exists {
+		return s
 	}
 	return strconv.Itoa(int(ec))
 }
@@ -261,6 +246,10 @@ func (e *Error) Equal(err error) bool {
 	if originErr == nil {
 		return false
 	}
+
+	if error(e) == originErr {
+		return true
+	}
 	inErr, ok := originErr.(*Error)
 	return ok && e.class == inErr.class && e.code == inErr.code
 }
@@ -273,7 +262,7 @@ func (e *Error) NotEqual(err error) bool {
 // ToSQLError convert Error to mysql.SQLError.
 func (e *Error) ToSQLError() *mysql.SQLError {
 	code := e.getMySQLErrorCode()
-	return mysql.NewErrf(code, e.getMsg())
+	return mysql.NewErrf(code, "%s", e.getMsg())
 }
 
 var defaultMySQLErrorCode uint16

@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -44,7 +46,7 @@ type ShowExec struct {
 	Column *ast.ColumnName // Used for `desc table column`.
 	Flag   int             // Some flag parsed from sql, such as FULL.
 	Full   bool
-	User   string // Used for show grants.
+	User   *auth.UserIdentity // Used for show grants.
 
 	// GlobalScope is used by show variables
 	GlobalScope bool
@@ -52,12 +54,12 @@ type ShowExec struct {
 	is infoschema.InfoSchema
 
 	fetched bool
-	rows    []*Row
+	rows    []Row
 	cursor  int
 }
 
 // Next implements Execution Next interface.
-func (e *ShowExec) Next() (*Row, error) {
+func (e *ShowExec) Next() (Row, error) {
 	if e.rows == nil {
 		err := e.fetchAll()
 		if err != nil {
@@ -116,21 +118,21 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowStatsHistogram()
 	case ast.ShowStatsBuckets:
 		return e.fetchShowStatsBuckets()
+	case ast.ShowPlugins:
+		return e.fetchShowPlugins()
 	}
 	return nil
 }
 
 func (e *ShowExec) fetchShowEngines() error {
-	row := &Row{
-		Data: types.MakeDatums(
-			"InnoDB",
-			"DEFAULT",
-			"Supports transactions, row-level locking, and foreign keys",
-			"YES",
-			"YES",
-			"YES",
-		),
-	}
+	row := types.MakeDatums(
+		"InnoDB",
+		"DEFAULT",
+		"Supports transactions, row-level locking, and foreign keys",
+		"YES",
+		"YES",
+		"YES",
+	)
 	e.rows = append(e.rows, row)
 	return nil
 }
@@ -144,7 +146,7 @@ func (e *ShowExec) fetchShowDatabases() error {
 		if checker != nil && !checker.DBIsVisible(d) {
 			continue
 		}
-		e.rows = append(e.rows, &Row{Data: types.MakeDatums(d)})
+		e.rows = append(e.rows, types.MakeDatums(d))
 	}
 	return nil
 }
@@ -161,17 +163,15 @@ func (e *ShowExec) fetchShowProcessList() error {
 		if len(pi.Info) != 0 {
 			t = uint64(time.Since(pi.Time) / time.Second)
 		}
-		row := &Row{
-			Data: []types.Datum{
-				types.NewUintDatum(pi.ID),
-				types.NewStringDatum(pi.User),
-				types.NewStringDatum(pi.Host),
-				types.NewStringDatum(pi.DB),
-				types.NewStringDatum(pi.Command),
-				types.NewUintDatum(t),
-				types.NewStringDatum(fmt.Sprintf("%d", pi.State)),
-				types.NewStringDatum(pi.Info),
-			},
+		row := []types.Datum{
+			types.NewUintDatum(pi.ID),
+			types.NewStringDatum(pi.User),
+			types.NewStringDatum(pi.Host),
+			types.NewStringDatum(pi.DB),
+			types.NewStringDatum(pi.Command),
+			types.NewUintDatum(t),
+			types.NewStringDatum(fmt.Sprintf("%d", pi.State)),
+			types.NewStringDatum(pi.Info),
 		}
 		e.rows = append(e.rows, row)
 	}
@@ -201,7 +201,7 @@ func (e *ShowExec) fetchShowTables() error {
 			// now, just use "BASE TABLE".
 			data = append(data, types.NewDatum("BASE TABLE"))
 		}
-		e.rows = append(e.rows, &Row{Data: data})
+		e.rows = append(e.rows, data)
 	}
 	return nil
 }
@@ -219,7 +219,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 		now := types.CurrentTime(mysql.TypeDatetime)
 		data := types.MakeDatums(t.Meta().Name.O, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
 			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment)
-		e.rows = append(e.rows, &Row{Data: data})
+		e.rows = append(e.rows, data)
 	}
 	return nil
 }
@@ -239,9 +239,9 @@ func (e *ShowExec) fetchShowColumns() error {
 
 		// The FULL keyword causes the output to include the column collation and comments,
 		// as well as the privileges you have for each column.
-		row := &Row{}
+		var row Row
 		if e.Full {
-			row.Data = types.MakeDatums(
+			row = types.MakeDatums(
 				desc.Field,
 				desc.Type,
 				desc.Collation,
@@ -253,7 +253,7 @@ func (e *ShowExec) fetchShowColumns() error {
 				desc.Comment,
 			)
 		} else {
-			row.Data = types.MakeDatums(
+			row = types.MakeDatums(
 				desc.Field,
 				desc.Type,
 				desc.Null,
@@ -267,6 +267,8 @@ func (e *ShowExec) fetchShowColumns() error {
 	return nil
 }
 
+// TODO: index collation can have values A (ascending) or NULL (not sorted).
+// see: https://dev.mysql.com/doc/refman/5.7/en/show-index.html
 func (e *ShowExec) fetchShowIndex() error {
 	tb, err := e.getTable()
 	if err != nil {
@@ -286,7 +288,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"PRIMARY",        // Key_name
 			1,                // Seq_in_index
 			pkCol.Name.O,     // Column_name
-			"utf8_bin",       // Colation
+			"A",              // Collation
 			0,                // Cardinality
 			nil,              // Sub_part
 			nil,              // Packed
@@ -295,7 +297,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"",               // Comment
 			"",               // Index_comment
 		)
-		e.rows = append(e.rows, &Row{Data: data})
+		e.rows = append(e.rows, data)
 	}
 	for _, idx := range tb.Indices() {
 		for i, col := range idx.Meta().Columns {
@@ -313,7 +315,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				idx.Meta().Name.O, // Key_name
 				i+1,               // Seq_in_index
 				col.Name.O,        // Column_name
-				"utf8_bin",        // Colation
+				"A",               // Collation
 				0,                 // Cardinality
 				subPart,           // Sub_part
 				nil,               // Packed
@@ -322,7 +324,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				"",                 // Comment
 				idx.Meta().Comment, // Index_comment
 			)
-			e.rows = append(e.rows, &Row{Data: data})
+			e.rows = append(e.rows, data)
 		}
 	}
 	return nil
@@ -333,14 +335,12 @@ func (e *ShowExec) fetchShowIndex() error {
 func (e *ShowExec) fetchShowCharset() error {
 	descs := charset.GetAllCharsets()
 	for _, desc := range descs {
-		row := &Row{
-			Data: types.MakeDatums(
-				desc.Name,
-				desc.Desc,
-				desc.DefaultCollation,
-				desc.Maxlen,
-			),
-		}
+		row := types.MakeDatums(
+			desc.Name,
+			desc.Desc,
+			desc.DefaultCollation,
+			desc.Maxlen,
+		)
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -360,14 +360,15 @@ func (e *ShowExec) fetchShowVariables() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		row := &Row{Data: types.MakeDatums(v.Name, value)}
+		row := types.MakeDatums(v.Name, value)
 		e.rows = append(e.rows, row)
 	}
 	return nil
 }
 
 func (e *ShowExec) fetchShowStatus() error {
-	statusVars, err := variable.GetStatusVars()
+	sessionVars := e.ctx.GetSessionVars()
+	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -383,7 +384,7 @@ func (e *ShowExec) fetchShowStatus() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		row := &Row{Data: types.MakeDatums(status, value)}
+		row := types.MakeDatums(status, value)
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -401,7 +402,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var pkCol *table.Column
 	for i, col := range tb.Cols() {
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
-		if len(col.GeneratedExprString) != 0 {
+		if col.IsGenerated() {
 			// It's a generated column.
 			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s)", col.GeneratedExprString))
 			if col.GeneratedStored {
@@ -428,7 +429,13 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
 				default:
-					buf.WriteString(fmt.Sprintf(" DEFAULT '%v'", col.DefaultValue))
+					defaultValStr := fmt.Sprintf("%v", col.DefaultValue)
+					if col.Tp == mysql.TypeBit {
+						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
+						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true)))
+					} else {
+						buf.WriteString(fmt.Sprintf(" DEFAULT '%s'", format.OutputFormat(defaultValStr)))
+					}
 				}
 			}
 			if mysql.HasOnUpdateNowFlag(col.Flag) {
@@ -436,7 +443,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 		}
 		if len(col.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", col.Comment))
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
 		}
 		if i != len(tb.Cols())-1 {
 			buf.WriteString(",\n")
@@ -530,11 +537,11 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if len(tb.Meta().Comment) > 0 {
-		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", tb.Meta().Comment))
+		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
 	}
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
-	e.rows = append(e.rows, &Row{Data: data})
+	e.rows = append(e.rows, data)
 	return nil
 }
 
@@ -552,7 +559,7 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 	}
 
 	data := types.MakeDatums(db.Name.O, buf.String())
-	e.rows = append(e.rows, &Row{Data: data})
+	e.rows = append(e.rows, data)
 	return nil
 }
 
@@ -563,14 +570,14 @@ func (e *ShowExec) fetchShowCollation() error {
 		if v.IsDefault {
 			isDefault = "Yes"
 		}
-		row := &Row{Data: types.MakeDatums(
+		row := types.MakeDatums(
 			v.Name,
 			v.CharsetName,
 			v.ID,
 			isDefault,
 			"Yes",
 			1,
-		)}
+		)
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -588,7 +595,7 @@ func (e *ShowExec) fetchShowGrants() error {
 	}
 	for _, g := range gs {
 		data := types.MakeDatums(g)
-		e.rows = append(e.rows, &Row{Data: data})
+		e.rows = append(e.rows, data)
 	}
 	return nil
 }
@@ -601,11 +608,16 @@ func (e *ShowExec) fetchShowProcedureStatus() error {
 	return nil
 }
 
+func (e *ShowExec) fetchShowPlugins() error {
+	return nil
+}
+
 func (e *ShowExec) fetchShowWarnings() error {
 	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	for _, warn := range warns {
 		datums := make([]types.Datum, 3)
 		datums[0] = types.NewStringDatum("Warning")
+		warn = errors.Cause(warn)
 		switch x := warn.(type) {
 		case *terror.Error:
 			sqlErr := x.ToSQLError()
@@ -615,7 +627,7 @@ func (e *ShowExec) fetchShowWarnings() error {
 			datums[1] = types.NewIntDatum(int64(mysql.ErrUnknown))
 			datums[2] = types.NewStringDatum(warn.Error())
 		}
-		e.rows = append(e.rows, &Row{Data: datums})
+		e.rows = append(e.rows, datums)
 	}
 	return nil
 }

@@ -131,6 +131,11 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
 	sql = "create table test_error_code1 (c1 int not null default '')"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT 2.0 DEFAULT now());"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "CREATE TABLE `t` (`a` double DEFAULT now());"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
 	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
@@ -181,6 +186,16 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 	s.tk.MustExec("insert into test_add_index_with_pk values(2, 2)")
 	s.tk.MustExec("alter table test_add_index_with_pk add index idx1 (a, b)")
 	s.tk.MustQuery("select * from test_add_index_with_pk").Check(testkit.Rows("1 2", "2 2"))
+	s.tk.MustExec("create table test_add_index_with_pk1(a int not null, b int not null default '0', c int, d int, primary key(c))")
+	s.tk.MustExec("insert into test_add_index_with_pk1 values(1, 1, 1, 1)")
+	s.tk.MustExec("alter table test_add_index_with_pk1 add index idx (c)")
+	s.tk.MustExec("insert into test_add_index_with_pk1 values(2, 2, 2, 2)")
+	s.tk.MustQuery("select * from test_add_index_with_pk1").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
+	s.tk.MustExec("create table test_add_index_with_pk2(a int not null, b int not null default '0', c int unsigned, d int, primary key(c))")
+	s.tk.MustExec("insert into test_add_index_with_pk2 values(1, 1, 1, 1)")
+	s.tk.MustExec("alter table test_add_index_with_pk2 add index idx (c)")
+	s.tk.MustExec("insert into test_add_index_with_pk2 values(2, 2, 2, 2)")
+	s.tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 }
 
 func (s *testDBSuite) TestIndex(c *C) {
@@ -313,6 +328,18 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 	s.mustExec(c, "alter table t_anonymous_index drop index c3")
 	s.mustExec(c, "alter table t_anonymous_index add index c3 (C3)")
 	s.mustExec(c, "alter table t_anonymous_index drop index C3")
+	// for anonymous index with column name `primary`
+	s.mustExec(c, "create table t_primary (`primary` int, key (`primary`))")
+	t = s.testGetTable(c, "t_primary")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	s.mustExec(c, "create table t_primary_2 (`primary` int, key primary_2 (`primary`), key (`primary`))")
+	t = s.testGetTable(c, "t_primary_2")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
+	s.mustExec(c, "create table t_primary_3 (`primary_2` int, key(`primary_2`), `primary` int, key(`primary`));")
+	t = s.testGetTable(c, "t_primary_3")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
 }
 
 func (s *testDBSuite) testAlterLock(c *C) {
@@ -489,8 +516,7 @@ LOOP:
 	// check in index, must no index in kv
 	ctx := s.s.(context.Context)
 
-	handles := make(map[int64]struct{})
-
+	// Make sure there is no index with name c3_index.
 	t = s.testGetTable(c, "t1")
 	var nidx table.Index
 	for _, tidx := range t.Indices() {
@@ -499,26 +525,40 @@ LOOP:
 			break
 		}
 	}
-	// Make sure there is no index with name c3_index.
 	c.Assert(nidx, IsNil)
+
 	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
-	c.Assert(ctx.NewTxn(), IsNil)
-	defer ctx.Txn().Rollback()
+	f := func() map[int64]struct{} {
+		handles := make(map[int64]struct{})
 
-	it, err := idx.SeekFirst(ctx.Txn())
-	c.Assert(err, IsNil)
-	defer it.Close()
+		c.Assert(ctx.NewTxn(), IsNil)
+		defer ctx.Txn().Rollback()
 
-	for {
-		_, h, err := it.Next()
-		if terror.ErrorEqual(err, io.EOF) {
-			break
-		}
-
+		it, err := idx.SeekFirst(ctx.Txn())
 		c.Assert(err, IsNil)
-		handles[h] = struct{}{}
+		defer it.Close()
+
+		for {
+			_, h, err := it.Next()
+			if terror.ErrorEqual(err, io.EOF) {
+				break
+			}
+
+			c.Assert(err, IsNil)
+			handles[h] = struct{}{}
+		}
+		return handles
 	}
 
+	var handles map[int64]struct{}
+	for i := 0; i < 30; i++ {
+		handles = f()
+		if len(handles) != 0 {
+			time.Sleep(time.Millisecond * 100)
+		} else {
+			break
+		}
+	}
 	c.Assert(handles, HasLen, 0)
 }
 
@@ -571,6 +611,16 @@ func (s *testDBSuite) TestCreateIndexType(c *C) {
 		petsyes enum('Y','N') DEFAULT 'Y' NOT NULL,
 		KEY price (price,area,type,transityes,shopsyes,schoolsyes,petsyes));`
 	s.tk.MustExec(sql)
+}
+
+func (s *testDBSuite) TestIssue3833(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table issue3833 (b char(0))")
+	s.testErrorCode(c, "create index idx on issue3833 (b)", tmysql.ErrWrongKeyColumn)
+	s.testErrorCode(c, "alter table issue3833 add index idx (b)", tmysql.ErrWrongKeyColumn)
+	s.testErrorCode(c, "create table issue3833_2 (b char(0), index (b))", tmysql.ErrWrongKeyColumn)
 }
 
 func (s *testDBSuite) TestColumn(c *C) {
@@ -678,7 +728,7 @@ LOOP:
 	matchRows(c, rows, [][]interface{}{{count - int64(step)}})
 
 	for i := num; i < num+step; i++ {
-		rows := s.mustQuery(c, "select c4 from t2 where c4 = ?", i)
+		rows = s.mustQuery(c, "select c4 from t2 where c4 = ?", i)
 		matchRows(c, rows, [][]interface{}{{i}})
 	}
 
@@ -902,6 +952,45 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrBadField)
 	sql = "alter table test_alter_column alter column c set default null"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+
+	// The followings tests whether adding constraints via change / modify column
+	// is forbidden as expected.
+	s.mustExec(c, "drop table if exists mc")
+	s.mustExec(c, "create table mc(a int key, b int, c int)")
+	_, err = s.tk.Exec("alter table mc modify column a int key") // Adds a new primary key
+	c.Assert(err, NotNil)
+	_, err = s.tk.Exec("alter table mc modify column c int unique") // Adds a new unique key
+	c.Assert(err, NotNil)
+	result := s.tk.MustQuery("show create table mc")
+	createSQL := result.Rows()[0][1]
+	expected := "CREATE TABLE `mc` (\n  `a` int(11) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	c.Assert(createSQL, Equals, expected)
+
+	// Change / modify column should preserve index options.
+	s.mustExec(c, "drop table if exists mc")
+	s.mustExec(c, "create table mc(a int key, b int, c int unique)")
+	s.mustExec(c, "alter table mc modify column a bigint") // NOT NULL & PRIMARY KEY should be preserved
+	s.mustExec(c, "alter table mc modify column b bigint")
+	s.mustExec(c, "alter table mc modify column c bigint") // Unique should be preserved
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	c.Assert(createSQL, Equals, expected)
+
+	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
+	s.mustExec(c, "drop table if exists mc")
+	s.mustExec(c, "create table mc(a int key auto_increment, b int)")
+	s.mustExec(c, "alter table mc modify column a bigint auto_increment") // Keeps auto_increment
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	s.mustExec(c, "alter table mc modify column a bigint") // Drops auto_increment
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	c.Assert(createSQL, Equals, expected)
+	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
+	c.Assert(err, NotNil)
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
@@ -952,12 +1041,13 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 
 	// Add a new column in write only state.
 	newColumn := &model.ColumnInfo{
-		ID:           100,
-		Name:         model.NewCIStr("c3"),
-		Offset:       2,
-		DefaultValue: 9,
-		FieldType:    *types.NewFieldType(tmysql.TypeLonglong),
-		State:        model.StateWriteOnly,
+		ID:                 100,
+		Name:               model.NewCIStr("c3"),
+		Offset:             2,
+		DefaultValue:       9,
+		OriginDefaultValue: 9,
+		FieldType:          *types.NewFieldType(tmysql.TypeLonglong),
+		State:              model.StateWriteOnly,
 	}
 	t1Info.Columns = append(t1Info.Columns, newColumn)
 
@@ -988,6 +1078,29 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
+}
+
+func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
+	defer testleak.AfterTest(c)
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+
+	sql := "create table t_too_large ("
+	cnt := 3000
+	for i := 1; i <= cnt; i++ {
+		sql += fmt.Sprintf("a%d double, b%d double, c%d double, d%d double", i, i, i, i)
+		if i != cnt {
+			sql += ","
+		}
+	}
+	sql += ");"
+	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
+
+	originLimit := ddl.TableColumnCountLimit
+	ddl.TableColumnCountLimit = cnt * 4
+	_, err := s.tk.Exec(sql)
+	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("err:%v", err))
+	ddl.TableColumnCountLimit = originLimit
 }
 
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
@@ -1037,6 +1150,29 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.testErrorCode(c, failSQL, tmysql.ErrBadDB)
 	failSQL = fmt.Sprintf("create table t1 like test.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+}
+
+func (s *testDBSuite) TestCreateTable(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://create_table")
+	c.Assert(err, IsNil)
+	s.tk = testkit.NewTestKit(c, store)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	s.tk.MustExec("use test")
+	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	cols := tbl.Cols()
+
+	c.Assert(len(cols), Equals, 1)
+	col := cols[0]
+	c.Assert(col.Name.L, Equals, "a")
+	d, ok := col.DefaultValue.(string)
+	c.Assert(ok, IsTrue)
+	c.Assert(d, Equals, "2.0")
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {
@@ -1150,6 +1286,24 @@ func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
 }
 
+func (s *testDBSuite) TestRenameMultiTables(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://rename_multi_tables")
+	c.Assert(err, IsNil)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	s.tk = testkit.NewTestKit(c, store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t1(id int)")
+	s.tk.MustExec("create table t2(id int)")
+	// Currently it will fail only.
+	sql := fmt.Sprintf("rename table t1 to t3, t2 to t4")
+	_, err = s.tk.Exec(sql)
+	c.Assert(err, NotNil)
+	originErr := errors.Cause(err)
+	c.Assert(originErr.Error(), Equals, "can't run multi schema change")
+}
+
 func (s *testDBSuite) TestAddNotNullColumn(c *C) {
 	defer testleak.AfterTest(c)
 	s.tk = testkit.NewTestKit(c, s.store)
@@ -1191,6 +1345,32 @@ func (s *testDBSuite) TestIssue2858And2717(c *C) {
 	s.tk.MustExec("insert into t_issue_2858_hex values (123), (0x321)")
 	s.tk.MustQuery("select a from t_issue_2858_hex").Check(testkit.Rows("291", "123", "801"))
 	s.tk.MustExec(`alter table t_issue_2858_hex alter column a set default 0x321`)
+}
+
+func (s *testDBSuite) TestIssue4432(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("create table tx (col bit(10) default 'a')")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
+
+	s.tk.MustExec("create table tx (col bit(10) default 0x61)")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
+
+	s.tk.MustExec("create table tx (col bit(10) default 97)")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
+
+	s.tk.MustExec("create table tx (col bit(10) default 0b1100001)")
+	s.tk.MustExec("insert into tx value ()")
+	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	s.tk.MustExec("drop table tx")
 }
 
 func (s *testDBSuite) TestChangeColumnPosition(c *C) {
@@ -1309,13 +1489,13 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	// Check alter table modify/change generated column.
 	s.tk.MustExec(`alter table test_gv_ddl modify column c bigint as (b+200) stored`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c bigint(21) YES  <nil> STORED GENERATED`))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c bigint(20) YES  <nil> STORED GENERATED`))
 
 	s.tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> VIRTUAL GENERATED`, `c bigint(21) YES  <nil> STORED GENERATED`))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c bigint(20) YES  <nil> STORED GENERATED`))
 
 	s.tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(21) YES  <nil> `))
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
 }

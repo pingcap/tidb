@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -92,7 +93,7 @@ func (e *PrepareExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next() (*Row, error) {
+func (e *PrepareExec) Next() (Row, error) {
 	e.DoPrepare()
 	return nil, e.Err
 }
@@ -201,7 +202,7 @@ func (e *ExecuteExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next() (*Row, error) {
+func (e *ExecuteExec) Next() (Row, error) {
 	// Will never be called.
 	return nil, nil
 }
@@ -262,7 +263,7 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b := newExecutorBuilder(e.Ctx, e.IS)
+	b := newExecutorBuilder(e.Ctx, e.IS, kv.PriorityNormal)
 	stmtExec := b.build(p)
 	if b.err != nil {
 		return errors.Trace(b.err)
@@ -271,7 +272,7 @@ func (e *ExecuteExec) Build() error {
 	e.Stmt = prepared.Stmt
 	e.Plan = p
 	ResetStmtCtx(e.Ctx, e.Stmt)
-	stmtCount(e.Stmt, e.Plan)
+	stmtCount(e.Stmt, e.Plan, e.Ctx.GetSessionVars().InRestrictedSQL)
 	return nil
 }
 
@@ -288,7 +289,7 @@ func (e *DeallocateExec) Schema() *expression.Schema {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next() (*Row, error) {
+func (e *DeallocateExec) Next() (Row, error) {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
@@ -333,22 +334,44 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(variable.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
-	switch s.(type) {
-	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
+
+	switch stmt := s.(type) {
+	case *ast.UpdateStmt, *ast.DeleteStmt:
+		sc.IgnoreTruncate = false
+		sc.OverflowAsWarning = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.InUpdateOrDeleteStmt = true
+	case *ast.InsertStmt:
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
-		if _, ok := s.(*ast.InsertStmt); !ok {
-			sc.InUpdateOrDeleteStmt = true
-		}
+		sc.InInsertStmt = true
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 		sc.IgnoreTruncate = false
+		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = false
 	case *ast.LoadDataStmt:
 		sc.IgnoreTruncate = false
+		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+	case *ast.SelectStmt:
+		sc.InSelectStmt = true
+
+		// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
+		// said "For statements such as SELECT that do not change data, invalid values
+		// generate a warning in strict mode, not an error."
+		// and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
+		sc.OverflowAsWarning = true
+
+		// Return warning for truncate error in selection.
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = true
+		if opts := stmt.SelectStmtOpts; opts != nil {
+			sc.Priority = opts.Priority
+		}
 	default:
 		sc.IgnoreTruncate = true
+		sc.OverflowAsWarning = false
 		if show, ok := s.(*ast.ShowStmt); ok {
 			if show.Tp == ast.ShowWarnings {
 				sc.InShowWarning = true

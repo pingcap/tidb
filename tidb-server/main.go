@@ -20,16 +20,18 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
-	"github.com/ngaut/systimemon"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
@@ -37,35 +39,66 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/systimemon"
+	"github.com/pingcap/tidb/x-server"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"google.golang.org/grpc"
 )
 
+// Flag Names
+const (
+	nmVersion         = "V"
+	nmConfig          = "config"
+	nmStore           = "store"
+	nmStorePath       = "path"
+	nmHost            = "host"
+	nmPort            = "P"
+	nmSocket          = "socket"
+	nmBinlogSocket    = "binlog-socket"
+	nmRunDDL          = "run-ddl"
+	nmLogLevel        = "L"
+	nmLogFile         = "log-file"
+	nmReportStatus    = "report-status"
+	nmStatusPort      = "status"
+	nmMetricsAddr     = "metrics-addr"
+	nmMetricsInterval = "metrics-interval"
+	nmDdlLease        = "lease"
+	nmJoinConcurrency = "join-concurrency"
+	nmStatsLease      = "statsLease"
+)
+
 var (
-	version         = flag.Bool("V", false, "print version information and exit")
-	store           = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]")
-	storePath       = flag.String("path", "/tmp/tidb", "tidb storage path")
-	logLevel        = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
-	host            = flag.String("host", "0.0.0.0", "tidb server host")
-	port            = flag.String("P", "4000", "tidb server port")
-	statusPort      = flag.String("status", "10080", "tidb server status port")
-	ddlLease        = flag.String("lease", "10s", "schema lease duration, very dangerous to change only if you know what you do")
-	statsLease      = flag.String("statsLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
-	socket          = flag.String("socket", "", "The socket file to use for connection.")
-	enablePS        = flag.Bool("perfschema", false, "If enable performance schema.")
-	enablePrivilege = flag.Bool("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
-	reportStatus    = flag.Bool("report-status", true, "If enable status report HTTP service.")
-	logFile         = flag.String("log-file", "", "log file path")
-	joinCon         = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
-	crossJoin       = flag.Bool("cross-join", true, "whether support cartesian product or not.")
-	metricsAddr     = flag.String("metrics-addr", "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
-	metricsInterval = flag.Int("metrics-interval", 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
-	binlogSocket    = flag.String("binlog-socket", "", "socket file to write binlog")
-	runDDL          = flag.Bool("run-ddl", true, "run ddl worker on this tidb-server")
-	retryLimit      = flag.Int("retry-limit", 10, "the maximum number of retries when commit a transaction")
-	skipGrantTable  = flag.Bool("skip-grant-table", false, "This option causes the server to start without using the privilege system at all.")
+	version    = flagBoolean(nmVersion, false, "print version information and exit")
+	configPath = flag.String(nmConfig, "", "config file path")
+
+	// Base
+	store        = flag.String(nmStore, "mocktikv", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]")
+	storePath    = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
+	host         = flag.String(nmHost, "0.0.0.0", "tidb server host")
+	port         = flag.String(nmPort, "4000", "tidb server port")
+	socket       = flag.String(nmSocket, "", "The socket file to use for connection.")
+	binlogSocket = flag.String(nmBinlogSocket, "", "socket file to write binlog")
+	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
+	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
+
+	// Performance
+	joinCon    = flag.Int(nmJoinConcurrency, 5, "the number of goroutines that participate joining.")
+	statsLease = flag.String(nmStatsLease, "3s", "stats lease duration, which inflences the time of analyze and stats load.")
+
+	// Log
+	logLevel = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
+	logFile  = flag.String(nmLogFile, "", "log file path")
+
+	// Status
+	reportStatus    = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
+	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
+	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
+	metricsInterval = flag.Int(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+
+	// To be removed.
+	enablePrivilege = flagBoolean("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
 
 	timeJumpBackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -76,127 +109,73 @@ var (
 		})
 )
 
+var (
+	cfg     *config.Config
+	storage kv.Storage
+	dom     *domain.Domain
+	svr     *server.Server
+	xsvr    *xserver.Server
+)
+
 func main() {
-	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
-	tidb.RegisterStore("tikv", tikv.Driver{})
-	tidb.RegisterStore("mocktikv", tikv.MockDriver{})
-
-	runtime.GOMAXPROCS(runtime.NumCPU())
-
 	flag.Parse()
 	if *version {
 		printer.PrintRawTiDBInfo()
 		os.Exit(0)
 	}
-	if *skipGrantTable && !hasRootPrivilege() {
-		log.Error("TiDB run with skip-grant-table need root privilege.")
-		os.Exit(-1)
-	}
 
-	ddlLeaseDuration := parseLease(*ddlLease)
-	tidb.SetSchemaLease(ddlLeaseDuration)
-	statsLeaseDuration := parseLease(*statsLease)
-	tidb.SetStatsLease(statsLeaseDuration)
-	ddl.RunWorker = *runDDL
-	tidb.SetCommitRetryLimit(*retryLimit)
+	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	cfg := &server.Config{
-		Addr:         fmt.Sprintf("%s:%s", *host, *port),
-		LogLevel:     *logLevel,
-		StatusAddr:   fmt.Sprintf(":%s", *statusPort),
-		Socket:       *socket,
-		ReportStatus: *reportStatus,
-		Store:        *store,
-		StorePath:    *storePath,
-	}
-
-	// set log options
-	if len(*logFile) > 0 {
-		err := log.SetOutputByName(*logFile)
-		if err != nil {
-			log.Fatal(errors.ErrorStack(err))
-		}
-		log.SetRotateByDay()
-		log.SetHighlighting(false)
-	}
-
-	if joinCon != nil && *joinCon > 0 {
-		plan.JoinConcurrency = *joinCon
-	}
-	plan.AllowCartesianProduct = *crossJoin
-	// Call this before setting log level to make sure that TiDB info could be printed.
-	printer.PrintTiDBInfo()
-	log.SetLevelByString(cfg.LogLevel)
-
-	store := createStore()
-
-	if *enablePS {
-		perfschema.EnablePerfSchema()
-	}
-	privileges.Enable = *enablePrivilege
-	privileges.SkipWithGrant = *skipGrantTable
-	if *binlogSocket != "" {
-		createBinlogClient()
-	}
-
-	// Bootstrap a session to load information schema.
-	domain, err := tidb.BootstrapSession(store)
-	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
-	}
-
-	var driver server.IDriver
-	driver = server.NewTiDBDriver(store)
-	var svr *server.Server
-	svr, err = server.NewServer(cfg, driver)
-	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
-	}
-
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc,
-		syscall.SIGHUP,
-		syscall.SIGINT,
-		syscall.SIGTERM,
-		syscall.SIGQUIT)
-
-	go func() {
-		sig := <-sc
-		log.Infof("Got signal [%d] to exit.", sig)
-		svr.Close()
-	}()
-
-	prometheus.MustRegister(timeJumpBackCounter)
-	go systimemon.StartMonitor(time.Now, func() {
-		timeJumpBackCounter.Inc()
-	})
-
-	pushMetric(*metricsAddr, time.Duration(*metricsInterval)*time.Second)
-
-	log.Error(svr.Run())
-	domain.Close()
+	registerStores()
+	loadConfig()
+	overrideConfig()
+	validateConfig()
+	setGlobalVars()
+	setupLog()
+	printInfo()
+	createStoreAndDomain()
+	setupBinlogClient()
+	createServer()
+	setupSignalHandler()
+	setupMetrics()
+	runServer()
+	cleanup()
 	os.Exit(0)
 }
 
-func createStore() kv.Storage {
-	fullPath := fmt.Sprintf("%s://%s", *store, *storePath)
-	store, err := tidb.NewStore(fullPath)
+func registerStores() {
+	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
+	tidb.RegisterStore("tikv", tikv.Driver{})
+	tidb.RegisterStore("mocktikv", tikv.MockDriver{})
+}
+
+func createStoreAndDomain() {
+	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
+	var err error
+	storage, err = tidb.NewStore(fullPath)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
-	return store
+	// Bootstrap a session to load information schema.
+	dom, err = tidb.BootstrapSession(storage)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
 }
 
-func createBinlogClient() {
+func setupBinlogClient() {
+	if cfg.BinlogSocket == "" {
+		return
+	}
 	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	clientCon, err := grpc.Dial(*binlogSocket, dialerOpt, grpc.WithInsecure())
+	clientCon, err := grpc.Dial(cfg.BinlogSocket, dialerOpt, grpc.WithInsecure())
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
 	binloginfo.SetPumpClient(binlog.NewPumpClient(clientCon))
-	log.Infof("created binlog client at %s", *binlogSocket)
+	log.Infof("created binlog client at %s", cfg.BinlogSocket)
 }
 
 // Prometheus push.
@@ -235,7 +214,7 @@ func instanceName() string {
 	if err != nil {
 		return "unknown"
 	}
-	return fmt.Sprintf("%s_%s", hostname, *port)
+	return fmt.Sprintf("%s_%d", hostname, cfg.Port)
 }
 
 // parseLease parses lease argument string.
@@ -252,4 +231,190 @@ func parseLease(lease string) time.Duration {
 
 func hasRootPrivilege() bool {
 	return os.Geteuid() == 0
+}
+
+func flagBoolean(name string, defaultVal bool, usage string) *bool {
+	if defaultVal == false {
+		// Fix #4125, golang do not print default false value in usage, so we append it.
+		usage = fmt.Sprintf("%s (default false)", usage)
+		return flag.Bool(name, defaultVal, usage)
+	}
+	return flag.Bool(name, defaultVal, usage)
+}
+
+func loadConfig() {
+	cfg = config.GetGlobalConfig()
+	if *configPath != "" {
+		err := cfg.Load(*configPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
+func overrideConfig() {
+	actualFlags := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) {
+		actualFlags[f.Name] = true
+	})
+
+	// Base
+	if actualFlags[nmHost] {
+		cfg.Host = *host
+	}
+	var err error
+	if actualFlags[nmPort] {
+		cfg.Port, err = strconv.Atoi(*port)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	if actualFlags[nmStore] {
+		cfg.Store = *store
+	}
+	if actualFlags[nmStorePath] {
+		cfg.Path = *storePath
+	}
+	if actualFlags[nmSocket] {
+		cfg.Socket = *socket
+	}
+	if actualFlags[nmBinlogSocket] {
+		cfg.BinlogSocket = *binlogSocket
+	}
+	if actualFlags[nmRunDDL] {
+		cfg.RunDDL = *runDDL
+	}
+	if actualFlags[nmDdlLease] {
+		cfg.Lease = *ddlLease
+	}
+
+	// Log
+	if actualFlags[nmLogLevel] {
+		cfg.Log.Level = *logLevel
+	}
+	if actualFlags[nmLogFile] {
+		cfg.Log.File.Filename = *logFile
+	}
+
+	// Status
+	if actualFlags[nmReportStatus] {
+		cfg.Status.ReportStatus = *reportStatus
+	}
+	if actualFlags[nmStatusPort] {
+		cfg.Status.StatusPort, err = strconv.Atoi(*statusPort)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	if actualFlags[nmMetricsAddr] {
+		cfg.Status.MetricsAddr = *metricsAddr
+	}
+	if actualFlags[nmMetricsInterval] {
+		cfg.Status.MetricsInterval = *metricsInterval
+	}
+
+	// Performance
+	if actualFlags[nmStatsLease] {
+		cfg.Performance.StatsLease = *statsLease
+	}
+	if actualFlags[nmJoinConcurrency] {
+		cfg.Performance.JoinConcurrency = *joinCon
+	}
+}
+
+func validateConfig() {
+	if cfg.Security.SkipGrantTable && !hasRootPrivilege() {
+		log.Error("TiDB run with skip-grant-table need root privilege.")
+		os.Exit(-1)
+	}
+}
+
+func setGlobalVars() {
+	ddlLeaseDuration := parseLease(cfg.Lease)
+	tidb.SetSchemaLease(ddlLeaseDuration)
+	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
+	tidb.SetStatsLease(statsLeaseDuration)
+	ddl.RunWorker = cfg.RunDDL
+	tidb.SetCommitRetryLimit(cfg.Performance.RetryLimit)
+	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
+	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
+	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
+}
+
+func setupLog() {
+	err := logutil.InitLogger(cfg.Log.ToLogConfig())
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func printInfo() {
+	// Make sure the TiDB info is always printed.
+	level := log.GetLevel()
+	log.SetLevel(log.InfoLevel)
+	printer.PrintTiDBInfo()
+	log.SetLevel(level)
+}
+
+func createServer() {
+	var driver server.IDriver
+	driver = server.NewTiDBDriver(storage)
+	var err error
+	svr, err = server.NewServer(cfg, driver)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
+	if cfg.XProtocol.XServer {
+		xcfg := &xserver.Config{
+			Addr:   fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
+			Socket: cfg.XProtocol.XSocket,
+		}
+		xsvr, err = xserver.NewServer(xcfg)
+		if err != nil {
+			log.Fatal(errors.ErrorStack(err))
+		}
+	}
+}
+
+func setupSignalHandler() {
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT)
+
+	go func() {
+		sig := <-sc
+		log.Infof("Got signal [%d] to exit.", sig)
+		if xsvr != nil {
+			xsvr.Close() // Should close xserver before server.
+		}
+		svr.Close()
+	}()
+}
+
+func setupMetrics() {
+	prometheus.MustRegister(timeJumpBackCounter)
+	go systimemon.StartMonitor(time.Now, func() {
+		timeJumpBackCounter.Inc()
+	})
+
+	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
+}
+
+func runServer() {
+	if err := svr.Run(); err != nil {
+		log.Error(err)
+	}
+	if cfg.XProtocol.XServer {
+		if err := xsvr.Run(); err != nil {
+			log.Error(err)
+		}
+	}
+}
+
+func cleanup() {
+	dom.Close()
+	storage.Close()
 }

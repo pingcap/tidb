@@ -63,6 +63,9 @@ type Context interface {
 	// InitTxnWithStartTS initializes a transaction with startTS.
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
+
+	// GetStore returns the store of session.
+	GetStore() kv.Storage
 }
 
 type basicCtxType int

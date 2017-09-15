@@ -14,7 +14,7 @@
 package plan
 
 import (
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -40,34 +40,35 @@ func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []boo
 	return used
 }
 
-// exprHasSetVar checks if the expression has set-var function. If do, we should not prune it.
+// exprHasSetVar checks if the expression has SetVar function.
 func exprHasSetVar(expr expression.Expression) bool {
-	if fun, ok := expr.(*expression.ScalarFunction); ok {
-		canPrune := true
-		if fun.FuncName.L == ast.SetVar {
-			return false
-		}
-		for _, arg := range fun.GetArgs() {
-			canPrune = canPrune && exprHasSetVar(arg)
-			if !canPrune {
-				return false
-			}
+	scalaFunc, isScalaFunc := expr.(*expression.ScalarFunction)
+	if !isScalaFunc {
+		return false
+	}
+	if scalaFunc.FuncName.L == ast.SetVar {
+		return true
+	}
+	for _, arg := range scalaFunc.GetArgs() {
+		if exprHasSetVar(arg) {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // PruneColumns implements LogicalPlan interface.
+// If any expression has SetVar functions, we do not prune it.
 func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
-	var selfUsedCols []*expression.Column
 	used := getUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && exprHasSetVar(p.Exprs[i]) {
+		if !used[i] && !exprHasSetVar(p.Exprs[i]) {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
+	var selfUsedCols []*expression.Column
 	for _, expr := range p.Exprs {
 		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
 	}
@@ -157,10 +158,33 @@ func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, p.schema)
+	p.pruneUnionScanSchema(used)
+	handleIdx := -1 // -1 for not found.
+	for _, col := range p.schema.TblID2Handle {
+		handleIdx = col[0].Index
+	}
+	if p.unionScanSchema != nil {
+		used[handleIdx] = true
+	}
+	if handleIdx != -1 && !used[handleIdx] {
+		p.schema.TblID2Handle = nil
+		p.NeedColHandle = false
+	}
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
+		}
+	}
+}
+
+func (p *DataSource) pruneUnionScanSchema(usedMask []bool) {
+	if p.unionScanSchema == nil {
+		return
+	}
+	for i := p.unionScanSchema.Len() - 1; i >= 0; i-- {
+		if !usedMask[i] {
+			p.unionScanSchema.Columns = append(p.unionScanSchema.Columns[:i], p.unionScanSchema.Columns[i+1:]...)
 		}
 	}
 }
@@ -245,6 +269,25 @@ func (p *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 	lChild.PruneColumns(leftCols)
 	p.mergeSchema()
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *SelectLock) PruneColumns(parentUsedCols []*expression.Column) {
+	if p.Lock != ast.SelectLockForUpdate {
+		p.baseLogicalPlan.PruneColumns(parentUsedCols)
+	} else {
+		used := getUsedList(parentUsedCols, p.schema)
+		for _, cols := range p.children[0].Schema().TblID2Handle {
+			for _, col := range cols {
+				col.ResolveIndices(p.children[0].Schema())
+				if !used[col.Index] {
+					used[col.Index] = true
+					parentUsedCols = append(parentUsedCols, col)
+				}
+			}
+		}
+		p.children[0].(LogicalPlan).PruneColumns(parentUsedCols)
+	}
 }
 
 // PruneColumns implements LogicalPlan interface.

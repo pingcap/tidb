@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -84,7 +83,7 @@ func pseudoSelectivity(exprs []expression.Expression) float64 {
 // Currently the time complexity is o(n^2).
 func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) (float64, error) {
 	if t.Count == 0 {
-		return 0, nil
+		return 1, nil
 	}
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
@@ -101,7 +100,7 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
 		// This column should have histogram.
 		if col != nil && len(colInfo.Histogram.Buckets) > 0 {
-			maskCovered, ranges, err := getMaskAndRanges(sc, exprs, ranger.ColumnRangeType, nil, col)
+			maskCovered, ranges, err := getMaskAndRanges(ctx, exprs, ranger.ColumnRangeType, nil, col)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -115,7 +114,7 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 		idxCols, lengths := expression.IndexInfo2Cols(extractedCols, idxInfo.Info)
 		// This index should have histogram.
 		if len(idxCols) > 0 && len(idxInfo.Histogram.Buckets) > 0 {
-			maskCovered, ranges, err := getMaskAndRanges(sc, exprs, ranger.IndexRangeType, lengths, idxCols...)
+			maskCovered, ranges, err := getMaskAndRanges(ctx, exprs, ranger.IndexRangeType, lengths, idxCols...)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -152,20 +151,20 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 	return ret, nil
 }
 
-func getMaskAndRanges(sc *variable.StatementContext, exprs []expression.Expression, rangeType int,
+func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeType int,
 	lengths []int, cols ...*expression.Column) (int64, []types.Range, error) {
 	exprsClone := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		exprsClone = append(exprsClone, expr.Clone())
 	}
-	ranges, accessConds, _, err := ranger.BuildRange(sc, exprsClone, rangeType, cols, lengths)
+	ranges, accessConds, _, err := ranger.BuildRange(ctx.GetSessionVars().StmtCtx, exprsClone, rangeType, cols, lengths)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
 	mask := int64(0)
 	for i := range exprs {
 		for j := range accessConds {
-			if exprs[i].Equal(accessConds[j], nil) {
+			if exprs[i].Equal(accessConds[j], ctx) {
 				mask |= 1 << uint64(i)
 				break
 			}

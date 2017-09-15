@@ -24,8 +24,9 @@ import (
 	"runtime/pprof"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/filesort"
@@ -392,7 +393,9 @@ func driveRunCmd() {
 }
 
 func init() {
-	log.SetLevelByString(logLevel)
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -417,9 +420,9 @@ func main() {
 	flag.Parse()
 
 	if len(os.Args) == 1 {
-		fmt.Println("Usage:\n")
-		fmt.Println("\tbenchfilesort command [arguments]\n")
-		fmt.Println("The commands are:\n")
+		fmt.Printf("Usage:\n\n")
+		fmt.Printf("\tbenchfilesort command [arguments]\n\n")
+		fmt.Printf("The commands are:\n\n")
 		fmt.Println("\tgen\t", "generate rows")
 		fmt.Println("\trun\t", "run tests")
 		fmt.Println("")

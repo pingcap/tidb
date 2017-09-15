@@ -17,27 +17,37 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // Version information.
 var (
-	TiDBBuildTS = "None"
-	TiDBGitHash = "None"
+	TiDBBuildTS   = "None"
+	TiDBGitHash   = "None"
+	TiDBGitBranch = "None"
 )
 
 // PrintTiDBInfo prints the TiDB version information.
 func PrintTiDBInfo() {
 	log.Infof("Welcome to TiDB.")
-	log.Infof("Version:")
+	log.Infof("Release Version: %s", mysql.TiDBReleaseVersion)
 	log.Infof("Git Commit Hash: %s", TiDBGitHash)
+	log.Infof("Git Branch: %s", TiDBGitBranch)
 	log.Infof("UTC Build Time:  %s", TiDBBuildTS)
 }
 
 // PrintRawTiDBInfo prints the TiDB version information without log info.
 func PrintRawTiDBInfo() {
+	fmt.Println("Release Version:", mysql.TiDBReleaseVersion)
 	fmt.Println("Git Commit Hash:", TiDBGitHash)
+	fmt.Println("Git Commit Branch:", TiDBGitBranch)
 	fmt.Println("UTC Build Time: ", TiDBBuildTS)
+}
+
+// GetTiDBInfo returns the git hash and build time of this tidb-server binary.
+func GetTiDBInfo() string {
+	return fmt.Sprintf("Release Version: %s\nGit Commit Hash: %s\nGit Branch: %s\nUTC Build Time: %s", mysql.TiDBReleaseVersion, TiDBGitHash, TiDBGitBranch, TiDBBuildTS)
 }
 
 // checkValidity checks whether cols and every data have the same length.

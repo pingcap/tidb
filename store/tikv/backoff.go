@@ -19,8 +19,8 @@ import (
 	"math/rand"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	goctx "golang.org/x/net/context"
 )
 
@@ -118,17 +118,19 @@ func (t backoffType) String() string {
 const (
 	copBuildTaskMaxBackoff  = 5000
 	tsoMaxBackoff           = 5000
-	scannerNextMaxBackoff   = 15000
-	batchGetMaxBackoff      = 15000
-	copNextMaxBackoff       = 15000
-	getMaxBackoff           = 15000
-	prewriteMaxBackoff      = 15000
-	commitMaxBackoff        = 15000
-	cleanupMaxBackoff       = 15000
+	scannerNextMaxBackoff   = 20000
+	batchGetMaxBackoff      = 20000
+	copNextMaxBackoff       = 20000
+	getMaxBackoff           = 20000
+	prewriteMaxBackoff      = 20000
+	cleanupMaxBackoff       = 20000
 	gcMaxBackoff            = 100000
 	gcResolveLockMaxBackoff = 100000
-	rawkvMaxBackoff         = 15000
+	gcDeleteRangeMaxBackoff = 100000
+	rawkvMaxBackoff         = 20000
 )
+
+var commitMaxBackoff = 20000
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
@@ -177,7 +179,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
-			if log.GetLogLevel() >= log.LOG_LEVEL_DEBUG || i >= len(b.errors)-3 {
+			if log.GetLevel() == log.DebugLevel || i >= len(b.errors)-3 {
 				errMsg += "\n" + err.Error()
 			}
 		}

@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -44,16 +44,17 @@ func TestGC(t *testing.T) {
 	}
 	wg.Wait()
 	time.Sleep(300 * time.Millisecond)
+	gp.Go(func() {}) // To trigger count change.
 	gp.Lock()
 	count := gp.count
 	gp.Unlock()
-	if count != 0 {
-		t.Error("all goroutines should be recycled")
+	if count > 1 {
+		t.Error("all goroutines should be recycled", count)
 	}
 }
 
 func TestRace(t *testing.T) {
-	gp := New(200 * time.Millisecond)
+	gp := New(8 * time.Millisecond)
 	var wg sync.WaitGroup
 	begin := make(chan struct{})
 	wg.Add(500)

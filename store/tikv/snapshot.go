@@ -18,8 +18,8 @@ import (
 	"time"
 	"unsafe"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -32,7 +32,7 @@ var (
 )
 
 const (
-	scanBatchSize = 100
+	scanBatchSize = 256
 	batchGetSize  = 5120
 )
 

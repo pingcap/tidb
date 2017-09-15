@@ -24,15 +24,6 @@ import (
 // ErrSyntax indicates that a value does not have the right syntax for the target type.
 var ErrSyntax = errors.New("invalid syntax")
 
-// Reverse returns its argument string reversed rune-wise left to right.
-func Reverse(s string) string {
-	r := []rune(s)
-	for i, j := 0, len(r)-1; i < len(r)/2; i, j = i+1, j-1 {
-		r[i], r[j] = r[j], r[i]
-	}
-	return string(r)
-}
-
 // UnquoteChar decodes the first character or byte in the escaped string
 // or character literal represented by the string s.
 // It returns four values:
@@ -170,7 +161,12 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 				}
 			}
 		case '_':
-			lastAny = false
+			if lastAny {
+				patChars[patLen-1], patTypes[patLen-1] = c, patOne
+				patChars[patLen], patTypes[patLen] = '%', patAny
+				patLen++
+				continue
+			}
 			tp = patOne
 		case '%':
 			if lastAny {
@@ -185,12 +181,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 		patChars[patLen] = c
 		patTypes[patLen] = tp
 		patLen++
-	}
-	for i := 0; i < patLen-1; i++ {
-		if (patTypes[i] == patAny) && (patTypes[i+1] == patOne) {
-			patTypes[i] = patOne
-			patTypes[i+1] = patAny
-		}
 	}
 	patChars = patChars[:patLen]
 	patTypes = patTypes[:patLen]
