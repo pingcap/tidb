@@ -357,7 +357,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString)
+	bf := newBaseBuiltinFuncWithTp([]Expression{}, ctx, tpDatetime)
 	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, 10, 0
 	sig := &builtinDateLiteralSig{baseTimeBuiltinFunc{bf}, tm}
 	return sig.setSelf(sig), nil
@@ -1968,7 +1968,7 @@ func (c *timeLiteralFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDuration, tpString)
+	bf := newBaseBuiltinFuncWithTp([]Expression{}, ctx, tpDuration)
 	bf.tp.Flen, bf.tp.Decimal = 10, duration.Fsp
 	if duration.Fsp > 0 {
 		bf.tp.Flen += 1 + duration.Fsp
@@ -3157,7 +3157,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx context.Context, args []
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString)
+	bf := newBaseBuiltinFuncWithTp([]Expression{}, ctx, tpDatetime)
 	bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeWidthNoFsp, tm.Fsp
 	if tm.Fsp > 0 {
 		bf.tp.Flen += tm.Fsp + 1
