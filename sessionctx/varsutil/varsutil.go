@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// formatSQLModeStr re-formate 'SQL_MODE' variable.
-func formatSQLModeStr(s string) string {
+// FormatSQLModeStr re-formate 'SQL_MODE' variable.
+func FormatSQLModeStr(s string) string {
 	s = strings.TrimRight(s, " ")
 	parts := strings.Split(s, ",")
 	var nonEmptyParts []string
@@ -53,25 +53,15 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	case variable.TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), nil
 	}
-	isSQLModeVar := key == variable.SQLModeVar
 	sVal, ok := s.Systems[key]
-	if isSQLModeVar {
-		sVal = formatSQLModeStr(sVal)
-	}
 	if ok {
 		return sVal, nil
 	}
 	if sysVar.Scope&variable.ScopeGlobal == 0 {
-		if isSQLModeVar {
-			return formatSQLModeStr(sysVar.Value), nil
-		}
 		// None-Global variable can use pre-defined default value.
 		return sysVar.Value, nil
 	}
 	gVal, err := s.GlobalVarsAccessor.GetGlobalSysVar(key)
-	if isSQLModeVar {
-		gVal = formatSQLModeStr(gVal)
-	}
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -82,7 +72,6 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 // GetGlobalSystemVar gets a global system variable.
 func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
-	isSQLModeVar := key == variable.SQLModeVar
 	sysVar := variable.SysVars[key]
 	if sysVar == nil {
 		return "", variable.UnknownSystemVar.GenByArgs(key)
@@ -90,15 +79,9 @@ func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 	if sysVar.Scope == variable.ScopeSession {
 		return "", variable.ErrIncorrectScope
 	} else if sysVar.Scope == variable.ScopeNone {
-		if isSQLModeVar {
-			return formatSQLModeStr(sysVar.Value), nil
-		}
 		return sysVar.Value, nil
 	}
 	gVal, err := s.GlobalVarsAccessor.GetGlobalSysVar(key)
-	if isSQLModeVar {
-		gVal = formatSQLModeStr(gVal)
-	}
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -134,6 +117,7 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		}
 	case variable.SQLModeVar:
 		sVal = strings.ToUpper(sVal)
+		sVal = FormatSQLModeStr(sVal)
 		// TODO: Remove this latter.
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
 			vars.StrictSQLMode = true
