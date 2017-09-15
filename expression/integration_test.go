@@ -1221,6 +1221,48 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select datediff('0000-01-01','0001-01-01'), datediff('0001-00-01', '0001-00-01'), datediff('0001-01-00','0001-01-00'), datediff('2017-01-01','2017-01-01');")
 	result.Check(testkit.Rows("-365 <nil> <nil> 0"))
 
+	// for ADDTIME
+	result = tk.MustQuery("select addtime('01:01:11', '00:00:01.013'), addtime('01:01:11.00', '00:00:01'), addtime" +
+		"('2017-01-01 01:01:11.12', '00:00:01'), addtime('2017-01-01 01:01:11.12', '00:00:01.88');")
+	result.Check(testkit.Rows("01:01:12.013000 01:01:12 2017-01-01 01:01:12.120000 2017-01-01 01:01:13"))
+	result = tk.MustQuery("select addtime(cast('01:01:11' as time(4)), '00:00:01.013'), addtime(cast('01:01:11.00' " +
+		"as datetime(3)), '00:00:01')," + " addtime(cast('2017-01-01 01:01:11.12' as date), '00:00:01'), addtime(cast" +
+		"(cast('2017-01-01 01:01:11.12' as date) as datetime(2)), '00:00:01.88');")
+	result.Check(testkit.Rows("01:01:12.0130 2001-01-11 00:00:01.000 00:00:01 2017-01-01 00:00:01.88"))
+	result = tk.MustQuery("select addtime('2017-01-01 01:01:01', 5), addtime('2017-01-01 01:01:01', -5), addtime('2017-01-01 01:01:01', 0.0), addtime('2017-01-01 01:01:01', 1.34);")
+	result.Check(testkit.Rows("2017-01-01 01:01:06 2017-01-01 01:00:56 2017-01-01 01:01:01 2017-01-01 01:01:02.340000"))
+	result = tk.MustQuery("select addtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time)), addtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time(5)))")
+	result.Check(testkit.Rows("2001-01-11 00:00:01.000 2001-01-11 00:00:01.00000"))
+	result = tk.MustQuery("select addtime(cast('01:01:11.00' as date), cast('00:00:01' as time));")
+	result.Check(testkit.Rows("00:00:01"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime, b timestamp, c time)")
+	tk.MustExec(`insert into t values("2017 01-01 12:30:31", "2017 01-01 12:30:31", "01:01:01")`)
+	result = tk.MustQuery("select addtime(a, b), addtime(cast(a as date), b), addtime(b,a), addtime(a,c), addtime(b," +
+		"c), addtime(c,a), addtime(c,b)" +
+		" from t;")
+	result.Check(testkit.Rows("<nil> <nil> <nil> 2017-01-01 13:31:32 2017-01-01 13:31:32 <nil> <nil>"))
+
+	// for SUBTIME
+	result = tk.MustQuery("select subtime('01:01:11', '00:00:01.013'), subtime('01:01:11.00', '00:00:01'), subtime" +
+		"('2017-01-01 01:01:11.12', '00:00:01'), subtime('2017-01-01 01:01:11.12', '00:00:01.88');")
+	result.Check(testkit.Rows("01:01:09.987000 01:01:10 2017-01-01 01:01:10.120000 2017-01-01 01:01:09.240000"))
+	result = tk.MustQuery("select subtime(cast('01:01:11' as time(4)), '00:00:01.013'), subtime(cast('01:01:11.00' " +
+		"as datetime(3)), '00:00:01')," + " subtime(cast('2017-01-01 01:01:11.12' as date), '00:00:01'), subtime(cast" +
+		"(cast('2017-01-01 01:01:11.12' as date) as datetime(2)), '00:00:01.88');")
+	result.Check(testkit.Rows("01:01:09.9870 2001-01-10 23:59:59.000 -00:00:01 2016-12-31 23:59:58.12"))
+	result = tk.MustQuery("select subtime('2017-01-01 01:01:01', 5), subtime('2017-01-01 01:01:01', -5), subtime('2017-01-01 01:01:01', 0.0), subtime('2017-01-01 01:01:01', 1.34);")
+	result.Check(testkit.Rows("2017-01-01 01:00:56 2017-01-01 01:01:06 2017-01-01 01:01:01 2017-01-01 01:00:59.660000"))
+	result = tk.MustQuery("select subtime('01:01:11', '0:0:1.013'), subtime('01:01:11.00', '0:0:1'), subtime('2017-01-01 01:01:11.12', '0:0:1'), subtime('2017-01-01 01:01:11.12', '0:0:1.120000');")
+	result.Check(testkit.Rows("01:01:09.987000 01:01:10 2017-01-01 01:01:10.120000 2017-01-01 01:01:10"))
+	result = tk.MustQuery("select subtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time)), subtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time(5)))")
+	result.Check(testkit.Rows("2001-01-10 23:59:59.000 2001-01-10 23:59:59.00000"))
+	result = tk.MustQuery("select subtime(cast('01:01:11.00' as date), cast('00:00:01' as time));")
+	result.Check(testkit.Rows("-00:00:01"))
+	result = tk.MustQuery("select subtime(a, b), subtime(cast(a as date), b), subtime(b,a), subtime(a,c), subtime(b," +
+		"c), subtime(c,a), subtime(c,b) from t;")
+	result.Check(testkit.Rows("<nil> <nil> <nil> 2017-01-01 11:29:30 2017-01-01 11:29:30 <nil> <nil>"))
+
 	// fixed issue #3986
 	tk.MustExec("SET SQL_MODE='NO_ENGINE_SUBSTITUTION';")
 	tk.MustExec("SET TIME_ZONE='+03:00';")
@@ -2587,21 +2629,71 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	r = tk.MustQuery("select date'2017/12-12'")
 	r.Check(testkit.Rows("2017-12-12"))
 
-	r = tk.MustQuery("select date'0000-00-00'")
-	r.Check(testkit.Rows("<nil>"))
+	tk.MustExec("set sql_mode = ''")
+	r = tk.MustQuery("select date '0000-00-00';")
+	r.Check(testkit.Rows("0000-00-00"))
 
-	r = tk.MustQuery("select date'0000-00-00 00:00:00'")
-	r.Check(testkit.Rows("<nil>"))
+	tk.MustExec("set sql_mode = 'NO_ZERO_IN_DATE'")
+	r = tk.MustQuery("select date '0000-00-00';")
+	r.Check(testkit.Rows("0000-00-00"))
 
-	r = tk.MustQuery("select date'2017-99-99';")
-	r.Check(testkit.Rows("<nil>"))
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
+	rs, err := tk.Exec("select date '0000-00-00';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
-	r = tk.MustQuery("select date'2017-2-31';")
-	r.Check(testkit.Rows("<nil>"))
+	tk.MustExec("set sql_mode = ''")
+	r = tk.MustQuery("select date '2007-10-00';")
+	r.Check(testkit.Rows("2007-10-00"))
 
-	r = tk.MustQuery("select date'201712-31';")
-	r.Check(testkit.Rows("<nil>"))
+	tk.MustExec("set sql_mode = 'NO_ZERO_IN_DATE'")
+	rs, _ = tk.Exec("select date '2007-10-00';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
+	r = tk.MustQuery("select date '2007-10-00';")
+	r.Check(testkit.Rows("2007-10-00"))
+
+	tk.MustExec("set sql_mode = 'NO_ZERO_IN_DATE,NO_ZERO_DATE'")
+
+	rs, _ = tk.Exec("select date '2007-10-00';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	rs, err = tk.Exec("select date '0000-00-00';")
+	_, err = tidb.GetRows(rs)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	r = tk.MustQuery("select date'1998~01~02'")
+	r.Check(testkit.Rows("1998-01-02"))
+
+	r = tk.MustQuery("select date'731124', date '011124'")
+	r.Check(testkit.Rows("1973-11-24 2001-11-24"))
+
+	_, err = tk.Exec("select date '0000-00-00 00:00:00';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	_, err = tk.Exec("select date '2017-99-99';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	_, err = tk.Exec("select date '2017-2-31';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	_, err = tk.Exec("select date '201712-31';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+
+	_, err = tk.Exec("select date 'abcdefg';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestLiterals(c *C) {
