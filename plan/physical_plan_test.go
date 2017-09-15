@@ -847,7 +847,7 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 }
 
 func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
-	c.Skip("wait for new plan")
+	c.Skip("Move to new plan test.")
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql string
@@ -942,7 +942,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 }
 
 func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
-	c.Skip("wait for new plan")
+	c.Skip("TODO: move to new plan test")
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql         string

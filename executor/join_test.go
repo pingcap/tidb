@@ -602,6 +602,14 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("create table t(dt datetime)")
 	result = tk.MustQuery("select (select 1 from t where DATE_FORMAT(o.dt,'%Y-%m')) from t o")
 	result.Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(f1 int, f2 int)")
+	tk.MustExec("create table t2(fa int, fb int)")
+	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2),(1,2),(1,3)")
+	tk.MustExec("insert into t2 values (1,1),(1,2),(1,3)")
+	result = tk.MustQuery("select f1,f2 from t1 group by f1,f2 having count(1) >= all (select fb from t2 where fa = f1)")
+	result.Check(testkit.Rows("1 2"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
