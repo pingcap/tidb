@@ -1789,6 +1789,12 @@ func (s *testPlanSuite) createTestCase4LikeFuncs() []typeInferTestCase {
 	}
 }
 
+func (s *testPlanSuite) createTestCase4Literals() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"date '2017-01-01'", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 0, 10},
+	}
+}
+
 func (s *testPlanSuite) createTestCase4JSONFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"json_type(c_json)", mysql.TypeVarString, charset.CharsetUTF8, 0, 51, types.UnspecifiedLength},
