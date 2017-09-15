@@ -60,6 +60,7 @@ var (
 
 var (
 	_ functionClass = &dateFunctionClass{}
+	_ functionClass = &dateLiteralFunctionClass{}
 	_ functionClass = &dateDiffFunctionClass{}
 	_ functionClass = &timeDiffFunctionClass{}
 	_ functionClass = &dateFormatFunctionClass{}
@@ -116,6 +117,7 @@ var (
 
 var (
 	_ builtinFunc = &builtinDateSig{}
+	_ builtinFunc = &builtinDateLiteralSig{}
 	_ builtinFunc = &builtinDateDiffSig{}
 	_ builtinFunc = &builtinNullTimeDiffSig{}
 	_ builtinFunc = &builtinTimeStringTimeDiffSig{}
@@ -311,6 +313,50 @@ func (b *builtinDateSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	expr.Time = types.FromDate(expr.Time.Year(), expr.Time.Month(), expr.Time.Day(), 0, 0, 0, 0)
 	expr.Type = mysql.TypeDate
 	return expr, false, nil
+}
+
+type dateLiteralFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *dateLiteralFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	constant, ok := args[0].(*Constant)
+	if !ok {
+		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	str := constant.Value.GetString()
+	if !datePattern.MatchString(str) {
+		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	tm, err := types.ParseDate(str)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, tpString)
+	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, 10, 0
+	sig := &builtinDateLiteralSig{baseTimeBuiltinFunc{bf}, tm}
+	return sig.setSelf(sig), nil
+}
+
+type builtinDateLiteralSig struct {
+	baseTimeBuiltinFunc
+	literal types.Time
+}
+
+// evalTime evals DATE 'stringLit'.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
+func (b *builtinDateLiteralSig) evalTime(row []types.Datum) (types.Time, bool, error) {
+	mode := b.getCtx().GetSessionVars().SQLMode
+	if mode.HasNoZeroDateMode() && b.literal.IsZero() {
+		return b.literal, true, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	if mode.HasNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
+		return b.literal, true, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	return b.literal, false, nil
 }
 
 func convertDatumToTime(sc *variable.StatementContext, d types.Datum) (t types.Time, err error) {
