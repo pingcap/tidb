@@ -43,7 +43,6 @@ var suite = new(TidbTestSuite)
 var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	log.SetLevel(log.ErrorLevel)
 	store, err := tidb.NewStore("memory:///tmp/tidb")
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
