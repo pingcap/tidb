@@ -34,18 +34,16 @@ type VirtualDataSource interface {
 }
 
 // VirtualTable stands for the fake table all its data is in the memory.
-// handle: the function to get rows
-// Meta: table Meta data
-// cols: column info for the table
+// dataSource: the function to get rows
 // @TODO this table is almost the same as the infoschema tables, but we need to use it in performance schema.
 // @TODO So we have to move it here, sometimes we need to refactor the infoschema tables to decrease the multiplicity of the codes
 type VirtualTable struct {
-	handle VirtualDataSource
+	dataSource VirtualDataSource
 }
 
 // CreateVirtualTable , as its name
-func CreateVirtualTable(handle VirtualDataSource) *VirtualTable {
-	return &VirtualTable{handle: handle}
+func CreateVirtualTable(dataSource VirtualDataSource) *VirtualTable {
+	return &VirtualTable{dataSource: dataSource}
 }
 
 // IterRecords implements table.Table Type interface.
@@ -54,7 +52,7 @@ func (vt *VirtualTable) IterRecords(ctx context.Context, startKey kv.Key, cols [
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
 	}
-	rows, err := vt.handle.GetRows(ctx)
+	rows, err := vt.dataSource.GetRows(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -82,12 +80,12 @@ func (vt *VirtualTable) Row(ctx context.Context, h int64) ([]types.Datum, error)
 
 // Cols implements table.Table Type interface.
 func (vt *VirtualTable) Cols() []*table.Column {
-	return vt.handle.Cols()
+	return vt.dataSource.Cols()
 }
 
 // WritableCols implements table.Table Type interface.
 func (vt *VirtualTable) WritableCols() []*table.Column {
-	return vt.handle.Cols()
+	return vt.dataSource.Cols()
 }
 
 // Indices implements table.Table Type interface.
@@ -157,7 +155,7 @@ func (vt *VirtualTable) RebaseAutoID(newBase int64, isSetStep bool) error {
 
 // Meta implements table.Table Type interface.
 func (vt *VirtualTable) Meta() *model.TableInfo {
-	return vt.handle.Meta()
+	return vt.dataSource.Meta()
 }
 
 // Seek implements table.Table Type interface.

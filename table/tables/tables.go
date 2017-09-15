@@ -737,7 +737,7 @@ func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 
 // Type implements table.Table Type interface.
 func (t *Table) Type() table.Type {
-	return table.Normal
+	return table.NormalTable
 }
 
 func shouldWriteBinlog(ctx context.Context) bool {

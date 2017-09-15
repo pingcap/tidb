@@ -212,7 +212,7 @@ func (ps *perfSchema) buildTables() {
 		switch name {
 		//@TODO in the furture, we need to add many SysVarTables, we may need to add new type for these tables.
 		case TableSessionStatus, TableGlobalStatus:
-			tbl = createSysVarTable(meta, name)
+			tbl = createVirtualTable(meta, name)
 		default:
 			tbl = tables.MemoryTableFromMeta(alloc, meta)
 		}

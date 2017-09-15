@@ -25,14 +25,15 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// session status
-type sessionStatusDataSource struct {
-	meta *model.TableInfo
-	cols []*table.Column
+// session/global status decided by scope
+type statusDataSource struct {
+	meta        *model.TableInfo
+	cols        []*table.Column
+	globalScope bool
 }
 
 // GetRows implement the interface of VirtualDataSource
-func (h *sessionStatusDataSource) GetRows(ctx context.Context) (fullRows [][]types.Datum,
+func (ds *statusDataSource) GetRows(ctx context.Context) (fullRows [][]types.Datum,
 	err error) {
 	sessionVars := ctx.GetSessionVars()
 	statusVars, err := variable.GetStatusVars(sessionVars)
@@ -42,50 +43,7 @@ func (h *sessionStatusDataSource) GetRows(ctx context.Context) (fullRows [][]typ
 
 	rows := [][]types.Datum{}
 	for status, v := range statusVars {
-		// @TODO should to check scope here?
-		switch v.Value.(type) {
-		case []interface{}, nil:
-			v.Value = fmt.Sprintf("%v", v.Value)
-		}
-		value, err := types.ToString(v.Value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		row := types.MakeDatums(status, value)
-		rows = append(rows, row)
-	}
-
-	return rows, nil
-}
-
-// Meta implement the interface of VirtualDataSource
-func (h *sessionStatusDataSource) Meta() *model.TableInfo {
-	return h.meta
-}
-
-// Cols implement the interface of VirtualDataSource
-func (h *sessionStatusDataSource) Cols() []*table.Column {
-	return h.cols
-}
-
-//global status
-type globalStatusDataSource struct {
-	meta *model.TableInfo
-	cols []*table.Column
-}
-
-// GetRows implement the interface of VirtualDataSource
-func (h *globalStatusDataSource) GetRows(ctx context.Context) (fullRows [][]types.Datum,
-	err error) {
-	sessionVars := ctx.GetSessionVars()
-	statusVars, err := variable.GetStatusVars(sessionVars)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	rows := [][]types.Datum{}
-	for status, v := range statusVars {
-		if v.Scope == variable.ScopeSession {
+		if ds.globalScope && v.Scope == variable.ScopeSession {
 			continue
 		}
 
@@ -105,16 +63,16 @@ func (h *globalStatusDataSource) GetRows(ctx context.Context) (fullRows [][]type
 }
 
 // Meta implement the interface of VirtualDataSource
-func (h *globalStatusDataSource) Meta() *model.TableInfo {
-	return h.meta
+func (ds *statusDataSource) Meta() *model.TableInfo {
+	return ds.meta
 }
 
 // Cols implement the interface of VirtualDataSource
-func (h *globalStatusDataSource) Cols() []*table.Column {
-	return h.cols
+func (ds *statusDataSource) Cols() []*table.Column {
+	return ds.cols
 }
 
-func createSysVarHandle(tableName string, meta *model.TableInfo) tables.VirtualDataSource {
+func createVirtualDataSource(tableName string, meta *model.TableInfo) tables.VirtualDataSource {
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)
@@ -123,20 +81,20 @@ func createSysVarHandle(tableName string, meta *model.TableInfo) tables.VirtualD
 
 	switch tableName {
 	case TableSessionStatus:
-		return &sessionStatusDataSource{meta: meta, cols: columns}
+		return &statusDataSource{meta: meta, cols: columns, globalScope: false}
 	case TableGlobalStatus:
-		return &globalStatusDataSource{meta: meta, cols: columns}
+		return &statusDataSource{meta: meta, cols: columns, globalScope: true}
 	default:
-		log.Fatal("unexpected system variables handler type")
+		log.Fatal("unexpected system variables data source type")
 	}
 
 	return nil
 }
 
-func createSysVarTable(meta *model.TableInfo, tableName string) table.Table {
-	handle := createSysVarHandle(tableName, meta)
-	if handle == nil {
-		log.Fatal("unexpected system variables handler type")
+func createVirtualTable(meta *model.TableInfo, tableName string) table.Table {
+	dataSource := createVirtualDataSource(tableName, meta)
+	if dataSource == nil {
+		log.Fatal("unexpected system variables data source type")
 	}
-	return tables.CreateVirtualTable(handle)
+	return tables.CreateVirtualTable(dataSource)
 }

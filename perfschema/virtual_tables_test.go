@@ -49,7 +49,7 @@ func (*testSuite) TestSessionStatus(c *C) {
 		meta := ps.tables[tableName]
 		c.Assert(tb, NotNil)
 
-		sessionStatusHandle := createSysVarHandle(tableName, meta)
+		sessionStatusHandle := createVirtualDataSource(tableName, meta)
 		rows, err := sessionStatusHandle.GetRows(ctx)
 		c.Assert(err, IsNil)
 
@@ -58,7 +58,7 @@ func (*testSuite) TestSessionStatus(c *C) {
 }
 
 func findSpecialStatus(rows [][]types.Datum, name string) error {
-	err := errors.New("cant find the status" + name)
+	err := errors.New("cant find the status " + name)
 	for _, row := range rows {
 		statusNames, _ := row[0].ToString()
 		if statusNames == name {

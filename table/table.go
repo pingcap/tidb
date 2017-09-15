@@ -31,8 +31,8 @@ import (
 type Type int16
 
 const (
-	// Normal , store data in tikv, mocktikv and so on.
-	Normal Type = iota
+	// NormalTable , store data in tikv, mocktikv and so on.
+	NormalTable Type = iota
 	// VirtualTale , store no data, just extract data from the memory struct.
 	VirtualTale
 	// MemoryTable , store data only in local memory.
