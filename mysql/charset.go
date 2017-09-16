@@ -558,6 +558,11 @@ const (
 	BinaryCollationID    = 63
 	UTF8DefaultCollation = "utf8_bin"
 	DefaultCollationName = UTF8DefaultCollation
+
+	// MaxBytesOfCharacter, is the max bytes length of a character,
+	// refer to RFC3629, In UTF-8, characters from the U+0000..U+10FFFF range
+	// (the UTF-16 accessible range) are encoded using sequences of 1 to 4 octets.
+	MaxBytesOfCharacter = 4
 )
 
 // IsUTF8Charset checks if charset is utf8 or utf8mb4

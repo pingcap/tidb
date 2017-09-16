@@ -541,6 +541,25 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
+
+	// Fix issue #4540.
+	// The flen is a hint, not a precise value, so most client will not use the value.
+	// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
+	// the `show create table` result. To fix this case, we must use a large enough flen to prevent
+	// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
+	// For examples:
+	// * latin, the multiple is 1
+	// * gb2312, the multiple is 2
+	// * Utf-8, the multiple is 3
+	// * utf8mb4, the multiple is 4
+	// So the large enough multiple is 4 in here.
+	schema := e.Schema()
+	// Table | Create Table
+	if len(schema.Columns) == 2 {
+		schema.Columns[0].RetType.Flen = mysql.MaxTableNameLength * mysql.MaxBytesOfCharacter
+		schema.Columns[1].RetType.Flen = len(buf.String()) * mysql.MaxBytesOfCharacter
+	}
+
 	e.rows = append(e.rows, data)
 	return nil
 }
