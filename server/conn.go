@@ -422,7 +422,7 @@ func (cc *clientConn) Run() {
 				}
 				return
 			}
-			log.Warnf("[%d] dispatch error:\n%s\n%s\n%s",
+			log.Warnf("[%d] dispatch error:\n%s\n%q\n%s",
 				cc.connectionID, cc, queryStrForLog(string(data[1:])), errStrForLog(err))
 			cc.writeError(err)
 		}
