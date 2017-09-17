@@ -58,6 +58,29 @@ var (
 // performed with the / operator.
 const precIncrement = 4
 
+// handleDivisionByZeroError reports error or warning depend on the context.
+func handleDivisionByZeroError(ctx context.Context) error {
+	sc := ctx.GetSessionVars().StmtCtx
+	if sc.InSelectStmt {
+		sc.AppendWarning(errDivideByZero)
+		return nil
+	}
+	if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
+		enableDivisionByZero := ctx.GetSessionVars().SQLMode&mysql.ModeErrorForDivisionByZero == mysql.ModeErrorForDivisionByZero
+		if !enableDivisionByZero {
+			return nil
+		}
+		if ctx.GetSessionVars().StrictSQLMode && !sc.IgnoreError {
+			return types.ErrDivByZero
+		}
+		sc.AppendWarning(errDivideByZero)
+		return nil
+	}
+
+	sc.AppendWarning(errDivideByZero)
+	return nil
+}
+
 // numericContextResultType returns TypeClass for numeric function's parameters.
 // the returned TypeClass should be one of: ClassInt, ClassDecimal, ClassReal
 func numericContextResultType(ft *types.FieldType) types.TypeClass {
@@ -524,7 +547,7 @@ func (s *builtinArithmeticDivideRealSig) evalReal(row []types.Datum) (float64, b
 		return 0, isNull, errors.Trace(err)
 	}
 	if b == 0 {
-		return 0, true, nil
+		return 0, true, errors.Trace(handleDivisionByZeroError(s.ctx))
 	}
 	result := a / b
 	if math.IsInf(result, 0) {
@@ -548,7 +571,7 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row []types.Datum) (*typ
 	c := &types.MyDecimal{}
 	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
 	if err == types.ErrDivByZero {
-		return c, true, nil
+		return c, true, errors.Trace(handleDivisionByZeroError(s.ctx))
 	}
 	return c, false, err
 }
@@ -591,7 +614,7 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (int64, bo
 	}
 
 	if b == 0 {
-		return 0, true, nil
+		return 0, true, errors.Trace(handleDivisionByZeroError(s.ctx))
 	}
 
 	a, isNull, err := s.args[0].EvalInt(row, sc)
@@ -636,8 +659,11 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64
 
 	c := &types.MyDecimal{}
 	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
+	if err == types.ErrDivByZero {
+		return 0, true, errors.Trace(handleDivisionByZeroError(s.ctx))
+	}
 	if err != nil {
-		return 0, err == types.ErrDivByZero, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 
 	ret, err := c.ToInt()
@@ -718,7 +744,7 @@ func (s *builtinArithmeticModRealSig) evalReal(row []types.Datum) (float64, bool
 	}
 
 	if b == 0 {
-		return 0, true, types.ErrDivByZero
+		return 0, true, errors.Trace(handleDivisionByZeroError(s.ctx))
 	}
 
 	a, isNull, err := s.args[0].EvalReal(row, sc)
@@ -745,7 +771,10 @@ func (s *builtinArithmeticModDecimalSig) evalDecimal(row []types.Datum) (*types.
 	}
 	c := &types.MyDecimal{}
 	err = types.DecimalMod(a, b, c)
-	return c, err == types.ErrDivByZero, errors.Trace(err)
+	if err == types.ErrDivByZero {
+		return c, true, errors.Trace(handleDivisionByZeroError(s.ctx))
+	}
+	return c, false, errors.Trace(err)
 }
 
 type builtinArithmeticModIntSig struct {
@@ -761,7 +790,7 @@ func (s *builtinArithmeticModIntSig) evalInt(row []types.Datum) (val int64, isNu
 	}
 
 	if b == 0 {
-		return 0, true, types.ErrDivByZero
+		return 0, true, errors.Trace(handleDivisionByZeroError(s.ctx))
 	}
 
 	a, isNull, err := s.args[0].EvalInt(row, sc)

@@ -340,6 +340,7 @@ type StatementContext struct {
 	InUpdateOrDeleteStmt bool
 	InSelectStmt         bool
 	IgnoreTruncate       bool
+	IgnoreError          bool
 	TruncateAsWarning    bool
 	OverflowAsWarning    bool
 	InShowWarning        bool

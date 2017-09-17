@@ -19,7 +19,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -267,8 +266,8 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)
 		val, err := sig.eval(nil)
-		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
+		c.Assert(err, IsNil)
 	}
 }
 
@@ -372,122 +371,98 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 	testCases := []struct {
 		args   []interface{}
 		expect interface{}
-		err    error
 	}{
 		{
 			args:   []interface{}{int64(13), int64(11)},
 			expect: int64(2),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(-13), int64(11)},
 			expect: int64(-2),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(13), int64(-11)},
 			expect: int64(2),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(-13), int64(-11)},
 			expect: int64(-2),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(33), int64(11)},
 			expect: int64(0),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(-33), int64(11)},
 			expect: int64(0),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(33), int64(-11)},
 			expect: int64(0),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(-33), int64(-11)},
 			expect: int64(0),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(11), int64(0)},
 			expect: nil,
-			err:    types.ErrDivByZero,
 		},
 		{
 			args:   []interface{}{int64(-11), int64(0)},
 			expect: nil,
-			err:    types.ErrDivByZero,
 		},
 		{
 			args:   []interface{}{int64(1), float64(1.1)},
 			expect: float64(1),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(-1), float64(1.1)},
 			expect: float64(-1),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(1), float64(-1.1)},
 			expect: float64(1),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(-1), float64(-1.1)},
 			expect: float64(-1),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{nil, float64(-0.11101)},
 			expect: nil,
-			err:    nil,
 		},
 		{
 			args:   []interface{}{float64(1.01), nil},
 			expect: nil,
-			err:    nil,
 		},
 		{
 			args:   []interface{}{nil, int64(-1001)},
 			expect: nil,
-			err:    nil,
 		},
 		{
 			args:   []interface{}{int64(101), nil},
 			expect: nil,
-			err:    nil,
 		},
 		{
 			args:   []interface{}{nil, nil},
 			expect: nil,
-			err:    nil,
 		},
 		{
 			args:   []interface{}{"1231", 12},
 			expect: 7,
-			err:    nil,
 		},
 		{
 			args:   []interface{}{"1231", "12"},
 			expect: float64(7),
-			err:    nil,
 		},
 		{
 			args:   []interface{}{types.Duration{Duration: 45296 * time.Second}, 122},
 			expect: 114,
-			err:    nil,
 		},
 		{
 			args:   []interface{}{types.Set{Value: 7, Name: "abc"}, "12"},
 			expect: float64(7),
-			err:    nil,
 		},
 	}
 
@@ -497,7 +472,7 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)
 		val, err := sig.eval(nil)
-		c.Assert(terror.ErrorEqual(err, tc.err), IsTrue)
+		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
 	}
 }

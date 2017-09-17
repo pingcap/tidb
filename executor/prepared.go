@@ -341,10 +341,18 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 		sc.InUpdateOrDeleteStmt = true
+		if node, ok := s.(*ast.UpdateStmt); ok {
+			sc.IgnoreError = node.IgnoreErr
+		} else {
+			node, _ := s.(*ast.DeleteStmt)
+			sc.IgnoreError = node.IgnoreErr
+		}
 	case *ast.InsertStmt:
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 		sc.InInsertStmt = true
+		node, _ := s.(*ast.InsertStmt)
+		sc.IgnoreError = node.IgnoreErr
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 		sc.IgnoreTruncate = false
