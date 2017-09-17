@@ -85,7 +85,7 @@ func (s *testSampleSuite) TestCollectSamplesAndEstimateNDVs(c *C) {
 	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
 	c.Assert(err, IsNil)
 	c.Assert(collectors[0].NullCount+collectors[0].Count, Equals, int64(s.count))
-	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(6624))
+	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(6232))
 	c.Assert(int64(pkBuilder.Count), Equals, int64(s.count))
 	c.Assert(pkBuilder.Hist().NDV, Equals, int64(s.count))
 }
@@ -106,8 +106,32 @@ func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 	c.Assert(pkBuilder, IsNil)
 	c.Assert(len(collectors), Equals, 2)
 	collectors[0].MergeSampleCollector(collectors[1])
-	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(10016))
+	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(9280))
 	c.Assert(len(collectors[0].Samples), Equals, 10000)
 	c.Assert(collectors[0].NullCount, Equals, int64(1000))
 	c.Assert(collectors[0].Count, Equals, int64(19000))
+}
+
+func (s *testSampleSuite) TestCollectorProtoConversion(c *C) {
+	builder := statistics.SampleBuilder{
+		Sc:            mock.NewContext().GetSessionVars().StmtCtx,
+		RecordSet:     s.rs,
+		ColLen:        2,
+		PkID:          -1,
+		MaxSampleSize: 10000,
+		MaxBucketSize: 256,
+		MaxSketchSize: 1000,
+	}
+	s.rs.Close()
+	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
+	c.Assert(err, IsNil)
+	c.Assert(pkBuilder, IsNil)
+	for _, collector := range collectors {
+		p := statistics.SampleCollectorToProto(collector)
+		s := statistics.SampleCollectorFromProto(p)
+		c.Assert(collector.Count, Equals, s.Count)
+		c.Assert(collector.NullCount, Equals, s.NullCount)
+		c.Assert(collector.Sketch.NDV(), Equals, s.Sketch.NDV())
+		c.Assert(len(collector.Samples), Equals, len(s.Samples))
+	}
 }

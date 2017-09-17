@@ -16,8 +16,8 @@ package plan
 import (
 	"math"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -1090,26 +1090,74 @@ func (p *TopN) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	return props
 }
 
+func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
+	if len(p.possibleProperties) == 0 {
+		return nil
+	}
+	for _, aggFunc := range p.AggFuncs {
+		if aggFunc.GetMode() == expression.FinalMode {
+			return nil
+		}
+	}
+	// group by a + b is not interested in any order.
+	if len(p.groupByCols) != len(p.GroupByItems) {
+		return nil
+	}
+	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties))
+	for _, cols := range p.possibleProperties {
+		_, keys := getPermutation(cols, p.groupByCols)
+		if len(keys) != len(p.groupByCols) {
+			continue
+		}
+		agg := PhysicalAggregation{
+			GroupByItems: p.GroupByItems,
+			AggFuncs:     p.AggFuncs,
+			HasGby:       len(p.GroupByItems) > 0,
+			AggType:      StreamedAgg,
+			propKeys:     cols,
+			inputCount:   p.inputCount,
+		}.init(p.allocator, p.ctx)
+		agg.SetSchema(p.schema.Clone())
+		agg.profile = p.profile
+		streamAggs = append(streamAggs, agg)
+	}
+	return streamAggs
+}
+
 func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
-	ha := PhysicalAggregation{
+	aggs := make([]PhysicalPlan, 0, len(p.possibleProperties)+1)
+	agg := PhysicalAggregation{
 		GroupByItems: p.GroupByItems,
 		AggFuncs:     p.AggFuncs,
 		HasGby:       len(p.GroupByItems) > 0,
 		AggType:      CompleteAgg,
 	}.init(p.allocator, p.ctx)
-	ha.SetSchema(p.schema)
-	ha.profile = p.profile
-	return []PhysicalPlan{ha}
+	agg.SetSchema(p.schema.Clone())
+	agg.profile = p.profile
+	aggs = append(aggs, agg)
+
+	streamAggs := p.getStreamAggs()
+	aggs = append(aggs, streamAggs...)
+
+	return aggs
 }
 
 func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
-	if !prop.isEmpty() {
+	if p.AggType != StreamedAgg {
+		if !prop.isEmpty() {
+			return nil
+		}
+		props := make([][]*requiredProp, 0, len(wholeTaskTypes))
+		for _, tp := range wholeTaskTypes {
+			props = append(props, []*requiredProp{{taskTp: tp, expectedCnt: math.MaxFloat64}})
+		}
+		return props
+	}
+
+	reqProp := &requiredProp{taskTp: rootTaskType, cols: p.propKeys, expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count, desc: prop.desc}
+	if !prop.isEmpty() && !prop.equal(reqProp) {
 		return nil
 	}
-	props := make([][]*requiredProp, 0, len(wholeTaskTypes))
-	for _, tp := range wholeTaskTypes {
-		props = append(props, []*requiredProp{{taskTp: tp, expectedCnt: math.MaxFloat64}})
-	}
-	return props
+	return [][]*requiredProp{{reqProp}}
 }

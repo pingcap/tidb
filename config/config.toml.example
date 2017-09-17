@@ -1,0 +1,113 @@
+# TiDB Configuration.
+
+# TiDB server host.
+host = "0.0.0.0"
+
+# TiDB server port.
+port = 4000
+
+# Registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]
+store = "mocktikv"
+
+# TiDB storage path.
+path = "/tmp/tidb"
+
+# The socket file to use for connection.
+#socket = ""
+
+# Socket file to write binlog.
+#binlog-socket = ""
+
+# Run ddl worker on this tidb-server.
+run-ddl = true
+
+# Schema lease duration, very dangerous to change only if you know what you do.
+lease = "10s"
+
+[log]
+# Log level: info, debug, warn, error, fatal.
+level = "info"
+
+# Log format, one of json, text, console.
+format = "text"
+
+# Disable automatic timestamps in output
+disable-timestamp = false
+
+# Queries with execution time greater than this value will be logged. (Milliseconds)
+slow-threshold = 300
+
+# Maximum query length recorded in log.
+query-log-max-len = 2048
+
+# File logging.
+[log.file]
+# Log file name.
+filename = ""
+
+# Max log file size in MB.
+#max-size = 300
+
+# Max log file keep days.
+#max-days = 28
+
+# Maximum number of old log files to retain.
+#max-backups = 7
+
+# Rotate log by day
+log-rotate = true
+
+[security]
+# This option causes the server to start without using the privilege system at all.
+skip-grant-table = false
+
+# Path of file that contains list of trusted SSL CAs.
+ssl-ca = ""
+
+# Path of file that contains X509 certificate in PEM format.
+ssl-cert = ""
+
+# Path of file that contains X509 key in PEM format.
+ssl-key = ""
+
+[status]
+# If enable status report HTTP service.
+report-status = true
+
+# TiDB status port.
+status-port = 10080
+
+# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+metrics-addr = ""
+
+# Prometheus client push interval in second, set \"0\" to disable prometheus push.
+metrics-interval = 15
+
+[performance]
+# Set keep alive option for tcp connection.
+tcp-keep-alive = true
+
+# The maximum number of retries when commit a transaction.
+retry-limit = 10
+
+# The number of goroutines that participate joining.
+join-concurrency = 5
+
+# Whether support cartesian product.
+cross-join = true
+
+# Stats lease duration, which inflences the time of analyze and stats load.
+stats-lease = "3s"
+
+[xprotocol]
+# Start TiDB x server.
+xserver = false
+
+# TiDB x protocol server host.
+xhost = "0.0.0.0"
+
+# TiDB x protocol server port.
+xport = 14000
+
+# The socket file to use for x protocol connection.
+xsocket = ""

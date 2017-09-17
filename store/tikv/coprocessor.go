@@ -19,8 +19,8 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -45,6 +45,13 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 		}
 	case kv.ReqTypeDAG:
 		return c.supportExpr(tipb.ExprType(subType))
+	case kv.ReqTypeAnalyze:
+		switch subType {
+		case kv.ReqSubTypeAnalyzeIdx:
+			return c.store.mock
+		default:
+			return false
+		}
 	}
 	return false
 }

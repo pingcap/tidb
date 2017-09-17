@@ -31,6 +31,7 @@ package server
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"net"
@@ -40,8 +41,8 @@ import (
 	// For pprof
 	_ "net/http/pprof"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -115,7 +116,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
 	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
-	if s.cfg.TCPKeepAlive {
+	if s.cfg.Performance.TCPKeepAlive {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			if err := tcpConn.SetKeepAlive(true); err != nil {
 				log.Error("failed to set tcp keep alive option:", err)
@@ -128,7 +129,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 }
 
 func (s *Server) skipAuth() bool {
-	return s.cfg.SkipAuth
+	return s.cfg.Socket != ""
 }
 
 const tokenLimit = 1000
@@ -152,13 +153,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	var err error
 	if cfg.Socket != "" {
-		cfg.SkipAuth = true
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
 			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
 		}
 	} else {
-		if s.listener, err = net.Listen("tcp", s.cfg.Addr); err == nil {
-			log.Infof("Server is running MySQL Protocol at [%s]", s.cfg.Addr)
+		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+		if s.listener, err = net.Listen("tcp", addr); err == nil {
+			log.Infof("Server is running MySQL Protocol at [%s]", addr)
 		}
 	}
 	if err != nil {
@@ -176,19 +177,19 @@ func (s *Server) loadTLSCertificates() {
 			log.Infof("Secure connection is enabled (client verification enabled = %v)", len(variable.SysVars["ssl_ca"].Value) > 0)
 			variable.SysVars["have_openssl"].Value = "YES"
 			variable.SysVars["have_ssl"].Value = "YES"
-			variable.SysVars["ssl_cert"].Value = s.cfg.SSLCertPath
-			variable.SysVars["ssl_key"].Value = s.cfg.SSLKeyPath
+			variable.SysVars["ssl_cert"].Value = s.cfg.Security.SSLCert
+			variable.SysVars["ssl_key"].Value = s.cfg.Security.SSLKey
 		} else {
 			log.Warn("Secure connection is NOT ENABLED")
 		}
 	}()
 
-	if len(s.cfg.SSLCertPath) == 0 || len(s.cfg.SSLKeyPath) == 0 {
+	if len(s.cfg.Security.SSLCert) == 0 || len(s.cfg.Security.SSLKey) == 0 {
 		s.tlsConfig = nil
 		return
 	}
 
-	tlsCert, err := tls.LoadX509KeyPair(s.cfg.SSLCertPath, s.cfg.SSLKeyPath)
+	tlsCert, err := tls.LoadX509KeyPair(s.cfg.Security.SSLCert, s.cfg.Security.SSLKey)
 	if err != nil {
 		log.Warn(errors.ErrorStack(err))
 		s.tlsConfig = nil
@@ -198,8 +199,8 @@ func (s *Server) loadTLSCertificates() {
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
 	var certPool *x509.CertPool
-	if len(s.cfg.SSLCAPath) > 0 {
-		caCert, err := ioutil.ReadFile(s.cfg.SSLCAPath)
+	if len(s.cfg.Security.SSLCA) > 0 {
+		caCert, err := ioutil.ReadFile(s.cfg.Security.SSLCA)
 		if err != nil {
 			log.Warn(errors.ErrorStack(err))
 		} else {
@@ -207,7 +208,7 @@ func (s *Server) loadTLSCertificates() {
 			if certPool.AppendCertsFromPEM(caCert) {
 				clientAuthPolicy = tls.VerifyClientCertIfGiven
 			}
-			variable.SysVars["ssl_ca"].Value = s.cfg.SSLCAPath
+			variable.SysVars["ssl_ca"].Value = s.cfg.Security.SSLCA
 		}
 	}
 	s.tlsConfig = &tls.Config{
@@ -221,7 +222,7 @@ func (s *Server) loadTLSCertificates() {
 // Run runs the server.
 func (s *Server) Run() error {
 	// Start HTTP API to report tidb info such as TPS.
-	if s.cfg.ReportStatus {
+	if s.cfg.Status.ReportStatus {
 		s.startStatusHTTP()
 	}
 	for {

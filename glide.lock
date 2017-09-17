@@ -1,5 +1,5 @@
-hash: 572342fd3964f6673d6c6c6832d66eb7a8ead6469e3a59404a2e8cb99be54e03
-updated: 2017-09-07T11:17:12.175998262+08:00
+hash: 4d58322463463231636f143c321156804fc372344b684bf0d95bc8bc4cfc1321
+updated: 2017-09-15T19:38:09.566391259+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -9,6 +9,8 @@ imports:
   - quantile
 - name: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
+- name: github.com/BurntSushi/toml
+  version: a368813c5e648fee92e5f6c30e3944ff9d5e8895
 - name: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - name: github.com/coreos/etcd
@@ -23,6 +25,14 @@ imports:
   - mvcc/mvccpb
   - pkg/monotime
   - pkg/tlsutil
+- name: github.com/coreos/go-systemd
+  version: 48702e0da86bd25e76cfef347e2adeb434a0d0a6
+  subpackages:
+  - journal
+- name: github.com/coreos/pkg
+  version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
+  subpackages:
+  - capnslog
 - name: github.com/cznic/golex
   version: da5a7153a51074477ecac5c45a7e5182a0c72448
   subpackages:
@@ -83,14 +93,10 @@ imports:
   - pbutil
 - name: github.com/ngaut/deadline
   version: fae8f9dfd7048de16575b9d4c255278e38c28a4f
-- name: github.com/ngaut/log
-  version: cec23d3e10b016363780d894a0eb732a12c06e02
 - name: github.com/ngaut/pools
   version: 6352e005618615ffaf1cb1c6622b8e91435751fe
 - name: github.com/ngaut/sync2
   version: 7a24ed77b2efb460c1468b7dc917821c66e80e55
-- name: github.com/ngaut/systimemon
-  version: c2ca1c75c6af5556eb6ce67994120adf12f2ccef
 - name: github.com/petar/GoLLRB
   version: 53be0d36a84c2a886ca057d34b6aa4468df9ccb4
   subpackages:
@@ -100,7 +106,7 @@ imports:
 - name: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
 - name: github.com/pingcap/goleveldb
-  version: 158edde5a354460121af007d02a00b01c8d03443
+  version: f654717c3ea2e4e33f46e6b90e9cd872ee022ccb
   subpackages:
   - leveldb
   - leveldb/cache
@@ -129,6 +135,7 @@ imports:
   version: 38eb8a2e70dd39668a62d24a79f30596f204df14
   subpackages:
   - pd-client
+  - pkg/logutil
 - name: github.com/pingcap/tipb
   version: 0edd80335ab0c044ddcd9de57b63026ab7a209fa
   subpackages:
@@ -164,6 +171,8 @@ imports:
   version: abf152e5f3e97f2fafac028d2cc06c1feb87ffa5
 - name: github.com/Sirupsen/logrus
   version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
+- name: github.com/spaolacci/murmur3
+  version: 0d12bf811670bf6a1a63828dfbd003eded177fce
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - name: golang.org/x/net
@@ -223,4 +232,6 @@ imports:
   - status
   - tap
   - transport
+- name: gopkg.in/natefinch/lumberjack.v2
+  version: dd45e6a67c53f673bb49ca8a001fd3a63ceb640e
 testImports: []
