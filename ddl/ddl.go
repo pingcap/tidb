@@ -22,9 +22,9 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
@@ -43,8 +44,15 @@ import (
 const (
 	// currentVersion is for all new DDL jobs.
 	currentVersion = 1
-	// Any background job with version greater or equal this should be processed with delete-range.
-	bgJobMigrateVersion = 1
+	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
+	DDLOwnerKey = "/tidb/ddl/fg/owner"
+	ddlPrompt   = "ddl"
+)
+
+var (
+	// TableColumnCountLimit is limit of the number of columns in a table.
+	// It's exported for testing.
+	TableColumnCountLimit = 512
 )
 
 var (
@@ -78,8 +86,8 @@ var (
 	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
 	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
-	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+	errTooManyFields         = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
@@ -159,7 +167,7 @@ type DDL interface {
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager, and it's used for testing.
-	OwnerManager() OwnerManager
+	OwnerManager() owner.Manager
 	// WorkerVars gets the session variables for DDL worker.
 	WorkerVars() *variable.SessionVars
 	// SetHook sets the hook. It's exported for testing.
@@ -197,7 +205,7 @@ type ddl struct {
 	hook         Callback
 	hookMu       sync.RWMutex
 	store        kv.Storage
-	ownerManager OwnerManager
+	ownerManager owner.Manager
 	schemaSyncer SchemaSyncer
 	// lease is schema seconds.
 	lease        time.Duration
@@ -265,15 +273,15 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
-	var manager OwnerManager
+	var manager owner.Manager
 	var syncer SchemaSyncer
 	if etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and mockSchemaSyncer.
-		manager = NewMockOwnerManager(id, cancelFunc)
+		manager = owner.NewMockManager(id, cancelFunc)
 		syncer = NewMockSchemaSyncer()
 	} else {
-		manager = NewOwnerManager(etcdCli, id, cancelFunc)
+		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
 		syncer = NewSchemaSyncer(etcdCli, id)
 	}
 	d := &ddl{
@@ -402,7 +410,7 @@ func (d *ddl) SchemaSyncer() SchemaSyncer {
 }
 
 // OwnerManager implements DDL.OwnerManager interface.
-func (d *ddl) OwnerManager() OwnerManager {
+func (d *ddl) OwnerManager() owner.Manager {
 	return d.ownerManager
 }
 
@@ -532,7 +540,6 @@ const (
 	codeBadField                     = 1054
 	codeTooLongIdent                 = 1059
 	codeDupKeyName                   = 1061
-	codeInvalidDefault               = 1067
 	codeTooLongKey                   = 1071
 	codeKeyColumnDoesNotExits        = 1072
 	codeIncorrectPrefixKey           = 1089
@@ -541,6 +548,7 @@ const (
 	codeBlobCantHaveDefault          = 1101
 	codeWrongDBName                  = 1102
 	codeWrongTableName               = 1103
+	codeTooManyFields                = 1117
 	codeInvalidUseOfNull             = 1138
 	codeWrongColumnName              = 1166
 	codeWrongKeyColumn               = 1167
@@ -570,7 +578,6 @@ func init() {
 		codeFileNotFound:                 mysql.ErrFileNotFound,
 		codeErrorOnRename:                mysql.ErrErrorOnRename,
 		codeBadField:                     mysql.ErrBadField,
-		codeInvalidDefault:               mysql.ErrInvalidDefault,
 		codeInvalidUseOfNull:             mysql.ErrInvalidUseOfNull,
 		codeUnsupportedOnGeneratedColumn: mysql.ErrUnsupportedOnGeneratedColumn,
 		codeGeneratedColumnNonPrior:      mysql.ErrGeneratedColumnNonPrior,
@@ -580,6 +587,7 @@ func init() {
 		codeWrongColumnName:              mysql.ErrWrongColumnName,
 		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
 		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
+		codeTooManyFields:                mysql.ErrTooManyFields,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

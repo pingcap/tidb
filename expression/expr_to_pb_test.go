@@ -152,17 +152,17 @@ func (s *testEvaluatorSuite) TestConstant2Pb(c *C) {
 	c.Assert(len(remained), Equals, 3)
 	js, err := json.Marshal(pbExpr)
 	c.Assert(err, IsNil)
-	c.Assert(string(js), Equals, "{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":0},{\"tp\":1,\"val\":\"gAAAAAAAAGQ=\"}]},{\"tp\":2,\"val\":\"AAAAAAAAAGQ=\"}]},{\"tp\":5,\"val\":\"MTAw\"}]},{\"tp\":6,\"val\":\"MTI0Yw==\"}]},{\"tp\":102,\"val\":\"AwCAbg==\"}]},{\"tp\":103,\"val\":\"gAAAAAAAAAA=\"}]}")
+	c.Assert(string(js), Equals, "{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":0,\"sig\":0},{\"tp\":1,\"val\":\"gAAAAAAAAGQ=\",\"sig\":0}],\"sig\":0},{\"tp\":2,\"val\":\"AAAAAAAAAGQ=\",\"sig\":0}],\"sig\":0},{\"tp\":5,\"val\":\"MTAw\",\"sig\":0}],\"sig\":0},{\"tp\":6,\"val\":\"MTI0Yw==\",\"sig\":0}],\"sig\":0},{\"tp\":102,\"val\":\"AwCAbg==\",\"sig\":0}],\"sig\":0},{\"tp\":103,\"val\":\"gAAAAAAAAAA=\",\"sig\":0}],\"sig\":0}")
 
 	pbExprs := ExpressionsToPBList(sc, constExprs, client)
 	jsons := []string{
-		"{\"tp\":0}",
-		"{\"tp\":1,\"val\":\"gAAAAAAAAGQ=\"}",
-		"{\"tp\":2,\"val\":\"AAAAAAAAAGQ=\"}",
-		"{\"tp\":5,\"val\":\"MTAw\"}",
-		"{\"tp\":6,\"val\":\"MTI0Yw==\"}",
-		"{\"tp\":102,\"val\":\"AwCAbg==\"}",
-		"{\"tp\":103,\"val\":\"gAAAAAAAAAA=\"}",
+		"{\"tp\":0,\"sig\":0}",
+		"{\"tp\":1,\"val\":\"gAAAAAAAAGQ=\",\"sig\":0}",
+		"{\"tp\":2,\"val\":\"AAAAAAAAAGQ=\",\"sig\":0}",
+		"{\"tp\":5,\"val\":\"MTAw\",\"sig\":0}",
+		"{\"tp\":6,\"val\":\"MTI0Yw==\",\"sig\":0}",
+		"{\"tp\":102,\"val\":\"AwCAbg==\",\"sig\":0}",
+		"{\"tp\":103,\"val\":\"gAAAAAAAAAA=\",\"sig\":0}",
 	}
 	for i, pbExpr := range pbExprs {
 		if i+3 < len(pbExprs) {
@@ -227,33 +227,33 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	c.Assert(len(remained), Equals, 0)
 	js, err := json.Marshal(pbExpr)
 	c.Assert(err, IsNil)
-	c.Assert(string(js), Equals, "{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAAU=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAAY=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAAc=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAAg=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAAk=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAAo=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAAs=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAAw=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAA0=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAA4=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAAA8=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAABA=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAABE=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAABI=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAABM=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAABQ=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAABU=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAABY=\"}]},{\"tp\":201,\"val\":\"gAAAAAAAABc=\"}]}")
+	c.Assert(string(js), Equals, "{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAU=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAY=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAc=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAg=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAk=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAo=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAs=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAw=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAA0=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAA4=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAA8=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABA=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABE=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABI=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABM=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABQ=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABU=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABY=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABc=\",\"sig\":0}],\"sig\":0}")
 
 	pbExprs = ExpressionsToPBList(sc, colExprs, client)
 	jsons := []string{
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAM=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAU=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAY=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAc=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAg=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAk=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAo=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAs=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAAw=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAA0=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAA4=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAA8=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABA=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABE=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABI=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABM=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABQ=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABU=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABY=\"}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAABc=\"}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAU=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAY=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAc=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAg=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAk=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAo=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAs=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAw=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAA0=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAA4=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAA8=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABA=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABE=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABI=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABM=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABQ=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABU=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABY=\",\"sig\":0}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABc=\",\"sig\":0}",
 	}
 	for i, pbExpr := range pbExprs {
 		c.Assert(pbExprs, NotNil)
@@ -296,18 +296,18 @@ func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
 	c.Assert(len(remained), Equals, 0)
 	js, err := json.Marshal(pbExpr)
 	c.Assert(err, IsNil)
-	c.Assert(string(js), Equals, "{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2001,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]},{\"tp\":2002,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}]},{\"tp\":2006,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}]},{\"tp\":2005,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}]},{\"tp\":2003,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}]},{\"tp\":2004,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}]},{\"tp\":2007,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}]}")
+	c.Assert(string(js), Equals, "{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2001,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0},{\"tp\":2002,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}],\"sig\":0},{\"tp\":2006,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}],\"sig\":0},{\"tp\":2005,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}],\"sig\":0},{\"tp\":2003,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}],\"sig\":0},{\"tp\":2004,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}],\"sig\":0},{\"tp\":2007,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}],\"sig\":0}")
 
 	pbExprs := ExpressionsToPBList(sc, compareExprs, client)
 	c.Assert(len(pbExprs), Equals, len(compareExprs))
 	jsons := []string{
-		"{\"tp\":2001,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}",
-		"{\"tp\":2002,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}",
-		"{\"tp\":2006,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}",
-		"{\"tp\":2005,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}",
-		"{\"tp\":2003,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}",
-		"{\"tp\":2004,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}",
-		"{\"tp\":2007,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}",
+		"{\"tp\":2001,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}",
+		"{\"tp\":2002,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}",
+		"{\"tp\":2006,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}",
+		"{\"tp\":2005,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}",
+		"{\"tp\":2003,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}",
+		"{\"tp\":2004,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}",
+		"{\"tp\":2007,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}",
 	}
 	for i, pbExpr := range pbExprs {
 		c.Assert(pbExprs, NotNil)
@@ -361,15 +361,15 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 			mock.NewContext(),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
-			dg.genColumn(mysql.TypeLonglong, 1),
-			dg.genColumn(mysql.TypeLonglong, 2))
+			dg.genColumn(mysql.TypeDouble, 1),
+			dg.genColumn(mysql.TypeDouble, 2))
 		c.Assert(err, IsNil)
 		arithmeticalFuncs = append(arithmeticalFuncs, fc)
 	}
 
 	jsons := make(map[string]string)
-	jsons[ast.Plus] = "{\"tp\":2201,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}"
-	jsons[ast.Div] = "{\"tp\":2204,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}"
+	jsons[ast.Plus] = "{\"tp\":2201,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}"
+	jsons[ast.Div] = "{\"tp\":2204,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}"
 
 	pbExprs := ExpressionsToPBList(sc, arithmeticalFuncs, client)
 	for i, pbExpr := range pbExprs {
@@ -409,10 +409,10 @@ func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
 
 	pbExprs := ExpressionsToPBList(sc, logicalFuncs, client)
 	jsons := []string{
-		"{\"tp\":2301,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}",
-		"{\"tp\":2302,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"}]}",
+		"{\"tp\":2301,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}",
+		"{\"tp\":2302,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0}",
 		"null",
-		"{\"tp\":1001,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"}]}",
+		"{\"tp\":1001,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0}],\"sig\":0}",
 	}
 	for i, pbExpr := range pbExprs {
 		js, err := json.Marshal(pbExpr)
@@ -480,8 +480,8 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 
 	pbExprs := ExpressionsToPBList(sc, controlFuncs, client)
 	jsons := []string{
-		"{\"tp\":4007,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\"}]}",
-		"{\"tp\":3301,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\"},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\"}]}",
+		"{\"tp\":4007,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0}],\"sig\":0}",
+		"{\"tp\":3301,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0}],\"sig\":0}",
 		"null",
 		"null",
 	}
@@ -532,7 +532,7 @@ func (s *testEvaluatorSuite) TestGroupByItem2Pb(c *C) {
 	pbByItem = GroupByItemToPB(sc, client, item)
 	js, err = json.Marshal(pbByItem)
 	c.Assert(err, IsNil)
-	c.Assert(string(js), Equals, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"},\"desc\":false}")
+	c.Assert(string(js), Equals, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},\"desc\":false}")
 }
 
 func (s *testEvaluatorSuite) TestSortByItem2Pb(c *C) {
@@ -554,44 +554,4 @@ func (s *testEvaluatorSuite) TestSortByItem2Pb(c *C) {
 	pbByItem = SortByItemToPB(sc, client, item, true)
 	js, err = json.Marshal(pbByItem)
 	c.Assert(err, IsNil)
-}
-
-func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
-	sc := new(variable.StatementContext)
-	client := new(mockKvClient)
-	dg := new(dataGen4Expr2PbTest)
-
-	funcNames := []string{ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow}
-	for _, funcName := range funcNames {
-		aggFunc := NewAggFunction(
-			funcName,
-			[]Expression{dg.genColumn(mysql.TypeDouble, 1)},
-			true,
-		)
-		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
-		js, err := json.Marshal(pbExpr)
-		c.Assert(err, IsNil)
-		c.Assert(string(js), Equals, "null")
-	}
-
-	jsons := []string{
-		"{\"tp\":3002,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"}]}",
-		"{\"tp\":3001,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"}]}",
-		"{\"tp\":3003,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"}]}",
-		"null",
-		"{\"tp\":3005,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"}]}",
-		"{\"tp\":3004,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"}]}",
-		"{\"tp\":3006,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\"}]}",
-	}
-	for i, funcName := range funcNames {
-		aggFunc := NewAggFunction(
-			funcName,
-			[]Expression{dg.genColumn(mysql.TypeDouble, 1)},
-			false,
-		)
-		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
-		js, err := json.Marshal(pbExpr)
-		c.Assert(err, IsNil)
-		c.Assert(string(js), Equals, jsons[i])
-	}
 }

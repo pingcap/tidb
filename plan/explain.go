@@ -18,11 +18,12 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 )
 
 func setParents4FinalPlan(plan PhysicalPlan) {
 	allPlans := []PhysicalPlan{plan}
-	planMark := map[string]bool{}
+	planMark := map[int]bool{}
 	planMark[plan.ID()] = true
 	for pID := 0; pID < len(allPlans); pID++ {
 		allPlans[pID].SetParents()
@@ -123,17 +124,17 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
-	return fmt.Sprintf("data:%s", p.tablePlan.ID())
+	return fmt.Sprintf("data:%s", p.tablePlan.ExplainID())
 }
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
-	return fmt.Sprintf("index:%s", p.indexPlan.ID())
+	return fmt.Sprintf("index:%s", p.indexPlan.ExplainID())
 }
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
-	return fmt.Sprintf("index:%s, table:%s", p.indexPlan.ID(), p.tablePlan.ID())
+	return fmt.Sprintf("index:%s, table:%s", p.indexPlan.ExplainID(), p.tablePlan.ExplainID())
 }
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -186,7 +187,7 @@ func (p *PhysicalAggregation) ExplainInfo() string {
 	}
 	buffer.WriteString(", funcs:")
 	for i, agg := range p.AggFuncs {
-		buffer.WriteString(expression.ExplainAggFunc(agg))
+		buffer.WriteString(aggregation.ExplainAggFunc(agg))
 		if i+1 < len(p.AggFuncs) {
 			buffer.WriteString(", ")
 		}
@@ -197,14 +198,14 @@ func (p *PhysicalAggregation) ExplainInfo() string {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalApply) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.PhysicalJoin.ExplainInfo())
-	buffer.WriteString(fmt.Sprintf(", right:%s", p.Children()[1].ID()))
+	buffer.WriteString(fmt.Sprintf(", right:%s", p.Children()[1].ExplainID()))
 	return buffer.String()
 }
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("outer:%s",
-		p.Children()[p.outerIndex].ID()))
+		p.Children()[p.outerIndex].ExplainID()))
 	if len(p.OuterJoinKeys) > 0 {
 		buffer.WriteString(fmt.Sprintf(", outer key:%s",
 			expression.ExplainColumnList(p.OuterJoinKeys)))
@@ -231,7 +232,7 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalHashJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
-	buffer.WriteString(fmt.Sprintf(", small:%s", p.Children()[p.SmallTable].ID()))
+	buffer.WriteString(fmt.Sprintf(", small:%s", p.Children()[p.SmallTable].ExplainID()))
 	if len(p.EqualConditions) > 0 {
 		buffer.WriteString(fmt.Sprintf(", equal:%s", p.EqualConditions))
 	}
@@ -251,7 +252,7 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalHashSemiJoin) ExplainInfo() string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("right:%s", p.Children()[1].ID()))
+	buffer := bytes.NewBufferString(fmt.Sprintf("right:%s", p.Children()[1].ExplainID()))
 	if p.WithAux {
 		buffer.WriteString(", aux")
 	}

@@ -19,9 +19,8 @@ import (
 	"math/rand"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/util"
 	goctx "golang.org/x/net/context"
 )
 
@@ -180,7 +179,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
-			if log.GetLogLevel() >= log.LOG_LEVEL_DEBUG || i >= len(b.errors)-3 {
+			if log.GetLevel() == log.DebugLevel || i >= len(b.errors)-3 {
 				errMsg += "\n" + err.Error()
 			}
 		}
@@ -210,7 +209,7 @@ func (b *Backoffer) Clone() *Backoffer {
 // Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors, and holds
 // a child context of current Backoffer's context.
 func (b *Backoffer) Fork() (*Backoffer, goctx.CancelFunc) {
-	ctx, cancel := util.WithCancel(b.ctx)
+	ctx, cancel := goctx.WithCancel(b.ctx)
 	return &Backoffer{
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,

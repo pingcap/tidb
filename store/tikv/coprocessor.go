@@ -19,12 +19,11 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -42,15 +41,17 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic, kv.ReqSubTypeTopN:
 			return true
 		default:
-			return supportExpr(tipb.ExprType(subType))
+			return c.supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
-		return true
+		return c.supportExpr(tipb.ExprType(subType))
+	case kv.ReqTypeAnalyze:
+		return c.store.mock
 	}
 	return false
 }
 
-func supportExpr(exprType tipb.ExprType) bool {
+func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
 		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
@@ -62,14 +63,14 @@ func supportExpr(exprType tipb.ExprType) bool {
 	// compare operators.
 	case tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
 		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
-		tipb.ExprType_In, tipb.ExprType_ValueList,
+		tipb.ExprType_In, tipb.ExprType_ValueList, tipb.ExprType_IsNull,
 		tipb.ExprType_Like:
 		return true
 	// arithmetic operators.
 	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus, tipb.ExprType_Mul:
 		return true
 	// control functions
-	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull:
+	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull, tipb.ExprType_Coalesce:
 		return true
 	// aggregate functions.
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg:
@@ -81,6 +82,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
+	case kv.ReqSubTypeSignature:
+		return c.store.mock
 	default:
 		return false
 	}
@@ -112,7 +115,6 @@ func (c *CopClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
 	if !it.req.KeepOrder {
 		it.respChan = make(chan copResponse, it.concurrency)
 	}
-	it.taskCh = make(chan *copTask, req.Concurrency)
 	it.run(ctx)
 	return it
 }
@@ -300,7 +302,6 @@ type copIterator struct {
 	req         *kv.Request
 	concurrency int
 	finished    chan struct{}
-	taskCh      chan *copTask
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
@@ -357,27 +358,28 @@ func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 }
 
 func (it *copIterator) run(ctx goctx.Context) {
+	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		go func() {
-			childCtx, cancel := util.WithCancel(ctx)
+			childCtx, cancel := goctx.WithCancel(ctx)
 			defer cancel()
-			it.work(childCtx, it.taskCh)
+			it.work(childCtx, taskCh)
 		}()
 	}
 
 	go func() {
 		// Send tasks to feed the worker goroutines.
-		childCtx, cancel := util.WithCancel(ctx)
+		childCtx, cancel := goctx.WithCancel(ctx)
 		defer cancel()
 		for _, t := range it.tasks {
-			finished, canceled := it.sendToTaskCh(childCtx, t)
+			finished, canceled := it.sendToTaskCh(childCtx, t, taskCh)
 			if finished || canceled {
 				break
 			}
 		}
-		close(it.taskCh)
+		close(taskCh)
 
 		// Wait for worker goroutines to exit.
 		it.wg.Wait()
@@ -387,9 +389,9 @@ func (it *copIterator) run(ctx goctx.Context) {
 	}()
 }
 
-func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask) (finished bool, canceled bool) {
+func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask, taskCh chan<- *copTask) (finished bool, canceled bool) {
 	select {
-	case it.taskCh <- t:
+	case taskCh <- t:
 	case <-it.finished:
 		finished = true
 	case <-ctx.Done():
@@ -426,6 +428,7 @@ func (it *copIterator) Next() ([]byte, error) {
 				break
 			}
 			// Switch to next task.
+			it.tasks[it.curr] = nil
 			it.curr++
 		}
 	}

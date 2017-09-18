@@ -16,15 +16,15 @@ package plan
 import (
 	"math"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -35,6 +35,7 @@ const (
 	scanFactor         = 2.0
 	descScanFactor     = 5 * scanFactor
 	memoryFactor       = 5.0
+	hashAggMemFactor   = 2.0
 	selectionFactor    = 0.8
 	distinctFactor     = 0.8
 	cpuFactor          = 0.9
@@ -48,10 +49,9 @@ var JoinConcurrency = 5
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	client := p.ctx.GetClient()
 	ts := PhysicalTableScan{
-		Table:       p.tableInfo,
-		Columns:     p.Columns,
-		TableAsName: p.TableAsName,
-		DBName:      p.DBName,
+		Table:   p.tableInfo,
+		Columns: p.Columns,
+		DBName:  p.DBName,
 		physicalTableSource: physicalTableSource{
 			client:          client,
 			NeedColHandle:   p.NeedColHandle,
@@ -116,12 +116,11 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
 	client := p.ctx.GetClient()
 	is := PhysicalIndexScan{
-		Index:       index,
-		Table:       p.tableInfo,
-		Columns:     p.Columns,
-		TableAsName: p.TableAsName,
-		OutOfOrder:  true,
-		DBName:      p.DBName,
+		Index:      index,
+		Table:      p.tableInfo,
+		Columns:    p.Columns,
+		OutOfOrder: true,
+		DBName:     p.DBName,
 		physicalTableSource: physicalTableSource{
 			client:          client,
 			NeedColHandle:   p.NeedColHandle,
@@ -160,7 +159,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			var err error
 			is.Ranges, err = ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
 			if err != nil {
-				if !terror.ErrorEqual(err, types.ErrTruncated) {
+				if !types.ErrTruncated.Equal(err) {
 					return nil, errors.Trace(err)
 				}
 				log.Warn("truncate error in buildIndexRange")
@@ -234,10 +233,9 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
 	if !isDistReq {
 		memTable := PhysicalMemTable{
-			DBName:      p.DBName,
-			Table:       p.tableInfo,
-			Columns:     p.Columns,
-			TableAsName: p.TableAsName,
+			DBName:  p.DBName,
+			Table:   p.tableInfo,
+			Columns: p.Columns,
 		}.init(p.allocator, p.ctx)
 		memTable.SetSchema(p.schema)
 		memTable.Ranges = ranger.FullIntRange()
@@ -618,9 +616,7 @@ func (p *LogicalJoin) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*
 	if selection.controllerStatus == notController {
 		return nil, nil
 	}
-	for _, cond := range innerConditions {
-		conds = append(conds, cond)
-	}
+	conds = append(conds, innerConditions...)
 	for _, cond := range p.OtherConditions {
 		newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
 		newCond.ResolveIndices(innerChild.Schema())
@@ -1072,7 +1068,7 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 // convert2PhysicalPlanStream converts the logical aggregation to the stream aggregation *physicalPlanInfo.
 func (p *LogicalAggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physicalPlanInfo, error) {
 	for _, aggFunc := range p.AggFuncs {
-		if aggFunc.GetMode() == expression.FinalMode {
+		if aggFunc.GetMode() == aggregation.FinalMode {
 			return &physicalPlanInfo{cost: math.MaxFloat64}, nil
 		}
 	}
@@ -1263,7 +1259,6 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		ts := PhysicalTableScan{
 			Table:               ds.tableInfo,
 			Columns:             ds.Columns,
-			TableAsName:         ds.TableAsName,
 			DBName:              ds.DBName,
 			physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
 		}.init(p.allocator, p.ctx)
@@ -1290,7 +1285,6 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 					Table:               ds.tableInfo,
 					Index:               idx,
 					Columns:             ds.Columns,
-					TableAsName:         ds.TableAsName,
 					OutOfOrder:          true,
 					DBName:              ds.DBName,
 					physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},

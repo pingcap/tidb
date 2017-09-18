@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
@@ -44,6 +45,8 @@ type copTask struct {
 	cst       float64
 	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
+	// keepOrder indicates if the plan scans data by order.
+	keepOrder bool
 }
 
 func (t *copTask) invalid() bool {
@@ -101,10 +104,11 @@ func attachPlan2Task(p PhysicalPlan, t task) task {
 // finishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.
 func (t *copTask) finishIndexPlan() {
 	if !t.indexPlanFinished {
-		t.cst += t.count() * (netWorkFactor + scanFactor)
+		t.cst += t.count() * netWorkFactor
 		t.indexPlanFinished = true
 		if t.tablePlan != nil {
 			t.tablePlan.(*PhysicalTableScan).profile = t.indexPlan.statsProfile()
+			t.cst += t.count() * scanFactor
 		}
 	}
 }
@@ -128,13 +132,8 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(tasks[p.outerIndex].copy(), p.ctx, p.allocator)
-	innerTask := tasks[1-p.outerIndex]
-	if innerTask.invalid() {
-		return invalidTask
-	}
-	rTask := finishCopTask(innerTask.copy(), p.ctx, p.allocator)
 	np := p.Copy()
-	np.SetChildren(lTask.plan(), rTask.plan())
+	np.SetChildren(lTask.plan(), p.innerPlan)
 	return &rootTask{
 		p:   np,
 		cst: lTask.cost() + p.getCost(lTask.count()),
@@ -281,16 +280,18 @@ func (p *Limit) attach2Task(tasks ...task) task {
 	}
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		// If the task is copTask, the Limit can always be pushed down.
-		// When limit be pushed down, it should remove its offset.
-		pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
-		pushedDownLimit.profile = p.profile
-		if cop.tablePlan != nil {
-			pushedDownLimit.SetSchema(cop.tablePlan.Schema())
-		} else {
-			pushedDownLimit.SetSchema(cop.indexPlan.Schema())
+		// If the table/index scans data by order and applies a double read, the limit cannot be pushed to the table side.
+		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
+			// When limit be pushed down, it should remove its offset.
+			pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
+			pushedDownLimit.profile = p.profile
+			if cop.tablePlan != nil {
+				pushedDownLimit.SetSchema(cop.tablePlan.Schema())
+			} else {
+				pushedDownLimit.SetSchema(cop.indexPlan.Schema())
+			}
+			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
-		cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		t = finishCopTask(cop, p.ctx, p.allocator)
 	}
 	if !p.partial {
@@ -344,6 +345,11 @@ func (p *TopN) attach2Task(tasks ...task) task {
 	// This is a topN plan.
 	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
 		pushedDownTopN := p.Copy().(*TopN)
+		newByItems := make([]*ByItems, 0, len(p.ByItems))
+		for _, expr := range p.ByItems {
+			newByItems = append(newByItems, expr.Clone())
+		}
+		pushedDownTopN.ByItems = newByItems
 		// When topN is pushed down, it should remove its offset.
 		pushedDownTopN.Count, pushedDownTopN.Offset = p.Count+p.Offset, 0
 		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
@@ -411,7 +417,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
-		pb := expression.AggFuncToPBExpr(sc, client, aggFunc)
+		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return
 		}
@@ -428,9 +434,9 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	partialSchema := expression.NewSchema()
 	partialAgg.SetSchema(partialSchema)
 	cursor := 0
-	finalAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
+	finalAggFuncs := make([]aggregation.Aggregation, len(finalAgg.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
-		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
+		fun := aggregation.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
 		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor))
 		if needCount(fun) {
@@ -449,7 +455,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 			cursor++
 		}
 		fun.SetArgs(args)
-		fun.SetMode(expression.FinalMode)
+		fun.SetMode(aggregation.FinalMode)
 		finalAggFuncs[i] = fun
 	}
 	finalAgg = PhysicalAggregation{
@@ -477,7 +483,7 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 	if tasks[0].plan() == nil {
 		return tasks[0]
 	}
-	// TODO: We only consider hash aggregation here.
+	cardinality := p.statsProfile().count
 	task := tasks[0].copy()
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
@@ -486,19 +492,22 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 				cop.finishIndexPlan()
 				partialAgg.SetChildren(cop.tablePlan)
 				cop.tablePlan = partialAgg
-				cop.cst += cop.count() * cpuFactor
 			} else {
 				partialAgg.SetChildren(cop.indexPlan)
 				cop.indexPlan = partialAgg
-				cop.cst += cop.count() * cpuFactor
 			}
 		}
 		task = finishCopTask(cop, p.ctx, p.allocator)
+		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 		attachPlan2Task(finalAgg, task)
 	} else {
 		np := p.Copy()
 		attachPlan2Task(np, task)
-		task.addCost(task.count() * cpuFactor)
+		if p.AggType == StreamedAgg {
+			task.addCost(task.count() * cpuFactor)
+		} else {
+			task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
+		}
 	}
 	return task
 }

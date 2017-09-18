@@ -36,7 +36,6 @@ import (
 
 var (
 	_ Executor = &CheckTableExec{}
-	_ Executor = &DummyScanExec{}
 	_ Executor = &ExistsExec{}
 	_ Executor = &HashAggExec{}
 	_ Executor = &LimitExec{}
@@ -45,6 +44,7 @@ var (
 	_ Executor = &SelectionExec{}
 	_ Executor = &SelectLockExec{}
 	_ Executor = &ShowDDLExec{}
+	_ Executor = &ShowDDLJobsExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
@@ -177,6 +177,27 @@ func (e *ShowDDLExec) Next() (Row, error) {
 		e.selfID,
 	)
 	e.done = true
+
+	return row, nil
+}
+
+// ShowDDLJobsExec represent a show DDL jobs executor.
+type ShowDDLJobsExec struct {
+	baseExecutor
+
+	cursor int
+	jobs   []*model.Job
+}
+
+// Next implements the Executor Next interface.
+func (e *ShowDDLJobsExec) Next() (Row, error) {
+	if e.cursor >= len(e.jobs) {
+		return nil, nil
+	}
+
+	job := e.jobs[e.cursor]
+	row := types.MakeDatums(job.String(), job.State.String())
+	e.cursor++
 
 	return row, nil
 }
@@ -500,9 +521,9 @@ type TableScanExec struct {
 	schema     *expression.Schema
 	columns    []*model.ColumnInfo
 
-	isInfoSchema     bool
-	infoSchemaRows   [][]types.Datum
-	infoSchemaCursor int
+	isVirtualTable     bool
+	virtualTableRows   [][]types.Datum
+	virtualTableCursor int
 }
 
 // Schema implements the Executor Schema interface.
@@ -512,7 +533,7 @@ func (e *TableScanExec) Schema() *expression.Schema {
 
 // Next implements the Executor interface.
 func (e *TableScanExec) Next() (Row, error) {
-	if e.isInfoSchema {
+	if e.isVirtualTable {
 		return e.nextForInfoSchema()
 	}
 	for {
@@ -555,24 +576,24 @@ func (e *TableScanExec) Next() (Row, error) {
 }
 
 func (e *TableScanExec) nextForInfoSchema() (Row, error) {
-	if e.infoSchemaRows == nil {
+	if e.virtualTableRows == nil {
 		columns := make([]*table.Column, e.schema.Len())
 		for i, v := range e.columns {
 			columns[i] = table.ToColumn(v)
 		}
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
-			e.infoSchemaRows = append(e.infoSchemaRows, rec)
+			e.virtualTableRows = append(e.virtualTableRows, rec)
 			return true, nil
 		})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	if e.infoSchemaCursor >= len(e.infoSchemaRows) {
+	if e.virtualTableCursor >= len(e.virtualTableRows) {
 		return nil, nil
 	}
-	row := e.infoSchemaRows[e.infoSchemaCursor]
-	e.infoSchemaCursor++
+	row := e.virtualTableRows[e.virtualTableCursor]
+	e.virtualTableCursor++
 	return row, nil
 }
 
@@ -797,17 +818,6 @@ func (e *UnionExec) Close() error {
 	<-e.closedCh
 	e.rows = nil
 	return errors.Trace(e.baseExecutor.Close())
-}
-
-// DummyScanExec returns zero results, when some where condition never match, there won't be any
-// rows to return, so DummyScan is used to avoid real scan on KV.
-type DummyScanExec struct {
-	baseExecutor
-}
-
-// Next implements the Executor Next interface.
-func (e *DummyScanExec) Next() (Row, error) {
-	return nil, nil
 }
 
 // CacheExec represents Cache executor.

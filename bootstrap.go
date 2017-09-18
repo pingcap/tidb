@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
@@ -542,18 +542,6 @@ func upgradeToVer14(s Session) {
 func upgradeToVer15(s Session) {
 	var err error
 	_, err = s.Execute(CreateGCDeleteRangeTable)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = s.NewTxn()
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = ddl.LoadPendingBgJobsIntoDeleteTable(s)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = s.CommitTxn()
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -112,6 +112,7 @@ const (
 	CurrentTimestamp = "current_timestamp"
 	Curtime          = "curtime"
 	Date             = "date"
+	DateLiteral      = "dateliteral"
 	DateAdd          = "date_add"
 	DateFormat       = "date_format"
 	DateSub          = "date_sub"
@@ -162,6 +163,7 @@ const (
 	WeekOfYear       = "weekofyear"
 	Year             = "year"
 	YearWeek         = "yearweek"
+	LastDay          = "last_day"
 
 	// string functions
 	ASCII           = "ascii"

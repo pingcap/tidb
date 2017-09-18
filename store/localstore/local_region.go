@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -435,7 +434,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 	if ran.IsPoint() {
 		var value []byte
 		value, err = ctx.txn.Get(ran.StartKey)
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
+		if kv.ErrNotExist.Equal(err) {
 			return 0, nil
 		} else if err != nil {
 			return 0, errors.Trace(err)
@@ -827,5 +826,5 @@ func buildLocalRegionServers(store *dbStore) []*localRegion {
 }
 
 func isDefaultNull(err error, col *tipb.ColumnInfo) bool {
-	return terror.ErrorEqual(err, kv.ErrNotExist) && !mysql.HasNotNullFlag(uint(col.GetFlag()))
+	return kv.ErrNotExist.Equal(err) && !mysql.HasNotNullFlag(uint(col.GetFlag()))
 }

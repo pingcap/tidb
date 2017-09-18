@@ -35,9 +35,9 @@ type testAnalyzeSuite struct {
 }
 
 func constructInsertSQL(i, n int) string {
-	sql := "insert into t values "
+	sql := "insert into t (a,b,c,e)values "
 	for j := 0; j < n; j++ {
-		sql += fmt.Sprintf("(%d, %d, '%d')", i*n+j, i, i+j)
+		sql += fmt.Sprintf("(%d, %d, '%d', %d)", i*n+j, i, i+j, i*n+j)
 		if j != n-1 {
 			sql += ", "
 		}
@@ -57,8 +57,12 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a int primary key, b int, c varchar(200))")
+	testKit.MustExec("create table t (a int primary key, b int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP, e int, ts timestamp DEFAULT CURRENT_TIMESTAMP)")
 	testKit.MustExec("create index b on t (b)")
+	testKit.MustExec("create index d on t (d)")
+	testKit.MustExec("create index e on t (e)")
+	testKit.MustExec("create index b_c on t (b,c)")
+	testKit.MustExec("create index ts on t (ts)")
 	for i := 0; i < 100; i++ {
 		testKit.MustExec(constructInsertSQL(i, 100))
 	}
@@ -68,19 +72,43 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		best string
 	}{
 		{
-			sql:  "select count(c) from t where t.b <= 20",
-			best: "IndexLookUp(Index(t.b)[[-inf,20]], Table(t)->HashAgg)->HashAgg",
+			sql:  "select count(*) from t group by e",
+			best: "IndexReader(Index(t.e)[[<nil>,+inf]])->StreamAgg",
 		},
 		{
-			sql:  "select count(c) from t where t.b <= 30",
+			sql:  "select count(*) from t where e <= 10 group by e",
+			best: "IndexReader(Index(t.e)[[-inf,10]])->StreamAgg",
+		},
+		{
+			sql:  "select count(*) from t where e <= 50",
+			best: "IndexReader(Index(t.e)[[-inf,50]]->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(*) from t where c > '1' group by b",
+			best: "IndexReader(Index(t.b_c)[[<nil> <nil>,+inf +inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
+		},
+		{
+			sql:  "select count(*) from t where e = 1 group by b",
+			best: "IndexLookUp(Index(t.e)[[1,1]], Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(*) from t where e > 1 group by b",
+			best: "TableReader(Table(t)->Sel([gt(test.t.e, 1)])->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(e) from t where t.b <= 20",
+			best: "IndexLookUp(Index(t.b_c)[[-inf <nil>,20 +inf]], Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(e) from t where t.b <= 30",
 			best: "IndexLookUp(Index(t.b)[[-inf,30]], Table(t)->HashAgg)->HashAgg",
 		},
 		{
-			sql:  "select count(c) from t where t.b <= 40",
+			sql:  "select count(e) from t where t.b <= 40",
 			best: "IndexLookUp(Index(t.b)[[-inf,40]], Table(t)->HashAgg)->HashAgg",
 		},
 		{
-			sql:  "select count(c) from t where t.b <= 50",
+			sql:  "select count(e) from t where t.b <= 50",
 			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->HashAgg)->HashAgg",
 		},
 		{
@@ -89,6 +117,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select * from t where t.b <= 50",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
+		},
+		// test panic
+		{
+			sql:  "select * from t where 1 and t.b <= 50",
 			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
 		},
 		{
@@ -102,6 +135,16 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		{
 			sql:  "select * from t use index(b) where b = 1 order by a",
 			best: "IndexLookUp(Index(t.b)[[1,1]], Table(t))->Sort",
+		},
+		// test datetime
+		{
+			sql:  "select * from t where d < cast('1991-09-05' as datetime)",
+			best: "IndexLookUp(Index(t.d)[[-inf,1991-09-05 00:00:00)], Table(t))",
+		},
+		// test timestamp
+		{
+			sql:  "select * from t where ts < '1991-09-05'",
+			best: "IndexLookUp(Index(t.ts)[[-inf,1991-09-05 00:00:00)], Table(t))",
 		},
 	}
 	for _, tt := range tests {
@@ -183,7 +226,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		store.Close()
 	}()
 	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t, t1, t2")
+	testKit.MustExec("drop table if exists t, t1, t2, t3")
 	testKit.MustExec("create table t (a int, b int)")
 	testKit.MustExec("create index a on t (a)")
 	testKit.MustExec("create index b on t (b)")
@@ -201,10 +244,16 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("insert into t2 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
 	testKit.MustExec("analyze table t2 index a")
 
+	testKit.MustExec("create table t3 (a int, b int)")
+	testKit.MustExec("create index a on t3 (a)")
 	tests := []struct {
 		sql  string
 		best string
 	}{
+		{
+			sql:  "analyze table t3",
+			best: "Analyze{Index(true, t3.a),Table(true, t3.b)}",
+		},
 		// Test analyze full table.
 		{
 			sql:  "select * from t where t.a <= 2",

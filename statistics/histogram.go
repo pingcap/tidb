@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Histogram represents statistics for a column or index.
@@ -334,6 +335,97 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 		return 1.0
 	}
 	return float64(totalCount) / float64(columnCount)
+}
+
+// HistogramToProto converts Histogram to its protobuf representation.
+// Note that when this is used, the lower/upper bound in the bucket must be BytesDatum.
+func HistogramToProto(hg *Histogram) *tipb.Histogram {
+	protoHg := &tipb.Histogram{
+		Ndv: hg.NDV,
+	}
+	for _, bucket := range hg.Buckets {
+		bkt := &tipb.Bucket{
+			Count:      bucket.Count,
+			LowerBound: bucket.LowerBound.GetBytes(),
+			UpperBound: bucket.UpperBound.GetBytes(),
+			Repeats:    bucket.Repeats,
+		}
+		protoHg.Buckets = append(protoHg.Buckets, bkt)
+	}
+	return protoHg
+}
+
+// HistogramFromProto converts Histogram from its protobuf representation.
+// Note that we will set BytesDatum for the lower/upper bound in the bucket, the decode will
+// be after all histograms merged.
+func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
+	hg := &Histogram{
+		NDV: protoHg.Ndv,
+	}
+	for _, bucket := range protoHg.Buckets {
+		bkt := Bucket{
+			Count:      bucket.Count,
+			LowerBound: types.NewBytesDatum(bucket.LowerBound),
+			UpperBound: types.NewBytesDatum(bucket.UpperBound),
+			Repeats:    bucket.Repeats,
+		}
+		hg.Buckets = append(hg.Buckets, bkt)
+	}
+	return hg
+}
+
+// MergeHistograms merges two histograms.
+func MergeHistograms(sc *variable.StatementContext, lh *Histogram, rh *Histogram, bucketSize int) (*Histogram, error) {
+	if len(lh.Buckets) == 0 {
+		return rh, nil
+	}
+	if len(rh.Buckets) == 0 {
+		return lh, nil
+	}
+	lh.NDV += rh.NDV
+	lLen := len(lh.Buckets)
+	cmp, err := lh.Buckets[lLen-1].UpperBound.CompareDatum(sc, rh.Buckets[0].LowerBound)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	offset := int64(0)
+	if cmp == 0 {
+		lh.NDV--
+		lh.Buckets[lLen-1].UpperBound = rh.Buckets[0].UpperBound
+		lh.Buckets[lLen-1].Repeats = rh.Buckets[0].Repeats
+		lh.Buckets[lLen-1].Count += rh.Buckets[0].Count
+		offset = rh.Buckets[0].Count
+		rh.Buckets = rh.Buckets[1:]
+	}
+	for len(lh.Buckets) > bucketSize {
+		lh.mergeBuckets(int64(len(lh.Buckets)) - 1)
+	}
+	if len(rh.Buckets) == 0 {
+		return lh, nil
+	}
+	for len(rh.Buckets) > bucketSize {
+		rh.mergeBuckets(int64(len(rh.Buckets)) - 1)
+	}
+	lCount := lh.Buckets[len(lh.Buckets)-1].Count
+	rCount := rh.Buckets[len(rh.Buckets)-1].Count - offset
+	lAvg := float64(lCount) / float64(len(lh.Buckets))
+	rAvg := float64(rCount) / float64(len(rh.Buckets))
+	for len(lh.Buckets) > 1 && lAvg*2 <= rAvg {
+		lh.mergeBuckets(int64(len(lh.Buckets)) - 1)
+		lAvg *= 2
+	}
+	for len(rh.Buckets) > 1 && rAvg*2 <= lAvg {
+		rh.mergeBuckets(int64(len(rh.Buckets)) - 1)
+		rAvg *= 2
+	}
+	for _, bkt := range rh.Buckets {
+		bkt.Count = bkt.Count + lCount - offset
+		lh.Buckets = append(lh.Buckets, bkt)
+	}
+	for len(lh.Buckets) > bucketSize {
+		lh.mergeBuckets(int64(len(lh.Buckets)) - 1)
+	}
+	return lh, nil
 }
 
 // Column represents a column histogram.

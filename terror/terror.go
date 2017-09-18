@@ -19,8 +19,8 @@ import (
 	"runtime"
 	"strconv"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 )
 
@@ -245,6 +245,10 @@ func (e *Error) Equal(err error) bool {
 	originErr := errors.Cause(err)
 	if originErr == nil {
 		return false
+	}
+
+	if error(e) == originErr {
+		return true
 	}
 	inErr, ok := originErr.(*Error)
 	return ok && e.class == inErr.class && e.code == inErr.code

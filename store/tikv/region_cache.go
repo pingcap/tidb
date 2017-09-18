@@ -17,8 +17,8 @@ import (
 	"bytes"
 	"sync"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -453,11 +453,6 @@ func (c *RegionCache) OnRegionStale(ctx *RPCContext, newRegions []*metapb.Region
 // PDClient returns the pd.Client in RegionCache.
 func (c *RegionCache) PDClient() pd.Client {
 	return c.pdClient
-}
-
-// Close closes the pd.Client in RegionCache.
-func (c *RegionCache) Close() {
-	c.pdClient.Close()
 }
 
 // moveLeaderToFirst moves the leader peer to the first and makes it easier to

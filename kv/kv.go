@@ -144,14 +144,18 @@ type Client interface {
 
 // ReqTypes.
 const (
-	ReqTypeSelect = 101
-	ReqTypeIndex  = 102
-	ReqTypeDAG    = 103
+	ReqTypeSelect  = 101
+	ReqTypeIndex   = 102
+	ReqTypeDAG     = 103
+	ReqTypeAnalyze = 104
 
-	ReqSubTypeBasic   = 0
-	ReqSubTypeDesc    = 10000
-	ReqSubTypeGroupBy = 10001
-	ReqSubTypeTopN    = 10002
+	ReqSubTypeBasic      = 0
+	ReqSubTypeDesc       = 10000
+	ReqSubTypeGroupBy    = 10001
+	ReqSubTypeTopN       = 10002
+	ReqSubTypeSignature  = 10003
+	ReqSubTypeAnalyzeIdx = 10004
+	ReqSubTypeAnalyzeCol = 10005
 )
 
 // Request represents a kv request.

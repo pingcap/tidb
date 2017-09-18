@@ -113,10 +113,10 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Plus].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.Plus].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
-		c.Assert(sig.isDeterministic(), Equals, true)
+		c.Assert(sig.canBeFolded(), IsTrue)
 		val, err := sig.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
@@ -152,10 +152,10 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Minus].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.Minus].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
-		c.Assert(sig.isDeterministic(), Equals, true)
+		c.Assert(sig.canBeFolded(), IsTrue)
 		val, err := sig.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
@@ -196,10 +196,168 @@ func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 	}
 
 	for _, tc := range testCases {
-		sig, err := funcs[ast.Mul].getFunction(datumsToConstants(types.MakeDatums(tc.args...)), s.ctx)
+		sig, err := funcs[ast.Mul].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
-		c.Assert(sig.isDeterministic(), Equals, true)
+		c.Assert(sig.canBeFolded(), IsTrue)
+		val, err := sig.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
+	}
+}
+
+func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
+	defer testleak.AfterTest(c)()
+	testCases := []struct {
+		args   []interface{}
+		expect interface{}
+	}{
+		{
+			args:   []interface{}{float64(11.1111111), float64(11.1)},
+			expect: float64(1.001001),
+		},
+		{
+			args:   []interface{}{float64(11.1111111), float64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{int64(11), int64(11)},
+			expect: float64(1),
+		},
+		{
+			args:   []interface{}{int64(11), int64(2)},
+			expect: float64(5.5),
+		},
+		{
+			args:   []interface{}{int64(11), int64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{uint64(11), uint64(11)},
+			expect: float64(1),
+		},
+		{
+			args:   []interface{}{uint64(11), uint64(2)},
+			expect: float64(5.5),
+		},
+		{
+			args:   []interface{}{uint64(11), uint64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{nil, float64(-0.11101)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{float64(1.01), nil},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{nil, nil},
+			expect: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		sig, err := funcs[ast.Div].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		c.Assert(err, IsNil)
+		c.Assert(sig, NotNil)
+		c.Assert(sig.canBeFolded(), IsTrue)
+		val, err := sig.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
+	}
+}
+
+func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
+	defer testleak.AfterTest(c)()
+	testCases := []struct {
+		args   []interface{}
+		expect interface{}
+	}{
+		{
+			args:   []interface{}{int64(13), int64(11)},
+			expect: int64(1),
+		},
+		{
+			args:   []interface{}{int64(-13), int64(11)},
+			expect: int64(-1),
+		},
+		{
+			args:   []interface{}{int64(13), int64(-11)},
+			expect: int64(-1),
+		},
+		{
+			args:   []interface{}{int64(-13), int64(-11)},
+			expect: int64(1),
+		},
+		{
+			args:   []interface{}{int64(33), int64(11)},
+			expect: int64(3),
+		},
+		{
+			args:   []interface{}{int64(-33), int64(11)},
+			expect: int64(-3),
+		},
+		{
+			args:   []interface{}{int64(33), int64(-11)},
+			expect: int64(-3),
+		},
+		{
+			args:   []interface{}{int64(-33), int64(-11)},
+			expect: int64(3),
+		},
+		{
+			args:   []interface{}{int64(11), int64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{int64(-11), int64(0)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{float64(11.01), float64(1.1)},
+			expect: int64(10),
+		},
+		{
+			args:   []interface{}{float64(-11.01), float64(1.1)},
+			expect: int64(-10),
+		},
+		{
+			args:   []interface{}{float64(11.01), float64(-1.1)},
+			expect: int64(-10),
+		},
+		{
+			args:   []interface{}{float64(-11.01), float64(-1.1)},
+			expect: int64(10),
+		},
+		{
+			args:   []interface{}{nil, float64(-0.11101)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{float64(1.01), nil},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{nil, int64(-1001)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{int64(101), nil},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{nil, nil},
+			expect: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		sig, err := funcs[ast.IntDiv].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		c.Assert(err, IsNil)
+		c.Assert(sig, NotNil)
+		c.Assert(sig.canBeFolded(), IsTrue)
 		val, err := sig.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))

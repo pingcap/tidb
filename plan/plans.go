@@ -32,6 +32,11 @@ type ShowDDL struct {
 	basePlan
 }
 
+// ShowDDLJobs is for showing DDL job list.
+type ShowDDLJobs struct {
+	basePlan
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
 	basePlan
@@ -104,6 +109,14 @@ type Simple struct {
 	Statement ast.StmtNode
 }
 
+// InsertGeneratedColumns is for completing generated columns in Insert.
+// We resolve generation expressions in plan, and eval those in executor.
+type InsertGeneratedColumns struct {
+	Columns      []*ast.ColumnName
+	Exprs        []expression.Expression
+	OnDuplicates []*expression.Assignment
+}
+
 // Insert represents an insert plan.
 type Insert struct {
 	*basePlan
@@ -119,7 +132,9 @@ type Insert struct {
 
 	IsReplace bool
 	Priority  mysql.PriorityEnum
-	Ignore    bool
+	IgnoreErr bool
+
+	GenCols InsertGeneratedColumns
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
@@ -127,12 +142,14 @@ type AnalyzeColumnsTask struct {
 	TableInfo *model.TableInfo
 	PKInfo    *model.ColumnInfo
 	ColsInfo  []*model.ColumnInfo
+	PushDown  bool
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
 	TableInfo *model.TableInfo
 	IndexInfo *model.IndexInfo
+	PushDown  bool
 }
 
 // Analyze represents an analyze plan
@@ -153,6 +170,8 @@ type LoadData struct {
 	Columns    []*ast.ColumnName
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
+
+	GenCols InsertGeneratedColumns
 }
 
 // DDL represents a DDL statement plan.
@@ -168,7 +187,7 @@ type Explain struct {
 
 	StmtPlan       Plan
 	Rows           [][]types.Datum
-	explainedPlans map[string]bool
+	explainedPlans map[int]bool
 }
 
 func (e *Explain) prepareExplainInfo(p Plan, parent Plan) error {
@@ -184,9 +203,9 @@ func (e *Explain) prepareExplainInfo(p Plan, parent Plan) error {
 	}
 	parentStr := ""
 	if parent != nil {
-		parentStr = parent.ID()
+		parentStr = parent.ExplainID()
 	}
-	row := types.MakeDatums(p.ID(), string(explain), parentStr)
+	row := types.MakeDatums(p.ExplainID(), string(explain), parentStr)
 	e.Rows = append(e.Rows, row)
 	return nil
 }
@@ -197,17 +216,17 @@ func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string) {
 	parents := p.Parents()
 	parentIDs := make([]string, 0, len(parents))
 	for _, parent := range parents {
-		parentIDs = append(parentIDs, parent.ID())
+		parentIDs = append(parentIDs, parent.ExplainID())
 	}
 	childrenIDs := make([]string, 0, len(p.Children()))
 	for _, ch := range p.Children() {
-		childrenIDs = append(childrenIDs, ch.ID())
+		childrenIDs = append(childrenIDs, ch.ExplainID())
 	}
 	parentInfo := strings.Join(parentIDs, ",")
 	childrenInfo := strings.Join(childrenIDs, ",")
 	operatorInfo := p.ExplainInfo()
 	count := p.statsProfile().count
-	row := types.MakeDatums(p.ID(), parentInfo, childrenInfo, taskType, operatorInfo, count)
+	row := types.MakeDatums(p.ExplainID(), parentInfo, childrenInfo, taskType, operatorInfo, count)
 	e.Rows = append(e.Rows, row)
 }
 

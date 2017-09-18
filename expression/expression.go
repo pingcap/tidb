@@ -32,11 +32,13 @@ import (
 
 // Error instances.
 var (
-	errInvalidOperation        = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
-	errFunctionNotExists       = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
-	errZlibZData               = terror.ClassTypes.New(codeZlibZData, "ZLIB: Input data corrupted")
-	errIncorrectArgs           = terror.ClassExpression.New(codeIncorrectArgs, mysql.MySQLErrName[mysql.ErrWrongArguments])
 	ErrIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count in the call to native function '%s'")
+
+	errInvalidOperation    = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
+	errFunctionNotExists   = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
+	errZlibZData           = terror.ClassTypes.New(codeZlibZData, "ZLIB: Input data corrupted")
+	errIncorrectArgs       = terror.ClassExpression.New(codeIncorrectArgs, mysql.MySQLErrName[mysql.ErrWrongArguments])
+	errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
 )
 
 // Error codes.
@@ -161,11 +163,11 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if expr.GetTypeClass() == types.ClassInt {
-		return val.GetInt64(), false, nil
-	} else if IsHybridType(expr) {
+	if IsHybridType(expr) {
 		res, err = val.ToInt64(sc)
 		return res, false, errors.Trace(err)
+	} else if expr.GetTypeClass() == types.ClassInt {
+		return val.GetInt64(), false, nil
 	}
 	panic(fmt.Sprintf("cannot get INT result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
@@ -177,7 +179,9 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 		return res, val.IsNull(), errors.Trace(err)
 	}
 	if expr.GetTypeClass() == types.ClassReal {
-		return val.GetFloat64(), false, nil
+		// TODO: fix this to val.GetFloat64() after all built-in functions been rewritten.
+		res, err = val.ToFloat64(sc)
+		return res, false, errors.Trace(err)
 	} else if IsHybridType(expr) {
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
@@ -200,7 +204,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 		// we infer the result type of the sql as `mysql.TypeNewDecimal` which is consistent with MySQL,
 		// but what we actually get is store as float64 in Datum.
 		// So if we wrap `CastDecimalAsInt` upon the result, we'll get <nil> when call `arg.EvalDecimal()`.
-		// This will be fixed after all built-in functions be rewrite correctlly.
+		// This will be fixed after all built-in functions be rewrite correctly.
 	} else if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
@@ -507,7 +511,7 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return FoldConstant(newFunc), nil
+		return newFunc, nil
 	case *Column:
 		if !schema.Contains(x) {
 			return x, nil
@@ -579,15 +583,14 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 }
 
 // NewCastFunc creates a new cast function.
-func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) (sf Expression) {
-	sf, _ = buildCastFunction(arg, tp, ctx)
-	return FoldConstant(sf)
+func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) Expression {
+	return FoldConstant(buildCastFunction(arg, tp, ctx))
 }
 
 // NewValuesFunc creates a new values function.
 func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *ScalarFunction {
-	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset}
-	bt, _ := fc.getFunction(nil, ctx)
+	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
+	bt, _ := fc.getFunction(ctx, nil)
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,

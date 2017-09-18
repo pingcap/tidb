@@ -87,10 +87,6 @@ func (s *testSuite) TestNestedLoopJoin(c *C) {
 }
 
 func (s *testSuite) TestJoinPanic(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists events")
@@ -99,10 +95,6 @@ func (s *testSuite) TestJoinPanic(c *C) {
 }
 
 func (s *testSuite) TestJoin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_index_lookup_size = 2")
 	tk.MustExec("use test")
@@ -230,13 +222,24 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t.a, t.b from t join t1 on t.a=t1.a where t1.b = 4 limit 1").Check(testkit.Rows("3 1"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("<nil> <nil> 0 0", "3 1 3 4", "1 3 1 2", "1 3 1 3"))
 
+	// join reorder will disorganize the resulting schema
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t values(1,2)")
+	tk.MustExec("insert into t1 values(3,4)")
+	tk.MustQuery("select (select t1.a from t1 , t where t.a = s.a limit 2) from t as s").Check(testkit.Rows("3"))
+
+	// test index join bug
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int, b int, key s1(a,b), key s2(b))")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t values(1,2), (5,3), (6,4)")
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t1.a from t1, t where t.a = 5 and t.b = t1.a").Check(testkit.Rows("3"))
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -285,13 +288,20 @@ func (s *testSuite) TestJoinCast(c *C) {
 	tk.MustExec("insert into t1 values(0), (9)")
 	result = tk.MustQuery("select /*+ TIDB_INLJ(t) */ * from t left join t1 on t1.c1 = t.c1")
 	result.Sort().Check(testkit.Rows("0.0 0.00", "2.0 <nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 char(10))")
+	tk.MustExec("create table t1(c1 char(10))")
+	tk.MustExec("create table t2(c1 char(10))")
+	tk.MustExec("insert into t values('abd')")
+	tk.MustExec("insert into t1 values('abc')")
+	tk.MustExec("insert into t2 values('abc')")
+	result = tk.MustQuery("select * from (select * from t union all select * from t1) t1 join t2 on t1.c1 = t2.c1")
+	result.Sort().Check(testkit.Rows("abc abc"))
 }
 
 func (s *testSuite) TestUsing(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -324,13 +334,22 @@ func (s *testSuite) TestUsing(c *C) {
 	tk.MustQuery("select * from t1 join t2 using (b, a)").Check(testkit.Rows("2 1 4 5"))
 
 	tk.MustExec("select * from (t1 join t2 using (a)) join (t3 join t4 using (a)) on (t2.a = t4.a and t1.a = t3.a)")
+
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table tt(b int, a int)")
+	tk.MustExec("insert into t (a, b) values(1, 1)")
+	tk.MustExec("insert into tt (a, b) values(1, 2)")
+	tk.MustQuery("select * from t join tt using(a)").Check(testkit.Rows("1 1 2"))
+
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a float, b int)")
+	tk.MustExec("create table tt(b bigint, a int)")
+	// Check whether this sql can execute successfully.
+	tk.MustExec("select * from t join tt using(a)")
 }
 
 func (s *testSuite) TestNaturalJoin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -346,10 +365,6 @@ func (s *testSuite) TestNaturalJoin(c *C) {
 }
 
 func (s *testSuite) TestMultiJoin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t35(a35 int primary key, b35 int, x35 int)")
@@ -442,10 +457,6 @@ AND b44=a42`)
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -460,8 +471,6 @@ func (s *testSuite) TestSubquerySameTable(c *C) {
 func (s *testSuite) TestSubquery(c *C) {
 	plan.JoinConcurrency = 1
 	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
 		plan.JoinConcurrency = 5
 	}()
 	tk := testkit.NewTestKit(c, s.store)
@@ -592,7 +601,6 @@ func (s *testSuite) TestSubquery(c *C) {
 
 func (s *testSuite) TestInSubquery(c *C) {
 	defer func() {
-		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
@@ -666,8 +674,6 @@ func (s *testSuite) TestJoinLeak(c *C) {
 	plan.JoinConcurrency = 1
 	defer func() {
 		plan.JoinConcurrency = savedConcurrency
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
