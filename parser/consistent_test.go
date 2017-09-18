@@ -14,13 +14,14 @@
 package parser
 
 import (
-	. "github.com/pingcap/check"
 	"io/ioutil"
 	"os"
 	"path"
 	"runtime"
 	"sort"
 	"strings"
+
+	. "github.com/pingcap/check"
 )
 
 var _ = Suite(&testConsistentSuite{})
@@ -28,7 +29,7 @@ var _ = Suite(&testConsistentSuite{})
 type testConsistentSuite struct {
 }
 
-func (s *testConsistentSuite) TestIdentToken(c *C) {
+func (s *testConsistentSuite) TestKeywordConsistent(c *C) {
 	_, filename, _, _ := runtime.Caller(0)
 	parserFilename := path.Join(path.Dir(filename), "parser.y")
 	parserFile, err := os.Open(parserFilename)
