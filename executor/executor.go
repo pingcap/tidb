@@ -457,9 +457,9 @@ type TableScanExec struct {
 	schema     *expression.Schema
 	columns    []*model.ColumnInfo
 
-	isInfoSchema     bool
-	infoSchemaRows   [][]types.Datum
-	infoSchemaCursor int
+	isVirtualTable     bool
+	virtualTableRows   [][]types.Datum
+	virtualTableCursor int
 }
 
 // Schema implements the Executor Schema interface.
@@ -469,7 +469,7 @@ func (e *TableScanExec) Schema() *expression.Schema {
 
 // Next implements the Executor interface.
 func (e *TableScanExec) Next() (Row, error) {
-	if e.isInfoSchema {
+	if e.isVirtualTable {
 		return e.nextForInfoSchema()
 	}
 	for {
@@ -512,24 +512,24 @@ func (e *TableScanExec) Next() (Row, error) {
 }
 
 func (e *TableScanExec) nextForInfoSchema() (Row, error) {
-	if e.infoSchemaRows == nil {
+	if e.virtualTableRows == nil {
 		columns := make([]*table.Column, e.schema.Len())
 		for i, v := range e.columns {
 			columns[i] = table.ToColumn(v)
 		}
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
-			e.infoSchemaRows = append(e.infoSchemaRows, rec)
+			e.virtualTableRows = append(e.virtualTableRows, rec)
 			return true, nil
 		})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	if e.infoSchemaCursor >= len(e.infoSchemaRows) {
+	if e.virtualTableCursor >= len(e.virtualTableRows) {
 		return nil, nil
 	}
-	row := e.infoSchemaRows[e.infoSchemaCursor]
-	e.infoSchemaCursor++
+	row := e.virtualTableRows[e.virtualTableCursor]
+	e.virtualTableCursor++
 	return row, nil
 }
 

@@ -15,12 +15,12 @@ package statistics
 
 import (
 	"hash"
-	"hash/fnv"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/spaolacci/murmur3"
 )
 
 // FMSketch is used to count the number of distinct elements in a set.
@@ -36,7 +36,7 @@ func NewFMSketch(maxSize int) *FMSketch {
 	return &FMSketch{
 		hashset:  make(map[uint64]bool),
 		maxSize:  maxSize,
-		hashFunc: fnv.New64a(),
+		hashFunc: murmur3.New64(),
 	}
 }
 
