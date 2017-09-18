@@ -116,7 +116,6 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	_, mock := client.(*mocktikv.RPCClient)
 	store := &tikvStore{
 		clusterID:   pdClient.GetClusterID(goctx.TODO()),
 		uuid:        uuid,
@@ -124,7 +123,6 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		client:      client,
 		pdClient:    pdClient,
 		regionCache: NewRegionCache(pdClient),
-		mock:        mock,
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
@@ -234,7 +232,9 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		pdCli = opt.pdClientHijack(pdCli)
 	}
 
-	return newTikvStore(uuid, pdCli, client, false)
+	tikvStore, err := newTikvStore(uuid, pdCli, client, false)
+	tikvStore.mock = true
+	return tikvStore, errors.Trace(err)
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
@@ -262,6 +262,12 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	return snapshot, nil
 }
 
+type realClose interface {
+	RealClose() error
+}
+
+var _ realClose = &mocktikv.RPCClient{}
+
 func (s *tikvStore) Close() error {
 	mc.Lock()
 	defer mc.Unlock()
@@ -275,6 +281,12 @@ func (s *tikvStore) Close() error {
 
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)
+	}
+
+	// For mocktikv, Close() should not only close the client,
+	// but also the underlying store such as leveldb.
+	if raw, ok := s.client.(realClose); ok {
+		raw.RealClose()
 	}
 	return nil
 }

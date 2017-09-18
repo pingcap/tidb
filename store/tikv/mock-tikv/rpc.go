@@ -607,3 +607,15 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 func (c *RPCClient) Close() error {
 	return nil
 }
+
+type closeable interface {
+	Close() error
+}
+
+// RealClose may close the underlying MvccStore.
+func (c *RPCClient) RealClose() error {
+	if raw, ok := c.MvccStore.(closeable); ok {
+		return raw.Close()
+	}
+	return nil
+}
