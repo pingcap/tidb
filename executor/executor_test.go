@@ -51,6 +51,10 @@ import (
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 	TestingT(t)
 }
 
@@ -89,10 +93,6 @@ func (s *testSuite) SetUpSuite(c *C) {
 	}
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
