@@ -719,6 +719,8 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	// issue #4540
 	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.CollationNames["utf8_general_ci"]), "test", nil)
 	c.Assert(err, IsNil)
+	_, err = ctx.Execute("use test;")
+	c.Assert(err, IsNil)
 
 	testSQL := "CREATE TABLE `t1` (" +
 		"`a` char(36) NOT NULL," +
@@ -747,15 +749,16 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 		"`x` varchar(250) DEFAULT ''," +
 		"PRIMARY KEY (`a`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
-	rs, err := ctx.Execute(testSQL)
+	_, err = ctx.Execute(testSQL)
 	c.Assert(err, IsNil)
+	rs, err := ctx.Execute("show create table t1")
 	row, err := rs[0].Next()
 	c.Assert(err, IsNil)
 	cols, err := rs[0].Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
-	c.Assert(cols[0].ColumnLength, Equals, len(row[0].GetString())*mysql.MaxBytesOfCharacter)
-	c.Assert(cols[1].ColumnLength, Equals, len(row[1].GetString())*mysql.MaxBytesOfCharacter)
+	c.Assert(int(cols[0].ColumnLength), Equals, tmysql.MaxTableNameLength*tmysql.MaxBytesOfCharacter)
+	c.Assert(int(cols[1].ColumnLength), Equals, len(row[1].GetString())*tmysql.MaxBytesOfCharacter)
 }
 
 func runTestTLSConnection(t *C, overrider configOverrider) error {

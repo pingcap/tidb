@@ -560,7 +560,7 @@ const (
 	DefaultCollationName = UTF8DefaultCollation
 
 	// MaxBytesOfCharacter, is the max bytes length of a character,
-	// refer to RFC3629, In UTF-8, characters from the U+0000..U+10FFFF range
+	// refer to RFC3629, in UTF-8, characters from the U+0000..U+10FFFF range
 	// (the UTF-16 accessible range) are encoded using sequences of 1 to 4 octets.
 	MaxBytesOfCharacter = 4
 )

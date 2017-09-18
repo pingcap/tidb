@@ -14,7 +14,6 @@
 package server
 
 import (
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/arena"
 )
 
@@ -53,19 +52,6 @@ func (column *ColumnInfo) Dump(alloc arena.Allocator) []byte {
 	data = append(data, 0x0c)
 
 	data = append(data, dumpUint16(column.Charset)...)
-
-	// Fix issue #4540.
-	// The flen is a hint, not a precise value, so most client will not use the value.
-	// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
-	// the `show create table` result. To fix this case, we must use a large enough flen to prevent
-	// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
-	// For examples:
-	// * latin, the multiple is 1
-	// * gb2312, the multiple is 2
-	// * Utf-8, the multiple is 3
-	// * utf8mb4, the multiple is 4
-	// So the large enough multiple is 4 in here.
-	column.ColumnLength = column.ColumnLength * mysql.MaxBytesOfCharacter
 	data = append(data, dumpUint32(column.ColumnLength)...)
 	data = append(data, column.Type)
 	data = append(data, dumpUint16(column.Flag)...)
