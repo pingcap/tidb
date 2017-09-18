@@ -22,8 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	log "github.com/Sirupsen/logrus"
+	"github.com/coreos/etcd/clientv3"
+	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ddl"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
-	"github.com/coreos/etcd/clientv3"
 )
 
 // GCWorker periodically triggers GC process on tikv server.
@@ -46,7 +46,7 @@ type GCWorker struct {
 	cancel      goctx.CancelFunc
 	done        chan error
 
-	session     tidb.Session
+	session tidb.Session
 }
 
 // SafePointKV is used for a seamingless integration for mockTest and runtime.
@@ -57,14 +57,14 @@ type SafePointKV interface {
 
 // MockSafePointKV implements SafePointKV at mock test
 type MockSafePointKV struct {
-	store 		map[string]string
-	mockLock	sync.RWMutex
+	store    map[string]string
+	mockLock sync.RWMutex
 }
 
 // NewMockSafePointKV creates an instance of MockSafePointKV
 func NewMockSafePointKV() *MockSafePointKV {
-	return &MockSafePointKV {
-		store:		make(map[string]string),
+	return &MockSafePointKV{
+		store: make(map[string]string),
 	}
 }
 
@@ -89,7 +89,7 @@ func (w *MockSafePointKV) Get(k string) (string, error) {
 
 // EtcdSafePointKV implements SafePointKV at runtime
 type EtcdSafePointKV struct {
-	cli	*clientv3.Client
+	cli *clientv3.Client
 }
 
 // NewEtcdSafePointKV creates an instance of EtcdSafePointKV
@@ -98,13 +98,13 @@ func NewEtcdSafePointKV(addrs []string) (*EtcdSafePointKV, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &EtcdSafePointKV{cli:etcdCli}, nil
+	return &EtcdSafePointKV{cli: etcdCli}, nil
 }
 
 // Put implements the Put method for SafePointKV
 func (w *EtcdSafePointKV) Put(k string, v string) error {
-	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second * 5)
-	_, err := w.cli.Put(ctx,k, v)
+	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second*5)
+	_, err := w.cli.Put(ctx, k, v)
 	cancel()
 	if err != nil {
 		return errors.Trace(err)
@@ -114,7 +114,7 @@ func (w *EtcdSafePointKV) Put(k string, v string) error {
 
 // Get implements the Get method for SafePointKV
 func (w *EtcdSafePointKV) Get(k string) (string, error) {
-	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second * 5)
+	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second*5)
 	resp, err := w.cli.Get(ctx, k)
 	cancel()
 	if err != nil {
@@ -132,7 +132,7 @@ func (w *GCWorker) StartSafePointChecker() {
 		d := gcSafePointUpdateInterval
 		for {
 			select {
-			case spCachedTime := <- time.After(d):
+			case spCachedTime := <-time.After(d):
 				cachedSafePoint, err := w.loadSafePoint(gcSavedSafePoint)
 				if err == nil {
 					w.store.UpdateSPCache(cachedSafePoint, spCachedTime)
@@ -187,7 +187,7 @@ func (w *GCWorker) Close() {
 }
 
 const (
-	gcTimeFormat = "20060102-15:04:05 -0700 MST"
+	gcTimeFormat         = "20060102-15:04:05 -0700 MST"
 	gcWorkerTickInterval = time.Minute
 	gcWorkerLease        = time.Minute * 2
 	gcLeaderUUIDKey      = "tikv_gc_leader_uuid"
@@ -199,14 +199,14 @@ const (
 	gcDefaultRunInterval = time.Minute * 10
 	gcWaitTime           = time.Minute * 10
 
-	gcLifeTimeKey     = "tikv_gc_life_time"
-	gcDefaultLifeTime = time.Minute * 10
-	gcSafePointKey    = "tikv_gc_safe_point"
-	gcSavedSafePoint  = "/tidb/store/gcworker/saved_safe_point"
-	gcSafePointCacheInterval = time.Second * 100
-	gcSafePointUpdateInterval = time.Second * 10
+	gcLifeTimeKey                  = "tikv_gc_life_time"
+	gcDefaultLifeTime              = time.Minute * 10
+	gcSafePointKey                 = "tikv_gc_safe_point"
+	gcSavedSafePoint               = "/tidb/store/gcworker/saved_safe_point"
+	gcSafePointCacheInterval       = time.Second * 100
+	gcSafePointUpdateInterval      = time.Second * 10
 	gcSafePointQuickRepeatInterval = time.Second
-	gcCPUTimeInaccuracyBound = time.Second
+	gcCPUTimeInaccuracyBound       = time.Second
 )
 
 var gcVariableComments = map[string]string{
@@ -247,7 +247,7 @@ func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func createSession(store kv.Storage) tidb.Session{
+func createSession(store kv.Storage) tidb.Session {
 	for {
 		session, err := tidb.CreateSession(store)
 		if err != nil {
@@ -365,11 +365,11 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	
+
 	if lastRun != nil && lastRun.Add(*runInterval).After(now) {
 		return false, nil
 	}
-	
+
 	return true, nil
 }
 
@@ -603,8 +603,7 @@ func doGC(ctx goctx.Context, store *tikvStore, safePoint uint64, identifier stri
 			}
 		}
 	}
-	
-	
+
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
 		GC: &kvrpcpb.GCRequest{
@@ -737,7 +736,7 @@ func (w *GCWorker) saveSafePoint(key string, t uint64) error {
 	return nil
 }
 
-func (w *GCWorker) loadSafePoint(key string) (uint64, error) {	
+func (w *GCWorker) loadSafePoint(key string) (uint64, error) {
 	str, err := w.store.kv.Get(gcSavedSafePoint)
 
 	if err != nil {
@@ -812,7 +811,7 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 
 func (w *GCWorker) loadValueFromSysTable(key string, s tidb.Session) (string, error) {
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err :=s.Execute(stmt)
+	rs, err := s.Execute(stmt)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
