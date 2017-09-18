@@ -198,7 +198,7 @@ func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) statistics.AnalyzeResult
 		result.Count = collectors[0].Count + collectors[0].NullCount
 	}
 	for i, col := range task.Columns {
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].Samples)
+		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i])
 		result.Hist = append(result.Hist, hg)
 		if err != nil && result.Err == nil {
 			result.Err = err

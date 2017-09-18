@@ -209,7 +209,7 @@ func (e *AnalyzeColumnsExec) buildHistograms() (hists []*statistics.Histogram, e
 				return nil, errors.Trace(err)
 			}
 		}
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].Samples)
+		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
