@@ -62,7 +62,7 @@ const precIncrement = 4
 func handleDivisionByZeroError(ctx context.Context) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
-		if ctx.GetSessionVars().SQLMode&mysql.ModeErrorForDivisionByZero != mysql.ModeErrorForDivisionByZero {
+		if (ctx.GetSessionVars().SQLMode & mysql.ModeErrorForDivisionByZero) != mysql.ModeErrorForDivisionByZero {
 			return nil
 		}
 		if ctx.GetSessionVars().StrictSQLMode && !sc.IgnoreError {
