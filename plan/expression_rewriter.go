@@ -765,9 +765,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = errors.Trace(err)
 		return
 	}
-	e := datumToConstant(types.NewStringDatum(val), mysql.TypeString)
-	e.RetType.Tp = mysql.TypeVarString
-	e.RetType.Charset = er.ctx.GetSessionVars().Systems["character_set_connection"]
+	e := datumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
+	e.RetType.Charset = er.ctx.GetSessionVars().Systems[variable.CharacterSetConnection]
 	e.RetType.Collate = er.ctx.GetSessionVars().Systems[variable.CollationConnection]
 	er.ctxStack = append(er.ctxStack, e)
 	return
