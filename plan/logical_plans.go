@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/aggregation"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -177,7 +178,7 @@ type LogicalAggregation struct {
 	*basePlan
 	baseLogicalPlan
 
-	AggFuncs     []expression.AggregationFunction
+	AggFuncs     []aggregation.AggregationFunction
 	GroupByItems []expression.Expression
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column

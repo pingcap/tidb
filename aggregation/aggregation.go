@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package aggregation
 
 import (
 	"bytes"
@@ -23,6 +23,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
@@ -56,13 +57,13 @@ type AggregationFunction interface {
 	GetStreamResult() types.Datum
 
 	// GetArgs stands for getting all arguments.
-	GetArgs() []Expression
+	GetArgs() []expression.Expression
 
 	// GetName gets the aggregation function name.
 	GetName() string
 
 	// SetArgs sets argument by index.
-	SetArgs(args []Expression)
+	SetArgs(args []expression.Expression)
 
 	// Reset resets this aggregate function.
 	Reset()
@@ -85,7 +86,7 @@ type AggregationFunction interface {
 	// CalculateDefaultValue gets the default value when the aggregate function's input is null.
 	// The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
 	// return value will be false.
-	CalculateDefaultValue(schema *Schema, ctx context.Context) (types.Datum, bool)
+	CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (types.Datum, bool)
 }
 
 // aggEvaluateContext is used to store intermediate result when calculating aggregate functions.
@@ -98,7 +99,7 @@ type aggEvaluateContext struct {
 }
 
 // NewAggFunction creates a new AggregationFunction.
-func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) AggregationFunction {
+func NewAggFunction(funcType string, funcArgs []expression.Expression, distinct bool) AggregationFunction {
 	switch tp := strings.ToLower(funcType); tp {
 	case ast.AggFuncSum:
 		return &sumFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
@@ -120,9 +121,9 @@ func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) Aggre
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
 func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *variable.StatementContext) (AggregationFunction, error) {
-	args := make([]Expression, 0, len(expr.Children))
+	args := make([]expression.Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
-		arg, err := PBToExpr(child, fieldTps, sc)
+		arg, err := expression.PBToExpr(child, fieldTps, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -162,7 +163,7 @@ const (
 type aggFunction struct {
 	name         string
 	mode         AggFunctionMode
-	Args         []Expression
+	Args         []expression.Expression
 	Distinct     bool
 	resultMapper aggCtxMapper
 	streamCtx    *aggEvaluateContext
@@ -207,7 +208,7 @@ func (af *aggFunction) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-func newAggFunc(name string, args []Expression, dist bool) aggFunction {
+func newAggFunc(name string, args []expression.Expression, dist bool) aggFunction {
 	return aggFunction{
 		name:         name,
 		Args:         args,
@@ -217,7 +218,7 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (af *aggFunction) CalculateDefaultValue(schema *Schema, ctx context.Context) (types.Datum, bool) {
+func (af *aggFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (types.Datum, bool) {
 	return types.Datum{}, false
 }
 
@@ -248,12 +249,12 @@ func (af *aggFunction) GetMode() AggFunctionMode {
 }
 
 // GetArgs implements AggregationFunction interface.
-func (af *aggFunction) GetArgs() []Expression {
+func (af *aggFunction) GetArgs() []expression.Expression {
 	return af.Args
 }
 
 // SetArgs implements AggregationFunction interface.
-func (af *aggFunction) SetArgs(args []Expression) {
+func (af *aggFunction) SetArgs(args []expression.Expression) {
 	af.Args = args
 }
 
@@ -383,14 +384,14 @@ func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (sf *sumFunction) CalculateDefaultValue(schema *Schema, ctx context.Context) (d types.Datum, valid bool) {
+func (sf *sumFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := sf.Args[0]
-	result, err := EvaluateExprWithNull(ctx, schema, arg)
+	result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", sf, err.Error())
 		return d, false
 	}
-	if con, ok := result.(*Constant); ok {
+	if con, ok := result.(*expression.Constant); ok {
 		d, err = calculateSum(ctx.GetSessionVars().StmtCtx, d, con.Value)
 		if err != nil {
 			log.Warnf("CalculateSum failed in function %s, err msg is %s", sf, err.Error())
@@ -424,14 +425,14 @@ func (cf *countFunction) Clone() AggregationFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (cf *countFunction) CalculateDefaultValue(schema *Schema, ctx context.Context) (d types.Datum, valid bool) {
+func (cf *countFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	for _, arg := range cf.Args {
-		result, err := EvaluateExprWithNull(ctx, schema, arg)
+		result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
 		if err != nil {
 			log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", cf, err.Error())
 			return d, false
 		}
-		if con, ok := result.(*Constant); ok {
+		if con, ok := result.(*expression.Constant); ok {
 			if con.Value.IsNull() {
 				return types.NewDatum(0), true
 			}
@@ -787,14 +788,14 @@ func (mmf *maxMinFunction) Clone() AggregationFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (mmf *maxMinFunction) CalculateDefaultValue(schema *Schema, ctx context.Context) (d types.Datum, valid bool) {
+func (mmf *maxMinFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := mmf.Args[0]
-	result, err := EvaluateExprWithNull(ctx, schema, arg)
+	result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", mmf, err.Error())
 		return d, false
 	}
-	if con, ok := result.(*Constant); ok {
+	if con, ok := result.(*expression.Constant); ok {
 		return con.Value, true
 	}
 	return d, false
@@ -957,14 +958,14 @@ func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (ff *firstRowFunction) CalculateDefaultValue(schema *Schema, ctx context.Context) (d types.Datum, valid bool) {
+func (ff *firstRowFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := ff.Args[0]
-	result, err := EvaluateExprWithNull(ctx, schema, arg)
+	result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
 		log.Warnf("Evaluate expr with null failed in function %s, err msg is %s", ff, err.Error())
 		return d, false
 	}
-	if con, ok := result.(*Constant); ok {
+	if con, ok := result.(*expression.Constant); ok {
 		return con.Value, true
 	}
 	return d, false

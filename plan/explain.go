@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/pingcap/tidb/aggregation"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -186,7 +187,7 @@ func (p *PhysicalAggregation) ExplainInfo() string {
 	}
 	buffer.WriteString(", funcs:")
 	for i, agg := range p.AggFuncs {
-		buffer.WriteString(expression.ExplainAggFunc(agg))
+		buffer.WriteString(aggregation.ExplainAggFunc(agg))
 		if i+1 < len(p.AggFuncs) {
 			buffer.WriteString(", ")
 		}
