@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	goctx "golang.org/x/net/context"
@@ -57,7 +58,7 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	c.Assert(s.cache.mu.regions, HasLen, len)
 	c.Assert(s.cache.mu.sorted.Len(), Equals, len)
 	for _, r := range s.cache.mu.regions {
-		c.Assert(r, DeepEquals, s.cache.getRegionFromCache(r.StartKey()))
+		c.Assert(r.region, DeepEquals, s.cache.getRegionFromCache(r.region.StartKey()))
 	}
 }
 
@@ -84,6 +85,13 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
 	s.checkCache(c, 1)
+	s.cache.mu.regions[r.VerID()].ttl = 0
+	log.Error("start check", r.VerID())
+	r = s.cache.getRegionFromCache([]byte("a"))
+	if r != nil {
+		log.Error("end check", r.VerID())
+	}
+	c.Assert(r, IsNil)
 }
 
 func (s *testRegionCacheSuite) TestDropStore(c *C) {
