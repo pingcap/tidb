@@ -17,8 +17,8 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/pingcap/tidb/aggregation"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 )
 
 func setParents4FinalPlan(plan PhysicalPlan) {

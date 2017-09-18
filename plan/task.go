@@ -17,9 +17,9 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/pingcap/tidb/aggregation"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"

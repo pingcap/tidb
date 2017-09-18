@@ -15,8 +15,8 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/aggregation"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
