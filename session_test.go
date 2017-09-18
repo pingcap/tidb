@@ -221,7 +221,7 @@ func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
 	match(c, row.Data, id, []byte("abc"), 1)
 	// Check for pass bool param to tidb prepared statement
 	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (id tiny)")
+	mustExecSQL(c, se, "create table t (id tinyint)")
 	mustExecSQL(c, se, "insert t values (?)", true)
 	rs = mustExecSQL(c, se, "select * from t")
 	c.Assert(rs, NotNil)
