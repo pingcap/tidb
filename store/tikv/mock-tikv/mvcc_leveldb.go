@@ -18,8 +18,8 @@ import (
 	"math"
 	"sync"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/goleveldb/leveldb"
 	"github.com/pingcap/goleveldb/leveldb/iterator"
 	"github.com/pingcap/goleveldb/leveldb/opt"
@@ -395,10 +395,91 @@ func (mvcc *MVCCLevelDB) Scan(startKey, endKey []byte, limit int, startTS uint64
 	return pairs
 }
 
-// ReverseScan implements the MVCCStore interface.
+// ReverseScan implements the MVCCStore interface. The search range is [startKey, endKey).
 func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
-	// TODO: Implement it.
-	panic("not implemented")
+	mvcc.mu.RLock()
+	defer mvcc.mu.RUnlock()
+
+	var mvccEnd []byte
+	if len(endKey) != 0 {
+		mvccEnd = mvccEncode(endKey, lockVer)
+	}
+	iter := mvcc.db.NewIterator(&util.Range{
+		Limit: mvccEnd,
+	}, nil)
+	defer iter.Release()
+
+	succ := iter.Last()
+	currKey, _, _ := mvccDecode(iter.Key())
+	helper := reverseScanHelper{
+		startTS:  startTS,
+		isoLevel: isoLevel,
+		currKey:  currKey,
+	}
+
+	for succ && len(helper.pairs) < limit {
+		key, ver, err := mvccDecode(iter.Key())
+		if err != nil {
+			break
+		}
+		if bytes.Compare(key, startKey) < 0 {
+			break
+		}
+
+		if !bytes.Equal(key, helper.currKey) {
+			helper.finishEntry()
+			helper.currKey = key
+		}
+		if ver == lockVer {
+			var lock mvccLock
+			err = lock.UnmarshalBinary(iter.Value())
+			helper.entry.lock = &lock
+		} else {
+			var value mvccValue
+			err = value.UnmarshalBinary(iter.Value())
+			helper.entry.values = append(helper.entry.values, value)
+		}
+		if err != nil {
+			log.Error("Unmarshal fail:", errors.Trace(err))
+			break
+		}
+		succ = iter.Prev()
+	}
+	if len(helper.pairs) < limit {
+		helper.finishEntry()
+	}
+	return helper.pairs
+}
+
+type reverseScanHelper struct {
+	startTS  uint64
+	isoLevel kvrpcpb.IsolationLevel
+	currKey  []byte
+	entry    mvccEntry
+	pairs    []Pair
+}
+
+func (helper *reverseScanHelper) finishEntry() {
+	reverse(helper.entry.values)
+	helper.entry.key = NewMvccKey(helper.currKey)
+	val, err := helper.entry.Get(helper.startTS, helper.isoLevel)
+	if len(val) != 0 || err != nil {
+		helper.pairs = append(helper.pairs, Pair{
+			Key:   helper.currKey,
+			Value: val,
+			Err:   err,
+		})
+	}
+	helper.entry = mvccEntry{}
+}
+
+func reverse(values []mvccValue) {
+	i, j := 0, len(values)-1
+	for i < j {
+		values[i], values[j] = values[j], values[i]
+		i++
+		j--
+	}
 }
 
 // Prewrite implements the MVCCStore interface.

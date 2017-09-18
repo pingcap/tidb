@@ -16,8 +16,8 @@ package tables
 import (
 	"sync"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -73,7 +73,7 @@ type MemoryTable struct {
 }
 
 // MemoryTableFromMeta creates a Table instance from model.TableInfo.
-func MemoryTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error) {
+func MemoryTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table {
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	var pkHandleColumn *table.Column
 	for _, colInfo := range tblInfo.Columns {
@@ -86,7 +86,7 @@ func MemoryTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (tabl
 	t := newMemoryTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
 	t.pkHandleCol = pkHandleColumn
 	t.meta = tblInfo
-	return t, nil
+	return t
 }
 
 // newMemoryTable constructs a MemoryTable instance.

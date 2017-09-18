@@ -19,8 +19,8 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -151,7 +151,7 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 		return false
 	}
 	t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-	if time.Now().Sub(t) < limit {
+	if time.Since(t) < limit {
 		return false
 	}
 	for _, col := range tbl.Columns {

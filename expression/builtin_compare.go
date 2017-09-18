@@ -15,16 +15,16 @@ package expression
 
 import (
 	"math"
-	"sort"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -43,9 +43,18 @@ var (
 	_ builtinFunc = &builtinCoalesceTimeSig{}
 	_ builtinFunc = &builtinCoalesceDurationSig{}
 
-	_ builtinFunc = &builtinGreatestSig{}
-	_ builtinFunc = &builtinLeastSig{}
-	_ builtinFunc = &builtinIntervalSig{}
+	_ builtinFunc = &builtinGreatestIntSig{}
+	_ builtinFunc = &builtinGreatestRealSig{}
+	_ builtinFunc = &builtinGreatestDecimalSig{}
+	_ builtinFunc = &builtinGreatestStringSig{}
+	_ builtinFunc = &builtinGreatestTimeSig{}
+	_ builtinFunc = &builtinLeastIntSig{}
+	_ builtinFunc = &builtinLeastRealSig{}
+	_ builtinFunc = &builtinLeastDecimalSig{}
+	_ builtinFunc = &builtinLeastStringSig{}
+	_ builtinFunc = &builtinLeastTimeSig{}
+	_ builtinFunc = &builtinIntervalIntSig{}
+	_ builtinFunc = &builtinIntervalRealSig{}
 
 	_ builtinFunc = &builtinLTIntSig{}
 	_ builtinFunc = &builtinLTRealSig{}
@@ -96,7 +105,7 @@ type coalesceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -116,10 +125,7 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, retEvalTp, fieldEvalTps...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retEvalTp, fieldEvalTps...)
 
 	bf.tp.Flag |= retTp.Flag
 	retTp.Flen, retTp.Decimal = 0, types.UnspecifiedLength
@@ -155,7 +161,7 @@ func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Conte
 		}
 
 		// For integer, field length = maxIntLen + (1/0 for sign bit)
-		// For decimal, field lenght = maxIntLen + maxDecimal + (1/0 for sign bit)
+		// For decimal, field length = maxIntLen + maxDecimal + (1/0 for sign bit)
 		if retCTp == types.ClassInt || retCTp == types.ClassDecimal {
 			retTp.Flen = maxIntLen + retTp.Decimal
 			if retTp.Decimal > 0 {
@@ -285,148 +291,528 @@ func (b *builtinCoalesceDurationSig) evalDuration(row []types.Datum) (res types.
 	return res, isNull, errors.Trace(err)
 }
 
+// temporalWithDateAsNumTypeClass makes DATE, DATETIME, TIMESTAMP pretend to be numbers rather than strings.
+func temporalWithDateAsNumTypeClass(argTp *types.FieldType) (argTypeClass types.TypeClass, isStr bool, isTemporalWithDate bool) {
+	argTypeClass = argTp.ToClass()
+	isStr, isTemporalWithDate = argTypeClass == types.ClassString, types.IsTemporalWithDate(argTp.Tp)
+	if !isTemporalWithDate {
+		return
+	}
+	if argTp.Decimal > 0 {
+		argTypeClass = types.ClassDecimal
+	} else {
+		argTypeClass = types.ClassInt
+	}
+	return
+}
+
+// getCmp4MinMax gets compare type for GREATEST and LEAST.
+func getCmpTp4MinMax(args []Expression) (argTp evalTp) {
+	datetimeFound, isAllStr := false, true
+	cmpType, isStr, isTemporalWithDate := temporalWithDateAsNumTypeClass(args[0].GetType())
+	if !isStr {
+		isAllStr = false
+	}
+	if isTemporalWithDate {
+		datetimeFound = true
+	}
+	for i := range args {
+		var tp types.TypeClass
+		tp, isStr, isTemporalWithDate = temporalWithDateAsNumTypeClass(args[i].GetType())
+		if isTemporalWithDate {
+			datetimeFound = true
+		}
+		if !isStr {
+			isAllStr = false
+		}
+		cmpType = getCmpType(cmpType, tp)
+	}
+	switch cmpType {
+	case types.ClassString:
+		argTp = tpString
+	case types.ClassInt:
+		argTp = tpInt
+	case types.ClassReal:
+		argTp = tpReal
+	case types.ClassDecimal:
+		argTp = tpDecimal
+	}
+	if isAllStr && datetimeFound {
+		argTp = tpDatetime
+	}
+	return argTp
+}
+
 type greatestFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *greatestFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinGreatestSig{newBaseBuiltinFunc(args, ctx)}
+	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
+	if tp == tpDatetime {
+		cmpAsDatetime = true
+		tp = tpString
+	}
+	argTps := make([]evalTp, len(args))
+	for i := range args {
+		argTps[i] = tp
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
+	if cmpAsDatetime {
+		tp = tpDatetime
+	}
+	switch tp {
+	case tpInt:
+		sig = &builtinGreatestIntSig{baseIntBuiltinFunc{bf}}
+	case tpReal:
+		sig = &builtinGreatestRealSig{baseRealBuiltinFunc{bf}}
+	case tpDecimal:
+		sig = &builtinGreatestDecimalSig{baseDecimalBuiltinFunc{bf}}
+	case tpString:
+		sig = &builtinGreatestStringSig{baseStringBuiltinFunc{bf}}
+	case tpDatetime:
+		sig = &builtinGreatestTimeSig{baseStringBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinGreatestSig struct {
-	baseBuiltinFunc
+type builtinGreatestIntSig struct {
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinGreatestSig.
+// evalInt evals a builtinGreatestIntSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return
-	}
-	max := 0
+func (b *builtinGreatestIntSig) evalInt(row []types.Datum) (max int64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	for i := 1; i < len(args); i++ {
-		if args[i].IsNull() {
-			return
+	max, isNull, err = b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return max, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v int64
+		v, isNull, err = b.args[i].EvalInt(row, sc)
+		if isNull || err != nil {
+			return max, isNull, errors.Trace(err)
 		}
-
-		var cmp int
-		if cmp, err = args[i].CompareDatum(sc, args[max]); err != nil {
-			return
-		}
-
-		if cmp > 0 {
-			max = i
+		if v > max {
+			max = v
 		}
 	}
-	d = args[max]
 	return
+}
+
+type builtinGreatestRealSig struct {
+	baseRealBuiltinFunc
+}
+
+// evalReal evals a builtinGreatestRealSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
+func (b *builtinGreatestRealSig) evalReal(row []types.Datum) (max float64, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	max, isNull, err = b.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return max, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v float64
+		v, isNull, err = b.args[i].EvalReal(row, sc)
+		if isNull || err != nil {
+			return max, isNull, errors.Trace(err)
+		}
+		if v > max {
+			max = v
+		}
+	}
+	return
+}
+
+type builtinGreatestDecimalSig struct {
+	baseDecimalBuiltinFunc
+}
+
+// evalDecimal evals a builtinGreatestDecimalSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
+func (b *builtinGreatestDecimalSig) evalDecimal(row []types.Datum) (max *types.MyDecimal, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	max, isNull, err = b.args[0].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return max, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v *types.MyDecimal
+		v, isNull, err = b.args[i].EvalDecimal(row, sc)
+		if isNull || err != nil {
+			return max, isNull, errors.Trace(err)
+		}
+		if v.Compare(max) > 0 {
+			max = v
+		}
+	}
+	return
+}
+
+type builtinGreatestStringSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinGreatestStringSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
+func (b *builtinGreatestStringSig) evalString(row []types.Datum) (max string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	max, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return max, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v string
+		v, isNull, err = b.args[i].EvalString(row, sc)
+		if isNull || err != nil {
+			return max, isNull, errors.Trace(err)
+		}
+		if types.CompareString(v, max) > 0 {
+			max = v
+		}
+	}
+	return
+}
+
+type builtinGreatestTimeSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinGreatestTimeSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
+func (b *builtinGreatestTimeSig) evalString(row []types.Datum) (_ string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	var (
+		v string
+		t types.Time
+	)
+	max := types.ZeroDatetime
+	for i := 0; i < len(b.args); i++ {
+		v, isNull, err = b.args[i].EvalString(row, sc)
+		if isNull {
+			return "", true, nil
+		}
+		t, err = types.ParseDatetime(v)
+		if err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				return v, true, errors.Trace(err)
+			}
+			continue
+		}
+		if t.Compare(max) > 0 {
+			max = t
+		}
+	}
+	return max.String(), false, nil
 }
 
 type leastFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leastFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinLeastSig{newBaseBuiltinFunc(args, ctx)}
+	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
+	if tp == tpDatetime {
+		cmpAsDatetime = true
+		tp = tpString
+	}
+	argTps := make([]evalTp, len(args))
+	for i := range args {
+		argTps[i] = tp
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
+	if cmpAsDatetime {
+		tp = tpDatetime
+	}
+	switch tp {
+	case tpInt:
+		sig = &builtinLeastIntSig{baseIntBuiltinFunc{bf}}
+	case tpReal:
+		sig = &builtinLeastRealSig{baseRealBuiltinFunc{bf}}
+	case tpDecimal:
+		sig = &builtinLeastDecimalSig{baseDecimalBuiltinFunc{bf}}
+	case tpString:
+		sig = &builtinLeastStringSig{baseStringBuiltinFunc{bf}}
+	case tpDatetime:
+		sig = &builtinLeastTimeSig{baseStringBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinLeastSig struct {
-	baseBuiltinFunc
+type builtinLeastIntSig struct {
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinLeastSig.
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
-func (b *builtinLeastSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return
-	}
-	min := 0
+// evalInt evals a builtinLeastIntSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+func (b *builtinLeastIntSig) evalInt(row []types.Datum) (min int64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	for i := 1; i < len(args); i++ {
-		if args[i].IsNull() {
-			return
+	min, isNull, err = b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return min, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v int64
+		v, isNull, err = b.args[i].EvalInt(row, sc)
+		if isNull || err != nil {
+			return min, isNull, errors.Trace(err)
 		}
-
-		var cmp int
-		if cmp, err = args[i].CompareDatum(sc, args[min]); err != nil {
-			return
-		}
-
-		if cmp < 0 {
-			min = i
+		if v < min {
+			min = v
 		}
 	}
-	d = args[min]
 	return
+}
+
+type builtinLeastRealSig struct {
+	baseRealBuiltinFunc
+}
+
+// evalReal evals a builtinLeastRealSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+func (b *builtinLeastRealSig) evalReal(row []types.Datum) (min float64, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	min, isNull, err = b.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return min, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v float64
+		v, isNull, err = b.args[i].EvalReal(row, sc)
+		if isNull || err != nil {
+			return min, isNull, errors.Trace(err)
+		}
+		if v < min {
+			min = v
+		}
+	}
+	return
+}
+
+type builtinLeastDecimalSig struct {
+	baseDecimalBuiltinFunc
+}
+
+// evalDecimal evals a builtinLeastDecimalSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+func (b *builtinLeastDecimalSig) evalDecimal(row []types.Datum) (min *types.MyDecimal, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	min, isNull, err = b.args[0].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return min, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v *types.MyDecimal
+		v, isNull, err = b.args[i].EvalDecimal(row, sc)
+		if isNull || err != nil {
+			return min, isNull, errors.Trace(err)
+		}
+		if v.Compare(min) < 0 {
+			min = v
+		}
+	}
+	return
+}
+
+type builtinLeastStringSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinLeastStringSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+func (b *builtinLeastStringSig) evalString(row []types.Datum) (min string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	min, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return min, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v string
+		v, isNull, err = b.args[i].EvalString(row, sc)
+		if isNull || err != nil {
+			return min, isNull, errors.Trace(err)
+		}
+		if types.CompareString(v, min) < 0 {
+			min = v
+		}
+	}
+	return
+}
+
+type builtinLeastTimeSig struct {
+	baseStringBuiltinFunc
+}
+
+// evalString evals a builtinLeastTimeSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+func (b *builtinLeastTimeSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	var (
+		v string
+		t types.Time
+	)
+	min := types.Time{
+		Time: types.MaxDatetime,
+		Type: mysql.TypeDatetime,
+		Fsp:  types.MaxFsp,
+	}
+	findInvalidTime := false
+	for i := 0; i < len(b.args); i++ {
+		v, isNull, err = b.args[i].EvalString(row, sc)
+		if isNull {
+			return "", true, nil
+		}
+		t, err = types.ParseDatetime(v)
+		if err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				return v, true, errors.Trace(err)
+			} else if !findInvalidTime {
+				res = v
+				findInvalidTime = true
+			}
+		}
+		if t.Compare(min) < 0 {
+			min = t
+		}
+	}
+	if !findInvalidTime {
+		res = min.String()
+	}
+	return res, false, nil
 }
 
 type intervalFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *intervalFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *intervalFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinIntervalSig{newBaseBuiltinFunc(args, ctx)}
+
+	allInt := true
+	for i := range args {
+		if fieldTp2EvalTp(args[i].GetType()) != tpInt {
+			allInt = false
+		}
+	}
+
+	argTps, argTp := make([]evalTp, 0, len(args)), tpReal
+	if allInt {
+		argTp = tpInt
+	}
+	for range args {
+		argTps = append(argTps, argTp)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTps...)
+	var sig builtinFunc
+	if allInt {
+		sig = &builtinIntervalIntSig{baseIntBuiltinFunc{bf}}
+	} else {
+		sig = &builtinIntervalRealSig{baseIntBuiltinFunc{bf}}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinIntervalSig struct {
-	baseBuiltinFunc
+type builtinIntervalIntSig struct {
+	baseIntBuiltinFunc
 }
 
-// eval evals a builtinIntervalSig.
+// evalInt evals a builtinIntervalIntSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
-func (b *builtinIntervalSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		d.SetInt64(int64(-1))
-		return
-	}
+func (b *builtinIntervalIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
+	args0, isNull, err := b.args[0].EvalInt(row, sc)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull {
+		return -1, false, nil
+	}
+	idx, err := b.binSearch(sc, args0, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], row)
+	return int64(idx), err != nil, errors.Trace(err)
+}
 
-	idx := sort.Search(len(args)-1, func(i int) bool {
-		d1, d2 := args[0], args[i+1]
-		if d1.Kind() == types.KindInt64 && d1.Kind() == d2.Kind() {
-			return d1.GetInt64() < d2.GetInt64()
+// All arguments are treated as integers.
+// It is required that arg[0] < args[1] < args[2] < ... < args[n] for this function to work correctly.
+// This is because a binary search is used (very fast).
+func (b *builtinIntervalIntSig) binSearch(sc *variable.StatementContext, target int64, isUint1 bool, args []Expression, row []types.Datum) (_ int, err error) {
+	i, j, cmp := 0, len(args), false
+	for i < j {
+		mid := i + (j-i)/2
+		v, isNull, err1 := args[mid].EvalInt(row, sc)
+		if err1 != nil {
+			err = err1
+			break
 		}
-		if d1.Kind() == types.KindUint64 && d1.Kind() == d2.Kind() {
-			return d1.GetUint64() < d2.GetUint64()
+		if isNull {
+			v = target
 		}
-		if d1.Kind() == types.KindInt64 && d2.Kind() == types.KindUint64 {
-			return d1.GetInt64() < 0 || d1.GetUint64() < d2.GetUint64()
+		isUint2 := mysql.HasUnsignedFlag(args[mid].GetType().Flag)
+		switch {
+		case !isUint1 && !isUint2:
+			cmp = target < v
+		case isUint1 && isUint2:
+			cmp = uint64(target) < uint64(v)
+		case !isUint1 && isUint2:
+			cmp = target < 0 || uint64(target) < uint64(v)
+		case isUint1 && !isUint2:
+			cmp = v > 0 && uint64(target) < uint64(v)
 		}
-		if d1.Kind() == types.KindUint64 && d2.Kind() == types.KindInt64 {
-			return d2.GetInt64() > 0 && d1.GetUint64() < d2.GetUint64()
+		if !cmp {
+			i = mid + 1
+		} else {
+			j = mid
 		}
-		v1, _ := d1.ToFloat64(sc)
-		v2, _ := d2.ToFloat64(sc)
-		return v1 < v2
-	})
-	d.SetInt64(int64(idx))
+	}
+	return i, errors.Trace(err)
+}
 
-	return
+type builtinIntervalRealSig struct {
+	baseIntBuiltinFunc
+}
+
+// evalInt evals a builtinIntervalRealSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
+func (b *builtinIntervalRealSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	args0, isNull, err := b.args[0].EvalReal(row, sc)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull {
+		return -1, false, nil
+	}
+	idx, err := b.binSearch(sc, args0, b.args[1:], row)
+	return int64(idx), err != nil, errors.Trace(err)
+}
+
+func (b *builtinIntervalRealSig) binSearch(sc *variable.StatementContext, target float64, args []Expression, row []types.Datum) (_ int, err error) {
+	i, j := 0, len(args)
+	for i < j {
+		mid := i + (j-i)/2
+		v, isNull, err1 := args[mid].EvalReal(row, sc)
+		if err != nil {
+			err = err1
+			break
+		}
+		if isNull {
+			i = mid + 1
+		} else if cmp := target < v; !cmp {
+			i = mid + 1
+		} else {
+			j = mid
+		}
+	}
+	return i, errors.Trace(err)
 }
 
 type compareFunctionClass struct {
@@ -482,13 +868,11 @@ func refineConstantArg(con *Constant, op opcode.Op, ctx context.Context) *Consta
 	sc := ctx.GetSessionVars().StmtCtx
 	i64, err := con.Value.ToInt64(sc)
 	if err != nil {
-		log.Warnf("failed to refine this expression, the constant argument is %s", con)
 		return con
 	}
 	datumInt := types.NewIntDatum(i64)
 	c, err := datumInt.CompareDatum(sc, con.Value)
 	if err != nil {
-		log.Warnf("failed to refine this expression, the constant argument is %s", con)
 		return con
 	}
 	if c == 0 {
@@ -534,7 +918,7 @@ func (c *compareFunctionClass) refineArgs(args []Expression, ctx context.Context
 }
 
 // getFunction sets compare built-in function signatures for various types.
-func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Context) (sig builtinFunc, err error) {
+func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -568,7 +952,7 @@ func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Con
 				or
 				<const string expression> <cmp> <non-const decimal expression>
 
-				Do comparision as decimal rather than float, in order not to lose precision.
+				Do comparison as decimal rather than float, in order not to lose precision.
 			)*/
 			cmpType = types.ClassDecimal
 		} else if isTemporalColumn(args[0]) && isConst1 ||
@@ -614,10 +998,7 @@ func (c *compareFunctionClass) getFunction(rawArgs []Expression, ctx context.Con
 
 // genCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx context.Context) (sig builtinFunc, err error) {
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
-	if err != nil {
-		return sig, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
 	bf.tp.Flen = 1
 	intBf := baseIntBuiltinFunc{bf}
 	switch tp {
@@ -625,120 +1006,169 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTIntSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LTInt)
 		case opcode.LE:
 			sig = &builtinLEIntSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LEInt)
 		case opcode.GT:
 			sig = &builtinGTIntSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GTInt)
 		case opcode.EQ:
 			sig = &builtinEQIntSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_EQInt)
 		case opcode.GE:
 			sig = &builtinGEIntSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GEInt)
 		case opcode.NE:
 			sig = &builtinNEIntSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NEInt)
 		case opcode.NullEQ:
 			sig = &builtinNullEQIntSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NullEQInt)
 		}
 	case tpReal:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTRealSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LTReal)
 		case opcode.LE:
 			sig = &builtinLERealSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LEReal)
 		case opcode.GT:
 			sig = &builtinGTRealSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GTReal)
 		case opcode.GE:
 			sig = &builtinGERealSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GEReal)
 		case opcode.EQ:
 			sig = &builtinEQRealSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_EQReal)
 		case opcode.NE:
 			sig = &builtinNERealSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NEReal)
 		case opcode.NullEQ:
 			sig = &builtinNullEQRealSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NullEQReal)
 		}
 	case tpDecimal:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTDecimalSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LTDecimal)
 		case opcode.LE:
 			sig = &builtinLEDecimalSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LEDecimal)
 		case opcode.GT:
 			sig = &builtinGTDecimalSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GTDecimal)
 		case opcode.GE:
 			sig = &builtinGEDecimalSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GEDecimal)
 		case opcode.EQ:
 			sig = &builtinEQDecimalSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_EQDecimal)
 		case opcode.NE:
 			sig = &builtinNEDecimalSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NEDecimal)
 		case opcode.NullEQ:
 			sig = &builtinNullEQDecimalSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NullEQDecimal)
 		}
 	case tpString:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTStringSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LTString)
 		case opcode.LE:
 			sig = &builtinLEStringSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LEString)
 		case opcode.GT:
 			sig = &builtinGTStringSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GTString)
 		case opcode.GE:
 			sig = &builtinGEStringSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GEString)
 		case opcode.EQ:
 			sig = &builtinEQStringSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_EQString)
 		case opcode.NE:
 			sig = &builtinNEStringSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NEString)
 		case opcode.NullEQ:
 			sig = &builtinNullEQStringSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NullEQString)
 		}
 	case tpDuration:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTDurationSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LTDuration)
 		case opcode.LE:
 			sig = &builtinLEDurationSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LEDuration)
 		case opcode.GT:
 			sig = &builtinGTDurationSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GTDuration)
 		case opcode.GE:
 			sig = &builtinGEDurationSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GEDuration)
 		case opcode.EQ:
 			sig = &builtinEQDurationSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_EQDuration)
 		case opcode.NE:
 			sig = &builtinNEDurationSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NEDuration)
 		case opcode.NullEQ:
 			sig = &builtinNullEQDurationSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NullEQDuration)
 		}
 	case tpDatetime, tpTimestamp:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTTimeSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LTTime)
 		case opcode.LE:
 			sig = &builtinLETimeSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LETime)
 		case opcode.GT:
 			sig = &builtinGTTimeSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GTTime)
 		case opcode.GE:
 			sig = &builtinGETimeSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GETime)
 		case opcode.EQ:
 			sig = &builtinEQTimeSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_EQTime)
 		case opcode.NE:
 			sig = &builtinNETimeSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NETime)
 		case opcode.NullEQ:
 			sig = &builtinNullEQTimeSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NullEQTime)
 		}
 	case tpJSON:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTJSONSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LTJson)
 		case opcode.LE:
 			sig = &builtinLEJSONSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_LEJson)
 		case opcode.GT:
 			sig = &builtinGTJSONSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GTJson)
 		case opcode.GE:
 			sig = &builtinGEJSONSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_GEJson)
 		case opcode.EQ:
 			sig = &builtinEQJSONSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_EQJson)
 		case opcode.NE:
 			sig = &builtinNEJSONSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NEJson)
 		case opcode.NullEQ:
 			sig = &builtinNullEQJSONSig{intBf}
+			sig.setPbCode(tipb.ScalarFuncSig_NullEQJson)
 		}
 	}
 	return

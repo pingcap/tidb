@@ -23,17 +23,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite) TestShow(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
 	testSQL := `drop table if exists show_test`
 	tk.MustExec(testSQL)
 	testSQL = `create table SHOW_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int comment "c1_comment", c2 int, c3 int default 1) ENGINE=InnoDB AUTO_INCREMENT=28934 DEFAULT CHARSET=utf8 COMMENT "table_comment";`
@@ -148,6 +144,68 @@ func (s *testSuite) TestShow(c *C) {
 			"  `id` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=4",
 	))
+
+	// Test show table with column's comment contain escape character
+	// for issue https://github.com/pingcap/tidb/issues/4411
+	tk.MustExec(`drop table if exists show_escape_character`)
+	tk.MustExec(`create table show_escape_character(id int comment 'a\rb\nc\td\0ef')`)
+	tk.MustQuery(`show create table show_escape_character`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_escape_character CREATE TABLE `show_escape_character` (\n"+
+			"  `id` int(11) DEFAULT NULL COMMENT 'a\\rb\\nc	d\\0ef'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+
+	// for issue https://github.com/pingcap/tidb/issues/4424
+	tk.MustExec("drop table if exists show_test")
+	testSQL = `create table show_test(
+		a varchar(10) COMMENT 'a\nb\rc\td\0e'
+	) COMMENT='a\nb\rc\td\0e';`
+	tk.MustExec(testSQL)
+	testSQL = "show create table show_test;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT NULL COMMENT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='a\\nb\\rc	d\\0e'"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	// for issue https://github.com/pingcap/tidb/issues/4425
+	tk.MustExec("drop table if exists show_test")
+	testSQL = `create table show_test(
+		a varchar(10) DEFAULT 'a\nb\rc\td\0e'
+	);`
+	tk.MustExec(testSQL)
+	testSQL = "show create table show_test;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	// for issue https://github.com/pingcap/tidb/issues/4426
+	tk.MustExec("drop table if exists show_test")
+	testSQL = `create table show_test(
+		a bit(1),
+		b bit(32) DEFAULT 0b0,
+		c bit(1) DEFAULT 0b1,
+		d bit(10) DEFAULT 0b1010
+	);`
+	tk.MustExec(testSQL)
+	testSQL = "show create table show_test;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"show_test", "CREATE TABLE `show_test` (\n  `a` bit(1) DEFAULT NULL,\n  `b` bit(32) DEFAULT b'0',\n  `c` bit(1) DEFAULT b'1',\n  `d` bit(10) DEFAULT b'1010'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
@@ -217,7 +275,7 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 	tk.MustExec(testSQL)
 	testSQL = `drop table if exists t1`
 	tk.MustExec(testSQL)
-	testSQL = `CREATE TABLE t1 (id int PRIMARY KEY AUTO_INCREMENT)`
+	testSQL = `CREATE TABLE t1 (pk int PRIMARY KEY AUTO_INCREMENT)`
 	tk.MustExec(testSQL)
 
 	// For table with single fk.
@@ -225,7 +283,7 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 		"CREATE TABLE `show_test` (",
 		"  `id` int(11) NOT NULL AUTO_INCREMENT,",
 		"  PRIMARY KEY (`id`),",
-		"  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE",
+		"  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`pk`) ON DELETE CASCADE ON UPDATE CASCADE",
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	}
 	testSQL = strings.Join(sqlLines, "\n")
@@ -269,14 +327,14 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
-	testSQL = "ALTER TABLE SHOW_TEST ADD CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n "
+	testSQL = "ALTER TABLE SHOW_TEST ADD CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`pk`) ON DELETE CASCADE ON UPDATE CASCADE\n "
 	tk.MustExec(testSQL)
 	testSQL = "show create table show_test;"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`id`),\n  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`id`),\n  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`pk`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}

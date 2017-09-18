@@ -163,10 +163,10 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
 			[]string{
-				"TableScan_9 HashAgg_8  cop table:t1, range:(-inf,+inf), keep order:false 8000",
-				"HashAgg_8  TableScan_9 cop type:complete, funcs:sum(or(eq(test.t1.c1, 1), eq(test.t1.c1, 2))) 1",
-				"TableReader_11 HashAgg_10  root data:HashAgg_8 1",
-				"HashAgg_10  TableReader_11 root type:final, funcs:sum(col_0) 1",
+				"TableScan_10 HashAgg_8  cop table:t1, range:(-inf,+inf), keep order:false 8000",
+				"HashAgg_8  TableScan_10 cop type:complete, funcs:sum(or(eq(test.t1.c1, 1), eq(test.t1.c1, 2))) 1",
+				"TableReader_12 HashAgg_11  root data:HashAgg_8 1",
+				"HashAgg_11  TableReader_12 root type:final, funcs:sum(col_0) 1",
 			},
 		},
 		{
@@ -181,11 +181,11 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			[]string{
 				"TableScan_13   cop table:t1, range:(-inf,+inf), keep order:false 8000",
 				"TableReader_14 Apply_12  root data:TableScan_13 8000",
-				"TableScan_16   cop table:s, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_17 Selection_4  root data:TableScan_16 8000",
-				"Selection_4 HashAgg_15 TableReader_17 root eq(s.c1, test.t1.c1) 6400",
-				"HashAgg_15 Selection_10 Selection_4 root type:complete, funcs:count(1) 1",
-				"Selection_10 Apply_12 HashAgg_15 root ne(k, 0) 0.8",
+				"TableScan_20   cop table:s, range:(-inf,+inf), keep order:true 8000",
+				"TableReader_21 Selection_4  root data:TableScan_20 8000",
+				"Selection_4 StreamAgg_16 TableReader_21 root eq(s.c1, test.t1.c1) 6400",
+				"StreamAgg_16 Selection_10 Selection_4 root type:stream, funcs:count(1) 1",
+				"Selection_10 Apply_12 StreamAgg_16 root ne(k, 0) 0.8",
 				"Apply_12 Projection_2 TableReader_14,Selection_10 root left outer join, small:Selection_10, right:Selection_10 8000",
 				"Projection_2  Apply_12 root k 8000",
 			},
@@ -234,12 +234,12 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
 			[]string{
-				"TableScan_10   cop table:t1, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_11 HashSemiJoin_9  root data:TableScan_10 8000",
-				"TableScan_12   cop table:t2, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_13 HashSemiJoin_9  root data:TableScan_12 8000",
-				"HashSemiJoin_9 HashAgg_8 TableReader_11,TableReader_13 root right:TableReader_13, aux, equal:[eq(test.t1.c1, test.t2.c1)] 8000",
-				"HashAgg_8  HashSemiJoin_9 root type:complete, funcs:sum(join_5_aux_0) 1",
+				"TableScan_18   cop table:t1, range:(-inf,+inf), keep order:true 8000",
+				"TableReader_19 HashSemiJoin_16  root data:TableScan_18 8000",
+				"TableScan_14   cop table:t2, range:(-inf,+inf), keep order:false 8000",
+				"TableReader_15 HashSemiJoin_16  root data:TableScan_14 8000",
+				"HashSemiJoin_16 StreamAgg_9 TableReader_19,TableReader_15 root right:TableReader_15, aux, equal:[eq(test.t1.c1, test.t2.c1)] 8000",
+				"StreamAgg_9  HashSemiJoin_16 root type:stream, funcs:sum(5_aux_0) 1",
 			},
 		},
 		{
@@ -262,7 +262,7 @@ func (s *testExplainSuite) TestExplain(c *C) {
 				"Selection_13  TableScan_12 cop eq(6, test.t2.c2) 10",
 				"TableReader_14 HashSemiJoin_9  root data:Selection_13 10",
 				"HashSemiJoin_9 HashAgg_8 TableReader_11,TableReader_14 root right:TableReader_14, aux 8000",
-				"HashAgg_8  HashSemiJoin_9 root type:complete, funcs:sum(join_5_aux_0) 1",
+				"HashAgg_8  HashSemiJoin_9 root type:complete, funcs:sum(5_aux_0) 1",
 			},
 		},
 	}

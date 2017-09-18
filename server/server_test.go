@@ -25,9 +25,10 @@ import (
 	"testing"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/go-sql-driver/mysql"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb/executor"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/printer"
@@ -35,6 +36,10 @@ import (
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 	TestingT(t)
 }
 
@@ -246,6 +251,41 @@ func runTestSpecialType(t *C) {
 	})
 }
 
+func runTestClientWithCollation(t *C) {
+	runTests(t, func(config *mysql.Config) {
+		config.Collation = "utf8mb4_general_ci"
+	}, func(dbt *DBTest) {
+		var name, charset, collation string
+		// check session variable collation_connection
+		rows := dbt.mustQuery("show variables like 'collation_connection'")
+		t.Assert(rows.Next(), IsTrue)
+		err := rows.Scan(&name, &collation)
+		t.Assert(err, IsNil)
+		t.Assert(collation, Equals, "utf8mb4_general_ci")
+
+		// check session variable character_set_client
+		rows = dbt.mustQuery("show variables like 'character_set_client'")
+		t.Assert(rows.Next(), IsTrue)
+		err = rows.Scan(&name, &charset)
+		t.Assert(err, IsNil)
+		t.Assert(charset, Equals, "utf8mb4")
+
+		// check session variable character_set_results
+		rows = dbt.mustQuery("show variables like 'character_set_results'")
+		t.Assert(rows.Next(), IsTrue)
+		err = rows.Scan(&name, &charset)
+		t.Assert(err, IsNil)
+		t.Assert(charset, Equals, "utf8mb4")
+
+		// check session variable character_set_connection
+		rows = dbt.mustQuery("show variables like 'character_set_connection'")
+		t.Assert(rows.Next(), IsTrue)
+		err = rows.Scan(&name, &charset)
+		t.Assert(err, IsNil)
+		t.Assert(charset, Equals, "utf8mb4")
+	})
+}
+
 func runTestPreparedString(t *C) {
 	runTestsOnNewDB(t, nil, "PreparedString", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a char(10), b char(10))")
@@ -260,7 +300,7 @@ func runTestPreparedString(t *C) {
 	})
 }
 
-func runTestLoadData(c *C) {
+func runTestLoadData(c *C, server *Server) {
 	// create a file and write data.
 	path := "/tmp/load_data_test.csv"
 	fp, err := os.Create(path)
@@ -392,7 +432,7 @@ func runTestLoadData(c *C) {
 	})
 
 	// unsupport ClientLocalFiles capability
-	defaultCapability ^= tmysql.ClientLocalFiles
+	server.capability ^= tmysql.ClientLocalFiles
 	runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 	}, "LoadData", func(dbt *DBTest) {
@@ -401,7 +441,7 @@ func runTestLoadData(c *C) {
 		dbt.Assert(err, NotNil)
 		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
 	})
-	defaultCapability |= tmysql.ClientLocalFiles
+	server.capability |= tmysql.ClientLocalFiles
 }
 
 func runTestConcurrentUpdate(c *C) {
@@ -675,6 +715,14 @@ func runTestStmtCount(t *C) {
 	})
 }
 
+func runTestTLSConnection(t *C, overrider configOverrider) error {
+	db, err := sql.Open("mysql", getDSN(overrider))
+	t.Assert(err, IsNil)
+	defer db.Close()
+	_, err = db.Exec("USE test")
+	return err
+}
+
 func getMetrics(t *C) []byte {
 	resp, err := http.Get("http://127.0.0.1:10090/metrics")
 	t.Assert(err, IsNil)
@@ -697,7 +745,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 const retryTime = 100
 
-func waitUntilServerOnline(statusAddr string) {
+func waitUntilServerOnline(statusPort int) {
 	// connect server
 	retry := 0
 	for ; retry < retryTime; retry++ {
@@ -712,7 +760,7 @@ func waitUntilServerOnline(statusAddr string) {
 		log.Fatalf("Failed to connect db for %d retries in every 10 ms", retryTime)
 	}
 	// connect http status
-	statusURL := fmt.Sprintf("http://127.0.0.1%s/status", statusAddr)
+	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
 	for retry = 0; retry < retryTime; retry++ {
 		resp, err := http.Get(statusURL)
 		if err == nil {

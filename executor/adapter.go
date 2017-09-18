@@ -18,8 +18,8 @@ import (
 	"math"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
@@ -146,8 +146,15 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	var pi processinfoSetter
 	if raw, ok := ctx.(processinfoSetter); ok {
 		pi = raw
+		sql := a.OriginText()
+		if simple, ok := a.plan.(*plan.Simple); ok && simple.Statement != nil {
+			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
+				// Use SecureText to avoid leak password information.
+				sql = ss.SecureText()
+			}
+		}
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(a.OriginText())
+		pi.SetProcessInfo(sql)
 	}
 	// Fields or Schema are only used for statements that return result set.
 	if e.Schema().Len() == 0 {
@@ -252,11 +259,11 @@ func (a *statement) logSlowQuery() {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
 	sql := a.text
-	if len(sql) > cfg.QueryLogMaxlen {
-		sql = sql[:cfg.QueryLogMaxlen] + fmt.Sprintf("(len:%d)", len(sql))
+	if len(sql) > cfg.Log.QueryLogMaxLen {
+		sql = sql[:cfg.Log.QueryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
 	}
 	connID := a.ctx.GetSessionVars().ConnectionID
-	if costTime < time.Duration(cfg.SlowThreshold)*time.Millisecond {
+	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
 		log.Debugf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
 	} else {
 		log.Warnf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)

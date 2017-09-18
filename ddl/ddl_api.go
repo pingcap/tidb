@@ -19,7 +19,6 @@ package ddl
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -201,12 +200,13 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 			}
 		}
 	}
-	// If flen is not assigned, assigned it by type.
+	// Use default value for flen or decimal when they are unspecified.
+	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.Tp)
 	if tp.Flen == types.UnspecifiedLength {
-		tp.Flen = mysql.GetDefaultFieldLength(tp.Tp)
+		tp.Flen = defaultFlen
 	}
 	if tp.Decimal == types.UnspecifiedLength {
-		tp.Decimal = mysql.GetDefaultDecimal(tp.Tp)
+		tp.Decimal = defaultDecimal
 	}
 	return nil
 }
@@ -328,6 +328,11 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	if col.Charset == charset.CharsetBin {
 		col.Flag |= mysql.BinaryFlag
 	}
+	if col.Tp == mysql.TypeBit {
+		// For BIT field, it's charset is binary but does not have binary flag.
+		col.Flag &= ^mysql.BinaryFlag
+		col.Flag |= mysql.UnsignedFlag
+	}
 	err := checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -364,8 +369,24 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 		return nil, nil
 	}
 
-	if v.Kind() == types.KindMysqlHex {
-		return strconv.FormatInt(v.GetMysqlHex().Value, 10), nil
+	if v.Kind() == types.KindBinaryLiteral || v.Kind() == types.KindMysqlBit {
+		if tp == mysql.TypeBit ||
+			tp == mysql.TypeString || tp == mysql.TypeVarchar || tp == mysql.TypeVarString ||
+			tp == mysql.TypeBlob || tp == mysql.TypeLongBlob || tp == mysql.TypeMediumBlob || tp == mysql.TypeTinyBlob ||
+			tp == mysql.TypeJSON {
+			// For BinaryLiteral / string fields, when getting default value we cast the value into BinaryLiteral{}, thus we return
+			// its raw string content here.
+			return v.GetBinaryLiteral().ToString(), nil
+		}
+		// For other kind of fields (e.g. INT), we supply its integer value so that it acts as integers.
+		return v.GetBinaryLiteral().ToInt()
+	}
+
+	if tp == mysql.TypeBit {
+		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
+			// For BIT fields, convert int into BinaryLiteral.
+			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), nil
+		}
 	}
 
 	return v.ToString()
@@ -417,14 +438,14 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 	if c.DefaultValue != nil {
 		_, err := table.GetColDefaultValue(ctx, c.ToInfo())
 		if types.ErrTruncated.Equal(err) {
-			return errInvalidDefault.GenByArgs(c.Name)
+			return types.ErrInvalidDefault.GenByArgs(c.Name)
 		}
 		return errors.Trace(err)
 	}
 
 	// Set not null but default null is invalid.
 	if mysql.HasNotNullFlag(c.Flag) {
-		return errInvalidDefault.GenByArgs(c.Name)
+		return types.ErrInvalidDefault.GenByArgs(c.Name)
 	}
 
 	return nil
@@ -473,6 +494,13 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
 			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name)
 		}
+	}
+	return nil
+}
+
+func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
+	if len(colDefs) > TableColumnCountLimit {
+		return errTooManyFields
 	}
 	return nil
 }
@@ -705,6 +733,9 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(err)
 	}
 	if err = checkTooLongColumn(colDefs); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkTooManyColumns(colDefs); err != nil {
 		return errors.Trace(err)
 	}
 

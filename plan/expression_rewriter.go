@@ -117,9 +117,6 @@ func getRowLen(e expression.Expression) int {
 	if f, ok := e.(*expression.ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
 		return len(f.GetArgs())
 	}
-	if c, ok := e.(*expression.Constant); ok && c.Value.Kind() == types.KindRow {
-		return len(c.Value.GetRow())
-	}
 	return 1
 }
 
@@ -127,9 +124,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 	if f, ok := e.(*expression.ScalarFunction); ok {
 		return f.GetArgs()[idx]
 	}
-	c, _ := e.(*expression.Constant)
-	d := c.Value.GetRow()[idx]
-	return &expression.Constant{Value: d, RetType: c.GetType()}
+	return nil
 }
 
 // popRowArg pops the first element and return the rest of row.
@@ -142,12 +137,6 @@ func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Exp
 		}
 		ret, err = expression.NewFunction(ctx, f.FuncName.L, f.GetType(), args[1:]...)
 		return ret, errors.Trace(err)
-	}
-	c, _ := e.(*expression.Constant)
-	if getRowLen(c) == 2 {
-		ret = &expression.Constant{Value: c.Value.GetRow()[1], RetType: c.GetType()}
-	} else {
-		ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
 	}
 	return
 }
@@ -681,9 +670,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
 	case *ast.ValueExpr:
-		tp := &types.FieldType{}
-		types.DefaultTypeForValue(v.GetValue(), tp)
-		value := &expression.Constant{Value: v.Datum, RetType: tp}
+		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
@@ -883,7 +870,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 
 // inToExpression converts in expression to a scalar function. The argument lLen means the length of in list.
 // The argument not means if the expression is not in. The tp stands for the expression type, which is always bool.
-// a in (b, c, d) will be rewritted as `(a = b) or (a = c) or (a = d)`.
+// a in (b, c, d) will be rewritten as `(a = b) or (a = c) or (a = d)`.
 func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	l := getRowLen(er.ctxStack[stkLen-lLen-1])
@@ -1081,8 +1068,15 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			er.err = err
 			return true
 		}
-		// if(param1 = param2, null, param1)
-		funcIf, err := expression.NewFunction(er.ctx, ast.If, &v.Type, funcCompare, expression.Null, param1)
+		// NULL
+		nullTp := types.NewFieldType(mysql.TypeNull)
+		nullTp.Flen, nullTp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
+		paramNull := &expression.Constant{
+			Value:   types.NewDatum(nil),
+			RetType: nullTp,
+		}
+		// if(param1 = param2, NULL, param1)
+		funcIf, err := expression.NewFunction(er.ctx, ast.If, &v.Type, funcCompare, paramNull, param1)
 		if err != nil {
 			er.err = err
 			return true

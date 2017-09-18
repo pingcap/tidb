@@ -64,6 +64,9 @@ func newStringType() types.FieldType {
 }
 
 func MockTable() *model.TableInfo {
+	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
+	// PK: a
+	// indeices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),
@@ -120,8 +123,7 @@ func MockTable() *model.TableInfo {
 					Offset: 9,
 				},
 			},
-			State:  model.StatePublic,
-			Unique: true,
+			State: model.StatePublic,
 		},
 		{
 			Name: model.NewCIStr("f_g"),
@@ -600,7 +602,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Aggr(firstrow(aggregation_2_col_0),firstrow(test.t.a),count(s.b))->Projection->Projection",
+			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Aggr(firstrow(2_col_0),firstrow(test.t.a),count(s.b))->Projection->Projection",
 		},
 		{
 			// Semi-join with agg cannot decorrelate.
@@ -676,10 +678,6 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			sql:  "select substr(\"abc\", 1)",
 			plan: "Dual->Projection",
-		},
-		{
-			sql:  "analyze table t, t",
-			plan: "*plan.Analyze",
 		},
 	}
 	for _, ca := range tests {
@@ -870,114 +868,114 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql string
-		ans map[string][]string
+		ans map[int][]string
 	}{
 		{
 			sql: "select count(*) from t group by a",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
+			ans: map[int][]string{
+				1: {"a"},
 			},
 		},
 		{
 			sql: "select count(*) from t",
-			ans: map[string][]string{
-				"TableScan_1": {},
+			ans: map[int][]string{
+				1: {},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b where a.a < 1",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_2": {},
+			ans: map[int][]string{
+				1: {"a"},
+				2: {},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b on a.a = b.d",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_2": {"d"},
+			ans: map[int][]string{
+				1: {"a"},
+				2: {"d"},
 			},
 		},
 		{
 			sql: "select count(*) from t a join t b on a.a = b.d order by sum(a.d)",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "d"},
-				"TableScan_2": {"d"},
+			ans: map[int][]string{
+				1: {"a", "d"},
+				2: {"d"},
 			},
 		},
 		{
 			sql: "select count(b.a) from t a join t b on a.a = b.d group by b.b order by sum(a.d)",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "d"},
-				"TableScan_2": {"a", "b", "d"},
+			ans: map[int][]string{
+				1: {"a", "d"},
+				2: {"a", "b", "d"},
 			},
 		},
 		{
 			sql: "select * from (select count(b.a) from t a join t b on a.a = b.d group by b.b having sum(a.d) < 0) tt",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "d"},
-				"TableScan_2": {"a", "b", "d"},
+			ans: map[int][]string{
+				1: {"a", "d"},
+				2: {"a", "b", "d"},
 			},
 		},
 		{
 			sql: "select (select count(a) from t where b = k.a) from t k",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_3": {"a", "b"},
+			ans: map[int][]string{
+				1: {"a"},
+				3: {"a", "b"},
 			},
 		},
 		{
 			sql: "select exists (select count(*) from t where b = k.a) from t k",
-			ans: map[string][]string{
-				"TableScan_1": {},
+			ans: map[int][]string{
+				1: {},
 			},
 		},
 		{
 			sql: "select b = (select count(*) from t where b = k.a) from t k",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "b"},
-				"TableScan_3": {"b"},
+			ans: map[int][]string{
+				1: {"a", "b"},
+				3: {"b"},
 			},
 		},
 		{
 			sql: "select exists (select count(a) from t where b = k.a group by b) from t k",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_3": {"b"},
+			ans: map[int][]string{
+				1: {"a"},
+				3: {"b"},
 			},
 		},
 		{
 			sql: "select a as c1, b as c2 from t order by 1, c1 + c2 + c",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "b", "c"},
+			ans: map[int][]string{
+				1: {"a", "b", "c"},
 			},
 		},
 		{
 			sql: "select a from t where b < any (select c from t)",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "b"},
-				"TableScan_3": {"c"},
+			ans: map[int][]string{
+				1: {"a", "b"},
+				3: {"c"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) != all (select c,d from t)",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "b"},
-				"TableScan_3": {"c", "d"},
+			ans: map[int][]string{
+				1: {"a", "b"},
+				3: {"c", "d"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) in (select c,d from t)",
-			ans: map[string][]string{
-				"TableScan_1": {"a", "b"},
-				"TableScan_3": {"c", "d"},
+			ans: map[int][]string{
+				1: {"a", "b"},
+				3: {"c", "d"},
 			},
 		},
 		{
 			sql: "select a from t where a in (select a from t s group by t.b)",
-			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_3": {"a"},
+			ans: map[int][]string{
+				1: {"a"},
+				3: {"a"},
 			},
 		},
 	}
@@ -1011,7 +1009,7 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	c.Assert(pA.id, Equals, pB.id)
 }
 
-func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
+func checkDataSourceCols(p Plan, c *C, ans map[int][]string, comment CommentInterface) {
 	switch p.(type) {
 	case *DataSource:
 		colList, ok := ans[p.ID()]
@@ -1146,7 +1144,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 	}
 }
 
-func checkUniqueKeys(p Plan, c *C, ans map[string][][]string, sql string) {
+func checkUniqueKeys(p Plan, c *C, ans map[int][][]string, sql string) {
 	keyList, ok := ans[p.ID()]
 	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.ID()))
 	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
@@ -1165,66 +1163,66 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql string
-		ans map[string][][]string
+		ans map[int][][]string
 	}{
 		{
 			sql: "select a, sum(e) from t group by b",
-			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}},
-				"Projection_3":  {{"a"}},
+			ans: map[int][][]string{
+				1: {{"test.t.a"}},
+				2: {{"test.t.a"}},
+				3: {{"a"}},
 			},
 		},
 		{
 			sql: "select a, b, sum(f) from t group by b",
-			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}, {"test.t.b"}},
-				"Projection_3":  {{"a"}, {"b"}},
+			ans: map[int][][]string{
+				1: {{"test.t.f"}, {"test.t.a"}},
+				2: {{"test.t.a"}, {"test.t.b"}},
+				3: {{"a"}, {"b"}},
 			},
 		},
 		{
 			sql: "select c, d, e, sum(a) from t group by c, d, e",
-			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.a"}},
-				"Aggregation_2": {{"test.t.c", "test.t.d", "test.t.e"}},
-				"Projection_3":  {{"c", "d", "e"}},
+			ans: map[int][][]string{
+				1: {{"test.t.a"}},
+				2: {{"test.t.c", "test.t.d", "test.t.e"}},
+				3: {{"c", "d", "e"}},
 			},
 		},
 		{
 			sql: "select f, g, sum(a) from t",
-			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}},
-				"Projection_3":  {{"f"}, {"g"}, {"f", "g"}},
+			ans: map[int][][]string{
+				1: {{"test.t.f"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
+				2: {{"test.t.f"}, {"test.t.f", "test.t.g"}},
+				3: {{"f"}, {"f", "g"}},
 			},
 		},
 		{
 			sql: "select * from t t1 join t t2 on t1.a = t2.e",
-			ans: map[string][][]string{
-				"TableScan_1":  {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
-				"TableScan_2":  {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
-				"Join_3":       {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
-				"Projection_4": {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
+			ans: map[int][][]string{
+				1: {{"t1.f"}, {"t1.f", "t1.g"}, {"t1.a"}},
+				2: {{"t2.f"}, {"t2.f", "t2.g"}, {"t2.a"}},
+				3: {{"t2.f"}, {"t2.f", "t2.g"}, {"t2.a"}},
+				4: {{"t2.f"}, {"t2.f", "t2.g"}, {"t2.a"}},
 			},
 		},
 		{
 			sql: "select f from t having sum(a) > 0",
-			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.f"}},
-				"Selection_6":   {{"test.t.f"}},
-				"Projection_3":  {{"f"}},
-				"Projection_5":  {{"f"}},
+			ans: map[int][][]string{
+				1: {{"test.t.f"}, {"test.t.a"}},
+				2: {{"test.t.f"}},
+				6: {{"test.t.f"}},
+				3: {{"f"}},
+				5: {{"f"}},
 			},
 		},
 		{
 			sql: "select * from t t1 left join t t2 on t1.a = t2.a",
-			ans: map[string][][]string{
-				"TableScan_1":  {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
-				"TableScan_2":  {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
-				"Join_3":       {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
-				"Projection_4": {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
+			ans: map[int][][]string{
+				1: {{"t1.f"}, {"t1.f", "t1.g"}, {"t1.a"}},
+				2: {{"t2.f"}, {"t2.f", "t2.g"}, {"t2.a"}},
+				3: {{"t1.f"}, {"t1.f", "t1.g"}, {"t1.a"}},
+				4: {{"t1.f"}, {"t1.f", "t1.g"}, {"t1.a"}},
 			},
 		},
 	}
