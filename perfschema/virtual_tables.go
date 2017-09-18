@@ -15,6 +15,7 @@ package perfschema
 
 import (
 	"fmt"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -25,14 +26,14 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// session/global status decided by scope
+// session/global status decided by scope.
 type statusDataSource struct {
 	meta        *model.TableInfo
 	cols        []*table.Column
 	globalScope bool
 }
 
-// GetRows implement the interface of VirtualDataSource
+// GetRows implements the interface of VirtualDataSource.
 func (ds *statusDataSource) GetRows(ctx context.Context) (fullRows [][]types.Datum,
 	err error) {
 	sessionVars := ctx.GetSessionVars()
@@ -62,17 +63,17 @@ func (ds *statusDataSource) GetRows(ctx context.Context) (fullRows [][]types.Dat
 	return rows, nil
 }
 
-// Meta implement the interface of VirtualDataSource
+// Meta implements the interface of VirtualDataSource.
 func (ds *statusDataSource) Meta() *model.TableInfo {
 	return ds.meta
 }
 
-// Cols implement the interface of VirtualDataSource
+// Cols implements the interface of VirtualDataSource.
 func (ds *statusDataSource) Cols() []*table.Column {
 	return ds.cols
 }
 
-func createVirtualDataSource(tableName string, meta *model.TableInfo) tables.VirtualDataSource {
+func createVirtualDataSource(tableName string, meta *model.TableInfo) (tables.VirtualDataSource, error) {
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)
@@ -81,20 +82,18 @@ func createVirtualDataSource(tableName string, meta *model.TableInfo) tables.Vir
 
 	switch tableName {
 	case TableSessionStatus:
-		return &statusDataSource{meta: meta, cols: columns, globalScope: false}
+		return &statusDataSource{meta: meta, cols: columns, globalScope: false}, nil
 	case TableGlobalStatus:
-		return &statusDataSource{meta: meta, cols: columns, globalScope: true}
+		return &statusDataSource{meta: meta, cols: columns, globalScope: true}, nil
 	default:
-		log.Fatal("unexpected system variables data source type")
+		return nil, errors.New("can't find table named by " + tableName)
 	}
-
-	return nil
 }
 
 func createVirtualTable(meta *model.TableInfo, tableName string) table.Table {
-	dataSource := createVirtualDataSource(tableName, meta)
-	if dataSource == nil {
-		log.Fatal("unexpected system variables data source type")
+	dataSource, err := createVirtualDataSource(tableName, meta)
+	if err != nil {
+		log.Fatal(err.Error())
 	}
 	return tables.CreateVirtualTable(dataSource)
 }

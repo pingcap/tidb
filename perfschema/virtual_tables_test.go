@@ -49,7 +49,7 @@ func (*testSuite) TestSessionStatus(c *C) {
 		meta := ps.tables[tableName]
 		c.Assert(tb, NotNil)
 
-		sessionStatusHandle := createVirtualDataSource(tableName, meta)
+		sessionStatusHandle, _ := createVirtualDataSource(tableName, meta)
 		rows, err := sessionStatusHandle.GetRows(ctx)
 		c.Assert(err, IsNil)
 

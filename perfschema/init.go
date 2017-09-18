@@ -210,7 +210,7 @@ func (ps *perfSchema) buildTables() {
 		alloc := autoid.NewMemoryAllocator(dbID)
 		var tbl table.Table
 		switch name {
-		//@TODO in the furture, we need to add many SysVarTables, we may need to add new type for these tables.
+		//@TODO in the future, we need to add many VirtualTable, we may need to add new type for these tables.
 		case TableSessionStatus, TableGlobalStatus:
 			tbl = createVirtualTable(meta, name)
 		default:

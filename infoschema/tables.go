@@ -1170,5 +1170,5 @@ func (it *infoschemaTable) Seek(ctx context.Context, h int64) (int64, bool, erro
 }
 
 func (it *infoschemaTable) Type() table.Type {
-	return table.VirtualTale
+	return table.VirtualTable
 }

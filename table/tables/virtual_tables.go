@@ -41,7 +41,7 @@ type VirtualTable struct {
 	dataSource VirtualDataSource
 }
 
-// CreateVirtualTable , as its name
+// CreateVirtualTable as its name
 func CreateVirtualTable(dataSource VirtualDataSource) *VirtualTable {
 	return &VirtualTable{dataSource: dataSource}
 }
@@ -165,5 +165,5 @@ func (vt *VirtualTable) Seek(ctx context.Context, h int64) (int64, bool, error) 
 
 // Type implements table.Table Type interface.
 func (vt *VirtualTable) Type() table.Type {
-	return table.VirtualTale
+	return table.VirtualTable
 }

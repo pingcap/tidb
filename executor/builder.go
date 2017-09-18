@@ -633,13 +633,13 @@ func (b *executorBuilder) getStartTS() uint64 {
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	tb, _ := b.is.TableByID(v.Table.ID)
 	ts := &TableScanExec{
-		t:            tb,
-		ctx:          b.ctx,
-		columns:      v.Columns,
-		schema:       v.Schema(),
-		seekHandle:   math.MinInt64,
-		ranges:       v.Ranges,
-		isInfoSchema: tb.Type() == table.VirtualTale,
+		t:              tb,
+		ctx:            b.ctx,
+		columns:        v.Columns,
+		schema:         v.Schema(),
+		seekHandle:     math.MinInt64,
+		ranges:         v.Ranges,
+		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
 	return ts
 }
