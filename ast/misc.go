@@ -84,7 +84,8 @@ type AuthOption struct {
 type ExplainStmt struct {
 	stmtNode
 
-	Stmt StmtNode
+	Stmt   StmtNode
+	Format string
 }
 
 // Accept implements Node Accept interface.
