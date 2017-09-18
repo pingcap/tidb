@@ -80,10 +80,7 @@ func (w *MockSafePointKV) Put(k string, v string) error {
 func (w *MockSafePointKV) Get(k string) (string, error) {
 	w.mockLock.RLock()
 	defer w.mockLock.RUnlock()
-	elem, ok := w.store[k]
-	if !ok {
-		return "", nil
-	}
+	elem, _ := w.store[k]
 	return elem, nil
 }
 
