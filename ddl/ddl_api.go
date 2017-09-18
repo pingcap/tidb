@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/dashbase"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -762,7 +763,11 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		Args:       []interface{}{tbInfo},
 	}
 
-	handleTableOptions(options, tbInfo)
+	err = handleTableOptions(options, tbInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
@@ -798,9 +803,46 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 }
 
 // handleTableOptions updates tableInfo according to table options.
-func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
+func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
 		switch op.Tp {
+		case ast.TableOptionEngine:
+			tbInfo.Engine = op.StrValue
+			// Assign dashbase columns
+			if strings.EqualFold(tbInfo.Engine, "Dashbase") {
+				tbInfo.DashbaseColumns = make([]*dashbase.Column, len(tbInfo.Columns))
+				indexByColumnName := make(map[string]*model.IndexInfo)
+				for _, index := range tbInfo.Indices {
+					// It is ensured that each index only contains 1 column (in validator.go)
+					indexByColumnName[index.Columns[0].Name.L] = index
+				}
+				for i, column := range tbInfo.Columns {
+					var dashbaseType dashbase.ColumnType
+					switch column.FieldType.Tp {
+					case mysql.TypeBlob:
+						if mysql.HasBinaryFlag(column.Flag) {
+							return errors.Trace(fmt.Errorf("Binary is not supported"))
+						}
+						dashbaseType = dashbase.TypeText
+						_, isIndex := indexByColumnName[column.Name.L]
+						if isIndex {
+							dashbaseType = dashbase.TypeMeta
+						}
+					case mysql.TypeDouble:
+						dashbaseType = dashbase.TypeNumeric
+					case mysql.TypeDatetime:
+						dashbaseType = dashbase.TypeTime
+					default:
+						return errors.Trace(fmt.Errorf("Unsupported column type: %d", column.FieldType.Tp))
+					}
+					dashbaseColumn := &dashbase.Column{
+						Name:     column.Name.L,
+						LowType:  dashbaseType,
+						HighType: column.FieldType.Tp,
+					}
+					tbInfo.DashbaseColumns[i] = dashbaseColumn
+				}
+			}
 		case ast.TableOptionAutoIncrement:
 			tbInfo.AutoIncID = int64(op.UintValue)
 		case ast.TableOptionComment:
@@ -809,8 +851,14 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 			tbInfo.Charset = op.StrValue
 		case ast.TableOptionCollate:
 			tbInfo.Collate = op.StrValue
+		case ast.TableOptionDashbaseConnection:
+			conn, _ := dashbase.ParseConnectionOption(op.StrValue)
+			tbInfo.DashbaseConnection = conn
+		case ast.TableOptionDashbaseTableName:
+			tbInfo.DashbaseTableName = op.StrValue
 		}
 	}
+	return nil
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {

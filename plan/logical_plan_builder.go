@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/dashbase"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -1061,12 +1062,72 @@ func (b *planBuilder) TableHints() *tableHintInfo {
 	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
 }
 
+func (b *planBuilder) buildDashbaseSelect(sel *ast.SelectStmt) LogicalPlan {
+	p := b.buildResultSetNode(sel.From.TableRefs)
+	fields := b.unfoldWildStar(p, sel.Fields.Fields)
+	tableInfo := p.(*DataSource).tableInfo
+	dashbaseColumns := make(map[string]*dashbase.Column)
+	for _, column := range tableInfo.DashbaseColumns {
+		dashbaseColumns[column.Name] = column
+	}
+
+	var totalMap map[*ast.AggregateFuncExpr]int
+	p, _ = b.buildProjection(p, fields, totalMap)
+
+	var srcColumns []*dashbase.Column
+	var converters []dashbase.Lo2HiConverter
+	for _, expr := range p.(*Projection).Exprs {
+		columnExpr, ok := expr.(*expression.Column)
+		if !ok || columnExpr.IsAggOrSubq {
+			b.err = errors.Trace(errors.New("Unsupported projection"))
+			return nil
+		}
+		column := dashbaseColumns[columnExpr.ColName.L]
+		converter, err := dashbase.GetLo2HiConverter(column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		srcColumns = append(srcColumns, column)
+		converters = append(converters, converter)
+	}
+
+	plan := DashbaseSelect{
+		SQL:             sel.Text(),
+		TableInfo:       tableInfo,
+		SrcColumns:      srcColumns,
+		Lo2HiConverters: converters,
+	}.init(b.allocator, b.ctx)
+	plan.SetSchema(p.Schema().Clone())
+
+	return plan
+}
+
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if sel.TableHints != nil {
 		// table hints without query block support only visible in current SELECT
 		if b.pushTableHints(sel.TableHints) {
 			defer b.popTableHints()
 		}
+	}
+
+	isDashbaseReferred := false
+	var tableList []*ast.TableName
+	if sel.From != nil {
+		tableList = extractTableList(sel.From.TableRefs, tableList)
+		for _, table := range tableList {
+			if strings.EqualFold(table.TableInfo.Engine, "Dashbase") {
+				isDashbaseReferred = true
+				break
+			}
+		}
+	}
+	if isDashbaseReferred {
+		if len(tableList) > 1 {
+			b.err = errors.New("Cannot select from multiple tables when at least one of them is dashbase table")
+			return nil
+		}
+		return b.buildDashbaseSelect(sel)
 	}
 
 	if sel.LockTp == ast.SelectLockForUpdate {
@@ -1436,6 +1497,19 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, t.Name.L, "")
 	}
 
+	// Reject if a dashbase table is referred.
+	isDashbaseReferred := false
+	for _, table := range tableList {
+		if strings.EqualFold(table.TableInfo.Engine, "Dashbase") {
+			isDashbaseReferred = true
+			break
+		}
+	}
+	if isDashbaseReferred {
+		b.err = errors.New("Cannot update a dashbase table")
+		return nil
+	}
+
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
@@ -1579,6 +1653,30 @@ func extractTableAsNameForUpdate(p Plan, asNames map[*model.TableInfo][]*model.C
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
+	// Reject if a dashbase table is referred.
+	isDashbaseReferred := false
+	if delete.Tables != nil {
+		for _, table := range delete.Tables.Tables {
+			if strings.EqualFold(table.TableInfo.Engine, "Dashbase") {
+				isDashbaseReferred = true
+				break
+			}
+		}
+	} else {
+		var tableList []*ast.TableName
+		tableList = extractTableList(delete.TableRefs.TableRefs, tableList)
+		for _, table := range tableList {
+			if strings.EqualFold(table.TableInfo.Engine, "Dashbase") {
+				isDashbaseReferred = true
+				break
+			}
+		}
+	}
+	if isDashbaseReferred {
+		b.err = errors.New("Cannot delete from a dashbase table")
+		return nil
+	}
+
 	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)

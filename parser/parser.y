@@ -541,6 +541,8 @@ import (
 	warnings	"WARNINGS"
 	week		"WEEK"
 	yearType	"YEAR"
+	dashbaseConn	"DASHBASE_CONN"
+	dashbaseTableName	"DASHBASE_TABLE_NAME"
 
 %token	<item>
 
@@ -5811,6 +5813,16 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent}
 	}
+/**************** Begin Dashbase Syntax ****************/
+|	"DASHBASE_CONN" EqOpt stringLit
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionDashbaseConnection, StrValue: $3}
+	}
+|	"DASHBASE_TABLE_NAME" EqOpt StringName
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionDashbaseTableName, StrValue: $3.(string)}
+	}
+/**************** End Dashbase Syntax ****************/
 
 StatsPersistentVal:
 	"DEFAULT"

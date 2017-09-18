@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/dashbase"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -42,6 +43,8 @@ var (
 	_ LogicalPlan = &Limit{}
 	_ LogicalPlan = &Show{}
 	_ LogicalPlan = &Insert{}
+	_ LogicalPlan = &DashbaseInsert{}
+	_ LogicalPlan = &DashbaseSelect{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -399,6 +402,31 @@ type Delete struct {
 
 	Tables       []*ast.TableName
 	IsMultiTable bool
+}
+
+// DashbaseSelect represents a plan of selecting from a dashbase table
+type DashbaseSelect struct {
+	*basePlan
+	baseLogicalPlan
+	basePhysicalPlan
+
+	TableInfo       *model.TableInfo
+	SrcColumns      []*dashbase.Column
+	Lo2HiConverters []dashbase.Lo2HiConverter
+	SQL             string
+}
+
+// DashbaseInsert represents a plan of inserting into a dashbase table
+type DashbaseInsert struct {
+	*basePlan
+	baseLogicalPlan
+	basePhysicalPlan
+
+	TableInfo       *model.TableInfo
+	HiColumns       []*model.ColumnInfo
+	LoColumns       []*dashbase.Column
+	Hi2LoConverters []dashbase.Hi2LoConverter
+	ValueRows       [][]*expression.Constant
 }
 
 // AddChild for parent.

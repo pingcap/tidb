@@ -195,7 +195,7 @@ func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-		p, err = doOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
+		p, err = doOptimize(false, builder.optFlag, lp, builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 		for {
@@ -987,7 +987,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		pp, err := doOptimize(false, builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
@@ -1063,7 +1063,7 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		pp, err := doOptimize(false, builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
 

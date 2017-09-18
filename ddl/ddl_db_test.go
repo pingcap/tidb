@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/dashbase"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -1498,4 +1499,145 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	s.tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
+}
+
+func (s *testDBSuite) TestDashbaseCreateTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.mustExec(c, "drop table if exists t")
+
+	// DASHBASE_CONN is required.
+	_, err := s.tk.Exec("create table t (a datetime key, b text) engine=dashbase")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; DASHBASE_CONN option is required for Dashbase engine tables")
+
+	// Test dashbase_conn is stored.
+	s.tk.MustExec("create table t (a datetime key, b text) engine=dashbase dashbase_conn='192.168.0.1:1234;192.168.0.2:4321'")
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	c.Assert(tblInfo.Engine, Equals, "dashbase")
+	c.Assert(tblInfo.DashbaseConnection, NotNil)
+	c.Assert(tblInfo.DashbaseConnection.FirehoseHostname, Equals, "192.168.0.1")
+	c.Assert(tblInfo.DashbaseConnection.FirehosePort, Equals, 1234)
+	c.Assert(tblInfo.DashbaseConnection.ProxyHostname, Equals, "192.168.0.2")
+	c.Assert(tblInfo.DashbaseConnection.ProxyPort, Equals, 4321)
+	c.Assert(tblInfo.DashbaseTableName, Equals, "")
+	c.Assert(len(tblInfo.DashbaseColumns), Equals, 2)
+	c.Assert(tblInfo.DashbaseColumns[0].Name, Equals, "a")
+	c.Assert(tblInfo.DashbaseColumns[0].LowType, Equals, dashbase.TypeTime)
+	c.Assert(tblInfo.DashbaseColumns[0].HighType, Equals, mysql.TypeDatetime)
+	c.Assert(tblInfo.DashbaseColumns[1].Name, Equals, "b")
+	c.Assert(tblInfo.DashbaseColumns[1].LowType, Equals, dashbase.TypeText)
+	c.Assert(tblInfo.DashbaseColumns[1].HighType, Equals, mysql.TypeBlob)
+	s.mustExec(c, "drop table t")
+
+	// Test dashbase_table_name is stored.
+	s.tk.MustExec("create table t (a datetime key, b text) engine=dashbase dashbase_conn='localhost' dashbase_table_name='t2'")
+	ctx = s.tk.Se.(context.Context)
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	c.Assert(tblInfo.DashbaseTableName, Equals, "t2")
+	s.mustExec(c, "drop table t")
+
+	// PK is required.
+	_, err = s.tk.Exec("create table t (a datetime, b text) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table should have a primary key")
+
+	// Allow PK via constraints.
+	s.tk.MustExec("create table t (a datetime, b text, primary key (a)) engine=dashbase dashbase_conn='localhost'")
+	ctx = s.tk.Se.(context.Context)
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	c.Assert(len(tblInfo.DashbaseColumns), Equals, 2)
+	c.Assert(tblInfo.DashbaseColumns[0].Name, Equals, "a")
+	c.Assert(tblInfo.DashbaseColumns[0].LowType, Equals, dashbase.TypeTime)
+	c.Assert(tblInfo.DashbaseColumns[0].HighType, Equals, mysql.TypeDatetime)
+	c.Assert(tblInfo.DashbaseColumns[1].Name, Equals, "b")
+	c.Assert(tblInfo.DashbaseColumns[1].LowType, Equals, dashbase.TypeText)
+	c.Assert(tblInfo.DashbaseColumns[1].HighType, Equals, mysql.TypeBlob)
+	s.mustExec(c, "drop table t")
+
+	// Multi PK is not allowed.
+	_, err = s.tk.Exec("create table t (a datetime key, b datetime key) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+
+	_, err = s.tk.Exec("create table t (a datetime key, b datetime, primary key (b)) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+
+	// Multi-column PK is not allowed.
+	_, err = s.tk.Exec("create table t (a datetime, b datetime, primary key (a, b)) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table primary key must contain only one column")
+
+	// PK must be datetime.
+	_, err = s.tk.Exec("create table t (a int key, b text) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table primary key column must be datetime type")
+
+	_, err = s.tk.Exec("create table t (a varchar(5) key, b text) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table primary key column must be datetime type")
+
+	_, err = s.tk.Exec("create table t (a timestamp key, b text) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table primary key column must be datetime type")
+
+	_, err = s.tk.Exec("create table t (a int, b text, primary key (a)) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table primary key column must be datetime type")
+
+	_, err = s.tk.Exec("create table t (a varchar(5), b text, primary key (a)) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table primary key column must be datetime type")
+
+	_, err = s.tk.Exec("create table t (a timestamp, b text, primary key (a)) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table primary key column must be datetime type")
+
+	// Multi-column index is not allowed.
+	_, err = s.tk.Exec("create table t (a datetime key, b text, c text, index (b, c)) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table index must contain only one column")
+
+	// Index must be text.
+	_, err = s.tk.Exec("create table t (a datetime key, b float, index (b)) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table index column must be text type")
+
+	_, err = s.tk.Exec("create table t (a datetime key, b varchar(10), index (b)) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table index column must be text type")
+
+	_, err = s.tk.Exec("create table t (a datetime key, b char(10), index (b)) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table index column must be text type")
+
+	_, err = s.tk.Exec("create table t (a datetime key, b datetime, index (b)) engine=dashbase dashbase_conn='localhost'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect table definition; Dashbase table index column must be text type")
+
+	// Index column becomes meta
+	s.tk.MustExec("create table t (aAa datetime key, bBB text, index (bbb(128))) engine=dashbase dashbase_conn='localhost'")
+	ctx = s.tk.Se.(context.Context)
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	c.Assert(len(tblInfo.DashbaseColumns), Equals, 2)
+	c.Assert(tblInfo.DashbaseColumns[0].Name, Equals, "aaa")
+	c.Assert(tblInfo.DashbaseColumns[0].LowType, Equals, dashbase.TypeTime)
+	c.Assert(tblInfo.DashbaseColumns[0].HighType, Equals, mysql.TypeDatetime)
+	c.Assert(tblInfo.DashbaseColumns[1].Name, Equals, "bbb")
+	c.Assert(tblInfo.DashbaseColumns[1].LowType, Equals, dashbase.TypeMeta)
+	c.Assert(tblInfo.DashbaseColumns[1].HighType, Equals, mysql.TypeBlob)
+	s.mustExec(c, "drop table t")
 }

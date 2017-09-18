@@ -54,6 +54,27 @@ type logicalOptRule interface {
 	optimize(LogicalPlan, context.Context, *idAllocator) (LogicalPlan, error)
 }
 
+func isDashbasePlan(plan Plan) bool {
+	switch plan.(type) {
+	case *DashbaseInsert, *DashbaseSelect:
+		return true
+	}
+	return false
+}
+
+func ensureNoDashbasePlanInChildren(plan Plan) (success bool) {
+	if isDashbasePlan(plan) {
+		return false
+	}
+	// Check children.
+	for _, p := range plan.Children() {
+		if !ensureNoDashbasePlanInChildren(p) {
+			return false
+		}
+	}
+	return true
+}
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
@@ -73,6 +94,23 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		return nil, errors.Trace(builder.err)
 	}
 
+	skipLogicalOptimize := false
+
+	// Validate Dashbase plans
+	if isDashbasePlan(p) {
+		// For a dashbase plan, children is not allowed
+		children := p.Children()
+		if len(children) > 0 {
+			return nil, errors.New("Unsupported operation")
+		}
+		skipLogicalOptimize = true
+	} else {
+		// For a normal plan, dashbase plan in children is not allowed
+		if !ensureNoDashbasePlanInChildren(p) {
+			return nil, errors.New("Unsupported operation")
+		}
+	}
+
 	// Maybe it's better to move this to Preprocess, but check privilege need table
 	// information, which is collected into visitInfo during logical plan builder.
 	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
@@ -82,7 +120,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	}
 
 	if logic, ok := p.(LogicalPlan); ok {
-		return doOptimize(builder.optFlag, logic, ctx, allocator)
+		return doOptimize(skipLogicalOptimize, builder.optFlag, logic, ctx, allocator)
 	}
 	return p, nil
 }
@@ -115,10 +153,13 @@ func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	return true
 }
 
-func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
-	logic, err := logicalOptimize(flag, logic, ctx, allocator)
-	if err != nil {
-		return nil, errors.Trace(err)
+func doOptimize(skipLogicalOptimize bool, flag uint64, logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
+	var err error
+	if !skipLogicalOptimize {
+		logic, err = logicalOptimize(flag, logic, ctx, allocator)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)

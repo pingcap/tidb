@@ -15,6 +15,9 @@ package plan
 
 import (
 	"fmt"
+	"strings"
+
+	"github.com/pingcap/tidb/util/dashbase"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -41,19 +44,21 @@ var (
 	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
 	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
 	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
+	ErrWrongValueCountOnRow = terror.ClassOptimizerPlan.New(CodeWrongValueCountOnRow, "Column count doesn't match value count at row %d")
 )
 
 // Error codes.
 const (
-	CodeUnsupportedType    terror.ErrCode = 1
-	SystemInternalError                   = 2
-	CodeAlterAutoID                       = 3
-	CodeAnalyzeMissIndex                  = 4
-	CodeAmbiguous                         = 1052
-	CodeUnknownColumn                     = mysql.ErrBadField
-	CodeUnknownTable                      = mysql.ErrBadTable
-	CodeWrongArguments                    = 1210
-	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
+	CodeUnsupportedType      terror.ErrCode = 1
+	SystemInternalError                     = 2
+	CodeAlterAutoID                         = 3
+	CodeAnalyzeMissIndex                    = 4
+	CodeAmbiguous                           = 1052
+	CodeUnknownColumn                       = mysql.ErrBadField
+	CodeUnknownTable                        = mysql.ErrBadTable
+	CodeWrongArguments                      = 1210
+	CodeBadGeneratedColumn                  = mysql.ErrBadGeneratedColumn
+	CodeWrongValueCountOnRow                = mysql.ErrWrongValueCountOnRow
 )
 
 func init() {
@@ -641,6 +646,139 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 	return nil, ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
 }
 
+func (b *planBuilder) buildDashbaseInsert(insert *ast.InsertStmt, tableInfo *model.TableInfo) Plan {
+	if insert.IsReplace {
+		b.err = errors.Errorf("REPLACE is not supported for Dashbase table")
+		return nil
+	}
+	if len(insert.OnDuplicate) > 0 {
+		b.err = errors.Errorf("ON DUPLICATE is not supported for Dashbase table")
+		return nil
+	}
+
+	columnsByName := make(map[string]*model.ColumnInfo)
+	for _, col := range tableInfo.Columns {
+		columnsByName[col.Name.L] = col
+	}
+
+	// fmt.Printf("+++++++++++++ Dashbase Insert +++++++++++++\n")
+	// fmt.Printf("Columns: %v\n", insert.Columns)
+	// fmt.Printf("Lists: %v\n", insert.Lists)
+	// for i, item := range insert.Lists {
+	// 	fmt.Printf("Item %d: %v\n", i, item)
+	// }
+	// fmt.Printf("Setlist: %v\n", insert.Setlist)
+	// b.err = errors.Errorf("Stopped")
+	// return nil
+
+	// Ensure column exists: check INSERT ... SET ...
+	for _, assignment := range insert.Setlist {
+		if _, exists := columnsByName[assignment.Column.Name.L]; !exists {
+			b.err = ErrUnknownColumn.GenByArgs(assignment.Column.Name.O, "field list")
+			return nil
+		}
+	}
+	// Ensure column exists: check INSERT ... (...) VALUES (...)
+	if len(insert.Columns) > 0 {
+		if len(insert.Columns) != len(insert.Lists) {
+			b.err = ErrWrongValueCountOnRow.GenByArgs(1)
+			return nil
+		}
+		for _, column := range insert.Columns {
+			if _, exists := columnsByName[column.Name.L]; !exists {
+				b.err = ErrUnknownColumn.GenByArgs(column.Name.O, "field list")
+				return nil
+			}
+		}
+	}
+
+	var planValueRows [][]*expression.Constant
+	var planColumns []*model.ColumnInfo
+	var planDashbaseColumns []*dashbase.Column
+	var planDashbaseConverters []dashbase.Hi2LoConverter
+
+	if len(insert.Setlist) > 0 {
+		// Assign values based on INSERT ... SET ...
+		planValues := make([]*expression.Constant, 0)
+		for _, assignment := range insert.Setlist {
+			if val, ok := assignment.Expr.(*ast.ValueExpr); ok {
+				planValues = append(planValues, &expression.Constant{
+					Value:   val.Datum,
+					RetType: &val.Type,
+				})
+				planColumns = append(planColumns, columnsByName[assignment.Column.Name.L])
+			} else {
+				b.err = fmt.Errorf("Only support constants for Dashbase table")
+				return nil
+			}
+		}
+		planValueRows = append(planValueRows, planValues)
+	} else {
+		// Assign values based on INSERT ... VALUES (....),(....)
+		hasNamedColumns := true
+		for _, insertRow := range insert.Lists {
+			maxListItems := len(insertRow)
+			if len(insert.Columns) == 0 {
+				hasNamedColumns = false
+				if len(tableInfo.Columns) < maxListItems {
+					maxListItems = len(tableInfo.Columns)
+				}
+			}
+			planValues := make([]*expression.Constant, maxListItems)
+			for i, item := range insertRow {
+				if i >= maxListItems {
+					break
+				}
+				var columnName string
+				if hasNamedColumns {
+					columnName = insert.Columns[i].Name.L
+				} else {
+					columnName = tableInfo.Columns[i].Name.L
+				}
+				if val, ok := item.(*ast.ValueExpr); ok {
+					planValues[i] = &expression.Constant{
+						Value:   val.Datum,
+						RetType: &val.Type,
+					}
+					planColumns = append(planColumns, columnsByName[columnName])
+				} else {
+					b.err = fmt.Errorf("Only support constants for Dashbase table")
+					return nil
+				}
+			}
+			planValueRows = append(planValueRows, planValues)
+		}
+	}
+
+	dashbaseColumnsByName := make(map[string]*dashbase.Column)
+	for _, col := range tableInfo.DashbaseColumns {
+		dashbaseColumnsByName[col.Name] = col
+	}
+
+	for _, column := range planColumns {
+		column := dashbaseColumnsByName[column.Name.L]
+		converter, err := dashbase.GetHi2LoConverter(column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		planDashbaseColumns = append(planDashbaseColumns, column)
+		planDashbaseConverters = append(planDashbaseConverters, converter)
+	}
+
+	// CastValue need execution context, so we call will it in execute instead of here.
+	plan := DashbaseInsert{
+		TableInfo:       tableInfo,
+		HiColumns:       planColumns,
+		LoColumns:       planDashbaseColumns,
+		Hi2LoConverters: planDashbaseConverters,
+		ValueRows:       planValueRows,
+	}.init(b.allocator, b.ctx)
+	plan.SetSchema(expression.NewSchema())
+
+	return plan
+}
+
 // resolveGeneratedColumns resolves generated columns with their generation
 // expressions respectively. onDups indicates which columns are in on-duplicate list.
 func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns) {
@@ -693,6 +831,11 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	if !ok {
 		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
 		return nil
+	}
+
+	// Inserting into a Dashbase table
+	if strings.EqualFold(tableInfo.Engine, "Dashbase") {
+		return b.buildDashbaseInsert(insert, tableInfo)
 	}
 
 	insertPlan := Insert{
@@ -868,6 +1011,12 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 }
 
 func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
+	// Reject if a dashbase table is referred.
+	if strings.EqualFold(ld.Table.TableInfo.Engine, "Dashbase") {
+		b.err = errors.New("Cannot load data into a dashbase table")
+		return nil
+	}
+
 	p := &LoadData{
 		IsLocal:    ld.IsLocal,
 		Path:       ld.Path,

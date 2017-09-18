@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/dashbase"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -93,6 +94,7 @@ type TableInfo struct {
 	Name    CIStr  `json:"name"`
 	Charset string `json:"charset"`
 	Collate string `json:"collate"`
+	Engine  string `json:"engine"`
 	// Columns are listed in the order in which they appear in the schema.
 	Columns     []*ColumnInfo `json:"cols"`
 	Indices     []*IndexInfo  `json:"index_info"`
@@ -108,6 +110,10 @@ type TableInfo struct {
 	// We need to save original schemaID to keep autoID unchanged
 	// while renaming a table from one database to another.
 	OldSchemaID int64 `json:"old_schema_id,omitempty"`
+	// The followings are Dashbase options.
+	DashbaseConnection *dashbase.ConnectionOption `json:"dashbase_conn"`
+	DashbaseTableName  string                     `json:"dashbase_tablename"`
+	DashbaseColumns    []*dashbase.Column         `json:"dashbase_columns"`
 }
 
 // Clone clones TableInfo.

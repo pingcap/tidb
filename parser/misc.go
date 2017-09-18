@@ -621,6 +621,8 @@ var tokenMap = map[string]int{
 	"UUID_SHORT":                 uuidShort,
 	"KILL":                       kill,
 	"NATURAL":                    natural,
+	"DASHBASE_CONN":              dashbaseConn,
+	"DASHBASE_TABLE_NAME":        dashbaseTableName,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {
