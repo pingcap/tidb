@@ -192,10 +192,8 @@ func (h *rpcHandler) checkRequest(ctx *kvrpcpb.Context, size int) *errorpb.Error
 		return err
 	}
 
-	if err := h.checkRequestSize(size); err != nil {
-		return err
-	}
-	return nil
+	err := h.checkRequestSize(size)
+	return err
 }
 
 func (h *rpcHandler) checkKeyInRegion(key []byte) bool {
