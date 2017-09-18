@@ -715,52 +715,6 @@ func runTestStmtCount(t *C) {
 	})
 }
 
-func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
-	// issue #4540
-	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
-	c.Assert(err, IsNil)
-	_, err = ctx.Execute("use test;")
-	c.Assert(err, IsNil)
-
-	testSQL := "CREATE TABLE `t1` (" +
-		"`a` char(36) NOT NULL," +
-		"`b` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
-		"`c` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
-		"`d` varchar(50) DEFAULT ''," +
-		"`e` char(36) NOT NULL DEFAULT ''," +
-		"`f` char(36) NOT NULL DEFAULT ''," +
-		"`g` char(1) NOT NULL DEFAULT 'N'," +
-		"`h` varchar(100) NOT NULL," +
-		"`i` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
-		"`j` varchar(10) DEFAULT ''," +
-		"`k` varchar(10) DEFAULT ''," +
-		"`l` varchar(20) DEFAULT ''," +
-		"`m` varchar(20) DEFAULT ''," +
-		"`n` varchar(30) DEFAULT ''," +
-		"`o` varchar(100) DEFAULT ''," +
-		"`p` varchar(50) DEFAULT ''," +
-		"`q` varchar(50) DEFAULT ''," +
-		"`r` varchar(100) DEFAULT ''," +
-		"`s` varchar(20) DEFAULT ''," +
-		"`t` varchar(50) DEFAULT ''," +
-		"`u` varchar(100) DEFAULT ''," +
-		"`v` varchar(50) DEFAULT ''," +
-		"`w` varchar(300) NOT NULL," +
-		"`x` varchar(250) DEFAULT ''," +
-		"PRIMARY KEY (`a`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
-	_, err = ctx.Execute(testSQL)
-	c.Assert(err, IsNil)
-	rs, err := ctx.Execute("show create table t1")
-	row, err := rs[0].Next()
-	c.Assert(err, IsNil)
-	cols, err := rs[0].Columns()
-	c.Assert(err, IsNil)
-	c.Assert(len(cols), Equals, 2)
-	c.Assert(int(cols[0].ColumnLength), Equals, tmysql.MaxTableNameLength*tmysql.MaxBytesOfCharacter)
-	c.Assert(int(cols[1].ColumnLength), Equals, len(row[1].GetString())*tmysql.MaxBytesOfCharacter)
-}
-
 func runTestTLSConnection(t *C, overrider configOverrider) error {
 	db, err := sql.Open("mysql", getDSN(overrider))
 	t.Assert(err, IsNil)
