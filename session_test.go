@@ -109,13 +109,14 @@ func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
 
 	// validator's latest schema version is expired.
 	time.Sleep(lease + time.Microsecond)
-	checker.schemaVer = 2
+	checker.schemaVer = 4
 	checker.relatedTableIDs = []int64{3}
 	err = checker.Check(ts)
 	c.Assert(err, IsNil)
 	nowTS := uint64(time.Now().UnixNano())
+	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
 	result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
-	c.Assert(result, Equals, domain.ResultSucc)
+	c.Assert(result, Equals, domain.ResultUnknown)
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
