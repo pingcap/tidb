@@ -339,20 +339,20 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	case *ast.UpdateStmt:
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
-		sc.IgnoreError = stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 	case *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
-		sc.IgnoreError = stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 	case *ast.InsertStmt:
 		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InInsertStmt = true
-		sc.IgnoreError = stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 		sc.IgnoreTruncate = false

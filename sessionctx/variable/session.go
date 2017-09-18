@@ -336,14 +336,14 @@ type TableDelta struct {
 type StatementContext struct {
 	// Set the following variables before execution
 
-	InInsertStmt         bool
-	InUpdateOrDeleteStmt bool
-	InSelectStmt         bool
-	IgnoreTruncate       bool
-	IgnoreError          bool
-	TruncateAsWarning    bool
-	OverflowAsWarning    bool
-	InShowWarning        bool
+	InInsertStmt           bool
+	InUpdateOrDeleteStmt   bool
+	InSelectStmt           bool
+	IgnoreTruncate         bool
+	DividedByZeroAsWarning bool
+	TruncateAsWarning      bool
+	OverflowAsWarning      bool
+	InShowWarning          bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {

@@ -65,7 +65,7 @@ func handleDivisionByZeroError(ctx context.Context) error {
 		if (ctx.GetSessionVars().SQLMode & mysql.ModeErrorForDivisionByZero) != mysql.ModeErrorForDivisionByZero {
 			return nil
 		}
-		if ctx.GetSessionVars().StrictSQLMode && !sc.IgnoreError {
+		if ctx.GetSessionVars().StrictSQLMode && !sc.DividedByZeroAsWarning {
 			return ErrDivideByZero
 		}
 	}

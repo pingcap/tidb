@@ -391,8 +391,8 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		c.Assert(err, NotNil)
 	}
 
-	oldIgnoreError := s.ctx.GetSessionVars().StmtCtx.IgnoreError
-	s.ctx.GetSessionVars().StmtCtx.IgnoreError = true
+	oldDividedByZeroAsWarning := s.ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning
+	s.ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = true
 	for _, t := range testcases {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
@@ -405,7 +405,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 	s.ctx.GetSessionVars().StmtCtx.InSelectStmt = oldInSelectStmt
 	s.ctx.GetSessionVars().SQLMode = oldSQLMode
 	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = oldInInsertStmt
-	s.ctx.GetSessionVars().StmtCtx.IgnoreError = oldIgnoreError
+	s.ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = oldDividedByZeroAsWarning
 }
 
 func (s *testEvaluatorSuite) TestExtract(c *C) {

@@ -266,8 +266,8 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 		c.Assert(sig, NotNil)
 		c.Assert(sig.canBeFolded(), IsTrue)
 		val, err := sig.eval(nil)
-		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
 		c.Assert(err, IsNil)
+		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
 	}
 }
 
