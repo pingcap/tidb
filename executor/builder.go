@@ -1025,19 +1025,57 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 	return e
 }
 
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTask) *AnalyzeColumnsExec {
+	cols := task.ColsInfo
+	keepOrder := false
+	if task.PKInfo != nil {
+		keepOrder = true
+		cols = append([]*model.ColumnInfo{task.PKInfo}, cols...)
+	}
+	e := &AnalyzeColumnsExec{
+		ctx:         b.ctx,
+		tblInfo:     task.TableInfo,
+		colsInfo:    task.ColsInfo,
+		pkInfo:      task.PKInfo,
+		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency,
+		priority:    b.priority,
+		keepOrder:   keepOrder,
+		analyzePB: &tipb.AnalyzeReq{
+			Tp:             tipb.AnalyzeType_TypeColumn,
+			StartTs:        b.getStartTS(),
+			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			TimeZoneOffset: timeZoneOffset(b.ctx),
+		},
+	}
+	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
+		BucketSize:  maxBucketSize,
+		SampleSize:  maxRegionSampleSize,
+		SketchSize:  maxSketchSize,
+		ColumnsInfo: distsql.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+	}
+	return e
+}
+
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		ctx:   b.ctx,
 		tasks: make([]*analyzeTask, 0, len(v.Children())),
 	}
 	for _, task := range v.ColTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType:  colTask,
-			src:       b.buildTableScanForAnalyze(task.TableInfo, task.PKInfo, task.ColsInfo),
-			tableInfo: task.TableInfo,
-			Columns:   task.ColsInfo,
-			PKInfo:    task.PKInfo,
-		})
+		if task.PushDown {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: colTask,
+				colExec:  b.buildAnalyzeColumnsPushdown(task),
+			})
+		} else {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType:  colTask,
+				src:       b.buildTableScanForAnalyze(task.TableInfo, task.PKInfo, task.ColsInfo),
+				tableInfo: task.TableInfo,
+				Columns:   task.ColsInfo,
+				PKInfo:    task.PKInfo,
+			})
+		}
 	}
 	for _, task := range v.IdxTasks {
 		if task.PushDown {
