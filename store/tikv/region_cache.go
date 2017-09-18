@@ -79,6 +79,15 @@ func (c *RPCContext) GetStoreID() uint64 {
 	return 0
 }
 
+func (c *CachedRegion) isValid() bool {
+	lastAccess := atomic.LoadInt64(&c.lastAccess) // we may not need an atomic load, I think a simple load is enough?
+	lastAccessTime := time.Unix(lastAccess, 0)
+	if time.Since(lastAccessTime) < rcDefaultRegionCacheTTL {
+		return true
+	}
+	return false
+}
+
 // DropInvalidRegion returns true if the region is invalid and then dropped or if it has been dropped
 func (c *RegionCache) DropInvalidRegion(id RegionVerID) bool {
 	c.mu.Lock()
@@ -91,9 +100,7 @@ func (c *RegionCache) DropInvalidRegion(id RegionVerID) bool {
 	// For example, T1 find ttl valid but before T1 freshes the ttl, T2 find ttl invalid
 	// In this case, T2 will invoke this function but T1 may have freshed the ttl
 	// Then, T2 should not drop the cached region
-	lastAccess := atomic.LoadInt64(&cachedregion.lastAccess) // we may not need an atomic load, I think a simple load is enough?
-	lastAccessTime := time.Unix(lastAccess, 0)
-	if time.Since(lastAccessTime) < rcDefaultRegionCacheTTL {
+	if cachedregion.isValid() {
 		return false
 	}
 	delete(c.mu.regions, id)
@@ -109,13 +116,10 @@ func (c *RegionCache) GetCachedRegion(id RegionVerID) *Region {
 		if !ok {
 			return nil
 		}
-		lastAccess := atomic.LoadInt64(&cachedregion.lastAccess) // we may not need an atomic load, I think a simple load is enough?
-		lastAccessTime := time.Unix(lastAccess, 0)
-		if time.Since(lastAccessTime) < rcDefaultRegionCacheTTL {
+		if cachedregion.isValid() {
 			atomic.StoreInt64(&cachedregion.lastAccess, time.Now().Unix())
 			return cachedregion.region
 		}
-
 		if c.DropInvalidRegion(id) {
 			return nil
 		}
