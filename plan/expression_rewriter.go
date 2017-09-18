@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -350,9 +351,9 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	if useMin {
 		funcName = ast.AggFuncMin
 	}
-	aggFunc := expression.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
+	aggFunc := aggregation.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
 	agg := LogicalAggregation{
-		AggFuncs: []expression.AggregationFunction{aggFunc},
+		AggFuncs: []aggregation.Aggregation{aggFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	aggCol0 := &expression.Column{
@@ -370,8 +371,8 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 // buildQuantifierPlan adds extra condition for any / all subquery.
 func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond, rexpr expression.Expression, all bool) {
 	isNullFunc, _ := expression.NewFunction(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
-	sumFunc := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{isNullFunc}, false)
-	countFuncNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
+	sumFunc := aggregation.NewAggFunction(ast.AggFuncSum, []expression.Expression{isNullFunc}, false)
+	countFuncNull := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
 	agg.AggFuncs = append(agg.AggFuncs, sumFunc, countFuncNull)
 	posID := agg.schema.Len()
 	aggColSum := &expression.Column{
@@ -432,10 +433,10 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond,
 // t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
+	firstRowFunc := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	countFunc := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := LogicalAggregation{
-		AggFuncs: []expression.AggregationFunction{firstRowFunc, countFunc},
+		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	firstRowResultCol := &expression.Column{
@@ -460,10 +461,10 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
 // t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
+	firstRowFunc := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	countFunc := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := LogicalAggregation{
-		AggFuncs: []expression.AggregationFunction{firstRowFunc, countFunc},
+		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	firstRowResultCol := &expression.Column{
