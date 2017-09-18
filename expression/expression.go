@@ -39,7 +39,7 @@ var (
 	errZlibZData           = terror.ClassTypes.New(codeZlibZData, "ZLIB: Input data corrupted")
 	errIncorrectArgs       = terror.ClassExpression.New(codeIncorrectArgs, mysql.MySQLErrName[mysql.ErrWrongArguments])
 	errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
-	errDivideByZero        = terror.ClassExpression.New(codeDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
+	ErrDivideByZero        = terror.ClassExpression.New(codeDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
 )
 
 // Error codes.

@@ -61,23 +61,16 @@ const precIncrement = 4
 // handleDivisionByZeroError reports error or warning depend on the context.
 func handleDivisionByZeroError(ctx context.Context) error {
 	sc := ctx.GetSessionVars().StmtCtx
-	if sc.InSelectStmt {
-		sc.AppendWarning(errDivideByZero)
-		return nil
-	}
 	if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
-		enableDivisionByZero := ctx.GetSessionVars().SQLMode&mysql.ModeErrorForDivisionByZero == mysql.ModeErrorForDivisionByZero
-		if !enableDivisionByZero {
+		if ctx.GetSessionVars().SQLMode&mysql.ModeErrorForDivisionByZero != mysql.ModeErrorForDivisionByZero {
 			return nil
 		}
 		if ctx.GetSessionVars().StrictSQLMode && !sc.IgnoreError {
-			return types.ErrDivByZero
+			return ErrDivideByZero
 		}
-		sc.AppendWarning(errDivideByZero)
-		return nil
 	}
 
-	sc.AppendWarning(errDivideByZero)
+	sc.AppendWarning(ErrDivideByZero)
 	return nil
 }
 
@@ -663,7 +656,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row []types.Datum) (int64
 		return 0, true, errors.Trace(handleDivisionByZeroError(s.ctx))
 	}
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 
 	ret, err := c.ToInt()

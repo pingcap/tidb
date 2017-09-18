@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -2409,7 +2410,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustQuery("select v from t;").Check(testkit.Rows("<nil>"))
 
 	_, err = tk.Exec("INSERT INTO t VALUE(12 MOD 0);")
-	c.Assert(terror.ErrorEqual(err, types.ErrDivByZero), IsTrue)
+	c.Assert(terror.ErrorEqual(err, expression.ErrDivideByZero), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
