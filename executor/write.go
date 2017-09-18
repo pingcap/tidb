@@ -1295,7 +1295,6 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-
 		newRowData := make([]types.Datum, len(row))
 		copy(newRowData, row)
 		for _, assign := range e.OrderedList {

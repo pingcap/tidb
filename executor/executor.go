@@ -489,12 +489,10 @@ func (e *SelectionExec) Next() (Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-
 		match, err := expression.EvalBool(e.Conditions, srcRow, e.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-
 		if match {
 			return srcRow, nil
 		}
