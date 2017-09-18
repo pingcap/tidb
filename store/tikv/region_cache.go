@@ -283,6 +283,8 @@ func (c *RegionCache) insertRegionToCache(r *Region) *Region {
 
 // getRegionByIDFromCache tries to get region by regionID from cache
 func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	for v, r := range c.mu.regions {
 		if v.id == regionID {
 			return r.region
