@@ -51,12 +51,14 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	// because all of them are sorted by their `Offset`, which
 	// causes all writable columns are after public columns.
 	for i, col := range t.Cols() {
-		// Cast changed fields with respective columns.
-		v, err := table.CastValue(ctx, newData[i], col.ToInfo())
-		if err != nil {
-			return false, errors.Trace(err)
+		if modified[i] {
+			// Cast changed fields with respective columns.
+			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			newData[i] = v
 		}
-		newData[i] = v
 
 		// Rebase auto increment id if the field is changed.
 		if mysql.HasAutoIncrementFlag(col.Flag) {
