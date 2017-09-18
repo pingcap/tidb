@@ -339,7 +339,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	case *ast.UpdateStmt:
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || s.(*ast.UpdateStmt).IgnoreErr
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
 	case *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
