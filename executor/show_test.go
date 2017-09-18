@@ -18,7 +18,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -361,48 +360,4 @@ func (s *testSuite) TestIssue3641(c *C) {
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 	_, err = tk.Exec("show table status;")
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
-}
-
-func (s *testSuite) TestShowCreateTableFlen(c *C) {
-	// issue #4540
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	testSQL := "CREATE TABLE `t1` (" +
-		"`a` char(36) NOT NULL," +
-		"`b` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
-		"`c` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
-		"`d` varchar(50) DEFAULT ''," +
-		"`e` char(36) NOT NULL DEFAULT ''," +
-		"`f` char(36) NOT NULL DEFAULT ''," +
-		"`g` char(1) NOT NULL DEFAULT 'N'," +
-		"`h` varchar(100) NOT NULL," +
-		"`i` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
-		"`j` varchar(10) DEFAULT ''," +
-		"`k` varchar(10) DEFAULT ''," +
-		"`l` varchar(20) DEFAULT ''," +
-		"`m` varchar(20) DEFAULT ''," +
-		"`n` varchar(30) DEFAULT ''," +
-		"`o` varchar(100) DEFAULT ''," +
-		"`p` varchar(50) DEFAULT ''," +
-		"`q` varchar(50) DEFAULT ''," +
-		"`r` varchar(100) DEFAULT ''," +
-		"`s` varchar(20) DEFAULT ''," +
-		"`t` varchar(50) DEFAULT ''," +
-		"`u` varchar(100) DEFAULT ''," +
-		"`v` varchar(50) DEFAULT ''," +
-		"`w` varchar(300) NOT NULL," +
-		"`x` varchar(250) DEFAULT ''," +
-		"PRIMARY KEY (`a`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
-	tk.MustExec(testSQL)
-	rs, err := tk.Exec("show create table t1")
-	c.Assert(err, IsNil)
-	row, err := rs.Next()
-	retField, err := rs.Fields()
-	c.Assert(err, IsNil)
-	c.Assert(len(row.Data), Equals, 2)
-	showLen := len(row.Data[1].GetString())
-	c.Assert(len(retField), Equals, 2)
-	c.Assert(retField[0].Column.Flen, Equals, mysql.MaxTableNameLength*mysql.MaxBytesOfCharacter)
-	c.Assert(retField[1].Column.Flen, Equals, showLen*mysql.MaxBytesOfCharacter)
 }

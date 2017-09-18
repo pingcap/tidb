@@ -59,7 +59,7 @@ const (
 )
 
 // Identifier length limitations.
-// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html.
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 const (
 	// MaxTableNameLength is max length of table name identifier.
 	MaxTableNameLength int = 64
