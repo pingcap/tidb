@@ -556,7 +556,7 @@ func (c *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Cont
 	overflow := false
 	// TODO: Handle float overflow.
 	if arg, ok := argExpr.(*Constant); sc.InSelectStmt && ok &&
-		fieldTp2EvalTp(arg.GetType()) == tpInt {
+		tp == tpInt {
 		overflow = c.handleIntOverflow(arg)
 		if overflow {
 			tp = tpDecimal
