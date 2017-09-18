@@ -55,11 +55,26 @@ const (
 )
 
 // Identifier length limitations.
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 const (
-	MaxTableNameLength    int = 64
+	// MaxTableNameLength is max length of table name identifier.
+	MaxTableNameLength int = 64
+	// MaxDatabaseNameLength is max length of database name identifier.
 	MaxDatabaseNameLength int = 64
-	MaxColumnNameLength   int = 64
-	MaxKeyParts           int = 16
+	// MaxColumnNameLength is max length of column name identifier.
+	MaxColumnNameLength int = 64
+	// MaxColumnNameLength is max length of key parts.
+	MaxKeyParts int = 16
+	// MaxIndexIdentifierLen is max length of index identifier.
+	MaxIndexIdentifierLen int = 64
+	// MaxConstraintIdentifierLen is max length of constrain identifier.
+	MaxConstraintIdentifierLen int = 64
+	// MaxViewIdentifierLen is max length of view identifier.
+	MaxViewIdentifierLen int = 64
+	// MaxAliasIdentifierLen is max length of alias identifier.
+	MaxAliasIdentifierLen int = 256
+	// MaxUserDefinedVariableLen is max length of user-defined variable.
+	MaxUserDefinedVariableLen int = 64
 )
 
 // Command information.
