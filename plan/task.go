@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
@@ -416,7 +417,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
-		pb := expression.AggFuncToPBExpr(sc, client, aggFunc)
+		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return
 		}
@@ -433,9 +434,9 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	partialSchema := expression.NewSchema()
 	partialAgg.SetSchema(partialSchema)
 	cursor := 0
-	finalAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
+	finalAggFuncs := make([]aggregation.Aggregation, len(finalAgg.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
-		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
+		fun := aggregation.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
 		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor))
 		if needCount(fun) {
@@ -454,7 +455,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 			cursor++
 		}
 		fun.SetArgs(args)
-		fun.SetMode(expression.FinalMode)
+		fun.SetMode(aggregation.FinalMode)
 		finalAggFuncs[i] = fun
 	}
 	finalAgg = PhysicalAggregation{
