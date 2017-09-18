@@ -145,7 +145,7 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 // NOTE, this function should be called under lock!
 func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
 	if _, ok := s.itemSchemaVers[currVer]; !ok {
-		log.Debugf("the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
+		log.Infof("the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
 		return true
 	}
 
