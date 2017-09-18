@@ -85,42 +85,20 @@ func (c *CachedRegion) isValid() bool {
 	return time.Since(lastAccessTime) < rcDefaultRegionCacheTTL
 }
 
-// DropInvalidRegion returns true if the region is invalid and then dropped or if it has been dropped
-func (c *RegionCache) DropInvalidRegion(id RegionVerID) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	cachedregion, ok := c.mu.regions[id]
-	if !ok {
-		return true
-	}
-	// we need to check ttl because concurrent threads may fresh it
-	// For example, T1 find ttl valid but before T1 freshes the ttl, T2 find ttl invalid
-	// In this case, T2 will invoke this function but T1 may have freshed the ttl
-	// Then, T2 should not drop the cached region
-	if cachedregion.isValid() {
-		return false
-	}
-	delete(c.mu.regions, id)
-	return true
-}
-
 // GetCachedRegion returns a valid region
 func (c *RegionCache) GetCachedRegion(id RegionVerID) *Region {
-	for {
-		c.mu.RLock()
-		cachedregion, ok := c.mu.regions[id]
-		c.mu.RUnlock()
-		if !ok {
-			return nil
-		}
-		if cachedregion.isValid() {
-			atomic.StoreInt64(&cachedregion.lastAccess, time.Now().Unix())
-			return cachedregion.region
-		}
-		if c.DropInvalidRegion(id) {
-			return nil
-		}
+	c.mu.RLock()
+	cachedregion, ok := c.mu.regions[id]
+	c.mu.RUnlock()
+	if !ok {
+		return nil
 	}
+	if cachedregion.isValid() {
+		atomic.StoreInt64(&cachedregion.lastAccess, time.Now().Unix())
+		return cachedregion.region
+	}
+	c.DropRegion(id)
+	return nil
 }
 
 // GetRPCContext returns RPCContext for a region. If it returns nil, the region
