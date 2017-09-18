@@ -1218,9 +1218,6 @@ type UpdateExec struct {
 
 // Next implements the Executor Next interface.
 func (e *UpdateExec) Next() (Row, error) {
-	if e.IgnoreErr {
-		e.ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
-	}
 	if !e.fetched {
 		err := e.fetchRows()
 		if err != nil {

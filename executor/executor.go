@@ -495,8 +495,6 @@ func (e *SelectionExec) Next() (Row, error) {
 			return nil, errors.Trace(err)
 		}
 
-		// ignore the same truncate warning with different rows
-		e.ctx.GetSessionVars().StmtCtx.SetIgnoreTruncate(true)
 		if match {
 			return srcRow, nil
 		}
