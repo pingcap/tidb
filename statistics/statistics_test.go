@@ -151,11 +151,17 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 
 func (s *testStatisticsSuite) TestBuild(c *C) {
 	bucketCount := int64(256)
-	_, ndv, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
+	sketch, _, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 
-	col, err := BuildColumn(ctx, bucketCount, 2, ndv, s.count, 0, s.samples)
+	collector := &SampleCollector{
+		Count:     s.count,
+		NullCount: 0,
+		Samples:   s.samples,
+		Sketch:    sketch,
+	}
+	col, err := BuildColumn(ctx, bucketCount, 2, collector)
 	c.Check(err, IsNil)
 	c.Check(len(col.Buckets), Equals, 232)
 	count, err := col.equalRowCount(sc, types.NewIntDatum(1000))
@@ -343,11 +349,17 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 
 func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	bucketCount := int64(256)
-	_, ndv, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
+	sketch, _, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 
-	hg, err := BuildColumn(ctx, bucketCount, 5, ndv, s.count, 0, s.samples)
+	collector := &SampleCollector{
+		Count:     s.count,
+		NullCount: 0,
+		Samples:   s.samples,
+		Sketch:    sketch,
+	}
+	hg, err := BuildColumn(ctx, bucketCount, 2, collector)
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg}
 	tbl := &Table{
