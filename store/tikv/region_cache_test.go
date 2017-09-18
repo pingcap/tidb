@@ -84,7 +84,7 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
 	s.checkCache(c, 1)
-	s.cache.mu.regions[r.VerID()].ttl = 0
+	s.cache.mu.regions[r.VerID()].lastAccess = 0
 	r = s.cache.getRegionFromCache([]byte("a"))
 	c.Assert(r, IsNil)
 }

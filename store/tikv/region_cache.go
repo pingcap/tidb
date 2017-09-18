@@ -34,8 +34,8 @@ const (
 
 // CachedRegion encapsulates {Region, TTL}
 type CachedRegion struct {
-	region *Region
-	ttl    int64
+	region     *Region
+	lastAccess int64
 }
 
 // RegionCache caches Regions loaded from PD.
@@ -91,9 +91,9 @@ func (c *RegionCache) DropInvalidRegion(id RegionVerID) bool {
 	// For example, T1 find ttl valid but before T1 freshes the ttl, T2 find ttl invalid
 	// In this case, T2 will invoke this function but T1 may have freshed the ttl
 	// Then, T2 should not drop the cached region
-	ttl := atomic.LoadInt64(&cachedregion.ttl) // we may not need an atomic load, I think a simple load is enough?
-	lastAccess := time.Unix(ttl, 0)
-	if time.Since(lastAccess) < rcDefaultRegionCacheTTL {
+	lastAccess := atomic.LoadInt64(&cachedregion.lastAccess) // we may not need an atomic load, I think a simple load is enough?
+	lastAccessTime := time.Unix(lastAccess, 0)
+	if time.Since(lastAccessTime) < rcDefaultRegionCacheTTL {
 		return false
 	}
 	delete(c.mu.regions, id)
@@ -105,18 +105,16 @@ func (c *RegionCache) GetCachedRegion(id RegionVerID) *Region {
 	for {
 		c.mu.RLock()
 		cachedregion, ok := c.mu.regions[id]
+		c.mu.RUnlock()
 		if !ok {
-			c.mu.RUnlock()
 			return nil
 		}
-		ttl := atomic.LoadInt64(&cachedregion.ttl)
-		lastAccess := time.Unix(ttl, 0)
-		if time.Since(lastAccess) < rcDefaultRegionCacheTTL {
-			defer c.mu.RUnlock()
-			atomic.StoreInt64(&cachedregion.ttl, time.Now().Unix())
+		lastAccess := atomic.LoadInt64(&cachedregion.lastAccess) // we may not need an atomic load, I think a simple load is enough?
+		lastAccessTime := time.Unix(lastAccess, 0)
+		if time.Since(lastAccessTime) < rcDefaultRegionCacheTTL {
+			atomic.StoreInt64(&cachedregion.lastAccess, time.Now().Unix())
 			return cachedregion.region
 		}
-		c.mu.RUnlock()
 
 		if c.DropInvalidRegion(id) {
 			return nil
@@ -298,8 +296,8 @@ func (c *RegionCache) insertRegionToCache(r *Region) *Region {
 		delete(c.mu.regions, old.(*llrbItem).region.VerID())
 	}
 	c.mu.regions[r.VerID()] = &CachedRegion{
-		region: r,
-		ttl:    time.Now().Unix(),
+		region:     r,
+		lastAccess: time.Now().Unix(),
 	}
 	return r
 }
