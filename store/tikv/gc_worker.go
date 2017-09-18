@@ -19,7 +19,6 @@ import (
 	"os"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -41,7 +40,7 @@ type GCWorker struct {
 	uuid        string
 	desc        string
 	store       *tikvStore
-	gcIsRunning int32
+	gcIsRunning bool
 	lastFinish  time.Time
 	cancel      goctx.CancelFunc
 	done        chan error
@@ -159,7 +158,7 @@ func NewGCWorker(store kv.Storage, enableGC bool) (*GCWorker, error) {
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:       store.(*tikvStore),
-		gcIsRunning: 0,
+		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		done:        make(chan error),
 	}
@@ -231,7 +230,7 @@ func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 		case <-ticker.C:
 			w.tick(ctx)
 		case err := <-w.done:
-			atomic.StoreInt32(&w.gcIsRunning, 0)
+			w.gcIsRunning = false
 			w.lastFinish = time.Now()
 			if err != nil {
 				log.Errorf("[gc worker] runGCJob error: %v", err)
@@ -295,22 +294,23 @@ func (w *GCWorker) storeIsBootstrapped() bool {
 
 // Leader of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx goctx.Context) error {
-	if !atomic.CompareAndSwapInt32(&w.gcIsRunning, 0, 1) {
+	if w.gcIsRunning {
 		return nil
 	}
 
 	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
-		atomic.StoreInt32(&w.gcIsRunning, 0)
+		w.gcIsRunning = false
 		return errors.Trace(err)
 	}
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
 	if time.Since(w.lastFinish) < gcWaitTime {
-		atomic.StoreInt32(&w.gcIsRunning, 0)
+		w.gcIsRunning = false
 		return nil
 	}
 
+	w.gcIsRunning = true
 	log.Infof("[gc worker] %s starts GC job, safePoint: %v", w.uuid, safePoint)
 	go w.runGCJob(ctx, safePoint)
 	return nil
@@ -420,7 +420,7 @@ func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	err = doGC(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
 		log.Error("do GC returns an error", err)
-		atomic.StoreInt32(&w.gcIsRunning, 0)
+		w.gcIsRunning = false
 		w.done <- errors.Trace(err)
 		return
 	}
@@ -857,7 +857,7 @@ func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:       store.(*tikvStore),
-		gcIsRunning: 0,
+		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		done:        make(chan error),
 	}

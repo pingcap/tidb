@@ -167,7 +167,6 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	_, mock := client.(*mocktikv.RPCClient)
 	store := &tikvStore{
 		clusterID:   pdClient.GetClusterID(goctx.TODO()),
 		uuid:        uuid,
@@ -175,7 +174,6 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		client:      client,
 		pdClient:    pdClient,
 		regionCache: NewRegionCache(pdClient),
-		mock:        mock,
 		kv:          spkv,
 		safePoint:   0,
 		spTime:      time.Now(),
@@ -265,7 +263,6 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 
 	mvccStore := opt.mvccStore
 	if mvccStore == nil {
-		// mvccStore = mocktikv.NewMvccStore()
 		var err error
 		mvccStore, err = mocktikv.NewMVCCLevelDB(opt.path)
 		if err != nil {
@@ -287,8 +284,9 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 	}
 
 	spkv := NewMockSafePointKV()
-
-	return newTikvStore(uuid, pdCli, spkv, client, false)
+	tikvStore, err := newTikvStore(uuid, pdCli, spkv, client, false)
+	tikvStore.mock = true
+	return tikvStore, errors.Trace(err)
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
