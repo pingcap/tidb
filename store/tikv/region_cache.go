@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	rcDefaultRegionCacheTTL = time.Minute * 2
+	rcDefaultRegionCacheTTL = time.Minute * 10
 )
 
 // CachedRegion encapsulates {Region, TTL}
@@ -80,12 +80,9 @@ func (c *RPCContext) GetStoreID() uint64 {
 }
 
 func (c *CachedRegion) isValid() bool {
-	lastAccess := atomic.LoadInt64(&c.lastAccess) // we may not need an atomic load, I think a simple load is enough?
+	lastAccess := atomic.LoadInt64(&c.lastAccess)
 	lastAccessTime := time.Unix(lastAccess, 0)
-	if time.Since(lastAccessTime) < rcDefaultRegionCacheTTL {
-		return true
-	}
-	return false
+	return time.Since(lastAccessTime) < rcDefaultRegionCacheTTL
 }
 
 // DropInvalidRegion returns true if the region is invalid and then dropped or if it has been dropped
