@@ -368,9 +368,12 @@ func (s *testSuite) TestShow2(c *C) {
 	tk.MustExec("use test")
 
 	tk.MustExec("set global autocommit=0")
-	defer tk.MustExec("set global autocommit = ON")
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 0"))
+	tk.MustExec("set global autocommit = 1")
+	tk2 := testkit.NewTestKit(c, s.store)
+	// TODO: In MySQL, the result is "autocommit ON".
+	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
