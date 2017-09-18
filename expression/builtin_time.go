@@ -347,11 +347,11 @@ func (c *dateLiteralFunctionClass) getFunction(ctx context.Context, args []Expre
 	}
 	constant, ok := args[0].(*Constant)
 	if !ok {
-		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+		panic("Unexpected parameter for date literal")
 	}
 	str := constant.Value.GetString()
 	if !datePattern.MatchString(str) {
-		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(str)
 	}
 	tm, err := types.ParseDate(str)
 	if err != nil {
@@ -373,10 +373,10 @@ type builtinDateLiteralSig struct {
 func (b *builtinDateLiteralSig) evalTime(row []types.Datum) (types.Time, bool, error) {
 	mode := b.getCtx().GetSessionVars().SQLMode
 	if mode.HasNoZeroDateMode() && b.literal.IsZero() {
-		return b.literal, true, errors.Trace(types.ErrInvalidTimeFormat)
+		return b.literal, true, types.ErrIncorrectDatetimeValue.GenByArgs(b.literal.String())
 	}
 	if mode.HasNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
-		return b.literal, true, errors.Trace(types.ErrInvalidTimeFormat)
+		return b.literal, true, types.ErrIncorrectDatetimeValue.GenByArgs(b.literal.String())
 	}
 	return b.literal, false, nil
 }
@@ -1964,11 +1964,11 @@ func (c *timeLiteralFunctionClass) getFunction(ctx context.Context, args []Expre
 	}
 	constant, ok := args[0].(*Constant)
 	if !ok {
-		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(constant.Value.GetString())
+		panic("Unexpected parameter for time literal")
 	}
 	str := constant.Value.GetString()
 	if !isDuration(str) {
-		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(constant.Value.GetString())
+		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(str)
 	}
 	duration, err := types.ParseDuration(str, getFsp(str))
 	if err != nil {
@@ -3159,11 +3159,11 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx context.Context, args []
 	}
 	constant, ok := args[0].(*Constant)
 	if !ok {
-		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(constant.Value.GetString())
+		panic("Unexpected parameter for timestamp literal")
 	}
 	str := constant.Value.GetString()
 	if !timestampPattern.MatchString(str) {
-		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(constant.Value.GetString())
+		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(str)
 	}
 	tm, err := types.ParseTime(str, mysql.TypeTimestamp, getFsp(str))
 	if err != nil {
