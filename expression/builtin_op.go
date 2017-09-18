@@ -340,12 +340,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx context.Context, args []Exp
 	}
 
 	argTp := fieldTp2EvalTp(args[0].GetType())
-	switch argTp {
-	case tpReal:
-		argTp = tpReal
-	case tpDecimal:
-		argTp = tpDecimal
-	default:
+	if argTp != tpReal && argTp != tpDecimal {
 		argTp = tpInt
 	}
 
@@ -553,7 +548,7 @@ func (c *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow boo
 // typerInfer will infers the return type as tpDecimal, not tpInt.
 func (c *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Context) (evalTp, bool) {
 	tp := fieldTp2EvalTp(argExpr.GetType())
-	if tp != tpInt || tp != tpDecimal {
+	if tp != tpInt && tp != tpDecimal {
 		tp = tpReal
 	}
 
