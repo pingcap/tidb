@@ -21,19 +21,19 @@ func (s *testStatisticsSuite) TestSketch(c *C) {
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(s.samples, maxSize)
 	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(6624))
+	c.Check(ndv, Equals, int64(6232))
 
 	rcSketch, ndv, err := buildFMSketch(s.rc.(*recordSet).data, maxSize)
 	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(74240))
+	c.Check(ndv, Equals, int64(73344))
 
 	pkSketch, ndv, err := buildFMSketch(s.pk.(*recordSet).data, maxSize)
 	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(99968))
+	c.Check(ndv, Equals, int64(100480))
 
 	sampleSketch.mergeFMSketch(pkSketch)
 	sampleSketch.mergeFMSketch(rcSketch)
-	c.Check(sampleSketch.NDV(), Equals, int64(99968))
+	c.Check(sampleSketch.NDV(), Equals, int64(100480))
 
 	maxSize = 2
 	sketch := NewFMSketch(maxSize)
@@ -48,7 +48,7 @@ func (s *testStatisticsSuite) TestSketchProtoConversion(c *C) {
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(s.samples, maxSize)
 	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(6624))
+	c.Check(ndv, Equals, int64(6232))
 
 	p := FMSketchToProto(sampleSketch)
 	f := FMSketchFromProto(p)

@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
@@ -97,11 +96,13 @@ type stmtRecord struct {
 	params  []interface{}
 }
 
-type stmtHistory struct {
+// StmtHistory holds all histories of statements in a txn.
+type StmtHistory struct {
 	history []*stmtRecord
 }
 
-func (h *stmtHistory) add(stmtID uint32, st ast.Statement, stmtCtx *variable.StatementContext, params ...interface{}) {
+// Add appends a stmt to history list.
+func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *variable.StatementContext, params ...interface{}) {
 	s := &stmtRecord{
 		stmtID:  stmtID,
 		st:      st,
@@ -130,9 +131,7 @@ type session struct {
 	// unlimitedRetryCount is used for test only.
 	unlimitedRetryCount bool
 
-	// For performance_schema only.
-	stmtState *perfschema.StatementState
-	parser    *parser.Parser
+	parser *parser.Parser
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -406,7 +405,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
-	nh := getHistory(s)
+	nh := GetHistory(s)
 	var err error
 	for {
 		s.PrepareTxnCtx()
@@ -617,6 +616,12 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(name string, value string) error {
+	if name == variable.SQLModeVar {
+		value = mysql.FormatSQLModeStr(value)
+		if _, err := mysql.GetSQLMode(value); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), value)
 	_, _, err := s.ExecRestrictedSQL(s, sql)
@@ -658,8 +663,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
 	var rs []ast.RecordSet
-	ph := sessionctx.GetDomain(s).PerfSchema()
-	for i, rst := range rawStmts {
+	for _, rst := range rawStmts {
 		s.PrepareTxnCtx()
 		startTS := time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
@@ -672,12 +676,10 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		}
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
-		s.stmtState = ph.StartStatement(sql, connID, perfschema.CallerNameSessionExecute, rawStmts[i])
 		s.SetValue(context.QueryString, st.OriginText())
 
 		startTS = time.Now()
 		r, err := runStmt(s, st)
-		ph.EndStatement(s.stmtState)
 		if err != nil {
 			if !kv.ErrKeyExists.Equal(err) {
 				log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)

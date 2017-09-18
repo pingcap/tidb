@@ -15,7 +15,6 @@ package executor
 
 import (
 	"math"
-	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -632,15 +631,15 @@ func (b *executorBuilder) getStartTS() uint64 {
 }
 
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
-	table, _ := b.is.TableByID(v.Table.ID)
+	tb, _ := b.is.TableByID(v.Table.ID)
 	ts := &TableScanExec{
-		t:            table,
-		ctx:          b.ctx,
-		columns:      v.Columns,
-		schema:       v.Schema(),
-		seekHandle:   math.MinInt64,
-		ranges:       v.Ranges,
-		isInfoSchema: strings.EqualFold(v.DBName.L, infoschema.Name),
+		t:              tb,
+		ctx:            b.ctx,
+		columns:        v.Columns,
+		schema:         v.Schema(),
+		seekHandle:     math.MinInt64,
+		ranges:         v.Ranges,
+		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
 	return ts
 }
@@ -904,7 +903,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk 
 			ranges:    ranges,
 			keepOrder: keepOrder,
 			dagPB: &tipb.DAGRequest{
-				StartTs:        b.getStartTS(),
+				StartTs:        startTS,
 				TimeZoneOffset: timeZoneOffset(b.ctx),
 				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			},
@@ -960,7 +959,7 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 			ranges:    []*types.IndexRange{idxRange},
 			keepOrder: true,
 			dagPB: &tipb.DAGRequest{
-				StartTs:        b.getStartTS(),
+				StartTs:        startTS,
 				TimeZoneOffset: timeZoneOffset(b.ctx),
 				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			},
@@ -1001,27 +1000,97 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	return e
 }
 
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) *AnalyzeIndexExec {
+	startTS := b.getStartTS()
+	if b.err != nil {
+		return nil
+	}
+	e := &AnalyzeIndexExec{
+		ctx:         b.ctx,
+		tblInfo:     task.TableInfo,
+		idxInfo:     task.IndexInfo,
+		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency,
+		priority:    b.priority,
+		analyzePB: &tipb.AnalyzeReq{
+			Tp:             tipb.AnalyzeType_TypeIndex,
+			StartTs:        startTS,
+			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			TimeZoneOffset: timeZoneOffset(b.ctx),
+		},
+	}
+	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
+		BucketSize: maxBucketSize,
+		NumColumns: int32(len(task.IndexInfo.Columns)),
+	}
+	return e
+}
+
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTask) *AnalyzeColumnsExec {
+	cols := task.ColsInfo
+	keepOrder := false
+	if task.PKInfo != nil {
+		keepOrder = true
+		cols = append([]*model.ColumnInfo{task.PKInfo}, cols...)
+	}
+	e := &AnalyzeColumnsExec{
+		ctx:         b.ctx,
+		tblInfo:     task.TableInfo,
+		colsInfo:    task.ColsInfo,
+		pkInfo:      task.PKInfo,
+		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency,
+		priority:    b.priority,
+		keepOrder:   keepOrder,
+		analyzePB: &tipb.AnalyzeReq{
+			Tp:             tipb.AnalyzeType_TypeColumn,
+			StartTs:        b.getStartTS(),
+			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			TimeZoneOffset: timeZoneOffset(b.ctx),
+		},
+	}
+	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
+		BucketSize:  maxBucketSize,
+		SampleSize:  maxRegionSampleSize,
+		SketchSize:  maxSketchSize,
+		ColumnsInfo: distsql.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+	}
+	return e
+}
+
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		ctx:   b.ctx,
 		tasks: make([]*analyzeTask, 0, len(v.Children())),
 	}
 	for _, task := range v.ColTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType:  colTask,
-			src:       b.buildTableScanForAnalyze(task.TableInfo, task.PKInfo, task.ColsInfo),
-			tableInfo: task.TableInfo,
-			Columns:   task.ColsInfo,
-			PKInfo:    task.PKInfo,
-		})
+		if task.PushDown {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: colTask,
+				colExec:  b.buildAnalyzeColumnsPushdown(task),
+			})
+		} else {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType:  colTask,
+				src:       b.buildTableScanForAnalyze(task.TableInfo, task.PKInfo, task.ColsInfo),
+				tableInfo: task.TableInfo,
+				Columns:   task.ColsInfo,
+				PKInfo:    task.PKInfo,
+			})
+		}
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType:  idxTask,
-			src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
-			indexInfo: task.IndexInfo,
-			tableInfo: task.TableInfo,
-		})
+		if task.PushDown {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: idxTask,
+				idxExec:  b.buildAnalyzeIndexPushdown(task),
+			})
+		} else {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType:  idxTask,
+				src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
+				indexInfo: task.IndexInfo,
+				tableInfo: task.TableInfo,
+			})
+		}
 	}
 	return e
 }
