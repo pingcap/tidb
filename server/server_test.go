@@ -717,7 +717,7 @@ func runTestStmtCount(t *C) {
 
 func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	// issue #4540
-	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.CollationNames["utf8_general_ci"]), "test", nil)
+	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
 	_, err = ctx.Execute("use test;")
 	c.Assert(err, IsNil)
