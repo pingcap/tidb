@@ -2733,15 +2733,15 @@ func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 
 	_, err := tk.Exec("select time '2017-01-01 00:00:00';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-01-01 00:00:00")), IsTrue)
 
 	_, err = tk.Exec("select time '071231235959.999999';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("071231235959.999999")), IsTrue)
 
 	_, err = tk.Exec("select time '20171231235959.999999';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("20171231235959.999999")), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
@@ -2766,15 +2766,15 @@ func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
 
 	_, err := tk.Exec("select timestamp '00:00:00';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("00:00:00")), IsTrue)
 
 	_, err = tk.Exec("select timestamp '1992-01-03';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("1992-01-03")), IsTrue)
 
 	_, err = tk.Exec("select timestamp '20171231235959.999999';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("20171231235959.999999")), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestLiterals(c *C) {

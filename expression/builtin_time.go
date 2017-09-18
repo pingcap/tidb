@@ -1958,11 +1958,11 @@ func (c *timeLiteralFunctionClass) getFunction(ctx context.Context, args []Expre
 	}
 	constant, ok := args[0].(*Constant)
 	if !ok {
-		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(constant.Value.GetString())
 	}
 	str := constant.Value.GetString()
 	if !isDuration(str) {
-		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(constant.Value.GetString())
 	}
 	duration, err := types.ParseDuration(str, getFsp(str))
 	if err != nil {
@@ -3147,11 +3147,11 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx context.Context, args []
 	}
 	constant, ok := args[0].(*Constant)
 	if !ok {
-		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(constant.Value.GetString())
 	}
 	str := constant.Value.GetString()
 	if !timestampPattern.MatchString(str) {
-		return nil, errors.Trace(types.ErrInvalidTimeFormat)
+		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(constant.Value.GetString())
 	}
 	tm, err := types.ParseTime(str, mysql.TypeTimestamp, getFsp(str))
 	if err != nil {
