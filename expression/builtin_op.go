@@ -674,6 +674,9 @@ func (c *isNullFunctionClass) getFunction(ctx context.Context, args []Expression
 		return nil, errors.Trace(err)
 	}
 	argTp := fieldTp2EvalTp(args[0].GetType())
+	if argTp == tpTimestamp {
+		argTp = tpDatetime
+	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp)
 	bf.tp.Flen = 1
 	var sig builtinFunc
