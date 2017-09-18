@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,13 +15,14 @@ package main
 
 import (
 	"fmt"
-	"github.com/chzyer/readline"
 	"io"
 	"io/ioutil"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"github.com/chzyer/readline"
 
 	flag "github.com/spf13/pflag"
 
@@ -74,7 +75,7 @@ func main() {
 			fmt.Println(err)
 			return
 		}
-		input = strings.Split(strings.TrimSpace(string(b[:])), " ")
+		input = strings.Split(strings.TrimSpace(string(b)), " ")
 	}
 	if detach {
 		tidbctl.Start(append(os.Args[1:], input...))

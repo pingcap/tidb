@@ -17,11 +17,12 @@ import (
 	"fmt"
 
 	"errors"
-	"github.com/pingcap/tidb/tidbctl/command"
-	"github.com/spf13/cobra"
 	"io/ioutil"
 	"net/http"
 	"net/url"
+
+	"github.com/pingcap/tidb/tidbctl/command"
+	"github.com/spf13/cobra"
 )
 
 var (

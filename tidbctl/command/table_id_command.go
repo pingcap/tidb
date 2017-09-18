@@ -17,9 +17,10 @@ import (
 	"fmt"
 
 	"encoding/json"
-	"github.com/spf13/cobra"
 	"io/ioutil"
 	"net/http"
+
+	"github.com/spf13/cobra"
 )
 
 type tableInfo struct {
@@ -94,7 +95,6 @@ func showTableIDCommandFunc(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// fmt.Println(resp)
 	defer resp.Body.Close()
 
 	content, err := ioutil.ReadAll(resp.Body)
