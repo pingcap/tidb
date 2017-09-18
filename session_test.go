@@ -15,18 +15,15 @@ package tidb
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
@@ -1891,96 +1888,6 @@ func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
-	defer testleak.AfterTest(c)()
-
-	varName := "max_allowed_packet"
-	varValue := "67108864" // This is the default value for max_allowed_packet
-	varValue1 := "4194305"
-	varValue2 := "4194306"
-
-	dbName := "test_global_var_accessor"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName).(*session)
-	// Get globalSysVar twice and get the same value
-	v, err := se.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue)
-	v, err = se.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue)
-	// Set global var to another value
-	err = se.SetGlobalSysVar(varName, varValue1)
-	c.Assert(err, IsNil)
-	v, err = se.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue1)
-	c.Assert(se.CommitTxn(), IsNil)
-
-	// Change global variable value in another session
-	se1 := newSession(c, s.store, dbName).(*session)
-	v, err = se1.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue1)
-	err = se1.SetGlobalSysVar(varName, varValue2)
-	c.Assert(err, IsNil)
-	v, err = se1.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue2)
-	c.Assert(se1.CommitTxn(), IsNil)
-
-	// Make sure the change is visible to any client that accesses that global variable.
-	v, err = se.GetGlobalSysVar(varName)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue2)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func mustExecMultiSQL(c *C, se Session, sql string) {
-	ss := strings.Split(sql, "\n")
-	for _, s := range ss {
-		s = strings.TrimSpace(s)
-		if len(s) == 0 {
-			continue
-		}
-		mustExecSQL(c, se, s)
-	}
-}
-
-func (s *testSessionSuite) TestSqlLogicTestCase(c *C) {
-	initSQL := `
-		CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT)
-		INSERT INTO tab1 VALUES(0,26,690.51)
-		CREATE INDEX idx_tab1_1 on tab1 (col1)`
-	dbName := "test_sql_logic_test_case"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecMultiSQL(c, se, initSQL)
-
-	sql := "SELECT col0 FROM tab1 WHERE 71*22 >= col1"
-	mustExecMatch(c, se, sql, [][]interface{}{{"26"}})
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-// TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
-func (s *testSessionSuite) TestTruncateAlloc(c *C) {
-	dbName := "test_truncate_alloc"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	_, err := se.Execute("create table truncate_id (a int primary key auto_increment)")
-	c.Assert(err, IsNil)
-	mustExecute(se, "insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
-	mustExecute(se, "truncate table truncate_id")
-	mustExecute(se, "insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
-	rset := mustExecSQL(c, se, "select a from truncate_id where a > 11")
-	row, err := rset.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 // TestISColumns tests information_schema.columns.
 func (s *testSessionSuite) TestISColumns(c *C) {
 	defer testleak.AfterTest(c)()
@@ -1991,50 +1898,4 @@ func (s *testSessionSuite) TestISColumns(c *C) {
 	mustExecSQL(c, se, sql)
 
 	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_retry_clean_txn"
-	se := newSession(c, s.store, dbName).(*session)
-	se.Execute("create table retrytxn (a int unique, b int)")
-	_, err := se.Execute("insert retrytxn values (1, 1)")
-	c.Assert(err, IsNil)
-	se.Execute("begin")
-	se.Execute("update retrytxn set b = b + 1 where a = 1")
-
-	// Make retryable error.
-	se2 := newSession(c, s.store, dbName)
-	se2.Execute("update retrytxn set b = b + 1 where a = 1")
-
-	// Hijack retry history, add a statement that returns error.
-	history := getHistory(se)
-	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
-	c.Assert(err, IsNil)
-	stmt, err := Compile(se, stmtNode)
-	executor.ResetStmtCtx(se, stmtNode)
-	history.add(0, stmt, se.sessionVars.StmtCtx)
-	_, err = se.Execute("commit")
-	c.Assert(err, NotNil)
-	c.Assert(se.Txn(), IsNil)
-	c.Assert(se.sessionVars.InTxn(), IsFalse)
-}
-
-func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_retry_reset_stmtctx"
-	se := newSession(c, s.store, dbName).(*session)
-	se.Execute("create table retrytxn (a int unique, b int)")
-	_, err := se.Execute("insert retrytxn values (1, 1)")
-	c.Assert(err, IsNil)
-	se.Execute("begin")
-	se.Execute("update retrytxn set b = b + 1 where a = 1")
-
-	// Make retryable error.
-	se2 := newSession(c, s.store, dbName)
-	se2.Execute("update retrytxn set b = b + 1 where a = 1")
-
-	err = se.CommitTxn()
-	c.Assert(err, IsNil)
-	c.Assert(se.AffectedRows(), Equals, uint64(1))
 }
