@@ -58,15 +58,18 @@ func ExpressionsToPBList(sc *variable.StatementContext, exprs []Expression, clie
 	return
 }
 
+// PbConverter supplys methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
 	sc     *variable.StatementContext
 }
 
+// NewPBConverter creates a PbConverter.
 func NewPBConverter(client kv.Client, sc *variable.StatementContext) PbConverter {
 	return PbConverter{client: client, sc: sc}
 }
 
+// ExprToPB converts Expression to TiPB.
 func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
 	case *Constant:

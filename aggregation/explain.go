@@ -19,7 +19,7 @@ import (
 )
 
 // ExplainAggFunc generates explain information for a aggregation function.
-func ExplainAggFunc(agg AggregationFunction) string {
+func ExplainAggFunc(agg Aggregation) string {
 	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", agg.GetName()))
 	if agg.IsDistinct() {
 		buffer.WriteString("distinct ")

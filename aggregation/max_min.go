@@ -27,8 +27,8 @@ type maxMinFunction struct {
 	isMax bool
 }
 
-// Clone implements AggregationFunction interface.
-func (mmf *maxMinFunction) Clone() AggregationFunction {
+// Clone implements Aggregation interface.
+func (mmf *maxMinFunction) Clone() Aggregation {
 	nf := *mmf
 	for i, arg := range mmf.Args {
 		nf.Args[i] = arg.Clone()
@@ -37,7 +37,7 @@ func (mmf *maxMinFunction) Clone() AggregationFunction {
 	return &nf
 }
 
-// CalculateDefaultValue implements AggregationFunction interface.
+// CalculateDefaultValue implements Aggregation interface.
 func (mmf *maxMinFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := mmf.Args[0]
 	result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
@@ -51,22 +51,22 @@ func (mmf *maxMinFunction) CalculateDefaultValue(schema *expression.Schema, ctx 
 	return d, false
 }
 
-// GetType implements AggregationFunction interface.
+// GetType implements Aggregation interface.
 func (mmf *maxMinFunction) GetType() *types.FieldType {
 	return mmf.Args[0].GetType()
 }
 
-// GetGroupResult implements AggregationFunction interface.
+// GetGroupResult implements Aggregation interface.
 func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return mmf.getContext(groupKey).Value
 }
 
-// GetPartialResult implements AggregationFunction interface.
+// GetPartialResult implements Aggregation interface.
 func (mmf *maxMinFunction) GetPartialResult(groupKey []byte) []types.Datum {
 	return []types.Datum{mmf.GetGroupResult(groupKey)}
 }
 
-// GetStreamResult implements AggregationFunction interface.
+// GetStreamResult implements Aggregation interface.
 func (mmf *maxMinFunction) GetStreamResult() (d types.Datum) {
 	if mmf.streamCtx == nil {
 		return
@@ -76,7 +76,7 @@ func (mmf *maxMinFunction) GetStreamResult() (d types.Datum) {
 	return
 }
 
-// Update implements AggregationFunction interface.
+// Update implements Aggregation interface.
 func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, sc *variable.StatementContext) error {
 	ctx := mmf.getContext(groupKey)
 	if len(mmf.Args) != 1 {
@@ -104,7 +104,7 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, sc *variab
 	return nil
 }
 
-// StreamUpdate implements AggregationFunction interface.
+// StreamUpdate implements Aggregation interface.
 func (mmf *maxMinFunction) StreamUpdate(row []types.Datum, sc *variable.StatementContext) error {
 	ctx := mmf.getStreamedContext()
 	if len(mmf.Args) != 1 {

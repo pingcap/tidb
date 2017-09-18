@@ -27,8 +27,8 @@ type concatFunction struct {
 	aggFunction
 }
 
-// Clone implements AggregationFunction interface.
-func (cf *concatFunction) Clone() AggregationFunction {
+// Clone implements Aggregation interface.
+func (cf *concatFunction) Clone() Aggregation {
 	nf := *cf
 	for i, arg := range cf.Args {
 		nf.Args[i] = arg.Clone()
@@ -37,7 +37,7 @@ func (cf *concatFunction) Clone() AggregationFunction {
 	return &nf
 }
 
-// GetType implements AggregationFunction interface.
+// GetType implements Aggregation interface.
 func (cf *concatFunction) GetType() *types.FieldType {
 	return types.NewFieldType(mysql.TypeVarString)
 }
@@ -50,7 +50,7 @@ func (cf *concatFunction) writeValue(ctx *aggEvaluateContext, val types.Datum) {
 	}
 }
 
-// Update implements AggregationFunction interface.
+// Update implements Aggregation interface.
 func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, sc *variable.StatementContext) error {
 	ctx := cf.getContext(groupKey)
 	cf.datumBuf = cf.datumBuf[:0]
@@ -86,7 +86,7 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, sc *variabl
 	return nil
 }
 
-// StreamUpdate implements AggregationFunction interface.
+// StreamUpdate implements Aggregation interface.
 func (cf *concatFunction) StreamUpdate(row []types.Datum, sc *variable.StatementContext) error {
 	ctx := cf.getStreamedContext()
 	cf.datumBuf = cf.datumBuf[:0]
@@ -122,7 +122,7 @@ func (cf *concatFunction) StreamUpdate(row []types.Datum, sc *variable.Statement
 	return nil
 }
 
-// GetGroupResult implements AggregationFunction interface.
+// GetGroupResult implements Aggregation interface.
 func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	ctx := cf.getContext(groupKey)
 	if ctx.Buffer != nil {
@@ -133,12 +133,12 @@ func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return d
 }
 
-// GetPartialResult implements AggregationFunction interface.
+// GetPartialResult implements Aggregation interface.
 func (cf *concatFunction) GetPartialResult(groupKey []byte) []types.Datum {
 	return []types.Datum{cf.GetGroupResult(groupKey)}
 }
 
-// GetStreamResult implements AggregationFunction interface.
+// GetStreamResult implements Aggregation interface.
 func (cf *concatFunction) GetStreamResult() (d types.Datum) {
 	if cf.streamCtx == nil {
 		return

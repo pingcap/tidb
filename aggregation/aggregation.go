@@ -28,8 +28,8 @@ import (
 	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
-// AggregationFunction stands for aggregate functions.
-type AggregationFunction interface {
+// Aggregation stands for aggregate functions.
+type Aggregation interface {
 	fmt.Stringer
 	json.Marshaler
 	// Update during executing.
@@ -73,10 +73,10 @@ type AggregationFunction interface {
 	SetContext(ctx map[string](*aggEvaluateContext))
 
 	// Equal checks whether two aggregation functions are equal.
-	Equal(agg AggregationFunction, ctx context.Context) bool
+	Equal(agg Aggregation, ctx context.Context) bool
 
 	// Clone copies an aggregate function totally.
-	Clone() AggregationFunction
+	Clone() Aggregation
 
 	// GetType gets field type of aggregate function.
 	GetType() *types.FieldType
@@ -87,8 +87,8 @@ type AggregationFunction interface {
 	CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (types.Datum, bool)
 }
 
-// NewAggFunction creates a new AggregationFunction.
-func NewAggFunction(funcType string, funcArgs []expression.Expression, distinct bool) AggregationFunction {
+// NewAggFunction creates a new Aggregation.
+func NewAggFunction(funcType string, funcArgs []expression.Expression, distinct bool) Aggregation {
 	switch tp := strings.ToLower(funcType); tp {
 	case ast.AggFuncSum:
 		return &sumFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
@@ -109,7 +109,7 @@ func NewAggFunction(funcType string, funcArgs []expression.Expression, distinct 
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
-func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *variable.StatementContext) (AggregationFunction, error) {
+func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *variable.StatementContext) (Aggregation, error) {
 	args := make([]expression.Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
 		arg, err := expression.PBToExpr(child, fieldTps, sc)
@@ -168,8 +168,8 @@ type aggFunction struct {
 	datumBuf     []types.Datum
 }
 
-// Equal implements AggregationFunction interface.
-func (af *aggFunction) Equal(b AggregationFunction, ctx context.Context) bool {
+// Equal implements Aggregation interface.
+func (af *aggFunction) Equal(b Aggregation, ctx context.Context) bool {
 	if af.GetName() != b.GetName() {
 		return false
 	}
@@ -215,43 +215,43 @@ func newAggFunc(name string, args []expression.Expression, dist bool) aggFunctio
 	}
 }
 
-// CalculateDefaultValue implements AggregationFunction interface.
+// CalculateDefaultValue implements Aggregation interface.
 func (af *aggFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (types.Datum, bool) {
 	return types.Datum{}, false
 }
 
-// IsDistinct implements AggregationFunction interface.
+// IsDistinct implements Aggregation interface.
 func (af *aggFunction) IsDistinct() bool {
 	return af.Distinct
 }
 
-// Reset implements AggregationFunction interface.
+// Reset implements Aggregation interface.
 func (af *aggFunction) Reset() {
 	af.resultMapper = make(aggCtxMapper, 0)
 	af.streamCtx = nil
 }
 
-// GetName implements AggregationFunction interface.
+// GetName implements Aggregation interface.
 func (af *aggFunction) GetName() string {
 	return af.name
 }
 
-// SetMode implements AggregationFunction interface.
+// SetMode implements Aggregation interface.
 func (af *aggFunction) SetMode(mode AggFunctionMode) {
 	af.mode = mode
 }
 
-// GetMode implements AggregationFunction interface.
+// GetMode implements Aggregation interface.
 func (af *aggFunction) GetMode() AggFunctionMode {
 	return af.mode
 }
 
-// GetArgs implements AggregationFunction interface.
+// GetArgs implements Aggregation interface.
 func (af *aggFunction) GetArgs() []expression.Expression {
 	return af.Args
 }
 
-// SetArgs implements AggregationFunction interface.
+// SetArgs implements Aggregation interface.
 func (af *aggFunction) SetArgs(args []expression.Expression) {
 	af.Args = args
 }
@@ -278,7 +278,7 @@ func (af *aggFunction) getStreamedContext() *aggEvaluateContext {
 	return af.streamCtx
 }
 
-// SetContext implements AggregationFunction interface.
+// SetContext implements Aggregation interface.
 func (af *aggFunction) SetContext(ctx map[string](*aggEvaluateContext)) {
 	af.resultMapper = ctx
 }

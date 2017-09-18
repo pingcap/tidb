@@ -27,8 +27,8 @@ type countFunction struct {
 	aggFunction
 }
 
-// Clone implements AggregationFunction interface.
-func (cf *countFunction) Clone() AggregationFunction {
+// Clone implements Aggregation interface.
+func (cf *countFunction) Clone() Aggregation {
 	nf := *cf
 	for i, arg := range cf.Args {
 		nf.Args[i] = arg.Clone()
@@ -37,7 +37,7 @@ func (cf *countFunction) Clone() AggregationFunction {
 	return &nf
 }
 
-// CalculateDefaultValue implements AggregationFunction interface.
+// CalculateDefaultValue implements Aggregation interface.
 func (cf *countFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	for _, arg := range cf.Args {
 		result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
@@ -56,7 +56,7 @@ func (cf *countFunction) CalculateDefaultValue(schema *expression.Schema, ctx co
 	return types.NewDatum(1), true
 }
 
-// GetType implements AggregationFunction interface.
+// GetType implements Aggregation interface.
 func (cf *countFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	ft.Flen = 21
@@ -64,7 +64,7 @@ func (cf *countFunction) GetType() *types.FieldType {
 	return ft
 }
 
-// Update implements AggregationFunction interface.
+// Update implements Aggregation interface.
 func (cf *countFunction) Update(row []types.Datum, groupKey []byte, sc *variable.StatementContext) error {
 	ctx := cf.getContext(groupKey)
 	if cf.Distinct {
@@ -100,7 +100,7 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, sc *variable
 	return nil
 }
 
-// StreamUpdate implements AggregationFunction interface.
+// StreamUpdate implements Aggregation interface.
 func (cf *countFunction) StreamUpdate(row []types.Datum, sc *variable.StatementContext) error {
 	ctx := cf.getStreamedContext()
 	if cf.Distinct {
@@ -131,18 +131,18 @@ func (cf *countFunction) StreamUpdate(row []types.Datum, sc *variable.StatementC
 	return nil
 }
 
-// GetGroupResult implements AggregationFunction interface.
+// GetGroupResult implements Aggregation interface.
 func (cf *countFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	d.SetInt64(cf.getContext(groupKey).Count)
 	return d
 }
 
-// GetPartialResult implements AggregationFunction interface.
+// GetPartialResult implements Aggregation interface.
 func (cf *countFunction) GetPartialResult(groupKey []byte) []types.Datum {
 	return []types.Datum{cf.GetGroupResult(groupKey)}
 }
 
-// GetStreamResult implements AggregationFunction interface.
+// GetStreamResult implements Aggregation interface.
 func (cf *countFunction) GetStreamResult() (d types.Datum) {
 	if cf.streamCtx == nil {
 		return types.NewDatum(0)

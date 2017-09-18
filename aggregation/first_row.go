@@ -26,8 +26,8 @@ type firstRowFunction struct {
 	aggFunction
 }
 
-// Clone implements AggregationFunction interface.
-func (ff *firstRowFunction) Clone() AggregationFunction {
+// Clone implements Aggregation interface.
+func (ff *firstRowFunction) Clone() Aggregation {
 	nf := *ff
 	for i, arg := range ff.Args {
 		nf.Args[i] = arg.Clone()
@@ -36,12 +36,12 @@ func (ff *firstRowFunction) Clone() AggregationFunction {
 	return &nf
 }
 
-// GetType implements AggregationFunction interface.
+// GetType implements Aggregation interface.
 func (ff *firstRowFunction) GetType() *types.FieldType {
 	return ff.Args[0].GetType()
 }
 
-// Update implements AggregationFunction interface.
+// Update implements Aggregation interface.
 func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, sc *variable.StatementContext) error {
 	ctx := ff.getContext(groupKey)
 	if ctx.GotFirstRow {
@@ -59,7 +59,7 @@ func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, sc *varia
 	return nil
 }
 
-// StreamUpdate implements AggregationFunction interface.
+// StreamUpdate implements Aggregation interface.
 func (ff *firstRowFunction) StreamUpdate(row []types.Datum, sc *variable.StatementContext) error {
 	ctx := ff.getStreamedContext()
 	if ctx.GotFirstRow {
@@ -77,17 +77,17 @@ func (ff *firstRowFunction) StreamUpdate(row []types.Datum, sc *variable.Stateme
 	return nil
 }
 
-// GetGroupResult implements AggregationFunction interface.
+// GetGroupResult implements Aggregation interface.
 func (ff *firstRowFunction) GetGroupResult(groupKey []byte) types.Datum {
 	return ff.getContext(groupKey).Value
 }
 
-// GetPartialResult implements AggregationFunction interface.
+// GetPartialResult implements Aggregation interface.
 func (ff *firstRowFunction) GetPartialResult(groupKey []byte) []types.Datum {
 	return []types.Datum{ff.GetGroupResult(groupKey)}
 }
 
-// GetStreamResult implements AggregationFunction interface.
+// GetStreamResult implements Aggregation interface.
 func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 	if ff.streamCtx == nil {
 		return
@@ -97,7 +97,7 @@ func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 	return
 }
 
-// CalculateDefaultValue implements AggregationFunction interface.
+// CalculateDefaultValue implements Aggregation interface.
 func (ff *firstRowFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := ff.Args[0]
 	result, err := expression.EvaluateExprWithNull(ctx, schema, arg)

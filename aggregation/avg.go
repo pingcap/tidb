@@ -24,8 +24,8 @@ type avgFunction struct {
 	aggFunction
 }
 
-// Clone implements AggregationFunction interface.
-func (af *avgFunction) Clone() AggregationFunction {
+// Clone implements Aggregation interface.
+func (af *avgFunction) Clone() Aggregation {
 	nf := *af
 	for i, arg := range af.Args {
 		nf.Args[i] = arg.Clone()
@@ -34,7 +34,7 @@ func (af *avgFunction) Clone() AggregationFunction {
 	return &nf
 }
 
-// GetType implements AggregationFunction interface.
+// GetType implements Aggregation interface.
 func (af *avgFunction) GetType() *types.FieldType {
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
 	types.SetBinChsClnFlag(ft)
@@ -73,7 +73,7 @@ func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, sc *variabl
 	return nil
 }
 
-// Update implements AggregationFunction interface.
+// Update implements Aggregation interface.
 func (af *avgFunction) Update(row []types.Datum, groupKey []byte, sc *variable.StatementContext) error {
 	if af.mode == FinalMode {
 		return af.updateAvg(row, groupKey, sc)
@@ -81,7 +81,7 @@ func (af *avgFunction) Update(row []types.Datum, groupKey []byte, sc *variable.S
 	return af.updateSum(row, groupKey, sc)
 }
 
-// StreamUpdate implements AggregationFunction interface.
+// StreamUpdate implements Aggregation interface.
 func (af *avgFunction) StreamUpdate(row []types.Datum, sc *variable.StatementContext) error {
 	return af.streamUpdateSum(row, sc)
 }
@@ -102,19 +102,19 @@ func (af *avgFunction) calculateResult(ctx *aggEvaluateContext) (d types.Datum) 
 	return
 }
 
-// GetGroupResult implements AggregationFunction interface.
+// GetGroupResult implements Aggregation interface.
 func (af *avgFunction) GetGroupResult(groupKey []byte) types.Datum {
 	ctx := af.getContext(groupKey)
 	return af.calculateResult(ctx)
 }
 
-// GetPartialResult implements AggregationFunction interface.
+// GetPartialResult implements Aggregation interface.
 func (af *avgFunction) GetPartialResult(groupKey []byte) []types.Datum {
 	ctx := af.getContext(groupKey)
 	return []types.Datum{types.NewIntDatum(ctx.Count), ctx.Value}
 }
 
-// GetStreamResult implements AggregationFunction interface.
+// GetStreamResult implements Aggregation interface.
 func (af *avgFunction) GetStreamResult() (d types.Datum) {
 	if af.streamCtx == nil {
 		return

@@ -34,7 +34,7 @@ type HashAggExec struct {
 	hasGby        bool
 	aggType       plan.AggregationType
 	sc            *variable.StatementContext
-	AggFuncs      []aggregation.AggregationFunction
+	AggFuncs      []aggregation.Aggregation
 	groupMap      *mvmap.MVMap
 	groupIterator *mvmap.Iterator
 	GroupByItems  []expression.Expression
@@ -150,7 +150,7 @@ type StreamAggExec struct {
 	executed           bool
 	hasData            bool
 	StmtCtx            *variable.StatementContext
-	AggFuncs           []aggregation.AggregationFunction
+	AggFuncs           []aggregation.Aggregation
 	GroupByItems       []expression.Expression
 	curGroupEncodedKey []byte
 	curGroupKey        []types.Datum

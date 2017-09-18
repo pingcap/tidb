@@ -22,7 +22,7 @@ import (
 )
 
 // AggFuncToPBExpr converts aggregate function to pb.
-func AggFuncToPBExpr(sc *variable.StatementContext, client kv.Client, aggFunc AggregationFunction) *tipb.Expr {
+func AggFuncToPBExpr(sc *variable.StatementContext, client kv.Client, aggFunc Aggregation) *tipb.Expr {
 	if aggFunc.IsDistinct() {
 		return nil
 	}

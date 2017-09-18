@@ -317,7 +317,7 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 
 type aggregateExec struct {
 	evalCtx           *evalContext
-	aggExprs          []aggregation.AggregationFunction
+	aggExprs          []aggregation.Aggregation
 	groupByExprs      []expression.Expression
 	relatedColOffsets []int
 	row               []types.Datum

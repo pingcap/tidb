@@ -178,7 +178,7 @@ type LogicalAggregation struct {
 	*basePlan
 	baseLogicalPlan
 
-	AggFuncs     []aggregation.AggregationFunction
+	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column

@@ -190,11 +190,11 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 
 func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) (*aggregateExec, error) {
 	length := len(executor.Aggregation.AggFunc)
-	aggs := make([]aggregation.AggregationFunction, 0, length)
+	aggs := make([]aggregation.Aggregation, 0, length)
 	var err error
 	var relatedColOffsets []int
 	for _, expr := range executor.Aggregation.AggFunc {
-		var aggExpr aggregation.AggregationFunction
+		var aggExpr aggregation.Aggregation
 		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
 		if err != nil {
 			return nil, errors.Trace(err)

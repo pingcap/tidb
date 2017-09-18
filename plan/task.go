@@ -434,7 +434,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	partialSchema := expression.NewSchema()
 	partialAgg.SetSchema(partialSchema)
 	cursor := 0
-	finalAggFuncs := make([]aggregation.AggregationFunction, len(finalAgg.AggFuncs))
+	finalAggFuncs := make([]aggregation.Aggregation, len(finalAgg.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
 		fun := aggregation.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression

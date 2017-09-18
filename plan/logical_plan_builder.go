@@ -63,7 +63,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
 
-	agg := LogicalAggregation{AggFuncs: make([]aggregation.AggregationFunction, 0, len(aggFuncList))}.init(b.allocator, b.ctx)
+	agg := LogicalAggregation{AggFuncs: make([]aggregation.Aggregation, 0, len(aggFuncList))}.init(b.allocator, b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
@@ -515,7 +515,7 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
 	agg := LogicalAggregation{
-		AggFuncs:     make([]aggregation.AggregationFunction, 0, child.Schema().Len()),
+		AggFuncs:     make([]aggregation.Aggregation, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.init(b.allocator, b.ctx)
 	agg.collectGroupByColumns()

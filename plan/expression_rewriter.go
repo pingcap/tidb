@@ -353,7 +353,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	}
 	aggFunc := aggregation.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
 	agg := LogicalAggregation{
-		AggFuncs: []aggregation.AggregationFunction{aggFunc},
+		AggFuncs: []aggregation.Aggregation{aggFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	aggCol0 := &expression.Column{
@@ -436,7 +436,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	firstRowFunc := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := LogicalAggregation{
-		AggFuncs: []aggregation.AggregationFunction{firstRowFunc, countFunc},
+		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	firstRowResultCol := &expression.Column{
@@ -464,7 +464,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	firstRowFunc := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := LogicalAggregation{
-		AggFuncs: []aggregation.AggregationFunction{firstRowFunc, countFunc},
+		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	firstRowResultCol := &expression.Column{

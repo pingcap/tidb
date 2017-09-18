@@ -251,7 +251,7 @@ type physicalTableSource struct {
 
 	// The following fields are used for explaining and testing. Because pb structures are not human-readable.
 
-	aggFuncs              []aggregation.AggregationFunction
+	aggFuncs              []aggregation.Aggregation
 	gbyItems              []expression.Expression
 	sortItems             []*ByItems
 	indexFilterConditions []expression.Expression
@@ -328,11 +328,11 @@ func (p *physicalTableSource) clearForTopnPushDown() {
 	p.LimitCount = nil
 }
 
-func needCount(af aggregation.AggregationFunction) bool {
+func needCount(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncCount || af.GetName() == ast.AggFuncAvg
 }
 
-func needValue(af aggregation.AggregationFunction) bool {
+func needValue(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
 }
@@ -419,7 +419,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	cursor := 0
 	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems)), RetType: gkType})
 	agg.GroupByItems = []expression.Expression{schema.Columns[cursor]}
-	newAggFuncs := make([]aggregation.AggregationFunction, len(agg.AggFuncs))
+	newAggFuncs := make([]aggregation.Aggregation, len(agg.AggFuncs))
 	for i, aggFun := range agg.AggFuncs {
 		fun := aggregation.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
@@ -578,7 +578,7 @@ type PhysicalAggregation struct {
 
 	HasGby       bool
 	AggType      AggregationType
-	AggFuncs     []aggregation.AggregationFunction
+	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
 
 	propKeys   []*expression.Column

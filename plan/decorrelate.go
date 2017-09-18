@@ -145,7 +145,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 				innerPlan.SetParents(apply)
 				agg.SetSchema(apply.Schema())
 				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
-				newAggFuncs := make([]aggregation.AggregationFunction, 0, apply.Schema().Len())
+				newAggFuncs := make([]aggregation.Aggregation, 0, apply.Schema().Len())
 				for _, col := range outerPlan.Schema().Columns {
 					first := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false)
 					newAggFuncs = append(newAggFuncs, first)
