@@ -368,7 +368,7 @@ func (s *testSuite) TestShow2(c *C) {
 	tk.MustExec("use test")
 
 	tk.MustExec("set global autocommit=1")
-	tk.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
+	tk.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit ON"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
@@ -388,6 +388,9 @@ func (s *testSuite) TestShow2(c *C) {
 	c.Assert(row.Data[17].GetString(), Equals, "注释")
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
+
+	tk.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
+
 	tk.MustExec("grant all on *.* to 'root'@'%'")
 	tk.MustQuery("show grants").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'"))
 }
