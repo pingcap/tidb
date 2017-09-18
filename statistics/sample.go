@@ -37,7 +37,7 @@ func (c *SampleCollector) MergeSampleCollector(rc *SampleCollector) {
 	c.NullCount += rc.NullCount
 	c.Sketch.mergeFMSketch(rc.Sketch)
 	for _, val := range rc.Samples {
-		c.collect(val)
+		c.collect(val, false)
 	}
 }
 
@@ -67,7 +67,7 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	return s
 }
 
-func (c *SampleCollector) collect(d types.Datum) error {
+func (c *SampleCollector) collect(d types.Datum, insertSketch bool) error {
 	if d.IsNull() {
 		c.NullCount++
 		return nil
@@ -85,7 +85,10 @@ func (c *SampleCollector) collect(d types.Datum) error {
 			c.Samples[idx] = types.CopyDatum(d)
 		}
 	}
-	return errors.Trace(c.Sketch.InsertValue(d))
+	if insertSketch {
+		return errors.Trace(c.Sketch.InsertValue(d))
+	}
+	return nil
 }
 
 // SampleBuilder is used to build samples for columns.
@@ -133,7 +136,7 @@ func (s SampleBuilder) CollectSamplesAndEstimateNDVs() ([]*SampleCollector, *Sor
 			row.Data = row.Data[1:]
 		}
 		for i, val := range row.Data {
-			err = collectors[i].collect(val)
+			err = collectors[i].collect(val, true)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
