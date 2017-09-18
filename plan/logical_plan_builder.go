@@ -21,7 +21,6 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -1307,7 +1306,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 				}
 				// Because the expression maybe return different type from
 				// the generated column, we should wrap a CAST on the result.
-				expr = wrapCastOnExpr(expr, colExpr.GetType(), b.ctx)
+				expr = expression.BuildCastFunction(expr, colExpr.GetType(), b.ctx)
 				exprIsGen = true
 			}
 		}
@@ -1320,27 +1319,6 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 	proj.SetChildren(ds)
 	ds.SetParents(proj)
 	return proj
-}
-
-// wrapCastOnExpr wraps a CAST operation on the expression. It's used for generated columns
-// because the generation expression may has different field type with the column respectively.
-func wrapCastOnExpr(expr expression.Expression, ft *types.FieldType, ctx context.Context) expression.Expression {
-	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		return expression.WrapWithCastAsInt(expr, ctx)
-	case mysql.TypeFloat, mysql.TypeDouble:
-		return expression.WrapWithCastAsReal(expr, ctx)
-	case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDatetime:
-		return expression.WrapWithCastAsTime(expr, ft, ctx)
-	case mysql.TypeDuration:
-		return expression.WrapWithCastAsDuration(expr, ctx)
-	case mysql.TypeNewDecimal:
-		return expression.WrapWithCastAsDecimal(expr, ctx)
-	case mysql.TypeJSON:
-		return expression.WrapWithCastAsJSON(expr, ctx)
-	default:
-		return expression.WrapWithCastAsString(expr, ctx)
-	}
 }
 
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
@@ -1562,7 +1540,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				return expr
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
-			newExpr = wrapCastOnExpr(newExpr, col.GetType(), b.ctx)
+			newExpr = expression.BuildCastFunction(newExpr, col.GetType(), b.ctx)
 		}
 		if err != nil {
 			b.err = errors.Trace(err)

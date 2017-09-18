@@ -1281,7 +1281,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row []types.Datum) (res type
 	return
 }
 
-func buildCastFunction(expr Expression, tp *types.FieldType, ctx context.Context) *ScalarFunction {
+func BuildCastFunction(expr Expression, tp *types.FieldType, ctx context.Context) *ScalarFunction {
 	var fc functionClass
 	switch tp.ToClass() {
 	case types.ClassInt:
@@ -1319,7 +1319,7 @@ func WrapWithCastAsInt(expr Expression, ctx context.Context) Expression {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, 0
 	types.SetBinChsClnFlag(tp)
-	return buildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(expr, tp, ctx)
 }
 
 // WrapWithCastAsReal wraps `expr` with `cast` if the return type
@@ -1332,7 +1332,7 @@ func WrapWithCastAsReal(expr Expression, ctx context.Context) Expression {
 	tp := types.NewFieldType(mysql.TypeDouble)
 	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 	types.SetBinChsClnFlag(tp)
-	return buildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(expr, tp, ctx)
 }
 
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type
@@ -1345,7 +1345,7 @@ func WrapWithCastAsDecimal(expr Expression, ctx context.Context) Expression {
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
 	types.SetBinChsClnFlag(tp)
-	return buildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(expr, tp, ctx)
 }
 
 // WrapWithCastAsString wraps `expr` with `cast` if the return type
@@ -1359,7 +1359,7 @@ func WrapWithCastAsString(expr Expression, ctx context.Context) Expression {
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
 	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
-	return buildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(expr, tp, ctx)
 }
 
 // WrapWithCastAsTime wraps `expr` with `cast` if the return type
@@ -1388,7 +1388,7 @@ func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Contex
 		}
 	}
 	types.SetBinChsClnFlag(tp)
-	return buildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(expr, tp, ctx)
 }
 
 // WrapWithCastAsDuration wraps `expr` with `cast` if the return type
@@ -1409,7 +1409,7 @@ func WrapWithCastAsDuration(expr Expression, ctx context.Context) Expression {
 	if tp.Decimal > 0 {
 		tp.Flen = tp.Flen + 1 + tp.Decimal
 	}
-	return buildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(expr, tp, ctx)
 }
 
 // WrapWithCastAsJSON wraps `expr` with `cast` if the return type
@@ -1427,5 +1427,5 @@ func WrapWithCastAsJSON(expr Expression, ctx context.Context) Expression {
 		Collate: charset.CollationUTF8,
 		Flag:    mysql.BinaryFlag,
 	}
-	return buildCastFunction(expr, tp, ctx)
+	return BuildCastFunction(expr, tp, ctx)
 }

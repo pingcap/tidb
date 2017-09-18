@@ -661,7 +661,7 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 			b.err = errors.Trace(err)
 			return
 		}
-		expr = wrapCastOnExpr(expr, colExpr.GetType(), b.ctx)
+		expr = expression.BuildCastFunction(expr, colExpr.GetType(), b.ctx)
 
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
