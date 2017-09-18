@@ -16,11 +16,11 @@ package tikv
 import (
 	"bytes"
 	"sync"
-	"sync/atomic"
 	"time"
+	"sync/atomic"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	log "github.com/Sirupsen/logrus"
 	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -29,20 +29,20 @@ import (
 )
 
 const (
-	rcDefaultRegionCacheTTL = time.Minute * 2
+	rcDefaultRegionCacheTTL	= time.Minute * 2
 )
 
 // CachedRegion encapsulates {Region, TTL}
 type CachedRegion struct {
-	region *Region
-	ttl    int64
+	region	*Region
+	ttl		int64
 }
 
 // RegionCache caches Regions loaded from PD.
 type RegionCache struct {
 	pdClient pd.Client
-
-	mu struct {
+	
+	mu       struct {
 		sync.RWMutex
 		regions map[RegionVerID]*CachedRegion
 		sorted  *llrb.LLRB
@@ -97,58 +97,56 @@ func (c *RegionCache) DropInvalidRegion(id RegionVerID) bool {
 		return false
 	}
 	delete(c.mu.regions, id)
-	log.Error("drop success:", id)
 	return true
 }
 
 // GetCachedRegion returns a valid region
 func (c *RegionCache) GetCachedRegion(id RegionVerID) *Region {
-	for {
-		c.mu.RLock()
-		cachedregion, ok := c.mu.regions[id]
-		if !ok {
-			c.mu.RUnlock()
-			return nil
-		}
+    for {
+        c.mu.RLock()
+        cachedregion, ok := c.mu.regions[id]
+        if !ok {
+            c.mu.RUnlock()
+            return nil
+        }
 		ttl := atomic.LoadInt64(&cachedregion.ttl)
 		lastAccess := time.Unix(ttl, 0)
-		if time.Since(lastAccess) < rcDefaultRegionCacheTTL {
+        if time.Since(lastAccess) < rcDefaultRegionCacheTTL {
 			defer c.mu.RUnlock()
 			atomic.StoreInt64(&cachedregion.ttl, time.Now().Unix())
-			return cachedregion.region
-		}
-		c.mu.RUnlock()
+            return cachedregion.region
+        }
+        c.mu.RUnlock()
 
-		if c.DropInvalidRegion(id) {
-			return nil
+        if c.DropInvalidRegion(id) {
+            return nil
 		}
-		log.Error("region cache:repeat")
-	}
+    }
 }
 
 // GetRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
 func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
-	region := c.GetCachedRegion(id)
-	if region == nil {
-		return nil, nil
-	}
-	kvCtx := region.GetContext()
-
-	addr, err := c.GetStoreAddr(bo, kvCtx.GetPeer().GetStoreId())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if addr == "" {
-		// Store not found, region must be out of date.
-		c.DropRegion(id)
-		return nil, nil
-	}
-	return &RPCContext{
-		Region: id,
-		KVCtx:  kvCtx,
-		Addr:   addr,
-	}, nil
+    region := c.GetCachedRegion(id)
+    if region == nil {
+        return nil, nil
+    }
+    kvCtx := region.GetContext()
+    
+    addr, err := c.GetStoreAddr(bo, kvCtx.GetPeer().GetStoreId())
+    if err != nil {
+        return nil, errors.Trace(err)
+    }
+    if addr == "" {
+        // Store not found, region must be out of date.
+        c.DropRegion(id)
+        return nil, nil
+    }
+    return &RPCContext{
+        Region: id,
+        KVCtx:  kvCtx,
+        Addr:   addr,
+    }, nil
 }
 
 // KeyLocation is the region and range that a key is located.
@@ -166,8 +164,6 @@ func (l *KeyLocation) Contains(key []byte) bool {
 
 // LocateKey searches for the region and range that the key is located.
 func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
-	log.Error("enter LocateKey")
-	defer log.Error("exit LocateKey")
 	r := c.getRegionFromCache(key)
 	if r != nil {
 		loc := &KeyLocation{
@@ -301,9 +297,9 @@ func (c *RegionCache) insertRegionToCache(r *Region) *Region {
 	if old != nil {
 		delete(c.mu.regions, old.(*llrbItem).region.VerID())
 	}
-	c.mu.regions[r.VerID()] = &CachedRegion{
-		region: r,
-		ttl:    time.Now().Unix(),
+	c.mu.regions[r.VerID()] = &CachedRegion {
+		region:	r,
+		ttl:	time.Now().Unix(),
 	}
 	return r
 }
@@ -454,7 +450,6 @@ func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 func (c *RegionCache) OnRequestFail(ctx *RPCContext, err error) {
 	// Switch region's leader peer to next one.
 	regionID := ctx.Region
-	log.Error("RegionCache.OnRequestFail:1")
 	c.mu.Lock()
 	if cachedregion, ok := c.mu.regions[regionID]; ok {
 		region := cachedregion.region
@@ -463,7 +458,6 @@ func (c *RegionCache) OnRequestFail(ctx *RPCContext, err error) {
 		}
 	}
 	c.mu.Unlock()
-	log.Error("RegionCache.OnRequestFail:2")
 	// Store's meta may be out of date.
 	storeID := ctx.KVCtx.GetPeer().GetStoreId()
 	c.storeMu.Lock()
