@@ -84,34 +84,35 @@ func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
 
 	// checker's schema version is the same as the current schema version.
 	checker.schemaVer = 4
-	err := checker.checkOnce(ts)
+	err := checker.Check(ts)
 	c.Assert(err, IsNil)
 
 	// checker's schema version is less than the current schema version, and it doesn't exist in validator's items.
 	// checker's related table ID isn't in validator's changed table IDs.
 	checker.schemaVer = 2
 	checker.relatedTableIDs = []int64{3}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(err, IsNil)
 	// The checker's schema version isn't in validator's items.
 	checker.schemaVer = 1
 	checker.relatedTableIDs = []int64{3}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
 	// checker's related table ID is in validator's changed table IDs.
 	checker.relatedTableIDs = []int64{2}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
 
 	// validator's latest schema version is expired.
 	time.Sleep(lease + time.Microsecond)
-	checker.schemaVer = 2
+	checker.schemaVer = 4
 	checker.relatedTableIDs = []int64{3}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(err, IsNil)
 	nowTS := uint64(time.Now().UnixNano())
-	err = checker.checkOnce(nowTS)
-	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaExpired), IsTrue)
+	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
+	result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
+	c.Assert(result, Equals, domain.ResultUnknown)
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
