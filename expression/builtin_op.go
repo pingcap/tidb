@@ -676,6 +676,8 @@ func (c *isNullFunctionClass) getFunction(ctx context.Context, args []Expression
 	argTp := fieldTp2EvalTp(args[0].GetType())
 	if argTp == tpTimestamp {
 		argTp = tpDatetime
+	} else if argTp == tpJSON {
+		argTp = tpString
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp)
 	bf.tp.Flen = 1
