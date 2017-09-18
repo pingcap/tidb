@@ -17,6 +17,5 @@ package xserver
 type Config struct {
 	Addr     string `json:"addr" toml:"addr"`
 	Socket   string `json:"socket" toml:"socket"`
-	LogLevel string `json:"log_level" toml:"log_level"`
 	SkipAuth bool   `json:"skip_auth" toml:"skip_auth"`
 }

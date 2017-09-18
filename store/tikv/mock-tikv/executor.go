@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -316,7 +317,7 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 
 type aggregateExec struct {
 	evalCtx           *evalContext
-	aggExprs          []expression.AggregationFunction
+	aggExprs          []aggregation.Aggregation
 	groupByExprs      []expression.Expression
 	relatedColOffsets []int
 	row               []types.Datum
