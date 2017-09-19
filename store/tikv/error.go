@@ -21,7 +21,7 @@ import (
 
 var (
 	// errBodyMissing response body is missing error
-	errBodyMissing   = errors.New("response body is missing")
+	errBodyMissing = errors.New("response body is missing")
 )
 
 // TiDB decides whether to retry transaction by checking if error message contains
@@ -39,7 +39,7 @@ var (
 	ErrPDServerTimeout    = terror.ClassTiKV.New(mysql.ErrPDServerTimeout, mysql.MySQLErrName[mysql.ErrPDServerTimeout]+"%v")
 	ErrRegionUnavaiable   = terror.ClassTiKV.New(mysql.ErrRegionUnavaiable, mysql.MySQLErrName[mysql.ErrRegionUnavaiable]+txnRetryableMark)
 	ErrTiKVServerBusy     = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy]+txnRetryableMark)
-	ErrGCTooEarly	      = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
+	ErrGCTooEarly         = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
 )
 
 func init() {
@@ -49,7 +49,7 @@ func init() {
 		mysql.ErrPDServerTimeout:    mysql.ErrPDServerTimeout,
 		mysql.ErrRegionUnavaiable:   mysql.ErrRegionUnavaiable,
 		mysql.ErrTiKVServerBusy:     mysql.ErrTiKVServerBusy,
-		mysql.ErrGCTooEarly:	     mysql.ErrGCTooEarly,
+		mysql.ErrGCTooEarly:         mysql.ErrGCTooEarly,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
 }
