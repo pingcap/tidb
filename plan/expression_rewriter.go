@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
@@ -764,7 +765,10 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = errors.Trace(err)
 		return
 	}
-	er.ctxStack = append(er.ctxStack, datumToConstant(types.NewStringDatum(val), mysql.TypeString))
+	e := datumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
+	e.RetType.Charset = er.ctx.GetSessionVars().Systems[variable.CharacterSetConnection]
+	e.RetType.Collate = er.ctx.GetSessionVars().Systems[variable.CollationConnection]
+	er.ctxStack = append(er.ctxStack, e)
 	return
 }
 
