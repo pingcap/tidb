@@ -24,12 +24,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -275,54 +273,6 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 
 	mustExecMatch(c, se, "select last_insert_id(20)", [][]interface{}{{20}})
 	mustExecMatch(c, se, "select last_insert_id()", [][]interface{}{{20}})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func checkTxn(c *C, se Session, stmt string, expectStatus uint16) {
-	mustExecSQL(c, se, stmt)
-	if expectStatus != 0 {
-		c.Assert(se.(*session).txn.Valid(), IsTrue)
-	}
-}
-
-func checkInTrans(c *C, se Session, stmt string, expectStatus uint16) {
-	checkTxn(c, se, stmt, expectStatus)
-	ret := se.(*session).sessionVars.Status & mysql.ServerStatusInTrans
-	c.Assert(ret, Equals, expectStatus)
-}
-
-// TestInTrans ...
-// See https://dev.mysql.com/doc/internals/en/status-flags.html
-func (s *testSessionSuite) TestInTrans(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_intrans"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	checkInTrans(c, se, "drop table if exists t;", 0)
-	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkInTrans(c, se, "insert t values ()", 0)
-	checkInTrans(c, se, "begin", 1)
-	checkInTrans(c, se, "insert t values ()", 1)
-	checkInTrans(c, se, "drop table if exists t;", 0)
-	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkInTrans(c, se, "insert t values ()", 0)
-	checkInTrans(c, se, "commit", 0)
-	checkInTrans(c, se, "insert t values ()", 0)
-
-	checkInTrans(c, se, "set autocommit=0;", 0)
-	checkInTrans(c, se, "begin", 1)
-	checkInTrans(c, se, "insert t values ()", 1)
-	checkInTrans(c, se, "commit", 0)
-	checkInTrans(c, se, "insert t values ()", 1)
-	checkInTrans(c, se, "commit", 0)
-
-	checkInTrans(c, se, "set autocommit=1;", 0)
-	checkInTrans(c, se, "drop table if exists t;", 0)
-	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkInTrans(c, se, "begin", 1)
-	checkInTrans(c, se, "insert t values ()", 1)
-	checkInTrans(c, se, "rollback", 0)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -1300,37 +1250,6 @@ func (s *testSessionSuite) TestIssue620(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_retry_prepare_stmt"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	se1 := newSession(c, s.store, dbName)
-	se2 := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, IsNil)
-	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
-	mustExecSQL(c, se, "insert t values (11, 2, 3)")
-
-	mustExecSQL(c, se1, "begin")
-	mustExecSQL(c, se1, "update t set c2=? where c1=11;", 21)
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=? where c1=11", 22)
-	mustExecSQL(c, se2, "commit")
-
-	mustExecSQL(c, se1, "commit")
-
-	se3 := newSession(c, s.store, dbName)
-	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 21)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestIssue893(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_issue893"
@@ -1456,66 +1375,6 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	err = store.Close()
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
-}
-
-/* Test cases for session. */
-
-func (s *testSessionSuite) TestSession(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_session"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "ROLLBACK;")
-
-	mustExecSQL(c, se, dropDBSQL)
-	se.Close()
-}
-
-func (s *testSessionSuite) TestSessionAuth(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_session_auth"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	defer se.Close()
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")), IsFalse)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSkipWithGrant(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_skip_with_grant"
-	se := newSession(c, s.store, dbName)
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-
-	save1 := privileges.Enable
-	save2 := privileges.SkipWithGrant
-
-	privileges.Enable = true
-	privileges.SkipWithGrant = false
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")), IsFalse)
-
-	privileges.SkipWithGrant = true
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "%"}, []byte("yyy"), []byte("zzz")), IsTrue)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, []byte(""), []byte("")), IsTrue)
-	mustExecSQL(c, se, "create table t (id int)")
-
-	privileges.Enable = save1
-	privileges.SkipWithGrant = save2
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_substring_index_expr"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c varchar(128));")
-	mustExecSQL(c, se, `insert into t values ("www.pingcap.com");`)
-	mustExecMatch(c, se, "SELECT DISTINCT SUBSTRING_INDEX(c, '.', 2) from t;", [][]interface{}{{"www.pingcap"}})
-
-	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestIndexMaxLength(c *C) {
