@@ -40,6 +40,7 @@ type tikvTxn struct {
 	valid     bool
 	lockKeys  [][]byte
 	dirty     bool
+	setCnt    int64
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -79,7 +80,7 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
-	txnCmdCounter.WithLabelValues("set").Inc()
+	txn.setCnt++
 
 	txn.dirty = true
 	return txn.us.Set(k, v)
@@ -136,6 +137,7 @@ func (txn *tikvTxn) Commit() error {
 	}
 	defer txn.close()
 
+	txnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	txnCmdCounter.WithLabelValues("commit").Inc()
 	start := time.Now()
 	defer func() { txnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()

@@ -63,7 +63,7 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 	// we will wait 2 * lease outer and try checking again,
 	// so we use a very little timeout here.
 	if d.lease > 0 {
-		waitTimeout = 1 * time.Millisecond
+		waitTimeout = 100 * time.Millisecond
 	}
 
 	// wait reorganization job done or timeout
@@ -89,7 +89,7 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 	}
 }
 
-func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
+func (d *ddl) isReorgRunnable() error {
 	if d.isClosed() {
 		// worker is closed, can't run reorganization.
 		return errInvalidWorker.Gen("worker is closed")
@@ -97,7 +97,7 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
 
 	if !d.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		log.Infof("[ddl] the %s not the job owner, txnTS:%d", d.uuid, txn.StartTS())
+		log.Infof("[ddl] the %s not the job owner", d.uuid)
 		return errors.Trace(errNotOwner)
 	}
 	return nil

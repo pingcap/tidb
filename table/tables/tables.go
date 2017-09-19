@@ -686,14 +686,14 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 // The defaultVals is used to avoid calculating the default value multiple times.
 func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
-	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+	if col.DefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
 		return colVal, errors.New("Miss column")
 	}
 	if col.State != model.StatePublic {
 		return colVal, nil
 	}
 	if defaultVals[col.Offset].IsNull() {
-		colVal, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
+		colVal, err = table.GetColDefaultValue(ctx, col.ToInfo())
 		if err != nil {
 			return colVal, errors.Trace(err)
 		}
