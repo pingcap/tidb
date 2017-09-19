@@ -819,3 +819,8 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 	}
 	return mvcc.db.Write(batch, nil)
 }
+
+// Close calls leveldb's Close to free resources.
+func (mvcc *MVCCLevelDB) Close() error {
+	return mvcc.db.Close()
+}
