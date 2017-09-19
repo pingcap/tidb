@@ -46,11 +46,6 @@ type validator struct {
 func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.AggregateFuncExpr:
-		if v.inAggregate {
-			// Aggregate function can not contain aggregate function.
-			v.err = ErrInvalidGroupFuncUse
-			return in, true
-		}
 		v.inAggregate = true
 	case *ast.CreateTableStmt:
 		v.checkCreateTableGrammar(node)

@@ -155,7 +155,12 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE `t` (`a` float DEFAULT now());", false, types.ErrInvalidDefault},
 		{"CREATE TABLE `t` (`a` varchar(10) DEFAULT now());", false, types.ErrInvalidDefault},
 		{"CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );", false, nil},
+
 		{`explain format = "xx" select 100;`, false, plan.ErrUnknownExplainFormat.GenByArgs("xx")},
+
+		// issue 4472
+		{`select sum(distinct(if('a', (select adddate(elt(999, count(*)), interval 1 day)), .1))) as foo;`, true, nil},
+		{`select sum(1 in (select count(1)))`, true, nil},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
