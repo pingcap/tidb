@@ -211,7 +211,6 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 
 	mvccStore := opt.mvccStore
 	if mvccStore == nil {
-		// mvccStore = mocktikv.NewMvccStore()
 		var err error
 		mvccStore, err = mocktikv.NewMVCCLevelDB(opt.path)
 		if err != nil {
@@ -262,14 +261,6 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	return snapshot, nil
 }
 
-// realClose is an auxiliary interface defined for mocktikv, RPCClient implements
-// realClose and it will close the whole leveldb store when called.
-type realClose interface {
-	RealClose() error
-}
-
-var _ realClose = &mocktikv.RPCClient{}
-
 func (s *tikvStore) Close() error {
 	mc.Lock()
 	defer mc.Unlock()
@@ -281,17 +272,10 @@ func (s *tikvStore) Close() error {
 		s.gcWorker.Close()
 	}
 
-	var err error
-	if err = s.client.Close(); err != nil {
+	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)
 	}
-
-	// For mocktikv, Close() should not only close the client,
-	// but also the underlying store such as leveldb.
-	if raw, ok := s.client.(realClose); ok {
-		err = raw.RealClose()
-	}
-	return errors.Trace(err)
+	return nil
 }
 
 func (s *tikvStore) UUID() string {
