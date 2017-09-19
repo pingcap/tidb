@@ -263,7 +263,7 @@ func (e *Explain) prepareRootTaskInfo(p PhysicalPlan) {
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	buffer := bytes.NewBufferString("")
-	buffer.WriteString(fmt.Sprintf("digraph %s {\n", p.ExplainID()))
+	buffer.WriteString(fmt.Sprintf("\ndigraph %s {\n", p.ExplainID()))
 	e.prepareeTaskDot(p, "root", buffer)
 	buffer.WriteString(fmt.Sprintln("}"))
 
@@ -278,7 +278,7 @@ func (e *Explain) prepareeTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.B
 	buffer.WriteString(fmt.Sprintf("label = \"%s\"\n", taskTp))
 
 	if len(p.Children()) == 0 {
-		buffer.WriteString(fmt.Sprintf("\"%s(%T)\"\n}\n", p.ExplainID(), p))
+		buffer.WriteString(fmt.Sprintf("\"%s\"\n}\n", p.ExplainID()))
 		return
 	}
 
@@ -289,19 +289,19 @@ func (e *Explain) prepareeTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.B
 		curPlan := planQueue[0]
 		switch copPlan := curPlan.(type) {
 		case *PhysicalTableReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s(%T)\" -> \"%s(%T)\"\n", copPlan.ExplainID(), copPlan, copPlan.tablePlan.ExplainID(), copPlan.tablePlan))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.tablePlan)
 		case *PhysicalIndexReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s(%T)\" -> \"%s(%T)\"\n", copPlan.ExplainID(), copPlan, copPlan.indexPlan.ExplainID(), copPlan.indexPlan))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.indexPlan)
 		case *PhysicalIndexLookUpReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s(%T)\" -> \"%s(%T)\"\n", copPlan.ExplainID(), copPlan, copPlan.tablePlan.ExplainID(), copPlan.tablePlan))
-			pipelines = append(pipelines, fmt.Sprintf("\"%s(%T)\" -> \"%s(%T)\"\n", copPlan.ExplainID(), copPlan, copPlan.indexPlan.ExplainID(), copPlan.indexPlan))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.tablePlan)
 			copTasks = append(copTasks, copPlan.indexPlan)
 		}
 		for _, child := range curPlan.Children() {
-			buffer.WriteString(fmt.Sprintf("\"%s(%T)\" -> \"%s(%T)\"\n", curPlan.ExplainID(), curPlan, child.ExplainID(), child))
+			buffer.WriteString(fmt.Sprintf("\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID()))
 			planQueue = append(planQueue, child)
 		}
 	}
