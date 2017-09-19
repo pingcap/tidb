@@ -20,9 +20,8 @@ import (
 	"sync"
 	"time"
 
-	//	log "github.com/Sirupsen/logrus"
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -441,9 +440,6 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *
 	ret.count = len(w.idxRecords)
 	log.Debugf("[ddl] txn %v fetches handle info %v, ret %v, takes time %v", txn.StartTS(), w.taskRange, ret, time.Since(startTime))
 	w.taskRange.isSent = true
-	if ret.count == 0 {
-		return nil, ret
-	}
 
 	return w.idxRecords, ret
 }
@@ -492,7 +488,7 @@ const (
 type taskResult struct {
 	count      int   // The number of records that has been processed in the task.
 	doneHandle int64 // This is the last reorg handle that has been processed.
-	isAllDone  bool
+	isAllDone  bool  // If all rows are all done.
 	err        error
 }
 
@@ -508,17 +504,17 @@ type indexTaskOpInfo struct {
 	tblIndex  table.Index
 	colMap    map[int64]*types.FieldType // It's the index columns map.
 	taskBatch int64
-	reorgInfo *reorgInfo
+	// reorgInfo  *reorgInfo
 }
 
 type worker struct {
 	id          int
 	ctx         context.Context
-	defaultVals []types.Datum
-	idxRecords  []*indexRecord
-	taskRange   handleInfo
+	defaultVals []types.Datum  // It's used to reduce the number of new slice.
+	idxRecords  []*indexRecord // It's used to reduce the number of new slice.
+	taskRange   handleInfo     // Every task's handle range.
 	taskRet     *taskResult
-	rowMap      map[int64]types.Datum
+	rowMap      map[int64]types.Datum // It's the index column values map. It is used to reduce the number of making map.
 }
 
 func newWorker(ctx context.Context, id, batch, cols, indexCols int) *worker {
@@ -556,8 +552,7 @@ func (h *handleInfo) isFinished(input int64) bool {
 // How to add index in reorganization state?
 // Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
 // The handle range size is defaultTaskHandleCnt.
-// Because each handle range depends on the previous one, it's necessary to obtain the handle range serially.
-// Real concurrent processing needs to perform after the handle range has been acquired.
+// Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
 // The operation flow of the each task of data is as follows:
 //  1. Open a goroutine. Traverse the snapshot to obtain the handle range, while accessing the corresponding row key and
 // raw index value. Then notify to start the next task.
@@ -566,7 +561,7 @@ func (h *handleInfo) isFinished(input int64) bool {
 // If the index doesn't exist, create the index and then continue to handle the next row.
 //  4. When the handle of a range is completed, return the corresponding task result.
 // The above operations are completed in a transaction.
-// When concurrent tasks are processed, the task result returned by each task is sorted by the handle. Then traverse the
+// When concurrent tasks are processed, the task result returned by each task is sorted by the worker number. Then traverse the
 // task results, get the total number of rows in the concurrent task and update the processed handle value. If
 // an error message is displayed, exit the traversal.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
@@ -582,7 +577,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		tblIndex:  tables.NewIndex(t.Meta(), indexInfo),
 		colMap:    colMap,
 		taskBatch: defaultTaskHandleCnt,
-		reorgInfo: reorgInfo,
+		// 		reorgInfo: reorgInfo,
 	}
 
 	// f, err := os.Create("cpuprofile")
@@ -603,11 +598,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 	for {
 		startTime := time.Now()
-		err := d.isReorgRunnable()
-		if err != nil {
-			return errors.Trace(err)
-		}
-
+		doneHandle := baseHandle
 		wg := sync.WaitGroup{}
 		for i := 0; i < workerCnt; i++ {
 			wg.Add(1)
@@ -617,14 +608,20 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			baseHandle += taskOpInfo.taskBatch
 		}
 		wg.Wait()
-		taskOpInfo.reorgInfo.Handle = baseHandle
+		// taskOpInfo.reorgInfo.Handle = baseHandle
 
 		taskAddedCount, doneHandle, isEnd, err := getCountAndHandle(workers)
 		addedCount += int64(taskAddedCount)
 		sub := time.Since(startTime).Seconds()
+		if err == nil {
+			err = d.isReorgRunnable()
+		}
 		if err != nil {
-			log.Warnf("[ddl] total added index for %d rows, this task add index for %d failed, take time %v",
-				addedCount, taskAddedCount, sub)
+			err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+				return errors.Trace(reorgInfo.UpdateHandle(txn, doneHandle+1))
+			})
+			log.Warnf("[ddl] total added index for %d rows, this task add index for %d failed, take time %v, update handle err %v",
+				addedCount, taskAddedCount, sub, err1)
 			return errors.Trace(err)
 		}
 		d.setReorgRowCount(addedCount)
@@ -664,15 +661,16 @@ func (w *worker) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo,
 	startTime := time.Now()
 	var ret *taskResult
 	err := kv.RunInNewTxn(w.ctx.GetStore(), true, func(txn kv.Transaction) error {
-		// Update the reorg handle that has been processed.
-		if w.id == 0 {
-			err1 := taskOpInfo.reorgInfo.UpdateHandle(txn, taskOpInfo.reorgInfo.Handle)
-			if err1 != nil {
-				log.Warnf("[ddl] add index failed when update handle %d, err %v", taskOpInfo.reorgInfo.Handle, err1)
-				ret = &taskResult{err: err1}
-				return errors.Trace(ret.err)
-			}
-		}
+		//		// Update the reorg handle that has been processed.
+		//		// TODO: Update handle once every 100 times.
+		//		if w.id == 0 {
+		//			err1 := taskOpInfo.reorgInfo.UpdateHandle(txn, taskOpInfo.reorgInfo.Handle)
+		//			if err1 != nil {
+		//				log.Warnf("[ddl] add index failed when update handle %d, err %v", taskOpInfo.reorgInfo.Handle, err1)
+		//				ret = &taskResult{err: err1}
+		//				return errors.Trace(ret.err)
+		//			}
+		//		}
 
 		ret = w.doBackfillIndexTaskInTxn(t, txn, taskOpInfo)
 		return errors.Trace(ret.err)
