@@ -84,34 +84,35 @@ func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
 
 	// checker's schema version is the same as the current schema version.
 	checker.schemaVer = 4
-	err := checker.checkOnce(ts)
+	err := checker.Check(ts)
 	c.Assert(err, IsNil)
 
 	// checker's schema version is less than the current schema version, and it doesn't exist in validator's items.
 	// checker's related table ID isn't in validator's changed table IDs.
 	checker.schemaVer = 2
 	checker.relatedTableIDs = []int64{3}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(err, IsNil)
 	// The checker's schema version isn't in validator's items.
 	checker.schemaVer = 1
 	checker.relatedTableIDs = []int64{3}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
 	// checker's related table ID is in validator's changed table IDs.
 	checker.relatedTableIDs = []int64{2}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
 
 	// validator's latest schema version is expired.
 	time.Sleep(lease + time.Microsecond)
-	checker.schemaVer = 2
+	checker.schemaVer = 4
 	checker.relatedTableIDs = []int64{3}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(err, IsNil)
 	nowTS := uint64(time.Now().UnixNano())
-	err = checker.checkOnce(nowTS)
-	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaExpired), IsTrue)
+	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
+	result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
+	c.Assert(result, Equals, domain.ResultUnknown)
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
@@ -792,69 +793,6 @@ func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestShow(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_show"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "set global autocommit=1")
-	r := mustExecSQL(c, se, "show global variables where variable_name = 'autocommit'")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "autocommit", "ON")
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, `create table if not exists t (c int) comment '注释'`)
-	r = mustExecSQL(c, se, `show columns from t`)
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 1)
-	match(c, rows[0], "c", "int(11)", "YES", "", nil, "")
-
-	r = mustExecSQL(c, se, "show collation where Charset = 'utf8' and Collation = 'utf8_bin'")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "utf8_bin", "utf8", 83, "", "Yes", 1)
-
-	r = mustExecSQL(c, se, "show tables")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 1)
-
-	r = mustExecSQL(c, se, "show full tables")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 2)
-
-	r = mustExecSQL(c, se, "show create table t")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 2)
-	c.Assert(row.Data[0].GetString(), Equals, "t")
-
-	r = mustExecSQL(c, se, fmt.Sprintf("show table status from %s like 't';", dbName))
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 18)
-	c.Assert(row.Data[0].GetString(), Equals, "t")
-	c.Assert(row.Data[17].GetString(), Equals, "注释")
-
-	r = mustExecSQL(c, se, "show databases like 'test'")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 1)
-	c.Assert(row.Data[0].GetString(), Equals, "test")
-
-	r = mustExecSQL(c, se, "grant all on *.* to 'root'@'%'")
-	r = mustExecSQL(c, se, "show grants")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 1)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestBit(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_bit"
@@ -978,33 +916,6 @@ func (s *testSessionSuite) TestSet(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestDatabase(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_database"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	// Test database.
-	mustExecSQL(c, se, "create database xxx")
-	mustExecSQL(c, se, "drop database xxx")
-
-	mustExecSQL(c, se, "drop database if exists xxx")
-	mustExecSQL(c, se, "create database xxx")
-	mustExecSQL(c, se, "create database if not exists xxx")
-	mustExecSQL(c, se, "drop database if exists xxx")
-
-	// Test schema.
-	mustExecSQL(c, se, "create schema xxx")
-	mustExecSQL(c, se, "drop schema xxx")
-
-	mustExecSQL(c, se, "drop schema if exists xxx")
-	mustExecSQL(c, se, "create schema xxx")
-	mustExecSQL(c, se, "create schema if not exists xxx")
-	mustExecSQL(c, se, "drop schema if exists xxx")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestWhereLike(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_where_like"
@@ -1048,18 +959,6 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 
 	mustExecSQL(c, se, dropDBSQL)
 	c.Assert(err, IsNil)
-}
-
-func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_exec_restricted_sql"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName).(*session)
-	r, _, err := se.ExecRestrictedSQL(se, "select 1;")
-	c.Assert(err, IsNil)
-	c.Assert(len(r), Equals, 1)
-
-	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestOrderBy(c *C) {
@@ -1293,24 +1192,6 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestIndexPointLookup(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_index_point_lookup"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (a int)")
-	mustExecSQL(c, se, "insert t values (1), (2), (3)")
-	mustExecMatch(c, se, "select * from t where a = '1.1';", [][]interface{}{})
-	mustExecMatch(c, se, "select * from t where a > '1.1';", [][]interface{}{{2}, {3}})
-	mustExecMatch(c, se, "select * from t where a = '2';", [][]interface{}{{2}})
-	mustExecMatch(c, se, "select * from t where a = 3;", [][]interface{}{{3}})
-	mustExecMatch(c, se, "select * from t where a = 4;", [][]interface{}{})
-	mustExecSQL(c, se, "drop table t")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestIssue454(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_issue454"
@@ -1446,24 +1327,6 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	match(c, row.Data, 21)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSleep(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_sleep"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "select sleep(0.01);")
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (a int);")
-	mustExecSQL(c, se, "insert t values (sleep(0.02));")
-	r := mustExecSQL(c, se, "select * from t;")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 0)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
