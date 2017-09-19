@@ -14,8 +14,6 @@
 package ddl
 
 import (
-	//	"os"
-	//	"runtime/pprof"
 	"math"
 	"sync"
 	"time"
