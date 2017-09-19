@@ -14,6 +14,8 @@
 package mocktikv
 
 import (
+	"io"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -606,12 +608,8 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 
 // Close closes the client.
 func (c *RPCClient) Close() error {
-	if raw, ok := c.MvccStore.(closeable); ok {
+	if raw, ok := c.MvccStore.(io.Closer); ok {
 		return raw.Close()
 	}
 	return nil
-}
-
-type closeable interface {
-	Close() error
 }
