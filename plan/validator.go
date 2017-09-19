@@ -111,6 +111,9 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 			x.Count.SetValue(math.MaxUint64 - offset)
 		}
 	case *ast.ExplainStmt:
+		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
+			break
+		}
 		valid := false
 		for i, length := 0, len(ast.ExplainFormats); i < length; i++ {
 			if strings.ToLower(x.Format) == ast.ExplainFormats[i] {
