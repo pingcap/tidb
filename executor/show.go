@@ -502,7 +502,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 
 		refCols := make([]string, 0, len(fk.RefCols))
-		for _, c := range fk.RefCols {
+		for _, c := range fk.Cols {
 			refCols = append(refCols, c.O)
 		}
 

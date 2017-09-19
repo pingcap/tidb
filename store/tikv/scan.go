@@ -120,7 +120,6 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer) error {
 	if current.GetError() == nil {
 		return nil
 	}
-	log.Infof("scanner key %q", current.Key)
 	val, err := s.snapshot.get(bo, kv.Key(current.Key))
 	if err != nil {
 		return errors.Trace(err)
