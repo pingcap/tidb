@@ -271,4 +271,69 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		result := tk.MustQuery("explain " + tt.sql)
 		result.Check(testkit.Rows(tt.expect...))
 	}
+
+	dotFormatTests := []struct {
+		sql    string
+		expect string
+	}{
+		{
+			sql: "select sum(t1.c1 in (select c1 from t2)) from t1",
+			expect: "\n" +
+				"digraph StreamAgg_9 {\n" +
+				"subgraph cluster9{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"root\"\n" +
+				"\"StreamAgg_9\" -> \"HashSemiJoin_16\"\n" +
+				"\"HashSemiJoin_16\" -> \"TableReader_19\"\n" +
+				"\"HashSemiJoin_16\" -> \"TableReader_15\"\n" +
+				"}\n" +
+				"subgraph cluster18{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"TableScan_18\"\n" +
+				"}\n" +
+				"subgraph cluster14{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"TableScan_14\"\n" +
+				"}\n" +
+				"\"TableReader_19\" -> \"TableScan_18\"\n" +
+				"\"TableReader_15\" -> \"TableScan_14\"\n" +
+				"}\n",
+		},
+		{
+			sql: "select 1 in (select c2 from t2) from t1",
+			expect: "\n" +
+				"digraph HashSemiJoin_7 {\n" +
+				"subgraph cluster7{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"root\"\n" +
+				"\"HashSemiJoin_7\" -> \"TableReader_9\"\n" +
+				"\"HashSemiJoin_7\" -> \"TableReader_12\"\n" +
+				"}\n" +
+				"subgraph cluster8{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"TableScan_8\"\n" +
+				"}\n" +
+				"subgraph cluster11{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"Selection_11\" -> \"TableScan_10\"\n" +
+				"}\n" +
+				"\"TableReader_9\" -> \"TableScan_8\"\n" +
+				"\"TableReader_12\" -> \"Selection_11\"\n" +
+				"}\n",
+		},
+	}
+	for i, length := 0, len(dotFormatTests); i < length; i++ {
+		result := tk.MustQuery(`explain format = "dot" ` + dotFormatTests[i].sql)
+		result.Check(testkit.Rows(dotFormatTests[i].expect))
+	}
 }
