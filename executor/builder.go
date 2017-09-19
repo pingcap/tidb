@@ -15,7 +15,6 @@ package executor
 
 import (
 	"math"
-	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -632,15 +631,15 @@ func (b *executorBuilder) getStartTS() uint64 {
 }
 
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
-	table, _ := b.is.TableByID(v.Table.ID)
+	tb, _ := b.is.TableByID(v.Table.ID)
 	ts := &TableScanExec{
-		t:            table,
-		ctx:          b.ctx,
-		columns:      v.Columns,
-		schema:       v.Schema(),
-		seekHandle:   math.MinInt64,
-		ranges:       v.Ranges,
-		isInfoSchema: strings.EqualFold(v.DBName.L, infoschema.Name),
+		t:              tb,
+		ctx:            b.ctx,
+		columns:        v.Columns,
+		schema:         v.Schema(),
+		seekHandle:     math.MinInt64,
+		ranges:         v.Ranges,
+		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
 	return ts
 }

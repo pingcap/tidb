@@ -563,6 +563,12 @@ func (s *testSuite) TestUpdate(c *C) {
 	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 
+	// test update ignore for truncate as warning
+	_, err = tk.Exec("update ignore t set a = 1 where a = (select '2a')")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated", "Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+
 	// test update ignore for unique key
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a bigint, unique key I_uniq (a));")
