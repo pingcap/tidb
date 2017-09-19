@@ -54,6 +54,18 @@ const (
 	ReadUncommitted = "READ-UNCOMMITTED"
 	Serializable    = "SERIALIZABLE"
 	RepeatableRead  = "REPEATABLE-READ"
+
+	// Valid formats for explain statement.
+	ExplainFormatROW = "row"
+	ExplainFormatDOT = "dot"
+)
+
+var (
+	// ExplainFormats stores the valid formats for explain statement, used by validator.
+	ExplainFormats = []string{
+		ExplainFormatROW,
+		ExplainFormatDOT,
+	}
 )
 
 // TypeOpt is used for parsing data type option from SQL.
@@ -84,7 +96,8 @@ type AuthOption struct {
 type ExplainStmt struct {
 	stmtNode
 
-	Stmt StmtNode
+	Stmt   StmtNode
+	Format string
 }
 
 // Accept implements Node Accept interface.
