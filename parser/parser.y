@@ -1786,7 +1786,17 @@ ExplainStmt:
 	}
 |	ExplainSym ExplainableStmt
 	{
-		$$ = &ast.ExplainStmt{Stmt: $2.(ast.StmtNode)}
+		$$ = &ast.ExplainStmt{
+			Stmt:	$2.(ast.StmtNode),
+			Format: "row",
+		}
+	}
+|	ExplainSym "FORMAT" "=" stringLit ExplainableStmt
+	{
+		$$ = &ast.ExplainStmt{
+			Stmt:	$5.(ast.StmtNode),
+			Format: $4,
+		}
 	}
 
 LengthNum:
