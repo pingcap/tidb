@@ -38,7 +38,7 @@ type LockResolver struct {
 		resolved       map[uint64]TxnStatus
 		recentResolved *list.List
 	}
-	cntTxnStatus int
+	cntTxnStatus  int
 	costTxnStatus time.Duration
 }
 
@@ -138,6 +138,7 @@ func (lr *LockResolver) getResolved(txnID uint64) (TxnStatus, bool) {
 	return s, ok
 }
 
+// BatchResolveLocks resolve locks in a batch
 func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc RegionVerID) (bool, error) {
 	if len(locks) == 0 {
 		return true, nil
@@ -175,39 +176,39 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 
 	var list2TxnStatus []*kvrpcpb.TxnInfo
 	for txnID, status := range txnID2Status {
-		list2TxnStatus = append(list2TxnStatus, &kvrpcpb.TxnInfo {
-			Txn:	txnID,
-			Status:	status,
+		list2TxnStatus = append(list2TxnStatus, &kvrpcpb.TxnInfo{
+			Txn:    txnID,
+			Status: status,
 		})
 	}
 
 	req := &tikvrpc.Request{
-        Type: tikvrpc.CmdResolveLock,
-            ResolveLock: &kvrpcpb.ResolveLockRequest {
-            TxnInfos: list2TxnStatus ,
-        },
+		Type: tikvrpc.CmdResolveLock,
+		ResolveLock: &kvrpcpb.ResolveLockRequest{
+			TxnInfos: list2TxnStatus,
+		},
 	}
 	startTime := time.Now()
 	resp, err := lr.store.SendReq(bo, req, loc, readTimeoutShort)
 	log.Infof("BatchResolveLocks: it takes %v cost to resolve %v locks in a batch.", time.Since(startTime), len(expiredLocks))
-    if err != nil {
-        return false, errors.Trace(err)
-    }
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 
-    regionErr, err := resp.GetRegionError()
-    if err != nil {
-        return false, errors.Trace(err)
-    }
+	regionErr, err := resp.GetRegionError()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 
-    if regionErr != nil {
-        err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
-        if err != nil {
-            return false, errors.Trace(err)
-        }
-        return false, nil
-    }
+	if regionErr != nil {
+		err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		return false, nil
+	}
 
-    return true, nil	
+	return true, nil
 }
 
 // ResolveLocks tries to resolve Locks. The resolving process is in 3 steps:
