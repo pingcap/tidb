@@ -1652,7 +1652,7 @@ DeleteFromStmt:
 			TableRefs:	&ast.TableRefsClause{TableRefs: join},
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
-			Ignore:		$4.(bool),
+			IgnoreErr:		$4.(bool),
 		}
 		if $7 != nil {
 			x.Where = $7.(ast.ExprNode)
@@ -1672,7 +1672,7 @@ DeleteFromStmt:
 		x := &ast.DeleteStmt{
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
-			Ignore:		$4.(bool),
+			IgnoreErr:		$4.(bool),
 			IsMultiTable:	true,
 			BeforeFrom:	true,
 			Tables:		&ast.DeleteTableList{Tables: $5.([]*ast.TableName)},
@@ -1689,7 +1689,7 @@ DeleteFromStmt:
 		x := &ast.DeleteStmt{
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
-			Ignore:		$4.(bool),
+			IgnoreErr:		$4.(bool),
 			IsMultiTable:	true,
 			Tables:		&ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
 			TableRefs:	&ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
