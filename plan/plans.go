@@ -14,7 +14,9 @@
 package plan
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
@@ -257,4 +259,59 @@ func (e *Explain) prepareRootTaskInfo(p PhysicalPlan) {
 		e.prepareCopTaskInfo(copPlan.TablePlans)
 	}
 	e.prepareExplainInfo4DAGTask(p, "root")
+}
+
+func (e *Explain) prepareDotInfo(p PhysicalPlan) {
+	buffer := bytes.NewBufferString("")
+	buffer.WriteString(fmt.Sprintf("digraph %s {\n", p.ExplainID()))
+	e.prepareeTaskDot(p, "root", buffer)
+	buffer.WriteString(fmt.Sprintln("}"))
+
+	row := types.MakeDatums(buffer.String())
+	e.Rows = append(e.Rows, row)
+}
+
+func (e *Explain) prepareeTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
+	buffer.WriteString(fmt.Sprintf("subgraph cluster%v{\n", p.ID()))
+	buffer.WriteString("node [style=filled, color=lightgrey]\n")
+	buffer.WriteString("color=black\n")
+	buffer.WriteString(fmt.Sprintf("label = \"%s\"\n", taskTp))
+
+	if len(p.Children()) == 0 {
+		buffer.WriteString(fmt.Sprintf("\"%s(%T)\"\n}\n", p.ExplainID(), p))
+		return
+	}
+
+	copTasks := []Plan{}
+	pipelines := []string{}
+
+	for planQueue := []Plan{p}; len(planQueue) > 0; planQueue = planQueue[1:] {
+		curPlan := planQueue[0]
+		switch copPlan := curPlan.(type) {
+		case *PhysicalTableReader:
+			pipelines = append(pipelines, fmt.Sprintf("\"%s(%T)\" -> \"%s(%T)\"\n", copPlan.ExplainID(), copPlan, copPlan.tablePlan.ExplainID(), copPlan.tablePlan))
+			copTasks = append(copTasks, copPlan.tablePlan)
+		case *PhysicalIndexReader:
+			pipelines = append(pipelines, fmt.Sprintf("\"%s(%T)\" -> \"%s(%T)\"\n", copPlan.ExplainID(), copPlan, copPlan.indexPlan.ExplainID(), copPlan.indexPlan))
+			copTasks = append(copTasks, copPlan.indexPlan)
+		case *PhysicalIndexLookUpReader:
+			pipelines = append(pipelines, fmt.Sprintf("\"%s(%T)\" -> \"%s(%T)\"\n", copPlan.ExplainID(), copPlan, copPlan.tablePlan.ExplainID(), copPlan.tablePlan))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s(%T)\" -> \"%s(%T)\"\n", copPlan.ExplainID(), copPlan, copPlan.indexPlan.ExplainID(), copPlan.indexPlan))
+			copTasks = append(copTasks, copPlan.tablePlan)
+			copTasks = append(copTasks, copPlan.indexPlan)
+		}
+		for _, child := range curPlan.Children() {
+			buffer.WriteString(fmt.Sprintf("\"%s(%T)\" -> \"%s(%T)\"\n", curPlan.ExplainID(), curPlan, child.ExplainID(), child))
+			planQueue = append(planQueue, child)
+		}
+	}
+	buffer.WriteString("}\n")
+
+	for _, cop := range copTasks {
+		e.prepareeTaskDot(cop.(PhysicalPlan), "cop", buffer)
+	}
+
+	for i := range pipelines {
+		buffer.WriteString(pipelines[i])
+	}
 }
