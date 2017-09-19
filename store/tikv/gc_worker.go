@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -39,7 +38,7 @@ type GCWorker struct {
 	uuid        string
 	desc        string
 	store       *tikvStore
-	gcIsRunning int32
+	gcIsRunning bool
 	lastFinish  time.Time
 	cancel      goctx.CancelFunc
 	done        chan error
@@ -59,7 +58,7 @@ func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:       store.(*tikvStore),
-		gcIsRunning: 0,
+		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		done:        make(chan error),
 	}
@@ -114,7 +113,7 @@ func (w *GCWorker) start(ctx goctx.Context) {
 		case <-ticker.C:
 			w.tick(ctx)
 		case err := <-w.done:
-			atomic.StoreInt32(&w.gcIsRunning, 0)
+			w.gcIsRunning = false
 			w.lastFinish = time.Now()
 			if err != nil {
 				log.Errorf("[gc worker] runGCJob error: %v", err)
@@ -178,7 +177,7 @@ func (w *GCWorker) storeIsBootstrapped() bool {
 
 // Leader of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx goctx.Context) error {
-	if !atomic.CompareAndSwapInt32(&w.gcIsRunning, 0, 1) {
+	if w.gcIsRunning {
 		return nil
 	}
 
@@ -193,6 +192,7 @@ func (w *GCWorker) leaderTick(ctx goctx.Context) error {
 		return nil
 	}
 
+	w.gcIsRunning = true
 	log.Infof("[gc worker] %s starts GC job, safePoint: %v", w.uuid, safePoint)
 	go w.runGCJob(ctx, safePoint)
 	return nil
@@ -691,7 +691,7 @@ func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:       store.(*tikvStore),
-		gcIsRunning: 0,
+		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		done:        make(chan error),
 	}
