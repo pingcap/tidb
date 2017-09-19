@@ -29,6 +29,7 @@ type leaseGrantItem struct {
 
 func (*testSuite) TestSchemaValidator(c *C) {
 	defer testleak.AfterTest(c)()
+
 	lease := 5 * time.Millisecond
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
@@ -46,26 +47,26 @@ func (*testSuite) TestSchemaValidator(c *C) {
 
 	// Take a lease, check it's valid.
 	item := <-leaseGrantCh
-	validator.Update(item.leaseGrantTS, 0, item.schemaVer, nil)
-	valid := validator.Check(item.leaseGrantTS, item.schemaVer, nil)
+	validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer, []int64{10})
+	valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
 	c.Assert(valid, Equals, ResultSucc)
 
 	// Stop the validator, validator's items value is nil.
 	validator.Stop()
-	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, nil)
+	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
 	c.Assert(isTablesChanged, IsTrue)
-	valid = validator.Check(item.leaseGrantTS, item.schemaVer, nil)
+	valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
 	c.Assert(valid, Equals, ResultFail)
 	validator.Restart()
 
 	// Sleep for a long time, check schema is invalid.
 	time.Sleep(lease)
 	ts := <-oracleCh
-	valid = validator.Check(ts, item.schemaVer, nil)
+	valid = validator.Check(ts, item.schemaVer, []int64{10})
 	c.Assert(valid, Equals, ResultUnknown)
 
 	currVer := reload(validator, leaseGrantCh, 0)
-	valid = validator.Check(ts, item.schemaVer, nil)
+	valid = validator.Check(ts, item.schemaVer, []int64{0})
 	c.Assert(valid, Equals, ResultFail)
 	// Check the latest schema version must changed.
 	c.Assert(item.schemaVer, Less, validator.latestSchemaVer)
@@ -73,6 +74,7 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	// Make sure newItem's version is bigger than currVer.
 	time.Sleep(lease * 2)
 	newItem := <-leaseGrantCh
+
 	// Update current schema version to newItem's version and the delta table IDs is 1, 2, 3.
 	validator.Update(ts, currVer, newItem.schemaVer, []int64{1, 2, 3})
 	// Make sure the updated table IDs don't be covered with the same schema version.
@@ -121,4 +123,31 @@ func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh 
 			return
 		}
 	}
+}
+
+func (*testSuite) TestSimpleQueue(c *C) {
+	q := &simpleQueue{}
+	var ver int64
+	for ver = 0; ver < maxNumberOfDiffsToLoad+200; ver++ {
+		q.enqueue(ver, nil)
+	}
+	old := q.tail
+	c.Assert(q.full(), IsTrue)
+	c.Assert(q.tailValue().schemaVersion, Equals, ver-1)
+
+	q.enqueue(ver, nil)
+	c.Assert(q.full(), IsTrue)
+	c.Assert((old+1)%maxNumberOfDiffsToLoad, Equals, q.tail)
+
+	q.reset()
+	c.Assert(q.head, Equals, 0)
+	c.Assert(q.tail, Equals, 0)
+}
+
+func (q *simpleQueue) full() bool {
+	return (q.tail+1)%maxNumberOfDiffsToLoad == q.head
+}
+
+func (q *simpleQueue) tailValue() *deltaSchemaInfo {
+	return &q.data[q.tail%maxNumberOfDiffsToLoad]
 }
