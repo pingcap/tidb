@@ -649,7 +649,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	if b.err != nil {
 		return nil
 	}
-	table, _ := b.is.TableByID(v.Table.ID)
+	tbl, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	var handleCol *expression.Column
@@ -661,7 +661,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		ctx:         b.ctx,
 		startTS:     startTS,
 		supportDesc: supportDesc,
-		table:       table,
+		table:       tbl,
 		schema:      v.Schema(),
 		Columns:     v.Columns,
 		ranges:      v.Ranges,
@@ -684,7 +684,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	if b.err != nil {
 		return nil
 	}
-	table, _ := b.is.TableByID(v.Table.ID)
+	tbl, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	var handleCol *expression.Column
@@ -695,7 +695,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		tableInfo:            v.Table,
 		ctx:                  b.ctx,
 		supportDesc:          supportDesc,
-		table:                table,
+		table:                tbl,
 		singleReadMode:       !v.DoubleRead,
 		startTS:              startTS,
 		where:                v.TableConditionPBExpr,
