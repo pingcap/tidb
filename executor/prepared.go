@@ -336,7 +336,12 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sc.TimeZone = sessVars.GetTimeZone()
 
 	switch stmt := s.(type) {
-	case *ast.UpdateStmt, *ast.DeleteStmt:
+	case *ast.UpdateStmt:
+		sc.IgnoreTruncate = false
+		sc.OverflowAsWarning = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.InUpdateOrDeleteStmt = true
+	case *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
