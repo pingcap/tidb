@@ -264,6 +264,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		reorgInfo, err = d.getReorgInfo(t, job)
 		if err != nil || reorgInfo.first {
 			if err == nil {
+				// Get the first handle of this table.
 				err = iterateSnapshotRows(d.store, tbl, reorgInfo.SnapshotVer, math.MinInt64,
 					func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 						reorgInfo.Handle = h
@@ -401,12 +402,11 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *
 	[]*indexRecord, *taskResult) {
 	startTime := time.Now()
 	w.idxRecords = w.idxRecords[:0]
-	startHandle := w.taskRange.startHandle
-	ret := &taskResult{doneHandle: startHandle}
+	ret := &taskResult{doneHandle: w.taskRange.startHandle}
 	isEnd := true
-	err := iterateSnapshotRows(w.ctx.GetStore(), t, txn.StartTS(), startHandle,
+	err := iterateSnapshotRows(w.ctx.GetStore(), t, txn.StartTS(), w.taskRange.startHandle,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
-			if h >= startHandle+taskOpInfo.taskBatch {
+			if h >= w.taskRange.endHandle {
 				ret.doneHandle = h - 1
 				isEnd = false
 				return false, nil
@@ -418,9 +418,6 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *
 			}
 			w.idxRecords = append(w.idxRecords, indexRecord)
 			ret.doneHandle = h
-			if w.taskRange.isFinished(h) {
-				return false, nil
-			}
 			return true, nil
 		})
 	if err != nil {
@@ -428,18 +425,11 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *
 		return nil, ret
 	}
 
-	if !w.taskRange.isSent {
-		// Record the last handle.
-		// Ensure that the handle scope of the task doesn't change,
-		// even if the transaction retries it can't effect the other tasks.
-		w.taskRange.endHandle = ret.doneHandle
-		if isEnd {
-			ret.isAllDone = true
-		}
+	if isEnd {
+		ret.isAllDone = true
 	}
 	ret.count = len(w.idxRecords)
 	log.Debugf("[ddl] txn %v fetches handle info %v, ret %v, takes time %v", txn.StartTS(), w.taskRange, ret, time.Since(startTime))
-	w.taskRange.isSent = true
 
 	return w.idxRecords, ret
 }
@@ -501,10 +491,8 @@ type indexRecord struct {
 
 // indexTaskOpInfo records the information that is needed in the task.
 type indexTaskOpInfo struct {
-	tblIndex  table.Index
-	colMap    map[int64]*types.FieldType // It's the index columns map.
-	taskBatch int64
-	// reorgInfo  *reorgInfo
+	tblIndex table.Index
+	colMap   map[int64]*types.FieldType // It's the index columns map.
 }
 
 type worker struct {
@@ -527,24 +515,15 @@ func newWorker(ctx context.Context, id, batch, cols, indexCols int) *worker {
 	}
 }
 
-func (w *worker) setTaskNewRange(startHandle int64) {
+func (w *worker) setTaskNewRange(startHandle, endHandle int64) {
 	w.taskRange.startHandle = startHandle
-	w.taskRange.endHandle = 0
-	w.taskRange.isSent = false
+	w.taskRange.endHandle = endHandle
 }
 
 // handleInfo records start and end handle that is used in a task.
 type handleInfo struct {
 	startHandle int64
 	endHandle   int64
-	isSent      bool // It ensures that the endHandle is assigned only once and is sent once.
-}
-
-func (h *handleInfo) isFinished(input int64) bool {
-	if !h.isSent || input < h.endHandle-1 {
-		return false
-	}
-	return true
 }
 
 // addTableIndex adds index into table.
@@ -574,27 +553,18 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 	workerCnt := defaultWorkers
 	taskOpInfo := &indexTaskOpInfo{
-		tblIndex:  tables.NewIndex(t.Meta(), indexInfo),
-		colMap:    colMap,
-		taskBatch: defaultTaskHandleCnt,
-		// 		reorgInfo: reorgInfo,
+		tblIndex: tables.NewIndex(t.Meta(), indexInfo),
+		colMap:   colMap,
 	}
 
-	// f, err := os.Create("cpuprofile")
-	// if err != nil {
-	// 	log.Error("err:", err)
-	// } else {
-	// 	pprof.StartCPUProfile(f)
-	// 	defer pprof.StopCPUProfile()
-	// }
-
+	taskBatch := int64(defaultTaskHandleCnt)
 	addedCount := job.GetRowCount()
 	baseHandle := reorgInfo.Handle
 
 	workers := make([]*worker, workerCnt)
 	for i := 0; i < workerCnt; i++ {
 		ctx := d.newContext()
-		workers[i] = newWorker(ctx, i, int(taskOpInfo.taskBatch), len(cols), len(taskOpInfo.colMap))
+		workers[i] = newWorker(ctx, i, int(taskBatch), len(cols), len(taskOpInfo.colMap))
 	}
 	for {
 		startTime := time.Now()
@@ -602,13 +572,12 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		wg := sync.WaitGroup{}
 		for i := 0; i < workerCnt; i++ {
 			wg.Add(1)
-			workers[i].setTaskNewRange(baseHandle)
+			workers[i].setTaskNewRange(baseHandle, baseHandle+taskBatch)
 			// TODO: Consider one worker to one goroutine.
 			go workers[i].doBackfillIndexTask(t, taskOpInfo, &wg)
-			baseHandle += taskOpInfo.taskBatch
+			baseHandle += taskBatch
 		}
 		wg.Wait()
-		// taskOpInfo.reorgInfo.Handle = baseHandle
 
 		taskAddedCount, doneHandle, isEnd, err := getCountAndHandle(workers)
 		addedCount += int64(taskAddedCount)
@@ -661,17 +630,6 @@ func (w *worker) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo,
 	startTime := time.Now()
 	var ret *taskResult
 	err := kv.RunInNewTxn(w.ctx.GetStore(), true, func(txn kv.Transaction) error {
-		//		// Update the reorg handle that has been processed.
-		//		// TODO: Update handle once every 100 times.
-		//		if w.id == 0 {
-		//			err1 := taskOpInfo.reorgInfo.UpdateHandle(txn, taskOpInfo.reorgInfo.Handle)
-		//			if err1 != nil {
-		//				log.Warnf("[ddl] add index failed when update handle %d, err %v", taskOpInfo.reorgInfo.Handle, err1)
-		//				ret = &taskResult{err: err1}
-		//				return errors.Trace(ret.err)
-		//			}
-		//		}
-
 		ret = w.doBackfillIndexTaskInTxn(t, txn, taskOpInfo)
 		return errors.Trace(ret.err)
 	})

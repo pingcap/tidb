@@ -227,7 +227,7 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 	return colDatum, nil
 }
 
-// DecodeRowWithMap decodes a byte slice into datums.
+// DecodeRowWithMap decodes a byte slice into datums with a existing row map.
 // Row layout: colID1, value1, colID2, value2, .....
 func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) error {
 	if row == nil {

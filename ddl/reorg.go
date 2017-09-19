@@ -63,7 +63,7 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 	// we will wait 2 * lease outer and try checking again,
 	// so we use a very little timeout here.
 	if d.lease > 0 {
-		waitTimeout = 100 * time.Millisecond
+		waitTimeout = 1 * time.Millisecond
 	}
 
 	// wait reorganization job done or timeout
@@ -135,11 +135,6 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-	}
-
-	if info.Handle > 0 {
-		// we have already handled this handle, so use next
-		info.Handle++
 	}
 
 	return info, errors.Trace(err)
