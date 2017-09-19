@@ -413,11 +413,11 @@ func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expres
 		sig = &builtinCastTimeAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsJson)
 	case tpDuration:
-		sig = &builtinCastJSONAsJSONSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
-	case tpJSON:
 		sig = &builtinCastDurationAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsJson)
+	case tpJSON:
+		sig = &builtinCastJSONAsJSONSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
 	case tpString:
 		sig = &builtinCastStringAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsJson)
