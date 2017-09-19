@@ -1281,7 +1281,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row []types.Datum) (res type
 	return
 }
 
-// BuildCastFunction builds a cast ScalarFunction from the Expression.
+// BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(expr Expression, tp *types.FieldType, ctx context.Context) *ScalarFunction {
 	var fc functionClass
 	switch tp.ToClass() {
