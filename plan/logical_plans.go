@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
@@ -177,13 +178,13 @@ type LogicalAggregation struct {
 	*basePlan
 	baseLogicalPlan
 
-	AggFuncs     []expression.AggregationFunction
+	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
-
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
 
 	possibleProperties [][]*expression.Column
+	inputCount         float64 // inputCount is the input count of this plan.
 }
 
 func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -250,7 +251,7 @@ type physicalTableSource struct {
 
 	// The following fields are used for explaining and testing. Because pb structures are not human-readable.
 
-	aggFuncs              []expression.AggregationFunction
+	aggFuncs              []aggregation.Aggregation
 	gbyItems              []expression.Expression
 	sortItems             []*ByItems
 	indexFilterConditions []expression.Expression
@@ -327,11 +328,11 @@ func (p *physicalTableSource) clearForTopnPushDown() {
 	p.LimitCount = nil
 }
 
-func needCount(af expression.AggregationFunction) bool {
+func needCount(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncCount || af.GetName() == ast.AggFuncAvg
 }
 
-func needValue(af expression.AggregationFunction) bool {
+func needValue(af aggregation.Aggregation) bool {
 	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
 		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat
 }
@@ -391,7 +392,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, f := range agg.AggFuncs {
-		pb := expression.AggFuncToPBExpr(sc, p.client, f)
+		pb := aggregation.AggFuncToPBExpr(sc, p.client, f)
 		if pb == nil {
 			// When we fail to convert any agg function to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
@@ -418,9 +419,9 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	cursor := 0
 	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems)), RetType: gkType})
 	agg.GroupByItems = []expression.Expression{schema.Columns[cursor]}
-	newAggFuncs := make([]expression.AggregationFunction, len(agg.AggFuncs))
+	newAggFuncs := make([]aggregation.Aggregation, len(agg.AggFuncs))
 	for i, aggFun := range agg.AggFuncs {
-		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
+		fun := aggregation.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
 		colName := model.NewCIStr(fmt.Sprint(aggFun.GetArgs()))
 		if needCount(fun) {
@@ -439,7 +440,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 			args = append(args, schema.Columns[cursor])
 		}
 		fun.SetArgs(args)
-		fun.SetMode(expression.FinalMode)
+		fun.SetMode(aggregation.FinalMode)
 		newAggFuncs[i] = fun
 	}
 	agg.AggFuncs = newAggFuncs
@@ -577,8 +578,11 @@ type PhysicalAggregation struct {
 
 	HasGby       bool
 	AggType      AggregationType
-	AggFuncs     []expression.AggregationFunction
+	AggFuncs     []aggregation.Aggregation
 	GroupByItems []expression.Expression
+
+	propKeys   []*expression.Column
+	inputCount float64 // inputCount is the input count of this plan.
 }
 
 // PhysicalUnionScan represents a union scan operator.

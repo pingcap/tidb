@@ -563,6 +563,12 @@ func (s *testSuite) TestUpdate(c *C) {
 	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 
+	// test update ignore for truncate as warning
+	_, err = tk.Exec("update ignore t set a = 1 where a = (select '2a')")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated", "Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+
 	// test update ignore for unique key
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a bigint, unique key I_uniq (a));")
@@ -573,6 +579,28 @@ func (s *testSuite) TestUpdate(c *C) {
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows("Warning 1062 key already exist"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
+}
+
+// For issue #4514.
+func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table update_modified (col_1 int, col_2 enum('a', 'b'))")
+	tk.MustExec("set SQL_MODE=''")
+	tk.MustExec("insert into update_modified values (0, 3)")
+	r := tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("0 "))
+	tk.MustExec("set SQL_MODE=STRICT_ALL_TABLES")
+	tk.MustExec("update update_modified set col_1 = 1")
+	r = tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("1 "))
+	_, err := tk.Exec("update update_modified set col_1 = 2, col_2 = 'c'")
+	c.Assert(err, NotNil)
+	r = tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("1 "))
+	tk.MustExec("update update_modified set col_1 = 3, col_2 = 'a'")
+	r = tk.MustQuery("SELECT * FROM update_modified")
+	r.Check(testkit.Rows("3 a"))
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
@@ -666,6 +694,15 @@ func (s *testSuite) TestDelete(c *C) {
 	rows := tk.MustQuery(`SELECT * from delete_test limit 2;`)
 	rows.Check(testkit.Rows("1 hello"))
 	tk.MustExec("commit")
+
+	// Test delete ignore
+	tk.MustExec("insert into delete_test values (2, 'abc')")
+	_, err := tk.Exec("delete from delete_test where id = (select '2a')")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("delete ignore from delete_test where id = (select '2a')")
+	tk.CheckExecResult(1, 0)
+	r := tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
 
 	tk.MustExec(`delete from delete_test ;`)
 	tk.CheckExecResult(1, 0)

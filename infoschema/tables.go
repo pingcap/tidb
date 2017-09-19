@@ -1168,3 +1168,7 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 func (it *infoschemaTable) Seek(ctx context.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp
 }
+
+func (it *infoschemaTable) Type() table.Type {
+	return table.VirtualTable
+}

@@ -782,6 +782,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		tmpInput := types.NewStringDatum(t.Input)
 		tmpInputDuration := types.NewStringDatum(t.InputDuration)
 		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}))
+		c.Assert(f.canBeFolded(), IsTrue)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
@@ -807,6 +808,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		tmpInputDuration := types.NewStringDatum(t.InputDuration)
 		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}))
 		c.Assert(err, IsNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		result, _ := d.ToString()
@@ -852,6 +854,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		tmpInputDuration := types.NewStringDatum(t.InputDuration)
 		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}))
 		c.Assert(err, IsNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		result, _ := d.ToString()
@@ -874,6 +877,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		tmpInputDuration := types.NewStringDatum(t.InputDuration)
 		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}))
 		c.Assert(err, IsNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		result, _ := d.ToString()
@@ -1251,29 +1255,45 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 	tests := []struct {
-		t1        string
-		t2        string
+		args      []interface{}
 		expectStr string
+		isNil     bool
+		fsp       int
+		getErr    bool
 	}{
-		{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001", "-00:00:00.000001"},
-		{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002", "46:58:57.999999"},
-		{"2016-12-00 12:00:00", "2016-12-01 12:00:00", "-24:00:00"},
+		{[]interface{}{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"}, "-00:00:00.000001", false, 6, false},
+		{[]interface{}{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002"}, "46:58:57.999999", false, 6, false},
+		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, false},
+		{[]interface{}{"10:10:10", "10:9:0"}, "00:01:10", false, 0, false},
+		{[]interface{}{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, false},
+		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, false},
 	}
-	fc := funcs[ast.TimeDiff]
-	for _, test := range tests {
-		t1 := types.NewStringDatum(test.t1)
-		t2 := types.NewStringDatum(test.t2)
-		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{t1, t2}))
+
+	for _, t := range tests {
+		f, err := newFunctionForTest(s.ctx, ast.TimeDiff, primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		result, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(result.GetMysqlDuration().String(), Equals, test.expectStr)
+		tp := f.GetType()
+		c.Assert(tp.Tp, Equals, mysql.TypeDuration)
+		c.Assert(tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flen, Equals, mysql.MaxDurationWidthWithFsp)
+		d, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetMysqlDuration().String(), Equals, t.expectStr)
+				c.Assert(d.GetMysqlDuration().Fsp, Equals, t.fsp)
+			}
+		}
 	}
-	f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{{}, types.NewStringDatum("2017-01-01")}))
+	f, err := funcs[ast.TimeDiff].getFunction(s.ctx, []Expression{Zero, Zero})
 	c.Assert(err, IsNil)
-	d, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.IsNull(), IsTrue)
+	c.Assert(f.canBeFolded(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestWeek(c *C) {
@@ -1471,6 +1491,8 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	args := types.MakeDatums(date[0], 1, "DAY")
 	f, err := fcAdd.getFunction(s.ctx, datumsToConstants(args))
 	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime().String(), Equals, date[1])
@@ -1478,6 +1500,8 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	args = types.MakeDatums(date[1], 1, "DAY")
 	f, err = fcSub.getFunction(s.ctx, datumsToConstants(args))
 	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime().String(), Equals, date[0])
@@ -1485,6 +1509,8 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	args = types.MakeDatums(date[0], nil, "DAY")
 	f, err = fcAdd.getFunction(s.ctx, datumsToConstants(args))
 	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
@@ -1492,6 +1518,8 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	args = types.MakeDatums(date[1], nil, "DAY")
 	f, err = fcSub.getFunction(s.ctx, datumsToConstants(args))
 	c.Assert(err, IsNil)
+	c.Assert(f, NotNil)
+	c.Assert(f.canBeFolded(), IsTrue)
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
@@ -1615,10 +1643,10 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		{[]interface{}{12, 15, -30}, nil},
 
 		{[]interface{}{12, 15, "30.10"}, "12:15:30.100000"},
-		{[]interface{}{12, 15, "30.00"}, "12:15:30.000000"},
-		{[]interface{}{12, 15, 30.0000001}, "12:15:30.000000"},
+		{[]interface{}{12, 15, "30.20"}, "12:15:30.200000"},
+		{[]interface{}{12, 15, 30.3000001}, "12:15:30.300000"},
 		{[]interface{}{12, 15, 30.0000005}, "12:15:30.000001"},
-		{[]interface{}{"12", "15", 30.1}, "12:15:30.1"},
+		{[]interface{}{"12", "15", 30.1}, "12:15:30.100000"},
 
 		{[]interface{}{0, 58.4, 0}, "00:58:00"},
 		{[]interface{}{0, "58.4", 0}, "00:58:00"},
@@ -1626,26 +1654,24 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		{[]interface{}{0, "58.5", 1}, "00:58:01"},
 		{[]interface{}{0, 59.5, 1}, nil},
 		{[]interface{}{0, "59.5", 1}, "00:59:01"},
-		{[]interface{}{0, 1, 59.1}, "00:01:59.1"},
+		{[]interface{}{0, 1, 59.1}, "00:01:59.100000"},
 		{[]interface{}{0, 1, "59.1"}, "00:01:59.100000"},
-		{[]interface{}{0, 1, 59.5}, "00:01:59.5"},
+		{[]interface{}{0, 1, 59.5}, "00:01:59.500000"},
 		{[]interface{}{0, 1, "59.5"}, "00:01:59.500000"},
 		{[]interface{}{23.5, 1, 10}, "24:01:10"},
 		{[]interface{}{"23.5", 1, 10}, "23:01:10"},
 
 		{[]interface{}{0, 0, 0}, "00:00:00"},
-		{[]interface{}{"", "", ""}, "00:00:00.000000"},
-		{[]interface{}{"h", "m", "s"}, "00:00:00.000000"},
 
-		{[]interface{}{837, 59, 59.1}, "837:59:59.1"},
-		{[]interface{}{838, 59, 59.1}, "838:59:59.0"},
-		{[]interface{}{-838, 59, 59.1}, "-838:59:59.0"},
+		{[]interface{}{837, 59, 59.1}, "837:59:59.100000"},
+		{[]interface{}{838, 59, 59.1}, "838:59:59.000000"},
+		{[]interface{}{-838, 59, 59.1}, "-838:59:59.000000"},
 		{[]interface{}{1000, 1, 1}, "838:59:59"},
-		{[]interface{}{-1000, 1, 1.23}, "-838:59:59.00"},
+		{[]interface{}{-1000, 1, 1.23}, "-838:59:59.000000"},
 		{[]interface{}{1000, 59.1, 1}, "838:59:59"},
 		{[]interface{}{1000, 59.5, 1}, nil},
-		{[]interface{}{1000, 1, 59.1}, "838:59:59.0"},
-		{[]interface{}{1000, 1, 59.5}, "838:59:59.0"},
+		{[]interface{}{1000, 1, 59.1}, "838:59:59.000000"},
+		{[]interface{}{1000, 1, 59.5}, "838:59:59.000000"},
 
 		{[]interface{}{12, 15, 60}, nil},
 		{[]interface{}{12, 15, "60"}, nil},
@@ -1663,6 +1689,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 	for idx, t := range Dtbl {
 		f, err := maketime.getFunction(s.ctx, datumsToConstants(t["Args"]))
 		c.Assert(err, IsNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		if t["Want"][0].Kind() == types.KindNull {
@@ -1672,6 +1699,25 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 			c.Assert(err, IsNil)
 			c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
 		}
+	}
+
+	tbl = []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{"", "", ""}, "00:00:00"},
+		{[]interface{}{"h", "m", "s"}, "00:00:00"},
+	}
+	Dtbl = tblToDtbl(tbl)
+	maketime = funcs[ast.MakeTime]
+	for idx, t := range Dtbl {
+		f, err := maketime.getFunction(s.ctx, datumsToConstants(t["Args"]))
+		c.Assert(err, IsNil)
+		c.Assert(f.canBeFolded(), IsTrue)
+		got, err := f.eval(nil)
+		c.Assert(err, NotNil)
+		want, err := t["Want"][0].ToString()
+		c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
 	}
 }
 

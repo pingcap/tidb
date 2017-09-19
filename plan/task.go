@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
@@ -103,10 +104,11 @@ func attachPlan2Task(p PhysicalPlan, t task) task {
 // finishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.
 func (t *copTask) finishIndexPlan() {
 	if !t.indexPlanFinished {
-		t.cst += t.count() * (netWorkFactor + scanFactor)
+		t.cst += t.count() * netWorkFactor
 		t.indexPlanFinished = true
 		if t.tablePlan != nil {
 			t.tablePlan.(*PhysicalTableScan).profile = t.indexPlan.statsProfile()
+			t.cst += t.count() * scanFactor
 		}
 	}
 }
@@ -415,7 +417,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
-		pb := expression.AggFuncToPBExpr(sc, client, aggFunc)
+		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return
 		}
@@ -432,9 +434,9 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	partialSchema := expression.NewSchema()
 	partialAgg.SetSchema(partialSchema)
 	cursor := 0
-	finalAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
+	finalAggFuncs := make([]aggregation.Aggregation, len(finalAgg.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
-		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
+		fun := aggregation.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
 		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor))
 		if needCount(fun) {
@@ -453,7 +455,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 			cursor++
 		}
 		fun.SetArgs(args)
-		fun.SetMode(expression.FinalMode)
+		fun.SetMode(aggregation.FinalMode)
 		finalAggFuncs[i] = fun
 	}
 	finalAgg = PhysicalAggregation{
@@ -481,7 +483,7 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 	if tasks[0].plan() == nil {
 		return tasks[0]
 	}
-	// TODO: We only consider hash aggregation here.
+	cardinality := p.statsProfile().count
 	task := tasks[0].copy()
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
@@ -490,19 +492,22 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 				cop.finishIndexPlan()
 				partialAgg.SetChildren(cop.tablePlan)
 				cop.tablePlan = partialAgg
-				cop.cst += cop.count() * cpuFactor
 			} else {
 				partialAgg.SetChildren(cop.indexPlan)
 				cop.indexPlan = partialAgg
-				cop.cst += cop.count() * cpuFactor
 			}
 		}
 		task = finishCopTask(cop, p.ctx, p.allocator)
+		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 		attachPlan2Task(finalAgg, task)
 	} else {
 		np := p.Copy()
 		attachPlan2Task(np, task)
-		task.addCost(task.count() * cpuFactor)
+		if p.AggType == StreamedAgg {
+			task.addCost(task.count() * cpuFactor)
+		} else {
+			task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
+		}
 	}
 	return task
 }
