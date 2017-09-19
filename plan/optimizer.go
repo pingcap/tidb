@@ -213,7 +213,8 @@ const (
 	CodeIllegalReference    terror.ErrCode = 6
 
 	// MySQL error code.
-	CodeNoDB terror.ErrCode = mysql.ErrNoDB
+	CodeNoDB                 terror.ErrCode = mysql.ErrNoDB
+	CodeUnknownExplainFormat terror.ErrCode = mysql.ErrUnknownExplainFormat
 )
 
 // Optimizer base errors.
@@ -224,15 +225,17 @@ var (
 	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
 	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
 	ErrNoDB                        = terror.ClassOptimizer.New(CodeNoDB, "No database selected")
+	ErrUnknownExplainFormat        = terror.ClassOptimizer.New(CodeUnknownExplainFormat, mysql.MySQLErrName[mysql.ErrUnknownExplainFormat])
 )
 
 func init() {
 	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeOperandColumns:      mysql.ErrOperandColumns,
-		CodeInvalidWildCard:     mysql.ErrParse,
-		CodeInvalidGroupFuncUse: mysql.ErrInvalidGroupFuncUse,
-		CodeIllegalReference:    mysql.ErrIllegalReference,
-		CodeNoDB:                mysql.ErrNoDB,
+		CodeOperandColumns:       mysql.ErrOperandColumns,
+		CodeInvalidWildCard:      mysql.ErrParse,
+		CodeInvalidGroupFuncUse:  mysql.ErrInvalidGroupFuncUse,
+		CodeIllegalReference:     mysql.ErrIllegalReference,
+		CodeNoDB:                 mysql.ErrNoDB,
+		CodeUnknownExplainFormat: mysql.ErrUnknownExplainFormat,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 	expression.EvalAstExpr = evalAstExpr

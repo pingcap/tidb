@@ -27,10 +27,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -328,6 +331,128 @@ func (s *testSessionSuite) TestString(c *C) {
 	tk.MustExec("select 1")
 	// here to check the panic bug in String() when txn is nil after committed.
 	c.Log(tk.Se.String())
+}
+
+func (s *testSessionSuite) TestDatabase(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// Test database.
+	tk.MustExec("create database xxx")
+	tk.MustExec("drop database xxx")
+
+	tk.MustExec("drop database if exists xxx")
+	tk.MustExec("create database xxx")
+	tk.MustExec("create database if not exists xxx")
+	tk.MustExec("drop database if exists xxx")
+
+	// Test schema.
+	tk.MustExec("create schema xxx")
+	tk.MustExec("drop schema xxx")
+
+	tk.MustExec("drop schema if exists xxx")
+	tk.MustExec("create schema xxx")
+	tk.MustExec("create schema if not exists xxx")
+	tk.MustExec("drop schema if exists xxx")
+}
+
+func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	r, _, err := tk.Se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(tk.Se, "select 1;")
+	c.Assert(err, IsNil)
+	c.Assert(len(r), Equals, 1)
+}
+
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
+func (s *testSessionSuite) TestInTrans(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("begin")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("insert t values ()")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("drop table if exists t;")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("insert t values ()")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("commit")
+	tk.MustExec("insert t values ()")
+
+	tk.MustExec("set autocommit=0")
+	tk.MustExec("begin")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("insert t values ()")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("commit")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("insert t values ()")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("commit")
+	c.Assert(tk.Se.Txn(), IsNil)
+
+	tk.MustExec("set autocommit=1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	tk.MustExec("begin")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("insert t values ()")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("rollback")
+	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+}
+
+func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
+	tk.MustExec("insert t values (11, 2, 3)")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set c2=? where c1=11;", 21)
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=? where c1=11", 22)
+	tk2.MustExec("commit")
+
+	tk1.MustExec("commit")
+
+	tk.MustQuery("select c2 from t where c1=11").Check(testkit.Rows("21"))
+}
+
+func (s *testSessionSuite) TestSession(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("ROLLBACK;")
+	tk.Se.Close()
+}
+
+func (s *testSessionSuite) TestSessionAuth(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")), IsFalse)
+}
+
+func (s *testSessionSuite) TestSkipWithGrant(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	save1 := privileges.Enable
+	save2 := privileges.SkipWithGrant
+
+	privileges.Enable = true
+	privileges.SkipWithGrant = false
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")), IsFalse)
+
+	privileges.SkipWithGrant = true
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "%"}, []byte("yyy"), []byte("zzz")), IsTrue)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, []byte(""), []byte("")), IsTrue)
+	tk.MustExec("create table t (id int)")
+
+	privileges.Enable = save1
+	privileges.SkipWithGrant = save2
 }
 
 var _ = Suite(&testSchemaSuite{})
