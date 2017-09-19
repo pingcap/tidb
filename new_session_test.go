@@ -455,6 +455,107 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	privileges.SkipWithGrant = save2
 }
 
+func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL, name varchar(255) UNIQUE NOT NULL, status int)")
+	tk.MustExec("insert t (name) values (?)", "abc")
+	id := tk.Se.LastInsertID()
+	c.Check(id != 0, IsTrue)
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("%d abc <nil>", id)))
+
+	tk.MustExec("update t set name = 'abc', status = 1 where id = ?", id)
+	tk1.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("%d abc 1", id)))
+
+	// Check for pass bool param to tidb prepared statement
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id tinyint)")
+	tk.MustExec("insert t values (?)", true)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestAutoIncrementID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	tk.MustExec("insert t values ()")
+	lastID := tk.Se.LastInsertID()
+	c.Assert(lastID, Less, uint64(4))
+	tk.MustExec("insert t () values ()")
+	c.Assert(tk.Se.LastInsertID(), Greater, lastID)
+	lastID = tk.Se.LastInsertID()
+	tk.MustExec("insert t values (100)")
+	c.Assert(tk.Se.LastInsertID(), Equals, uint64(100))
+
+	// If the auto_increment column value is given, it uses the value of the latest row.
+	tk.MustExec("insert t values (120), (112)")
+	c.Assert(tk.Se.LastInsertID(), Equals, uint64(112))
+
+	// The last_insert_id function only use last auto-generated id.
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows(fmt.Sprint(lastID)))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (i tinyint unsigned not null auto_increment, primary key (i));")
+	tk.MustExec("insert into t set i = 254;")
+	tk.MustExec("insert t values ()")
+
+	// The last insert ID doesn't care about primary key, it is set even if its a normal index column.
+	tk.MustExec("create table autoid (id int auto_increment, index (id))")
+	tk.MustExec("insert autoid values ()")
+	c.Assert(tk.Se.LastInsertID(), Greater, uint64(0))
+	tk.MustExec("insert autoid values (100)")
+	c.Assert(tk.Se.LastInsertID(), Equals, uint64(100))
+
+	tk.MustQuery("select last_insert_id(20)").Check(testkit.Rows(fmt.Sprint(20)))
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows(fmt.Sprint(20)))
+}
+
+func (s *testSessionSuite) TestPrepare(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(id TEXT)")
+	tk.MustExec(`INSERT INTO t VALUES ("id");`)
+	id, ps, fields, err := tk.Se.PrepareStmt("select id+? from t")
+	c.Assert(err, IsNil)
+	c.Assert(fields, HasLen, 1)
+	c.Assert(id, Equals, uint32(1))
+	c.Assert(ps, Equals, 1)
+	tk.MustExec(`set @a=1`)
+	_, err = tk.Se.ExecutePreparedStmt(id, "1")
+	c.Assert(err, IsNil)
+	err = tk.Se.DropPreparedStmt(id)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("prepare stmt from 'select 1+?'")
+	tk.MustExec("set @v1=100")
+	tk.MustQuery("execute stmt using @v1").Check(testkit.Rows("101"))
+
+	tk.MustExec("set @v2=200")
+	tk.MustQuery("execute stmt using @v2").Check(testkit.Rows("201"))
+
+	tk.MustExec("set @v3=300")
+	tk.MustQuery("execute stmt using @v3").Check(testkit.Rows("301"))
+	tk.MustExec("deallocate prepare stmt")
+
+	// Execute prepared statements for more than one time.
+	tk.MustExec("create table multiexec (a int, b int)")
+	tk.MustExec("insert multiexec values (1, 1), (2, 2)")
+	id, _, _, err = tk.Se.PrepareStmt("select a from multiexec where b = ? order by b")
+	c.Assert(err, IsNil)
+	rs, err := tk.Se.ExecutePreparedStmt(id, 1)
+	c.Assert(err, IsNil)
+	rs.Close()
+	rs, err = tk.Se.ExecutePreparedStmt(id, 2)
+	rs.Close()
+	c.Assert(err, IsNil)
+}
+
 var _ = Suite(&testSchemaSuite{})
 
 type testSchemaSuite struct {
