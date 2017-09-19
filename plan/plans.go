@@ -264,14 +264,14 @@ func (e *Explain) prepareRootTaskInfo(p PhysicalPlan) {
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	buffer := bytes.NewBufferString("")
 	buffer.WriteString(fmt.Sprintf("\ndigraph %s {\n", p.ExplainID()))
-	e.prepareeTaskDot(p, "root", buffer)
+	e.prepareTaskDot(p, "root", buffer)
 	buffer.WriteString(fmt.Sprintln("}"))
 
 	row := types.MakeDatums(buffer.String())
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) prepareeTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
+func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
 	buffer.WriteString(fmt.Sprintf("subgraph cluster%v{\n", p.ID()))
 	buffer.WriteString("node [style=filled, color=lightgrey]\n")
 	buffer.WriteString("color=black\n")
@@ -308,7 +308,7 @@ func (e *Explain) prepareeTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.B
 	buffer.WriteString("}\n")
 
 	for _, cop := range copTasks {
-		e.prepareeTaskDot(cop.(PhysicalPlan), "cop", buffer)
+		e.prepareTaskDot(cop.(PhysicalPlan), "cop", buffer)
 	}
 
 	for i := range pipelines {
