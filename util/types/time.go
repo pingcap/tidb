@@ -1211,15 +1211,15 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
 func ParseTime(str string, tp byte, fst int) (Time, error) {
-	return parseTime1(str, tp, fst, false)
+	return parseTime(str, tp, fst, false)
 }
 
 // ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
 func ParseTimeFromFloatString(str string, tp byte, fst int) (Time, error) {
-	return parseTime1(str, tp, fst, true)
+	return parseTime(str, tp, fst, true)
 }
 
-func parseTime1(str string, tp byte, fsp int, isFloat bool) (Time, error) {
+func parseTime(str string, tp byte, fsp int, isFloat bool) (Time, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
