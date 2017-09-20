@@ -994,6 +994,14 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 			p.SetSchema(schema)
 			p.explainedPlans = map[int]bool{}
 			p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+		case ast.ExplainFormatDOT:
+			retFields := []string{"dot contents"}
+			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+			for _, fieldName := range retFields {
+				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+			}
+			p.SetSchema(schema)
+			p.prepareDotInfo(p.StmtPlan.(PhysicalPlan))
 		default:
 			b.err = errors.Errorf("explain format '%s' is not supported now", explain.Format)
 		}
