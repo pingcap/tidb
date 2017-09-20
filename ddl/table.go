@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -51,6 +52,10 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.SchemaState = model.StatePublic
 		tbInfo.State = model.StatePublic
 		err = t.CreateTable(schemaID, tbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		err = d.splitTableRegion(tbInfo.ID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -122,6 +127,25 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func (d *ddl) splitTableRegion(tableID int64) error {
+	type splitableStore interface {
+		SplitRegion(splitKey kv.Key) error
+	}
+	store, ok := d.store.(splitableStore)
+	if !ok {
+		return nil
+	}
+	tableStartKey := tablecodec.GenTablePrefix(tableID)
+	if err := store.SplitRegion(tableStartKey); err != nil {
+		return errors.Trace(err)
+	}
+	nextTableStartKey := tablecodec.GenTablePrefix(tableID + 1)
+	if err := store.SplitRegion(nextTableStartKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // Maximum number of keys to delete for each reorg table job run.

@@ -505,6 +505,14 @@ func GenTableIndexPrefix(tableID int64) kv.Key {
 	return appendTableIndexPrefix(buf, tableID)
 }
 
+// GenTablePrefix composes table record and index prefix: "t[tableID]".
+func GenTablePrefix(tableID int64) kv.Key {
+	buf := make([]byte, 0, len(tablePrefix)+8)
+	buf = append(buf, tablePrefix...)
+	buf = codec.EncodeInt(buf, tableID)
+	return buf
+}
+
 // TruncateToRowKeyLen truncates the key to row key length if the key is longer than row key.
 func TruncateToRowKeyLen(key kv.Key) kv.Key {
 	if len(key) > recordRowKeyLen {
