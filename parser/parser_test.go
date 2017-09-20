@@ -222,7 +222,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"INSERT INTO foo VALUES (1 || 2)", true},
 		{"INSERT INTO foo VALUES (1 | 2)", true},
 		{"INSERT INTO foo VALUES (false || true)", true},
-		{"INSERT INTO foo VALUES (bar(5678))", false},
+		{"INSERT INTO foo VALUES (bar(5678))", true},
 		// 20
 		{"INSERT INTO foo VALUES ()", true},
 		{"SELECT * FROM t", true},
@@ -255,7 +255,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"REPLACE INTO foo VALUES (1 || 2)", true},
 		{"REPLACE INTO foo VALUES (1 | 2)", true},
 		{"REPLACE INTO foo VALUES (false || true)", true},
-		{"REPLACE INTO foo VALUES (bar(5678))", false},
+		{"REPLACE INTO foo VALUES (bar(5678))", true},
 		{"REPLACE INTO foo VALUES ()", true},
 		{"REPLACE INTO foo (a,b) VALUES (42,314)", true},
 		{"REPLACE INTO foo (a,b,) VALUES (42,314)", false},
@@ -550,6 +550,12 @@ func (s *testParserSuite) TestExpression(c *C) {
 		// for date literal
 		{"select date'1989-09-10'", true},
 		{"select date 19890910", false},
+		// for time literal
+		{"select time '00:00:00.111'", true},
+		{"select time 19890910", false},
+		// for timestamp literal
+		{"select timestamp '1989-09-10 11:11:11'", true},
+		{"select timestamp 19890910", false},
 	}
 	s.RunTest(c, table)
 }
@@ -1143,6 +1149,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT '{}'->>'$.a' FROM t`, false},
 		{`SELECT a->3 FROM t`, false},
 		{`SELECT a->>3 FROM t`, false},
+
+		// Test that quoted identifier can be a function name.
+		{"SELECT `uuid`()", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1258,6 +1267,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) PARTITION BY HASH (c) PARTITIONS 32;", true},
 		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
 		{"create table t (c int, `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '') PARTITION BY RANGE (UNIX_TIMESTAMP(create_time)) (PARTITION p201610 VALUES LESS THAN(1477929600), PARTITION p201611 VALUES LESS THAN(1480521600),PARTITION p201612 VALUES LESS THAN(1483200000),PARTITION p201701 VALUES LESS THAN(1485878400),PARTITION p201702 VALUES LESS THAN(1488297600),PARTITION p201703 VALUES LESS THAN(1490976000))", true},
+		{"CREATE TABLE `md_product_shop` (`shopCode` varchar(4) DEFAULT NULL COMMENT '地点') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 /*!50100 PARTITION BY KEY (shopCode) PARTITIONS 19 */;", true},
 
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
@@ -1449,6 +1459,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD UNIQUE ()", false},
 		{"ALTER TABLE t ADD UNIQUE INDEX ()", false},
 		{"ALTER TABLE t ADD UNIQUE KEY ()", false},
+
+		// for issue 4538
+		{"create table a (process double)", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1767,6 +1780,7 @@ func (s *testParserSuite) TestExplain(c *C) {
 		{"explain replace into foo values (1 || 2)", true},
 		{"explain update t set id = id + 1 order by id desc;", true},
 		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true},
+		{`explain format = "row" select c1 from t1 union (select c2 from t2) limit 1, 1`, true},
 	}
 	s.RunTest(c, table)
 }
