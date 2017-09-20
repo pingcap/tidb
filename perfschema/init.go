@@ -208,7 +208,15 @@ func (ps *perfSchema) buildTables() {
 			c.ID = autoid.GenLocalSchemaID()
 		}
 		alloc := autoid.NewMemoryAllocator(dbID)
-		ps.mTables[name] = tables.MemoryTableFromMeta(alloc, meta)
+		var tbl table.Table
+		switch name {
+		//@TODO in the future, we need to add many VirtualTable, we may need to add new type for these tables.
+		case TableSessionStatus, TableGlobalStatus:
+			tbl = createVirtualTable(meta, name)
+		default:
+			tbl = tables.MemoryTableFromMeta(alloc, meta)
+		}
+		ps.mTables[name] = tbl
 	}
 	ps.dbInfo = &model.DBInfo{
 		ID:      dbID,

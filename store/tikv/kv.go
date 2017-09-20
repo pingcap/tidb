@@ -116,7 +116,6 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	_, mock := client.(*mocktikv.RPCClient)
 	store := &tikvStore{
 		clusterID:   pdClient.GetClusterID(goctx.TODO()),
 		uuid:        uuid,
@@ -124,7 +123,6 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		client:      client,
 		pdClient:    pdClient,
 		regionCache: NewRegionCache(pdClient),
-		mock:        mock,
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
@@ -213,7 +211,6 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 
 	mvccStore := opt.mvccStore
 	if mvccStore == nil {
-		// mvccStore = mocktikv.NewMvccStore()
 		var err error
 		mvccStore, err = mocktikv.NewMVCCLevelDB(opt.path)
 		if err != nil {
@@ -234,7 +231,9 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		pdCli = opt.pdClientHijack(pdCli)
 	}
 
-	return newTikvStore(uuid, pdCli, client, false)
+	tikvStore, err := newTikvStore(uuid, pdCli, client, false)
+	tikvStore.mock = true
+	return tikvStore, errors.Trace(err)
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
