@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -37,6 +38,7 @@ var _ = Suite(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
 	store kv.Storage
+	dom   *domain.Domain
 	ctx   context.Context
 }
 
@@ -51,8 +53,15 @@ func (s *testIntegrationSuite) cleanEnv(c *C) {
 }
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
-	s.store, _ = newStoreWithBootstrap()
+	var err error
+	s.store, s.dom, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
+}
+
+func (s *testIntegrationSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
