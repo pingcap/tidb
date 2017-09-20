@@ -99,13 +99,7 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 			newEnd = requiredBase
 		}
 		_, err1 = m.GenAutoTableID(alloc.dbID, tableID, newEnd-currentEnd)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		if !allocIDs {
-			alloc.base = alloc.end
-		}
-		return nil
+		return errors.Trace(err1)
 	})
 	if err != nil {
 		return errors.Trace(err)
