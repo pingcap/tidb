@@ -128,6 +128,7 @@ const (
 	gcResolveLockMaxBackoff = 100000
 	gcDeleteRangeMaxBackoff = 100000
 	rawkvMaxBackoff         = 20000
+	splitRegionBackoff      = 20000
 )
 
 var commitMaxBackoff = 20000

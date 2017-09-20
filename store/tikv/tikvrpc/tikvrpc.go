@@ -47,6 +47,7 @@ const (
 
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
+	CmdSplitRegion
 )
 
 // Request wraps all kv/coprocessor requests.
@@ -71,6 +72,7 @@ type Request struct {
 	Cop              *coprocessor.Request
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyRequest
 	MvccGetByStartTs *kvrpcpb.MvccGetByStartTsRequest
+	SplitRegion      *kvrpcpb.SplitRegionRequest
 }
 
 // GetContext returns the rpc context for the underlying concrete request.
@@ -113,6 +115,8 @@ func (req *Request) GetContext() (*kvrpcpb.Context, error) {
 		c = req.MvccGetByKey.GetContext()
 	case CmdMvccGetByStartTs:
 		c = req.MvccGetByStartTs.GetContext()
+	case CmdSplitRegion:
+		c = req.SplitRegion.GetContext()
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -140,6 +144,7 @@ type Response struct {
 	Cop              *coprocessor.Response
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS *kvrpcpb.MvccGetByStartTsResponse
+	SplitRegion      *kvrpcpb.SplitRegionResponse
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
@@ -182,6 +187,8 @@ func SetContext(req *Request, ctx *kvrpcpb.Context) error {
 		req.MvccGetByKey.Context = ctx
 	case CmdMvccGetByStartTs:
 		req.MvccGetByStartTs.Context = ctx
+	case CmdSplitRegion:
+		req.SplitRegion.Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -266,6 +273,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.MvccGetByStartTS = &kvrpcpb.MvccGetByStartTsResponse{
 			RegionError: e,
 		}
+	case CmdSplitRegion:
+		resp.SplitRegion = &kvrpcpb.SplitRegionResponse{
+			RegionError: e,
+		}
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -312,6 +323,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.MvccGetByKey.GetRegionError()
 	case CmdMvccGetByStartTs:
 		e = resp.MvccGetByStartTS.GetRegionError()
+	case CmdSplitRegion:
+		e = resp.SplitRegion.GetRegionError()
 	default:
 		return nil, fmt.Errorf("invalid response type %v", resp.Type)
 	}

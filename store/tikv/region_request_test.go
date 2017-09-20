@@ -223,6 +223,9 @@ func (s *mockTikvGrpcServer) MvccGetByKey(goctx.Context, *kvrpcpb.MvccGetByKeyRe
 func (s *mockTikvGrpcServer) MvccGetByStartTs(goctx.Context, *kvrpcpb.MvccGetByStartTsRequest) (*kvrpcpb.MvccGetByStartTsResponse, error) {
 	return nil, errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) SplitRegion(goctx.Context, *kvrpcpb.SplitRegionRequest) (*kvrpcpb.SplitRegionResponse, error) {
+	return nil, errors.New("unreachable")
+}
 
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
 	// prepare a mock tikv grpc server
