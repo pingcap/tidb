@@ -100,8 +100,11 @@ func (s *testSuite) TearDownSuite(c *C) {
 	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 }
 
+func (s *testSuite) SetUpTest(c *C) {
+	testleak.BeforeTest()
+}
+
 func (s *testSuite) TearDownTest(c *C) {
-	testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
@@ -109,6 +112,7 @@ func (s *testSuite) TearDownTest(c *C) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TestAdmin(c *C) {
