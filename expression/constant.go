@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/util/types/json"
 )
 
-// One stands for a number 1.
 var (
+	// One stands for a number 1.
 	One = &Constant{
 		Value:   types.NewDatum(1),
 		RetType: types.NewFieldType(mysql.TypeTiny),
