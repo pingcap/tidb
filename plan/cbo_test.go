@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
@@ -46,13 +47,12 @@ func constructInsertSQL(i, n int) string {
 }
 
 func (s *testAnalyzeSuite) TestIndexRead(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	defer func() {
+		dom.Close()
 		store.Close()
 	}()
 	testKit.MustExec("use test")
@@ -164,13 +164,12 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 }
 
 func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	defer func() {
+		dom.Close()
 		store.Close()
 	}()
 	testKit.MustExec("use test")
@@ -216,13 +215,12 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 }
 
 func (s *testAnalyzeSuite) TestAnalyze(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	defer func() {
+		dom.Close()
 		store.Close()
 	}()
 	testKit.MustExec("use test")
@@ -303,13 +301,13 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}
 }
 
-func newStoreWithBootstrap() (kv.Storage, error) {
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tikv.NewMockTikvStore()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(0)
-	_, err = tidb.BootstrapSession(store)
-	return store, errors.Trace(err)
+	dom, err := tidb.BootstrapSession(store)
+	return store, dom, errors.Trace(err)
 }
