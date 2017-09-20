@@ -70,6 +70,16 @@ func (e *ShowExec) Next() (Row, error) {
 		return nil, nil
 	}
 	row := e.rows[e.cursor]
+	for i := range row {
+		if row[i].Kind() != types.KindString {
+			continue
+		}
+		val := row[i].GetString()
+		retType := e.Schema().Columns[i].RetType
+		if l := len(val); l > retType.Flen {
+			retType.Flen = l
+		}
+	}
 	e.cursor++
 	return row, nil
 }
@@ -539,12 +549,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if len(tb.Meta().Comment) > 0 {
 		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
 	}
-
-	// Fix issue #4540
-	schema := e.Schema()
-	// Table | Create Table
-	schema.Columns[0].RetType.Flen = mysql.MaxTableNameLength
-	schema.Columns[1].RetType.Flen = len(buf.String())
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
 	e.rows = append(e.rows, data)
