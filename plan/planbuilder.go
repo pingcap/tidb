@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -978,15 +979,28 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	setParents4FinalPlan(targetPlan.(PhysicalPlan))
 	p := &Explain{StmtPlan: targetPlan}
 	if UseDAGPlanBuilder(b.ctx) {
-		retFields := []string{"id", "parents", "children", "task", "operator info"}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		switch strings.ToLower(explain.Format) {
+		case ast.ExplainFormatROW:
+			retFields := []string{"id", "parents", "children", "task", "operator info"}
+			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+			for _, fieldName := range retFields {
+				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+			}
+			schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
+			p.SetSchema(schema)
+			p.explainedPlans = map[int]bool{}
+			p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+		case ast.ExplainFormatDOT:
+			retFields := []string{"dot contents"}
+			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+			for _, fieldName := range retFields {
+				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+			}
+			p.SetSchema(schema)
+			p.prepareDotInfo(p.StmtPlan.(PhysicalPlan))
+		default:
+			b.err = errors.Errorf("explain format '%s' is not supported now", explain.Format)
 		}
-		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
-		p.SetSchema(schema)
-		p.explainedPlans = map[int]bool{}
-		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
 	} else {
 		schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
 		schema.Append(buildColumn("", "ID", mysql.TypeString, mysql.MaxBlobWidth))
