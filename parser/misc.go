@@ -166,6 +166,7 @@ var tokenMap = map[string]int{
 	"BTREE":               btree,
 	"BY":                  by,
 	"BYTE":                byteType,
+	"CANCEL":              cancel,
 	"CASCADE":             cascade,
 	"CASE":                caseKwd,
 	"CAST":                cast,
