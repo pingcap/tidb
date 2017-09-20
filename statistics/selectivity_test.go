@@ -89,10 +89,12 @@ func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 }
 
 func (s *testSelectivitySuite) TestSelectivity(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	defer store.Close()
+	store, dom, err := newStoreWithBootstrap()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	c.Assert(err, IsNil)
-	defer do.Close()
 
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
