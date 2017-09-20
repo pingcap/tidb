@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -37,6 +38,7 @@ var _ = Suite(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
 	store kv.Storage
+	dom   *domain.Domain
 	ctx   context.Context
 }
 
@@ -51,8 +53,15 @@ func (s *testIntegrationSuite) cleanEnv(c *C) {
 }
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
-	s.store, _ = newStoreWithBootstrap()
+	var err error
+	s.store, s.dom, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
+}
+
+func (s *testIntegrationSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
@@ -2644,7 +2653,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	rs, err := tk.Exec("select date '0000-00-00';")
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("0000-00-00")), IsTrue)
 
 	tk.MustExec("set sql_mode = ''")
 	r = tk.MustQuery("select date '2007-10-00';")
@@ -2654,7 +2663,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	rs, _ = tk.Exec("select date '2007-10-00';")
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-10-00")), IsTrue)
 
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
 	r = tk.MustQuery("select date '2007-10-00';")
@@ -2665,12 +2674,12 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	rs, _ = tk.Exec("select date '2007-10-00';")
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-10-00")), IsTrue)
 
 	rs, err = tk.Exec("select date '0000-00-00';")
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("0000-00-00")), IsTrue)
 
 	r = tk.MustQuery("select date'1998~01~02'")
 	r.Check(testkit.Rows("1998-01-02"))
@@ -2680,7 +2689,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 
 	_, err = tk.Exec("select date '0000-00-00 00:00:00';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("0000-00-00 00:00:00")), IsTrue)
 
 	_, err = tk.Exec("select date '2017-99-99';")
 	c.Assert(err, NotNil)
@@ -2692,11 +2701,92 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 
 	_, err = tk.Exec("select date '201712-31';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("201712-31")), IsTrue)
 
 	_, err = tk.Exec("select date 'abcdefg';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("abcdefg")), IsTrue)
+}
+
+func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	r := tk.MustQuery("select time '117:01:12';")
+	r.Check(testkit.Rows("117:01:12"))
+
+	r = tk.MustQuery("select time '01:00:00.999999';")
+	r.Check(testkit.Rows("01:00:00.999999"))
+
+	r = tk.MustQuery("select time '1 01:00:00';")
+	r.Check(testkit.Rows("25:00:00"))
+
+	r = tk.MustQuery("select time '110:00:00';")
+	r.Check(testkit.Rows("110:00:00"))
+
+	r = tk.MustQuery("select time'-1:1:1.123454656';")
+	r.Check(testkit.Rows("-01:01:01.123455"))
+
+	r = tk.MustQuery("select time '33:33';")
+	r.Check(testkit.Rows("33:33:00"))
+
+	r = tk.MustQuery("select time '1.1';")
+	r.Check(testkit.Rows("00:00:01.1"))
+
+	r = tk.MustQuery("select time '21';")
+	r.Check(testkit.Rows("00:00:21"))
+
+	r = tk.MustQuery("select time '20 20:20';")
+	r.Check(testkit.Rows("500:20:00"))
+
+	_, err := tk.Exec("select time '2017-01-01 00:00:00';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-01-01 00:00:00")), IsTrue)
+
+	_, err = tk.Exec("select time '071231235959.999999';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("071231235959.999999")), IsTrue)
+
+	_, err = tk.Exec("select time '20171231235959.999999';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("20171231235959.999999")), IsTrue)
+}
+
+func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	r := tk.MustQuery("select timestamp '2017-01-01 00:00:00';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00"))
+
+	r = tk.MustQuery("select timestamp '2017@01@01 00:00:00';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00"))
+
+	r = tk.MustQuery("select timestamp '2017@01@01 00~00~00';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00"))
+
+	r = tk.MustQuery("select timestamp '2017@01@0001 00~00~00.333';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00.333"))
+
+	_, err := tk.Exec("select timestamp '00:00:00';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("00:00:00")), IsTrue)
+
+	_, err = tk.Exec("select timestamp '1992-01-03';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("1992-01-03")), IsTrue)
+
+	_, err = tk.Exec("select timestamp '20171231235959.999999';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("20171231235959.999999")), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestLiterals(c *C) {
