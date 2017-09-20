@@ -58,9 +58,6 @@ filename = ""
 log-rotate = true
 
 [security]
-# This option causes the server to start without using the privilege system at all.
-skip-grant-table = false
-
 # Path of file that contains list of trusted SSL CAs.
 ssl-ca = ""
 
