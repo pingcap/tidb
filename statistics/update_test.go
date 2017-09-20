@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -30,13 +31,16 @@ type testStatsUpdateSuite struct {
 }
 
 func (s *testStatsUpdateSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	var err error
 	s.store, s.do, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 }
 
 func (s *testStatsUpdateSuite) TearDownSuite(c *C) {
+	s.do.Close()
 	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {

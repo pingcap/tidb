@@ -956,7 +956,9 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	defer testleak.AfterTest(c)()
 	localstore.MockRemoteStore = true
 	dbName := "test_issue1435"
-	store := newStoreWithBootstrap(c, dbName)
+	store, dom := newStoreWithBootstrap(c, dbName)
+	defer dom.Close()
+	defer store.Close()
 	se := newSession(c, store, dbName)
 	se1 := newSession(c, store, dbName)
 	se2 := newSession(c, store, dbName)
@@ -1043,9 +1045,6 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	se.Close()
 	se1.Close()
 	se2.Close()
-	sessionctx.GetDomain(ctx).Close()
-	err = store.Close()
-	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
 }
 
