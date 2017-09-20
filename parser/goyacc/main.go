@@ -388,7 +388,7 @@ type %[1]sXError struct {
 		case "$default":
 			nm = *oPref + "Default"
 		case "$end":
-			nm = *oPref + "EofCode"
+			nm = *oPref + "EOFCode"
 		}
 		f.Format("%s%s = %d\n", nm, strings.Repeat(" ", maxTokName-len(nm)+1), nsyms[v].Value)
 	}
@@ -529,7 +529,7 @@ func %[1]sSymName(c int) (s string) {
 func %[1]slex1(yylex %[1]sLexer, lval *%[1]sSymType) (n int) {
 	n = yylex.Lex(lval)
 	if n <= 0 {
-		n = %[1]sEofCode
+		n = %[1]sEOFCode
 	}
 	if %[1]sDebug >= 3 {
 		__yyfmt__.Printf("\nlex %%s(%%#x %%d), %[4]s: %[3]s\n", %[1]sSymName(n), n, n, %[4]s)
@@ -681,7 +681,7 @@ yynewstate:
 			if %[1]sDebug >= 2 {
 				__yyfmt__.Printf("error recovery discards %%s\n", %[1]sSymName(yychar))
 			}
-			if yychar == %[1]sEofCode {
+			if yychar == %[1]sEOFCode {
 				goto ret1
 			}
 
