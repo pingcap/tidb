@@ -29,8 +29,15 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	db        engine.DB
-	checkLeak func()
+	db engine.DB
+}
+
+func (s *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testSuite) TearDownSuite(c *C) {
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) SetUpTest(c *C) {
@@ -38,14 +45,12 @@ func (s *testSuite) SetUpTest(c *C) {
 		d   MemoryDriver
 		err error
 	)
-	s.checkLeak = testleak.AfterTest(c)
 	s.db, err = d.Open("memory")
 	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TearDownTest(c *C) {
 	s.db.Close()
-	s.checkLeak()
 }
 
 func (s *testSuite) TestGetSet(c *C) {

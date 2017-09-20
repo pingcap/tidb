@@ -65,7 +65,6 @@ type testSuite struct {
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
 	*parser.Parser
-	checkLeak func()
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
@@ -102,7 +101,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 }
 
 func (s *testSuite) SetUpTest(c *C) {
-	s.checkLeak = testleak.AfterTest(c)
+	testleak.BeforeTest()
 }
 
 func (s *testSuite) TearDownTest(c *C) {
@@ -113,7 +112,7 @@ func (s *testSuite) TearDownTest(c *C) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
-	s.checkLeak()
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TestAdmin(c *C) {
