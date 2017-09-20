@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -90,8 +89,6 @@ func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 }
 
 func (s *testSelectivitySuite) TestSelectivity(c *C) {
-	// TODO: Fix here.
-	// defer testleak.AfterTest(c)()
 	store, do, err := newStoreWithBootstrap()
 	defer store.Close()
 	c.Assert(err, IsNil)

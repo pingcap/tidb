@@ -605,13 +605,14 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	s.lease = 20 * time.Millisecond
 	tidb.SetSchemaLease(s.lease)
 	tidb.SetStatsLease(0)
-	_, err = tidb.BootstrapSession(s.store)
+	dom, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.dom = dom
 }
 
 func (s *testSchemaSuite) TearDownSuite(c *C) {
-	s.store.Close()
 	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {

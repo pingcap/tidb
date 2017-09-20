@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testTypeInferrerSuite{})
@@ -370,8 +371,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 }
 
 func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
-	// TODO: Seems something wrong here, even store.Close() is called, leak will be detected.
-	// defer testleak.AfterTest(c)()
+	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -389,8 +389,7 @@ func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 }
 
 func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
-	// TODO: Seems something wrong here, even store.Close() is called, leak will be detected.
-	// defer testleak.AfterTest(c)()
+	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
