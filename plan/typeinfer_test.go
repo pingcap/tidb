@@ -39,9 +39,12 @@ type typeInferTestCase struct {
 }
 
 func (s *testPlanSuite) TestInferType(c *C) {
-	store, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 	defer func() {
