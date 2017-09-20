@@ -14,6 +14,8 @@
 package mocktikv
 
 import (
+	"io"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -191,11 +193,7 @@ func (h *rpcHandler) checkRequest(ctx *kvrpcpb.Context, size int) *errorpb.Error
 	if err := h.checkRequestContext(ctx); err != nil {
 		return err
 	}
-
-	if err := h.checkRequestSize(size); err != nil {
-		return err
-	}
-	return nil
+	return h.checkRequestSize(size)
 }
 
 func (h *rpcHandler) checkKeyInRegion(key []byte) bool {
@@ -405,6 +403,7 @@ type RPCClient struct {
 }
 
 // NewRPCClient creates an RPCClient.
+// Note that close the RPCClient may close the underlying MvccStore.
 func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
 	return &RPCClient{
 		Cluster:   cluster,
@@ -605,5 +604,8 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 
 // Close closes the client.
 func (c *RPCClient) Close() error {
+	if raw, ok := c.MvccStore.(io.Closer); ok {
+		return raw.Close()
+	}
 	return nil
 }

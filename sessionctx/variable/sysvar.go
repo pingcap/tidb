@@ -628,6 +628,8 @@ var SetNamesVariables = []string{
 }
 
 const (
+	// CharacterSetConnection is the name for character_set_connection system variable.
+	CharacterSetConnection = "character_set_connection"
 	// CollationConnection is the name for collation_connection system variable.
 	CollationConnection = "collation_connection"
 	// CharsetDatabase is the name for character_set_database system variable.
