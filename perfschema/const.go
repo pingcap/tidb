@@ -21,6 +21,8 @@ const (
 // Definition order same as MySQL's reference manual, so don't bother to
 // adjust according to alphabetical order.
 const (
+	TableGlobalStatus           = "GLOBAL_STATUS"
+	TableSessionStatus          = "SESSION_STATUS"
 	TableSetupActors            = "SETUP_ACTORS"
 	TableSetupObjects           = "SETUP_OBJECTS"
 	TableSetupInstruments       = "SETUP_INSTRUMENTS"
@@ -40,6 +42,8 @@ const (
 
 // PerfSchemaTables is a shortcut to involve all table names.
 var PerfSchemaTables = []string{
+	TableGlobalStatus,
+	TableSessionStatus,
 	TableSetupActors,
 	TableSetupObjects,
 	TableSetupInstruments,
@@ -56,6 +60,20 @@ var PerfSchemaTables = []string{
 	TableStagesHistory,
 	TableStagesHistoryLong,
 }
+
+// ColumnGlobalStatus contains the column name definitions for table global_status, same as MySQL.
+//
+// CREATE TABLE performance_schema.global_status(
+//     VARIABLE_NAME VARCHAR(64) not null,
+//     VARIABLE_VALUE VARCHAR(1024));
+var ColumnGlobalStatus = []string{"VARIABLE_NAME", "VARIABLE_VALUE"}
+
+// ColumnSessionStatus contains the column name definitions for table session_status, same as MySQL.
+//
+// CREATE TABLE performance_schema.session_status(
+//     VARIABLE_NAME VARCHAR(64) not null,
+//     VARIABLE_VALUE VARCHAR(1024));
+var ColumnSessionStatus = []string{"VARIABLE_NAME", "VARIABLE_VALUE"}
 
 // ColumnSetupActors contains the column name definitions for table setup_actors, same as MySQL.
 //

@@ -73,7 +73,7 @@ type MemoryTable struct {
 }
 
 // MemoryTableFromMeta creates a Table instance from model.TableInfo.
-func MemoryTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error) {
+func MemoryTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table {
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	var pkHandleColumn *table.Column
 	for _, colInfo := range tblInfo.Columns {
@@ -86,7 +86,7 @@ func MemoryTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (tabl
 	t := newMemoryTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
 	t.pkHandleCol = pkHandleColumn
 	t.meta = tblInfo
-	return t, nil
+	return t
 }
 
 // newMemoryTable constructs a MemoryTable instance.
@@ -266,4 +266,9 @@ func (t *MemoryTable) RebaseAutoID(newBase int64, isSetStep bool) error {
 func (t *MemoryTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	return nil
+}
+
+// Type implements table.Table Type interface.
+func (t *MemoryTable) Type() table.Type {
+	return table.MemoryTable
 }

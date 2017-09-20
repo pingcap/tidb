@@ -502,7 +502,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 
 		refCols := make([]string, 0, len(fk.RefCols))
-		for _, c := range fk.Cols {
+		for _, c := range fk.RefCols {
 			refCols = append(refCols, c.O)
 		}
 
@@ -539,6 +539,12 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if len(tb.Meta().Comment) > 0 {
 		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
 	}
+
+	// Fix issue #4540
+	schema := e.Schema()
+	// Table | Create Table
+	schema.Columns[0].RetType.Flen = mysql.MaxTableNameLength
+	schema.Columns[1].RetType.Flen = len(buf.String())
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
 	e.rows = append(e.rows, data)

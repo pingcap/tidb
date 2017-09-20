@@ -17,12 +17,10 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 )
@@ -243,23 +241,16 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 
 // Handle handles information schema, including getting and setting.
 type Handle struct {
-	value      atomic.Value
-	store      kv.Storage
-	perfHandle perfschema.PerfSchema
+	value atomic.Value
+	store kv.Storage
 }
 
 // NewHandle creates a new Handle.
-func NewHandle(store kv.Storage) (*Handle, error) {
+func NewHandle(store kv.Storage) *Handle {
 	h := &Handle{
 		store: store,
 	}
-	// init memory tables
-	var err error
-	h.perfHandle, err = perfschema.NewPerfHandle()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return h, nil
+	return h
 }
 
 // Get gets information schema from Handle.
@@ -269,16 +260,10 @@ func (h *Handle) Get() InfoSchema {
 	return schema
 }
 
-// GetPerfHandle gets performance schema from handle.
-func (h *Handle) GetPerfHandle() perfschema.PerfSchema {
-	return h.perfHandle
-}
-
 // EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
 func (h *Handle) EmptyClone() *Handle {
 	newHandle := &Handle{
-		store:      h.store,
-		perfHandle: h.perfHandle,
+		store: h.store,
 	}
 	return newHandle
 }
