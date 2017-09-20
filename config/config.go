@@ -38,9 +38,14 @@ type Config struct {
 	ProxyProtocol ProxyProtocol `toml:"proxy-protocol" toml:"proxy-protocol"`
 }
 
+// ProxyProtocol is the PROXY protocol section of the config.
 type ProxyProtocol struct {
-	Networks      string `json:"networks" toml:"networks"`
-	HeaderTimeout int    `json:"header-timeout" toml:"header-timeout"`
+	// PROXY protocol acceptable client networks.
+	// Empty string means disable PROXY protocol,
+	// * means all networks.
+	Networks string `json:"networks" toml:"networks"`
+	// PROXY protocol header read timeout, Unit is second.
+	HeaderTimeout int `json:"header-timeout" toml:"header-timeout"`
 }
 
 // Log is the log section of config.
