@@ -89,17 +89,19 @@ func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 }
 
 func (s *testSelectivitySuite) TestSelectivity(c *C) {
-	store, do, err := newStoreWithBootstrap()
-	defer store.Close()
+	store, dom, err := newStoreWithBootstrap()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	c.Assert(err, IsNil)
-	defer do.Close()
 
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx_cd(c, d), index idx_de(d, e))")
 
-	is := do.InfoSchema()
+	is := dom.InfoSchema()
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tbl := tb.Meta()
