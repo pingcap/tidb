@@ -29,6 +29,7 @@ type Config struct {
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 	Lease        string `toml:"lease" json:"lease"`
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable   bool   `toml:"split-table" json:"split-table"`
 
 	Log         Log         `toml:"log" json:"log"`
 	Security    Security    `toml:"security" json:"security"`

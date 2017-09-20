@@ -55,9 +55,11 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = d.splitTableRegion(tbInfo.ID)
-		if err != nil {
-			return ver, errors.Trace(err)
+		if EnableSplitTableRegion {
+			err = d.splitTableRegion(tbInfo.ID)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
 		// Finish this job.
 		job.State = model.JobDone
