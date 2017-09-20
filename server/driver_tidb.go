@@ -334,6 +334,19 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	} else {
 		ci.ColumnLength = uint32(fld.Column.Flen)
 	}
+	// Fix issue #4540.
+	// The flen is a hint, not a precise value, so most client will not use the value.
+	// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
+	// the `show create table` result. To fix this case, we must use a large enough flen to prevent
+	// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
+	// For examples:
+	// * latin, the multiple is 1
+	// * gb2312, the multiple is 2
+	// * Utf-8, the multiple is 3
+	// * utf8mb4, the multiple is 4
+	// So the large enough multiple is 4 in here.
+	ci.ColumnLength = ci.ColumnLength * mysql.MaxBytesOfCharacter
+
 	if fld.Column.Decimal == types.UnspecifiedLength {
 		ci.Decimal = mysql.NotFixedDec
 	} else {
