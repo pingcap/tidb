@@ -70,8 +70,8 @@ func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 		alloc.base = newBase
 		return nil
 	}
-
-	return kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	originBase, originEnd := alloc.base, alloc.end
+	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		end, err := m.GetAutoTableID(alloc.dbID, tableID)
 		if err != nil {
@@ -97,6 +97,11 @@ func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 		}
 		return nil
 	})
+	if err != nil {
+		alloc.base, alloc.end = originBase, originEnd
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // Alloc implements autoid.Allocator Alloc interface.
@@ -107,6 +112,7 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.base == alloc.end { // step
+		originBase, originEnd := alloc.base, alloc.end
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			base, err1 := m.GetAutoTableID(alloc.dbID, tableID)
@@ -128,6 +134,7 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 		})
 
 		if err != nil {
+			alloc.base, alloc.end = originBase, originEnd
 			return 0, errors.Trace(err)
 		}
 	}
