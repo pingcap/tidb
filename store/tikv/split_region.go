@@ -24,6 +24,8 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
+// SplitRegion splits the region contains splitKey into 2 regions: [start,
+// splitKey) and [splitKey, end).
 func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 	log.Infof("start split_region at %q", splitKey)
 	bo := NewBackoffer(splitRegionBackoff, goctx.Background())
@@ -52,11 +54,12 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if regionErr == nil {
+		if regionErr != nil {
 			err := bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
+			continue
 		}
 		log.Infof("split_region at %q complete, new regions: %v, %v", splitKey, res.SplitRegion.GetLeft(), res.SplitRegion.GetRight())
 		return nil
