@@ -19,13 +19,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
-	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {
