@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -37,13 +38,16 @@ type testStatsCacheSuite struct {
 }
 
 func (s *testStatsCacheSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	var err error
 	s.store, s.do, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 }
 
 func (s *testStatsCacheSuite) TearDownSuite(c *C) {
+	s.do.Close()
 	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {

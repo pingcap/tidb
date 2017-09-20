@@ -100,8 +100,11 @@ func (s *testSuite) TearDownSuite(c *C) {
 	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 }
 
+func (s *testSuite) SetUpTest(c *C) {
+	testleak.BeforeTest()
+}
+
 func (s *testSuite) TearDownTest(c *C) {
-	testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
@@ -109,6 +112,7 @@ func (s *testSuite) TearDownTest(c *C) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TestAdmin(c *C) {
@@ -1560,6 +1564,20 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select (2, 3, 4) != (2, 3, 4)")
 	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select row(1, 1) in (row(1, 1))")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select row(1, 0) in (row(1, 1))")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select row(1, 1) in (select 1, 1)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select row(1, 1) > row(1, 0)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select row(1, 1) > (select 1, 0)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select 1 > (select 1)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select (select 1)")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestColumnName(c *C) {
@@ -1972,4 +1990,92 @@ func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
+}
+
+func (s *testSuite) TestBit(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(2))")
+	tk.MustExec("insert into t values (0), (1), (2), (3)")
+	_, err := tk.Exec("insert into t values (4)")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("insert into t values ('a')")
+	c.Assert(err, NotNil)
+	r, err := tk.Exec("select * from t where c1 = 2")
+	c.Assert(err, IsNil)
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[0].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(31))")
+	tk.MustExec("insert into t values (0x7fffffff)")
+	_, err = tk.Exec("insert into t values (0x80000000)")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("insert into t values (0xffffffff)")
+	c.Assert(err, NotNil)
+	tk.MustExec("insert into t values ('123')")
+	tk.MustExec("insert into t values ('1234')")
+	_, err = tk.Exec("insert into t values ('12345)")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(62))")
+	tk.MustExec("insert into t values ('12345678')")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(61))")
+	_, err = tk.Exec("insert into t values ('12345678')")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(32))")
+	tk.MustExec("insert into t values (0x7fffffff)")
+	tk.MustExec("insert into t values (0xffffffff)")
+	_, err = tk.Exec("insert into t values (0x1ffffffff)")
+	c.Assert(err, NotNil)
+	tk.MustExec("insert into t values ('1234')")
+	_, err = tk.Exec("insert into t values ('12345')")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(64))")
+	tk.MustExec("insert into t values (0xffffffffffffffff)")
+	tk.MustExec("insert into t values ('12345678')")
+	_, err = tk.Exec("insert into t values ('123456789')")
+	c.Assert(err, NotNil)
+}
+
+func (s *testSuite) TestEnum(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c enum('a', 'b', 'c'))")
+	tk.MustExec("insert into t values ('a'), (2), ('c')")
+	tk.MustQuery("select * from t where c = 'a'").Check(testkit.Rows("a"))
+
+	tk.MustQuery("select c + 1 from t where c = 2").Check(testkit.Rows("3"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (null), ('1')")
+	tk.MustQuery("select c + 1 from t where c = 1").Check(testkit.Rows("2"))
+}
+
+func (s *testSuite) TestSet(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c set('a', 'b', 'c'))")
+	tk.MustExec("insert into t values ('a'), (2), ('c'), ('a,b'), ('b,a')")
+	tk.MustQuery("select * from t where c = 'a'").Check(testkit.Rows("a"))
+
+	tk.MustQuery("select * from t where c = 'a,b'").Check(testkit.Rows("a,b", "a,b"))
+
+	tk.MustQuery("select c + 1 from t where c = 2").Check(testkit.Rows("3"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (null), ('1')")
+	tk.MustQuery("select c + 1 from t where c = 1").Check(testkit.Rows("2"))
 }

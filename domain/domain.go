@@ -51,6 +51,7 @@ type Domain struct {
 	sysSessionPool  *pools.ResourcePool
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
+	wg              sync.WaitGroup
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -348,6 +349,7 @@ func (do *Domain) Close() {
 		do.etcdClient.Close()
 	}
 	do.sysSessionPool.Close()
+	do.wg.Wait()
 }
 
 type ddlCallback struct {
@@ -539,6 +541,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	if lease <= 0 {
 		return nil
 	}
+	do.wg.Add(1)
 	go do.updateStatsWorker(ctx, lease)
 	return nil
 }
@@ -558,6 +561,7 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 				log.Error("[stats] update stats info fail: ", errors.ErrorStack(err))
 			}
 		case <-do.exit:
+			do.wg.Done()
 			return
 			// This channel is sent only by ddl owner or the drop stats executor.
 		case t := <-statsHandle.DDLEventCh():
