@@ -133,8 +133,8 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		return true
 	}
 
-	for pos := q.tail; pos != q.head; pos = (pos - 1) % maxNumberOfDiffsToLoad {
-		item := &q.data[pos]
+	for iter := q.iter(); iter != nil; iter = iter.next() {
+		item := iter.value()
 		if !versionNewerThan(item.schemaVersion, currVer) {
 			break
 		}
@@ -142,8 +142,8 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		if hasRelatedTableID(item.relatedTableIDs, tableIDs) {
 			return true
 		}
-
 	}
+
 	return false
 }
 
@@ -195,6 +195,7 @@ func extractPhysicalTime(ts uint64) time.Time {
 // simpleQueue is a fixed size queue, when queue is full, enqueue will overwrite the oldest.
 // empty, initial state: head == tail
 // queue full:  (tail+1) % size == head
+// data in range [head, tail)
 type simpleQueue struct {
 	data [maxNumberOfDiffsToLoad]deltaSchemaInfo
 	head int
@@ -202,21 +203,59 @@ type simpleQueue struct {
 }
 
 func (q *simpleQueue) enqueue(schemaVersion int64, relatedTableIDs []int64) {
-	// Move tail cursor forward.
-	q.tail = (q.tail + 1) % maxNumberOfDiffsToLoad
-
 	// Write to the queue tail.
 	target := &q.data[q.tail]
 	target.schemaVersion = schemaVersion
 	target.relatedTableIDs = relatedTableIDs
 
+	// Move tail cursor forward.
+	q.tail = nextPos(q.tail)
+
 	// If queue is full, head has been overwrite, need to forward it.
 	if q.tail == q.head {
-		q.head = (q.head + 1) % maxNumberOfDiffsToLoad
+		q.head = nextPos(q.head)
 	}
+}
+
+func nextPos(pos int) int {
+	return (pos + 1) % maxNumberOfDiffsToLoad
+}
+
+func prevPos(pos int) int {
+	return (pos + maxNumberOfDiffsToLoad - 1) % maxNumberOfDiffsToLoad
 }
 
 func (q *simpleQueue) reset() {
 	q.head = 0
 	q.tail = 0
+}
+
+// iter returns an iterator which could visit the queue from tail to head.
+func (q *simpleQueue) iter() *simpleIter {
+	if q.head == q.tail {
+		return nil // empty queue
+	}
+
+	return &simpleIter{
+		simpleQueue: q,
+		pos:         prevPos(q.tail),
+	}
+}
+
+type simpleIter struct {
+	*simpleQueue
+	pos int
+}
+
+func (iter *simpleIter) next() *simpleIter {
+	if iter.pos == iter.simpleQueue.head {
+		return nil
+	}
+	iter.pos = prevPos(iter.pos)
+	return iter
+}
+
+func (iter *simpleIter) value() *deltaSchemaInfo {
+	q := iter.simpleQueue
+	return &q.data[iter.pos]
 }

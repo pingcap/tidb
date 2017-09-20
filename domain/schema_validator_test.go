@@ -131,13 +131,20 @@ func (*testSuite) TestSimpleQueue(c *C) {
 	for ver = 0; ver < maxNumberOfDiffsToLoad+200; ver++ {
 		q.enqueue(ver, nil)
 	}
-	old := q.tail
+
+	iter := q.iter()
 	c.Assert(q.full(), IsTrue)
-	c.Assert(q.tailValue().schemaVersion, Equals, ver-1)
+	c.Assert(iter.value().schemaVersion, Equals, ver-1)
 
 	q.enqueue(ver, nil)
 	c.Assert(q.full(), IsTrue)
-	c.Assert((old+1)%maxNumberOfDiffsToLoad, Equals, q.tail)
+	iter = q.iter()
+	c.Assert(iter.value().schemaVersion, Equals, ver)
+
+	for iter := q.iter(); iter != nil; iter = iter.next() {
+		c.Assert(iter.value().schemaVersion, Equals, ver)
+		ver--
+	}
 
 	q.reset()
 	c.Assert(q.head, Equals, 0)
@@ -145,9 +152,5 @@ func (*testSuite) TestSimpleQueue(c *C) {
 }
 
 func (q *simpleQueue) full() bool {
-	return (q.tail+1)%maxNumberOfDiffsToLoad == q.head
-}
-
-func (q *simpleQueue) tailValue() *deltaSchemaInfo {
-	return &q.data[q.tail%maxNumberOfDiffsToLoad]
+	return nextPos(q.tail) == q.head
 }
