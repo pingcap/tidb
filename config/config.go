@@ -30,14 +30,17 @@ type Config struct {
 	Lease        string `toml:"lease" json:"lease"`
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 
-	Log         Log         `toml:"log" json:"log"`
-	Security    Security    `toml:"security" json:"security"`
-	Status      Status      `toml:"status" json:"status"`
-	Performance Performance `toml:"performance" json:"performance"`
-	XProtocol   XProtocol   `toml:"xprotocol" json:"xprotocol"`
+	Log           Log           `toml:"log" json:"log"`
+	Security      Security      `toml:"security" json:"security"`
+	Status        Status        `toml:"status" json:"status"`
+	Performance   Performance   `toml:"performance" json:"performance"`
+	XProtocol     XProtocol     `toml:"xprotocol" json:"xprotocol"`
+	ProxyProtocol ProxyProtocol `toml:"proxy-protocol" toml:"proxy-protocol"`
+}
 
-	ProxyProtocolNetworks      string `json:"proxy_protocol_networks" toml:"proxy_protocol_networks"`
-	ProxyProtocolHeaderTimeout int    `json:"proxy_protocol_header_timeout" toml:"proxy_protocol_header_timeout"`
+type ProxyProtocol struct {
+	Networks      string `json:"networks" toml:"networks"`
+	HeaderTimeout int    `json:"header-timeout" toml:"header-timeout"`
 }
 
 // Log is the log section of config.
@@ -120,6 +123,10 @@ var defaultConf = Config{
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",
 		XPort: 14000,
+	},
+	ProxyProtocol: ProxyProtocol{
+		Networks:      "",
+		HeaderTimeout: 5,
 	},
 }
 

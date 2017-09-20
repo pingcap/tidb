@@ -49,25 +49,24 @@ import (
 
 // Flag Names
 const (
-	nmVersion         = "V"
-	nmConfig          = "config"
-	nmStore           = "store"
-	nmStorePath       = "path"
-	nmHost            = "host"
-	nmPort            = "P"
-	nmSocket          = "socket"
-	nmBinlogSocket    = "binlog-socket"
-	nmRunDDL          = "run-ddl"
-	nmLogLevel        = "L"
-	nmLogFile         = "log-file"
-	nmReportStatus    = "report-status"
-	nmStatusPort      = "status"
-	nmMetricsAddr     = "metrics-addr"
-	nmMetricsInterval = "metrics-interval"
-	nmDdlLease        = "lease"
-  
-  nmProxyProtocolNetworks      = "proxy-protocol-networks"
-  nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
+	nmVersion                    = "V"
+	nmConfig                     = "config"
+	nmStore                      = "store"
+	nmStorePath                  = "path"
+	nmHost                       = "host"
+	nmPort                       = "P"
+	nmSocket                     = "socket"
+	nmBinlogSocket               = "binlog-socket"
+	nmRunDDL                     = "run-ddl"
+	nmLogLevel                   = "L"
+	nmLogFile                    = "log-file"
+	nmReportStatus               = "report-status"
+	nmStatusPort                 = "status"
+	nmMetricsAddr                = "metrics-addr"
+	nmMetricsInterval            = "metrics-interval"
+	nmDdlLease                   = "lease"
+	nmProxyProtocolNetworks      = "proxy-protocol-networks"
+	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
 )
 
 var (
@@ -94,8 +93,9 @@ var (
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = flag.Int(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 
-	proxyProtocolNetworks      = flag.String("proxy-protocol-networks", "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
-	proxyProtocolHeaderTimeout = flag.Int("proxy-protocol-header-timeout", 5, "proxy protocol header read timeout, unit is second.")
+	// PROXY Protocol
+	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
+	proxyProtocolHeaderTimeout = flag.Int(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
 
 	timeJumpBackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -309,14 +309,14 @@ func overrideConfig() {
 	if actualFlags[nmMetricsInterval] {
 		cfg.Status.MetricsInterval = *metricsInterval
 	}
-  
-  // PROXY Protocol
-  if actualFlags[nmProxyProtocolNetworks] {
-    cfg.ProxyProtocolNetworks = *proxyProtocolNetworks
-  }
-  if actualFlags[nmProxyProtocolHeaderTimeout] {
-    cfg.ProxyProtocolHeaderTimeout = *proxyProtocolHeaderTimeout
-  }
+
+	// PROXY Protocol
+	if actualFlags[nmProxyProtocolNetworks] {
+		cfg.ProxyProtocol.Networks = *proxyProtocolNetworks
+	}
+	if actualFlags[nmProxyProtocolHeaderTimeout] {
+		cfg.ProxyProtocol.HeaderTimeout = *proxyProtocolHeaderTimeout
+	}
 }
 
 func validateConfig() {

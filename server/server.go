@@ -117,7 +117,6 @@ func (s *Server) newConn(conn net.Conn) (*clientConn, error) {
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
 
-	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	if s.cfg.Performance.TCPKeepAlive {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			if err := tcpConn.SetKeepAlive(true); err != nil {
@@ -153,8 +152,8 @@ const tokenLimit = 1000
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	var err error
 	var ppcb *proxyProtocolConnBuilder
-	if cfg.ProxyProtocolNetworks != "" {
-		ppcb, err = newProxyProtocolConnBuilder(cfg.ProxyProtocolNetworks, cfg.ProxyProtocolHeaderTimeout)
+	if cfg.ProxyProtocol.Networks != "" {
+		ppcb, err = newProxyProtocolConnBuilder(cfg.ProxyProtocol.Networks, cfg.ProxyProtocol.HeaderTimeout)
 		if err != nil {
 			log.Error("ProxyProtocolNetworks parameter is not valid")
 		}
@@ -193,9 +192,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	if ppcb != nil {
-		log.Infof("Server run MySQL Protocol (through PROXY Protocol) Listen at [%s]", s.cfg.Addr)
+		log.Infof("Server run MySQL Protocol (through PROXY Protocol) Listen at [%s]", s.cfg.Host)
 	} else {
-		log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Addr)
+		log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Host)
 	}
 
 	return s, nil

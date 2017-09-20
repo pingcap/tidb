@@ -111,3 +111,10 @@ xport = 14000
 
 # The socket file to use for x protocol connection.
 xsocket = ""
+
+[proxy-protocol]
+# PROXY protocol acceptable client networks
+networks = ""
+
+# PROXY protocol header read timeout, unit is second
+header-timeout = 5
