@@ -83,7 +83,6 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	case kv.ReqSubTypeDesc:
 		return true
 	case kv.ReqSubTypeSignature:
-		//return c.store.mock
 		return true
 	default:
 		return false
