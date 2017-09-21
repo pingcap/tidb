@@ -24,16 +24,11 @@ import (
 var (
 	ErrIncorrectParameterCount = terror.ClassExpression.New(mysql.ErrWrongParamcountToNativeFct, mysql.MySQLErrName[mysql.ErrWrongParamcountToNativeFct])
 
-	errInvalidOperation    = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
 	errFunctionNotExists   = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
 	errZlibZData           = terror.ClassTypes.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
 	errIncorrectArgs       = terror.ClassExpression.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
 	errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
-)
-
-// Error codes.
-const (
-	codeInvalidOperation terror.ErrCode = 1
+	errDivisionByZero      = terror.ClassExpression.New(mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
 )
 
 func init() {
@@ -42,6 +37,7 @@ func init() {
 		mysql.ErrSpDoesNotExist:             mysql.ErrSpDoesNotExist,
 		mysql.ErrZlibZData:                  mysql.ErrZlibZData,
 		mysql.ErrWrongArguments:             mysql.ErrWrongArguments,
+		mysql.ErrDivisionByZero:             mysql.ErrDivisionByZero,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
@@ -56,5 +52,20 @@ func handleInvalidTimeError(ctx context.Context, err error) error {
 		return err
 	}
 	sc.AppendWarning(err)
+	return nil
+}
+
+// handleDivisionByZeroError reports error or warning depend on the context.
+func handleDivisionByZeroError(ctx context.Context) error {
+	sc := ctx.GetSessionVars().StmtCtx
+	if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
+		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {
+			return nil
+		}
+		if ctx.GetSessionVars().StrictSQLMode && !sc.DividedByZeroAsWarning {
+			return errDivisionByZero
+		}
+	}
+	sc.AppendWarning(errDivisionByZero)
 	return nil
 }
