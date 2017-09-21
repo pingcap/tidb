@@ -23,43 +23,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 )
-
-// Error instances.
-var (
-	ErrIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count in the call to native function '%s'")
-
-	errInvalidOperation    = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
-	errFunctionNotExists   = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
-	errZlibZData           = terror.ClassTypes.New(codeZlibZData, "ZLIB: Input data corrupted")
-	errIncorrectArgs       = terror.ClassExpression.New(codeIncorrectArgs, mysql.MySQLErrName[mysql.ErrWrongArguments])
-	errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
-	ErrDivideByZero        = terror.ClassExpression.New(codeDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
-)
-
-// Error codes.
-const (
-	codeInvalidOperation        terror.ErrCode = 1
-	codeIncorrectParameterCount                = 1582
-	codeFunctionNotExists                      = 1305
-	codeZlibZData                              = mysql.ErrZlibZData
-	codeIncorrectArgs                          = mysql.ErrWrongArguments
-	codeDivisionByZero                         = mysql.ErrDivisionByZero
-)
-
-func init() {
-	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
-		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
-		codeZlibZData:               mysql.ErrZlibZData,
-		codeIncorrectArgs:           mysql.ErrWrongArguments,
-		codeDivisionByZero:          mysql.ErrDivisionByZero,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
-}
 
 // TurnOnNewExprEval indicates whether turn on the new expression evaluation architecture.
 var TurnOnNewExprEval int32
@@ -167,7 +133,7 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	if IsHybridType(expr) {
 		res, err = val.ToInt64(sc)
 		return res, false, errors.Trace(err)
-	} else if expr.GetTypeClass() == types.ClassInt {
+	} else if fieldTp2EvalTp(expr.GetType()) == tpInt {
 		return val.GetInt64(), false, nil
 	}
 	panic(fmt.Sprintf("cannot get INT result from %s expression", types.TypeStr(expr.GetType().Tp)))
@@ -179,7 +145,7 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if expr.GetTypeClass() == types.ClassReal {
+	if fieldTp2EvalTp(expr.GetType()) == tpReal {
 		// TODO: fix this to val.GetFloat64() after all built-in functions been rewritten.
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
@@ -196,7 +162,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if expr.GetTypeClass() == types.ClassDecimal {
+	if fieldTp2EvalTp(expr.GetType()) == tpDecimal {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
 		// TODO: We maintain two sets of type systems, one for Expression, one for Datum.
@@ -219,7 +185,8 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if expr.GetTypeClass() == types.ClassString || IsHybridType(expr) {
+	exprEvalTp := fieldTp2EvalTp(expr.GetType())
+	if exprEvalTp == tpString || exprEvalTp == tpJSON || IsHybridType(expr) {
 		// We cannot use val.GetString() directly.
 		// For example, `Bit` is regarded as ClassString,
 		// while we can not use val.GetString() to get the value of a Bit variable,
