@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -67,12 +68,12 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 		Ret  interface{}
 	}{
 		{"2012-12-12 00:00:00", "2012-12-12 00:00:00"},
-		{CurrentTimestamp, time.Unix(1234, 0).Format(types.TimeFormat)},
+		{ast.CurrentTimestamp, time.Unix(1234, 0).Format(types.TimeFormat)},
 		{types.ZeroDatetimeStr, "0000-00-00 00:00:00"},
 		{ast.NewValueExpr("2012-12-12 00:00:00"), "2012-12-12 00:00:00"},
 		{ast.NewValueExpr(int64(0)), "0000-00-00 00:00:00"},
 		{ast.NewValueExpr(nil), nil},
-		{&ast.FuncCallExpr{FnName: model.NewCIStr(CurrentTimestamp)}, CurrentTimestamp},
+		{&ast.FuncCallExpr{FnName: model.NewCIStr(ast.CurrentTimestamp)}, strings.ToUpper(ast.CurrentTimestamp)},
 		//{&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(0))}, "0000-00-00 00:00:00"},
 	}
 
@@ -121,7 +122,7 @@ func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
 
 	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
 	varsutil.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+00:00"))
-	v, err := GetTimeValue(ctx, CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
+	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
 		Time:     types.FromDate(1970, 1, 1, 0, 20, 34, 0),
@@ -131,7 +132,7 @@ func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
 	// CurrentTimestamp from "timestamp" session variable is based on UTC, so change timezone
 	// would get different value.
 	varsutil.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+08:00"))
-	v, err = GetTimeValue(ctx, CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
+	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
 		Time:     types.FromDate(1970, 1, 1, 8, 20, 34, 0),
