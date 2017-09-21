@@ -23,12 +23,12 @@ import (
 // Error instances.
 var (
 	ErrIncorrectParameterCount = terror.ClassExpression.New(mysql.ErrWrongParamcountToNativeFct, mysql.MySQLErrName[mysql.ErrWrongParamcountToNativeFct])
+	ErrDivisionByZero          = terror.ClassExpression.New(mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
 
 	errFunctionNotExists   = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
 	errZlibZData           = terror.ClassTypes.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
 	errIncorrectArgs       = terror.ClassExpression.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
 	errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
-	errDivisionByZero      = terror.ClassExpression.New(mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
 )
 
 func init() {
@@ -63,9 +63,9 @@ func handleDivisionByZeroError(ctx context.Context) error {
 			return nil
 		}
 		if ctx.GetSessionVars().StrictSQLMode && !sc.DividedByZeroAsWarning {
-			return errDivisionByZero
+			return ErrDivisionByZero
 		}
 	}
-	sc.AppendWarning(errDivisionByZero)
+	sc.AppendWarning(ErrDivisionByZero)
 	return nil
 }
