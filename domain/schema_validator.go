@@ -33,7 +33,7 @@ const (
 
 // SchemaValidator is the interface for checking the validity of schema version.
 type SchemaValidator interface {
-	// Update the schema validator, add a new item, delete the expired detalItemInfos.
+	// Update the schema validator, add a new item, delete the expired deltaItemInfos.
 	// The latest schemaVer is valid within leaseGrantTime plus lease duration.
 	// Add the changed table IDs to the new schema information,
 	// which is produced when the oldSchemaVer is updated to the newSchemaVer.
@@ -57,7 +57,7 @@ type schemaValidator struct {
 	lease              time.Duration
 	latestSchemaVer    int64
 	latestSchemaExpire time.Time
-	detalItemInfos     []deltaSchemaInfo
+	deltaItemInfos     []deltaSchemaInfo
 }
 
 // NewSchemaValidator returns a SchemaValidator structure.
@@ -65,7 +65,7 @@ func NewSchemaValidator(lease time.Duration) SchemaValidator {
 	return &schemaValidator{
 		isStarted:      true,
 		lease:          lease,
-		detalItemInfos: make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad),
+		deltaItemInfos: make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad),
 	}
 }
 
@@ -75,7 +75,7 @@ func (s *schemaValidator) Stop() {
 	defer s.mux.Unlock()
 	s.isStarted = false
 	s.latestSchemaVer = 0
-	s.detalItemInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
+	s.deltaItemInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
 }
 
 func (s *schemaValidator) Restart() {
@@ -122,17 +122,15 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 // from usedVer to the latest schema version.
 // NOTE, this function should be called under lock!
 func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
-	if len(s.detalItemInfos) == 0 {
+	if len(s.deltaItemInfos) == 0 {
 		log.Infof("schema change history is empty, checking %d", currVer)
 		return true
 	}
-	oldestVersion := s.detalItemInfos[0].schemaVersion
-	if oldestVersion > currVer {
+	newerDeltas := s.findNewerDeltas(currVer)
+	if len(newerDeltas) == len(s.deltaItemInfos) {
 		log.Infof("the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
 		return true
 	}
-
-	newerDeltas := s.findNewerDeltas(currVer)
 	for _, item := range newerDeltas {
 		if hasRelatedTableID(item.relatedTableIDs, tableIDs) {
 			return true
@@ -142,7 +140,7 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 }
 
 func (s *schemaValidator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
-	q := s.detalItemInfos
+	q := s.deltaItemInfos
 	pos := len(q)
 	for i := len(q) - 1; i >= 0 && q[i].schemaVersion > currVer; i-- {
 		pos = i
@@ -184,8 +182,8 @@ func extractPhysicalTime(ts uint64) time.Time {
 }
 
 func (s *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) {
-	s.detalItemInfos = append(s.detalItemInfos, deltaSchemaInfo{schemaVersion, relatedTableIDs})
-	if len(s.detalItemInfos) > maxNumberOfDiffsToLoad {
-		s.detalItemInfos = s.detalItemInfos[1:]
+	s.deltaItemInfos = append(s.deltaItemInfos, deltaSchemaInfo{schemaVersion, relatedTableIDs})
+	if len(s.deltaItemInfos) > maxNumberOfDiffsToLoad {
+		s.deltaItemInfos = s.deltaItemInfos[1:]
 	}
 }
