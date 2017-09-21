@@ -557,7 +557,8 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 
 	taskBatch := int64(defaultTaskHandleCnt)
 	addedCount := job.GetRowCount()
-	baseHandle := reorgInfo.Handle
+	// The previous done handle is used to be recorded in the reorg info.
+	prevDoneHandle, baseHandle := reorgInfo.Handle, reorgInfo.Handle
 
 	workers := make([]*worker, workerCnt)
 	for i := 0; i < workerCnt; i++ {
@@ -566,7 +567,6 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 	for {
 		startTime := time.Now()
-		doneHandle := baseHandle
 		wg := sync.WaitGroup{}
 		for i := 0; i < workerCnt; i++ {
 			wg.Add(1)
@@ -577,15 +577,16 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		}
 		wg.Wait()
 
-		taskAddedCount, doneHandle, isEnd, err := getCountAndHandle(workers)
+		taskAddedCount, doneHandle, isEnd, err := getCountAndHandle(prevDoneHandle, workers)
 		addedCount += int64(taskAddedCount)
 		sub := time.Since(startTime).Seconds()
 		if err == nil {
 			err = d.isReorgRunnable()
 		}
 		if err != nil {
+			// Update the reorg handle that has been processed.
 			err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-				return errors.Trace(reorgInfo.UpdateHandle(txn, doneHandle+1))
+				return errors.Trace(reorgInfo.UpdateHandle(txn, doneHandle))
 			})
 			log.Warnf("[ddl] total added index for %d rows, this task add index for %d failed, take time %v, update handle err %v",
 				addedCount, taskAddedCount, sub, err1)
@@ -596,17 +597,15 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		log.Infof("[ddl] total added index for %d rows, this task added index for %d rows, take time %v",
 			addedCount, taskAddedCount, sub)
 
-		if baseHandle < doneHandle+1 {
-			baseHandle = doneHandle + 1
-		}
+		prevDoneHandle, baseHandle = doneHandle, doneHandle+1
 		if isEnd {
 			return nil
 		}
 	}
 }
 
-func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
-	taskAddedCount, currHandle := int64(0), int64(0)
+func getCountAndHandle(prevDoneHandle int64, workers []*worker) (int64, int64, bool, error) {
+	taskAddedCount, currDoneHandle := int64(0), prevDoneHandle
 	var err error
 	var isEnd bool
 	for _, worker := range workers {
@@ -616,10 +615,10 @@ func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
 			break
 		}
 		taskAddedCount += int64(ret.count)
-		currHandle = ret.doneHandle
+		currDoneHandle = ret.doneHandle
 		isEnd = ret.isAllDone
 	}
-	return taskAddedCount, currHandle, isEnd, errors.Trace(err)
+	return taskAddedCount, currDoneHandle, isEnd, errors.Trace(err)
 }
 
 func (w *worker) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, wg *sync.WaitGroup) {
