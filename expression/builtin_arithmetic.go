@@ -58,22 +58,6 @@ var (
 // performed with the / operator.
 const precIncrement = 4
 
-// handleDivisionByZeroError reports error or warning depend on the context.
-func handleDivisionByZeroError(ctx context.Context) error {
-	sc := ctx.GetSessionVars().StmtCtx
-	if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
-		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {
-			return nil
-		}
-		if ctx.GetSessionVars().StrictSQLMode && !sc.DividedByZeroAsWarning {
-			return ErrDivideByZero
-		}
-	}
-
-	sc.AppendWarning(ErrDivideByZero)
-	return nil
-}
-
 // numericContextResultType returns TypeClass for numeric function's parameters.
 // the returned TypeClass should be one of: ClassInt, ClassDecimal, ClassReal
 func numericContextResultType(ft *types.FieldType) types.TypeClass {
