@@ -172,7 +172,7 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 
 const (
 	initialVersion         = 0
-	maxNumberOfDiffsToLoad = 64 // Better to be 2^n.
+	maxNumberOfDiffsToLoad = 100
 )
 
 func isTooOldSchema(usedVersion, newVersion int64) bool {

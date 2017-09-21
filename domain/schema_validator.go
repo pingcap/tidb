@@ -57,7 +57,7 @@ type schemaValidator struct {
 	lease              time.Duration
 	latestSchemaVer    int64
 	latestSchemaExpire time.Time
-	detalItemInfos     *simpleQueue
+	detalItemInfos     []deltaSchemaInfo
 }
 
 // NewSchemaValidator returns a SchemaValidator structure.
@@ -65,7 +65,7 @@ func NewSchemaValidator(lease time.Duration) SchemaValidator {
 	return &schemaValidator{
 		isStarted:      true,
 		lease:          lease,
-		detalItemInfos: &simpleQueue{},
+		detalItemInfos: make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad),
 	}
 }
 
@@ -75,7 +75,7 @@ func (s *schemaValidator) Stop() {
 	defer s.mux.Unlock()
 	s.isStarted = false
 	s.latestSchemaVer = 0
-	s.detalItemInfos.reset()
+	s.detalItemInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
 }
 
 func (s *schemaValidator) Restart() {
@@ -103,7 +103,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	// Update the schema deltaItem information.
 	if currVer != oldVer {
 		log.Debug("update schema validator:", oldVer, currVer, changedTableIDs)
-		s.detalItemInfos.enqueue(currVer, changedTableIDs)
+		s.enqueue(currVer, changedTableIDs)
 	}
 }
 
@@ -122,19 +122,18 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 // from usedVer to the latest schema version.
 // NOTE, this function should be called under lock!
 func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
-	q := s.detalItemInfos
-	if q.head == q.tail {
+	if len(s.detalItemInfos) == 0 {
 		log.Infof("schema change history is empty, checking %d", currVer)
 		return true
 	}
-	oldestVersion := q.data[q.head].schemaVersion
+	oldestVersion := s.detalItemInfos[0].schemaVersion
 	if versionNewerThan(oldestVersion, currVer) {
 		log.Infof("the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
 		return true
 	}
 
-	for iter := q.iter(); iter != nil; iter = iter.next() {
-		item := iter.value()
+	for i := len(s.detalItemInfos) - 1; i > 0; i-- {
+		item := &s.detalItemInfos[i]
 		if !versionNewerThan(item.schemaVersion, currVer) {
 			break
 		}
@@ -192,70 +191,9 @@ func extractPhysicalTime(ts uint64) time.Time {
 	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
 
-// simpleQueue is a fixed size queue, when queue is full, enqueue will overwrite the oldest.
-// empty, initial state: head == tail
-// queue full:  (tail+1) % size == head
-// data in range [head, tail)
-type simpleQueue struct {
-	data [maxNumberOfDiffsToLoad]deltaSchemaInfo
-	head int
-	tail int
-}
-
-func (q *simpleQueue) enqueue(schemaVersion int64, relatedTableIDs []int64) {
-	// Write to the queue tail.
-	target := &q.data[q.tail]
-	target.schemaVersion = schemaVersion
-	target.relatedTableIDs = relatedTableIDs
-
-	// Move tail cursor forward.
-	q.tail = nextPos(q.tail)
-
-	// If queue is full, head has been overwrite, need to forward it.
-	if q.tail == q.head {
-		q.head = nextPos(q.head)
+func (q *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) {
+	q.detalItemInfos = append(q.detalItemInfos, deltaSchemaInfo{schemaVersion, relatedTableIDs})
+	if len(q.detalItemInfos) > maxNumberOfDiffsToLoad {
+		q.detalItemInfos = q.detalItemInfos[1:]
 	}
-}
-
-func nextPos(pos int) int {
-	return (pos + 1) % maxNumberOfDiffsToLoad
-}
-
-func prevPos(pos int) int {
-	return (pos + maxNumberOfDiffsToLoad - 1) % maxNumberOfDiffsToLoad
-}
-
-func (q *simpleQueue) reset() {
-	q.head = 0
-	q.tail = 0
-}
-
-// iter returns an iterator which could visit the queue from tail to head.
-func (q *simpleQueue) iter() *simpleIter {
-	if q.head == q.tail {
-		return nil // empty queue
-	}
-
-	return &simpleIter{
-		simpleQueue: q,
-		pos:         prevPos(q.tail),
-	}
-}
-
-type simpleIter struct {
-	*simpleQueue
-	pos int
-}
-
-func (iter *simpleIter) next() *simpleIter {
-	if iter.pos == iter.simpleQueue.head {
-		return nil
-	}
-	iter.pos = prevPos(iter.pos)
-	return iter
-}
-
-func (iter *simpleIter) value() *deltaSchemaInfo {
-	q := iter.simpleQueue
-	return &q.data[iter.pos]
 }

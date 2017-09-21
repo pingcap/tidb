@@ -124,33 +124,3 @@ func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh 
 		}
 	}
 }
-
-func (*testSuite) TestSimpleQueue(c *C) {
-	q := &simpleQueue{}
-	var ver int64
-	for ver = 0; ver < maxNumberOfDiffsToLoad+200; ver++ {
-		q.enqueue(ver, nil)
-	}
-
-	iter := q.iter()
-	c.Assert(q.full(), IsTrue)
-	c.Assert(iter.value().schemaVersion, Equals, ver-1)
-
-	q.enqueue(ver, nil)
-	c.Assert(q.full(), IsTrue)
-	iter = q.iter()
-	c.Assert(iter.value().schemaVersion, Equals, ver)
-
-	for iter := q.iter(); iter != nil; iter = iter.next() {
-		c.Assert(iter.value().schemaVersion, Equals, ver)
-		ver--
-	}
-
-	q.reset()
-	c.Assert(q.head, Equals, 0)
-	c.Assert(q.tail, Equals, 0)
-}
-
-func (q *simpleQueue) full() bool {
-	return nextPos(q.tail) == q.head
-}
