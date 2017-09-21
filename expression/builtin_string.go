@@ -1241,22 +1241,21 @@ func (c *hexFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		return nil, errors.Trace(err)
 	}
 
-	switch t := args[0].GetTypeClass(); t {
-	case types.ClassString:
+	argTp := fieldTp2EvalTp(args[0].GetType())
+	switch argTp {
+	case tpString, tpDatetime, tpTimestamp, tpDuration, tpJSON:
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 		// Use UTF-8 as default
 		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
 		sig := &builtinHexStrArgSig{baseStringBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
-
-	case types.ClassInt, types.ClassReal, types.ClassDecimal:
+	case tpInt, tpReal, tpDecimal:
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
 		bf.tp.Flen = args[0].GetType().Flen * 2
 		sig := &builtinHexIntArgSig{baseStringBuiltinFunc{bf}}
 		return sig.setSelf(sig), nil
-
 	default:
-		return nil, errors.Errorf("Hex invalid args, need int or string but get %T", t)
+		return nil, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetType())
 	}
 }
 
@@ -1302,17 +1301,16 @@ func (c *unhexFunctionClass) getFunction(ctx context.Context, args []Expression)
 		return nil, errors.Trace(err)
 	}
 	argType := args[0].GetType()
-	switch t := args[0].GetTypeClass(); t {
-	case types.ClassString:
+	argEvalTp := fieldTp2EvalTp(argType)
+	switch argEvalTp {
+	case tpString, tpDatetime, tpTimestamp, tpDuration, tpJSON:
 		// Use UTF-8 as default charset, so there're (Flen * 3 + 1) / 2 byte-pairs
 		retFlen = (argType.Flen*3 + 1) / 2
-
-	case types.ClassInt, types.ClassReal, types.ClassDecimal:
+	case tpInt, tpReal, tpDecimal:
 		// For number value, there're (Flen + 1) / 2 byte-pairs
 		retFlen = (argType.Flen + 1) / 2
-
 	default:
-		return nil, errors.Errorf("Unhex invalid args, need int or string but get %T", t)
+		return nil, errors.Errorf("Unhex invalid args, need int or string but get %s", argType)
 	}
 
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
@@ -2173,7 +2171,7 @@ func (c *octFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		return nil, errors.Trace(err)
 	}
 	var sig builtinFunc
-	if IsHybridType(args[0]) || args[0].GetTypeClass() == types.ClassInt {
+	if IsHybridType(args[0]) || fieldTp2EvalTp(args[0].GetType()) == tpInt {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
 		sig = &builtinOctIntSig{baseStringBuiltinFunc{bf}}
