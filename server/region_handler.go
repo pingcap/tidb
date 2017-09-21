@@ -288,6 +288,25 @@ func (rh tableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// parse and check params
 	params := mux.Vars(req)
+	if _, ok := params[pRegionID]; !ok {
+		startKey := []byte{'m'}
+		endKey := []byte{'n'}
+
+		recordRegionIDs, err := rh.regionCache.ListRegionIDsInKeyRange(rh.bo, startKey, endKey)
+		if err != nil {
+			rh.writeError(w, err)
+			return
+		}
+
+		recordRegions, err := rh.getRegionsMeta(recordRegionIDs)
+		if err != nil {
+			rh.writeError(w, err)
+			return
+		}
+		rh.writeData(w, recordRegions)
+		return
+	}
+
 	regionIDInt, err := strconv.ParseInt(params[pRegionID], 0, 64)
 	if err != nil {
 		rh.writeError(w, err)
