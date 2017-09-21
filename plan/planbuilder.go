@@ -651,11 +651,20 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
 		columnName.SetText(column.Name.O)
+
+		colExpr, _, err := mockPlan.findColumn(columnName)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return
+		}
+
 		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return
 		}
+		expr = expression.BuildCastFunction(expr, colExpr.GetType(), b.ctx)
+
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
 		if onDups == nil {
@@ -663,12 +672,7 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		for dep := range column.Dependences {
 			if _, ok := onDups[dep]; ok {
-				col, _, err := mockPlan.findColumn(columnName)
-				if err != nil {
-					b.err = errors.Trace(err)
-					return
-				}
-				assign := &expression.Assignment{Col: col, Expr: expr.Clone()}
+				assign := &expression.Assignment{Col: colExpr, Expr: expr.Clone()}
 				igc.OnDuplicates = append(igc.OnDuplicates, assign)
 				break
 			}
