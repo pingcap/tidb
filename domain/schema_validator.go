@@ -127,27 +127,27 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		return true
 	}
 	oldestVersion := s.detalItemInfos[0].schemaVersion
-	if versionNewerThan(oldestVersion, currVer) {
+	if oldestVersion > currVer {
 		log.Infof("the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
 		return true
 	}
 
-	for i := len(s.detalItemInfos) - 1; i >= 0; i-- {
-		item := &s.detalItemInfos[i]
-		if !versionNewerThan(item.schemaVersion, currVer) {
-			break
-		}
-
+	newerDeltas := s.findNewerDeltas(currVer)
+	for _, item := range newerDeltas {
 		if hasRelatedTableID(item.relatedTableIDs, tableIDs) {
 			return true
 		}
 	}
-
 	return false
 }
 
-func versionNewerThan(ver1, ver2 int64) bool {
-	return ver1 > ver2
+func (s *schemaValidator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
+	q := s.detalItemInfos
+	pos := len(q)
+	for i := len(q) - 1; i >= 0 && q[i].schemaVersion > currVer; i-- {
+		pos = i
+	}
+	return q[pos:]
 }
 
 // Check checks schema validity, returns true if use schemaVer and related tables at txnTS is legal.
