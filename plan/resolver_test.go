@@ -82,9 +82,12 @@ var resolverTests = []resolverTestCase{
 }
 
 func (ts *testNameResolverSuite) TestNameResolver(c *C) {
-	store, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
