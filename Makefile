@@ -44,15 +44,12 @@ dev: checklist parserlib build benchkv test check
 build:
 	$(GOBUILD)
 
-TEMP_FILE = temp_parser_file
-
 goyacc:
 	$(GOBUILD) -o bin/goyacc parser/goyacc/main.go
 
 parser: goyacc
-	bin/goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
-	bin/goyacc -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
-	rm -f $(TEMP_FILE)
+	bin/goyacc -o /dev/null parser/parser.y
+	bin/goyacc -o parser/parser.go parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; exit 1;}}'
 	rm -f y.output
 
 	@if [ $(ARCH) = $(LINUX) ]; \
@@ -123,10 +120,7 @@ race: parserlib
 
 leak: parserlib
 	@export log_level=debug; \
-	for dir in $(PACKAGES); do \
-		echo $$dir; \
-		$(GOTEST) -tags leak $$dir | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1; \
-	done;
+	$(GOTEST) -tags leak $(PACKAGES)
 
 tikv_integration_test: parserlib
 	$(GOTEST) ./store/tikv/. -with-tikv=true

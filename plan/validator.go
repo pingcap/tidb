@@ -46,11 +46,6 @@ type validator struct {
 func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.AggregateFuncExpr:
-		if v.inAggregate {
-			// Aggregate function can not contain aggregate function.
-			v.err = ErrInvalidGroupFuncUse
-			return in, true
-		}
 		v.inAggregate = true
 	case *ast.CreateTableStmt:
 		v.checkCreateTableGrammar(node)
@@ -114,6 +109,20 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 		if count > math.MaxUint64-offset {
 			x.Count.SetValue(math.MaxUint64 - offset)
+		}
+	case *ast.ExplainStmt:
+		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
+			break
+		}
+		valid := false
+		for i, length := 0, len(ast.ExplainFormats); i < length; i++ {
+			if strings.ToLower(x.Format) == ast.ExplainFormats[i] {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			v.err = ErrUnknownExplainFormat.GenByArgs(x.Format)
 		}
 	}
 

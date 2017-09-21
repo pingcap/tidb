@@ -32,15 +32,16 @@ func (s *testPlanSuite) SetUpSuite(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -185,15 +186,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -277,6 +279,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d",
 			best: "MergeJoin{MergeJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)(t1.d,t2.d)->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t3.c)(t1.d,t3.d)",
 		},
+		{
+			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d order by t1.c",
+			best: "MergeJoin{MergeJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)(t1.d,t2.d)->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t3.c)(t1.d,t3.d)",
+		},
 		// Test Multi Merge Join + Outer Join.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t2.a = t3.a",
@@ -346,15 +352,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -415,15 +422,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -471,15 +479,16 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -550,15 +559,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -598,15 +608,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -664,15 +675,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -729,6 +741,15 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		{
 			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
 			best: "Apply{TableReader(Table(t))->TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->StreamAgg->Sel([ne(k, 0)])}->Projection",
+		},
+		// Test stream agg with multi group by columns.
+		{
+			sql:  "select sum(to_base64(e)) from t group by e,d,c order by c",
+			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->StreamAgg->Projection",
+		},
+		{
+			sql:  "select sum(to_base64(e)) from t group by e,d,c order by c,e",
+			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->StreamAgg->Sort->Projection",
 		},
 		// Test stream agg + limit or sort
 		{
@@ -789,15 +810,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 }
 
 func (s *testPlanSuite) TestRefine(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
