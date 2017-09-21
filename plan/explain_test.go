@@ -310,11 +310,12 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			sql: "select 1 in (select c2 from t2) from t1",
 			expect: "\n" +
-				"digraph HashSemiJoin_7 {\n" +
-				"subgraph cluster7{\n" +
+				"digraph Projection_2 {\n" +
+				"subgraph cluster2{\n" +
 				"node [style=filled, color=lightgrey]\n" +
 				"color=black\n" +
 				"label = \"root\"\n" +
+				"\"Projection_2\" -> \"HashSemiJoin_7\"\n" +
 				"\"HashSemiJoin_7\" -> \"TableReader_9\"\n" +
 				"\"HashSemiJoin_7\" -> \"TableReader_12\"\n" +
 				"}\n" +
