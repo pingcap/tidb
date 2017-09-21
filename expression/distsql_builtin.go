@@ -430,7 +430,7 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinJSONMergeSig{baseJSONBuiltinFunc{base}}
 
 	default:
-		e = errFunctionNotExists.GenByArgs(sigCode)
+		e = errFunctionNotExists.GenByArgs("FUNCTION", sigCode)
 		return nil, errors.Trace(e)
 	}
 	f.setSelf(f)
@@ -455,7 +455,7 @@ func newDistSQLFunctionBySig(sc *variable.StatementContext, sigCode tipb.ScalarF
 func newDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, args []Expression) (Expression, error) {
 	name, ok := distFuncs[exprType]
 	if !ok {
-		return nil, errFunctionNotExists.GenByArgs(exprType)
+		return nil, errFunctionNotExists.GenByArgs("FUNCTION", exprType)
 	}
 	// TODO: Too ugly...
 	ctx := mock.NewContext()
