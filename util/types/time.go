@@ -57,7 +57,7 @@ const (
 	// MaxTime is the maximum for mysql time type.
 	MaxTime = gotime.Duration(838*3600+59*60+59) * gotime.Second
 
-	zeroDatetimeStr = "0000-00-00 00:00:00"
+	ZeroDatetimeStr = "0000-00-00 00:00:00"
 	zeroDateStr     = "0000-00-00"
 
 	// TimeMaxHour is the max hour for mysql time type.

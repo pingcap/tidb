@@ -68,7 +68,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	}{
 		{"2012-12-12 00:00:00", "2012-12-12 00:00:00"},
 		{CurrentTimestamp, time.Unix(1234, 0).Format(types.TimeFormat)},
-		{ZeroTimestamp, "0000-00-00 00:00:00"},
+		{types.ZeroDatetimeStr, "0000-00-00 00:00:00"},
 		{ast.NewValueExpr("2012-12-12 00:00:00"), "2012-12-12 00:00:00"},
 		{ast.NewValueExpr(int64(0)), "0000-00-00 00:00:00"},
 		{ast.NewValueExpr(nil), nil},
@@ -105,12 +105,12 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	}
 }
 
-func (s *testExpressionSuite) TestIsCurrentTimeExpr(c *C) {
+func (s *testExpressionSuite) TestIsCurrentTimestampExpr(c *C) {
 	defer testleak.AfterTest(c)()
-	v := IsCurrentTimeExpr(ast.NewValueExpr("abc"))
+	v := IsCurrentTimestampExpr(ast.NewValueExpr("abc"))
 	c.Assert(v, IsFalse)
 
-	v = IsCurrentTimeExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")})
+	v = IsCurrentTimestampExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")})
 	c.Assert(v, IsTrue)
 }
 
