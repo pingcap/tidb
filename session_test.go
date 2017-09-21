@@ -24,12 +24,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -84,90 +82,35 @@ func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
 
 	// checker's schema version is the same as the current schema version.
 	checker.schemaVer = 4
-	err := checker.checkOnce(ts)
+	err := checker.Check(ts)
 	c.Assert(err, IsNil)
 
 	// checker's schema version is less than the current schema version, and it doesn't exist in validator's items.
 	// checker's related table ID isn't in validator's changed table IDs.
 	checker.schemaVer = 2
 	checker.relatedTableIDs = []int64{3}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(err, IsNil)
 	// The checker's schema version isn't in validator's items.
 	checker.schemaVer = 1
 	checker.relatedTableIDs = []int64{3}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
 	// checker's related table ID is in validator's changed table IDs.
 	checker.relatedTableIDs = []int64{2}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
 
 	// validator's latest schema version is expired.
 	time.Sleep(lease + time.Microsecond)
-	checker.schemaVer = 2
+	checker.schemaVer = 4
 	checker.relatedTableIDs = []int64{3}
-	err = checker.checkOnce(ts)
+	err = checker.Check(ts)
 	c.Assert(err, IsNil)
 	nowTS := uint64(time.Now().UnixNano())
-	err = checker.checkOnce(nowTS)
-	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaExpired), IsTrue)
-}
-
-func (s *testSessionSuite) TestPrepare(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_prepare"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	// create table
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, s.createTableSQL)
-	// insert data
-	mustExecSQL(c, se, `INSERT INTO t VALUES ("id");`)
-	id, ps, fields, err := se.PrepareStmt("select id+? from t")
-	c.Assert(err, IsNil)
-	c.Assert(fields, HasLen, 1)
-	c.Assert(id, Equals, uint32(1))
-	c.Assert(ps, Equals, 1)
-	mustExecSQL(c, se, `set @a=1`)
-	_, err = se.ExecutePreparedStmt(id, "1")
-	c.Assert(err, IsNil)
-	err = se.DropPreparedStmt(id)
-	c.Assert(err, IsNil)
-
-	mustExecSQL(c, se, "prepare stmt from 'select 1+?'")
-	mustExecSQL(c, se, "set @v1=100")
-	rs := mustExecSQL(c, se, "execute stmt using @v1")
-	r, err := rs.Next()
-	c.Assert(err, IsNil)
-	c.Assert(r.Data[0].GetFloat64(), Equals, float64(101))
-
-	mustExecSQL(c, se, "set @v2=200")
-	rs = mustExecSQL(c, se, "execute stmt using @v2")
-	r, err = rs.Next()
-	c.Assert(err, IsNil)
-	c.Assert(r.Data[0].GetFloat64(), Equals, float64(201))
-
-	mustExecSQL(c, se, "set @v3=300")
-	rs = mustExecSQL(c, se, "execute stmt using @v3")
-	r, err = rs.Next()
-	c.Assert(err, IsNil)
-	c.Assert(r.Data[0].GetFloat64(), Equals, float64(301))
-	mustExecSQL(c, se, "deallocate prepare stmt")
-
-	// Execute prepared statements for more than one time.
-	mustExecSQL(c, se, "create table multiexec (a int, b int)")
-	mustExecSQL(c, se, "insert multiexec values (1, 1), (2, 2)")
-	id, _, _, err = se.PrepareStmt("select a from multiexec where b = ? order by b")
-	c.Assert(err, IsNil)
-	rs, err = se.ExecutePreparedStmt(id, 1)
-	c.Assert(err, IsNil)
-	rs.Close()
-	rs, err = se.ExecutePreparedStmt(id, 2)
-	rs.Close()
-	c.Assert(err, IsNil)
-
-	mustExecSQL(c, se, dropDBSQL)
+	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
+	result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
+	c.Assert(result, Equals, domain.ResultUnknown)
 }
 
 func (s *testSessionSuite) TestResultField(c *C) {
@@ -191,138 +134,6 @@ func (s *testSessionSuite) TestResultField(c *C) {
 	field := fields[0].Column
 	c.Assert(field.Tp, Equals, mysql.TypeLonglong)
 	c.Assert(field.Flen, Equals, 21)
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_primary_key_auto_increment"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL, name varchar(255) UNIQUE NOT NULL, status int)")
-	mustExecSQL(c, se, "insert t (name) values (?)", "abc")
-	id := se.LastInsertID()
-	c.Check(id != 0, IsTrue)
-
-	se2 := newSession(c, s.store, dbName)
-	rs := mustExecSQL(c, se2, "select * from t")
-	c.Assert(rs, NotNil)
-	row, err := rs.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, id, []byte("abc"), nil)
-
-	mustExecSQL(c, se, "update t set name = 'abc', status = 1 where id = ?", id)
-	rs = mustExecSQL(c, se2, "select * from t")
-	c.Assert(rs, NotNil)
-	row, err = rs.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, id, []byte("abc"), 1)
-	// Check for pass bool param to tidb prepared statement
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (id tiny)")
-	mustExecSQL(c, se, "insert t values (?)", true)
-	rs = mustExecSQL(c, se, "select * from t")
-	c.Assert(rs, NotNil)
-	row, err = rs.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, int8(1))
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestAutoIncrementID(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_auto_increment_id"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	mustExecSQL(c, se, "insert t values ()")
-	mustExecSQL(c, se, "insert t values ()")
-	mustExecSQL(c, se, "insert t values ()")
-	se.Execute("drop table if exists t;")
-	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	mustExecSQL(c, se, "insert t values ()")
-	lastID := se.LastInsertID()
-	c.Assert(lastID, Less, uint64(4))
-	mustExecSQL(c, se, "insert t () values ()")
-	c.Assert(se.LastInsertID(), Greater, lastID)
-	lastID = se.LastInsertID()
-	mustExecSQL(c, se, "insert t values (100)")
-	c.Assert(se.LastInsertID(), Equals, uint64(100))
-
-	// If the auto_increment column value is given, it uses the value of the latest row.
-	mustExecSQL(c, se, "insert t values (120), (112)")
-	c.Assert(se.LastInsertID(), Equals, uint64(112))
-
-	// The last_insert_id function only use last auto-generated id.
-	mustExecMatch(c, se, "select last_insert_id()", [][]interface{}{{lastID}})
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (i tinyint unsigned not null auto_increment, primary key (i));")
-	mustExecSQL(c, se, "insert into t set i = 254;")
-	mustExecSQL(c, se, "insert t values ()")
-
-	// The last insert ID doesn't care about primary key, it is set even if its a normal index column.
-	mustExecSQL(c, se, "create table autoid (id int auto_increment, index (id))")
-	mustExecSQL(c, se, "insert autoid values ()")
-	c.Assert(se.LastInsertID(), Greater, uint64(0))
-	mustExecSQL(c, se, "insert autoid values (100)")
-	c.Assert(se.LastInsertID(), Equals, uint64(100))
-
-	mustExecMatch(c, se, "select last_insert_id(20)", [][]interface{}{{20}})
-	mustExecMatch(c, se, "select last_insert_id()", [][]interface{}{{20}})
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func checkTxn(c *C, se Session, stmt string, expectStatus uint16) {
-	mustExecSQL(c, se, stmt)
-	if expectStatus != 0 {
-		c.Assert(se.(*session).txn.Valid(), IsTrue)
-	}
-}
-
-func checkInTrans(c *C, se Session, stmt string, expectStatus uint16) {
-	checkTxn(c, se, stmt, expectStatus)
-	ret := se.(*session).sessionVars.Status & mysql.ServerStatusInTrans
-	c.Assert(ret, Equals, expectStatus)
-}
-
-// TestInTrans ...
-// See https://dev.mysql.com/doc/internals/en/status-flags.html
-func (s *testSessionSuite) TestInTrans(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_intrans"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	checkInTrans(c, se, "drop table if exists t;", 0)
-	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkInTrans(c, se, "insert t values ()", 0)
-	checkInTrans(c, se, "begin", 1)
-	checkInTrans(c, se, "insert t values ()", 1)
-	checkInTrans(c, se, "drop table if exists t;", 0)
-	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkInTrans(c, se, "insert t values ()", 0)
-	checkInTrans(c, se, "commit", 0)
-	checkInTrans(c, se, "insert t values ()", 0)
-
-	checkInTrans(c, se, "set autocommit=0;", 0)
-	checkInTrans(c, se, "begin", 1)
-	checkInTrans(c, se, "insert t values ()", 1)
-	checkInTrans(c, se, "commit", 0)
-	checkInTrans(c, se, "insert t values ()", 1)
-	checkInTrans(c, se, "commit", 0)
-
-	checkInTrans(c, se, "set autocommit=1;", 0)
-	checkInTrans(c, se, "drop table if exists t;", 0)
-	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkInTrans(c, se, "begin", 1)
-	checkInTrans(c, se, "insert t values ()", 1)
-	checkInTrans(c, se, "rollback", 0)
-
 	mustExecSQL(c, se, dropDBSQL)
 }
 
@@ -727,50 +538,6 @@ func (s *testSessionSuite) TestIssue1114(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestRow(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_row"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	r := mustExecSQL(c, se, "select row(1, 1) in (row(1, 1))")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-
-	r = mustExecSQL(c, se, "select row(1, 1) in (row(1, 0))")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 0)
-
-	r = mustExecSQL(c, se, "select row(1, 1) in (select 1, 1)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-
-	r = mustExecSQL(c, se, "select row(1, 1) > row(1, 0)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-
-	r = mustExecSQL(c, se, "select row(1, 1) > (select 1, 0)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-
-	r = mustExecSQL(c, se, "select 1 > (select 1)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 0)
-
-	r = mustExecSQL(c, se, "select (select 1)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_mysql_types"
@@ -788,240 +555,6 @@ func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	c.Assert(err, IsNil)
 	match(c, row.Data, 2, 1)
 	r.Close()
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestShow(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_show"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "set global autocommit=1")
-	r := mustExecSQL(c, se, "show global variables where variable_name = 'autocommit'")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "autocommit", "ON")
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, `create table if not exists t (c int) comment '注释'`)
-	r = mustExecSQL(c, se, `show columns from t`)
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 1)
-	match(c, rows[0], "c", "int(11)", "YES", "", nil, "")
-
-	r = mustExecSQL(c, se, "show collation where Charset = 'utf8' and Collation = 'utf8_bin'")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "utf8_bin", "utf8", 83, "", "Yes", 1)
-
-	r = mustExecSQL(c, se, "show tables")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 1)
-
-	r = mustExecSQL(c, se, "show full tables")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 2)
-
-	r = mustExecSQL(c, se, "show create table t")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 2)
-	c.Assert(row.Data[0].GetString(), Equals, "t")
-
-	r = mustExecSQL(c, se, fmt.Sprintf("show table status from %s like 't';", dbName))
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 18)
-	c.Assert(row.Data[0].GetString(), Equals, "t")
-	c.Assert(row.Data[17].GetString(), Equals, "注释")
-
-	r = mustExecSQL(c, se, "show databases like 'test'")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 1)
-	c.Assert(row.Data[0].GetString(), Equals, "test")
-
-	r = mustExecSQL(c, se, "grant all on *.* to 'root'@'%'")
-	r = mustExecSQL(c, se, "show grants")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data, HasLen, 1)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestBit(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_bit"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(2))")
-	mustExecSQL(c, se, "insert into t values (0), (1), (2), (3)")
-	_, err := exec(se, "insert into t values (4)")
-	c.Assert(err, NotNil)
-	_, err = exec(se, "insert into t values ('a')")
-	c.Assert(err, NotNil)
-	r := mustExecSQL(c, se, "select * from t where c1 = 2")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(31))")
-	mustExecSQL(c, se, "insert into t values (0x7fffffff)")
-	_, err = exec(se, "insert into t values (0x80000000)")
-	c.Assert(err, NotNil)
-	_, err = exec(se, "insert into t values (0xffffffff)")
-	c.Assert(err, NotNil)
-	mustExecSQL(c, se, "insert into t values ('123')")
-	mustExecSQL(c, se, "insert into t values ('1234')")
-	_, err = exec(se, "insert into t values ('12345)")
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(62))")
-	mustExecSQL(c, se, "insert into t values ('12345678')")
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(61))")
-	_, err = exec(se, "insert into t values ('12345678')")
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(32))")
-	mustExecSQL(c, se, "insert into t values (0x7fffffff)")
-	mustExecSQL(c, se, "insert into t values (0xffffffff)")
-	_, err = exec(se, "insert into t values (0x1ffffffff)")
-	c.Assert(err, NotNil)
-	mustExecSQL(c, se, "insert into t values ('1234')")
-	_, err = exec(se, "insert into t values ('12345')")
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(64))")
-	mustExecSQL(c, se, "insert into t values (0xffffffffffffffff)")
-	mustExecSQL(c, se, "insert into t values ('12345678')")
-	_, err = exec(se, "insert into t values ('123456789')")
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestEnum(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_enum"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c enum('a', 'b', 'c'))")
-	mustExecSQL(c, se, "insert into t values ('a'), (2), ('c')")
-	r := mustExecSQL(c, se, "select * from t where c = 'a'")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "a")
-
-	r = mustExecSQL(c, se, "select c + 1 from t where c = 2")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "3")
-
-	mustExecSQL(c, se, "delete from t")
-	mustExecSQL(c, se, "insert into t values ()")
-	mustExecSQL(c, se, "insert into t values (null), ('1')")
-	r = mustExecSQL(c, se, "select c + 1 from t where c = 1")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "2")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSet(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_set"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c set('a', 'b', 'c'))")
-	mustExecSQL(c, se, "insert into t values ('a'), (2), ('c'), ('a,b'), ('b,a')")
-	r := mustExecSQL(c, se, "select * from t where c = 'a'")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "a")
-
-	r = mustExecSQL(c, se, "select * from t where c = 'a,b'")
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 2)
-
-	r = mustExecSQL(c, se, "select c + 1 from t where c = 2")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "3")
-
-	mustExecSQL(c, se, "delete from t")
-	mustExecSQL(c, se, "insert into t values ()")
-	mustExecSQL(c, se, "insert into t values (null), ('1')")
-	r = mustExecSQL(c, se, "select c + 1 from t where c = 1")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "2")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestDatabase(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_database"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	// Test database.
-	mustExecSQL(c, se, "create database xxx")
-	mustExecSQL(c, se, "drop database xxx")
-
-	mustExecSQL(c, se, "drop database if exists xxx")
-	mustExecSQL(c, se, "create database xxx")
-	mustExecSQL(c, se, "create database if not exists xxx")
-	mustExecSQL(c, se, "drop database if exists xxx")
-
-	// Test schema.
-	mustExecSQL(c, se, "create schema xxx")
-	mustExecSQL(c, se, "drop schema xxx")
-
-	mustExecSQL(c, se, "drop schema if exists xxx")
-	mustExecSQL(c, se, "create schema xxx")
-	mustExecSQL(c, se, "create schema if not exists xxx")
-	mustExecSQL(c, se, "drop schema if exists xxx")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestWhereLike(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_where_like"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t(c int, index(c))")
-	mustExecSQL(c, se, "insert into t values (1),(2),(3),(-11),(11),(123),(211),(210)")
-	mustExecSQL(c, se, "insert into t values ()")
-
-	r := mustExecSQL(c, se, "select c from t where c like '%1%'")
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 6)
-
-	mustExecSQL(c, se, "select c from t where c like binary('abc')")
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -1048,18 +581,6 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 
 	mustExecSQL(c, se, dropDBSQL)
 	c.Assert(err, IsNil)
-}
-
-func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_exec_restricted_sql"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName).(*session)
-	r, _, err := se.ExecRestrictedSQL(se, "select 1;")
-	c.Assert(err, IsNil)
-	c.Assert(len(r), Equals, 1)
-
-	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestOrderBy(c *C) {
@@ -1293,24 +814,6 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestIndexPointLookup(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_index_point_lookup"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (a int)")
-	mustExecSQL(c, se, "insert t values (1), (2), (3)")
-	mustExecMatch(c, se, "select * from t where a = '1.1';", [][]interface{}{})
-	mustExecMatch(c, se, "select * from t where a > '1.1';", [][]interface{}{{2}, {3}})
-	mustExecMatch(c, se, "select * from t where a = '2';", [][]interface{}{{2}})
-	mustExecMatch(c, se, "select * from t where a = 3;", [][]interface{}{{3}})
-	mustExecMatch(c, se, "select * from t where a = 4;", [][]interface{}{})
-	mustExecSQL(c, se, "drop table t")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestIssue454(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_issue454"
@@ -1419,55 +922,6 @@ func (s *testSessionSuite) TestIssue620(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_retry_prepare_stmt"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	se1 := newSession(c, s.store, dbName)
-	se2 := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, IsNil)
-	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
-	mustExecSQL(c, se, "insert t values (11, 2, 3)")
-
-	mustExecSQL(c, se1, "begin")
-	mustExecSQL(c, se1, "update t set c2=? where c1=11;", 21)
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=? where c1=11", 22)
-	mustExecSQL(c, se2, "commit")
-
-	mustExecSQL(c, se1, "commit")
-
-	se3 := newSession(c, s.store, dbName)
-	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 21)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSleep(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_sleep"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "select sleep(0.01);")
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (a int);")
-	mustExecSQL(c, se, "insert t values (sleep(0.02));")
-	r := mustExecSQL(c, se, "select * from t;")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 0)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestIssue893(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_issue893"
@@ -1502,7 +956,9 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	defer testleak.AfterTest(c)()
 	localstore.MockRemoteStore = true
 	dbName := "test_issue1435"
-	store := newStoreWithBootstrap(c, dbName)
+	store, dom := newStoreWithBootstrap(c, dbName)
+	defer dom.Close()
+	defer store.Close()
 	se := newSession(c, store, dbName)
 	se1 := newSession(c, store, dbName)
 	se2 := newSession(c, store, dbName)
@@ -1589,70 +1045,7 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	se.Close()
 	se1.Close()
 	se2.Close()
-	sessionctx.GetDomain(ctx).Close()
-	err = store.Close()
-	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
-}
-
-/* Test cases for session. */
-
-func (s *testSessionSuite) TestSession(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_session"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "ROLLBACK;")
-
-	mustExecSQL(c, se, dropDBSQL)
-	se.Close()
-}
-
-func (s *testSessionSuite) TestSessionAuth(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_session_auth"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	defer se.Close()
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")), IsFalse)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSkipWithGrant(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_skip_with_grant"
-	se := newSession(c, s.store, dbName)
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-
-	save1 := privileges.Enable
-	save2 := privileges.SkipWithGrant
-
-	privileges.Enable = true
-	privileges.SkipWithGrant = false
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")), IsFalse)
-
-	privileges.SkipWithGrant = true
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "%"}, []byte("yyy"), []byte("zzz")), IsTrue)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, []byte(""), []byte("")), IsTrue)
-	mustExecSQL(c, se, "create table t (id int)")
-
-	privileges.Enable = save1
-	privileges.SkipWithGrant = save2
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_substring_index_expr"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c varchar(128));")
-	mustExecSQL(c, se, `insert into t values ("www.pingcap.com");`)
-	mustExecMatch(c, se, "SELECT DISTINCT SUBSTRING_INDEX(c, '.', 2) from t;", [][]interface{}{{"www.pingcap"}})
-
-	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestIndexMaxLength(c *C) {
@@ -1734,118 +1127,6 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	c.Assert(err, NotNil)
 
 	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_specify_index_prefix_length"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t;")
-
-	_, err := exec(se, "create table t (c1 char, index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create table t (c1 int, index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create table t (c1 bit(10), index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "create table t (c1 char, c2 int, c3 bit(10));")
-
-	_, err = exec(se, "create index idx_c1 on t (c1(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c2(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c3(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-
-	_, err = exec(se, "create table t (c1 int, c2 blob, c3 varchar(64), index(c2));")
-	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "create table t (c1 int, c2 blob, c3 varchar(64));")
-	_, err = exec(se, "create index idx_c1 on t (c2);")
-	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c2(555555));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c1(5))")
-	// ERROR 1089 (HY000): Incorrect prefix key;
-	// the used key part isn't a string, the used length is longer than the key part,
-	// or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "create index idx_c1 on t (c1);")
-	mustExecSQL(c, se, "create index idx_c2 on t (c2(3));")
-	mustExecSQL(c, se, "create unique index idx_c3 on t (c3(5));")
-
-	mustExecSQL(c, se, "insert into t values (3, 'abc', 'def');")
-	sql := "select c2 from t where c2 = 'abc';"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}})
-
-	mustExecSQL(c, se, "insert into t values (4, 'abcd', 'xxx');")
-	mustExecSQL(c, se, "insert into t values (4, 'abcf', 'yyy');")
-	sql = "select c2 from t where c2 = 'abcf';"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abcf")}})
-	sql = "select c2 from t where c2 = 'abcd';"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abcd")}})
-
-	mustExecSQL(c, se, "insert into t values (4, 'ignore', 'abcdeXXX');")
-	_, err = exec(se, "insert into t values (5, 'ignore', 'abcdeYYY');")
-	// ERROR 1062 (23000): Duplicate entry 'abcde' for key 'idx_c3'
-	c.Assert(err, NotNil)
-	sql = "select c3 from t where c3 = 'abcde';"
-	mustExecMatch(c, se, sql, [][]interface{}{})
-
-	mustExecSQL(c, se, "delete from t where c3 = 'abcdeXXX';")
-	mustExecSQL(c, se, "delete from t where c2 = 'abc';")
-
-	mustExecMatch(c, se, "select c2 from t where c2 > 'abcd';", [][]interface{}{{[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 < 'abcf';", [][]interface{}{{[]byte("abcd")}})
-	mustExecMatch(c, se, "select c2 from t where c2 >= 'abcd';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 <= 'abcf';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 != 'abc';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 != 'abcd';", [][]interface{}{{[]byte("abcf")}})
-
-	mustExecSQL(c, se, "drop table if exists t1;")
-	mustExecSQL(c, se, "create table t1 (a int, b char(255), key(a, b(20)));")
-	mustExecSQL(c, se, "insert into t1 values (0, '1');")
-	mustExecSQL(c, se, "update t1 set b = b + 1 where a = 0;")
-	mustExecMatch(c, se, "select b from t1 where a = 0;", [][]interface{}{{[]byte("2")}})
-
-	// test union index.
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (a text, b text, c int, index (a(3), b(3), c));")
-	mustExecSQL(c, se, "insert into t values ('abc', 'abcd', 1);")
-	mustExecSQL(c, se, "insert into t values ('abcx', 'abcf', 2);")
-	mustExecSQL(c, se, "insert into t values ('abcy', 'abcf', 3);")
-	mustExecSQL(c, se, "insert into t values ('bbc', 'abcd', 4);")
-	mustExecSQL(c, se, "insert into t values ('bbcz', 'abcd', 5);")
-	mustExecSQL(c, se, "insert into t values ('cbck', 'abd', 6);")
-	mustExecMatch(c, se, "select c from t where a = 'abc' and b <= 'abc';", [][]interface{}{})
-	mustExecMatch(c, se, "select c from t where a = 'abc' and b <= 'abd';", [][]interface{}{{1}})
-	mustExecMatch(c, se, "select c from t where a < 'cbc' and b > 'abcd';", [][]interface{}{{2}, {3}})
-	mustExecMatch(c, se, "select c from t where a <= 'abd' and b > 'abc';", [][]interface{}{{1}, {2}, {3}})
-	mustExecMatch(c, se, "select c from t where a < 'bbcc' and b = 'abcd';", [][]interface{}{{1}, {4}})
-	mustExecMatch(c, se, "select c from t where a > 'bbcf';", [][]interface{}{{5}, {6}})
-
-	mustExecSQL(c, se, dropDBSQL)
-	se.Close()
 }
 
 func (s *testSessionSuite) TestIndexColumnLength(c *C) {

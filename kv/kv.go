@@ -155,12 +155,14 @@ const (
 	ReqSubTypeTopN       = 10002
 	ReqSubTypeSignature  = 10003
 	ReqSubTypeAnalyzeIdx = 10004
+	ReqSubTypeAnalyzeCol = 10005
 )
 
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
 	Tp        int64
+	StartTs   uint64
 	Data      []byte
 	KeyRanges []KeyRange
 	// KeepOrder is true, if the response should be returned in order.

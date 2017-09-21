@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -199,12 +199,12 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 
 func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) (*aggregateExec, error) {
 	length := len(executor.Aggregation.AggFunc)
-	aggs := make([]expression.AggregationFunction, 0, length)
+	aggs := make([]aggregation.Aggregation, 0, length)
 	var err error
 	var relatedColOffsets []int
 	for _, expr := range executor.Aggregation.AggFunc {
-		var aggExpr expression.AggregationFunction
-		aggExpr, err = expression.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
+		var aggExpr aggregation.Aggregation
+		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

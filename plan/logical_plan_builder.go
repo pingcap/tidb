@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -62,7 +63,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
 
-	agg := LogicalAggregation{AggFuncs: make([]expression.AggregationFunction, 0, len(aggFuncList))}.init(b.allocator, b.ctx)
+	agg := LogicalAggregation{AggFuncs: make([]aggregation.Aggregation, 0, len(aggFuncList))}.init(b.allocator, b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
@@ -77,7 +78,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			p = np
 			newArgList = append(newArgList, newArg)
 		}
-		newFunc := expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct)
+		newFunc := aggregation.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct)
 		combined := false
 		for j, oldFunc := range agg.AggFuncs {
 			if oldFunc.Equal(newFunc, b.ctx) {
@@ -99,7 +100,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		}
 	}
 	for _, col := range p.Schema().Columns {
-		newFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col.Clone()}, false)
+		newFunc := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col.Clone()}, false)
 		agg.AggFuncs = append(agg.AggFuncs, newFunc)
 		schema.Append(col.Clone().(*expression.Column))
 	}
@@ -514,12 +515,12 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
 	agg := LogicalAggregation{
-		AggFuncs:     make([]expression.AggregationFunction, 0, child.Schema().Len()),
+		AggFuncs:     make([]aggregation.Aggregation, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.init(b.allocator, b.ctx)
 	agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
-		agg.AggFuncs = append(agg.AggFuncs, expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false))
+		agg.AggFuncs = append(agg.AggFuncs, aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false))
 	}
 	addChild(agg, child)
 	agg.SetSchema(child.Schema().Clone())
@@ -1304,6 +1305,9 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 					b.err = errors.Trace(err)
 					return nil
 				}
+				// Because the expression maybe return different type from
+				// the generated column, we should wrap a CAST on the result.
+				expr = expression.BuildCastFunction(expr, colExpr.GetType(), b.ctx)
 				exprIsGen = true
 			}
 		}
@@ -1537,6 +1541,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 				return expr
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
+			newExpr = expression.BuildCastFunction(newExpr, col.GetType(), b.ctx)
 		}
 		if err != nil {
 			b.err = errors.Trace(err)

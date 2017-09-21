@@ -14,11 +14,15 @@
 package mocktikv
 
 import (
+	"time"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -40,10 +44,10 @@ func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) (*coproce
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if analyzeReq.Tp != tipb.AnalyzeType_TypeIndex {
-		return resp, nil
+	if analyzeReq.Tp == tipb.AnalyzeType_TypeIndex {
+		return h.handleAnalyzeIndexReq(req, analyzeReq)
 	}
-	return h.handleAnalyzeIndexReq(req, analyzeReq)
+	return h.handleAnalyzeColumnsReq(req, analyzeReq)
 }
 
 func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
@@ -79,4 +83,88 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		return nil, errors.Trace(err)
 	}
 	return &coprocessor.Response{Data: data}, nil
+}
+
+type analyzeColumnsExec struct {
+	tblExec *tableScanExec
+}
+
+func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
+	sc := flagsToStatementContext(analyzeReq.Flags)
+	timeZone := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	evalCtx := &evalContext{sc: sc, timeZone: timeZone}
+	columns := analyzeReq.ColReq.ColumnsInfo
+	evalCtx.setColumnInfo(columns)
+	e := &analyzeColumnsExec{
+		tblExec: &tableScanExec{
+			TableScan:      &tipb.TableScan{Columns: columns},
+			kvRanges:       h.extractKVRanges(req.Ranges, false),
+			colIDs:         evalCtx.colIDs,
+			startTS:        analyzeReq.GetStartTs(),
+			isolationLevel: h.isolationLevel,
+			mvccStore:      h.mvccStore,
+		},
+	}
+	pkID := int64(-1)
+	numCols := len(columns)
+	if columns[0].GetPkHandle() {
+		pkID = columns[0].ColumnId
+		numCols--
+	}
+	colReq := analyzeReq.ColReq
+	builder := statistics.SampleBuilder{
+		Sc:            sc,
+		RecordSet:     e,
+		ColLen:        numCols,
+		PkID:          pkID,
+		MaxBucketSize: colReq.BucketSize,
+		MaxSketchSize: colReq.SketchSize,
+		MaxSampleSize: colReq.SampleSize,
+	}
+	collectors, pkBuilder, err := builder.CollectSamplesAndEstimateNDVs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	colResp := &tipb.AnalyzeColumnsResp{}
+	if pkID != -1 {
+		colResp.PkHist = statistics.HistogramToProto(pkBuilder.Hist())
+	}
+	for _, c := range collectors {
+		colResp.Collectors = append(colResp.Collectors, statistics.SampleCollectorToProto(c))
+	}
+	data, err := proto.Marshal(colResp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &coprocessor.Response{Data: data}, nil
+}
+
+// Fields implements the ast.RecordSet Fields interface.
+func (e *analyzeColumnsExec) Fields() (fields []*ast.ResultField, err error) {
+	return nil, nil
+}
+
+// Next implements the ast.RecordSet Next interface.
+func (e *analyzeColumnsExec) Next() (row *ast.Row, err error) {
+	values, err := e.tblExec.Next()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if values == nil {
+		return nil, nil
+	}
+	row = &ast.Row{}
+	for _, val := range values {
+		d := types.NewBytesDatum(val)
+		if len(val) == 1 && val[0] == codec.NilFlag {
+			d.SetNull()
+		}
+		row.Data = append(row.Data, d)
+	}
+	return
+}
+
+// Close implements the ast.RecordSet Close interface.
+func (e *analyzeColumnsExec) Close() error {
+	return nil
 }

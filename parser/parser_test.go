@@ -222,7 +222,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"INSERT INTO foo VALUES (1 || 2)", true},
 		{"INSERT INTO foo VALUES (1 | 2)", true},
 		{"INSERT INTO foo VALUES (false || true)", true},
-		{"INSERT INTO foo VALUES (bar(5678))", false},
+		{"INSERT INTO foo VALUES (bar(5678))", true},
 		// 20
 		{"INSERT INTO foo VALUES ()", true},
 		{"SELECT * FROM t", true},
@@ -255,7 +255,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"REPLACE INTO foo VALUES (1 || 2)", true},
 		{"REPLACE INTO foo VALUES (1 | 2)", true},
 		{"REPLACE INTO foo VALUES (false || true)", true},
-		{"REPLACE INTO foo VALUES (bar(5678))", false},
+		{"REPLACE INTO foo VALUES (bar(5678))", true},
 		{"REPLACE INTO foo VALUES ()", true},
 		{"REPLACE INTO foo (a,b) VALUES (42,314)", true},
 		{"REPLACE INTO foo (a,b,) VALUES (42,314)", false},
@@ -550,6 +550,12 @@ func (s *testParserSuite) TestExpression(c *C) {
 		// for date literal
 		{"select date'1989-09-10'", true},
 		{"select date 19890910", false},
+		// for time literal
+		{"select time '00:00:00.111'", true},
+		{"select time 19890910", false},
+		// for timestamp literal
+		{"select timestamp '1989-09-10 11:11:11'", true},
+		{"select timestamp 19890910", false},
 	}
 	s.RunTest(c, table)
 }
@@ -1143,6 +1149,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT '{}'->>'$.a' FROM t`, false},
 		{`SELECT a->3 FROM t`, false},
 		{`SELECT a->>3 FROM t`, false},
+
+		// Test that quoted identifier can be a function name.
+		{"SELECT `uuid`()", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1450,6 +1459,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD UNIQUE ()", false},
 		{"ALTER TABLE t ADD UNIQUE INDEX ()", false},
 		{"ALTER TABLE t ADD UNIQUE KEY ()", false},
+
+		// for issue 4538
+		{"create table a (process double)", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1768,6 +1780,7 @@ func (s *testParserSuite) TestExplain(c *C) {
 		{"explain replace into foo values (1 || 2)", true},
 		{"explain update t set id = id + 1 order by id desc;", true},
 		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true},
+		{`explain format = "row" select c1 from t1 union (select c2 from t2) limit 1, 1`, true},
 	}
 	s.RunTest(c, table)
 }

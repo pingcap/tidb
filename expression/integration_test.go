@@ -22,6 +22,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -37,6 +39,7 @@ var _ = Suite(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
 	store kv.Storage
+	dom   *domain.Domain
 	ctx   context.Context
 }
 
@@ -51,8 +54,15 @@ func (s *testIntegrationSuite) cleanEnv(c *C) {
 }
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
-	s.store, _ = newStoreWithBootstrap()
+	var err error
+	s.store, s.dom, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
+}
+
+func (s *testIntegrationSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
@@ -1042,7 +1052,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	_, err = tk.Exec(`insert into t select year("0000-00-00 00:00:00")`)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	tk.MustExec(`insert into t select 1`)
 	_, err = tk.Exec(`update t set a = year("aa")`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
@@ -1065,7 +1075,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	_, err = tk.Exec(`insert into t select month("0000-00-00 00:00:00")`)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	tk.MustExec(`insert into t select 1`)
 	_, err = tk.Exec(`update t set a = month("aa")`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
@@ -1202,9 +1212,9 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2003-12-31 00:00:00 2004-01-01 00:00:00"))
 	result = tk.MustQuery("select timestamp(20170118123950.123), timestamp(20170118123950.999);")
 	result.Check(testkit.Rows("2017-01-18 12:39:50.123 2017-01-18 12:39:50.999"))
-	result = tk.MustQuery("select timestamp('2003-12-31', '01:01:01.01'), timestamp('2003-12-31.1234', '01:01:01.01')," +
+	result = tk.MustQuery("select timestamp('2003-12-31', '01:01:01.01'), timestamp('2003-12-31 12:34', '01:01:01.01')," +
 		" timestamp('2008-12-31','00:00:00.0'), timestamp('2008-12-31 00:00:00.000');")
-	result.Check(testkit.Rows("2003-12-31 01:01:01.01 2003-12-31 01:01:01.1334 2008-12-31 00:00:00.0 2008-12-31 00:00:00.000"))
+	result.Check(testkit.Rows("2003-12-31 01:01:01.01 2003-12-31 13:35:01.01 2008-12-31 00:00:00.0 2008-12-31 00:00:00.000"))
 	result = tk.MustQuery("select timestamp('2003-12-31', 1), timestamp('2003-12-31', -1);")
 	result.Check(testkit.Rows("2003-12-31 00:00:01 2003-12-30 23:59:59"))
 	result = tk.MustQuery("select timestamp('2003-12-31', '2000-12-12 01:01:01.01'), timestamp('2003-14-31','01:01:01.01');")
@@ -1399,25 +1409,25 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 
 	_, err = tk.Exec("insert into t value(dayOfWeek('0000-00-00'))")
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`update t set a = dayOfWeek("0000-00-00")`)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfWeek(123)`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
 	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`update t set a = dayOfMonth("0000-00-00")`)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfMonth(123)`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
 	_, err = tk.Exec("insert into t value(dayOfYear('0000-00-00'))")
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`update t set a = dayOfYear("0000-00-00")`)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfYear(123)`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 
@@ -1486,14 +1496,14 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 
 	_, err = tk.Exec("insert into t value(monthname('0000-00-00'))")
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`update t set a = monthname("0000-00-00")`)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = monthname(123)`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	result = tk.MustQuery(`select monthname("2017-12-01"), monthname("0000-00-00"), monthname("0000-01-00"), monthname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("December <nil> January January"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 
 	// for dayname
 	tk.MustExec(`drop table if exists t`)
@@ -1502,14 +1512,17 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 
 	_, err = tk.Exec("insert into t value(dayname('0000-00-00'))")
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`update t set a = dayname("0000-00-00")`)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayname(123)`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
 	result = tk.MustQuery(`select dayname("2017-12-01"), dayname("0000-00-00"), dayname("0000-01-00"), dayname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("Friday <nil> <nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format", "Warning|1105|invalid time format", "Warning|1105|invalid time format"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
+		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'",
+		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'"))
 
 	// for sec_to_time
 	result = tk.MustQuery("select sec_to_time(NULL)")
@@ -1541,7 +1554,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select str_to_date('01-01-2017', '%d'), str_to_date('59', '%d-%Y')")
 	// TODO: MySQL returns "<nil> <nil>".
 	result.Check(testkit.Rows("0000-00-01 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'"))
 
 	// for maketime
 	tk.MustExec(`drop table if exists t`)
@@ -2353,6 +2366,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t(a, b) VALUES(-1.09, 1.999);")
 	result = tk.MustQuery("SELECT a/b, a/12, a/-0.01, b/12, b/-0.01, b/0.000, NULL/b, b/NULL, NULL/NULL FROM t;")
 	result.Check(testkit.Rows("-0.545273 -0.090833 109.000000 0.1665833 -199.9000000 <nil> <nil> <nil> <nil>"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
 	rs, err = tk.Exec("select 1e200/1e-200")
 	c.Assert(err, IsNil)
 	_, err = tidb.GetRows(rs)
@@ -2367,25 +2381,48 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tidb.GetRows(rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_int_unsigned int unsigned, c_timestamp timestamp, c_enum enum('a','b','c'));")
 	tk.MustExec("INSERT INTO t VALUE('abc', '12:00:00', 12, 0, 5, '2017-08-05 18:19:03', 'b');")
-	result = tk.MustQuery("select c_varchar div nonzero, c_time div nonzero, c_time div zero, c_timestamp div nonzero, c_timestamp div zero from t;")
-	result.Check(testkit.Rows("0 10000 <nil> 1680900431825 <nil>"))
-	rs, err = tk.Exec("select c_varchar div zero from t")
-	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
-	c.Assert(terror.ErrorEqual(err, types.ErrDivByZero), IsTrue)
+	result = tk.MustQuery("select c_varchar div nonzero, c_time div nonzero, c_time div zero, c_timestamp div nonzero, c_timestamp div zero, c_varchar div zero from t;")
+	result.Check(testkit.Rows("0 10000 <nil> 1680900431825 <nil> <nil>"))
 	result = tk.MustQuery("select c_enum div nonzero from t;")
 	result.Check(testkit.Rows("0"))
-	rs, err = tk.Exec("select c_enum div zero from t")
-	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
-	c.Assert(terror.ErrorEqual(err, types.ErrDivByZero), IsTrue)
+	tk.MustQuery("select c_enum div zero from t").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select nonzero div zero from t").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
 	result = tk.MustQuery("select c_time div c_enum, c_timestamp div c_time, c_timestamp div c_enum from t;")
 	result.Check(testkit.Rows("60000 168090043 10085402590951"))
 	result = tk.MustQuery("select c_int_unsigned div nonzero, nonzero div c_int_unsigned, c_int_unsigned div zero from t;")
 	result.Check(testkit.Rows("0 2 <nil>"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
+
+	// for mod
+	result = tk.MustQuery("SELECT CAST(1 AS UNSIGNED) MOD -9223372036854775808, -9223372036854775808 MOD CAST(1 AS UNSIGNED);")
+	result.Check(testkit.Rows("1 0"))
+	result = tk.MustQuery("SELECT 13 MOD 12, 13 MOD 0.01, -13 MOD 2, 13 MOD NULL, NULL MOD 13, NULL DIV NULL;")
+	result.Check(testkit.Rows("1 0.00 -1 <nil> <nil> <nil>"))
+	result = tk.MustQuery("SELECT 2.4 MOD 1.1, 2.4 MOD 1.2, 2.4 mod 1.30;")
+	result.Check(testkit.Rows("0.2 0.0 1.10"))
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_timestamp timestamp, c_enum enum('a','b','c'));")
+	tk.MustExec("INSERT INTO t VALUE('abc', '12:00:00', 12, 0, '2017-08-05 18:19:03', 'b');")
+	result = tk.MustQuery("select c_varchar MOD nonzero, c_time MOD nonzero, c_timestamp MOD nonzero, c_enum MOD nonzero from t;")
+	result.Check(testkit.Rows("0 0 3 2"))
+	result = tk.MustQuery("select c_time MOD c_enum, c_timestamp MOD c_time, c_timestamp MOD c_enum from t;")
+	result.Check(testkit.Rows("0 21903 1"))
+	tk.MustQuery("select c_enum MOD zero from t;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
+	tk.MustExec("SET SQL_MODE='ERROR_FOR_DIVISION_BY_ZERO,STRICT_ALL_TABLES';")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (v int);")
+	tk.MustExec("INSERT IGNORE INTO t VALUE(12 MOD 0);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
+	tk.MustQuery("select v from t;").Check(testkit.Rows("<nil>"))
+
+	_, err = tk.Exec("INSERT INTO t VALUE(12 MOD 0);")
+	c.Assert(terror.ErrorEqual(err, expression.ErrDivisionByZero), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
@@ -2641,7 +2678,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	rs, err := tk.Exec("select date '0000-00-00';")
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("0000-00-00")), IsTrue)
 
 	tk.MustExec("set sql_mode = ''")
 	r = tk.MustQuery("select date '2007-10-00';")
@@ -2651,7 +2688,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	rs, _ = tk.Exec("select date '2007-10-00';")
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-10-00")), IsTrue)
 
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
 	r = tk.MustQuery("select date '2007-10-00';")
@@ -2662,12 +2699,12 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	rs, _ = tk.Exec("select date '2007-10-00';")
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-10-00")), IsTrue)
 
 	rs, err = tk.Exec("select date '0000-00-00';")
 	_, err = tidb.GetRows(rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("0000-00-00")), IsTrue)
 
 	r = tk.MustQuery("select date'1998~01~02'")
 	r.Check(testkit.Rows("1998-01-02"))
@@ -2677,7 +2714,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 
 	_, err = tk.Exec("select date '0000-00-00 00:00:00';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("0000-00-00 00:00:00")), IsTrue)
 
 	_, err = tk.Exec("select date '2017-99-99';")
 	c.Assert(err, NotNil)
@@ -2689,11 +2726,92 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 
 	_, err = tk.Exec("select date '201712-31';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("201712-31")), IsTrue)
 
 	_, err = tk.Exec("select date 'abcdefg';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("abcdefg")), IsTrue)
+}
+
+func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	r := tk.MustQuery("select time '117:01:12';")
+	r.Check(testkit.Rows("117:01:12"))
+
+	r = tk.MustQuery("select time '01:00:00.999999';")
+	r.Check(testkit.Rows("01:00:00.999999"))
+
+	r = tk.MustQuery("select time '1 01:00:00';")
+	r.Check(testkit.Rows("25:00:00"))
+
+	r = tk.MustQuery("select time '110:00:00';")
+	r.Check(testkit.Rows("110:00:00"))
+
+	r = tk.MustQuery("select time'-1:1:1.123454656';")
+	r.Check(testkit.Rows("-01:01:01.123455"))
+
+	r = tk.MustQuery("select time '33:33';")
+	r.Check(testkit.Rows("33:33:00"))
+
+	r = tk.MustQuery("select time '1.1';")
+	r.Check(testkit.Rows("00:00:01.1"))
+
+	r = tk.MustQuery("select time '21';")
+	r.Check(testkit.Rows("00:00:21"))
+
+	r = tk.MustQuery("select time '20 20:20';")
+	r.Check(testkit.Rows("500:20:00"))
+
+	_, err := tk.Exec("select time '2017-01-01 00:00:00';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-01-01 00:00:00")), IsTrue)
+
+	_, err = tk.Exec("select time '071231235959.999999';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("071231235959.999999")), IsTrue)
+
+	_, err = tk.Exec("select time '20171231235959.999999';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("20171231235959.999999")), IsTrue)
+}
+
+func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	r := tk.MustQuery("select timestamp '2017-01-01 00:00:00';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00"))
+
+	r = tk.MustQuery("select timestamp '2017@01@01 00:00:00';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00"))
+
+	r = tk.MustQuery("select timestamp '2017@01@01 00~00~00';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00"))
+
+	r = tk.MustQuery("select timestamp '2017@01@0001 00~00~00.333';")
+	r.Check(testkit.Rows("2017-01-01 00:00:00.333"))
+
+	_, err := tk.Exec("select timestamp '00:00:00';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("00:00:00")), IsTrue)
+
+	_, err = tk.Exec("select timestamp '1992-01-03';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("1992-01-03")), IsTrue)
+
+	_, err = tk.Exec("select timestamp '20171231235959.999999';")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("20171231235959.999999")), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestLiterals(c *C) {
@@ -2750,4 +2868,25 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 
 	r = tk.MustQuery(`select json_extract(json_object(1,2,3,4), '$."1"')`)
 	r.Check(testkit.Rows("2"))
+}
+
+func (s *testIntegrationSuite) TestSetVariables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	_, err := tk.Exec("set sql_mode='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set @@sql_mode='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set @@global.sql_mode='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("set @@session.sql_mode='adfasdfadsfdasd';")
+	c.Assert(err, NotNil)
+
+	var r *testkit.Result
+	_, err = tk.Exec("set @@session.sql_mode=',NO_ZERO_DATE';")
+	r = tk.MustQuery(`select @@session.sql_mode`)
+	r.Check(testkit.Rows("NO_ZERO_DATE"))
 }

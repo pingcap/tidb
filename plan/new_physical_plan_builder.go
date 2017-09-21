@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -212,13 +213,13 @@ func (p *PhysicalMergeJoin) getChildrenPossibleProps(prop *requiredProp) [][]*re
 		if prop.desc {
 			return nil
 		}
-		if !prop.equal(lProp) && !prop.equal(rProp) {
+		if !prop.isPrefix(lProp) && !prop.isPrefix(rProp) {
 			return nil
 		}
-		if prop.equal(rProp) && p.JoinType == LeftOuterJoin {
+		if prop.isPrefix(rProp) && p.JoinType == LeftOuterJoin {
 			return nil
 		}
-		if prop.equal(lProp) && p.JoinType == RightOuterJoin {
+		if prop.isPrefix(lProp) && p.JoinType == RightOuterJoin {
 			return nil
 		}
 	}
@@ -1107,7 +1108,7 @@ func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
 		return nil
 	}
 	for _, aggFunc := range p.AggFuncs {
-		if aggFunc.GetMode() == expression.FinalMode {
+		if aggFunc.GetMode() == aggregation.FinalMode {
 			return nil
 		}
 	}
@@ -1168,7 +1169,7 @@ func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*
 	}
 
 	reqProp := &requiredProp{taskTp: rootTaskType, cols: p.propKeys, expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count, desc: prop.desc}
-	if !prop.isEmpty() && !prop.equal(reqProp) {
+	if !prop.isEmpty() && !prop.isPrefix(reqProp) {
 		return nil
 	}
 	return [][]*requiredProp{{reqProp}}

@@ -87,6 +87,7 @@ func fixPrefixColRange(ranges []*types.IndexRange, lengths []int) {
 		for i := 0; i < len(ran.HighVal); i++ {
 			fixRangeDatum(&ran.HighVal[i], lengths[i])
 		}
+		ran.HighExclude = false
 	}
 }
 

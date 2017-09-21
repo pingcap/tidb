@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -422,13 +423,14 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	pushdownIdx := b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeIdx)
+	pushdownCol := b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeAnalyze, kv.ReqSubTypeAnalyzeCol)
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		for _, idx := range idxInfo {
 			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx, PushDown: pushdownIdx})
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo})
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo, PushDown: pushdownCol})
 		}
 	}
 	p.SetSchema(&expression.Schema{})
@@ -649,11 +651,20 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
 		columnName.SetText(column.Name.O)
+
+		colExpr, _, err := mockPlan.findColumn(columnName)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return
+		}
+
 		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return
 		}
+		expr = expression.BuildCastFunction(expr, colExpr.GetType(), b.ctx)
+
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
 		if onDups == nil {
@@ -661,12 +672,7 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		for dep := range column.Dependences {
 			if _, ok := onDups[dep]; ok {
-				col, _, err := mockPlan.findColumn(columnName)
-				if err != nil {
-					b.err = errors.Trace(err)
-					return
-				}
-				assign := &expression.Assignment{Col: col, Expr: expr.Clone()}
+				assign := &expression.Assignment{Col: colExpr, Expr: expr.Clone()}
 				igc.OnDuplicates = append(igc.OnDuplicates, assign)
 				break
 			}
@@ -977,15 +983,28 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	setParents4FinalPlan(targetPlan.(PhysicalPlan))
 	p := &Explain{StmtPlan: targetPlan}
 	if UseDAGPlanBuilder(b.ctx) {
-		retFields := []string{"id", "parents", "children", "task", "operator info"}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		switch strings.ToLower(explain.Format) {
+		case ast.ExplainFormatROW:
+			retFields := []string{"id", "parents", "children", "task", "operator info"}
+			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+			for _, fieldName := range retFields {
+				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+			}
+			schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
+			p.SetSchema(schema)
+			p.explainedPlans = map[int]bool{}
+			p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+		case ast.ExplainFormatDOT:
+			retFields := []string{"dot contents"}
+			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+			for _, fieldName := range retFields {
+				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+			}
+			p.SetSchema(schema)
+			p.prepareDotInfo(p.StmtPlan.(PhysicalPlan))
+		default:
+			b.err = errors.Errorf("explain format '%s' is not supported now", explain.Format)
 		}
-		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
-		p.SetSchema(schema)
-		p.explainedPlans = map[int]bool{}
-		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
 	} else {
 		schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
 		schema.Append(buildColumn("", "ID", mysql.TypeString, mysql.MaxBlobWidth))
