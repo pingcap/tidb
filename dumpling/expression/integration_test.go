@@ -2422,7 +2422,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustQuery("select v from t;").Check(testkit.Rows("<nil>"))
 
 	_, err = tk.Exec("INSERT INTO t VALUE(12 MOD 0);")
-	c.Assert(terror.ErrorEqual(err, expression.ErrDivideByZero), IsTrue)
+	c.Assert(terror.ErrorEqual(err, expression.ErrDivisionByZero), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
