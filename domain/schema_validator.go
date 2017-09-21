@@ -132,7 +132,7 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		return true
 	}
 
-	for i := len(s.detalItemInfos) - 1; i > 0; i-- {
+	for i := len(s.detalItemInfos) - 1; i >= 0; i-- {
 		item := &s.detalItemInfos[i]
 		if !versionNewerThan(item.schemaVersion, currVer) {
 			break
@@ -176,14 +176,6 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 		return ResultUnknown
 	}
 	return ResultSucc
-}
-
-// Latest returns the latest schema version it knows.
-func (s *schemaValidator) Latest() int64 {
-	s.mux.RLock()
-	ret := s.latestSchemaVer
-	s.mux.RUnlock()
-	return ret
 }
 
 func extractPhysicalTime(ts uint64) time.Time {
