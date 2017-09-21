@@ -74,7 +74,7 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenByArgs(funcName)
+		return nil, errFunctionNotExists.GenByArgs("FUNCTION", funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
@@ -113,7 +113,7 @@ func (sf *ScalarFunction) Clone() Expression {
 	}
 	switch sf.FuncName.L {
 	case ast.Cast:
-		return buildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
+		return BuildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
 	case ast.Values:
 		var offset int
 		switch fieldTp2EvalTp(sf.GetType()) {
