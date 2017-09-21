@@ -32,10 +32,6 @@ func boolToInt64(v bool) int64 {
 	return 0
 }
 
-var (
-	errDefaultValue = errors.New("invalid default value")
-)
-
 // IsCurrentTimestampExpr returns whether e is CurrentTimestamp expression.
 func IsCurrentTimestampExpr(e ast.ExprNode) bool {
 	if fn, ok := e.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.CurrentTimestamp {
