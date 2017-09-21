@@ -229,68 +229,13 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 
 // DecodeRowWithMap decodes a byte slice into datums with a existing row map.
 // Row layout: colID1, value1, colID2, value2, .....
-func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) error {
-	if row == nil {
-		return nil
-	}
-	if b == nil {
-		return nil
-	}
-	if len(b) == 1 && b[0] == codec.NilFlag {
-		return nil
-	}
-	cnt := 0
-	var (
-		data []byte
-		err  error
-	)
-	for len(b) > 0 {
-		// Get col id.
-		data, b, err = codec.CutOne(b)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		_, cid, err := codec.DecodeOne(data)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// Get col value.
-		data, b, err = codec.CutOne(b)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		id := cid.GetInt64()
-		ft, ok := cols[id]
-		if ok {
-			_, v, err := codec.DecodeOne(data)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			v, err = unflatten(v, ft, loc)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			row[id] = v
-			cnt++
-			if cnt == len(cols) {
-				// Get enough data.
-				break
-			}
-		}
-	}
-	return nil
-}
-
-// DecodeRow decodes a byte slice into datums.
-// Row layout: colID1, value1, colID2, value2, .....
-func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
-	if b == nil {
+func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	if row == nil || b == nil {
 		return nil, nil
 	}
 	if len(b) == 1 && b[0] == codec.NilFlag {
 		return nil, nil
 	}
-	row := make(map[int64]types.Datum, len(cols))
 	cnt := 0
 	var (
 		data []byte
@@ -331,6 +276,13 @@ func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (m
 		}
 	}
 	return row, nil
+}
+
+// DecodeRow decodes a byte slice into datums.
+// Row layout: colID1, value1, colID2, value2, .....
+func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
+	row := make(map[int64]types.Datum, len(cols))
+	return DecodeRowWithMap(b, cols, loc, row)
 }
 
 // CutRowNew cuts encoded row into byte slices and return columns' byte slice.

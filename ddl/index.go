@@ -400,12 +400,12 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *
 	[]*indexRecord, *taskResult) {
 	startTime := time.Now()
 	w.idxRecords = w.idxRecords[:0]
-	ret := &taskResult{doneHandle: w.taskRange.startHandle}
+	ret := &taskResult{outOfRangeHandle: w.taskRange.endHandle}
 	isEnd := true
 	err := iterateSnapshotRows(w.ctx.GetStore(), t, txn.StartTS(), w.taskRange.startHandle,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			if h >= w.taskRange.endHandle {
-				ret.doneHandle = h - 1
+				ret.outOfRangeHandle = h
 				isEnd = false
 				return false, nil
 			}
@@ -415,7 +415,6 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *
 				return false, errors.Trace(err1)
 			}
 			w.idxRecords = append(w.idxRecords, indexRecord)
-			ret.doneHandle = h
 			return true, nil
 		})
 	if err != nil {
@@ -435,7 +434,7 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *
 func (w *worker) getIndexRecord(t table.Table, taskOpInfo *indexTaskOpInfo, rawRecord []byte, idxRecord *indexRecord) error {
 	cols := t.Cols()
 	idxInfo := taskOpInfo.tblIndex.Meta()
-	err := tablecodec.DecodeRowWithMap(rawRecord, taskOpInfo.colMap, time.UTC, w.rowMap)
+	_, err := tablecodec.DecodeRowWithMap(rawRecord, taskOpInfo.colMap, time.UTC, w.rowMap)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -474,10 +473,10 @@ const (
 
 // taskResult is the result of the task.
 type taskResult struct {
-	count      int   // The number of records that has been processed in the task.
-	doneHandle int64 // This is the last reorg handle that has been processed.
-	isAllDone  bool  // If all rows are all done.
-	err        error
+	count            int   // The number of records that has been processed in the task.
+	outOfRangeHandle int64 // This is the handle out of the range.
+	isAllDone        bool  // If all rows are all done.
+	err              error
 }
 
 // indexRecord is the record information of an index.
@@ -518,7 +517,7 @@ func (w *worker) setTaskNewRange(startHandle, endHandle int64) {
 	w.taskRange.endHandle = endHandle
 }
 
-// handleInfo records start and end handle that is used in a task.
+// handleInfo records the range of [start handle, end handle) that is used in a task.
 type handleInfo struct {
 	startHandle int64
 	endHandle   int64
@@ -557,8 +556,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 
 	taskBatch := int64(defaultTaskHandleCnt)
 	addedCount := job.GetRowCount()
-	// The previous done handle is used to be recorded in the reorg info.
-	prevDoneHandle, baseHandle := reorgInfo.Handle, reorgInfo.Handle
+	baseHandle := reorgInfo.Handle
 
 	workers := make([]*worker, workerCnt)
 	for i := 0; i < workerCnt; i++ {
@@ -577,7 +575,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		}
 		wg.Wait()
 
-		taskAddedCount, doneHandle, isEnd, err := getCountAndHandle(prevDoneHandle, workers)
+		taskAddedCount, nextHandle, isEnd, err := getCountAndHandle(workers)
 		addedCount += int64(taskAddedCount)
 		sub := time.Since(startTime).Seconds()
 		if err == nil {
@@ -586,7 +584,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		if err != nil {
 			// Update the reorg handle that has been processed.
 			err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-				return errors.Trace(reorgInfo.UpdateHandle(txn, doneHandle))
+				return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 			})
 			log.Warnf("[ddl] total added index for %d rows, this task add index for %d failed, take time %v, update handle err %v",
 				addedCount, taskAddedCount, sub, err1)
@@ -597,15 +595,15 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		log.Infof("[ddl] total added index for %d rows, this task added index for %d rows, take time %v",
 			addedCount, taskAddedCount, sub)
 
-		prevDoneHandle, baseHandle = doneHandle, doneHandle+1
 		if isEnd {
 			return nil
 		}
+		baseHandle = nextHandle
 	}
 }
 
-func getCountAndHandle(prevDoneHandle int64, workers []*worker) (int64, int64, bool, error) {
-	taskAddedCount, currDoneHandle := int64(0), prevDoneHandle
+func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
+	taskAddedCount, nextHandle := int64(0), workers[0].taskRange.startHandle
 	var err error
 	var isEnd bool
 	for _, worker := range workers {
@@ -615,10 +613,10 @@ func getCountAndHandle(prevDoneHandle int64, workers []*worker) (int64, int64, b
 			break
 		}
 		taskAddedCount += int64(ret.count)
-		currDoneHandle = ret.doneHandle
+		nextHandle = ret.outOfRangeHandle
 		isEnd = ret.isAllDone
 	}
-	return taskAddedCount, currDoneHandle, isEnd, errors.Trace(err)
+	return taskAddedCount, nextHandle, isEnd, errors.Trace(err)
 }
 
 func (w *worker) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, wg *sync.WaitGroup) {
