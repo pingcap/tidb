@@ -168,6 +168,11 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(errBodyMissing)
 		}
 
+		err = s.snapshot.store.CheckVisibility(s.startTS())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		kvPairs := cmdScanResp.Pairs
 		// Check if kvPair contains error, it should be a Lock.
 		for _, pair := range kvPairs {

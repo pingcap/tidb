@@ -439,6 +439,12 @@ func (it *copIterator) Next() ([]byte, error) {
 	if resp.Data == nil {
 		return []byte{}, nil
 	}
+
+	err := it.store.CheckVisibility(it.req.StartTs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return resp.Data, nil
 }
 
