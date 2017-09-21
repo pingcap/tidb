@@ -42,7 +42,8 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	mvccStore := mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
-	store, err := newTikvStore("mock-tikv-store", pdCli, client, false)
+	spkv := NewMockSafePointKV()
+	store, err := newTikvStore("mock-tikv-store", pdCli, spkv, client, false)
 	c.Assert(err, IsNil)
 	s.store = store
 	commitMaxBackoff = 2000
