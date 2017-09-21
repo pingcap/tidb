@@ -571,38 +571,38 @@ func (c *unaryMinusFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 
 	argExpr, argExprTp := args[0], args[0].GetType()
-	retTp, intOverflow := c.typeInfer(argExpr, ctx)
+	_, intOverflow := c.typeInfer(argExpr, ctx)
 
 	var bf baseBuiltinFunc
 	switch fieldTp2EvalTp(argExprTp) {
 	case tpInt:
 		if intOverflow {
-			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal)
 			sig = &builtinUnaryMinusDecimalSig{bf, true}
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 		} else {
-			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpInt)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
 			sig = &builtinUnaryMinusIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusInt)
 		}
 		bf.tp.Decimal = 0
 	case tpDecimal:
-		bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal)
 		bf.tp.Decimal = argExprTp.Decimal
 		sig = &builtinUnaryMinusDecimalSig{bf, false}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 	case tpReal:
-		bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
+		bf = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
 		sig = &builtinUnaryMinusRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 	default:
 		tp := argExpr.GetType().Tp
 		if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
-			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpDecimal)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal)
 			sig = &builtinUnaryMinusDecimalSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 		} else {
-			bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, tpReal)
+			bf = newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
 			sig = &builtinUnaryMinusRealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 		}

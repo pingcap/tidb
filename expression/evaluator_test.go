@@ -559,6 +559,8 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.arg)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 

@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 	"github.com/pingcap/tipb/go-tipb"
+	"runtime"
 )
 
 // evalTp indicates the specified types that arguments and result of a built-in function should be.
@@ -219,32 +221,104 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
+// eval should only be called in test files, and it should be removed after all tests being rewritten.
+func (b *baseBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
+	var (
+		res    interface{}
+		isNull bool
+	)
+	switch fieldTp2EvalTp(b.tp) {
+	case tpInt:
+		var intRes int64
+		intRes, isNull, err = b.self.evalInt(row)
+		if mysql.HasUnsignedFlag(b.tp.Flag) {
+			res = uint64(intRes)
+		} else {
+			res = intRes
+		}
+	case tpReal:
+		res, isNull, err = b.self.evalReal(row)
+	case tpDecimal:
+		res, isNull, err = b.self.evalDecimal(row)
+	case tpDatetime, tpTimestamp:
+		res, isNull, err = b.self.evalTime(row)
+	case tpDuration:
+		res, isNull, err = b.self.evalDuration(row)
+	case tpJSON:
+		res, isNull, err = b.self.evalJSON(row)
+	case tpString:
+		res, isNull, err = b.self.evalString(row)
+	}
+
+	if isNull || err != nil {
+		d.SetValue(nil)
+		return d, errors.Trace(err)
+	}
+	d.SetValue(res)
+	return
+}
+
 func (b *baseBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("baseBuiltinFunc.evalInt() should never be called.")
+	pc, _, _, ok := runtime.Caller(0)
+	if ok {
+		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
+	} else {
+		panic("runtime.Caller failed.")
+	}
 }
 
 func (b *baseBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("baseBuiltinFunc.evalReal() should never be called.")
+	pc, _, _, ok := runtime.Caller(0)
+	if ok {
+		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
+	} else {
+		panic("runtime.Caller failed.")
+	}
 }
 
 func (b *baseBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("baseBuiltinFunc.evalString() should never be called.")
+	pc, _, _, ok := runtime.Caller(0)
+	if ok {
+		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
+	} else {
+		panic("runtime.Caller failed.")
+	}
 }
 
 func (b *baseBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("baseBuiltinFunc.evalDecimal() should never be called.")
+	pc, _, _, ok := runtime.Caller(0)
+	if ok {
+		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
+	} else {
+		panic("runtime.Caller failed.")
+	}
 }
 
 func (b *baseBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	panic("baseBuiltinFunc.evalTime() should never be called.")
+	pc, _, _, ok := runtime.Caller(0)
+	if ok {
+		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
+	} else {
+		panic("runtime.Caller failed.")
+	}
 }
 
 func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("baseBuiltinFunc.evalDuration() should never be called.")
+	pc, _, _, ok := runtime.Caller(0)
+	if ok {
+		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
+	} else {
+		panic("runtime.Caller failed.")
+	}
 }
 
 func (b *baseBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	panic("baseBuiltinFunc.evalJSON() should never be called.")
+	pc, _, _, ok := runtime.Caller(0)
+	if ok {
+		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
+	} else {
+		panic("runtime.Caller failed.")
+	}
 }
 
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
@@ -284,6 +358,8 @@ func (b *baseBuiltinFunc) getCtx() context.Context {
 
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
+	// eval evaluates result of builtinFunc by given row.
+	eval(row []types.Datum) (d types.Datum, err error)
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(row []types.Datum) (val int64, isNull bool, err error)
 	// evalReal evaluates real representation of builtinFunc by given row.
