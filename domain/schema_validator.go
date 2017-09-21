@@ -191,9 +191,9 @@ func extractPhysicalTime(ts uint64) time.Time {
 	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
 
-func (q *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) {
-	q.detalItemInfos = append(q.detalItemInfos, deltaSchemaInfo{schemaVersion, relatedTableIDs})
-	if len(q.detalItemInfos) > maxNumberOfDiffsToLoad {
-		q.detalItemInfos = q.detalItemInfos[1:]
+func (s *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) {
+	s.detalItemInfos = append(s.detalItemInfos, deltaSchemaInfo{schemaVersion, relatedTableIDs})
+	if len(s.detalItemInfos) > maxNumberOfDiffsToLoad {
+		s.detalItemInfos = s.detalItemInfos[1:]
 	}
 }
