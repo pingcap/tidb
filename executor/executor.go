@@ -149,6 +149,23 @@ type Executor interface {
 	Schema() *expression.Schema
 }
 
+// CancelDDLJobsExec represents a cancel DDL jobs executor.
+type CancelDDLJobsExec struct {
+	baseExecutor
+
+	done    bool
+	JobsIDs []int64
+}
+
+// Next implements the Executor Next interface.
+func (e *CancelDDLJobsExec) Next() (Row, error) {
+	if e.done {
+		return nil, nil
+	}
+
+	return nil, nil
+}
+
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
 	baseExecutor

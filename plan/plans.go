@@ -46,6 +46,13 @@ type CheckTable struct {
 	Tables []*ast.TableName
 }
 
+// CancelDDLJobs represents a cancel DDL jobs plan.
+type CancelDDLJobs struct {
+	basePlan
+
+	JobIDs []int64
+}
+
 // SelectLock represents a select lock plan.
 type SelectLock struct {
 	*basePlan
