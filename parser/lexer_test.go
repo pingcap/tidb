@@ -147,7 +147,7 @@ func runTest(c *C, table []testCaseItem) {
 	for _, v := range table {
 		l := NewScanner(v.str)
 		tok := l.Lex(&val)
-		c.Check(tok, Equals, v.tok)
+		c.Check(tok, Equals, v.tok, Commentf(v.str))
 	}
 }
 
