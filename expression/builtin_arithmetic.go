@@ -158,13 +158,13 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx context.Context, args []Ex
 	if tcA == types.ClassReal || tcB == types.ClassReal {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
-		sig := &builtinArithmeticPlusRealSig{baseRealBuiltinFunc{bf}}
+		sig := &builtinArithmeticPlusRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusReal)
 		return sig.setSelf(sig), nil
 	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
-		sig := &builtinArithmeticPlusDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig := &builtinArithmeticPlusDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusDecimal)
 		return sig.setSelf(sig), nil
 	} else {
@@ -173,14 +173,14 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx context.Context, args []Ex
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
-		sig := &builtinArithmeticPlusIntSig{baseIntBuiltinFunc{bf}}
+		sig := &builtinArithmeticPlusIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
 		return sig.setSelf(sig), nil
 	}
 }
 
 type builtinArithmeticPlusIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinArithmeticPlusIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -228,7 +228,7 @@ func (s *builtinArithmeticPlusIntSig) evalInt(row []types.Datum) (val int64, isN
 }
 
 type builtinArithmeticPlusDecimalSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinArithmeticPlusDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
@@ -250,7 +250,7 @@ func (s *builtinArithmeticPlusDecimalSig) evalDecimal(row []types.Datum) (*types
 }
 
 type builtinArithmeticPlusRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinArithmeticPlusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
@@ -282,13 +282,13 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx context.Context, args []E
 	if tcA == types.ClassReal || tcB == types.ClassReal {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
-		sig := &builtinArithmeticMinusRealSig{baseRealBuiltinFunc{bf}}
+		sig := &builtinArithmeticMinusRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusReal)
 		return sig.setSelf(sig), nil
 	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
-		sig := &builtinArithmeticMinusDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig := &builtinArithmeticMinusDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig.setSelf(sig), nil
 	} else {
@@ -297,14 +297,14 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx context.Context, args []E
 		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-		sig := &builtinArithmeticMinusIntSig{baseIntBuiltinFunc: baseIntBuiltinFunc{bf}}
+		sig := &builtinArithmeticMinusIntSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
 		return sig.setSelf(sig), nil
 	}
 }
 
 type builtinArithmeticMinusRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinArithmeticMinusRealSig) evalReal(row []types.Datum) (float64, bool, error) {
@@ -324,7 +324,7 @@ func (s *builtinArithmeticMinusRealSig) evalReal(row []types.Datum) (float64, bo
 }
 
 type builtinArithmeticMinusDecimalSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinArithmeticMinusDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
@@ -346,7 +346,7 @@ func (s *builtinArithmeticMinusDecimalSig) evalDecimal(row []types.Datum) (*type
 }
 
 type builtinArithmeticMinusIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinArithmeticMinusIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -403,13 +403,13 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx context.Context, args 
 	if tcA == types.ClassReal || tcB == types.ClassReal {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true)
-		sig := &builtinArithmeticMultiplyRealSig{baseRealBuiltinFunc{bf}}
+		sig := &builtinArithmeticMultiplyRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyReal)
 		return sig.setSelf(sig), nil
 	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false)
-		sig := &builtinArithmeticMultiplyDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig := &builtinArithmeticMultiplyDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyDecimal)
 		return sig.setSelf(sig), nil
 	} else {
@@ -417,21 +417,21 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx context.Context, args 
 		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 			setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
-			sig := &builtinArithmeticMultiplyIntUnsignedSig{baseIntBuiltinFunc{bf}}
+			sig := &builtinArithmeticMultiplyIntUnsignedSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
 			return sig.setSelf(sig), nil
 		}
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
-		sig := &builtinArithmeticMultiplyIntSig{baseIntBuiltinFunc{bf}}
+		sig := &builtinArithmeticMultiplyIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
 		return sig.setSelf(sig), nil
 	}
 }
 
-type builtinArithmeticMultiplyRealSig struct{ baseRealBuiltinFunc }
-type builtinArithmeticMultiplyDecimalSig struct{ baseDecimalBuiltinFunc }
-type builtinArithmeticMultiplyIntUnsignedSig struct{ baseIntBuiltinFunc }
-type builtinArithmeticMultiplyIntSig struct{ baseIntBuiltinFunc }
+type builtinArithmeticMultiplyRealSig struct{ baseBuiltinFunc }
+type builtinArithmeticMultiplyDecimalSig struct{ baseBuiltinFunc }
+type builtinArithmeticMultiplyIntUnsignedSig struct{ baseBuiltinFunc }
+type builtinArithmeticMultiplyIntSig struct{ baseBuiltinFunc }
 
 func (s *builtinArithmeticMultiplyRealSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
@@ -517,17 +517,17 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx context.Context, args []
 	if tcA == types.ClassReal || tcB == types.ClassReal {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
 		c.setType4DivReal(bf.tp)
-		sig := &builtinArithmeticDivideRealSig{baseRealBuiltinFunc{bf}}
+		sig := &builtinArithmeticDivideRealSig{bf}
 		return sig.setSelf(sig), nil
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
 	c.setType4DivDecimal(bf.tp, tpA, tpB)
-	sig := &builtinArithmeticDivideDecimalSig{baseDecimalBuiltinFunc{bf}}
+	sig := &builtinArithmeticDivideDecimalSig{bf}
 	return sig.setSelf(sig), nil
 }
 
-type builtinArithmeticDivideRealSig struct{ baseRealBuiltinFunc }
-type builtinArithmeticDivideDecimalSig struct{ baseDecimalBuiltinFunc }
+type builtinArithmeticDivideRealSig struct{ baseBuiltinFunc }
+type builtinArithmeticDivideDecimalSig struct{ baseBuiltinFunc }
 
 func (s *builtinArithmeticDivideRealSig) evalReal(row []types.Datum) (float64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
@@ -585,19 +585,19 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx context.Context, args
 		if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-		sig := &builtinArithmeticIntDivideIntSig{baseIntBuiltinFunc{bf}}
+		sig := &builtinArithmeticIntDivideIntSig{bf}
 		return sig.setSelf(sig), nil
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpDecimal, tpDecimal)
 	if mysql.HasUnsignedFlag(tpA.Flag) || mysql.HasUnsignedFlag(tpB.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
-	sig := &builtinArithmeticIntDivideDecimalSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinArithmeticIntDivideDecimalSig{bf}
 	return sig.setSelf(sig), nil
 }
 
-type builtinArithmeticIntDivideIntSig struct{ baseIntBuiltinFunc }
-type builtinArithmeticIntDivideDecimalSig struct{ baseIntBuiltinFunc }
+type builtinArithmeticIntDivideIntSig struct{ baseBuiltinFunc }
+type builtinArithmeticIntDivideDecimalSig struct{ baseBuiltinFunc }
 
 func (s *builtinArithmeticIntDivideIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
@@ -705,7 +705,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx context.Context, args []Exp
 		if mysql.HasUnsignedFlag(tpA.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-		sig := &builtinArithmeticModRealSig{baseRealBuiltinFunc{bf}}
+		sig := &builtinArithmeticModRealSig{bf}
 		return sig.setSelf(sig), nil
 	} else if tcA == types.ClassDecimal || tcB == types.ClassDecimal {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpDecimal, tpDecimal, tpDecimal)
@@ -713,20 +713,20 @@ func (c *arithmeticModFunctionClass) getFunction(ctx context.Context, args []Exp
 		if mysql.HasUnsignedFlag(tpA.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-		sig := &builtinArithmeticModDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig := &builtinArithmeticModDecimalSig{bf}
 		return sig.setSelf(sig), nil
 	} else {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 		if mysql.HasUnsignedFlag(tpA.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-		sig := &builtinArithmeticModIntSig{baseIntBuiltinFunc{bf}}
+		sig := &builtinArithmeticModIntSig{bf}
 		return sig.setSelf(sig), nil
 	}
 }
 
 type builtinArithmeticModRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinArithmeticModRealSig) evalReal(row []types.Datum) (float64, bool, error) {
@@ -749,7 +749,7 @@ func (s *builtinArithmeticModRealSig) evalReal(row []types.Datum) (float64, bool
 }
 
 type builtinArithmeticModDecimalSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinArithmeticModDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
@@ -771,7 +771,7 @@ func (s *builtinArithmeticModDecimalSig) evalDecimal(row []types.Datum) (*types.
 }
 
 type builtinArithmeticModIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinArithmeticModIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {

@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,7 +69,6 @@ type testSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 1)
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -97,7 +95,6 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 }
 
 func (s *testSuite) SetUpTest(c *C) {
@@ -1075,12 +1072,6 @@ func (s *testSuite) TestUnsignedPKColumn(c *C) {
 }
 
 func (s *testSuite) TestJSON(c *C) {
-	// This will be opened after implementing cast as json.
-	origin := atomic.LoadInt32(&expression.TurnOnNewExprEval)
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
-	defer func() {
-		atomic.StoreInt32(&expression.TurnOnNewExprEval, origin)
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
