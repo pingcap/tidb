@@ -23,12 +23,11 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/inspectkv"
@@ -52,6 +51,10 @@ import (
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 	TestingT(t)
 }
 
@@ -90,8 +93,6 @@ func (s *testSuite) SetUpSuite(c *C) {
 	}
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	logLevel := os.Getenv("log_level")
-	log.SetLevelByString(logLevel)
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
@@ -99,7 +100,11 @@ func (s *testSuite) TearDownSuite(c *C) {
 	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 }
 
-func (s *testSuite) cleanEnv(c *C) {
+func (s *testSuite) SetUpTest(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testSuite) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
@@ -107,13 +112,10 @@ func (s *testSuite) cleanEnv(c *C) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TestAdmin(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -137,6 +139,23 @@ func (s *testSuite) TestAdmin(c *C) {
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
+
+	// show ddl jobs test
+	r, err = tk.Exec("admin show ddl jobs")
+	c.Assert(err, IsNil)
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, HasLen, 2)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	historyJobs, err := inspectkv.GetHistoryDDLJobs(txn)
+	c.Assert(len(historyJobs), Greater, 1)
+	c.Assert(len(row.Data[0].GetString()), Greater, 0)
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[1].GetString(), Equals, historyJobs[0].State.String())
+	c.Assert(err, IsNil)
 
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
@@ -204,7 +223,6 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 }
 
 func (s *testSuite) TestSelectWithoutFrom(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -217,10 +235,6 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 
 // Issue 3685.
 func (s *testSuite) TestSelectBackslashN(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	sql := `select \N;`
@@ -320,10 +334,6 @@ func (s *testSuite) TestSelectBackslashN(c *C) {
 
 // Issue #4053.
 func (s *testSuite) TestSelectNull(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	sql := `select nUll;`
@@ -359,10 +369,6 @@ func (s *testSuite) TestSelectNull(c *C) {
 
 // Issue #3686.
 func (s *testSuite) TestSelectStringLiteral(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	sql := `select 'abc';`
@@ -537,10 +543,6 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 
 func (s *testSuite) TestSelectLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk.MustExec("use test")
 	s.fillData(tk, "select_limit")
 
@@ -569,10 +571,6 @@ func (s *testSuite) TestSelectLimit(c *C) {
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "select_order_test")
@@ -647,13 +645,26 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustExec("insert into t values(1, 1), (2, 2)")
 	tk.MustQuery("select * from t where 1 order by b").Check(testkit.Rows("1 1", "2 2"))
 	tk.MustQuery("select * from t where a between 1 and 2 order by a desc").Check(testkit.Rows("2 2", "1 1"))
+
+	// Test double read and topN is pushed down to first read plan.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int, index idx(b))")
+	tk.MustExec("insert into t values(1, 3, 1)")
+	tk.MustExec("insert into t values(2, 2, 2)")
+	tk.MustExec("insert into t values(3, 1, 3)")
+	tk.MustQuery("select * from t use index(idx) order by a desc limit 1").Check(testkit.Rows("3 1 3"))
+
+	// Test double read which needs to keep order.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key b (b))")
+	tk.Se.GetSessionVars().IndexLookupSize = 3
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, 10-i))
+	}
+	tk.MustQuery("select a from t use index(b) order by b").Check(testkit.Rows("9", "8", "7", "6", "5", "4", "3", "2", "1", "0"))
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -684,10 +695,6 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 
 // TestIssue2612 is related with https://github.com/pingcap/tidb/issues/2612
 func (s *testSuite) TestIssue2612(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t`)
@@ -705,10 +712,6 @@ func (s *testSuite) TestIssue2612(c *C) {
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
 func (s *testSuite) TestIssue345(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1, t2`)
@@ -740,10 +743,6 @@ func (s *testSuite) TestIssue345(c *C) {
 }
 
 func (s *testSuite) TestUnion(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -867,10 +866,6 @@ func (s *testSuite) TestUnion(c *C) {
 }
 
 func (s *testSuite) TestIn(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t`)
@@ -887,10 +882,6 @@ func (s *testSuite) TestIn(c *C) {
 }
 
 func (s *testSuite) TestTablePKisHandleScan(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -953,10 +944,6 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 }
 
 func (s *testSuite) TestIndexScan(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1029,10 +1016,6 @@ func (s *testSuite) TestIndexScan(c *C) {
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1051,10 +1034,6 @@ func (s *testSuite) TestIndexReverseOrder(c *C) {
 }
 
 func (s *testSuite) TestTableReverseOrder(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1067,10 +1046,6 @@ func (s *testSuite) TestTableReverseOrder(c *C) {
 }
 
 func (s *testSuite) TestDefaultNull(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1087,10 +1062,6 @@ func (s *testSuite) TestDefaultNull(c *C) {
 }
 
 func (s *testSuite) TestUnsignedPKColumn(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1109,8 +1080,6 @@ func (s *testSuite) TestJSON(c *C) {
 	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 	defer func() {
 		atomic.StoreInt32(&expression.TurnOnNewExprEval, origin)
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1142,6 +1111,12 @@ func (s *testSuite) TestJSON(c *C) {
 	result.Check(testkit.Rows("true"))
 	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
 	result.Check(testkit.Rows(`"string"`))
+
+	// Check cast(true/false as JSON).
+	result = tk.MustQuery(`select cast(true as JSON)`)
+	result.Check(testkit.Rows(`true`))
+	result = tk.MustQuery(`select cast(false as JSON)`)
+	result.Check(testkit.Rows(`false`))
 
 	// Check two json grammar sugar.
 	result = tk.MustQuery(`select a->>'$.a[2].aa' as x, a->'$.b' as y from test_json having x is not null order by id`)
@@ -1180,10 +1155,6 @@ func (s *testSuite) TestJSON(c *C) {
 }
 
 func (s *testSuite) TestMultiUpdate(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_mu (a int primary key, b int, c int)`)
@@ -1213,10 +1184,6 @@ func (s *testSuite) TestMultiUpdate(c *C) {
 }
 
 func (s *testSuite) TestGeneratedColumnWrite(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key, b int, c int as (a+8) virtual)`)
@@ -1263,11 +1230,134 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 	}
 }
 
+// TestGeneratedColumnRead tests select generated columns from table.
+// They should be calculated from their generation expressions.
+func (s *testSuite) TestGeneratedColumnRead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_gc_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored)`)
+
+	// Insert only column a and b, leave c and d be calculated from them.
+	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (0,null),(1,2),(3,4)`)
+	result := tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`))
+
+	tk.MustExec(`INSERT INTO test_gc_read SET a = 5, b = 10`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 10 15 50`))
+
+	tk.MustExec(`REPLACE INTO test_gc_read (a, b) VALUES (5, 6)`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 6 11 30`))
+
+	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE b = 9`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 9 14 45`))
+
+	// Test select only-generated-column-without-dependences.
+	result = tk.MustQuery(`SELECT c, d FROM test_gc_read`)
+	result.Check(testkit.Rows(`<nil> <nil>`, `3 2`, `7 12`, `14 45`))
+
+	// Test order of on duplicate key update list.
+	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE a = 6, b = a`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `6 6 12 36`))
+
+	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (6, 8) ON DUPLICATE KEY UPDATE b = 8, a = b`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+
+	// Test where-conditions on virtual/stored generated columns.
+	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE c = 7`)
+	result.Check(testkit.Rows(`3 4 7 12`))
+
+	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE d = 64`)
+	result.Check(testkit.Rows(`8 8 16 64`))
+
+	// Test update where-conditions on virtual/generated columns.
+	tk.MustExec(`UPDATE test_gc_read SET a = a + 100 WHERE c = 7`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE c = 107`)
+	result.Check(testkit.Rows(`103 4 107 412`))
+
+	// Test update where-conditions on virtual/generated columns.
+	tk.MustExec(`UPDATE test_gc_read m SET m.a = m.a + 100 WHERE c = 107`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE c = 207`)
+	result.Check(testkit.Rows(`203 4 207 812`))
+
+	tk.MustExec(`UPDATE test_gc_read SET a = a - 200 WHERE d = 812`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE d = 12`)
+	result.Check(testkit.Rows(`3 4 7 12`))
+
+	// Test on-conditions on virtual/stored generated columns.
+	tk.MustExec(`CREATE TABLE test_gc_help(a int primary key, b int, c int, d int)`)
+	tk.MustExec(`INSERT INTO test_gc_help(a, b, c, d) SELECT * FROM test_gc_read`)
+
+	result = tk.MustQuery(`SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.c = t2.c ORDER BY t1.a`)
+	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+
+	result = tk.MustQuery(`SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.d = t2.d ORDER BY t1.a`)
+	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+
+	// Test generated column in subqueries.
+	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.a not in (SELECT t.a FROM test_gc_read t where t.c > 5)`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`))
+
+	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.c in (SELECT t.c FROM test_gc_read t where t.c > 5)`)
+	result.Check(testkit.Rows(`3 4 7 12`, `8 8 16 64`))
+
+	result = tk.MustQuery(`SELECT tt.b FROM test_gc_read tt WHERE tt.a = (SELECT max(t.a) FROM test_gc_read t WHERE t.c = tt.c) ORDER BY b`)
+	result.Check(testkit.Rows(`2`, `4`, `8`))
+
+	// Test aggregation on virtual/stored generated columns.
+	result = tk.MustQuery(`SELECT c, sum(a) aa, max(d) dd FROM test_gc_read GROUP BY c ORDER BY aa`)
+	result.Check(testkit.Rows(`<nil> 0 <nil>`, `3 1 2`, `7 3 12`, `16 8 64`))
+
+	result = tk.MustQuery(`SELECT a, sum(c), sum(d) FROM test_gc_read GROUP BY a ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil>`, `1 3 2`, `3 7 12`, `8 16 64`))
+
+	// Test multi-update on generated columns.
+	tk.MustExec(`UPDATE test_gc_read m, test_gc_read n SET m.a = m.a + 10, n.a = n.a + 10`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`10 <nil> <nil> <nil>`, `11 2 13 22`, `13 4 17 52`, `18 8 26 144`))
+
+	// Test different types between generation expression and generated column.
+	tk.MustExec(`CREATE TABLE test_gc_read_cast(a VARCHAR(255), b VARCHAR(255), c INT AS (JSON_EXTRACT(a, b)), d INT AS (JSON_EXTRACT(a, b)) STORED)`)
+	tk.MustExec(`INSERT INTO test_gc_read_cast (a, b) VALUES ('{"a": "3"}', '$.a')`)
+	result = tk.MustQuery(`SELECT c, d FROM test_gc_read_cast`)
+	result.Check(testkit.Rows(`3 3`))
+
+	tk.MustExec(`CREATE TABLE test_gc_read_cast_1(a VARCHAR(255), b VARCHAR(255), c ENUM("red", "yellow") AS (JSON_UNQUOTE(JSON_EXTRACT(a, b))))`)
+	tk.MustExec(`INSERT INTO test_gc_read_cast_1 (a, b) VALUES ('{"a": "yellow"}', '$.a')`)
+	result = tk.MustQuery(`SELECT c FROM test_gc_read_cast_1`)
+	result.Check(testkit.Rows(`yellow`))
+
+	_, err := tk.Exec(`INSERT INTO test_gc_read_cast_1 (a, b) VALUES ('{"a": "invalid"}', '$.a')`)
+	c.Assert(err, NotNil)
+
+	// Test not null generated columns.
+	tk.MustExec(`CREATE TABLE test_gc_read_1(a int primary key, b int, c int as (a+b) not null, d int as (a*b) stored)`)
+	tk.MustExec(`CREATE TABLE test_gc_read_2(a int primary key, b int, c int as (a+b), d int as (a*b) stored not null)`)
+	tests := []struct {
+		stmt string
+		err  int
+	}{
+		// Can't insert these records, because generated columns are not null.
+		{`insert into test_gc_read_1(a, b) values (1, null)`, mysql.ErrBadNull},
+		{`insert into test_gc_read_2(a, b) values (1, null)`, mysql.ErrBadNull},
+	}
+	for _, tt := range tests {
+		_, err := tk.Exec(tt.stmt)
+		if tt.err != 0 {
+			c.Assert(err, NotNil)
+			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+		} else {
+			c.Assert(err, IsNil)
+		}
+	}
+}
+
 func (s *testSuite) TestToPBExpr(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1316,10 +1406,6 @@ func (s *testSuite) TestToPBExpr(c *C) {
 }
 
 func (s *testSuite) TestDatumXAPI(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1345,10 +1431,6 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 }
 
 func (s *testSuite) TestSQLMode(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1389,7 +1471,6 @@ func (s *testSuite) TestSQLMode(c *C) {
 }
 
 func (s *testSuite) TestTableDual(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	result := tk.MustQuery("Select 1")
@@ -1403,7 +1484,6 @@ func (s *testSuite) TestTableDual(c *C) {
 }
 
 func (s *testSuite) TestTableScan(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use information_schema")
 	result := tk.MustQuery("select * from schemata")
@@ -1421,7 +1501,6 @@ func (s *testSuite) TestTableScan(c *C) {
 }
 
 func (s *testSuite) TestAdapterStatement(c *C) {
-	defer testleak.AfterTest(c)()
 	se, err := tidb.CreateSession(s.store)
 	c.Check(err, IsNil)
 	se.GetSessionVars().TxnCtx.InfoSchema = sessionctx.GetDomain(se).InfoSchema()
@@ -1441,9 +1520,6 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 }
 
 func (s *testSuite) TestPointGet(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(context.Context)
@@ -1462,18 +1538,14 @@ func (s *testSuite) TestPointGet(c *C) {
 		// Validate should be after NameResolve.
 		err = plan.Validate(stmtNode, false)
 		c.Check(err, IsNil)
-		plan, err := plan.Optimize(ctx, stmtNode, infoSchema)
+		p, err := plan.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
-		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, plan)
+		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(ret, Equals, result)
 	}
 }
 
 func (s *testSuite) TestRow(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1506,13 +1578,23 @@ func (s *testSuite) TestRow(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select (2, 3, 4) != (2, 3, 4)")
 	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select row(1, 1) in (row(1, 1))")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select row(1, 0) in (row(1, 1))")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select row(1, 1) in (select 1, 1)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select row(1, 1) > row(1, 0)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select row(1, 1) > (select 1, 0)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select 1 > (select 1)")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select (select 1)")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestColumnName(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1542,10 +1624,6 @@ func (s *testSuite) TestColumnName(c *C) {
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1557,10 +1635,6 @@ func (s *testSuite) TestSelectVar(c *C) {
 }
 
 func (s *testSuite) TestHistoryRead(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists history_read")
@@ -1620,10 +1694,6 @@ func (s *testSuite) TestHistoryRead(c *C) {
 }
 
 func (s *testSuite) TestScanControlSelection(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1633,10 +1703,6 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 }
 
 func (s *testSuite) TestSimpleDAG(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1677,10 +1743,6 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 }
 
 func (s *testSuite) TestTimestampTimeZone(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1739,10 +1801,6 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 }
 
 func (s *testSuite) TestTiDBCurrentTS(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 	tk.MustExec("begin")
@@ -1757,10 +1815,6 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 }
 
 func (s *testSuite) TestSelectForUpdate(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(c, s.store)
@@ -1835,10 +1889,6 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 
 func (s *testSuite) TestEmptyEnum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (e enum('Y', 'N'))")
@@ -1859,11 +1909,6 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 
 // This tests https://github.com/pingcap/tidb/issues/4024
 func (s *testSuite) TestIssue4024(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database test2")
 	tk.MustExec("use test2")
@@ -1878,66 +1923,6 @@ func (s *testSuite) TestIssue4024(c *C) {
 	tk.MustExec("update test.t, test2.t set test.t.a=3")
 	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
 	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
-}
-
-func (s *testSuite) TestSchemaCheckerSQL(c *C) {
-	defer testleak.AfterTest(c)()
-	store, err := tikv.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	tidb.SetStatsLease(0)
-	lease := 20 * time.Millisecond
-	tidb.SetSchemaLease(lease)
-	dom, err := tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer dom.Close()
-	defer store.Close()
-
-	tk := testkit.NewTestKit(c, store)
-	tk.MustExec(`use test`)
-	se1, err := tidb.CreateSession(store)
-	c.Assert(err, IsNil)
-	defer se1.Close()
-	_, err = se1.Execute(`use test`)
-	c.Assert(err, IsNil)
-
-	// create table
-	tk.MustExec(`create table t (id int, c int);`)
-	tk.MustExec(`create table t1 (id int, c int);`)
-	// insert data
-	tk.MustExec(`insert into t values(1, 1);`)
-
-	// The schema version is out of date in the first transaction, but the SQL can be retried.
-	tk.MustExec(`begin;`)
-	_, err = se1.Execute(`alter table t add index idx(c);`)
-	c.Assert(err, IsNil)
-	time.Sleep(lease + 2*time.Millisecond)
-	tk.MustExec(`insert into t1 values(2, 2);`)
-	tk.MustExec(`commit;`)
-
-	// The schema version is out of date in the first transaction, and the SQL can't be retried.
-	tidb.SchemaChangedWithoutRetry = true
-	tk.MustExec(`begin;`)
-	_, err = se1.Execute(`alter table t modify column c bigint;`)
-	c.Assert(err, IsNil)
-	tk.MustExec(`insert into t values(3, 3);`)
-	_, err = tk.Exec(`commit;`)
-	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
-	// But the transaction related table IDs aren't in the updated table IDs.
-	tk.MustExec(`begin;`)
-	_, err = se1.Execute(`alter table t add index idx2(c);`)
-	c.Assert(err, IsNil)
-	time.Sleep(lease + 2*time.Millisecond)
-	tk.MustExec(`insert into t1 values(4, 4);`)
-	tk.MustExec(`commit;`)
-
-	// Test for "select for update".
-	tk.MustExec(`begin;`)
-	_, err = se1.Execute(`alter table t add index idx3(c);`)
-	c.Assert(err, IsNil)
-	time.Sleep(lease + 2*time.Millisecond)
-	tk.MustQuery(`select * from t for update`)
-	_, err = tk.Exec(`commit;`)
-	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
 }
 
 type checkRequestClient struct {
@@ -2019,4 +2004,92 @@ func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
+}
+
+func (s *testSuite) TestBit(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(2))")
+	tk.MustExec("insert into t values (0), (1), (2), (3)")
+	_, err := tk.Exec("insert into t values (4)")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("insert into t values ('a')")
+	c.Assert(err, NotNil)
+	r, err := tk.Exec("select * from t where c1 = 2")
+	c.Assert(err, IsNil)
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[0].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(31))")
+	tk.MustExec("insert into t values (0x7fffffff)")
+	_, err = tk.Exec("insert into t values (0x80000000)")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("insert into t values (0xffffffff)")
+	c.Assert(err, NotNil)
+	tk.MustExec("insert into t values ('123')")
+	tk.MustExec("insert into t values ('1234')")
+	_, err = tk.Exec("insert into t values ('12345)")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(62))")
+	tk.MustExec("insert into t values ('12345678')")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(61))")
+	_, err = tk.Exec("insert into t values ('12345678')")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(32))")
+	tk.MustExec("insert into t values (0x7fffffff)")
+	tk.MustExec("insert into t values (0xffffffff)")
+	_, err = tk.Exec("insert into t values (0x1ffffffff)")
+	c.Assert(err, NotNil)
+	tk.MustExec("insert into t values ('1234')")
+	_, err = tk.Exec("insert into t values ('12345')")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(64))")
+	tk.MustExec("insert into t values (0xffffffffffffffff)")
+	tk.MustExec("insert into t values ('12345678')")
+	_, err = tk.Exec("insert into t values ('123456789')")
+	c.Assert(err, NotNil)
+}
+
+func (s *testSuite) TestEnum(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c enum('a', 'b', 'c'))")
+	tk.MustExec("insert into t values ('a'), (2), ('c')")
+	tk.MustQuery("select * from t where c = 'a'").Check(testkit.Rows("a"))
+
+	tk.MustQuery("select c + 1 from t where c = 2").Check(testkit.Rows("3"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (null), ('1')")
+	tk.MustQuery("select c + 1 from t where c = 1").Check(testkit.Rows("2"))
+}
+
+func (s *testSuite) TestSet(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c set('a', 'b', 'c'))")
+	tk.MustExec("insert into t values ('a'), (2), ('c'), ('a,b'), ('b,a')")
+	tk.MustQuery("select * from t where c = 'a'").Check(testkit.Rows("a"))
+
+	tk.MustQuery("select * from t where c = 'a,b'").Check(testkit.Rows("a,b", "a,b"))
+
+	tk.MustQuery("select c + 1 from t where c = 2").Check(testkit.Rows("3"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (null), ('1')")
+	tk.MustQuery("select c + 1 from t where c = 1").Check(testkit.Rows("2"))
 }

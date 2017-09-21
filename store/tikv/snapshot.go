@@ -18,8 +18,8 @@ import (
 	"time"
 	"unsafe"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -31,7 +31,7 @@ var (
 )
 
 const (
-	scanBatchSize = 100
+	scanBatchSize = 256
 	batchGetSize  = 5120
 )
 
@@ -78,6 +78,12 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	err = s.store.CheckVisibility(s.version.Ver)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return m, nil
 }
 

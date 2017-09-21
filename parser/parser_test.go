@@ -169,10 +169,28 @@ func (s *testParserSuite) TestSimple(c *C) {
 	c.Assert(cs.Cols[0].Options, HasLen, 1)
 	c.Assert(cs.Cols[0].Options[0].Tp, Equals, ast.ColumnOptionPrimaryKey)
 
+	// for issue #4497
+	src = "create table t1(a NVARCHAR(100));"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
 	// for issue 2803
 	src = "use quote;"
 	_, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
+
+	// issue #4354
+	src = "select b'';"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	src = "select B'';"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	// src = "select 0b'';"
+	// _, err = parser.ParseOneStmt(src, "", "")
+	// c.Assert(err, NotNil)
 }
 
 type testCase struct {
@@ -204,7 +222,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"INSERT INTO foo VALUES (1 || 2)", true},
 		{"INSERT INTO foo VALUES (1 | 2)", true},
 		{"INSERT INTO foo VALUES (false || true)", true},
-		{"INSERT INTO foo VALUES (bar(5678))", false},
+		{"INSERT INTO foo VALUES (bar(5678))", true},
 		// 20
 		{"INSERT INTO foo VALUES ()", true},
 		{"SELECT * FROM t", true},
@@ -237,7 +255,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"REPLACE INTO foo VALUES (1 || 2)", true},
 		{"REPLACE INTO foo VALUES (1 | 2)", true},
 		{"REPLACE INTO foo VALUES (false || true)", true},
-		{"REPLACE INTO foo VALUES (bar(5678))", false},
+		{"REPLACE INTO foo VALUES (bar(5678))", true},
 		{"REPLACE INTO foo VALUES ()", true},
 		{"REPLACE INTO foo (a,b) VALUES (42,314)", true},
 		{"REPLACE INTO foo (a,b,) VALUES (42,314)", false},
@@ -324,6 +342,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for admin
 		{"admin show ddl;", true},
+		{"admin show ddl jobs;", true},
 		{"admin check table t1, t2;", true},
 
 		// for on duplicate key update
@@ -528,6 +547,15 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{"select n'string'", true},
 		// for comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
+		// for date literal
+		{"select date'1989-09-10'", true},
+		{"select date 19890910", false},
+		// for time literal
+		{"select time '00:00:00.111'", true},
+		{"select time 19890910", false},
+		// for timestamp literal
+		{"select timestamp '1989-09-10 11:11:11'", true},
+		{"select timestamp 19890910", false},
 	}
 	s.RunTest(c, table)
 }
@@ -684,6 +712,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select current_timestamp", true},
 		{"select current_timestamp()", true},
 		{"select current_timestamp(6)", true},
+		{"select current_timestamp(null)", false},
+		{"select current_timestamp(-1)", false},
+		{"select current_timestamp(1.0)", false},
+		{"select current_timestamp('2')", false},
 		{"select now()", true},
 		{"select now(6)", true},
 		{"select sysdate(), sysdate(6)", true},
@@ -697,13 +729,34 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select current_time", true},
 		{"select current_time()", true},
 		{"select current_time(6)", true},
+		{"select current_time(-1)", false},
+		{"select current_time(1.0)", false},
+		{"select current_time('1')", false},
+		{"select current_time(null)", false},
 		{"select curtime()", true},
 		{"select curtime(6)", true},
+		{"select curtime(-1)", false},
+		{"select curtime(1.0)", false},
+		{"select curtime('1')", false},
+		{"select curtime(null)", false},
 
 		// select utc_timestamp
 		{"select utc_timestamp", true},
 		{"select utc_timestamp()", true},
 		{"select utc_timestamp(6)", true},
+		{"select utc_timestamp(-1)", false},
+		{"select utc_timestamp(1.0)", false},
+		{"select utc_timestamp('1')", false},
+		{"select utc_timestamp(null)", false},
+
+		// select utc_time
+		{"select utc_time", true},
+		{"select utc_time()", true},
+		{"select utc_time(6)", true},
+		{"select utc_time(-1)", false},
+		{"select utc_time(1.0)", false},
+		{"select utc_time('1')", false},
+		{"select utc_time(null)", false},
 
 		// for microsecond, second, minute, hour
 		{"SELECT MICROSECOND('2009-12-31 23:59:59.000010');", true},
@@ -791,6 +844,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for TO_DAYS, TO_SECONDS
 		{"SELECT TO_DAYS('2007-10-07')", true},
 		{"SELECT TO_SECONDS('2009-11-29')", true},
+
+		// for LAST_DAY
+		{"SELECT LAST_DAY('2003-02-05');", true},
 
 		// for UTC_TIME
 		{"SELECT UTC_TIME(), UTC_TIME(1)", true},
@@ -1093,6 +1149,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT '{}'->>'$.a' FROM t`, false},
 		{`SELECT a->3 FROM t`, false},
 		{`SELECT a->>3 FROM t`, false},
+
+		// Test that quoted identifier can be a function name.
+		{"SELECT `uuid`()", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1208,6 +1267,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) PARTITION BY HASH (c) PARTITIONS 32;", true},
 		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
 		{"create table t (c int, `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '') PARTITION BY RANGE (UNIX_TIMESTAMP(create_time)) (PARTITION p201610 VALUES LESS THAN(1477929600), PARTITION p201611 VALUES LESS THAN(1480521600),PARTITION p201612 VALUES LESS THAN(1483200000),PARTITION p201701 VALUES LESS THAN(1485878400),PARTITION p201702 VALUES LESS THAN(1488297600),PARTITION p201703 VALUES LESS THAN(1490976000))", true},
+		{"CREATE TABLE `md_product_shop` (`shopCode` varchar(4) DEFAULT NULL COMMENT '地点') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 /*!50100 PARTITION BY KEY (shopCode) PARTITIONS 19 */;", true},
 
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
@@ -1338,7 +1398,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (a timestamp default now() on update now)", false},
 		{"create table t (a timestamp default now() on update now())", true},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
-		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(21) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
+		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
@@ -1399,6 +1459,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD UNIQUE ()", false},
 		{"ALTER TABLE t ADD UNIQUE INDEX ()", false},
 		{"ALTER TABLE t ADD UNIQUE KEY ()", false},
+
+		// for issue 4538
+		{"create table a (process double)", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1717,6 +1780,7 @@ func (s *testParserSuite) TestExplain(c *C) {
 		{"explain replace into foo values (1 || 2)", true},
 		{"explain update t set id = id + 1 order by id desc;", true},
 		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true},
+		{`explain format = "row" select c1 from t1 union (select c2 from t2) limit 1, 1`, true},
 	}
 	s.RunTest(c, table)
 }

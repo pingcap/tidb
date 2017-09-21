@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types/json"
 )
 
@@ -75,6 +76,7 @@ func AggFieldType(tps []*FieldType) *FieldType {
 		mtp := MergeFieldType(currType.Tp, t.Tp)
 		currType.Tp = mtp
 	}
+
 	return &currType
 }
 
@@ -91,7 +93,8 @@ func AggTypeClass(tps []*FieldType, flag *uint) TypeClass {
 			continue
 		}
 		argTypeClass := argFieldType.ToClass()
-		if argTypeClass == ClassString && mysql.HasBinaryFlag(argFieldType.Flag) {
+		if (IsTypeBlob(argFieldType.Tp) || IsTypeVarchar(argFieldType.Tp) || IsTypeChar(argFieldType.Tp)) &&
+			mysql.HasBinaryFlag(argFieldType.Flag) {
 			gotBinString = true
 		}
 		if !gotFirst {
@@ -130,8 +133,7 @@ func setTypeFlag(flag *uint, flagItem uint, on bool) {
 // ToClass maps the field type to a type class.
 func (ft *FieldType) ToClass() TypeClass {
 	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeBit, mysql.TypeYear:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeBit:
 		return ClassInt
 	case mysql.TypeNewDecimal:
 		return ClassDecimal
@@ -185,31 +187,52 @@ func (ft *FieldType) Init(tp byte) {
 func (ft *FieldType) CompactStr() string {
 	ts := TypeToStr(ft.Tp, ft.Charset)
 	suffix := ""
+
+	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.Tp)
+	isFlenNotDefault := ft.Flen != defaultFlen && ft.Flen != 0 && ft.Flen != UnspecifiedLength
+	isDecimalNotDefault := ft.Decimal != defaultDecimal && ft.Decimal != 0 && ft.Decimal != UnspecifiedLength
+
+	// displayFlen and displayDecimal are flen and decimal values with `-1` substituted with default value.
+	displayFlen, displayDecimal := ft.Flen, ft.Decimal
+	if displayFlen == 0 || displayFlen == UnspecifiedLength {
+		displayFlen = defaultFlen
+	}
+	if displayDecimal == 0 || displayDecimal == UnspecifiedLength {
+		displayDecimal = defaultDecimal
+	}
+
 	switch ft.Tp {
 	case mysql.TypeEnum, mysql.TypeSet:
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
 		es := make([]string, 0, len(ft.Elems))
 		for _, e := range ft.Elems {
-			e = strings.Replace(e, "'", "''", -1)
+			e = format.OutputFormat(e)
 			es = append(es, e)
 		}
 		suffix = fmt.Sprintf("('%s')", strings.Join(es, "','"))
-	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeDuration:
-		if ft.Decimal != UnspecifiedLength && ft.Decimal != 0 {
-			suffix = fmt.Sprintf("(%d)", ft.Decimal)
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
+		if isDecimalNotDefault {
+			suffix = fmt.Sprintf("(%d)", displayDecimal)
 		}
-	default:
-		if ft.Flen != UnspecifiedLength {
-			if ft.Decimal == UnspecifiedLength {
-				if ft.Tp != mysql.TypeFloat && ft.Tp != mysql.TypeDouble {
-					suffix = fmt.Sprintf("(%d)", ft.Flen)
-				}
-			} else {
-				suffix = fmt.Sprintf("(%d,%d)", ft.Flen, ft.Decimal)
+	case mysql.TypeDouble, mysql.TypeFloat:
+		// 1. Flen Not Default, Decimal Not Default -> Valid
+		// 2. Flen Not Default, Decimal Default (-1) -> Invalid
+		// 3. Flen Default, Decimal Not Default -> Valid
+		// 4. Flen Default, Decimal Default -> Valid (hide)
+		if isDecimalNotDefault {
+			suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
+		}
+	case mysql.TypeNewDecimal:
+		if isFlenNotDefault || isDecimalNotDefault {
+			suffix = fmt.Sprintf("(%d", displayFlen)
+			if isDecimalNotDefault {
+				suffix += fmt.Sprintf(",%d", displayDecimal)
 			}
-		} else if ft.Decimal != UnspecifiedLength {
-			suffix = fmt.Sprintf("(%d)", ft.Decimal)
+			suffix += ")"
 		}
+	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+		// Flen is always shown.
+		suffix = fmt.Sprintf("(%d)", displayFlen)
 	}
 	return ts + suffix
 }
@@ -224,8 +247,8 @@ func (ft *FieldType) InfoSchemaStr() string {
 	return ft.CompactStr() + suffix
 }
 
-// String joins the information of FieldType and
-// returns a string.
+// String joins the information of FieldType and returns a string.
+// Note: when flen or decimal is unspecified, this function will use the default value instead of -1.
 func (ft *FieldType) String() string {
 	strs := []string{ft.CompactStr()}
 	if mysql.HasUnsignedFlag(ft.Flag) {
@@ -234,7 +257,7 @@ func (ft *FieldType) String() string {
 	if mysql.HasZerofillFlag(ft.Flag) {
 		strs = append(strs, "ZEROFILL")
 	}
-	if mysql.HasBinaryFlag(ft.Flag) {
+	if mysql.HasBinaryFlag(ft.Flag) && ft.Tp != mysql.TypeString {
 		strs = append(strs, "BINARY")
 	}
 
@@ -262,6 +285,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeLonglong
 		tp.Flen = 1
 		tp.Decimal = 0
+		tp.Flag |= mysql.IsBooleanFlag
 		SetBinChsClnFlag(tp)
 	case int:
 		tp.Tp = mysql.TypeLonglong
@@ -290,23 +314,31 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeDouble
 		s := strconv.FormatFloat(x, 'f', -1, 64)
 		tp.Flen = len(s)
-		tp.Decimal = len(s) - 1 - strings.Index(s, ".")
+		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
 	case []byte:
 		tp.Tp = mysql.TypeBlob
 		tp.Flen = len(x)
 		tp.Decimal = UnspecifiedLength
 		SetBinChsClnFlag(tp)
-	case Bit:
-		tp.Tp = mysql.TypeVarchar
-		tp.Flen = len(x.String())
-		tp.Decimal = UnspecifiedLength
+	case BitLiteral:
+		tp.Tp = mysql.TypeVarString
+		tp.Flen = len(x)
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
-	case Hex:
-		tp.Tp = mysql.TypeVarchar
-		tp.Flen = len(x.String())
-		tp.Decimal = UnspecifiedLength
+	case HexLiteral:
+		tp.Tp = mysql.TypeVarString
+		tp.Flen = len(x)
+		tp.Decimal = 0
+		tp.Flag |= mysql.UnsignedFlag
 		SetBinChsClnFlag(tp)
+	case BinaryLiteral:
+		tp.Tp = mysql.TypeBit
+		tp.Flen = len(x) * 8
+		tp.Decimal = 0
+		SetBinChsClnFlag(tp)
+		tp.Flag &= ^mysql.BinaryFlag
+		tp.Flag |= mysql.UnsignedFlag
 	case Time:
 		tp.Tp = x.Type
 		switch x.Type {
@@ -316,7 +348,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			tp.Flen = mysql.MaxDatetimeWidthNoFsp
 			if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
-				tp.Flen = x.Fsp + 1
+				tp.Flen += x.Fsp + 1
 			}
 			tp.Decimal = x.Fsp
 		}
@@ -346,6 +378,10 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case json.JSON:
 		tp.Tp = mysql.TypeJSON
+		tp.Flen = UnspecifiedLength
+		tp.Decimal = 0
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CollationBin
 	default:
 		tp.Tp = mysql.TypeUnspecified
 		tp.Flen = UnspecifiedLength

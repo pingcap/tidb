@@ -15,11 +15,13 @@ package mocktikv
 
 import (
 	"bytes"
+	"encoding/binary"
 	"sort"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -81,10 +83,11 @@ func (e *tableScanExec) Next() (handle int64, value [][]byte, err error) {
 
 func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error) {
 	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
 	if len(val) == 0 {
 		return 0, nil, nil
-	} else if err != nil {
-		return 0, nil, errors.Trace(err)
 	}
 	handle, err := tablecodec.DecodeRowKey(kv.Key(ran.StartKey))
 	if err != nil {
@@ -314,7 +317,7 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 
 type aggregateExec struct {
 	evalCtx           *evalContext
-	aggExprs          []expression.AggregationFunction
+	aggExprs          []aggregation.Aggregation
 	groupByExprs      []expression.Expression
 	relatedColOffsets []int
 	row               []types.Datum
@@ -593,39 +596,6 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 	return values, nil
 }
 
-func isDuplicated(offsets []int, offset int) bool {
-	for _, idx := range offsets {
-		if idx == offset {
-			return true
-		}
-	}
-	return false
-}
-
-func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector []int) ([]int, error) {
-	if expr == nil {
-		return nil, nil
-	}
-	if expr.GetTp() == tipb.ExprType_ColumnRef {
-		_, idx, err := codec.DecodeInt(expr.Val)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !isDuplicated(collector, int(idx)) {
-			collector = append(collector, int(idx))
-		}
-		return collector, nil
-	}
-	var err error
-	for _, child := range expr.Children {
-		collector, err = extractOffsetsInExpr(child, columns, collector)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return collector, nil
-}
-
 func convertToExprs(sc *variable.StatementContext, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
 	exprs := make([]expression.Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
@@ -636,4 +606,11 @@ func convertToExprs(sc *variable.StatementContext, fieldTps []*types.FieldType, 
 		exprs = append(exprs, e)
 	}
 	return exprs, nil
+}
+
+func decodeHandle(data []byte) (int64, error) {
+	var h int64
+	buf := bytes.NewBuffer(data)
+	err := binary.Read(buf, binary.BigEndian, &h)
+	return h, errors.Trace(err)
 }

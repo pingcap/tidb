@@ -13,35 +13,140 @@
 
 package config
 
-import "sync"
+import (
+	"github.com/BurntSushi/toml"
+	"github.com/juju/errors"
+	"github.com/pingcap/pd/pkg/logutil"
+)
 
 // Config contains configuration options.
 type Config struct {
-	Addr           string `json:"addr" toml:"addr"`
-	LogLevel       string `json:"log_level" toml:"log_level"`
-	SkipAuth       bool   `json:"skip_auth" toml:"skip_auth"`
-	StatusAddr     string `json:"status_addr" toml:"status_addr"`
-	Socket         string `json:"socket" toml:"socket"`
-	ReportStatus   bool   `json:"report_status" toml:"report_status"`
-	StorePath      string `json:"store_path" toml:"store_path"`
-	Store          string `json:"store" toml:"store"`
-	SlowThreshold  int    `json:"slow_threshold" toml:"slow_threshold"`
-	QueryLogMaxlen int    `json:"query_log_max_len" toml:"query_log_max_len"`
-	TCPKeepAlive   bool   `json:"tcp_keep_alive" toml:"tcp_keep_alive"`
+	Host         string `toml:"host" json:"host"`
+	Port         int    `toml:"port" json:"port"`
+	Store        string `toml:"store" json:"store"`
+	Path         string `toml:"path" json:"path"`
+	Socket       string `toml:"socket" json:"socket"`
+	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	Lease        string `toml:"lease" json:"lease"`
+	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
+
+	Log         Log         `toml:"log" json:"log"`
+	Security    Security    `toml:"security" json:"security"`
+	Status      Status      `toml:"status" json:"status"`
+	Performance Performance `toml:"performance" json:"performance"`
+	XProtocol   XProtocol   `toml:"xprotocol" json:"xprotocol"`
 }
 
-var cfg *Config
-var once sync.Once
+// Log is the log section of config.
+type Log struct {
+	// Log level.
+	Level string `toml:"level" json:"level"`
+	// Log format. one of json, text, or console.
+	Format string `toml:"format" json:"format"`
+	// Disable automatic timestamps in output.
+	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
+	// File log config.
+	File logutil.FileLogConfig `toml:"file" json:"file"`
+
+	SlowThreshold int `toml:"slow-threshold" json:"slow-threshold"`
+
+	QueryLogMaxLen int `toml:"query-log-max-len" json:"query-log-max-len"`
+}
+
+// Security is the security section of the config.
+type Security struct {
+	SkipGrantTable bool   `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA          string `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert        string `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey         string `toml:"ssl-key" json:"ssl-key"`
+}
+
+// Status is the status section of the config.
+type Status struct {
+	ReportStatus    bool   `toml:"report-status" json:"report-status"`
+	StatusPort      int    `toml:"status-port" json:"status-port"`
+	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
+	MetricsInterval int    `toml:"metrics-interval" json:"metrics-interval"`
+}
+
+// Performance is the performance section of the config.
+type Performance struct {
+	TCPKeepAlive    bool   `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	RetryLimit      int    `toml:"retry-limit" json:"retry-limit"`
+	JoinConcurrency int    `toml:"join-concurrency" json:"join-concurrency"`
+	CrossJoin       bool   `toml:"cross-join" json:"cross-join"`
+	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
+}
+
+// XProtocol is the XProtocol section of the config.
+type XProtocol struct {
+	XServer bool   `toml:"xserver" json:"xserver"`
+	XHost   string `toml:"xhost" json:"xhost"`
+	XPort   int    `toml:"xport" json:"xport"`
+	XSocket string `toml:"xsocket" json:"xsocket"`
+}
+
+var defaultConf = Config{
+	Host:   "0.0.0.0",
+	Port:   4000,
+	Store:  "mocktikv",
+	Path:   "/tmp/tidb",
+	RunDDL: true,
+	Lease:  "10s",
+	Log: Log{
+		Level:  "info",
+		Format: "text",
+		File: logutil.FileLogConfig{
+			LogRotate: true,
+		},
+		SlowThreshold:  300,
+		QueryLogMaxLen: 2048,
+	},
+	Status: Status{
+		ReportStatus:    true,
+		StatusPort:      10080,
+		MetricsInterval: 15,
+	},
+	Performance: Performance{
+		TCPKeepAlive:    true,
+		RetryLimit:      10,
+		JoinConcurrency: 5,
+		CrossJoin:       true,
+		StatsLease:      "3s",
+	},
+	XProtocol: XProtocol{
+		XHost: "0.0.0.0",
+		XPort: 14000,
+	},
+}
+
+var globalConf = defaultConf
+
+// NewConfig creates a new config instance with default value.
+func NewConfig() *Config {
+	conf := defaultConf
+	return &conf
+}
 
 // GetGlobalConfig returns the global configuration for this server.
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	once.Do(func() {
-		cfg = &Config{
-			SlowThreshold:  300,
-			QueryLogMaxlen: 2048,
-		}
-	})
-	return cfg
+	return &globalConf
+}
+
+// Load loads config options from a toml file.
+func (c *Config) Load(confFile string) error {
+	_, err := toml.DecodeFile(confFile, c)
+	return errors.Trace(err)
+}
+
+// ToLogConfig converts *Log to *logutil.LogConfig.
+func (l *Log) ToLogConfig() *logutil.LogConfig {
+	return &logutil.LogConfig{
+		Level:            l.Level,
+		Format:           l.Format,
+		DisableTimestamp: l.DisableTimestamp,
+		File:             l.File,
+	}
 }

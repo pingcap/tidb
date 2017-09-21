@@ -19,9 +19,9 @@ import (
 	"time"
 	"unsafe"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -52,6 +51,7 @@ type Domain struct {
 	sysSessionPool  *pools.ResourcePool
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
+	wg              sync.WaitGroup
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -237,11 +237,6 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 	return snapHandle.Get(), nil
 }
 
-// PerfSchema gets performance schema from domain.
-func (do *Domain) PerfSchema() perfschema.PerfSchema {
-	return do.infoHandle.GetPerfHandle()
-}
-
 // DDL gets DDL from domain.
 func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
@@ -354,6 +349,7 @@ func (do *Domain) Close() {
 		do.etcdClient.Close()
 	}
 	do.sysSessionPool.Close()
+	do.wg.Wait()
 }
 
 type ddlCallback struct {
@@ -427,10 +423,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		}
 	}
 
-	d.infoHandle, err = infoschema.NewHandle(d.store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	d.infoHandle = infoschema.NewHandle(d.store)
 	ctx := goctx.Background()
 	callback := &ddlCallback{do: d}
 
@@ -548,8 +541,8 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	if lease <= 0 {
 		return nil
 	}
+	do.wg.Add(1)
 	go do.updateStatsWorker(ctx, lease)
-	go do.autoAnalyzeWorker(lease)
 	return nil
 }
 
@@ -568,6 +561,7 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 				log.Error("[stats] update stats info fail: ", errors.ErrorStack(err))
 			}
 		case <-do.exit:
+			do.wg.Done()
 			return
 			// This channel is sent only by ddl owner or the drop stats executor.
 		case t := <-statsHandle.DDLEventCh():

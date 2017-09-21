@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"sync"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -57,7 +57,13 @@ func NewLockResolver(etcdAddrs []string) (*LockResolver, error) {
 		return nil, errors.Trace(err)
 	}
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(goctx.TODO()))
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), false)
+
+	spkv, err := NewEtcdSafePointKV(etcdAddrs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(), false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

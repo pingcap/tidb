@@ -18,6 +18,7 @@
 package tidb
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -26,8 +27,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
@@ -71,6 +72,8 @@ type Session interface {
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
+	SetTLSState(*tls.ConnectionState)
+	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
@@ -93,11 +96,13 @@ type stmtRecord struct {
 	params  []interface{}
 }
 
-type stmtHistory struct {
+// StmtHistory holds all histories of statements in a txn.
+type StmtHistory struct {
 	history []*stmtRecord
 }
 
-func (h *stmtHistory) add(stmtID uint32, st ast.Statement, stmtCtx *variable.StatementContext, params ...interface{}) {
+// Add appends a stmt to history list.
+func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *variable.StatementContext, params ...interface{}) {
 	s := &stmtRecord{
 		stmtID:  stmtID,
 		st:      st,
@@ -126,9 +131,7 @@ type session struct {
 	// unlimitedRetryCount is used for test only.
 	unlimitedRetryCount bool
 
-	// For performance_schema only.
-	stmtState *perfschema.StatementState
-	parser    *parser.Parser
+	parser *parser.Parser
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -181,6 +184,29 @@ func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
 }
 
+func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
+	// If user is not connected via TLS, then tlsState == nil.
+	if tlsState != nil {
+		s.sessionVars.TLSConnectionState = tlsState
+	}
+}
+
+func (s *session) GetTLSState() *tls.ConnectionState {
+	return s.sessionVars.TLSConnectionState
+}
+
+func (s *session) SetCollation(coID int) error {
+	cs, co, err := charset.GetCharsetInfoByID(coID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, v := range variable.SetNamesVariables {
+		s.sessionVars.Systems[v] = cs
+	}
+	s.sessionVars.Systems[variable.CollationConnection] = co
+	return nil
+}
+
 func (s *session) SetSessionManager(sm util.SessionManager) {
 	s.sessionManager = sm
 }
@@ -202,35 +228,20 @@ const (
 
 func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
-		err := s.checkOnce(txnTS)
-		switch err {
-		case nil:
+		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
+		switch result {
+		case domain.ResultSucc:
 			return nil
-		case domain.ErrInfoSchemaChanged:
+		case domain.ResultFail:
 			schemaLeaseErrorCounter.WithLabelValues("changed").Inc()
-			return errors.Trace(err)
-		default:
+			return domain.ErrInfoSchemaChanged
+		case domain.ResultUnknown:
 			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 			time.Sleep(schemaOutOfDateRetryInterval)
 		}
+
 	}
 	return domain.ErrInfoSchemaExpired
-}
-
-func (s *schemaLeaseChecker) checkOnce(txnTS uint64) error {
-	succ := s.SchemaValidator.Check(txnTS, s.schemaVer)
-	if !succ {
-		isChanged, err := s.SchemaValidator.IsRelatedTablesChanged(txnTS, s.schemaVer, s.relatedTableIDs)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isChanged {
-			return domain.ErrInfoSchemaChanged
-		}
-		log.Infof("schema checker txnTS %d ver %d doesn't change related tables %v",
-			txnTS, s.schemaVer, s.relatedTableIDs)
-	}
-	return nil
 }
 
 func (s *session) doCommit() error {
@@ -379,7 +390,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
-	nh := getHistory(s)
+	nh := GetHistory(s)
 	var err error
 	for {
 		s.PrepareTxnCtx()
@@ -590,6 +601,12 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(name string, value string) error {
+	if name == variable.SQLModeVar {
+		value = mysql.FormatSQLModeStr(value)
+		if _, err := mysql.GetSQLMode(value); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), value)
 	_, _, err := s.ExecRestrictedSQL(s, sql)
@@ -631,8 +648,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
 	var rs []ast.RecordSet
-	ph := sessionctx.GetDomain(s).PerfSchema()
-	for i, rst := range rawStmts {
+	for _, rst := range rawStmts {
 		s.PrepareTxnCtx()
 		startTS := time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
@@ -645,12 +661,10 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		}
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
-		s.stmtState = ph.StartStatement(sql, connID, perfschema.CallerNameSessionExecute, rawStmts[i])
 		s.SetValue(context.QueryString, st.OriginText())
 
 		startTS = time.Now()
 		r, err := runStmt(s, st)
-		ph.EndStatement(s.stmtState)
 		if err != nil {
 			if !kv.ErrKeyExists.Equal(err) {
 				log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
@@ -753,41 +767,6 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	}
 	vars.RetryInfo.DroppedPreparedStmtIDs = append(vars.RetryInfo.DroppedPreparedStmtIDs, stmtID)
 	return nil
-}
-
-// GetTxn gets the current transaction or creates a new transaction.
-// If forceNew is true, GetTxn() must return a new transaction.
-// In this situation, if current transaction is still in progress,
-// there will be an implicit commit and create a new transaction.
-func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
-	if s.txn != nil && !forceNew {
-		return s.txn, nil
-	}
-
-	var err error
-	var force string
-	if s.txn == nil {
-		err = s.loadCommonGlobalVariablesIfNeeded()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else if forceNew {
-		err = s.CommitTxn()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		force = "force"
-	}
-	s.txn, err = s.store.Begin()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	ac := s.sessionVars.IsAutocommit()
-	if !ac {
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-	}
-	log.Infof("[%d] %s new txn:%s", s.sessionVars.ConnectionID, force, s.txn)
-	return s.txn, nil
 }
 
 func (s *session) Txn() kv.Transaction {
@@ -986,8 +965,8 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	finishBootstrap(store)
 	s.ClearValue(context.Initing)
 
-	domain := sessionctx.GetDomain(s)
-	domain.Close()
+	dom := sessionctx.GetDomain(s)
+	dom.Close()
 	domap.Delete(store)
 }
 
@@ -1230,30 +1209,16 @@ func (s *session) ShowProcess() util.ProcessInfo {
 	return pi
 }
 
-// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD etc.
+// logCrucialStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc.
 func logCrucialStmt(node ast.StmtNode) {
 	switch stmt := node.(type) {
-	case *ast.CreateUserStmt:
-		for _, user := range stmt.Specs {
-			log.Infof("[CRUCIAL OPERATION] create user %s.", user.SecurityString())
+	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
+		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
+		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
+		if ss, ok := node.(ast.SensitiveStmtNode); ok {
+			log.Infof("[CRUCIAL OPERATION] %s.", ss.SecureText())
+		} else {
+			log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
 		}
-	case *ast.DropUserStmt:
-		log.Infof("[CRUCIAL OPERATION] drop user %v.", stmt.UserList)
-	case *ast.AlterUserStmt:
-		for _, user := range stmt.Specs {
-			log.Infof("[CRUCIAL OPERATION] alter user %s.", user.SecurityString())
-		}
-	case *ast.SetPwdStmt:
-		log.Infof("[CRUCIAL OPERATION] set password for user %s.", stmt.User)
-	case *ast.GrantStmt:
-		text := stmt.Text()
-		// Filter "identified by xxx" because it would expose password information.
-		idx := strings.Index(strings.ToLower(text), "identified")
-		if idx > 0 {
-			text = text[:idx]
-		}
-		log.Infof("[CRUCIAL OPERATION] %s.", text)
-	case *ast.RevokeStmt:
-		log.Infof("[CRUCIAL OPERATION] %s.", stmt.Text())
 	}
 }

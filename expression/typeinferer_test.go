@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -39,9 +40,10 @@ type testTypeInferrerSuite struct {
 
 func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 	c.Skip("we re-implement this test in plan/typeinfer_test.go")
-	store, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
+	defer dom.Close()
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	sql := `create table t (
@@ -66,7 +68,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		expr string
 		tp   byte
 		chs  string
-		flag int
+		flag uint
 	}{
 		{"c_int", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag},
 		{"+1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -370,9 +372,10 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 
 func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
+	defer dom.Close()
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists tab0")
@@ -387,9 +390,10 @@ func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 
 func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
+	defer dom.Close()
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -410,8 +414,8 @@ func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
 		{"c_enum", mysql.TypeEnum, true},
 		{"c_set", mysql.TypeSet, true},
 		{"c_bit", mysql.TypeBit, true},
-		{"0b1001", mysql.TypeVarchar, true},
-		{"0xFFFF", mysql.TypeVarchar, true},
+		{"0b1001", mysql.TypeVarString, true},
+		{"0xFFFF", mysql.TypeVarString, true},
 		{"c_dt", mysql.TypeDatetime, false},
 		{"c_date", mysql.TypeDate, false},
 		{"c_time", mysql.TypeDuration, false},
@@ -436,12 +440,12 @@ func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
 	}
 }
 
-func newStoreWithBootstrap() (kv.Storage, error) {
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tikv.NewMockTikvStore()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	tidb.SetSchemaLease(0)
-	_, err = tidb.BootstrapSession(store)
-	return store, errors.Trace(err)
+	dom, err := tidb.BootstrapSession(store)
+	return store, dom, errors.Trace(err)
 }

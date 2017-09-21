@@ -42,7 +42,7 @@ func (s *testTableSuite) TestString(c *C) {
 	col.Collate = mysql.DefaultCollationName
 	col.Flag |= mysql.ZerofillFlag | mysql.UnsignedFlag | mysql.BinaryFlag | mysql.AutoIncrementFlag | mysql.NotNullFlag
 
-	c.Assert(col.GetTypeDesc(), Equals, "tinyint(2,1) UNSIGNED")
+	c.Assert(col.GetTypeDesc(), Equals, "tinyint(2) UNSIGNED")
 	col.ToInfo()
 	tbInfo := &model.TableInfo{}
 	c.Assert(col.IsPKHandleColumn(tbInfo), Equals, false)
@@ -183,7 +183,7 @@ func (s *testTableSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeBit),
-			types.NewDatum(types.Bit{Value: 0, Width: types.MinBitWidth}),
+			types.NewMysqlBitDatum(types.ZeroBinaryLiteral),
 		},
 		{
 			types.NewFieldType(mysql.TypeSet),

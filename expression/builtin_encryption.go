@@ -77,14 +77,11 @@ type aesDecryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *aesDecryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *aesDecryptFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
 	bf.tp.Flen = args[0].GetType().Flen // At most.
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinAesDecryptSig{baseStringBuiltinFunc{bf}}
@@ -122,14 +119,11 @@ type aesEncryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *aesEncryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *aesEncryptFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
 	bf.tp.Flen = aes128ecbBlobkSize * (args[0].GetType().Flen/aes128ecbBlobkSize + 1) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinAesEncryptSig{baseStringBuiltinFunc{bf}}
@@ -167,62 +161,59 @@ type decodeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *decodeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("DECODE")
+func (c *decodeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DECODE")
 }
 
 type desDecryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *desDecryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("DES_DECRYPT")
+func (c *desDecryptFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DES_DECRYPT")
 }
 
 type desEncryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *desEncryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("DES_ENCRYPT")
+func (c *desEncryptFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DES_ENCRYPT")
 }
 
 type encodeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *encodeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("ENCODE")
+func (c *encodeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "ENCODE")
 }
 
 type encryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *encryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("ENCRYPT")
+func (c *encryptFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "ENCRYPT")
 }
 
 type oldPasswordFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *oldPasswordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("OLD_PASSWORD")
+func (c *oldPasswordFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "OLD_PASSWORD")
 }
 
 type passwordFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *passwordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *passwordFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	bf.tp.Flen = mysql.PWDHashLen + 1
 	sig := &builtinPasswordSig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -252,14 +243,11 @@ type randomBytesFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *randomBytesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *randomBytesFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
 	bf.tp.Flen = 1024 // Max allowed random bytes
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinRandomBytesSig{baseStringBuiltinFunc{bf}}
@@ -293,14 +281,11 @@ type md5FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *md5FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *md5FunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	bf.tp.Flen = 32
 	sig := &builtinMD5Sig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -326,14 +311,11 @@ type sha1FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sha1FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *sha1FunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	bf.tp.Flen = 40
 	sig := &builtinSHA1Sig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -360,14 +342,11 @@ type sha2FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sha2FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *sha2FunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
 	bf.tp.Flen = 128 // sha512
 	sig := &builtinSHA2Sig{baseStringBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -448,14 +427,11 @@ type compressFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *compressFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *compressFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	srcLen := args[0].GetType().Flen
 	compressBound := srcLen + (srcLen >> 12) + (srcLen >> 14) + (srcLen >> 25) + 13
 	if compressBound > mysql.MaxBlobWidth {
@@ -512,14 +488,11 @@ type uncompressFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uncompressFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *uncompressFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	bf.tp.Flen = mysql.MaxBlobWidth
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinUncompressSig{baseStringBuiltinFunc{bf}}
@@ -558,14 +531,11 @@ type uncompressedLengthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uncompressedLengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+func (c *uncompressedLengthFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	bf.tp.Flen = 10
 	sig := &builtinUncompressedLengthSig{baseIntBuiltinFunc{bf}}
 	return sig.setSelf(sig), nil
@@ -599,6 +569,6 @@ type validatePasswordStrengthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *validatePasswordStrengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("VALIDATE_PASSWORD_STRENGTH")
+func (c *validatePasswordStrengthFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "VALIDATE_PASSWORD_STRENGTH")
 }

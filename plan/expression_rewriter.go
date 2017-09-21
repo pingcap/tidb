@@ -20,10 +20,12 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
@@ -117,9 +119,6 @@ func getRowLen(e expression.Expression) int {
 	if f, ok := e.(*expression.ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
 		return len(f.GetArgs())
 	}
-	if c, ok := e.(*expression.Constant); ok && c.Value.Kind() == types.KindRow {
-		return len(c.Value.GetRow())
-	}
 	return 1
 }
 
@@ -127,9 +126,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 	if f, ok := e.(*expression.ScalarFunction); ok {
 		return f.GetArgs()[idx]
 	}
-	c, _ := e.(*expression.Constant)
-	d := c.Value.GetRow()[idx]
-	return &expression.Constant{Value: d, RetType: c.GetType()}
+	return nil
 }
 
 // popRowArg pops the first element and return the rest of row.
@@ -142,12 +139,6 @@ func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Exp
 		}
 		ret, err = expression.NewFunction(ctx, f.FuncName.L, f.GetType(), args[1:]...)
 		return ret, errors.Trace(err)
-	}
-	c, _ := e.(*expression.Constant)
-	if getRowLen(c) == 2 {
-		ret = &expression.Constant{Value: c.Value.GetRow()[1], RetType: c.GetType()}
-	} else {
-		ret = &expression.Constant{Value: types.NewDatum(c.Value.GetRow()[1:]), RetType: c.GetType()}
 	}
 	return
 }
@@ -361,9 +352,9 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	if useMin {
 		funcName = ast.AggFuncMin
 	}
-	aggFunc := expression.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
+	aggFunc := aggregation.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
 	agg := LogicalAggregation{
-		AggFuncs: []expression.AggregationFunction{aggFunc},
+		AggFuncs: []aggregation.Aggregation{aggFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	aggCol0 := &expression.Column{
@@ -381,8 +372,8 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 // buildQuantifierPlan adds extra condition for any / all subquery.
 func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond, rexpr expression.Expression, all bool) {
 	isNullFunc, _ := expression.NewFunction(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
-	sumFunc := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{isNullFunc}, false)
-	countFuncNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
+	sumFunc := aggregation.NewAggFunction(ast.AggFuncSum, []expression.Expression{isNullFunc}, false)
+	countFuncNull := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
 	agg.AggFuncs = append(agg.AggFuncs, sumFunc, countFuncNull)
 	posID := agg.schema.Len()
 	aggColSum := &expression.Column{
@@ -443,10 +434,10 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond,
 // t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
+	firstRowFunc := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	countFunc := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := LogicalAggregation{
-		AggFuncs: []expression.AggregationFunction{firstRowFunc, countFunc},
+		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	firstRowResultCol := &expression.Column{
@@ -471,10 +462,10 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
 // t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
-	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
+	firstRowFunc := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	countFunc := aggregation.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := LogicalAggregation{
-		AggFuncs: []expression.AggregationFunction{firstRowFunc, countFunc},
+		AggFuncs: []aggregation.Aggregation{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	firstRowResultCol := &expression.Column{
@@ -681,9 +672,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
 	case *ast.ValueExpr:
-		tp := &types.FieldType{}
-		types.DefaultTypeForValue(v.GetValue(), tp)
-		value := &expression.Constant{Value: v.Datum, RetType: tp}
+		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
@@ -776,7 +765,10 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = errors.Trace(err)
 		return
 	}
-	er.ctxStack = append(er.ctxStack, datumToConstant(types.NewStringDatum(val), mysql.TypeString))
+	e := datumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
+	e.RetType.Charset = er.ctx.GetSessionVars().Systems[variable.CharacterSetConnection]
+	e.RetType.Collate = er.ctx.GetSessionVars().Systems[variable.CollationConnection]
+	er.ctxStack = append(er.ctxStack, e)
 	return
 }
 
@@ -883,7 +875,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 
 // inToExpression converts in expression to a scalar function. The argument lLen means the length of in list.
 // The argument not means if the expression is not in. The tp stands for the expression type, which is always bool.
-// a in (b, c, d) will be rewritted as `(a = b) or (a = c) or (a = d)`.
+// a in (b, c, d) will be rewritten as `(a = b) or (a = c) or (a = d)`.
 func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	l := getRowLen(er.ctxStack[stkLen-lLen-1])
@@ -1081,8 +1073,15 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			er.err = err
 			return true
 		}
-		// if(param1 = param2, null, param1)
-		funcIf, err := expression.NewFunction(er.ctx, ast.If, &v.Type, funcCompare, expression.Null, param1)
+		// NULL
+		nullTp := types.NewFieldType(mysql.TypeNull)
+		nullTp.Flen, nullTp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
+		paramNull := &expression.Constant{
+			Value:   types.NewDatum(nil),
+			RetType: nullTp,
+		}
+		// if(param1 = param2, NULL, param1)
+		funcIf, err := expression.NewFunction(er.ctx, ast.If, &v.Type, funcCompare, paramNull, param1)
 		if err != nil {
 			er.err = err
 			return true

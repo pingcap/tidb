@@ -54,7 +54,9 @@ type Plan interface {
 	// Get the schema.
 	Schema() *expression.Schema
 	// Get the ID.
-	ID() string
+	ID() int
+	// Get the ID in explain statement
+	ExplainID() string
 	// Get id allocator
 	Allocator() *idAllocator
 	// SetParents sets the parents for the plan.
@@ -107,7 +109,7 @@ func (t taskType) String() string {
 	return "UnknownTaskType"
 }
 
-// requriedProp stands for the required physical property by parents.
+// requiredProp stands for the required physical property by parents.
 // It contains the orders, if the order is desc and the task types.
 type requiredProp struct {
 	cols []*expression.Column
@@ -120,10 +122,12 @@ type requiredProp struct {
 	taskTp taskType
 	// expectedCnt means this operator may be closed after fetching expectedCnt records.
 	expectedCnt float64
+	// hashcode stores the hash code of a requiredProp, will be lazily calculated when function "hashCode()" being called.
+	hashcode []byte
 }
 
-func (p *requiredProp) equal(prop *requiredProp) bool {
-	if len(p.cols) != len(prop.cols) || p.desc != prop.desc {
+func (p *requiredProp) isPrefix(prop *requiredProp) bool {
+	if len(p.cols) > len(prop.cols) || p.desc != prop.desc {
 		return false
 	}
 	if p.taskTp != prop.taskTp {
@@ -141,17 +145,24 @@ func (p *requiredProp) isEmpty() bool {
 	return len(p.cols) == 0
 }
 
-// getHashKey encodes prop to a unique key. The key will be stored in the memory table.
-func (p *requiredProp) getHashKey() ([]byte, error) {
-	datums := make([]types.Datum, 0, len(p.cols)*2+3)
-	datums = append(datums, types.NewDatum(p.desc))
-	for _, c := range p.cols {
-		datums = append(datums, types.NewDatum(c.FromID), types.NewDatum(c.Position))
+// hashCode calculates hash code for a requiredProp object.
+func (p *requiredProp) hashCode() []byte {
+	if p.hashcode != nil {
+		return p.hashcode
 	}
-	datums = append(datums, types.NewDatum(int(p.taskTp)))
-	datums = append(datums, types.NewDatum(p.expectedCnt))
-	bytes, err := codec.EncodeValue(nil, datums...)
-	return bytes, errors.Trace(err)
+	hashcodeSize := 8 + 8 + 8 + 16*len(p.cols)
+	p.hashcode = make([]byte, 0, hashcodeSize)
+	if p.desc {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
+	}
+	p.hashcode = codec.EncodeInt(p.hashcode, int64(p.taskTp))
+	p.hashcode = codec.EncodeFloat(p.hashcode, p.expectedCnt)
+	for i, length := 0, len(p.cols); i < length; i++ {
+		p.hashcode = append(p.hashcode, p.cols[i].HashCode()...)
+	}
+	return p.hashcode
 }
 
 // String implements fmt.Stringer interface. Just for test.
@@ -294,12 +305,9 @@ func (bp *basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
-func (p *baseLogicalPlan) getTask(prop *requiredProp) (task, error) {
-	key, err := prop.getHashKey()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return p.taskMap[string(key)], nil
+func (p *baseLogicalPlan) getTask(prop *requiredProp) task {
+	key := prop.hashCode()
+	return p.taskMap[string(key)]
 }
 
 func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo, error) {
@@ -330,13 +338,9 @@ func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProperty) (*physica
 	return info, p.storePlanInfo(prop, info)
 }
 
-func (p *baseLogicalPlan) storeTask(prop *requiredProp, task task) error {
-	key, err := prop.getHashKey()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *baseLogicalPlan) storeTask(prop *requiredProp, task task) {
+	key := prop.hashCode()
 	p.taskMap[string(key)] = task
-	return nil
 }
 
 func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPlanInfo) error {
@@ -371,7 +375,7 @@ func newBasePlan(tp string, allocator *idAllocator, ctx context.Context, p Plan)
 	return &basePlan{
 		tp:        tp,
 		allocator: allocator,
-		id:        tp + allocator.allocID(),
+		id:        allocator.allocID(),
 		ctx:       ctx,
 		self:      p,
 	}
@@ -444,7 +448,7 @@ type basePlan struct {
 
 	schema    *expression.Schema
 	tp        string
-	id        string
+	id        int
 	allocator *idAllocator
 	ctx       context.Context
 	self      Plan
@@ -462,7 +466,7 @@ func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *basePlan) MarshalJSON() ([]byte, error) {
-	children := make([]string, 0, len(p.children))
+	children := make([]int, 0, len(p.children))
 	for _, child := range p.children {
 		children = append(children, child.ID())
 	}
@@ -477,8 +481,12 @@ func (p *basePlan) MarshalJSON() ([]byte, error) {
 }
 
 // ID implements Plan ID interface.
-func (p *basePlan) ID() string {
+func (p *basePlan) ID() int {
 	return p.id
+}
+
+func (p *basePlan) ExplainID() string {
+	return fmt.Sprintf("%s_%d", p.tp, p.id)
 }
 
 // SetSchema implements Plan SetSchema interface.

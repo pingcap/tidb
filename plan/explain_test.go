@@ -25,12 +25,14 @@ type testExplainSuite struct {
 }
 
 func (s *testExplainSuite) TestExplain(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
 	defer func() {
-		testleak.AfterTest(c)()
+		dom.Close()
+		store.Close()
 	}()
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2))")
@@ -96,11 +98,11 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
 			[]string{
-				"TableScan_22   cop table:t1, range:[2,+inf), keep order:false 3333.333333333333",
-				"TableReader_23 HashLeftJoin_8  root data:TableScan_22 3333.333333333333",
-				"TableScan_37   cop table:t2, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_38 HashLeftJoin_8  root data:TableScan_37 8000",
-				"HashLeftJoin_8  TableReader_23,TableReader_38 root left outer join, small:TableReader_38, equal:[eq(test.t1.c2, test.t2.c1)] 4166.666666666666",
+				"TableScan_25   cop table:t1, range:[2,+inf), keep order:false 3333.333333333333",
+				"TableReader_26 HashLeftJoin_11  root data:TableScan_25 3333.333333333333",
+				"TableScan_31   cop table:t2, range:(-inf,+inf), keep order:false 8000",
+				"TableReader_32 HashLeftJoin_11  root data:TableScan_31 8000",
+				"HashLeftJoin_11  TableReader_26,TableReader_32 root left outer join, small:TableReader_32, equal:[eq(test.t1.c2, test.t2.c1)] 4166.666666666666",
 			},
 		},
 		{
@@ -123,14 +125,14 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
 			[]string{
-				"TableScan_26   cop table:a, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_27 HashLeftJoin_11  root data:TableScan_26 8000",
-				"TableScan_18 HashAgg_17  cop table:b, range:(-inf,+inf), keep order:false 8000",
-				"HashAgg_17  TableScan_18 cop type:complete, group by:b.c2, funcs:count(b.c2), firstrow(b.c2) 6400",
-				"TableReader_20 HashAgg_19  root data:HashAgg_17 6400",
-				"HashAgg_19 HashLeftJoin_11 TableReader_20 root type:final, group by:, funcs:count(col_0), firstrow(col_1) 6400",
-				"HashLeftJoin_11 Projection_9 TableReader_27,HashAgg_19 root inner join, small:HashAgg_19, equal:[eq(a.c1, b.c2)] 8000",
-				"Projection_9  HashLeftJoin_11 root cast(join_agg_0) 8000",
+				"TableScan_21   cop table:a, range:(-inf,+inf), keep order:false 8000",
+				"TableReader_22 HashLeftJoin_13  root data:TableScan_21 8000",
+				"TableScan_16 HashAgg_15  cop table:b, range:(-inf,+inf), keep order:false 8000",
+				"HashAgg_15  TableScan_16 cop type:complete, group by:b.c2, funcs:count(b.c2), firstrow(b.c2) 6400",
+				"TableReader_18 HashAgg_17  root data:HashAgg_15 6400",
+				"HashAgg_17 HashLeftJoin_13 TableReader_18 root type:final, group by:, funcs:count(col_0), firstrow(col_1) 6400",
+				"HashLeftJoin_13 Projection_9 TableReader_22,HashAgg_17 root inner join, small:HashAgg_17, equal:[eq(a.c1, b.c2)] 8000",
+				"Projection_9  HashLeftJoin_13 root cast(join_agg_0) 8000",
 			},
 		},
 		{
@@ -163,10 +165,10 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
 			[]string{
-				"TableScan_9 HashAgg_8  cop table:t1, range:(-inf,+inf), keep order:false 8000",
-				"HashAgg_8  TableScan_9 cop type:complete, funcs:sum(or(eq(test.t1.c1, 1), eq(test.t1.c1, 2))) 1",
-				"TableReader_11 HashAgg_10  root data:HashAgg_8 1",
-				"HashAgg_10  TableReader_11 root type:final, funcs:sum(col_0) 1",
+				"TableScan_10 HashAgg_8  cop table:t1, range:(-inf,+inf), keep order:false 8000",
+				"HashAgg_8  TableScan_10 cop type:complete, funcs:sum(or(eq(test.t1.c1, 1), eq(test.t1.c1, 2))) 1",
+				"TableReader_12 HashAgg_11  root data:HashAgg_8 1",
+				"HashAgg_11  TableReader_12 root type:final, funcs:sum(col_0) 1",
 			},
 		},
 		{
@@ -181,11 +183,11 @@ func (s *testExplainSuite) TestExplain(c *C) {
 			[]string{
 				"TableScan_13   cop table:t1, range:(-inf,+inf), keep order:false 8000",
 				"TableReader_14 Apply_12  root data:TableScan_13 8000",
-				"TableScan_16   cop table:s, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_17 Selection_4  root data:TableScan_16 8000",
-				"Selection_4 HashAgg_15 TableReader_17 root eq(s.c1, test.t1.c1) 6400",
-				"HashAgg_15 Selection_10 Selection_4 root type:complete, funcs:count(1) 1",
-				"Selection_10 Apply_12 HashAgg_15 root ne(k, 0) 0.8",
+				"TableScan_20   cop table:s, range:(-inf,+inf), keep order:true 8000",
+				"TableReader_21 Selection_4  root data:TableScan_20 8000",
+				"Selection_4 StreamAgg_16 TableReader_21 root eq(s.c1, test.t1.c1) 6400",
+				"StreamAgg_16 Selection_10 Selection_4 root type:stream, funcs:count(1) 1",
+				"Selection_10 Apply_12 StreamAgg_16 root ne(k, 0) 0.8",
 				"Apply_12 Projection_2 TableReader_14,Selection_10 root left outer join, small:Selection_10, right:Selection_10 8000",
 				"Projection_2  Apply_12 root k 8000",
 			},
@@ -234,12 +236,12 @@ func (s *testExplainSuite) TestExplain(c *C) {
 		{
 			"select sum(t1.c1 in (select c1 from t2)) from t1",
 			[]string{
-				"TableScan_10   cop table:t1, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_11 HashSemiJoin_9  root data:TableScan_10 8000",
-				"TableScan_12   cop table:t2, range:(-inf,+inf), keep order:false 8000",
-				"TableReader_13 HashSemiJoin_9  root data:TableScan_12 8000",
-				"HashSemiJoin_9 HashAgg_8 TableReader_11,TableReader_13 root right:TableReader_13, aux, equal:[eq(test.t1.c1, test.t2.c1)] 8000",
-				"HashAgg_8  HashSemiJoin_9 root type:complete, funcs:sum(join_5_aux_0) 1",
+				"TableScan_18   cop table:t1, range:(-inf,+inf), keep order:true 8000",
+				"TableReader_19 HashSemiJoin_16  root data:TableScan_18 8000",
+				"TableScan_14   cop table:t2, range:(-inf,+inf), keep order:false 8000",
+				"TableReader_15 HashSemiJoin_16  root data:TableScan_14 8000",
+				"HashSemiJoin_16 StreamAgg_9 TableReader_19,TableReader_15 root right:TableReader_15, aux, equal:[eq(test.t1.c1, test.t2.c1)] 8000",
+				"StreamAgg_9  HashSemiJoin_16 root type:stream, funcs:sum(5_aux_0) 1",
 			},
 		},
 		{
@@ -262,7 +264,7 @@ func (s *testExplainSuite) TestExplain(c *C) {
 				"Selection_13  TableScan_12 cop eq(6, test.t2.c2) 10",
 				"TableReader_14 HashSemiJoin_9  root data:Selection_13 10",
 				"HashSemiJoin_9 HashAgg_8 TableReader_11,TableReader_14 root right:TableReader_14, aux 8000",
-				"HashAgg_8  HashSemiJoin_9 root type:complete, funcs:sum(join_5_aux_0) 1",
+				"HashAgg_8  HashSemiJoin_9 root type:complete, funcs:sum(5_aux_0) 1",
 			},
 		},
 	}
@@ -270,5 +272,70 @@ func (s *testExplainSuite) TestExplain(c *C) {
 	for _, tt := range insubqueryFoldTests {
 		result := tk.MustQuery("explain " + tt.sql)
 		result.Check(testkit.Rows(tt.expect...))
+	}
+
+	dotFormatTests := []struct {
+		sql    string
+		expect string
+	}{
+		{
+			sql: "select sum(t1.c1 in (select c1 from t2)) from t1",
+			expect: "\n" +
+				"digraph StreamAgg_9 {\n" +
+				"subgraph cluster9{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"root\"\n" +
+				"\"StreamAgg_9\" -> \"HashSemiJoin_16\"\n" +
+				"\"HashSemiJoin_16\" -> \"TableReader_19\"\n" +
+				"\"HashSemiJoin_16\" -> \"TableReader_15\"\n" +
+				"}\n" +
+				"subgraph cluster18{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"TableScan_18\"\n" +
+				"}\n" +
+				"subgraph cluster14{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"TableScan_14\"\n" +
+				"}\n" +
+				"\"TableReader_19\" -> \"TableScan_18\"\n" +
+				"\"TableReader_15\" -> \"TableScan_14\"\n" +
+				"}\n",
+		},
+		{
+			sql: "select 1 in (select c2 from t2) from t1",
+			expect: "\n" +
+				"digraph HashSemiJoin_7 {\n" +
+				"subgraph cluster7{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"root\"\n" +
+				"\"HashSemiJoin_7\" -> \"TableReader_9\"\n" +
+				"\"HashSemiJoin_7\" -> \"TableReader_12\"\n" +
+				"}\n" +
+				"subgraph cluster8{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"TableScan_8\"\n" +
+				"}\n" +
+				"subgraph cluster11{\n" +
+				"node [style=filled, color=lightgrey]\n" +
+				"color=black\n" +
+				"label = \"cop\"\n" +
+				"\"Selection_11\" -> \"TableScan_10\"\n" +
+				"}\n" +
+				"\"TableReader_9\" -> \"TableScan_8\"\n" +
+				"\"TableReader_12\" -> \"Selection_11\"\n" +
+				"}\n",
+		},
+	}
+	for i, length := 0, len(dotFormatTests); i < length; i++ {
+		result := tk.MustQuery(`explain format = "dot" ` + dotFormatTests[i].sql)
+		result.Check(testkit.Rows(dotFormatTests[i].expect))
 	}
 }
