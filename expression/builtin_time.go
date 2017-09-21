@@ -2437,32 +2437,32 @@ func (c *addDateFunctionClass) getFunction(ctx context.Context, args []Expressio
 	switch {
 	case dateEvalTp == tpString && intervalEvalTp == tpString:
 		sig = &builtinAddDateStringStringSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	case dateEvalTp == tpString && intervalEvalTp == tpInt:
 		sig = &builtinAddDateStringIntSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	case dateEvalTp == tpInt && intervalEvalTp == tpString:
 		sig = &builtinAddDateIntStringSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	case dateEvalTp == tpInt && intervalEvalTp == tpInt:
 		sig = &builtinAddDateIntIntSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	case dateEvalTp == tpDatetime && intervalEvalTp == tpString:
 		sig = &builtinAddDateDatetimeStringSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	case dateEvalTp == tpDatetime && intervalEvalTp == tpInt:
 		sig = &builtinAddDateDatetimeIntSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	}
@@ -2669,32 +2669,32 @@ func (c *subDateFunctionClass) getFunction(ctx context.Context, args []Expressio
 	switch {
 	case dateEvalTp == tpString && intervalEvalTp == tpString:
 		sig = &builtinSubDateStringStringSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	case dateEvalTp == tpString && intervalEvalTp == tpInt:
 		sig = &builtinSubDateStringIntSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	case dateEvalTp == tpInt && intervalEvalTp == tpString:
 		sig = &builtinSubDateIntStringSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	case dateEvalTp == tpInt && intervalEvalTp == tpInt:
 		sig = &builtinSubDateIntIntSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	case dateEvalTp == tpDatetime && intervalEvalTp == tpString:
 		sig = &builtinSubDateDatetimeStringSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	case dateEvalTp == tpDatetime && intervalEvalTp == tpInt:
 		sig = &builtinSubDateDatetimeIntSig{
-			baseBuiltinFunc:  bf,
+			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
 	}
@@ -3667,7 +3667,7 @@ func (c *convertTzFunctionClass) getFunction(ctx context.Context, args []Express
 	bf.tp.Decimal = decimal
 	sig := &builtinConvertTzSig{
 		baseBuiltinFunc: bf,
-		timezoneRegex:       tzRegex,
+		timezoneRegex:   tzRegex,
 	}
 	return sig.setSelf(sig), nil
 }
