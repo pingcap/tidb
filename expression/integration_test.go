@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -2365,6 +2366,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec("INSERT INTO t(a, b) VALUES(-1.09, 1.999);")
 	result = tk.MustQuery("SELECT a/b, a/12, a/-0.01, b/12, b/-0.01, b/0.000, NULL/b, b/NULL, NULL/NULL FROM t;")
 	result.Check(testkit.Rows("-0.545273 -0.090833 109.000000 0.1665833 -199.9000000 <nil> <nil> <nil> <nil>"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
 	rs, err = tk.Exec("select 1e200/1e-200")
 	c.Assert(err, IsNil)
 	_, err = tidb.GetRows(rs)
@@ -2379,25 +2381,48 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tidb.GetRows(rs)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_int_unsigned int unsigned, c_timestamp timestamp, c_enum enum('a','b','c'));")
 	tk.MustExec("INSERT INTO t VALUE('abc', '12:00:00', 12, 0, 5, '2017-08-05 18:19:03', 'b');")
-	result = tk.MustQuery("select c_varchar div nonzero, c_time div nonzero, c_time div zero, c_timestamp div nonzero, c_timestamp div zero from t;")
-	result.Check(testkit.Rows("0 10000 <nil> 1680900431825 <nil>"))
-	rs, err = tk.Exec("select c_varchar div zero from t")
-	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
-	c.Assert(terror.ErrorEqual(err, types.ErrDivByZero), IsTrue)
+	result = tk.MustQuery("select c_varchar div nonzero, c_time div nonzero, c_time div zero, c_timestamp div nonzero, c_timestamp div zero, c_varchar div zero from t;")
+	result.Check(testkit.Rows("0 10000 <nil> 1680900431825 <nil> <nil>"))
 	result = tk.MustQuery("select c_enum div nonzero from t;")
 	result.Check(testkit.Rows("0"))
-	rs, err = tk.Exec("select c_enum div zero from t")
-	c.Assert(err, IsNil)
-	_, err = tidb.GetRows(rs)
-	c.Assert(terror.ErrorEqual(err, types.ErrDivByZero), IsTrue)
+	tk.MustQuery("select c_enum div zero from t").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select nonzero div zero from t").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
 	result = tk.MustQuery("select c_time div c_enum, c_timestamp div c_time, c_timestamp div c_enum from t;")
 	result.Check(testkit.Rows("60000 168090043 10085402590951"))
 	result = tk.MustQuery("select c_int_unsigned div nonzero, nonzero div c_int_unsigned, c_int_unsigned div zero from t;")
 	result.Check(testkit.Rows("0 2 <nil>"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
+
+	// for mod
+	result = tk.MustQuery("SELECT CAST(1 AS UNSIGNED) MOD -9223372036854775808, -9223372036854775808 MOD CAST(1 AS UNSIGNED);")
+	result.Check(testkit.Rows("1 0"))
+	result = tk.MustQuery("SELECT 13 MOD 12, 13 MOD 0.01, -13 MOD 2, 13 MOD NULL, NULL MOD 13, NULL DIV NULL;")
+	result.Check(testkit.Rows("1 0.00 -1 <nil> <nil> <nil>"))
+	result = tk.MustQuery("SELECT 2.4 MOD 1.1, 2.4 MOD 1.2, 2.4 mod 1.30;")
+	result.Check(testkit.Rows("0.2 0.0 1.10"))
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_timestamp timestamp, c_enum enum('a','b','c'));")
+	tk.MustExec("INSERT INTO t VALUE('abc', '12:00:00', 12, 0, '2017-08-05 18:19:03', 'b');")
+	result = tk.MustQuery("select c_varchar MOD nonzero, c_time MOD nonzero, c_timestamp MOD nonzero, c_enum MOD nonzero from t;")
+	result.Check(testkit.Rows("0 0 3 2"))
+	result = tk.MustQuery("select c_time MOD c_enum, c_timestamp MOD c_time, c_timestamp MOD c_enum from t;")
+	result.Check(testkit.Rows("0 21903 1"))
+	tk.MustQuery("select c_enum MOD zero from t;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
+	tk.MustExec("SET SQL_MODE='ERROR_FOR_DIVISION_BY_ZERO,STRICT_ALL_TABLES';")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (v int);")
+	tk.MustExec("INSERT IGNORE INTO t VALUE(12 MOD 0);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1365 Division by 0"))
+	tk.MustQuery("select v from t;").Check(testkit.Rows("<nil>"))
+
+	_, err = tk.Exec("INSERT INTO t VALUE(12 MOD 0);")
+	c.Assert(terror.ErrorEqual(err, expression.ErrDivideByZero), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {

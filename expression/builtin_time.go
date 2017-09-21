@@ -94,7 +94,6 @@ var (
 	_ functionClass = &utcDateFunctionClass{}
 	_ functionClass = &utcTimestampFunctionClass{}
 	_ functionClass = &extractFunctionClass{}
-	_ functionClass = &arithmeticFunctionClass{}
 	_ functionClass = &unixTimestampFunctionClass{}
 	_ functionClass = &addTimeFunctionClass{}
 	_ functionClass = &convertTzFunctionClass{}
@@ -161,7 +160,6 @@ var (
 	_ builtinFunc = &builtinUTCDateSig{}
 	_ builtinFunc = &builtinUTCTimestampWithArgSig{}
 	_ builtinFunc = &builtinUTCTimestampWithoutArgSig{}
-	_ builtinFunc = &builtinArithmeticSig{}
 	_ builtinFunc = &builtinAddDatetimeAndDurationSig{}
 	_ builtinFunc = &builtinAddDatetimeAndStringSig{}
 	_ builtinFunc = &builtinAddTimeDateTimeNullSig{}
@@ -184,6 +182,7 @@ var (
 	_ builtinFunc = &builtinSubTimeDurationNullSig{}
 	_ builtinFunc = &builtinSubDateAndDurationSig{}
 	_ builtinFunc = &builtinSubDateAndStringSig{}
+	_ builtinFunc = &builtinUnixTimestampCurrentSig{}
 	_ builtinFunc = &builtinUnixTimestampIntSig{}
 	_ builtinFunc = &builtinUnixTimestampDecSig{}
 	_ builtinFunc = &builtinConvertTzSig{}

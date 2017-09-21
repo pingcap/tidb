@@ -32,15 +32,16 @@ func (s *testPlanSuite) SetUpSuite(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -185,15 +186,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -350,15 +352,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -419,15 +422,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -475,15 +479,16 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -554,15 +559,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -602,15 +608,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -668,15 +675,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
@@ -802,15 +810,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 }
 
 func (s *testPlanSuite) TestRefine(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tests := []struct {
 		sql  string
 		best string
