@@ -25,12 +25,14 @@ type testExplainSuite struct {
 }
 
 func (s *testExplainSuite) TestExplain(c *C) {
-	store, err := newStoreWithBootstrap()
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
 	defer func() {
-		testleak.AfterTest(c)()
+		dom.Close()
+		store.Close()
 	}()
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2))")
