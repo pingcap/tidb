@@ -37,6 +37,7 @@ var (
 	errZlibZData           = terror.ClassTypes.New(codeZlibZData, "ZLIB: Input data corrupted")
 	errIncorrectArgs       = terror.ClassExpression.New(codeIncorrectArgs, mysql.MySQLErrName[mysql.ErrWrongArguments])
 	errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
+	ErrDivideByZero        = terror.ClassExpression.New(codeDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
 )
 
 // Error codes.
@@ -46,6 +47,7 @@ const (
 	codeFunctionNotExists                      = 1305
 	codeZlibZData                              = mysql.ErrZlibZData
 	codeIncorrectArgs                          = mysql.ErrWrongArguments
+	codeDivisionByZero                         = mysql.ErrDivisionByZero
 )
 
 func init() {
@@ -54,6 +56,7 @@ func init() {
 		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
 		codeZlibZData:               mysql.ErrZlibZData,
 		codeIncorrectArgs:           mysql.ErrWrongArguments,
+		codeDivisionByZero:          mysql.ErrDivisionByZero,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
