@@ -37,9 +37,10 @@ type AnalyzeExec struct {
 }
 
 const (
-	maxSampleSize = 10000
-	maxSketchSize = 10000
-	maxBucketSize = 256
+	maxSampleSize       = 10000
+	maxRegionSampleSize = 1000
+	maxSketchSize       = 10000
+	maxBucketSize       = 256
 )
 
 // Schema implements the Executor Schema interface.
@@ -142,15 +143,25 @@ type analyzeTask struct {
 	Columns   []*model.ColumnInfo
 	PKInfo    *model.ColumnInfo
 	src       Executor
+	idxExec   *AnalyzeIndexExec
+	colExec   *AnalyzeColumnsExec
 }
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
 	for task := range taskCh {
 		switch task.taskType {
 		case colTask:
-			resultCh <- e.analyzeColumns(task)
+			if task.colExec != nil {
+				resultCh <- analyzeColumnsPushdown(task.colExec)
+			} else {
+				resultCh <- e.analyzeColumns(task)
+			}
 		case idxTask:
-			resultCh <- e.analyzeIndex(task)
+			if task.idxExec != nil {
+				resultCh <- analyzeIndexPushdown(task.idxExec)
+			} else {
+				resultCh <- e.analyzeIndex(task)
+			}
 		}
 	}
 }
@@ -187,7 +198,7 @@ func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) statistics.AnalyzeResult
 		result.Count = collectors[0].Count + collectors[0].NullCount
 	}
 	for i, col := range task.Columns {
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].Samples)
+		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i])
 		result.Hist = append(result.Hist, hg)
 		if err != nil && result.Err == nil {
 			result.Err = err

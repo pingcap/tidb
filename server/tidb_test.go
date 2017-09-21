@@ -26,12 +26,12 @@ import (
 	"os"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
+	tmysql "github.com/pingcap/tidb/mysql"
 )
 
 type TidbTestSuite struct {
@@ -43,25 +43,27 @@ var suite = new(TidbTestSuite)
 var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	log.SetLevel(log.ErrorLevel)
 	store, err := tidb.NewStore("memory:///tmp/tidb")
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := &config.Config{
-		Addr:         ":4001",
-		LogLevel:     "debug",
-		StatusAddr:   ":10090",
-		ReportStatus: true,
-		TCPKeepAlive: true,
+		Port: 4001,
+		Status: config.Status{
+			ReportStatus: true,
+			StatusPort:   10090,
+		},
+		Performance: config.Performance{
+			TCPKeepAlive: true,
+		},
 	}
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
-	waitUntilServerOnline(cfg.StatusAddr)
+	waitUntilServerOnline(cfg.Status.StatusPort)
 
 	// Run this test here because parallel would affect the result of it.
 	runTestStmtCount(c)
@@ -144,9 +146,10 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 
 func (ts *TidbTestSuite) TestSocket(c *C) {
 	cfg := &config.Config{
-		LogLevel:   "debug",
-		StatusAddr: ":10091",
-		Socket:     "/tmp/tidbtest.sock",
+		Socket: "/tmp/tidbtest.sock",
+		Status: config.Status{
+			StatusPort: 10091,
+		},
 	}
 
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -278,10 +281,11 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.Addr = "localhost:4002"
 	}
 	cfg := &config.Config{
-		Addr:         ":4002",
-		LogLevel:     "debug",
-		StatusAddr:   ":10091",
-		ReportStatus: true,
+		Port: 4002,
+		Status: config.Status{
+			ReportStatus: true,
+			StatusPort:   10091,
+		},
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -298,12 +302,15 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.Addr = "localhost:4003"
 	}
 	cfg = &config.Config{
-		Addr:         ":4003",
-		LogLevel:     "debug",
-		StatusAddr:   ":10091",
-		ReportStatus: true,
-		SSLCertPath:  "/tmp/server-cert.pem",
-		SSLKeyPath:   "/tmp/server-key.pem",
+		Port: 4003,
+		Status: config.Status{
+			ReportStatus: true,
+			StatusPort:   10091,
+		},
+		Security: config.Security{
+			SSLCert: "/tmp/server-cert.pem",
+			SSLKey:  "/tmp/server-key.pem",
+		},
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -328,13 +335,16 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.Addr = "localhost:4004"
 	}
 	cfg = &config.Config{
-		Addr:         ":4004",
-		LogLevel:     "debug",
-		StatusAddr:   ":10091",
-		ReportStatus: true,
-		SSLCertPath:  "/tmp/server-cert.pem",
-		SSLKeyPath:   "/tmp/server-key.pem",
-		SSLCAPath:    "/tmp/ca-cert.pem",
+		Port: 4004,
+		Status: config.Status{
+			ReportStatus: true,
+			StatusPort:   10091,
+		},
+		Security: config.Security{
+			SSLCA:   "/tmp/ca-cert.pem",
+			SSLCert: "/tmp/server-cert.pem",
+			SSLKey:  "/tmp/server-key.pem",
+		},
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -361,4 +371,50 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 func (ts *TidbTestSuite) TestClientWithCollation(c *C) {
 	c.Parallel()
 	runTestClientWithCollation(c)
+}
+
+func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
+	// issue #4540
+	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	_, err = ctx.Execute("use test;")
+	c.Assert(err, IsNil)
+
+	testSQL := "CREATE TABLE `t1` (" +
+		"`a` char(36) NOT NULL," +
+		"`b` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
+		"`c` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
+		"`d` varchar(50) DEFAULT ''," +
+		"`e` char(36) NOT NULL DEFAULT ''," +
+		"`f` char(36) NOT NULL DEFAULT ''," +
+		"`g` char(1) NOT NULL DEFAULT 'N'," +
+		"`h` varchar(100) NOT NULL," +
+		"`i` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
+		"`j` varchar(10) DEFAULT ''," +
+		"`k` varchar(10) DEFAULT ''," +
+		"`l` varchar(20) DEFAULT ''," +
+		"`m` varchar(20) DEFAULT ''," +
+		"`n` varchar(30) DEFAULT ''," +
+		"`o` varchar(100) DEFAULT ''," +
+		"`p` varchar(50) DEFAULT ''," +
+		"`q` varchar(50) DEFAULT ''," +
+		"`r` varchar(100) DEFAULT ''," +
+		"`s` varchar(20) DEFAULT ''," +
+		"`t` varchar(50) DEFAULT ''," +
+		"`u` varchar(100) DEFAULT ''," +
+		"`v` varchar(50) DEFAULT ''," +
+		"`w` varchar(300) NOT NULL," +
+		"`x` varchar(250) DEFAULT ''," +
+		"PRIMARY KEY (`a`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	_, err = ctx.Execute(testSQL)
+	c.Assert(err, IsNil)
+	rs, err := ctx.Execute("show create table t1")
+	row, err := rs[0].Next()
+	c.Assert(err, IsNil)
+	cols, err := rs[0].Columns()
+	c.Assert(err, IsNil)
+	c.Assert(len(cols), Equals, 2)
+	c.Assert(int(cols[0].ColumnLength), Equals, tmysql.MaxTableNameLength*tmysql.MaxBytesOfCharacter)
+	c.Assert(int(cols[1].ColumnLength), Equals, len(row[1].GetString())*tmysql.MaxBytesOfCharacter)
 }
