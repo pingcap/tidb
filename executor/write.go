@@ -886,15 +886,39 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 }
 
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
-	vals := make([]types.Datum, len(list))
+	row := make([]types.Datum, len(e.Table.Cols()))
+	hasValue := make([]bool, len(e.Table.Cols()))
+	if err := e.fillDefaultValues(row, ignoreErr); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	for i, expr := range list {
-		val, err := expr.Eval(nil)
-		vals[i] = val
+		val, err := expr.Eval(row)
+		offset := cols[i].Offset
+		row[offset] = val
+		hasValue[offset] = true
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	return e.fillRowData(cols, vals, ignoreErr)
+
+	return e.checkRowData(cols, len(list), hasValue, row, ignoreErr)
+}
+
+func (e *InsertValues) fillDefaultValues(row []types.Datum, ignoreErr bool) error {
+	var defaultValueCols []*table.Column
+	for i, c := range e.Table.Cols() {
+		if mysql.HasAutoIncrementFlag(c.Flag) || c.IsGenerated() {
+			continue
+		}
+		row[i], _ = table.GetColDefaultValue(e.ctx, c.ToInfo())
+		defaultValueCols = append(defaultValueCols, c)
+	}
+	if err := table.CastValues(e.ctx, row, defaultValueCols, ignoreErr); err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
 }
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
@@ -929,6 +953,11 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 		row[offset] = v
 		hasValue[offset] = true
 	}
+
+	return e.checkRowData(cols, len(vals), hasValue, row, ignoreErr)
+}
+
+func (e *InsertValues) checkRowData(cols []*table.Column, valLen int, hasValue []bool, row []types.Datum, ignoreErr bool) ([]types.Datum, error) {
 	err := e.initDefaultValues(row, hasValue, ignoreErr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -939,7 +968,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 		if err = e.filterErr(err, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
-		offset := cols[len(vals)+i].Offset
+		offset := cols[valLen+i].Offset
 		row[offset] = val
 	}
 	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {

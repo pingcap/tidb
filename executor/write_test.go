@@ -1171,3 +1171,24 @@ func (s *testSuite) TestIssue4067(c *C) {
 	tk.MustExec("delete from t1 where id in (select id from t2)")
 	tk.MustQuery("select * from t1").Check(nil)
 }
+
+// Test issue https://github.com/pingcap/tidb/issues/4488
+func (s *testSuite) TestIssue4488(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t1 set a=1, b=a+1")
+	tk.MustQuery("select a, b from t1").Check(testkit.Rows("1 2"))
+
+	tk.MustExec("create table t2(a int default 100, b int)")
+	tk.MustExec("insert into t2 set b=a+1, a=1")
+	tk.MustQuery("select a, b from t2").Check(testkit.Rows("1 101"))
+	tk.MustExec("insert into t2 (b) value (a)")
+	tk.MustQuery("select * from t2 where b = 100").Check(testkit.Rows("100 100"))
+
+	tk.MustExec("create table t3 (c int)")
+	tk.MustExec("insert into test.t3 set test.t3.c = '1'")
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1"))
+}
