@@ -16,14 +16,13 @@ package statistics
 import (
 	"math"
 
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // calcFraction is used to calculate the fraction of the interval [lower, upper] that lies within the [lower, value]
 // using the continuous-value assumption.
-func calcFraction(sc *variable.StatementContext, lower, upper, value types.Datum) float64 {
-	lowerScalar, upperScalar, valueScalar := convertToScalar(sc, lower, upper, value)
+func calcFraction(lower, upper, value *types.Datum) float64 {
+	lowerScalar, upperScalar, valueScalar := convertToScalar(lower, upper, value)
 	if upperScalar <= lowerScalar {
 		return 0.5
 	}
@@ -41,10 +40,18 @@ func calcFraction(sc *variable.StatementContext, lower, upper, value types.Datum
 }
 
 // convertToScalar will convert the datum to scalar values.
-func convertToScalar(sc *variable.StatementContext, lower, upper, value types.Datum) (float64, float64, float64) {
+func convertToScalar(lower, upper, value *types.Datum) (float64, float64, float64) {
 	switch value.Kind() {
-	case types.KindFloat32, types.KindFloat64, types.KindInt64, types.KindUint64, types.KindMysqlDecimal:
-		return convertNumericToScalar(sc, lower, upper, value)
+	case types.KindFloat32:
+		return float64(lower.GetFloat32()), float64(upper.GetFloat32()), float64(value.GetFloat32())
+	case types.KindFloat64:
+		return lower.GetFloat64(), upper.GetFloat64(), value.GetFloat64()
+	case types.KindInt64:
+		return float64(lower.GetInt64()), float64(upper.GetInt64()), float64(value.GetInt64())
+	case types.KindUint64:
+		return float64(lower.GetUint64()), float64(upper.GetUint64()), float64(value.GetUint64())
+	case types.KindMysqlDecimal:
+		return convertDecimalToScalar(lower, upper, value)
 	case types.KindMysqlDuration:
 		return float64(lower.GetMysqlDuration().Duration), float64(upper.GetMysqlDuration().Duration), float64(value.GetMysqlDuration().Duration)
 	case types.KindMysqlTime:
@@ -60,17 +67,17 @@ func convertToScalar(sc *variable.StatementContext, lower, upper, value types.Da
 	}
 }
 
-// Numeric types are simply converted to their equivalent float64 values.
-func convertNumericToScalar(sc *variable.StatementContext, lower, upper, value types.Datum) (float64, float64, float64) {
-	lowerScalar, err := lower.ToFloat64(sc)
+// Decimal types are simply converted to their equivalent float64 values.
+func convertDecimalToScalar(lower, upper, value *types.Datum) (float64, float64, float64) {
+	lowerScalar, err := lower.GetMysqlDecimal().ToFloat64()
 	if err != nil {
 		return 0, 0, 0
 	}
-	upperScalar, err := upper.ToFloat64(sc)
+	upperScalar, err := upper.GetMysqlDecimal().ToFloat64()
 	if err != nil {
 		return 0, 0, 0
 	}
-	valueScalar, err := value.ToFloat64(sc)
+	valueScalar, err := value.GetMysqlDecimal().ToFloat64()
 	if err != nil {
 		return 0, 0, 0
 	}
