@@ -263,7 +263,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
 	case *ast.ValuesExpr:
-		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, &v.Type, er.ctx))
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, v.Column.GetType(), er.ctx))
 		return inNode, true
 	default:
 		er.asScalar = true

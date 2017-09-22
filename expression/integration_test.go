@@ -25,7 +25,11 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/mock"
@@ -2870,6 +2874,23 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r.Check(testkit.Rows("2"))
 }
 
+func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists tab0")
+	testKit.MustExec("CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)")
+	testKit.MustExec("SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0")
+	ctx := testKit.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
+	col := table.FindCol(tbl.Cols(), "col1")
+	c.Assert(col.Tp, Equals, mysql.TypeLong)
+}
+
 func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
@@ -2889,4 +2910,14 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	_, err = tk.Exec("set @@session.sql_mode=',NO_ZERO_DATE';")
 	r = tk.MustQuery(`select @@session.sql_mode`)
 	r.Check(testkit.Rows("NO_ZERO_DATE"))
+}
+
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
+	store, err := tikv.NewMockTikvStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	tidb.SetSchemaLease(0)
+	dom, err := tidb.BootstrapSession(store)
+	return store, dom, errors.Trace(err)
 }
