@@ -39,13 +39,18 @@ func calcFraction(lower, upper, value *types.Datum) float64 {
 	return frac
 }
 
-// convertToScalar will convert the datum to scalar values.
+// convertToScalar converts the datum to scalar values.
+// TODO: We may cache results for some types.
 func convertToScalar(lower, upper, value *types.Datum) (float64, float64, float64) {
 	switch value.Kind() {
-	case types.KindFloat64, types.KindFloat32:
+	case types.KindFloat32:
+		return float64(lower.GetFloat32()), float64(upper.GetFloat32()), float64(value.GetFloat32())
+	case types.KindFloat64:
 		return lower.GetFloat64(), upper.GetFloat64(), value.GetFloat64()
-	case types.KindInt64, types.KindUint64:
+	case types.KindInt64:
 		return float64(lower.GetInt64()), float64(upper.GetInt64()), float64(value.GetInt64())
+	case types.KindUint64:
+		return float64(lower.GetUint64()), float64(upper.GetUint64()), float64(value.GetUint64())
 	case types.KindMysqlDecimal:
 		return convertDecimalToScalar(lower, upper, value)
 	case types.KindMysqlDuration:
