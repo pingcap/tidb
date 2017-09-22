@@ -538,50 +538,6 @@ func (s *testSessionSuite) TestIssue1114(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestRow(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_row"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	r := mustExecSQL(c, se, "select row(1, 1) in (row(1, 1))")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-
-	r = mustExecSQL(c, se, "select row(1, 1) in (row(1, 0))")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 0)
-
-	r = mustExecSQL(c, se, "select row(1, 1) in (select 1, 1)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-
-	r = mustExecSQL(c, se, "select row(1, 1) > row(1, 0)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-
-	r = mustExecSQL(c, se, "select row(1, 1) > (select 1, 0)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-
-	r = mustExecSQL(c, se, "select 1 > (select 1)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 0)
-
-	r = mustExecSQL(c, se, "select (select 1)")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, 1)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_mysql_types"
@@ -599,150 +555,6 @@ func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	c.Assert(err, IsNil)
 	match(c, row.Data, 2, 1)
 	r.Close()
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestBit(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_bit"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(2))")
-	mustExecSQL(c, se, "insert into t values (0), (1), (2), (3)")
-	_, err := exec(se, "insert into t values (4)")
-	c.Assert(err, NotNil)
-	_, err = exec(se, "insert into t values ('a')")
-	c.Assert(err, NotNil)
-	r := mustExecSQL(c, se, "select * from t where c1 = 2")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(31))")
-	mustExecSQL(c, se, "insert into t values (0x7fffffff)")
-	_, err = exec(se, "insert into t values (0x80000000)")
-	c.Assert(err, NotNil)
-	_, err = exec(se, "insert into t values (0xffffffff)")
-	c.Assert(err, NotNil)
-	mustExecSQL(c, se, "insert into t values ('123')")
-	mustExecSQL(c, se, "insert into t values ('1234')")
-	_, err = exec(se, "insert into t values ('12345)")
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(62))")
-	mustExecSQL(c, se, "insert into t values ('12345678')")
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(61))")
-	_, err = exec(se, "insert into t values ('12345678')")
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(32))")
-	mustExecSQL(c, se, "insert into t values (0x7fffffff)")
-	mustExecSQL(c, se, "insert into t values (0xffffffff)")
-	_, err = exec(se, "insert into t values (0x1ffffffff)")
-	c.Assert(err, NotNil)
-	mustExecSQL(c, se, "insert into t values ('1234')")
-	_, err = exec(se, "insert into t values ('12345')")
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 bit(64))")
-	mustExecSQL(c, se, "insert into t values (0xffffffffffffffff)")
-	mustExecSQL(c, se, "insert into t values ('12345678')")
-	_, err = exec(se, "insert into t values ('123456789')")
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestEnum(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_enum"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c enum('a', 'b', 'c'))")
-	mustExecSQL(c, se, "insert into t values ('a'), (2), ('c')")
-	r := mustExecSQL(c, se, "select * from t where c = 'a'")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "a")
-
-	r = mustExecSQL(c, se, "select c + 1 from t where c = 2")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "3")
-
-	mustExecSQL(c, se, "delete from t")
-	mustExecSQL(c, se, "insert into t values ()")
-	mustExecSQL(c, se, "insert into t values (null), ('1')")
-	r = mustExecSQL(c, se, "select c + 1 from t where c = 1")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "2")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSet(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_set"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c set('a', 'b', 'c'))")
-	mustExecSQL(c, se, "insert into t values ('a'), (2), ('c'), ('a,b'), ('b,a')")
-	r := mustExecSQL(c, se, "select * from t where c = 'a'")
-	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "a")
-
-	r = mustExecSQL(c, se, "select * from t where c = 'a,b'")
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 2)
-
-	r = mustExecSQL(c, se, "select c + 1 from t where c = 2")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "3")
-
-	mustExecSQL(c, se, "delete from t")
-	mustExecSQL(c, se, "insert into t values ()")
-	mustExecSQL(c, se, "insert into t values (null), ('1')")
-	r = mustExecSQL(c, se, "select c + 1 from t where c = 1")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, "2")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestWhereLike(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_where_like"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t(c int, index(c))")
-	mustExecSQL(c, se, "insert into t values (1),(2),(3),(-11),(11),(123),(211),(210)")
-	mustExecSQL(c, se, "insert into t values ()")
-
-	r := mustExecSQL(c, se, "select c from t where c like '%1%'")
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 6)
-
-	mustExecSQL(c, se, "select c from t where c like binary('abc')")
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -1144,7 +956,9 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	defer testleak.AfterTest(c)()
 	localstore.MockRemoteStore = true
 	dbName := "test_issue1435"
-	store := newStoreWithBootstrap(c, dbName)
+	store, dom := newStoreWithBootstrap(c, dbName)
+	defer dom.Close()
+	defer store.Close()
 	se := newSession(c, store, dbName)
 	se1 := newSession(c, store, dbName)
 	se2 := newSession(c, store, dbName)
@@ -1231,9 +1045,6 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	se.Close()
 	se1.Close()
 	se2.Close()
-	sessionctx.GetDomain(ctx).Close()
-	err = store.Close()
-	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
 }
 
@@ -1316,118 +1127,6 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	c.Assert(err, NotNil)
 
 	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_specify_index_prefix_length"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t;")
-
-	_, err := exec(se, "create table t (c1 char, index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create table t (c1 int, index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create table t (c1 bit(10), index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "create table t (c1 char, c2 int, c3 bit(10));")
-
-	_, err = exec(se, "create index idx_c1 on t (c1(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c2(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c3(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-
-	_, err = exec(se, "create table t (c1 int, c2 blob, c3 varchar(64), index(c2));")
-	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "create table t (c1 int, c2 blob, c3 varchar(64));")
-	_, err = exec(se, "create index idx_c1 on t (c2);")
-	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c2(555555));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c1(5))")
-	// ERROR 1089 (HY000): Incorrect prefix key;
-	// the used key part isn't a string, the used length is longer than the key part,
-	// or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "create index idx_c1 on t (c1);")
-	mustExecSQL(c, se, "create index idx_c2 on t (c2(3));")
-	mustExecSQL(c, se, "create unique index idx_c3 on t (c3(5));")
-
-	mustExecSQL(c, se, "insert into t values (3, 'abc', 'def');")
-	sql := "select c2 from t where c2 = 'abc';"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}})
-
-	mustExecSQL(c, se, "insert into t values (4, 'abcd', 'xxx');")
-	mustExecSQL(c, se, "insert into t values (4, 'abcf', 'yyy');")
-	sql = "select c2 from t where c2 = 'abcf';"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abcf")}})
-	sql = "select c2 from t where c2 = 'abcd';"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abcd")}})
-
-	mustExecSQL(c, se, "insert into t values (4, 'ignore', 'abcdeXXX');")
-	_, err = exec(se, "insert into t values (5, 'ignore', 'abcdeYYY');")
-	// ERROR 1062 (23000): Duplicate entry 'abcde' for key 'idx_c3'
-	c.Assert(err, NotNil)
-	sql = "select c3 from t where c3 = 'abcde';"
-	mustExecMatch(c, se, sql, [][]interface{}{})
-
-	mustExecSQL(c, se, "delete from t where c3 = 'abcdeXXX';")
-	mustExecSQL(c, se, "delete from t where c2 = 'abc';")
-
-	mustExecMatch(c, se, "select c2 from t where c2 > 'abcd';", [][]interface{}{{[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 < 'abcf';", [][]interface{}{{[]byte("abcd")}})
-	mustExecMatch(c, se, "select c2 from t where c2 >= 'abcd';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 <= 'abcf';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 != 'abc';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 != 'abcd';", [][]interface{}{{[]byte("abcf")}})
-
-	mustExecSQL(c, se, "drop table if exists t1;")
-	mustExecSQL(c, se, "create table t1 (a int, b char(255), key(a, b(20)));")
-	mustExecSQL(c, se, "insert into t1 values (0, '1');")
-	mustExecSQL(c, se, "update t1 set b = b + 1 where a = 0;")
-	mustExecMatch(c, se, "select b from t1 where a = 0;", [][]interface{}{{[]byte("2")}})
-
-	// test union index.
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (a text, b text, c int, index (a(3), b(3), c));")
-	mustExecSQL(c, se, "insert into t values ('abc', 'abcd', 1);")
-	mustExecSQL(c, se, "insert into t values ('abcx', 'abcf', 2);")
-	mustExecSQL(c, se, "insert into t values ('abcy', 'abcf', 3);")
-	mustExecSQL(c, se, "insert into t values ('bbc', 'abcd', 4);")
-	mustExecSQL(c, se, "insert into t values ('bbcz', 'abcd', 5);")
-	mustExecSQL(c, se, "insert into t values ('cbck', 'abd', 6);")
-	mustExecMatch(c, se, "select c from t where a = 'abc' and b <= 'abc';", [][]interface{}{})
-	mustExecMatch(c, se, "select c from t where a = 'abc' and b <= 'abd';", [][]interface{}{{1}})
-	mustExecMatch(c, se, "select c from t where a < 'cbc' and b > 'abcd';", [][]interface{}{{2}, {3}})
-	mustExecMatch(c, se, "select c from t where a <= 'abd' and b > 'abc';", [][]interface{}{{1}, {2}, {3}})
-	mustExecMatch(c, se, "select c from t where a < 'bbcc' and b = 'abcd';", [][]interface{}{{1}, {4}})
-	mustExecMatch(c, se, "select c from t where a > 'bbcf';", [][]interface{}{{5}, {6}})
-
-	mustExecSQL(c, se, dropDBSQL)
-	se.Close()
 }
 
 func (s *testSessionSuite) TestIndexColumnLength(c *C) {
