@@ -18,7 +18,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -125,7 +124,6 @@ func (t *testStatisticsSuite) TestCalcFraction(c *C) {
 			fraction: 0.0529216802217269,
 		},
 	}
-	sc := mock.NewContext().GetSessionVars().StmtCtx
 	for _, test := range tests {
 		fraction := calcFraction(&test.lower, &test.upper, &test.value)
 		c.Check(math.Abs(fraction-test.fraction) < eps, IsTrue)
