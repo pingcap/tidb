@@ -244,7 +244,8 @@ func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Dat
 	if c <= 0 {
 		return prevCount, nil
 	}
-	return (prevCount + lessThanBucketValueCount) / 2, nil
+	frac := calcFraction(&hg.Buckets[index].LowerBound, &hg.Buckets[index].UpperBound, &value)
+	return prevCount + (lessThanBucketValueCount-prevCount)*frac, nil
 }
 
 // lessAndEqRowCount estimates the row count where the column less than or equal to value.

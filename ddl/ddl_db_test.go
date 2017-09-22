@@ -102,7 +102,6 @@ func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
 }
 
 func (s *testDBSuite) TestMySQLErrorCode(c *C) {
-	defer testleak.AfterTest(c)
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -603,7 +602,6 @@ func (s *testDBSuite) TestIssue2293(c *C) {
 }
 
 func (s *testDBSuite) TestCreateIndexType(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	sql := `CREATE TABLE test_index (
@@ -1024,11 +1022,13 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
-	defer testleak.AfterTest(c)
+	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://update_multiple_table")
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	defer store.Close()
+	dom, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int)")
@@ -1086,7 +1086,6 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 }
 
 func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
-	defer testleak.AfterTest(c)
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 
@@ -1109,12 +1108,14 @@ func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
 }
 
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
-	defer testleak.AfterTest(c)
+	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://create_table_like")
 	c.Assert(err, IsNil)
+	defer store.Close()
 	s.tk = testkit.NewTestKit(c, store)
-	_, err = tidb.BootstrapSession(store)
+	dom, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 
 	// for the same database
 	s.tk.MustExec("use test")
@@ -1158,7 +1159,6 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 }
 
 func (s *testDBSuite) TestCreateTable(c *C) {
-	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://create_table")
 	c.Assert(err, IsNil)
 	s.tk = testkit.NewTestKit(c, store)
@@ -1181,11 +1181,13 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {
-	defer testleak.AfterTest(c)
+	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://truncate_table")
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	defer store.Close()
+	dom, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int, c2 int)")
@@ -1241,11 +1243,13 @@ func (s *testDBSuite) TestAlterTableRenameTable(c *C) {
 }
 
 func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
-	defer testleak.AfterTest(c)
+	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://" + storeStr)
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	defer store.Close()
+	dom, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	s.tk = testkit.NewTestKit(c, store)
 	s.tk.MustExec("use test")
 
@@ -1292,11 +1296,13 @@ func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 }
 
 func (s *testDBSuite) TestRenameMultiTables(c *C) {
-	defer testleak.AfterTest(c)
+	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://rename_multi_tables")
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	defer store.Close()
+	dom, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	s.tk = testkit.NewTestKit(c, store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("create table t1(id int)")
@@ -1310,7 +1316,7 @@ func (s *testDBSuite) TestRenameMultiTables(c *C) {
 }
 
 func (s *testDBSuite) TestAddNotNullColumn(c *C) {
-	defer testleak.AfterTest(c)
+	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 	// for different databases
@@ -1436,9 +1442,6 @@ func (s *testDBSuite) TestChangeColumnPosition(c *C) {
 }
 
 func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 
