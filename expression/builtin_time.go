@@ -223,19 +223,6 @@ var (
 	_ builtinFunc = &builtinSubDateDatetimeIntSig{}
 )
 
-// handleInvalidTimeError reports error or warning depend on the context.
-func handleInvalidTimeError(ctx context.Context, err error) error {
-	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err)) {
-		return err
-	}
-	sc := ctx.GetSessionVars().StmtCtx
-	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateOrDeleteStmt) {
-		return err
-	}
-	sc.AppendWarning(err)
-	return nil
-}
-
 func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
 	tr, err := types.RoundFrac(t, int(fsp))
 	if err != nil {
@@ -3082,6 +3069,11 @@ func (c *timestampFunctionClass) getFunction(ctx context.Context, args []Express
 	if argLen == 2 {
 		fsp = mathutil.Max(fsp, c.getDefaultFsp(args[1].GetType()))
 	}
+	isFloat := false
+	switch args[0].GetType().Tp {
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDecimal:
+		isFloat = true
+	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpDatetime, evalTps...)
 	bf.tp.Decimal, bf.tp.Flen = fsp, 19
 	if fsp != 0 {
@@ -3089,15 +3081,16 @@ func (c *timestampFunctionClass) getFunction(ctx context.Context, args []Express
 	}
 	var sig builtinFunc
 	if argLen == 2 {
-		sig = &builtinTimestamp2ArgsSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinTimestamp2ArgsSig{baseTimeBuiltinFunc{bf}, isFloat}
 	} else {
-		sig = &builtinTimestamp1ArgSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinTimestamp1ArgSig{baseTimeBuiltinFunc{bf}, isFloat}
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinTimestamp1ArgSig struct {
 	baseTimeBuiltinFunc
+	isFloat bool
 }
 
 // evalTime evals a builtinTimestamp1ArgSig.
@@ -3107,7 +3100,12 @@ func (b *builtinTimestamp1ArgSig) evalTime(row []types.Datum) (types.Time, bool,
 	if isNull || err != nil {
 		return types.Time{}, isNull, errors.Trace(err)
 	}
-	tm, err := types.ParseTime(s, mysql.TypeDatetime, getFsp(s))
+	var tm types.Time
+	if b.isFloat {
+		tm, err = types.ParseTimeFromFloatString(s, mysql.TypeDatetime, getFsp(s))
+	} else {
+		tm, err = types.ParseTime(s, mysql.TypeDatetime, getFsp(s))
+	}
 	if err != nil {
 		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
@@ -3116,6 +3114,7 @@ func (b *builtinTimestamp1ArgSig) evalTime(row []types.Datum) (types.Time, bool,
 
 type builtinTimestamp2ArgsSig struct {
 	baseTimeBuiltinFunc
+	isFloat bool
 }
 
 // evalTime evals a builtinTimestamp2ArgsSig.
@@ -3126,7 +3125,12 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row []types.Datum) (types.Time, bool
 	if isNull || err != nil {
 		return types.Time{}, isNull, errors.Trace(err)
 	}
-	tm, err := types.ParseTime(arg0, mysql.TypeDatetime, getFsp(arg0))
+	var tm types.Time
+	if b.isFloat {
+		tm, err = types.ParseTimeFromFloatString(arg0, mysql.TypeDatetime, getFsp(arg0))
+	} else {
+		tm, err = types.ParseTime(arg0, mysql.TypeDatetime, getFsp(arg0))
+	}
 	if err != nil {
 		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
