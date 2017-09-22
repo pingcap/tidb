@@ -664,6 +664,141 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	tk.MustQuery("select c from t where a > 'bbcf';").Check(testkit.Rows("5", "6"))
 }
 
+func (s *testSessionSuite) TestResultField(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (id int);")
+
+	tk.MustExec(`INSERT INTO t VALUES (1);`)
+	tk.MustExec(`INSERT INTO t VALUES (2);`)
+	r, err := tk.Exec(`SELECT count(*) from t;`)
+	c.Assert(err, IsNil)
+	fields, err := r.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(len(fields), Equals, 1)
+	field := fields[0].Column
+	c.Assert(field.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(field.Flen, Equals, 21)
+}
+
+func (s *testSessionSuite) TestResultType(c *C) {
+	// Testcase for https://github.com/pingcap/tidb/issues/325
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	rs, err := tk.Exec(`select cast(null as char(30))`)
+	c.Assert(err, IsNil)
+	row, err := rs.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[0].GetValue(), IsNil)
+	fs, err := rs.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(fs[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
+}
+
+func (s *testSessionSuite) TestFieldText(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int)")
+	tests := []struct {
+		sql   string
+		field string
+	}{
+		{"select distinct(a) from t", "a"},
+		{"select (1)", "1"},
+		{"select (1+1)", "(1+1)"},
+		{"select a from t", "a"},
+		{"select        ((a+1))     from t", "((a+1))"},
+		{"select 1 /*!32301 +1 */;", "1  +1 "},
+		{"select /*!32301 1  +1 */;", "1  +1 "},
+		{"/*!32301 select 1  +1 */;", "1  +1 "},
+		{"select 1 + /*!32301 1 +1 */;", "1 +  1 +1 "},
+		{"select 1 /*!32301 + 1, 1 */;", "1  + 1"},
+		{"select /*!32301 1, 1 +1 */;", "1"},
+		{"select /*!32301 1 + 1, */ +1;", "1 + 1"},
+	}
+	for _, tt := range tests {
+		results, err := tk.Se.Execute(tt.sql)
+		c.Assert(err, IsNil)
+		result := results[0]
+		fields, err := result.Fields()
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].ColumnAsName.O, Equals, tt.field)
+	}
+}
+
+func (s *testSessionSuite) TestIndexMaxLength(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+
+	// create simple index at table creation
+	_, err := tk.Exec("create table t (c1 varchar(3073), index(c1));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	// create simple index after table creation
+	tk.MustExec("create table t (c1 varchar(3073));")
+	_, err = tk.Exec("create index idx_c1 on t(c1) ")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	// create compound index at table creation
+	tk.MustExec("drop table if exists t;")
+	_, err = tk.Exec("create table t (c1 varchar(3072), c2 varchar(1), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t (c1 varchar(3072), c2 char(1), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t (c1 varchar(3072), c2 char, index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t (c1 varchar(3072), c2 date, index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t (c1 varchar(3068), c2 timestamp(1), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	tk.MustExec("create table t (c1 varchar(3068), c2 bit(26), index(c1, c2));") // 26 bit = 4 bytes
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c1 varchar(3068), c2 bit(32), index(c1, c2));") // 32 bit = 4 bytes
+	tk.MustExec("drop table if exists t;")
+	_, err = tk.Exec("create table t (c1 varchar(3068), c2 bit(33), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	// create compound index after table creation
+	tk.MustExec("create table t (c1 varchar(3072), c2 varchar(1));")
+	_, err = tk.Exec("create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c1 varchar(3072), c2 char(1));")
+	_, err = tk.Exec("create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c1 varchar(3072), c2 char);")
+	_, err = tk.Exec("create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c1 varchar(3072), c2 date);")
+	_, err = tk.Exec("create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c1 varchar(3068), c2 timestamp(1));")
+	_, err = tk.Exec("create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+}
+
 var _ = Suite(&testSchemaSuite{})
 
 type testSchemaSuite struct {
