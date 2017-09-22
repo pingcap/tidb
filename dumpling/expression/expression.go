@@ -27,9 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/types/json"
 )
 
-// TurnOnNewExprEval indicates whether turn on the new expression evaluation architecture.
-var TurnOnNewExprEval int32
-
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
 
