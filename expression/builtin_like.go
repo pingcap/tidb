@@ -47,12 +47,12 @@ func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp...)
 	bf.tp.Flen = 1
-	sig := &builtinLikeSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinLikeSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinLikeSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a builtinLikeSig.
@@ -96,15 +96,15 @@ func (c *regexpFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf.tp.Flen = 1
 	var sig builtinFunc
 	if types.IsBinaryStr(args[0].GetType()) {
-		sig = &builtinRegexpBinarySig{baseIntBuiltinFunc{bf}}
+		sig = &builtinRegexpBinarySig{bf}
 	} else {
-		sig = &builtinRegexpSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinRegexpSig{bf}
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinRegexpBinarySig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinRegexpBinarySig) evalInt(row []types.Datum) (int64, bool, error) {
@@ -129,7 +129,7 @@ func (b *builtinRegexpBinarySig) evalInt(row []types.Datum) (int64, bool, error)
 }
 
 type builtinRegexpSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals `expr REGEXP pat`, or `expr RLIKE pat`.
