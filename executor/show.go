@@ -65,15 +65,15 @@ func (e *ShowExec) Next() (Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		for i := range e.rows {
-			for j, row, l := 0, e.rows[i], len(e.rows); j < l; j++ {
+		for i := 0; e.rows != nil && i < len(e.rows); i++ {
+			for j, row := 0, e.rows[i]; j < len(row); j++ {
 				if row[j].Kind() != types.KindString {
 					continue
 				}
 				val := row[j].GetString()
 				retType := e.Schema().Columns[j].RetType
-				if l := len(val); l > retType.Flen {
-					retType.Flen = l
+				if valLen := len(val); retType.Flen < valLen {
+					retType.Flen = valLen
 				}
 			}
 		}
