@@ -402,6 +402,7 @@ func ColumnInfos2ColumnsWithDBName(dbName, tblName model.CIStr, colInfos []*mode
 			DBName:   dbName,
 			RetType:  &col.FieldType,
 			Position: i,
+			Index:    col.Offset,
 		}
 		columns = append(columns, newCol)
 	}

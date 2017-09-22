@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // Column provides meta data describing a table column.
@@ -383,6 +384,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetMysqlSet(types.Set{})
 	case mysql.TypeEnum:
 		d.SetMysqlEnum(types.Enum{})
+	case mysql.TypeJSON:
+		d.SetMysqlJSON(json.CreateJSON(nil))
 	}
 	return d
 }
