@@ -140,7 +140,7 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 	}
 	aggCtxs := e.getContexts(groupKey)
 	for i, af := range e.AggFuncs {
-		af.Update(srcRow, aggCtxs[i], e.sc)
+		af.Update(aggCtxs[i], e.sc, srcRow)
 	}
 	return true, nil
 }
@@ -221,7 +221,7 @@ func (e *StreamAggExec) Next() (Row, error) {
 			break
 		}
 		for i, af := range e.AggFuncs {
-			err = af.Update(row, e.aggCtxs[i], e.StmtCtx)
+			err = af.Update(e.aggCtxs[i], e.StmtCtx, row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

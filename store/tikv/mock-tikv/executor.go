@@ -438,7 +438,7 @@ func (e *aggregateExec) aggregate(value [][]byte) error {
 	// Update aggregate expressions.
 	aggCtxs := e.getContexts(gk)
 	for i, agg := range e.aggExprs {
-		agg.Update(e.row, aggCtxs[i], e.evalCtx.sc)
+		agg.Update(aggCtxs[i], e.evalCtx.sc, e.row)
 	}
 	return nil
 }

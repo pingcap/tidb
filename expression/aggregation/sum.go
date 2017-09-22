@@ -36,7 +36,7 @@ func (sf *sumFunction) Clone() Aggregation {
 }
 
 // Update implements Aggregation interface.
-func (sf *sumFunction) Update(row []types.Datum, ctx *AggEvaluateContext, sc *variable.StatementContext) error {
+func (sf *sumFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row []types.Datum) error {
 	return sf.updateSum(row, ctx, sc)
 }
 

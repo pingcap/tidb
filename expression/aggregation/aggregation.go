@@ -34,7 +34,7 @@ type Aggregation interface {
 	json.Marshaler
 
 	// Update during executing.
-	Update(row []types.Datum, ctx *AggEvaluateContext, sc *variable.StatementContext) error
+	Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row []types.Datum) error
 
 	// GetPartialResult will called by coprocessor to get partial results. For avg function, partial results will return
 	// sum and count values at the same time.

@@ -50,7 +50,7 @@ func (cf *concatFunction) writeValue(ctx *AggEvaluateContext, val types.Datum) {
 }
 
 // Update implements Aggregation interface.
-func (cf *concatFunction) Update(row []types.Datum, ctx *AggEvaluateContext, sc *variable.StatementContext) error {
+func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row []types.Datum) error {
 	datumBuf := make([]types.Datum, 0, len(cf.Args))
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)

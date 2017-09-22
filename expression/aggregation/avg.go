@@ -72,7 +72,7 @@ func (af *avgFunction) updateAvg(row []types.Datum, ctx *AggEvaluateContext, sc 
 }
 
 // Update implements Aggregation interface.
-func (af *avgFunction) Update(row []types.Datum, ctx *AggEvaluateContext, sc *variable.StatementContext) error {
+func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementContext, row []types.Datum) error {
 	if af.mode == FinalMode {
 		return af.updateAvg(row, ctx, sc)
 	}
