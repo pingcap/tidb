@@ -79,7 +79,8 @@ func (af *avgFunction) Update(row []types.Datum, ctx *AggEvaluateContext, sc *va
 	return af.updateSum(row, ctx, sc)
 }
 
-func (af *avgFunction) calculateResult(ctx *AggEvaluateContext) (d types.Datum) {
+// GetResult implements Aggregation interface.
+func (af *avgFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	switch ctx.Value.Kind() {
 	case types.KindFloat64:
 		t := ctx.Value.GetFloat64() / float64(ctx.Count)
@@ -93,11 +94,6 @@ func (af *avgFunction) calculateResult(ctx *AggEvaluateContext) (d types.Datum) 
 		d.SetMysqlDecimal(to)
 	}
 	return
-}
-
-// GetResult implements Aggregation interface.
-func (af *avgFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
-	return af.calculateResult(ctx)
 }
 
 // GetPartialResult implements Aggregation interface.
