@@ -30,7 +30,6 @@ func (af *avgFunction) Clone() Aggregation {
 	for i, arg := range af.Args {
 		nf.Args[i] = arg.Clone()
 	}
-	nf.resultMapper = make(aggCtxMapper)
 	return &nf
 }
 
@@ -42,8 +41,7 @@ func (af *avgFunction) GetType() *types.FieldType {
 	return ft
 }
 
-func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, sc *variable.StatementContext) error {
-	ctx := af.getContext(groupKey)
+func (af *avgFunction) updateAvg(row []types.Datum, ctx *AggEvaluateContext, sc *variable.StatementContext) error {
 	a := af.Args[1]
 	value, err := a.Eval(row)
 	if err != nil {
@@ -74,19 +72,14 @@ func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, sc *variabl
 }
 
 // Update implements Aggregation interface.
-func (af *avgFunction) Update(row []types.Datum, groupKey []byte, sc *variable.StatementContext) error {
+func (af *avgFunction) Update(row []types.Datum, ctx *AggEvaluateContext, sc *variable.StatementContext) error {
 	if af.mode == FinalMode {
-		return af.updateAvg(row, groupKey, sc)
+		return af.updateAvg(row, ctx, sc)
 	}
-	return af.updateSum(row, groupKey, sc)
+	return af.updateSum(row, ctx, sc)
 }
 
-// StreamUpdate implements Aggregation interface.
-func (af *avgFunction) StreamUpdate(row []types.Datum, sc *variable.StatementContext) error {
-	return af.streamUpdateSum(row, sc)
-}
-
-func (af *avgFunction) calculateResult(ctx *aggEvaluateContext) (d types.Datum) {
+func (af *avgFunction) calculateResult(ctx *AggEvaluateContext) (d types.Datum) {
 	switch ctx.Value.Kind() {
 	case types.KindFloat64:
 		t := ctx.Value.GetFloat64() / float64(ctx.Count)
@@ -102,24 +95,12 @@ func (af *avgFunction) calculateResult(ctx *aggEvaluateContext) (d types.Datum) 
 	return
 }
 
-// GetGroupResult implements Aggregation interface.
-func (af *avgFunction) GetGroupResult(groupKey []byte) types.Datum {
-	ctx := af.getContext(groupKey)
+// GetResult implements Aggregation interface.
+func (af *avgFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
 	return af.calculateResult(ctx)
 }
 
 // GetPartialResult implements Aggregation interface.
-func (af *avgFunction) GetPartialResult(groupKey []byte) []types.Datum {
-	ctx := af.getContext(groupKey)
+func (af *avgFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{types.NewIntDatum(ctx.Count), ctx.Value}
-}
-
-// GetStreamResult implements Aggregation interface.
-func (af *avgFunction) GetStreamResult() (d types.Datum) {
-	if af.streamCtx == nil {
-		return
-	}
-	d = af.calculateResult(af.streamCtx)
-	af.streamCtx = nil
-	return
 }

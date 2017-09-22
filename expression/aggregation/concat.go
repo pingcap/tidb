@@ -33,7 +33,6 @@ func (cf *concatFunction) Clone() Aggregation {
 	for i, arg := range cf.Args {
 		nf.Args[i] = arg.Clone()
 	}
-	nf.resultMapper = make(aggCtxMapper)
 	return &nf
 }
 
@@ -42,7 +41,7 @@ func (cf *concatFunction) GetType() *types.FieldType {
 	return types.NewFieldType(mysql.TypeVarString)
 }
 
-func (cf *concatFunction) writeValue(ctx *aggEvaluateContext, val types.Datum) {
+func (cf *concatFunction) writeValue(ctx *AggEvaluateContext, val types.Datum) {
 	if val.Kind() == types.KindBytes {
 		ctx.Buffer.Write(val.GetBytes())
 	} else {
@@ -51,9 +50,8 @@ func (cf *concatFunction) writeValue(ctx *aggEvaluateContext, val types.Datum) {
 }
 
 // Update implements Aggregation interface.
-func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, sc *variable.StatementContext) error {
-	ctx := cf.getContext(groupKey)
-	cf.datumBuf = cf.datumBuf[:0]
+func (cf *concatFunction) Update(row []types.Datum, ctx *AggEvaluateContext, sc *variable.StatementContext) error {
+	datumBuf := make([]types.Datum, 0, len(cf.Args))
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
 		if err != nil {
@@ -62,10 +60,10 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, sc *variabl
 		if value.GetValue() == nil {
 			return nil
 		}
-		cf.datumBuf = append(cf.datumBuf, value)
+		datumBuf = append(datumBuf, value)
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
+		d, err := ctx.DistinctChecker.Check(datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -79,52 +77,15 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, sc *variabl
 		// now use comma separator
 		ctx.Buffer.WriteString(",")
 	}
-	for _, val := range cf.datumBuf {
+	for _, val := range datumBuf {
 		cf.writeValue(ctx, val)
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	return nil
 }
 
-// StreamUpdate implements Aggregation interface.
-func (cf *concatFunction) StreamUpdate(row []types.Datum, sc *variable.StatementContext) error {
-	ctx := cf.getStreamedContext()
-	cf.datumBuf = cf.datumBuf[:0]
-	for _, a := range cf.Args {
-		value, err := a.Eval(row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if value.GetValue() == nil {
-			return nil
-		}
-		cf.datumBuf = append(cf.datumBuf, value)
-	}
-	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !d {
-			return nil
-		}
-	}
-	if ctx.Buffer == nil {
-		ctx.Buffer = &bytes.Buffer{}
-	} else {
-		// now use comma separator
-		ctx.Buffer.WriteString(",")
-	}
-	for _, val := range cf.datumBuf {
-		cf.writeValue(ctx, val)
-	}
-	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
-	return nil
-}
-
-// GetGroupResult implements Aggregation interface.
-func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	ctx := cf.getContext(groupKey)
+// GetResult implements Aggregation interface.
+func (cf *concatFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 	if ctx.Buffer != nil {
 		d.SetString(ctx.Buffer.String())
 	} else {
@@ -134,20 +95,6 @@ func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 }
 
 // GetPartialResult implements Aggregation interface.
-func (cf *concatFunction) GetPartialResult(groupKey []byte) []types.Datum {
-	return []types.Datum{cf.GetGroupResult(groupKey)}
-}
-
-// GetStreamResult implements Aggregation interface.
-func (cf *concatFunction) GetStreamResult() (d types.Datum) {
-	if cf.streamCtx == nil {
-		return
-	}
-	if cf.streamCtx.Buffer != nil {
-		d.SetString(cf.streamCtx.Buffer.String())
-	} else {
-		d.SetNull()
-	}
-	cf.streamCtx = nil
-	return
+func (cf *concatFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{cf.GetResult(ctx)}
 }

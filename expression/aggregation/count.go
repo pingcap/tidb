@@ -33,7 +33,6 @@ func (cf *countFunction) Clone() Aggregation {
 	for i, arg := range cf.Args {
 		nf.Args[i] = arg.Clone()
 	}
-	nf.resultMapper = make(aggCtxMapper)
 	return &nf
 }
 
@@ -65,10 +64,10 @@ func (cf *countFunction) GetType() *types.FieldType {
 }
 
 // Update implements Aggregation interface.
-func (cf *countFunction) Update(row []types.Datum, groupKey []byte, sc *variable.StatementContext) error {
-	ctx := cf.getContext(groupKey)
+func (cf *countFunction) Update(row []types.Datum, ctx *AggEvaluateContext, sc *variable.StatementContext) error {
+	var datumBuf []types.Datum
 	if cf.Distinct {
-		cf.datumBuf = cf.datumBuf[:0]
+		datumBuf = make([]types.Datum, 0, len(cf.Args))
 	}
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
@@ -82,11 +81,11 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, sc *variable
 			ctx.Count += value.GetInt64()
 		}
 		if cf.Distinct {
-			cf.datumBuf = append(cf.datumBuf, value)
+			datumBuf = append(datumBuf, value)
 		}
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
+		d, err := ctx.DistinctChecker.Check(datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -100,54 +99,13 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, sc *variable
 	return nil
 }
 
-// StreamUpdate implements Aggregation interface.
-func (cf *countFunction) StreamUpdate(row []types.Datum, sc *variable.StatementContext) error {
-	ctx := cf.getStreamedContext()
-	if cf.Distinct {
-		cf.datumBuf = cf.datumBuf[:0]
-	}
-	for _, a := range cf.Args {
-		value, err := a.Eval(row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if value.GetValue() == nil {
-			return nil
-		}
-		if cf.Distinct {
-			cf.datumBuf = append(cf.datumBuf, value)
-		}
-	}
-	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !d {
-			return nil
-		}
-	}
-	ctx.Count++
-	return nil
-}
-
-// GetGroupResult implements Aggregation interface.
-func (cf *countFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	d.SetInt64(cf.getContext(groupKey).Count)
+// GetResult implements Aggregation interface.
+func (cf *countFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
+	d.SetInt64(ctx.Count)
 	return d
 }
 
 // GetPartialResult implements Aggregation interface.
-func (cf *countFunction) GetPartialResult(groupKey []byte) []types.Datum {
-	return []types.Datum{cf.GetGroupResult(groupKey)}
-}
-
-// GetStreamResult implements Aggregation interface.
-func (cf *countFunction) GetStreamResult() (d types.Datum) {
-	if cf.streamCtx == nil {
-		return types.NewDatum(0)
-	}
-	d.SetInt64(cf.streamCtx.Count)
-	cf.streamCtx = nil
-	return
+func (cf *countFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{cf.GetResult(ctx)}
 }

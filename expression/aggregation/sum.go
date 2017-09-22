@@ -32,38 +32,22 @@ func (sf *sumFunction) Clone() Aggregation {
 	for i, arg := range sf.Args {
 		nf.Args[i] = arg.Clone()
 	}
-	nf.resultMapper = make(aggCtxMapper)
 	return &nf
 }
 
 // Update implements Aggregation interface.
-func (sf *sumFunction) Update(row []types.Datum, groupKey []byte, sc *variable.StatementContext) error {
-	return sf.updateSum(row, groupKey, sc)
+func (sf *sumFunction) Update(row []types.Datum, ctx *AggEvaluateContext, sc *variable.StatementContext) error {
+	return sf.updateSum(row, ctx, sc)
 }
 
-// StreamUpdate implements Aggregation interface.
-func (sf *sumFunction) StreamUpdate(row []types.Datum, sc *variable.StatementContext) error {
-	return sf.streamUpdateSum(row, sc)
-}
-
-// GetGroupResult implements Aggregation interface.
-func (sf *sumFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	return sf.getContext(groupKey).Value
+// GetResult implements Aggregation interface.
+func (sf *sumFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
+	return ctx.Value
 }
 
 // GetPartialResult implements Aggregation interface.
-func (sf *sumFunction) GetPartialResult(groupKey []byte) []types.Datum {
-	return []types.Datum{sf.GetGroupResult(groupKey)}
-}
-
-// GetStreamResult implements Aggregation interface.
-func (sf *sumFunction) GetStreamResult() (d types.Datum) {
-	if sf.streamCtx == nil {
-		return
-	}
-	d = sf.streamCtx.Value
-	sf.streamCtx = nil
-	return
+func (sf *sumFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{sf.GetResult(ctx)}
 }
 
 // CalculateDefaultValue implements Aggregation interface.
