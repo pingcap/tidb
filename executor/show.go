@@ -65,21 +65,23 @@ func (e *ShowExec) Next() (Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		for i := range e.rows {
+			for j, row, l := 0, e.rows[i], len(e.rows); j < l; j++ {
+				if row[j].Kind() != types.KindString {
+					continue
+				}
+				val := row[j].GetString()
+				retType := e.Schema().Columns[j].RetType
+				if l := len(val); l > retType.Flen {
+					retType.Flen = l
+				}
+			}
+		}
 	}
 	if e.cursor >= len(e.rows) {
 		return nil, nil
 	}
 	row := e.rows[e.cursor]
-	for i := range row {
-		if row[i].Kind() != types.KindString {
-			continue
-		}
-		val := row[i].GetString()
-		retType := e.Schema().Columns[i].RetType
-		if l := len(val); l > retType.Flen {
-			retType.Flen = l
-		}
-	}
 	e.cursor++
 	return row, nil
 }
