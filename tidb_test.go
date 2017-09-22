@@ -382,14 +382,6 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	c.Assert(after-before, Less, 3)
 }
 
-func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
-	se.Execute("BEGIN;")
-	r, err := se.Execute(sql)
-	c.Assert(err, IsNil)
-	se.Execute("COMMIT;")
-	return r, err
-}
-
 func newStore(c *C, dbPath string) kv.Storage {
 	store, err := NewStore(*store + "://" + dbPath)
 	c.Assert(err, IsNil)
