@@ -32,8 +32,7 @@ import (
 type Aggregation interface {
 	fmt.Stringer
 	json.Marshaler
-	// // Update during executing.
-	// Update(row []types.Datum, groupKey []byte, sc *variable.StatementContext) error
+
 	// Update during executing.
 	Update(row []types.Datum, ctx *AggEvaluateContext, sc *variable.StatementContext) error
 
