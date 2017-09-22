@@ -1000,174 +1000,173 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx context.Context) (sig builtinFunc, err error) {
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
 	bf.tp.Flen = 1
-	intBf := bf
 	switch tp {
 	case tpInt:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTIntSig{intBf}
+			sig = &builtinLTIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTInt)
 		case opcode.LE:
-			sig = &builtinLEIntSig{intBf}
+			sig = &builtinLEIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEInt)
 		case opcode.GT:
-			sig = &builtinGTIntSig{intBf}
+			sig = &builtinGTIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTInt)
 		case opcode.EQ:
-			sig = &builtinEQIntSig{intBf}
+			sig = &builtinEQIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQInt)
 		case opcode.GE:
-			sig = &builtinGEIntSig{intBf}
+			sig = &builtinGEIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEInt)
 		case opcode.NE:
-			sig = &builtinNEIntSig{intBf}
+			sig = &builtinNEIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEInt)
 		case opcode.NullEQ:
-			sig = &builtinNullEQIntSig{intBf}
+			sig = &builtinNullEQIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQInt)
 		}
 	case tpReal:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTRealSig{intBf}
+			sig = &builtinLTRealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTReal)
 		case opcode.LE:
-			sig = &builtinLERealSig{intBf}
+			sig = &builtinLERealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEReal)
 		case opcode.GT:
-			sig = &builtinGTRealSig{intBf}
+			sig = &builtinGTRealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTReal)
 		case opcode.GE:
-			sig = &builtinGERealSig{intBf}
+			sig = &builtinGERealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEReal)
 		case opcode.EQ:
-			sig = &builtinEQRealSig{intBf}
+			sig = &builtinEQRealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQReal)
 		case opcode.NE:
-			sig = &builtinNERealSig{intBf}
+			sig = &builtinNERealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEReal)
 		case opcode.NullEQ:
-			sig = &builtinNullEQRealSig{intBf}
+			sig = &builtinNullEQRealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQReal)
 		}
 	case tpDecimal:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTDecimalSig{intBf}
+			sig = &builtinLTDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTDecimal)
 		case opcode.LE:
-			sig = &builtinLEDecimalSig{intBf}
+			sig = &builtinLEDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEDecimal)
 		case opcode.GT:
-			sig = &builtinGTDecimalSig{intBf}
+			sig = &builtinGTDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTDecimal)
 		case opcode.GE:
-			sig = &builtinGEDecimalSig{intBf}
+			sig = &builtinGEDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEDecimal)
 		case opcode.EQ:
-			sig = &builtinEQDecimalSig{intBf}
+			sig = &builtinEQDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQDecimal)
 		case opcode.NE:
-			sig = &builtinNEDecimalSig{intBf}
+			sig = &builtinNEDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEDecimal)
 		case opcode.NullEQ:
-			sig = &builtinNullEQDecimalSig{intBf}
+			sig = &builtinNullEQDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQDecimal)
 		}
 	case tpString:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTStringSig{intBf}
+			sig = &builtinLTStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTString)
 		case opcode.LE:
-			sig = &builtinLEStringSig{intBf}
+			sig = &builtinLEStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEString)
 		case opcode.GT:
-			sig = &builtinGTStringSig{intBf}
+			sig = &builtinGTStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTString)
 		case opcode.GE:
-			sig = &builtinGEStringSig{intBf}
+			sig = &builtinGEStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEString)
 		case opcode.EQ:
-			sig = &builtinEQStringSig{intBf}
+			sig = &builtinEQStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQString)
 		case opcode.NE:
-			sig = &builtinNEStringSig{intBf}
+			sig = &builtinNEStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEString)
 		case opcode.NullEQ:
-			sig = &builtinNullEQStringSig{intBf}
+			sig = &builtinNullEQStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQString)
 		}
 	case tpDuration:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTDurationSig{intBf}
+			sig = &builtinLTDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTDuration)
 		case opcode.LE:
-			sig = &builtinLEDurationSig{intBf}
+			sig = &builtinLEDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEDuration)
 		case opcode.GT:
-			sig = &builtinGTDurationSig{intBf}
+			sig = &builtinGTDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTDuration)
 		case opcode.GE:
-			sig = &builtinGEDurationSig{intBf}
+			sig = &builtinGEDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEDuration)
 		case opcode.EQ:
-			sig = &builtinEQDurationSig{intBf}
+			sig = &builtinEQDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQDuration)
 		case opcode.NE:
-			sig = &builtinNEDurationSig{intBf}
+			sig = &builtinNEDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEDuration)
 		case opcode.NullEQ:
-			sig = &builtinNullEQDurationSig{intBf}
+			sig = &builtinNullEQDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQDuration)
 		}
 	case tpDatetime, tpTimestamp:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTTimeSig{intBf}
+			sig = &builtinLTTimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTTime)
 		case opcode.LE:
-			sig = &builtinLETimeSig{intBf}
+			sig = &builtinLETimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LETime)
 		case opcode.GT:
-			sig = &builtinGTTimeSig{intBf}
+			sig = &builtinGTTimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTTime)
 		case opcode.GE:
-			sig = &builtinGETimeSig{intBf}
+			sig = &builtinGETimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GETime)
 		case opcode.EQ:
-			sig = &builtinEQTimeSig{intBf}
+			sig = &builtinEQTimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQTime)
 		case opcode.NE:
-			sig = &builtinNETimeSig{intBf}
+			sig = &builtinNETimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NETime)
 		case opcode.NullEQ:
-			sig = &builtinNullEQTimeSig{intBf}
+			sig = &builtinNullEQTimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQTime)
 		}
 	case tpJSON:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTJSONSig{intBf}
+			sig = &builtinLTJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTJson)
 		case opcode.LE:
-			sig = &builtinLEJSONSig{intBf}
+			sig = &builtinLEJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEJson)
 		case opcode.GT:
-			sig = &builtinGTJSONSig{intBf}
+			sig = &builtinGTJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTJson)
 		case opcode.GE:
-			sig = &builtinGEJSONSig{intBf}
+			sig = &builtinGEJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEJson)
 		case opcode.EQ:
-			sig = &builtinEQJSONSig{intBf}
+			sig = &builtinEQJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQJson)
 		case opcode.NE:
-			sig = &builtinNEJSONSig{intBf}
+			sig = &builtinNEJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEJson)
 		case opcode.NullEQ:
-			sig = &builtinNullEQJSONSig{intBf}
+			sig = &builtinNullEQJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQJson)
 		}
 	}

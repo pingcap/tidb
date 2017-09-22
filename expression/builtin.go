@@ -18,7 +18,6 @@
 package expression
 
 import (
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 	"github.com/pingcap/tipb/go-tipb"
-	"runtime"
 )
 
 // evalTp indicates the specified types that arguments and result of a built-in function should be.
@@ -259,66 +257,31 @@ func (b *baseBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
 }
 
 func (b *baseBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	pc, _, _, ok := runtime.Caller(0)
-	if ok {
-		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
-	} else {
-		panic("runtime.Caller failed.")
-	}
+	panic("baseBuiltinFunc.evalInt() should be called.")
 }
 
 func (b *baseBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	pc, _, _, ok := runtime.Caller(0)
-	if ok {
-		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
-	} else {
-		panic("runtime.Caller failed.")
-	}
+	panic("baseBuiltinFunc.evalReal() should be called.")
 }
 
 func (b *baseBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	pc, _, _, ok := runtime.Caller(0)
-	if ok {
-		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
-	} else {
-		panic("runtime.Caller failed.")
-	}
+	panic("baseBuiltinFunc.evalString() should be called.")
 }
 
 func (b *baseBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	pc, _, _, ok := runtime.Caller(0)
-	if ok {
-		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
-	} else {
-		panic("runtime.Caller failed.")
-	}
+	panic("baseBuiltinFunc.evalDecimal() should be called.")
 }
 
 func (b *baseBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
-	pc, _, _, ok := runtime.Caller(0)
-	if ok {
-		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
-	} else {
-		panic("runtime.Caller failed.")
-	}
+	panic("baseBuiltinFunc.evalTime() should be called.")
 }
 
 func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	pc, _, _, ok := runtime.Caller(0)
-	if ok {
-		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
-	} else {
-		panic("runtime.Caller failed.")
-	}
+	panic("baseBuiltinFunc.evalDuration() should be called.")
 }
 
 func (b *baseBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
-	pc, _, _, ok := runtime.Caller(0)
-	if ok {
-		panic(fmt.Sprintf("func \"%s\" should never be called.", runtime.FuncForPC(pc).Name()))
-	} else {
-		panic("runtime.Caller failed.")
-	}
+	panic("baseBuiltinFunc.evalJSON() should be called.")
 }
 
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
