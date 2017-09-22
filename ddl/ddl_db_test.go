@@ -1161,9 +1161,11 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 func (s *testDBSuite) TestCreateTable(c *C) {
 	store, err := tidb.NewStore("memory://create_table")
 	c.Assert(err, IsNil)
+	defer store.Close()
 	s.tk = testkit.NewTestKit(c, store)
-	_, err = tidb.BootstrapSession(store)
+	dom, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 
 	s.tk.MustExec("use test")
 	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
