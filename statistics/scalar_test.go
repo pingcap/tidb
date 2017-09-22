@@ -127,7 +127,7 @@ func (t *testStatisticsSuite) TestCalcFraction(c *C) {
 	}
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	for _, test := range tests {
-		fraction := calcFraction(sc, test.lower, test.upper, test.value)
+		fraction := calcFraction(&test.lower, &test.upper, &test.value)
 		c.Check(math.Abs(fraction-test.fraction) < eps, IsTrue)
 	}
 }
