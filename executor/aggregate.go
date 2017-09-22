@@ -47,7 +47,7 @@ type HashAggExec struct {
 func (e *HashAggExec) Close() error {
 	e.groupMap = nil
 	e.groupIterator = nil
-	e.aggCtxsMap = make(aggCtxsMapper, 0)
+	e.aggCtxsMap = nil
 	return errors.Trace(e.children[0].Close())
 }
 
