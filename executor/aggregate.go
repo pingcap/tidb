@@ -146,13 +146,14 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 }
 
 func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext {
-	aggCtxs, ok := e.aggCtxsMap[string(groupKey)]
+	groupKeyString := string(groupKey)
+	aggCtxs, ok := e.aggCtxsMap[groupKeyString]
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
 		for _, af := range e.AggFuncs {
 			aggCtxs = append(aggCtxs, af.CreateContext())
 		}
-		e.aggCtxsMap[string(groupKey)] = aggCtxs
+		e.aggCtxsMap[groupKeyString] = aggCtxs
 	}
 	return aggCtxs
 }

@@ -444,13 +444,14 @@ func (e *aggregateExec) aggregate(value [][]byte) error {
 }
 
 func (e *aggregateExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext {
-	aggCtxs, ok := e.aggCtxsMap[string(groupKey)]
+	groupKeyString := string(groupKey)
+	aggCtxs, ok := e.aggCtxsMap[groupKeyString]
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.aggExprs))
 		for _, agg := range e.aggExprs {
 			aggCtxs = append(aggCtxs, agg.CreateContext())
 		}
-		e.aggCtxsMap[string(groupKey)] = aggCtxs
+		e.aggCtxsMap[groupKeyString] = aggCtxs
 	}
 	return aggCtxs
 }
