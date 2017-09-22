@@ -346,6 +346,7 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 }
 
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
+	c.Skip("make leak should check it")
 	// TODO: testleak package should be able to find this leak.
 	store, dom := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
 	defer dom.Close()

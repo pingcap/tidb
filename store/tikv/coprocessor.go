@@ -24,9 +24,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
+
+var copIteratorGP = gp.New(time.Minute)
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -362,14 +365,14 @@ func (it *copIterator) run(ctx goctx.Context) {
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
-		go func() {
+		copIteratorGP.Go(func() {
 			childCtx, cancel := goctx.WithCancel(ctx)
 			defer cancel()
 			it.work(childCtx, taskCh)
-		}()
+		})
 	}
 
-	go func() {
+	copIteratorGP.Go(func() {
 		// Send tasks to feed the worker goroutines.
 		childCtx, cancel := goctx.WithCancel(ctx)
 		defer cancel()
@@ -386,7 +389,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 		if !it.req.KeepOrder {
 			close(it.respChan)
 		}
-	}()
+	})
 }
 
 func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask, taskCh chan<- *copTask) (finished bool, canceled bool) {
