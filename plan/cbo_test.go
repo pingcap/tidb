@@ -97,7 +97,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 20",
-			best: "IndexLookUp(Index(t.b_c)[[-inf <nil>,20 +inf]], Table(t)->HashAgg)->HashAgg",
+			best: "IndexLookUp(Index(t.b)[[-inf,20]], Table(t)->HashAgg)->HashAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 30",
