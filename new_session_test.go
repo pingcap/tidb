@@ -27,10 +27,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -42,9 +44,11 @@ type testSessionSuite struct {
 	cluster   *mocktikv.Cluster
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
+	dom       *domain.Domain
 }
 
 func (s *testSessionSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.NewMvccStore()
@@ -56,12 +60,17 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.store = store
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(0)
-	_, err = tidb.BootstrapSession(s.store)
+	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
 
-func (s *testSessionSuite) TearDownTest(c *C) {
+func (s *testSessionSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
 	testleak.AfterTest(c)()
+}
+
+func (s *testSessionSuite) TearDownTest(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
@@ -360,6 +369,301 @@ func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	c.Assert(len(r), Equals, 1)
 }
 
+// See https://dev.mysql.com/doc/internals/en/status-flags.html
+func (s *testSessionSuite) TestInTrans(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("begin")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("insert t values ()")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("drop table if exists t;")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("insert t values ()")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("commit")
+	tk.MustExec("insert t values ()")
+
+	tk.MustExec("set autocommit=0")
+	tk.MustExec("begin")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("insert t values ()")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("commit")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("insert t values ()")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("commit")
+	c.Assert(tk.Se.Txn(), IsNil)
+
+	tk.MustExec("set autocommit=1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	tk.MustExec("begin")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("insert t values ()")
+	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	tk.MustExec("rollback")
+	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+}
+
+func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
+	tk.MustExec("insert t values (11, 2, 3)")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set c2=? where c1=11;", 21)
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=? where c1=11", 22)
+	tk2.MustExec("commit")
+
+	tk1.MustExec("commit")
+
+	tk.MustQuery("select c2 from t where c1=11").Check(testkit.Rows("21"))
+}
+
+func (s *testSessionSuite) TestSession(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("ROLLBACK;")
+	tk.Se.Close()
+}
+
+func (s *testSessionSuite) TestSessionAuth(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")), IsFalse)
+}
+
+func (s *testSessionSuite) TestSkipWithGrant(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	save1 := privileges.Enable
+	save2 := privileges.SkipWithGrant
+
+	privileges.Enable = true
+	privileges.SkipWithGrant = false
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")), IsFalse)
+
+	privileges.SkipWithGrant = true
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "%"}, []byte("yyy"), []byte("zzz")), IsTrue)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, []byte(""), []byte("")), IsTrue)
+	tk.MustExec("create table t (id int)")
+
+	privileges.Enable = save1
+	privileges.SkipWithGrant = save2
+}
+
+func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL, name varchar(255) UNIQUE NOT NULL, status int)")
+	tk.MustExec("insert t (name) values (?)", "abc")
+	id := tk.Se.LastInsertID()
+	c.Check(id != 0, IsTrue)
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("%d abc <nil>", id)))
+
+	tk.MustExec("update t set name = 'abc', status = 1 where id = ?", id)
+	tk1.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("%d abc 1", id)))
+
+	// Check for pass bool param to tidb prepared statement
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id tinyint)")
+	tk.MustExec("insert t values (?)", true)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestAutoIncrementID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	tk.MustExec("insert t values ()")
+	lastID := tk.Se.LastInsertID()
+	c.Assert(lastID, Less, uint64(4))
+	tk.MustExec("insert t () values ()")
+	c.Assert(tk.Se.LastInsertID(), Greater, lastID)
+	lastID = tk.Se.LastInsertID()
+	tk.MustExec("insert t values (100)")
+	c.Assert(tk.Se.LastInsertID(), Equals, uint64(100))
+
+	// If the auto_increment column value is given, it uses the value of the latest row.
+	tk.MustExec("insert t values (120), (112)")
+	c.Assert(tk.Se.LastInsertID(), Equals, uint64(112))
+
+	// The last_insert_id function only use last auto-generated id.
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows(fmt.Sprint(lastID)))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (i tinyint unsigned not null auto_increment, primary key (i));")
+	tk.MustExec("insert into t set i = 254;")
+	tk.MustExec("insert t values ()")
+
+	// The last insert ID doesn't care about primary key, it is set even if its a normal index column.
+	tk.MustExec("create table autoid (id int auto_increment, index (id))")
+	tk.MustExec("insert autoid values ()")
+	c.Assert(tk.Se.LastInsertID(), Greater, uint64(0))
+	tk.MustExec("insert autoid values (100)")
+	c.Assert(tk.Se.LastInsertID(), Equals, uint64(100))
+
+	tk.MustQuery("select last_insert_id(20)").Check(testkit.Rows(fmt.Sprint(20)))
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows(fmt.Sprint(20)))
+}
+
+func (s *testSessionSuite) TestPrepare(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(id TEXT)")
+	tk.MustExec(`INSERT INTO t VALUES ("id");`)
+	id, ps, fields, err := tk.Se.PrepareStmt("select id+? from t")
+	c.Assert(err, IsNil)
+	c.Assert(fields, HasLen, 1)
+	c.Assert(id, Equals, uint32(1))
+	c.Assert(ps, Equals, 1)
+	tk.MustExec(`set @a=1`)
+	_, err = tk.Se.ExecutePreparedStmt(id, "1")
+	c.Assert(err, IsNil)
+	err = tk.Se.DropPreparedStmt(id)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("prepare stmt from 'select 1+?'")
+	tk.MustExec("set @v1=100")
+	tk.MustQuery("execute stmt using @v1").Check(testkit.Rows("101"))
+
+	tk.MustExec("set @v2=200")
+	tk.MustQuery("execute stmt using @v2").Check(testkit.Rows("201"))
+
+	tk.MustExec("set @v3=300")
+	tk.MustQuery("execute stmt using @v3").Check(testkit.Rows("301"))
+	tk.MustExec("deallocate prepare stmt")
+
+	// Execute prepared statements for more than one time.
+	tk.MustExec("create table multiexec (a int, b int)")
+	tk.MustExec("insert multiexec values (1, 1), (2, 2)")
+	id, _, _, err = tk.Se.PrepareStmt("select a from multiexec where b = ? order by b")
+	c.Assert(err, IsNil)
+	rs, err := tk.Se.ExecutePreparedStmt(id, 1)
+	c.Assert(err, IsNil)
+	rs.Close()
+	rs, err = tk.Se.ExecutePreparedStmt(id, 2)
+	rs.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	_, err := tk.Exec("create table t (c1 char, index(c1(3)));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t (c1 int, index(c1(3)));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t (c1 bit(10), index(c1(3)));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	tk.MustExec("create table t (c1 char, c2 int, c3 bit(10));")
+
+	_, err = tk.Exec("create index idx_c1 on t (c1(3));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create index idx_c1 on t (c2(3));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create index idx_c1 on t (c3(3));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t;")
+
+	_, err = tk.Exec("create table t (c1 int, c2 blob, c3 varchar(64), index(c2));")
+	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
+	c.Assert(err, NotNil)
+
+	tk.MustExec("create table t (c1 int, c2 blob, c3 varchar(64));")
+	_, err = tk.Exec("create index idx_c1 on t (c2);")
+	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create index idx_c1 on t (c2(555555));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create index idx_c1 on t (c1(5))")
+	// ERROR 1089 (HY000): Incorrect prefix key;
+	// the used key part isn't a string, the used length is longer than the key part,
+	// or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	tk.MustExec("create index idx_c1 on t (c1);")
+	tk.MustExec("create index idx_c2 on t (c2(3));")
+	tk.MustExec("create unique index idx_c3 on t (c3(5));")
+
+	tk.MustExec("insert into t values (3, 'abc', 'def');")
+	tk.MustQuery("select c2 from t where c2 = 'abc';").Check(testkit.Rows("abc"))
+
+	tk.MustExec("insert into t values (4, 'abcd', 'xxx');")
+	tk.MustExec("insert into t values (4, 'abcf', 'yyy');")
+	tk.MustQuery("select c2 from t where c2 = 'abcf';").Check(testkit.Rows("abcf"))
+	tk.MustQuery("select c2 from t where c2 = 'abcd';").Check(testkit.Rows("abcd"))
+
+	tk.MustExec("insert into t values (4, 'ignore', 'abcdeXXX');")
+	_, err = tk.Exec("insert into t values (5, 'ignore', 'abcdeYYY');")
+	// ERROR 1062 (23000): Duplicate entry 'abcde' for key 'idx_c3'
+	c.Assert(err, NotNil)
+	tk.MustQuery("select c3 from t where c3 = 'abcde';").Check(testkit.Rows())
+
+	tk.MustExec("delete from t where c3 = 'abcdeXXX';")
+	tk.MustExec("delete from t where c2 = 'abc';")
+
+	tk.MustQuery("select c2 from t where c2 > 'abcd';").Check(testkit.Rows("abcf"))
+	tk.MustQuery("select c2 from t where c2 < 'abcf';").Check(testkit.Rows("abcd"))
+	tk.MustQuery("select c2 from t where c2 >= 'abcd';").Check(testkit.Rows("abcd", "abcf"))
+	tk.MustQuery("select c2 from t where c2 <= 'abcf';").Check(testkit.Rows("abcd", "abcf"))
+	tk.MustQuery("select c2 from t where c2 != 'abc';").Check(testkit.Rows("abcd", "abcf"))
+	tk.MustQuery("select c2 from t where c2 != 'abcd';").Check(testkit.Rows("abcf"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b char(255), key(a, b(20)));")
+	tk.MustExec("insert into t1 values (0, '1');")
+	tk.MustExec("update t1 set b = b + 1 where a = 0;")
+	tk.MustQuery("select b from t1 where a = 0;").Check(testkit.Rows("2"))
+
+	// test union index.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a text, b text, c int, index (a(3), b(3), c));")
+	tk.MustExec("insert into t values ('abc', 'abcd', 1);")
+	tk.MustExec("insert into t values ('abcx', 'abcf', 2);")
+	tk.MustExec("insert into t values ('abcy', 'abcf', 3);")
+	tk.MustExec("insert into t values ('bbc', 'abcd', 4);")
+	tk.MustExec("insert into t values ('bbcz', 'abcd', 5);")
+	tk.MustExec("insert into t values ('cbck', 'abd', 6);")
+	tk.MustQuery("select c from t where a = 'abc' and b <= 'abc';").Check(testkit.Rows())
+	tk.MustQuery("select c from t where a = 'abc' and b <= 'abd';").Check(testkit.Rows("1"))
+	tk.MustQuery("select c from t where a < 'cbc' and b > 'abcd';").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select c from t where a <= 'abd' and b > 'abc';").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select c from t where a < 'bbcc' and b = 'abcd';").Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select c from t where a > 'bbcf';").Check(testkit.Rows("5", "6"))
+}
+
 var _ = Suite(&testSchemaSuite{})
 
 type testSchemaSuite struct {
@@ -367,10 +671,11 @@ type testSchemaSuite struct {
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
 	lease     time.Duration
+	dom       *domain.Domain
+	checkLeak func()
 }
 
 func (s *testSchemaSuite) TearDownTest(c *C) {
-	testleak.AfterTest(c)()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
@@ -380,6 +685,7 @@ func (s *testSchemaSuite) TearDownTest(c *C) {
 }
 
 func (s *testSchemaSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.NewMvccStore()
@@ -392,8 +698,15 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	s.lease = 20 * time.Millisecond
 	tidb.SetSchemaLease(s.lease)
 	tidb.SetStatsLease(0)
-	_, err = tidb.BootstrapSession(s.store)
+	dom, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.dom = dom
+}
+
+func (s *testSchemaSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {

@@ -336,15 +336,23 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sc.TimeZone = sessVars.GetTimeZone()
 
 	switch stmt := s.(type) {
-	case *ast.UpdateStmt, *ast.DeleteStmt:
+	case *ast.UpdateStmt:
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+	case *ast.DeleteStmt:
+		sc.IgnoreTruncate = false
+		sc.OverflowAsWarning = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.InUpdateOrDeleteStmt = true
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 	case *ast.InsertStmt:
 		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InInsertStmt = true
+		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 		sc.IgnoreTruncate = false

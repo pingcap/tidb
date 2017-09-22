@@ -256,8 +256,7 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 // TODO: Merge TestIssue1435 in session test.
 func (s *testMainSuite) TestSchemaValidity(c *C) {
 	localstore.MockRemoteStore = true
-	store := newStoreWithBootstrap(c, s.dbName+"schema_validity")
-	defer store.Close()
+	store, _ := newStoreWithBootstrap(c, s.dbName+"schema_validity")
 	dbName := "test_schema_validity"
 	se := newSession(c, store, dbName)
 	se1 := newSession(c, store, dbName)
@@ -347,8 +346,10 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 }
 
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
+	c.Skip("make leak should check it")
 	// TODO: testleak package should be able to find this leak.
-	store := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
+	store, dom := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
+	defer dom.Close()
 	defer store.Close()
 	se, err := createSession(store)
 	c.Assert(err, IsNil)
@@ -396,11 +397,11 @@ func newStore(c *C, dbPath string) kv.Storage {
 	return store
 }
 
-func newStoreWithBootstrap(c *C, dbPath string) kv.Storage {
+func newStoreWithBootstrap(c *C, dbPath string) (kv.Storage, *domain.Domain) {
 	store := newStore(c, dbPath)
-	_, err := BootstrapSession(store)
+	dom, err := BootstrapSession(store)
 	c.Assert(err, IsNil)
-	return store
+	return store, dom
 }
 
 var testConnID uint64

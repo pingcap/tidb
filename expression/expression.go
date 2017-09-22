@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"bytes"
 	goJSON "encoding/json"
 	"fmt"
 
@@ -24,44 +23,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 )
-
-// Error instances.
-var (
-	ErrIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count in the call to native function '%s'")
-
-	errInvalidOperation    = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
-	errFunctionNotExists   = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
-	errZlibZData           = terror.ClassTypes.New(codeZlibZData, "ZLIB: Input data corrupted")
-	errIncorrectArgs       = terror.ClassExpression.New(codeIncorrectArgs, mysql.MySQLErrName[mysql.ErrWrongArguments])
-	errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
-)
-
-// Error codes.
-const (
-	codeInvalidOperation        terror.ErrCode = 1
-	codeIncorrectParameterCount                = 1582
-	codeFunctionNotExists                      = 1305
-	codeZlibZData                              = mysql.ErrZlibZData
-	codeIncorrectArgs                          = mysql.ErrWrongArguments
-)
-
-func init() {
-	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
-		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
-		codeZlibZData:               mysql.ErrZlibZData,
-		codeIncorrectArgs:           mysql.ErrWrongArguments,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
-}
-
-// TurnOnNewExprEval indicates whether turn on the new expression evaluation architecture.
-var TurnOnNewExprEval int32
 
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
@@ -166,7 +130,7 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	if IsHybridType(expr) {
 		res, err = val.ToInt64(sc)
 		return res, false, errors.Trace(err)
-	} else if expr.GetTypeClass() == types.ClassInt {
+	} else if fieldTp2EvalTp(expr.GetType()) == tpInt {
 		return val.GetInt64(), false, nil
 	}
 	panic(fmt.Sprintf("cannot get INT result from %s expression", types.TypeStr(expr.GetType().Tp)))
@@ -178,7 +142,7 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if expr.GetTypeClass() == types.ClassReal {
+	if fieldTp2EvalTp(expr.GetType()) == tpReal {
 		// TODO: fix this to val.GetFloat64() after all built-in functions been rewritten.
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
@@ -195,7 +159,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if expr.GetTypeClass() == types.ClassDecimal {
+	if fieldTp2EvalTp(expr.GetType()) == tpDecimal {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
 		// TODO: We maintain two sets of type systems, one for Expression, one for Datum.
@@ -218,7 +182,8 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if expr.GetTypeClass() == types.ClassString || IsHybridType(expr) {
+	exprEvalTp := fieldTp2EvalTp(expr.GetType())
+	if exprEvalTp == tpString || exprEvalTp == tpJSON || IsHybridType(expr) {
 		// We cannot use val.GetString() directly.
 		// For example, `Bit` is regarded as ClassString,
 		// while we can not use val.GetString() to get the value of a Bit variable,
@@ -272,156 +237,6 @@ func evalExprToJSON(expr Expression, row []types.Datum, _ *variable.StatementCon
 		return val.GetMysqlJSON(), false, nil
 	}
 	panic(fmt.Sprintf("cannot get JSON result from %s expression", types.TypeStr(expr.GetType().Tp)))
-}
-
-// One stands for a number 1.
-var One = &Constant{
-	Value:   types.NewDatum(1),
-	RetType: types.NewFieldType(mysql.TypeTiny),
-}
-
-// Zero stands for a number 0.
-var Zero = &Constant{
-	Value:   types.NewDatum(0),
-	RetType: types.NewFieldType(mysql.TypeTiny),
-}
-
-// Null stands for null constant.
-var Null = &Constant{
-	Value:   types.NewDatum(nil),
-	RetType: types.NewFieldType(mysql.TypeTiny),
-}
-
-// Constant stands for a constant value.
-type Constant struct {
-	Value   types.Datum
-	RetType *types.FieldType
-}
-
-// String implements fmt.Stringer interface.
-func (c *Constant) String() string {
-	return fmt.Sprintf("%v", c.Value.GetValue())
-}
-
-// MarshalJSON implements json.Marshaler interface.
-func (c *Constant) MarshalJSON() ([]byte, error) {
-	buffer := bytes.NewBufferString(fmt.Sprintf("\"%s\"", c))
-	return buffer.Bytes(), nil
-}
-
-// Clone implements Expression interface.
-func (c *Constant) Clone() Expression {
-	con := *c
-	return &con
-}
-
-// GetType implements Expression interface.
-func (c *Constant) GetType() *types.FieldType {
-	return c.RetType
-}
-
-// GetTypeClass implements Expression interface.
-func (c *Constant) GetTypeClass() types.TypeClass {
-	return c.RetType.ToClass()
-}
-
-// Eval implements Expression interface.
-func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
-	return c.Value, nil
-}
-
-// EvalInt returns int representation of Constant.
-func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull {
-		return 0, true, nil
-	}
-	val, isNull, err := evalExprToInt(c, nil, sc)
-	return val, isNull, errors.Trace(err)
-}
-
-// EvalReal returns real representation of Constant.
-func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull {
-		return 0, true, nil
-	}
-	val, isNull, err := evalExprToReal(c, nil, sc)
-	return val, isNull, errors.Trace(err)
-}
-
-// EvalString returns string representation of Constant.
-func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull {
-		return "", true, nil
-	}
-	val, isNull, err := evalExprToString(c, nil, sc)
-	return val, isNull, errors.Trace(err)
-}
-
-// EvalDecimal returns decimal representation of Constant.
-func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
-	if c.GetType().Tp == mysql.TypeNull {
-		return nil, true, nil
-	}
-	val, isNull, err := evalExprToDecimal(c, nil, sc)
-	return val, isNull, errors.Trace(err)
-}
-
-// EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
-func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (val types.Time, isNull bool, err error) {
-	if c.GetType().Tp == mysql.TypeNull {
-		return val, true, nil
-	}
-	val, isNull, err = evalExprToTime(c, nil, sc)
-	return val, isNull, errors.Trace(err)
-}
-
-// EvalDuration returns Duration representation of Constant.
-func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error) {
-	if c.GetType().Tp == mysql.TypeNull {
-		return val, true, nil
-	}
-	val, isNull, err = evalExprToDuration(c, nil, sc)
-	return val, isNull, errors.Trace(err)
-}
-
-// EvalJSON returns JSON representation of Constant.
-func (c *Constant) EvalJSON(_ []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
-	val, isNull, err := evalExprToJSON(c, nil, sc)
-	return val, isNull, errors.Trace(err)
-}
-
-// Equal implements Expression interface.
-func (c *Constant) Equal(b Expression, ctx context.Context) bool {
-	y, ok := b.(*Constant)
-	if !ok {
-		return false
-	}
-	con, err := c.Value.CompareDatum(ctx.GetSessionVars().StmtCtx, y.Value)
-	if err != nil || con != 0 {
-		return false
-	}
-	return true
-}
-
-// IsCorrelated implements Expression interface.
-func (c *Constant) IsCorrelated() bool {
-	return false
-}
-
-// Decorrelate implements Expression interface.
-func (c *Constant) Decorrelate(_ *Schema) Expression {
-	return c
-}
-
-// HashCode implements Expression interface.
-func (c *Constant) HashCode() []byte {
-	var bytes []byte
-	bytes, _ = codec.EncodeValue(bytes, c.Value)
-	return bytes
-}
-
-// ResolveIndices implements Expression interface.
-func (c *Constant) ResolveIndices(_ *Schema) {
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
@@ -584,7 +399,7 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 
 // NewCastFunc creates a new cast function.
 func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) Expression {
-	return FoldConstant(buildCastFunction(arg, tp, ctx))
+	return FoldConstant(BuildCastFunction(arg, tp, ctx))
 }
 
 // NewValuesFunc creates a new values function.
@@ -596,4 +411,27 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 		RetType:  retTp,
 		Function: bt.setSelf(bt),
 	}
+}
+
+// IsHybridType checks whether a ClassString expression is a hybrid type value which will return different types of value in different context.
+//
+// For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
+// it will cause an error if we convert ENUM/SET to int as a string value.
+//
+// For BinaryLiteral/MysqlBit, we will get a wrong result if we convert it to int as a string value.
+// For example, when convert `0b101` to int, the result should be 5, but we will get 101 if we regard it as a string.
+func IsHybridType(expr Expression) bool {
+	switch expr.GetType().Tp {
+	case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
+		return true
+	}
+
+	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is BinaryLiteral
+	if con, ok := expr.(*Constant); ok {
+		switch con.Value.Kind() {
+		case types.KindBinaryLiteral:
+			return true
+		}
+	}
+	return false
 }

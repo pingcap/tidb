@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
@@ -199,10 +200,14 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 }
 
 func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) LogicalPlan {
-	outerSchema := er.schema.Clone()
-	er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
+	if er.schema != nil {
+		outerSchema := er.schema.Clone()
+		er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
+	}
 	np := er.b.buildResultSetNode(subq.Query)
-	er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1]
+	if er.schema != nil {
+		er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1]
+	}
 	if er.b.err != nil {
 		er.err = errors.Trace(er.b.err)
 		return nil
@@ -258,7 +263,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
 	case *ast.ValuesExpr:
-		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, &v.Type, er.ctx))
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, v.Column.GetType(), er.ctx))
 		return inNode, true
 	default:
 		er.asScalar = true
@@ -764,7 +769,10 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = errors.Trace(err)
 		return
 	}
-	er.ctxStack = append(er.ctxStack, datumToConstant(types.NewStringDatum(val), mysql.TypeString))
+	e := datumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
+	e.RetType.Charset = er.ctx.GetSessionVars().Systems[variable.CharacterSetConnection]
+	e.RetType.Collate = er.ctx.GetSessionVars().Systems[variable.CollationConnection]
+	er.ctxStack = append(er.ctxStack, e)
 	return
 }
 

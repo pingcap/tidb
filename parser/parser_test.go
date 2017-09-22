@@ -550,6 +550,12 @@ func (s *testParserSuite) TestExpression(c *C) {
 		// for date literal
 		{"select date'1989-09-10'", true},
 		{"select date 19890910", false},
+		// for time literal
+		{"select time '00:00:00.111'", true},
+		{"select time 19890910", false},
+		// for timestamp literal
+		{"select timestamp '1989-09-10 11:11:11'", true},
+		{"select timestamp 19890910", false},
 	}
 	s.RunTest(c, table)
 }
@@ -1774,6 +1780,7 @@ func (s *testParserSuite) TestExplain(c *C) {
 		{"explain replace into foo values (1 || 2)", true},
 		{"explain update t set id = id + 1 order by id desc;", true},
 		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true},
+		{`explain format = "row" select c1 from t1 union (select c2 from t2) limit 1, 1`, true},
 	}
 	s.RunTest(c, table)
 }

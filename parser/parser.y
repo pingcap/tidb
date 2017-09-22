@@ -1652,7 +1652,7 @@ DeleteFromStmt:
 			TableRefs:	&ast.TableRefsClause{TableRefs: join},
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
-			Ignore:		$4.(bool),
+			IgnoreErr:		$4.(bool),
 		}
 		if $7 != nil {
 			x.Where = $7.(ast.ExprNode)
@@ -1672,7 +1672,7 @@ DeleteFromStmt:
 		x := &ast.DeleteStmt{
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
-			Ignore:		$4.(bool),
+			IgnoreErr:		$4.(bool),
 			IsMultiTable:	true,
 			BeforeFrom:	true,
 			Tables:		&ast.DeleteTableList{Tables: $5.([]*ast.TableName)},
@@ -1689,7 +1689,7 @@ DeleteFromStmt:
 		x := &ast.DeleteStmt{
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
-			Ignore:		$4.(bool),
+			IgnoreErr:		$4.(bool),
 			IsMultiTable:	true,
 			Tables:		&ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
 			TableRefs:	&ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
@@ -1786,7 +1786,17 @@ ExplainStmt:
 	}
 |	ExplainSym ExplainableStmt
 	{
-		$$ = &ast.ExplainStmt{Stmt: $2.(ast.StmtNode)}
+		$$ = &ast.ExplainStmt{
+			Stmt:	$2.(ast.StmtNode),
+			Format: "row",
+		}
+	}
+|	ExplainSym "FORMAT" "=" stringLit ExplainableStmt
+	{
+		$$ = &ast.ExplainStmt{
+			Stmt:	$5.(ast.StmtNode),
+			Format: $4,
+		}
 	}
 
 LengthNum:
@@ -2257,7 +2267,7 @@ UnReservedKeyword:
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
-| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" | "TIMESTAMP"
+| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken | "TIMESTAMP" %prec lowerThanStringLitToken
 | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
@@ -2639,7 +2649,6 @@ PrimaryExpression:
 		$$ = $1
 	}
 
-
 DistinctKwd:
 	"DISTINCT"
 |	"DISTINCTROW"
@@ -2797,6 +2806,16 @@ FunctionCallKeyword:
 	{
 		expr := ast.NewValueExpr($2)
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.DateLiteral), Args: []ast.ExprNode{expr}}
+	}
+|	"TIME"  stringLit
+	{
+		expr := ast.NewValueExpr($2)
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimeLiteral), Args: []ast.ExprNode{expr}}
+	}
+|	"TIMESTAMP"  stringLit
+	{
+		expr := ast.NewValueExpr($2)
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimestampLiteral), Args: []ast.ExprNode{expr}}
 	}
 |	"INSERT" '(' ExpressionListOpt ')'
 	{

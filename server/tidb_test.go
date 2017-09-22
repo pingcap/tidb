@@ -415,6 +415,6 @@ func (ts *TidbTestSuite) TestShowCreateTableFlen(c *C) {
 	cols, err := rs[0].Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
-	c.Assert(int(cols[0].ColumnLength), Equals, tmysql.MaxTableNameLength*tmysql.MaxBytesOfCharacter)
+	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
 	c.Assert(int(cols[1].ColumnLength), Equals, len(row[1].GetString())*tmysql.MaxBytesOfCharacter)
 }

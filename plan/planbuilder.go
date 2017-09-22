@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -650,11 +651,20 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
 		columnName.SetText(column.Name.O)
+
+		colExpr, _, err := mockPlan.findColumn(columnName)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return
+		}
+
 		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return
 		}
+		expr = expression.BuildCastFunction(expr, colExpr.GetType(), b.ctx)
+
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
 		if onDups == nil {
@@ -662,12 +672,7 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		for dep := range column.Dependences {
 			if _, ok := onDups[dep]; ok {
-				col, _, err := mockPlan.findColumn(columnName)
-				if err != nil {
-					b.err = errors.Trace(err)
-					return
-				}
-				assign := &expression.Assignment{Col: col, Expr: expr.Clone()}
+				assign := &expression.Assignment{Col: colExpr, Expr: expr.Clone()}
 				igc.OnDuplicates = append(igc.OnDuplicates, assign)
 				break
 			}
@@ -978,15 +983,28 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	setParents4FinalPlan(targetPlan.(PhysicalPlan))
 	p := &Explain{StmtPlan: targetPlan}
 	if UseDAGPlanBuilder(b.ctx) {
-		retFields := []string{"id", "parents", "children", "task", "operator info"}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		switch strings.ToLower(explain.Format) {
+		case ast.ExplainFormatROW:
+			retFields := []string{"id", "parents", "children", "task", "operator info"}
+			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+			for _, fieldName := range retFields {
+				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+			}
+			schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
+			p.SetSchema(schema)
+			p.explainedPlans = map[int]bool{}
+			p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+		case ast.ExplainFormatDOT:
+			retFields := []string{"dot contents"}
+			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+			for _, fieldName := range retFields {
+				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+			}
+			p.SetSchema(schema)
+			p.prepareDotInfo(p.StmtPlan.(PhysicalPlan))
+		default:
+			b.err = errors.Errorf("explain format '%s' is not supported now", explain.Format)
 		}
-		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
-		p.SetSchema(schema)
-		p.explainedPlans = map[int]bool{}
-		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
 	} else {
 		schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
 		schema.Append(buildColumn("", "ID", mysql.TypeString, mysql.MaxBlobWidth))
@@ -1062,39 +1080,6 @@ func buildShowWarningsSchema() *expression.Schema {
 	return schema
 }
 
-func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
-	for i, name := range names {
-		col := &expression.Column{
-			ColName: model.NewCIStr(name),
-		}
-		var retTp byte
-		if len(ftypes) == 0 || ftypes[i] == 0 {
-			// Use varchar as the default return column type.
-			retTp = mysql.TypeVarchar
-		} else {
-			retTp = ftypes[i]
-		}
-		retType := types.NewFieldType(retTp)
-		if retTp == mysql.TypeVarchar || retTp == mysql.TypeString {
-			retType.Flen = 256
-		} else if retTp == mysql.TypeDatetime {
-			retType.Flen = 19
-		}
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(retType.Tp)
-		if retType.Flen == types.UnspecifiedLength {
-			retType.Flen = defaultFlen
-		}
-		if retType.Decimal == types.UnspecifiedLength {
-			retType.Decimal = defaultDecimal
-		}
-		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
-		col.RetType = retType
-		schema.Append(col)
-	}
-	return schema
-}
-
 // buildShowSchema builds column info for ShowStmt including column name and type.
 func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 	var names []string
@@ -1167,5 +1152,22 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
-	return composeShowSchema(names, ftypes)
+
+	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
+	for i := range names {
+		col := &expression.Column{
+			ColName: model.NewCIStr(names[i]),
+		}
+		// User varchar as the default return column type.
+		tp := mysql.TypeVarchar
+		if len(ftypes) != 0 && ftypes[0] != mysql.TypeUnspecified {
+			tp = ftypes[0]
+		}
+		fieldType := types.NewFieldType(tp)
+		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
+		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
+		col.RetType = fieldType
+		schema.Append(col)
+	}
+	return schema
 }
