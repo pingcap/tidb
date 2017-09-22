@@ -100,8 +100,11 @@ func (s *testSuite) TearDownSuite(c *C) {
 	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 }
 
+func (s *testSuite) SetUpTest(c *C) {
+	testleak.BeforeTest()
+}
+
 func (s *testSuite) TearDownTest(c *C) {
-	testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
@@ -109,6 +112,7 @@ func (s *testSuite) TearDownTest(c *C) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TestAdmin(c *C) {
@@ -1316,6 +1320,20 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
 	result.Check(testkit.Rows(`10 <nil> <nil> <nil>`, `11 2 13 22`, `13 4 17 52`, `18 8 26 144`))
 
+	// Test different types between generation expression and generated column.
+	tk.MustExec(`CREATE TABLE test_gc_read_cast(a VARCHAR(255), b VARCHAR(255), c INT AS (JSON_EXTRACT(a, b)), d INT AS (JSON_EXTRACT(a, b)) STORED)`)
+	tk.MustExec(`INSERT INTO test_gc_read_cast (a, b) VALUES ('{"a": "3"}', '$.a')`)
+	result = tk.MustQuery(`SELECT c, d FROM test_gc_read_cast`)
+	result.Check(testkit.Rows(`3 3`))
+
+	tk.MustExec(`CREATE TABLE test_gc_read_cast_1(a VARCHAR(255), b VARCHAR(255), c ENUM("red", "yellow") AS (JSON_UNQUOTE(JSON_EXTRACT(a, b))))`)
+	tk.MustExec(`INSERT INTO test_gc_read_cast_1 (a, b) VALUES ('{"a": "yellow"}', '$.a')`)
+	result = tk.MustQuery(`SELECT c FROM test_gc_read_cast_1`)
+	result.Check(testkit.Rows(`yellow`))
+
+	_, err := tk.Exec(`INSERT INTO test_gc_read_cast_1 (a, b) VALUES ('{"a": "invalid"}', '$.a')`)
+	c.Assert(err, NotNil)
+
 	// Test not null generated columns.
 	tk.MustExec(`CREATE TABLE test_gc_read_1(a int primary key, b int, c int as (a+b) not null, d int as (a*b) stored)`)
 	tk.MustExec(`CREATE TABLE test_gc_read_2(a int primary key, b int, c int as (a+b), d int as (a*b) stored not null)`)
@@ -2074,4 +2092,17 @@ func (s *testSuite) TestSet(c *C) {
 	tk.MustExec("insert into t values ()")
 	tk.MustExec("insert into t values (null), ('1')")
 	tk.MustQuery("select c + 1 from t where c = 1").Check(testkit.Rows("2"))
+}
+
+func (s *testSuite) TestSubqueryInValues(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, name varchar(20))")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (gid int)")
+
+	tk.MustExec("insert into t1 (gid) value (1)")
+	tk.MustExec("insert into t (id, name) value ((select gid from t1) ,'asd')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 asd"))
 }
