@@ -864,7 +864,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" + "  `a` date DEFAULT NULL\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
 	// Move from session test.
-
+	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (c double);")
 	tk.MustExec("create table t2 (c double);")
 	tk.MustExec("insert into t1 value (73);")
