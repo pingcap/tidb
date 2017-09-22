@@ -29,15 +29,18 @@ var (
 	errZlibZData           = terror.ClassTypes.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
 	errIncorrectArgs       = terror.ClassExpression.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
 	errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
+	errDefaultValue        = terror.ClassExpression.New(mysql.ErrInvalidDefault, "invalid default value")
 )
 
 func init() {
 	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
 		mysql.ErrWrongParamcountToNativeFct: mysql.ErrWrongParamcountToNativeFct,
+		mysql.ErrDivisionByZero:             mysql.ErrDivisionByZero,
 		mysql.ErrSpDoesNotExist:             mysql.ErrSpDoesNotExist,
 		mysql.ErrZlibZData:                  mysql.ErrZlibZData,
 		mysql.ErrWrongArguments:             mysql.ErrWrongArguments,
-		mysql.ErrDivisionByZero:             mysql.ErrDivisionByZero,
+		mysql.ErrUnknownCharacterSet:        mysql.ErrUnknownCharacterSet,
+		mysql.ErrInvalidDefault:             mysql.ErrInvalidDefault,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
