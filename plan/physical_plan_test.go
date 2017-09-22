@@ -846,60 +846,8 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestScanController(c *C) {
-	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql string
-		ans string
-	}{
-		{
-			sql: "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
-			ans: "Apply{Table(t)->Table(t)->Selection->StreamAgg}->Projection",
-		},
-		{
-			sql: "select (select count(1) k from t s where s.b = t.b having k != 0) from t",
-			ans: "Apply{Table(t)->Table(t)->Cache->Selection->StreamAgg}->Projection",
-		},
-		{
-			sql: "select (select count(1) k from t s where s.f = t.f having k != 0) from t",
-			ans: "Apply{Table(t)->Index(t.f)[]->Selection->StreamAgg}->Projection",
-		},
-	}
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
-		ast.SetFlag(stmt)
-
-		is, err := MockResolve(stmt)
-		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			is:        is,
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-		_, lp, err = lp.PredicatePushDown(nil)
-		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.Schema().Columns)
-		dSolver := &decorrelateSolver{}
-		lp, err = dSolver.optimize(lp, mockContext(), new(idAllocator))
-		c.Assert(err, IsNil)
-		lp.ResolveIndices()
-		lp, err = (&projectionEliminater{}).optimize(lp, nil, nil)
-		c.Assert(err, IsNil)
-		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		pp := info.p
-		addCachePlan(pp, builder.allocator)
-		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))
-	}
-}
-
 func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
+	c.Skip("Move to new plan test.")
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql string
@@ -994,6 +942,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 }
 
 func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
+	c.Skip("TODO: move to new plan test")
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql         string

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -185,4 +186,41 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	close(errCh)
 	err = <-errCh
 	c.Assert(err, IsNil)
+}
+
+// TestRollbackAlloc tests that when the allocation transaction commit failed,
+// the local variable base and end doesn't change.
+func (*testSuite) TestRollbackAlloc(c *C) {
+	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
+	store, err := driver.Open("memory")
+	c.Assert(err, IsNil)
+	defer store.Close()
+	dbID := int64(1)
+	tblID := int64(2)
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
+		c.Assert(err, IsNil)
+		err = m.CreateTable(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
+		c.Assert(err, IsNil)
+		return nil
+	})
+	c.Assert(err, IsNil)
+
+	injectConf := new(kv.InjectionConfig)
+	injectConf.SetCommitError(errors.New("injected"))
+	injectedStore := kv.NewInjectedStore(store, injectConf)
+	alloc := &allocator{
+		store: injectedStore,
+		dbID:  1,
+	}
+	_, err = alloc.Alloc(2)
+	c.Assert(err, NotNil)
+	c.Assert(alloc.base, Equals, int64(0))
+	c.Assert(alloc.end, Equals, int64(0))
+
+	err = alloc.Rebase(2, 100, true)
+	c.Assert(err, NotNil)
+	c.Assert(alloc.base, Equals, int64(0))
+	c.Assert(alloc.end, Equals, int64(0))
 }

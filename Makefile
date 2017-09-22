@@ -120,10 +120,7 @@ race: parserlib
 
 leak: parserlib
 	@export log_level=debug; \
-	for dir in $(PACKAGES); do \
-		echo $$dir; \
-		$(GOTEST) -tags leak $$dir | awk 'END{if($$1=="FAIL") {exit 1}}' || exit 1; \
-	done;
+	$(GOTEST) -tags leak $(PACKAGES)
 
 tikv_integration_test: parserlib
 	$(GOTEST) ./store/tikv/. -with-tikv=true
