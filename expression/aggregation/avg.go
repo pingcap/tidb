@@ -76,7 +76,7 @@ func (af *avgFunction) Update(ctx *AggEvaluateContext, sc *variable.StatementCon
 	if af.mode == FinalMode {
 		return af.updateAvg(row, ctx, sc)
 	}
-	return af.updateSum(row, ctx, sc)
+	return af.updateSum(ctx, sc, row)
 }
 
 // GetResult implements Aggregation interface.

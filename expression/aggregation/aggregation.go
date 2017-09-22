@@ -245,7 +245,7 @@ func (af *aggFunction) CreateContext() *AggEvaluateContext {
 	return ctx
 }
 
-func (af *aggFunction) updateSum(row []types.Datum, ctx *AggEvaluateContext, sc *variable.StatementContext) error {
+func (af *aggFunction) updateSum(ctx *AggEvaluateContext, sc *variable.StatementContext, row []types.Datum) error {
 	a := af.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
