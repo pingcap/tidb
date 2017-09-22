@@ -59,6 +59,8 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 	switch expr := origin.(type) {
 	case *expression.Column:
 		resolveColumnAndReplace(expr, replace)
+	case *expression.CorrelatedColumn:
+		resolveColumnAndReplace(&expr.Column, replace)
 	case *expression.ScalarFunction:
 		for _, arg := range expr.GetArgs() {
 			resolveExprAndReplace(arg, replace)

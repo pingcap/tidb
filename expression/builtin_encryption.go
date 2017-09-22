@@ -162,7 +162,7 @@ type decodeFunctionClass struct {
 }
 
 func (c *decodeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("DECODE")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DECODE")
 }
 
 type desDecryptFunctionClass struct {
@@ -170,7 +170,7 @@ type desDecryptFunctionClass struct {
 }
 
 func (c *desDecryptFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("DES_DECRYPT")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DES_DECRYPT")
 }
 
 type desEncryptFunctionClass struct {
@@ -178,7 +178,7 @@ type desEncryptFunctionClass struct {
 }
 
 func (c *desEncryptFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("DES_ENCRYPT")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DES_ENCRYPT")
 }
 
 type encodeFunctionClass struct {
@@ -186,7 +186,7 @@ type encodeFunctionClass struct {
 }
 
 func (c *encodeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("ENCODE")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "ENCODE")
 }
 
 type encryptFunctionClass struct {
@@ -194,7 +194,7 @@ type encryptFunctionClass struct {
 }
 
 func (c *encryptFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("ENCRYPT")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "ENCRYPT")
 }
 
 type oldPasswordFunctionClass struct {
@@ -202,7 +202,7 @@ type oldPasswordFunctionClass struct {
 }
 
 func (c *oldPasswordFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("OLD_PASSWORD")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "OLD_PASSWORD")
 }
 
 type passwordFunctionClass struct {
@@ -570,5 +570,5 @@ type validatePasswordStrengthFunctionClass struct {
 }
 
 func (c *validatePasswordStrengthFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("VALIDATE_PASSWORD_STRENGTH")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "VALIDATE_PASSWORD_STRENGTH")
 }

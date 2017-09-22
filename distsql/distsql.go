@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -34,6 +35,8 @@ var (
 	_ SelectResult  = &selectResult{}
 	_ PartialResult = &partialResult{}
 )
+
+var selectResultGP = gp.New(2 * time.Minute)
 
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
@@ -73,7 +76,9 @@ type resultWithErr struct {
 }
 
 func (r *selectResult) Fetch(ctx goctx.Context) {
-	go r.fetch(ctx)
+	selectResultGP.Go(func() {
+		r.fetch(ctx)
+	})
 }
 
 func (r *selectResult) fetch(ctx goctx.Context) {
@@ -255,6 +260,7 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 
 	kvReq := &kv.Request{
 		Tp:             kv.ReqTypeDAG,
+		StartTs:        dag.StartTs,
 		Concurrency:    concurrency,
 		KeepOrder:      keepOrder,
 		KeyRanges:      keyRanges,
@@ -321,6 +327,7 @@ func Analyze(client kv.Client, ctx goctx.Context, req *tipb.AnalyzeReq, keyRange
 // Convert tipb.Request to kv.Request.
 func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, isolationLevel kv.IsoLevel, priority int) (*kv.Request, error) {
 	kvReq := &kv.Request{
+		StartTs:        req.StartTs,
 		Concurrency:    concurrency,
 		KeepOrder:      keepOrder,
 		KeyRanges:      keyRanges,

@@ -304,7 +304,7 @@ type benchmarkFunctionClass struct {
 }
 
 func (c *benchmarkFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("BENCHMARK")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "BENCHMARK")
 }
 
 type charsetFunctionClass struct {
@@ -312,7 +312,7 @@ type charsetFunctionClass struct {
 }
 
 func (c *charsetFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("CHARSET")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "CHARSET")
 }
 
 type coercibilityFunctionClass struct {
@@ -320,7 +320,7 @@ type coercibilityFunctionClass struct {
 }
 
 func (c *coercibilityFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("COERCIBILITY")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "COERCIBILITY")
 }
 
 type collationFunctionClass struct {
@@ -328,7 +328,7 @@ type collationFunctionClass struct {
 }
 
 func (c *collationFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("COLLATION")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "COLLATION")
 }
 
 type rowCountFunctionClass struct {
@@ -336,5 +336,5 @@ type rowCountFunctionClass struct {
 }
 
 func (c *rowCountFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("ROW_COUNT")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "ROW_COUNT")
 }

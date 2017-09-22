@@ -407,6 +407,11 @@ func (m SQLMode) HasNoZeroInDateMode() bool {
 	return m&ModeNoZeroInDate == ModeNoZeroInDate
 }
 
+// HasErrorForDivisionByZeroMode detects if 'ERROR_FOR_DIVISION_BY_ZERO' mode is set in SQLMode
+func (m SQLMode) HasErrorForDivisionByZeroMode() bool {
+	return m&ModeErrorForDivisionByZero == ModeErrorForDivisionByZero
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0

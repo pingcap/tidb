@@ -119,22 +119,17 @@ func (c *absFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
-	tc := args[0].GetTypeClass()
-	var argTp evalTp
-	switch tc {
-	case types.ClassInt:
-		argTp = tpInt
-	case types.ClassDecimal:
-		argTp = tpDecimal
-	default:
+
+	argFieldTp := args[0].GetType()
+	argTp := fieldTp2EvalTp(argFieldTp)
+	if argTp != tpInt && argTp != tpDecimal {
 		argTp = tpReal
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, argTp, argTp)
-	argFieldTp := args[0].GetType()
 	if mysql.HasUnsignedFlag(argFieldTp.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
-	if tc == types.ClassReal {
+	if argTp == tpReal {
 		bf.tp.Flen, bf.tp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDouble)
 	} else {
 		bf.tp.Flen = argFieldTp.Flen
@@ -232,14 +227,8 @@ func (c *roundFunctionClass) getFunction(ctx context.Context, args []Expression)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
-	tc := args[0].GetTypeClass()
-	var argTp evalTp
-	switch tc {
-	case types.ClassInt:
-		argTp = tpInt
-	case types.ClassDecimal:
-		argTp = tpDecimal
-	default:
+	argTp := fieldTp2EvalTp(args[0].GetType())
+	if argTp != tpInt && argTp != tpDecimal {
 		argTp = tpReal
 	}
 	argTps := []evalTp{argTp}
@@ -384,26 +373,19 @@ type ceilFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *ceilFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	var (
-		bf  baseBuiltinFunc
-		sig builtinFunc
-		err error
-	)
-
+func (c *ceilFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
-	bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
 	setFlag4FloorAndCeil(bf.tp, args[0])
 	argFieldTp := args[0].GetType()
-	bf.tp.Flen = argFieldTp.Flen
-	bf.tp.Decimal = 0
+	bf.tp.Flen, bf.tp.Decimal = argFieldTp.Flen, 0
 
-	switch args[0].GetTypeClass() {
-	case types.ClassInt:
+	switch argTp {
+	case tpInt:
 		if retTp == tpInt {
 			sig = &builtinCeilIntToIntSig{baseIntBuiltinFunc{bf}}
 			sig.setPbCode(tipb.ScalarFuncSig_CeilIntToInt)
@@ -411,7 +393,7 @@ func (c *ceilFunctionClass) getFunction(ctx context.Context, args []Expression) 
 			sig = &builtinCeilIntToDecSig{baseDecimalBuiltinFunc{bf}}
 			sig.setPbCode(tipb.ScalarFuncSig_CeilIntToDec)
 		}
-	case types.ClassDecimal:
+	case tpDecimal:
 		if retTp == tpInt {
 			sig = &builtinCeilDecToIntSig{baseIntBuiltinFunc{bf}}
 			sig.setPbCode(tipb.ScalarFuncSig_CeilDecToInt)
@@ -506,22 +488,20 @@ type floorFunctionClass struct {
 // getEvalTp4FloorAndCeil gets the evalTp of FLOOR and CEIL.
 func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp evalTp) {
 	fieldTp := arg.GetType()
-	switch arg.GetTypeClass() {
-	case types.ClassInt:
-		retTp, argTp = tpInt, tpInt
+	retTp, argTp = tpInt, fieldTp2EvalTp(fieldTp)
+	switch argTp {
+	case tpInt:
 		if fieldTp.Tp == mysql.TypeLonglong {
 			retTp = tpDecimal
 		}
-	case types.ClassDecimal:
-		if fieldTp.Flen-fieldTp.Decimal <= mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
-			retTp, argTp = tpInt, tpDecimal
-		} else {
-			retTp, argTp = tpDecimal, tpDecimal
+	case tpDecimal:
+		if fieldTp.Flen-fieldTp.Decimal > mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
+			retTp = tpDecimal
 		}
 	default:
 		retTp, argTp = tpReal, tpReal
 	}
-	return
+	return retTp, argTp
 }
 
 // setFlag4FloorAndCeil sets return flag of FLOOR and CEIL.
@@ -533,24 +513,17 @@ func setFlag4FloorAndCeil(tp *types.FieldType, arg Expression) {
 	// TODO: when argument type is timestamp, add not null flag.
 }
 
-func (c *floorFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	var (
-		bf  baseBuiltinFunc
-		sig builtinFunc
-		err error
-	)
-
+func (c *floorFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
-	bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
 	setFlag4FloorAndCeil(bf.tp, args[0])
-	bf.tp.Flen = args[0].GetType().Flen
-	bf.tp.Decimal = 0
-	switch args[0].GetTypeClass() {
-	case types.ClassInt:
+	bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+	switch argTp {
+	case tpInt:
 		if retTp == tpInt {
 			sig = &builtinFloorIntToIntSig{baseIntBuiltinFunc{bf}}
 			sig.setPbCode(tipb.ScalarFuncSig_FloorIntToInt)
@@ -558,7 +531,7 @@ func (c *floorFunctionClass) getFunction(ctx context.Context, args []Expression)
 			sig = &builtinFloorIntToDecSig{baseDecimalBuiltinFunc{bf}}
 			sig.setPbCode(tipb.ScalarFuncSig_FloorIntToDec)
 		}
-	case types.ClassDecimal:
+	case tpDecimal:
 		if retTp == tpInt {
 			sig = &builtinFloorDecToIntSig{baseIntBuiltinFunc{bf}}
 			sig.setPbCode(tipb.ScalarFuncSig_FloorDecToInt)

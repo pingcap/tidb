@@ -289,7 +289,7 @@ type defaultFunctionClass struct {
 }
 
 func (c *defaultFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("DEFAULT")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DEFAULT")
 }
 
 type inetAtonFunctionClass struct {
@@ -507,7 +507,7 @@ type isFreeLockFunctionClass struct {
 }
 
 func (c *isFreeLockFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("IS_FREE_LOCK")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "IS_FREE_LOCK")
 }
 
 type isIPv4FunctionClass struct {
@@ -683,7 +683,7 @@ type isUsedLockFunctionClass struct {
 }
 
 func (c *isUsedLockFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("IS_USED_LOCK")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "IS_USED_LOCK")
 }
 
 type masterPosWaitFunctionClass struct {
@@ -691,7 +691,7 @@ type masterPosWaitFunctionClass struct {
 }
 
 func (c *masterPosWaitFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("MASTER_POS_WAIT")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "MASTER_POS_WAIT")
 }
 
 type nameConstFunctionClass struct {
@@ -699,7 +699,7 @@ type nameConstFunctionClass struct {
 }
 
 func (c *nameConstFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("NAME_CONST")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "NAME_CONST")
 }
 
 type releaseAllLocksFunctionClass struct {
@@ -707,7 +707,7 @@ type releaseAllLocksFunctionClass struct {
 }
 
 func (c *releaseAllLocksFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("RELEASE_ALL_LOCKS")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "RELEASE_ALL_LOCKS")
 }
 
 type uuidFunctionClass struct {
@@ -740,5 +740,5 @@ type uuidShortFunctionClass struct {
 }
 
 func (c *uuidShortFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("UUID_SHORT")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "UUID_SHORT")
 }

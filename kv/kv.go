@@ -162,6 +162,7 @@ const (
 type Request struct {
 	// Tp is the request type.
 	Tp        int64
+	StartTs   uint64
 	Data      []byte
 	KeyRanges []KeyRange
 	// KeepOrder is true, if the response should be returned in order.
