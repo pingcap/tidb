@@ -33,7 +33,7 @@ func calcFraction(lower, upper, value *types.Datum) float64 {
 		return 1
 	}
 	frac := (valueScalar - lowerScalar) / (upperScalar - lowerScalar)
-	if math.IsNaN(frac) || frac < 0 || frac > 1 {
+	if math.IsNaN(frac) || math.IsInf(frac, 0) || frac < 0 || frac > 1 {
 		return 0.5
 	}
 	return frac
