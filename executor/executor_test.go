@@ -2083,3 +2083,16 @@ func (s *testSuite) TestSet(c *C) {
 	tk.MustExec("insert into t values (null), ('1')")
 	tk.MustQuery("select c + 1 from t where c = 1").Check(testkit.Rows("2"))
 }
+
+func (s *testSuite) TestSubqueryInValues(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, name varchar(20))")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (gid int)")
+
+	tk.MustExec("insert into t1 (gid) value (1)")
+	tk.MustExec("insert into t (id, name) value ((select gid from t1) ,'asd')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 asd"))
+}
