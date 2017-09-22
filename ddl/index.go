@@ -502,13 +502,13 @@ type worker struct {
 	rowMap      map[int64]types.Datum // It's the index column values map. It is used to reduce the number of making map.
 }
 
-func newWorker(ctx context.Context, id, batch, cols, indexCols int) *worker {
+func newWorker(ctx context.Context, id, batch, colsLen, indexColsLen int) *worker {
 	return &worker{
 		id:          id,
 		ctx:         ctx,
 		idxRecords:  make([]*indexRecord, 0, batch),
-		defaultVals: make([]types.Datum, cols),
-		rowMap:      make(map[int64]types.Datum, indexCols),
+		defaultVals: make([]types.Datum, colsLen),
+		rowMap:      make(map[int64]types.Datum, indexColsLen),
 	}
 }
 
