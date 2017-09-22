@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"encoding/binary"
 	"math"
 
 	"github.com/pingcap/tidb/util/types"
@@ -107,16 +108,8 @@ func convertBytesToScalar(lower, upper, value []byte) (float64, float64, float64
 }
 
 func convertOneBytesToScalar(value []byte) float64 {
-	base, num := float64(math.MaxUint8+1), 0.0
-	// Since the base is 256, we only consider at most 10 bytes.
-	maxLen := 10
-	denom := math.Pow(base, float64(maxLen)/2.0)
-	for i, b := range value {
-		if i >= maxLen {
-			return num
-		}
-		num += float64(b) * denom
-		denom /= base
-	}
-	return num
+	// Since the base is 256, we only consider at most 8 bytes.
+	var buf [8]byte
+	copy(buf[:], value)
+	return float64(binary.BigEndian.Uint64(buf[:]))
 }
