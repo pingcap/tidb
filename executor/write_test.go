@@ -1192,3 +1192,22 @@ func (s *testSuite) TestIssue4488(c *C) {
 	tk.MustExec("insert into test.t3 set test.t3.c = '1'")
 	tk.MustQuery("select * from t3").Check(testkit.Rows("1"))
 }
+
+// Test issue https://github.com/pingcap/tidb/issues/4482
+func (s *testSuite) TestIssue4482(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int not null)")
+	tk.MustExec("insert into t1 values (a+2)")
+	tk.MustExec("insert into t1 values (a)")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("0", "2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint not null, b bigint not null)")
+	tk.MustExec("insert into t value(b + 1, a)")
+	tk.MustExec("insert into t set a = b + a, b = a + 1")
+	tk.MustExec("insert into t value(1000, a)")
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0 1", "1 1", "1000 1000"))
+}

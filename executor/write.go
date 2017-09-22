@@ -911,7 +911,11 @@ func (e *InsertValues) fillDefaultValues(row []types.Datum, ignoreErr bool) erro
 		if mysql.HasAutoIncrementFlag(c.Flag) || c.IsGenerated() {
 			continue
 		}
-		row[i], _ = table.GetColDefaultValue(e.ctx, c.ToInfo())
+		var err error
+		row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
+		if table.IsNoDefault(err) && mysql.HasNotNullFlag(c.Flag) {
+			row[i] = table.GetZeroValue(c.ToInfo())
+		}
 		defaultValueCols = append(defaultValueCols, c)
 	}
 	if err := table.CastValues(e.ctx, row, defaultValueCols, ignoreErr); err != nil {
