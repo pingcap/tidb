@@ -170,8 +170,6 @@ type IndexReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
-	// This is the column that represent the handle, we can use handleCol.Index to know its position.
-	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.NewSelectResult

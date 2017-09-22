@@ -1170,10 +1170,6 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
-	var handleCol *expression.Column
-	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
-	}
 	e := &IndexReaderExecutor{
 		ctx:       b.ctx,
 		schema:    v.Schema(),
@@ -1185,7 +1181,6 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		desc:      is.Desc,
 		ranges:    is.Ranges,
 		columns:   is.Columns,
-		handleCol: handleCol,
 		priority:  b.priority,
 	}
 
@@ -1208,26 +1203,26 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
 	var (
-		handleCol    *expression.Column
-		secondSchema *expression.Schema
+		handleCol         *expression.Column
+		tableReaderSchema *expression.Schema
 	)
 	table, _ := b.is.TableByID(is.Table.ID)
 	if v.NeedColHandle {
 		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
 	} else if !is.OutOfOrder {
-		secondSchema = v.Schema().Clone()
+		tableReaderSchema = v.Schema().Clone()
 		handleCol = &expression.Column{
 			ID:      model.ExtraHandleID,
 			ColName: model.NewCIStr("_rowid"),
 			Index:   v.Schema().Len(),
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		}
-		secondSchema.Append(handleCol)
+		tableReaderSchema.Append(handleCol)
 	}
 
 	len := v.Schema().Len()
-	if secondSchema != nil {
-		len = secondSchema.Len()
+	if tableReaderSchema != nil {
+		len = tableReaderSchema.Len()
 	}
 
 	for i := 0; i < len; i++ {
@@ -1248,7 +1243,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		columns:           is.Columns,
 		handleCol:         handleCol,
 		priority:          b.priority,
-		tableReaderSchema: secondSchema,
+		tableReaderSchema: tableReaderSchema,
 	}
 	return e
 }
