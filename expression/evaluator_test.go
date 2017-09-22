@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,11 +43,9 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
-	atomic.StoreInt32(&TurnOnNewExprEval, 1)
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
-	atomic.StoreInt32(&TurnOnNewExprEval, 0)
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {
@@ -354,6 +351,58 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 			c.Assert(r, Equals, f)
 		}
 	}
+
+	testcases := []struct {
+		lhs interface{}
+		op  string
+		rhs interface{}
+	}{
+		// div
+		{1, ast.Div, float64(0)},
+		{1, ast.Div, 0},
+		// int div
+		{1, ast.IntDiv, 0},
+		{1, ast.IntDiv, uint64(0)},
+		{uint64(1), ast.IntDiv, 0},
+		{uint64(1), ast.IntDiv, uint64(0)},
+		// mod
+		{10, ast.Mod, 0},
+		{10, ast.Mod, uint64(0)},
+		{uint64(10), ast.Mod, 0},
+		{uint64(10), ast.Mod, uint64(0)},
+		{float64(10), ast.Mod, 0},
+		{types.NewDecFromInt(10), ast.Mod, 0},
+	}
+
+	oldInSelectStmt := s.ctx.GetSessionVars().StmtCtx.InSelectStmt
+	s.ctx.GetSessionVars().StmtCtx.InSelectStmt = false
+	oldSQLMode := s.ctx.GetSessionVars().SQLMode
+	s.ctx.GetSessionVars().SQLMode |= mysql.ModeErrorForDivisionByZero
+	oldInInsertStmt := s.ctx.GetSessionVars().StmtCtx.InInsertStmt
+	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = true
+	for _, t := range testcases {
+		fc := funcs[t.op]
+		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
+		c.Assert(err, IsNil)
+		_, err = f.eval(nil)
+		c.Assert(err, NotNil)
+	}
+
+	oldDividedByZeroAsWarning := s.ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning
+	s.ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = true
+	for _, t := range testcases {
+		fc := funcs[t.op]
+		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v.Kind(), Equals, types.KindNull)
+	}
+
+	s.ctx.GetSessionVars().StmtCtx.InSelectStmt = oldInSelectStmt
+	s.ctx.GetSessionVars().SQLMode = oldSQLMode
+	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = oldInInsertStmt
+	s.ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = oldDividedByZeroAsWarning
 }
 
 func (s *testEvaluatorSuite) TestExtract(c *C) {
@@ -510,6 +559,8 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.arg)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 

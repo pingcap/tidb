@@ -79,7 +79,7 @@ type jsonTypeFunctionClass struct {
 }
 
 type builtinJSONTypeSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (c *jsonTypeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -89,7 +89,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx context.Context, args []Expressi
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
 	bf.tp.Flen = 51 // Flen of JSON_TYPE is length of UNSIGNED INTEGER.
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
-	sig := &builtinJSONTypeSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinJSONTypeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
 	return sig.setSelf(sig), nil
 }
@@ -108,7 +108,7 @@ type jsonExtractFunctionClass struct {
 }
 
 type builtinJSONExtractSig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (c *jsonExtractFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -122,7 +122,7 @@ func (c *jsonExtractFunctionClass) getFunction(ctx context.Context, args []Expre
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
-	sig := &builtinJSONExtractSig{baseJSONBuiltinFunc{bf}}
+	sig := &builtinJSONExtractSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonExtractSig)
 	return sig.setSelf(sig), nil
 }
@@ -158,7 +158,7 @@ type jsonUnquoteFunctionClass struct {
 }
 
 type builtinJSONUnquoteSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (c *jsonUnquoteFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -166,7 +166,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx context.Context, args []Expre
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
-	sig := &builtinJSONUnquoteSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig.setSelf(sig), nil
 }
@@ -186,7 +186,7 @@ type jsonSetFunctionClass struct {
 }
 
 type builtinJSONSetSig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (c *jsonSetFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -203,7 +203,7 @@ func (c *jsonSetFunctionClass) getFunction(ctx context.Context, args []Expressio
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
-	sig := &builtinJSONSetSig{baseJSONBuiltinFunc{bf}}
+	sig := &builtinJSONSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
 	return sig.setSelf(sig), nil
 }
@@ -219,7 +219,7 @@ type jsonInsertFunctionClass struct {
 }
 
 type builtinJSONInsertSig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (c *jsonInsertFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -236,7 +236,7 @@ func (c *jsonInsertFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
-	sig := &builtinJSONInsertSig{baseJSONBuiltinFunc{bf}}
+	sig := &builtinJSONInsertSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
 	return sig.setSelf(sig), nil
 }
@@ -252,7 +252,7 @@ type jsonReplaceFunctionClass struct {
 }
 
 type builtinJSONReplaceSig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (c *jsonReplaceFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -269,7 +269,7 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx context.Context, args []Expre
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
-	sig := &builtinJSONReplaceSig{baseJSONBuiltinFunc{bf}}
+	sig := &builtinJSONReplaceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
 	return sig.setSelf(sig), nil
 }
@@ -285,7 +285,7 @@ type jsonRemoveFunctionClass struct {
 }
 
 type builtinJSONRemoveSig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (c *jsonRemoveFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -299,7 +299,7 @@ func (c *jsonRemoveFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
-	sig := &builtinJSONRemoveSig{baseJSONBuiltinFunc{bf}}
+	sig := &builtinJSONRemoveSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonRemoveSig)
 	return sig.setSelf(sig), nil
 }
@@ -336,7 +336,7 @@ type jsonMergeFunctionClass struct {
 }
 
 type builtinJSONMergeSig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (c *jsonMergeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -351,7 +351,7 @@ func (c *jsonMergeFunctionClass) getFunction(ctx context.Context, args []Express
 	for i := range args {
 		args[i].GetType().Flag |= mysql.ParseToJSONFlag
 	}
-	sig := &builtinJSONMergeSig{baseJSONBuiltinFunc{bf}}
+	sig := &builtinJSONMergeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMergeSig)
 	return sig.setSelf(sig), nil
 }
@@ -376,7 +376,7 @@ type jsonObjectFunctionClass struct {
 }
 
 type builtinJSONObjectSig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (c *jsonObjectFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -391,7 +391,7 @@ func (c *jsonObjectFunctionClass) getFunction(ctx context.Context, args []Expres
 		argTps = append(argTps, tpString, tpJSON)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	sig := &builtinJSONObjectSig{baseJSONBuiltinFunc{bf}}
+	sig := &builtinJSONObjectSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
 	return sig.setSelf(sig), nil
 }
@@ -428,7 +428,7 @@ type jsonArrayFunctionClass struct {
 }
 
 type builtinJSONArraySig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (c *jsonArrayFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
@@ -440,7 +440,7 @@ func (c *jsonArrayFunctionClass) getFunction(ctx context.Context, args []Express
 		argTps = append(argTps, tpJSON)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
-	sig := &builtinJSONArraySig{baseJSONBuiltinFunc{bf}}
+	sig := &builtinJSONArraySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)
 	return sig.setSelf(sig), nil
 }

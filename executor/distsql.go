@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -42,6 +43,8 @@ import (
 const (
 	minLogDuration = 50 * time.Millisecond
 )
+
+var xIndexSelectGP = gp.New(3 * time.Minute)
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
 var LookupTableTaskChannelSize int32 = 50
@@ -551,7 +554,9 @@ func (e *XSelectIndexExec) nextForDoubleRead() (Row, error) {
 		// e.taskChan serves as a pipeline, so fetching index and getting table data can
 		// run concurrently.
 		e.taskChan = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
-		go e.fetchHandles(idxResult, e.taskChan)
+		xIndexSelectGP.Go(func() {
+			e.fetchHandles(idxResult, e.taskChan)
+		})
 	}
 
 	for {
@@ -587,7 +592,9 @@ func (e *XSelectIndexExec) slowQueryInfo(duration time.Duration) string {
 
 func (e *XSelectIndexExec) addWorker(workCh chan *lookupTableTask, concurrency *int, concurrencyLimit int) {
 	if *concurrency < concurrencyLimit {
-		go e.pickAndExecTask(workCh)
+		xIndexSelectGP.Go(func() {
+			e.pickAndExecTask(workCh)
+		})
 		*concurrency++
 	}
 }

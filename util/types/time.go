@@ -595,7 +595,7 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(str string, fsp int) (Time, error) {
+func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 	// Try to split str with delimiter.
 	// TODO: only punctuation can be the delimiter for date parts or time parts.
 	// But only space and T can be the delimiter between the date and time part.
@@ -611,6 +611,7 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		err error
 	)
 
+	var hhmmss bool
 	seps, fracStr := splitDateTime(str)
 	switch len(seps) {
 	case 1:
@@ -619,10 +620,17 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		if len(sep) == 14 {
 			// YYYYMMDDHHMMSS
 			_, err = fmt.Sscanf(sep, "%4d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
+			hhmmss = true
 		} else if len(sep) == 12 {
 			// YYMMDDHHMMSS
 			_, err = fmt.Sscanf(sep, "%2d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
 			year = adjustYear(year)
+			hhmmss = true
+		} else if len(sep) == 11 {
+			// YYMMDDHHMMS
+			_, err = fmt.Sscanf(sep, "%2d%2d%2d%2d%2d%1d", &year, &month, &day, &hour, &minute, &second)
+			year = adjustYear(year)
+			hhmmss = true
 		} else if len(sep) == 8 {
 			// YYYYMMDD
 			_, err = fmt.Sscanf(sep, "%4d%2d%2d", &year, &month, &day)
@@ -632,6 +640,18 @@ func parseDatetime(str string, fsp int) (Time, error) {
 			year = adjustYear(year)
 		} else {
 			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
+		}
+		if len(sep) == 6 || len(sep) == 8 {
+			// YYMMDD or YYYYMMDD
+			// We must handle float => string => datetime, the difference is that fractional
+			// part of float type is discarded directly, while fractional part of string type
+			// is parsed to HH:MM:SS.
+			if isFloat {
+				// 20170118.123423 => 2017-01-18 00:00:00
+			} else {
+				// '20170118.123423' => 2017-01-18 12:34:23.234
+				fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
+			}
 		}
 	case 3:
 		// YYYY-MM-DD
@@ -643,6 +663,7 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		// We don't have fractional seconds part.
 		// YYYY-MM-DD HH-MM-SS
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
+		hhmmss = true
 	default:
 		return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
 	}
@@ -661,9 +682,14 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		}
 	}
 
-	microsecond, overflow, err := parseFrac(fracStr, fsp)
-	if err != nil {
-		return ZeroDatetime, errors.Trace(err)
+	var microsecond int
+	var overflow bool
+	if hhmmss {
+		// If input string is "20170118.999", without hhmmss, fsp is meanless.
+		microsecond, overflow, err = parseFrac(fracStr, fsp)
+		if err != nil {
+			return ZeroDatetime, errors.Trace(err)
+		}
 	}
 
 	tmp := FromDate(year, month, day, hour, minute, second, microsecond)
@@ -1184,13 +1210,22 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 // The valid datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.999999'.
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
-func ParseTime(str string, tp byte, fsp int) (Time, error) {
+func ParseTime(str string, tp byte, fst int) (Time, error) {
+	return parseTime(str, tp, fst, false)
+}
+
+// ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
+func ParseTimeFromFloatString(str string, tp byte, fst int) (Time, error) {
+	return parseTime(str, tp, fst, true)
+}
+
+func parseTime(str string, tp byte, fsp int, isFloat bool) (Time, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
 
-	t, err := parseDatetime(str, fsp)
+	t, err := parseDatetime(str, fsp, isFloat)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
