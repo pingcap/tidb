@@ -64,3 +64,19 @@ func (s *testEvaluatorSuite) TestConstant(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, []byte{0x22, 0x30, 0x22})
 }
+
+func (s *testEvaluatorSuite) TestIsHybridType(c *C) {
+	col := &Column{RetType: types.NewFieldType(mysql.TypeEnum)}
+	c.Assert(IsHybridType(col), IsTrue)
+	col.RetType.Tp = mysql.TypeSet
+	c.Assert(IsHybridType(col), IsTrue)
+	col.RetType.Tp = mysql.TypeBit
+	c.Assert(IsHybridType(col), IsTrue)
+	col.RetType.Tp = mysql.TypeDuration
+	c.Assert(IsHybridType(col), IsFalse)
+
+	con := &Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum([]byte{byte(0), byte(1)})}
+	c.Assert(IsHybridType(con), IsTrue)
+	con.Value = types.NewIntDatum(1)
+	c.Assert(IsHybridType(con), IsFalse)
+}
