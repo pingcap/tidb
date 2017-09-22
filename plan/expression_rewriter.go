@@ -47,10 +47,6 @@ func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 	if ctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		b.is = ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
-	err := expression.InferType(ctx.GetSessionVars().StmtCtx, expr)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
 	newExpr, _, err := b.rewrite(expr, nil, nil, true)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
@@ -263,7 +259,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
 	case *ast.ValuesExpr:
-		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, v.Column.GetType(), er.ctx))
+		col, err := er.schema.FindColumn(v.Column.Name)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return inNode, false
+		}
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, col.RetType, er.ctx))
 		return inNode, true
 	default:
 		er.asScalar = true
@@ -679,7 +680,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
+		tp := types.NewFieldType(mysql.TypeUnspecified)
+		types.DefaultTypeForValue(v.GetValue(), tp)
+		value := &expression.Constant{Value: v.Datum, RetType: tp}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
@@ -814,7 +817,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 			er.err = ErrOperandColumns.GenByArgs(1)
 			return
 		}
-		function, er.err = expression.NewFunction(er.ctx, v.Op.String(), &v.Type, er.ctxStack[stkLen-2:]...)
+		function, er.err = expression.NewFunction(er.ctx, v.Op.String(), types.NewFieldType(mysql.TypeUnspecified), er.ctxStack[stkLen-2:]...)
 	}
 	if er.err != nil {
 		er.err = errors.Trace(er.err)

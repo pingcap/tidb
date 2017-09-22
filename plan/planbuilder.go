@@ -785,7 +785,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 
 	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
-	mockTablePlan.SetSchema(expression.NewSchema())
+	mockTablePlan.SetSchema(schema)
 	for _, assign := range insert.Setlist {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -813,8 +813,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Expr: expr,
 		})
 	}
-
-	mockTablePlan.SetSchema(schema)
 
 	onDupCols := make(map[string]struct{}, len(insert.OnDuplicate))
 	for _, assign := range insert.OnDuplicate {
