@@ -126,8 +126,8 @@ type requiredProp struct {
 	hashcode []byte
 }
 
-func (p *requiredProp) equal(prop *requiredProp) bool {
-	if len(p.cols) != len(prop.cols) || p.desc != prop.desc {
+func (p *requiredProp) isPrefix(prop *requiredProp) bool {
+	if len(p.cols) > len(prop.cols) || p.desc != prop.desc {
 		return false
 	}
 	if p.taskTp != prop.taskTp {

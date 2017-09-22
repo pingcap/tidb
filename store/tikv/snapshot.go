@@ -81,6 +81,12 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	err = s.store.CheckVisibility(s.version.Ver)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return m, nil
 }
 

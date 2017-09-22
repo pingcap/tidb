@@ -228,35 +228,20 @@ const (
 
 func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
-		err := s.checkOnce(txnTS)
-		switch err {
-		case nil:
+		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
+		switch result {
+		case domain.ResultSucc:
 			return nil
-		case domain.ErrInfoSchemaChanged:
+		case domain.ResultFail:
 			schemaLeaseErrorCounter.WithLabelValues("changed").Inc()
-			return errors.Trace(err)
-		default:
+			return domain.ErrInfoSchemaChanged
+		case domain.ResultUnknown:
 			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 			time.Sleep(schemaOutOfDateRetryInterval)
 		}
+
 	}
 	return domain.ErrInfoSchemaExpired
-}
-
-func (s *schemaLeaseChecker) checkOnce(txnTS uint64) error {
-	succ := s.SchemaValidator.Check(txnTS, s.schemaVer)
-	if !succ {
-		isChanged, err := s.SchemaValidator.IsRelatedTablesChanged(txnTS, s.schemaVer, s.relatedTableIDs)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isChanged {
-			return domain.ErrInfoSchemaChanged
-		}
-		log.Infof("schema checker txnTS %d ver %d doesn't change related tables %v",
-			txnTS, s.schemaVer, s.relatedTableIDs)
-	}
-	return nil
 }
 
 func (s *session) doCommit() error {
@@ -616,6 +601,12 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(name string, value string) error {
+	if name == variable.SQLModeVar {
+		value = mysql.FormatSQLModeStr(value)
+		if _, err := mysql.GetSQLMode(value); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), value)
 	_, _, err := s.ExecRestrictedSQL(s, sql)
