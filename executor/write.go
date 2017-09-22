@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
 )
 
 var (
@@ -895,11 +894,12 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 
 	for i, expr := range list {
 		val, err := expr.Eval(row)
-		if cols[i].Tp == mysql.TypeJSON {
-			// val.x may be nil, so parse json value and set it, otherwise val.GetMysqlJSON will panic.
-			if val, err = e.parseJSONValue(val); err != nil {
-				return nil, errors.Trace(err)
-			}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		val, err = table.CastValue(e.ctx, val, cols[i].ToInfo())
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 
 		offset := cols[i].Offset
@@ -911,19 +911,6 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 	}
 
 	return e.checkRowData(cols, len(list), hasValue, row, ignoreErr)
-}
-
-func (e *InsertValues) parseJSONValue(val types.Datum) (types.Datum, error) {
-	if val.IsNull() || val.GetInterface() != nil {
-		return val, nil
-	}
-	str := val.GetString()
-	j, err := json.ParseFromString(str)
-	if err != nil {
-		return val, errors.Trace(err)
-	}
-	val.SetMysqlJSON(j)
-	return val, nil
 }
 
 func (e *InsertValues) fillDefaultValues(row []types.Datum, ignoreErr bool) error {
