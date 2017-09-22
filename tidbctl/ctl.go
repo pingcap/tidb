@@ -16,10 +16,11 @@ package tidbctl
 import (
 	"fmt"
 
-	"errors"
 	"io/ioutil"
 	"net/http"
 	"net/url"
+
+	"github.com/juju/errors"
 
 	"github.com/pingcap/tidb/tidbctl/command"
 	"github.com/spf13/cobra"
