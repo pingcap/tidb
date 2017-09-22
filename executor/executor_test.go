@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -70,7 +68,6 @@ type testSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 1)
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -97,7 +94,6 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 }
 
 func (s *testSuite) SetUpTest(c *C) {
@@ -1074,12 +1070,6 @@ func (s *testSuite) TestUnsignedPKColumn(c *C) {
 }
 
 func (s *testSuite) TestJSON(c *C) {
-	// This will be opened after implementing cast as json.
-	origin := atomic.LoadInt32(&expression.TurnOnNewExprEval)
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
-	defer func() {
-		atomic.StoreInt32(&expression.TurnOnNewExprEval, origin)
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -2114,4 +2104,17 @@ func (s *testSuite) TestSet(c *C) {
 	tk.MustExec("insert into t values ()")
 	tk.MustExec("insert into t values (null), ('1')")
 	tk.MustQuery("select c + 1 from t where c = 1").Check(testkit.Rows("2"))
+}
+
+func (s *testSuite) TestSubqueryInValues(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, name varchar(20))")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (gid int)")
+
+	tk.MustExec("insert into t1 (gid) value (1)")
+	tk.MustExec("insert into t (id, name) value ((select gid from t1) ,'asd')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 asd"))
 }
