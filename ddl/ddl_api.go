@@ -298,7 +298,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
-				if !expression.IsCurrentTimeExpr(v.Expr) {
+				if !expression.IsCurrentTimestampExpr(v.Expr) {
 					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 				}
 				col.Flag |= mysql.OnUpdateNowFlag
@@ -408,9 +408,9 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	// For timestamp Col, if is not set default value or not set null, use current timestamp.
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
-			c.DefaultValue = expression.ZeroTimestamp
+			c.DefaultValue = types.ZeroDatetimeStr
 		} else {
-			c.DefaultValue = expression.CurrentTimestamp
+			c.DefaultValue = strings.ToUpper(ast.CurrentTimestamp)
 		}
 	}
 }
@@ -949,7 +949,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		}
 	}
 
-	if col.OriginDefaultValue == expression.CurrentTimestamp &&
+	if col.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
 		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
 		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
 	}
@@ -1109,7 +1109,7 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			return errUnsupportedModifyColumn.Gen("unsupported modify column constraint - %v", opt.Tp)
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
-			if !expression.IsCurrentTimeExpr(opt.Expr) {
+			if !expression.IsCurrentTimestampExpr(opt.Expr) {
 				return ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 			}
 			col.Flag |= mysql.OnUpdateNowFlag

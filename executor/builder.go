@@ -1052,6 +1052,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		SketchSize:  maxSketchSize,
 		ColumnsInfo: distsql.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
 	}
+	b.err = setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	return e
 }
 

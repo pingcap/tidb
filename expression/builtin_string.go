@@ -183,12 +183,12 @@ func (c *lengthFunctionClass) getFunction(ctx context.Context, args []Expression
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	bf.tp.Flen = 10
-	sig := &builtinLengthSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinLengthSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinLengthSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evaluates a builtinLengthSig.
@@ -211,12 +211,12 @@ func (c *asciiFunctionClass) getFunction(ctx context.Context, args []Expression)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	bf.tp.Flen = 3
-	sig := &builtinASCIISig{baseIntBuiltinFunc{bf}}
+	sig := &builtinASCIISig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinASCIISig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // eval evals a builtinASCIISig.
@@ -258,12 +258,12 @@ func (c *concatFunctionClass) getFunction(ctx context.Context, args []Expression
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinConcatSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinConcatSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinConcatSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
@@ -316,12 +316,12 @@ func (c *concatWSFunctionClass) getFunction(ctx context.Context, args []Expressi
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 
-	sig := &builtinConcatWSSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinConcatWSSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinConcatWSSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinConcatWSSig.
@@ -370,15 +370,15 @@ func (c *leftFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
 	if types.IsBinaryStr(argType) {
-		sig := &builtinLeftBinarySig{baseStringBuiltinFunc{bf}}
+		sig := &builtinLeftBinarySig{bf}
 		return sig.setSelf(sig), nil
 	}
-	sig := &builtinLeftSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinLeftSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinLeftBinarySig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals LEFT(str,len).
@@ -403,7 +403,7 @@ func (b *builtinLeftBinarySig) evalString(row []types.Datum) (string, bool, erro
 }
 
 type builtinLeftSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals LEFT(str,len).
@@ -440,15 +440,15 @@ func (c *rightFunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
 	if types.IsBinaryStr(argType) {
-		sig := &builtinRightBinarySig{baseStringBuiltinFunc{bf}}
+		sig := &builtinRightBinarySig{bf}
 		return sig.setSelf(sig), nil
 	}
-	sig := &builtinRightSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinRightSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinRightBinarySig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals RIGHT(str,len).
@@ -473,7 +473,7 @@ func (b *builtinRightBinarySig) evalString(row []types.Datum) (string, bool, err
 }
 
 type builtinRightSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals RIGHT(str,len).
@@ -509,12 +509,12 @@ func (c *repeatFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt)
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	sig := &builtinRepeatSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinRepeatSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinRepeatSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // eval evals a builtinRepeatSig.
@@ -555,12 +555,12 @@ func (c *lowerFunctionClass) getFunction(ctx context.Context, args []Expression)
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
-	sig := &builtinLowerSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinLowerSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinLowerSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinLowerSig.
@@ -593,15 +593,15 @@ func (c *reverseFunctionClass) getFunction(ctx context.Context, args []Expressio
 	bf.tp = &retTp
 	var sig builtinFunc
 	if types.IsBinaryStr(bf.tp) {
-		sig = &builtinReverseBinarySig{baseStringBuiltinFunc{bf}}
+		sig = &builtinReverseBinarySig{bf}
 	} else {
-		sig = &builtinReverseSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinReverseSig{bf}
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinReverseBinarySig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a REVERSE(str).
@@ -616,7 +616,7 @@ func (b *builtinReverseBinarySig) evalString(row []types.Datum) (string, bool, e
 }
 
 type builtinReverseSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a REVERSE(str).
@@ -640,12 +640,12 @@ func (c *spaceFunctionClass) getFunction(ctx context.Context, args []Expression)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
 	bf.tp.Flen = mysql.MaxBlobWidth
-	sig := &builtinSpaceSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinSpaceSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinSpaceSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinSpaceSig.
@@ -678,12 +678,12 @@ func (c *upperFunctionClass) getFunction(ctx context.Context, args []Expression)
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
-	sig := &builtinUpperSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinUpperSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinUpperSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinUpperSig.
@@ -712,12 +712,12 @@ func (c *strcmpFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
 	bf.tp.Flen = 2
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinStrcmpSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinStrcmpSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinStrcmpSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a builtinStrcmpSig.
@@ -755,7 +755,7 @@ func (c *replaceFunctionClass) getFunction(ctx context.Context, args []Expressio
 	for _, a := range args {
 		SetBinFlagOrBinStr(a.GetType(), bf.tp)
 	}
-	sig := &builtinReplaceSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinReplaceSig{bf}
 	return sig.setSelf(sig), nil
 }
 
@@ -771,7 +771,7 @@ func (c *replaceFunctionClass) fixLength(args []Expression) int {
 }
 
 type builtinReplaceSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinReplaceSig.
@@ -811,12 +811,12 @@ func (c *convertFunctionClass) getFunction(ctx context.Context, args []Expressio
 	// TODO: issue #4474: Charset supported by TiDB and MySQL is not the same.
 	// TODO: Fix #4436 && #4474, set the correct charset and flag of `bf.tp`.
 	bf.tp.Flen = mysql.MaxBlobWidth
-	sig := &builtinConvertSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinConvertSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinConvertSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals CONVERT(expr USING transcoding_name).
@@ -864,13 +864,13 @@ func (c *substringFunctionClass) getFunction(ctx context.Context, args []Express
 	var sig builtinFunc
 	switch {
 	case len(args) == 3 && types.IsBinaryStr(argType):
-		sig = &builtinSubstringBinary3ArgsSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinSubstringBinary3ArgsSig{bf}
 	case len(args) == 3:
-		sig = &builtinSubstring3ArgsSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinSubstring3ArgsSig{bf}
 	case len(args) == 2 && types.IsBinaryStr(argType):
-		sig = &builtinSubstringBinary2ArgsSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinSubstringBinary2ArgsSig{bf}
 	case len(args) == 2:
-		sig = &builtinSubstring2ArgsSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinSubstring2ArgsSig{bf}
 	default:
 		// Should never happens.
 		return nil, errors.Errorf("SUBSTR invalid arg length, expect 2 or 3 but got: %v", len(args))
@@ -879,7 +879,7 @@ func (c *substringFunctionClass) getFunction(ctx context.Context, args []Express
 }
 
 type builtinSubstringBinary2ArgsSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals SUBSTR(str,pos), SUBSTR(str FROM pos), SUBSTR() is a synonym for SUBSTRING().
@@ -907,7 +907,7 @@ func (b *builtinSubstringBinary2ArgsSig) evalString(row []types.Datum) (string, 
 }
 
 type builtinSubstring2ArgsSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals SUBSTR(str,pos), SUBSTR(str FROM pos), SUBSTR() is a synonym for SUBSTRING().
@@ -936,7 +936,7 @@ func (b *builtinSubstring2ArgsSig) evalString(row []types.Datum) (string, bool, 
 }
 
 type builtinSubstringBinary3ArgsSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
@@ -974,7 +974,7 @@ func (b *builtinSubstringBinary3ArgsSig) evalString(row []types.Datum) (string, 
 }
 
 type builtinSubstring3ArgsSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
@@ -1024,12 +1024,12 @@ func (c *substringIndexFunctionClass) getFunction(ctx context.Context, args []Ex
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
-	sig := &builtinSubstringIndexSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinSubstringIndexSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinSubstringIndexSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinSubstringIndexSig.
@@ -1092,22 +1092,22 @@ func (c *locateFunctionClass) getFunction(ctx context.Context, args []Expression
 	hasBianryInput := types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType())
 	switch {
 	case hasStartPos && hasBianryInput:
-		sig = &builtinLocateBinary3ArgsSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinLocateBinary3ArgsSig{bf}
 		break
 	case hasStartPos:
-		sig = &builtinLocate3ArgsSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinLocate3ArgsSig{bf}
 		break
 	case hasBianryInput:
-		sig = &builtinLocateBinary2ArgsSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinLocateBinary2ArgsSig{bf}
 		break
 	default:
-		sig = &builtinLocate2ArgsSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinLocate2ArgsSig{bf}
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinLocateBinary2ArgsSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals LOCATE(substr,str), case-sensitive.
@@ -1134,7 +1134,7 @@ func (b *builtinLocateBinary2ArgsSig) evalInt(row []types.Datum) (int64, bool, e
 }
 
 type builtinLocate2ArgsSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals LOCATE(substr,str), non case-sensitive.
@@ -1161,7 +1161,7 @@ func (b *builtinLocate2ArgsSig) evalInt(row []types.Datum) (int64, bool, error) 
 }
 
 type builtinLocateBinary3ArgsSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals LOCATE(substr,str,pos), case-sensitive.
@@ -1197,7 +1197,7 @@ func (b *builtinLocateBinary3ArgsSig) evalInt(row []types.Datum) (int64, bool, e
 }
 
 type builtinLocate3ArgsSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals LOCATE(substr,str,pos), non case-sensitive.
@@ -1247,12 +1247,12 @@ func (c *hexFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 		// Use UTF-8 as default
 		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
-		sig := &builtinHexStrArgSig{baseStringBuiltinFunc{bf}}
+		sig := &builtinHexStrArgSig{bf}
 		return sig.setSelf(sig), nil
 	case tpInt, tpReal, tpDecimal:
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
 		bf.tp.Flen = args[0].GetType().Flen * 2
-		sig := &builtinHexIntArgSig{baseStringBuiltinFunc{bf}}
+		sig := &builtinHexIntArgSig{bf}
 		return sig.setSelf(sig), nil
 	default:
 		return nil, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetType())
@@ -1260,7 +1260,7 @@ func (c *hexFunctionClass) getFunction(ctx context.Context, args []Expression) (
 }
 
 type builtinHexStrArgSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinHexStrArgSig, corresponding to hex(str)
@@ -1274,7 +1274,7 @@ func (b *builtinHexStrArgSig) evalString(row []types.Datum) (string, bool, error
 }
 
 type builtinHexIntArgSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinHexIntArgSig, corresponding to hex(N)
@@ -1316,12 +1316,12 @@ func (c *unhexFunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	bf.tp.Flen = retFlen
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinUnHexSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinUnHexSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinUnHexSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinUnHexSig.
@@ -1363,14 +1363,14 @@ func (c *trimFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		argType := args[0].GetType()
 		bf.tp.Flen = argType.Flen
 		SetBinFlagOrBinStr(argType, bf.tp)
-		sig := &builtinTrim1ArgSig{baseStringBuiltinFunc{bf}}
+		sig := &builtinTrim1ArgSig{bf}
 		return sig.setSelf(sig), nil
 
 	case 2:
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
 		argType := args[0].GetType()
 		SetBinFlagOrBinStr(argType, bf.tp)
-		sig := &builtinTrim2ArgsSig{baseStringBuiltinFunc{bf}}
+		sig := &builtinTrim2ArgsSig{bf}
 		return sig.setSelf(sig), nil
 
 	case 3:
@@ -1378,7 +1378,7 @@ func (c *trimFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		argType := args[0].GetType()
 		bf.tp.Flen = argType.Flen
 		SetBinFlagOrBinStr(argType, bf.tp)
-		sig := &builtinTrim3ArgsSig{baseStringBuiltinFunc{bf}}
+		sig := &builtinTrim3ArgsSig{bf}
 		return sig.setSelf(sig), nil
 
 	default:
@@ -1387,7 +1387,7 @@ func (c *trimFunctionClass) getFunction(ctx context.Context, args []Expression) 
 }
 
 type builtinTrim1ArgSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinTrim1ArgSig, corresponding to trim(str)
@@ -1401,7 +1401,7 @@ func (b *builtinTrim1ArgSig) evalString(row []types.Datum) (d string, isNull boo
 }
 
 type builtinTrim2ArgsSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinTrim2ArgsSig, corresponding to trim(str, remstr)
@@ -1424,7 +1424,7 @@ func (b *builtinTrim2ArgsSig) evalString(row []types.Datum) (d string, isNull bo
 }
 
 type builtinTrim3ArgsSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinTrim3ArgsSig, corresponding to trim(str, remstr, direction)
@@ -1485,12 +1485,12 @@ func (c *lTrimFunctionClass) getFunction(ctx context.Context, args []Expression)
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
-	sig := &builtinLTrimSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinLTrimSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinLTrimSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinLTrimSig
@@ -1515,12 +1515,12 @@ func (c *rTrimFunctionClass) getFunction(ctx context.Context, args []Expression)
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
-	sig := &builtinRTrimSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinRTrimSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinRTrimSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinRTrimSig
@@ -1580,18 +1580,18 @@ func (c *lpadFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
-		sig := &builtinLpadBinarySig{baseStringBuiltinFunc{bf}}
+		sig := &builtinLpadBinarySig{bf}
 		return sig.setSelf(sig), nil
 	}
 	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinLpadSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinLpadSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinLpadBinarySig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals LPAD(str,len,padstr).
@@ -1629,7 +1629,7 @@ func (b *builtinLpadBinarySig) evalString(row []types.Datum) (string, bool, erro
 }
 
 type builtinLpadSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals LPAD(str,len,padstr).
@@ -1679,18 +1679,18 @@ func (c *rpadFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
-		sig := &builtinRpadBinarySig{baseStringBuiltinFunc{bf}}
+		sig := &builtinRpadBinarySig{bf}
 		return sig.setSelf(sig), nil
 	}
 	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinRpadSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinRpadSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinRpadBinarySig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals RPAD(str,len,padstr).
@@ -1728,7 +1728,7 @@ func (b *builtinRpadBinarySig) evalString(row []types.Datum) (string, bool, erro
 }
 
 type builtinRpadSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals RPAD(str,len,padstr).
@@ -1775,12 +1775,12 @@ func (c *bitLengthFunctionClass) getFunction(ctx context.Context, args []Express
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	bf.tp.Flen = 10
-	sig := &builtinBitLengthSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinBitLengthSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinBitLengthSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evaluates a builtinBitLengthSig.
@@ -1811,12 +1811,12 @@ func (c *charFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	bf.tp.Flen = 4 * (len(args) - 1)
 	types.SetBinChsClnFlag(bf.tp)
 
-	sig := &builtinCharSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinCharSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCharSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCharSig) convertToBytes(ints []int64) []byte {
@@ -1884,12 +1884,12 @@ func (c *charLengthFunctionClass) getFunction(ctx context.Context, args []Expres
 		return nil, errors.Trace(argsErr)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
-	sig := &builtinCharLengthSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinCharLengthSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCharLengthSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a builtinCharLengthSig.
@@ -1912,12 +1912,12 @@ func (c *findInSetFunctionClass) getFunction(ctx context.Context, args []Express
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
 	bf.tp.Flen = 3
-	sig := &builtinFindInSetSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinFindInSetSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinFindInSetSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals FIND_IN_SET(str,strlist).
@@ -1979,17 +1979,17 @@ func (c *fieldFunctionClass) getFunction(ctx context.Context, args []Expression)
 	var sig builtinFunc
 	switch argTp {
 	case tpReal:
-		sig = &builtinFieldRealSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinFieldRealSig{bf}
 	case tpInt:
-		sig = &builtinFieldIntSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinFieldIntSig{bf}
 	case tpString:
-		sig = &builtinFieldStringSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinFieldStringSig{bf}
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinFieldIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals FIELD(str,str1,str2,str3,...).
@@ -2013,7 +2013,7 @@ func (b *builtinFieldIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 type builtinFieldRealSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals FIELD(str,str1,str2,str3,...).
@@ -2037,7 +2037,7 @@ func (b *builtinFieldRealSig) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 type builtinFieldStringSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals FIELD(str,str1,str2,str3,...).
@@ -2127,12 +2127,12 @@ func (c *makeSetFunctionClass) getFunction(ctx context.Context, args []Expressio
 	if bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinMakeSetSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinMakeSetSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinMakeSetSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals MAKE_SET(bits,str1,str2,...).
@@ -2174,18 +2174,18 @@ func (c *octFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	if IsHybridType(args[0]) || fieldTp2EvalTp(args[0].GetType()) == tpInt {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
-		sig = &builtinOctIntSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinOctIntSig{bf}
 	} else {
 		bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
-		sig = &builtinOctStringSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinOctStringSig{bf}
 	}
 
 	return sig.setSelf(sig), nil
 }
 
 type builtinOctIntSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals OCT(N).
@@ -2200,7 +2200,7 @@ func (b *builtinOctIntSig) evalString(row []types.Datum) (string, bool, error) {
 }
 
 type builtinOctStringSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // // evalString evals OCT(N).
@@ -2245,12 +2245,12 @@ func (c *ordFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	bf.tp.Flen = 10
-	sig := &builtinOrdSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinOrdSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinOrdSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a builtinOrdSig.
@@ -2290,12 +2290,12 @@ func (c *quoteFunctionClass) getFunction(ctx context.Context, args []Expression)
 	if bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinQuoteSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinQuoteSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinQuoteSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals QUOTE(str).
@@ -2341,12 +2341,12 @@ func (c *binFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
 	bf.tp.Flen = 64
-	sig := &builtinBinSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinBinSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinBinSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals BIN(N).
@@ -2382,12 +2382,12 @@ func (c *eltFunctionClass) getFunction(ctx context.Context, args []Expression) (
 			bf.tp.Flen = argType.Flen
 		}
 	}
-	sig := &builtinEltSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinEltSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinEltSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinEltSig.
@@ -2427,11 +2427,11 @@ func (c *exportSetFunctionClass) getFunction(ctx context.Context, args []Express
 	bf.tp.Flen = mysql.MaxBlobWidth
 	switch len(args) {
 	case 3:
-		sig = &builtinExportSet3ArgSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinExportSet3ArgSig{bf}
 	case 4:
-		sig = &builtinExportSet4ArgSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinExportSet4ArgSig{bf}
 	case 5:
-		sig = &builtinExportSet5ArgSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinExportSet5ArgSig{bf}
 	}
 	return sig.setSelf(sig), nil
 }
@@ -2454,7 +2454,7 @@ func exportSet(bits int64, on, off, separator string, numberOfBits int64) string
 }
 
 type builtinExportSet3ArgSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals EXPORT_SET(bits,on,off).
@@ -2481,7 +2481,7 @@ func (b *builtinExportSet3ArgSig) evalString(row []types.Datum) (string, bool, e
 }
 
 type builtinExportSet4ArgSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals EXPORT_SET(bits,on,off,separator).
@@ -2513,7 +2513,7 @@ func (b *builtinExportSet4ArgSig) evalString(row []types.Datum) (string, bool, e
 }
 
 type builtinExportSet5ArgSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals EXPORT_SET(bits,on,off,separator,number_of_bits).
@@ -2569,15 +2569,15 @@ func (c *formatFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf.tp.Flen = mysql.MaxBlobWidth
 	var sig builtinFunc
 	if len(args) == 3 {
-		sig = &builtinFormatWithLocaleSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinFormatWithLocaleSig{bf}
 	} else {
-		sig = &builtinFormatSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinFormatSig{bf}
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinFormatWithLocaleSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals FORMAT(X,D,locale).
@@ -2605,7 +2605,7 @@ func (b *builtinFormatWithLocaleSig) evalString(row []types.Datum) (string, bool
 }
 
 type builtinFormatSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals FORMAT(X,D).
@@ -2638,12 +2638,12 @@ func (c *fromBase64FunctionClass) getFunction(ctx context.Context, args []Expres
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	bf.tp.Flen = mysql.MaxBlobWidth
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinFromBase64Sig{baseStringBuiltinFunc{bf}}
+	sig := &builtinFromBase64Sig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinFromBase64Sig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals FROM_BASE64(str).
@@ -2673,12 +2673,12 @@ func (c *toBase64FunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
 	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
-	sig := &builtinToBase64Sig{baseStringBuiltinFunc{bf}}
+	sig := &builtinToBase64Sig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinToBase64Sig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // base64NeededEncodedLength return the base64 encoded string length.
@@ -2754,15 +2754,15 @@ func (c *insertFunctionClass) getFunction(ctx context.Context, args []Expression
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[3].GetType(), bf.tp)
 	if types.IsBinaryStr(args[0].GetType()) {
-		sig = &builtinInsertBinarySig{baseStringBuiltinFunc{bf}}
+		sig = &builtinInsertBinarySig{bf}
 	} else {
-		sig = &builtinInsertSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinInsertSig{bf}
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinInsertBinarySig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals INSERT(str,pos,len,newstr).
@@ -2801,7 +2801,7 @@ func (b *builtinInsertBinarySig) evalString(row []types.Datum) (string, bool, er
 }
 
 type builtinInsertSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals INSERT(str,pos,len,newstr).
@@ -2851,15 +2851,15 @@ func (c *instrFunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpString)
 	bf.tp.Flen = 11
 	if types.IsBinaryStr(bf.args[0].GetType()) || types.IsBinaryStr(bf.args[1].GetType()) {
-		sig := &builtinInstrBinarySig{baseIntBuiltinFunc{bf}}
+		sig := &builtinInstrBinarySig{bf}
 		return sig.setSelf(sig), nil
 	}
-	sig := &builtinInstrSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinInstrSig{bf}
 	return sig.setSelf(sig), nil
 }
 
-type builtinInstrSig struct{ baseIntBuiltinFunc }
-type builtinInstrBinarySig struct{ baseIntBuiltinFunc }
+type builtinInstrSig struct{ baseBuiltinFunc }
+type builtinInstrBinarySig struct{ baseBuiltinFunc }
 
 // evalInt evals INSTR(str,substr), case insensitive
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr

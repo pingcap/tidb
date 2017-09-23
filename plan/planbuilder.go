@@ -785,7 +785,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 
 	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
-	mockTablePlan.SetSchema(expression.NewSchema())
+	mockTablePlan.SetSchema(schema)
 	for _, assign := range insert.Setlist {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -813,8 +813,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Expr: expr,
 		})
 	}
-
-	mockTablePlan.SetSchema(schema)
 
 	onDupCols := make(map[string]struct{}, len(insert.OnDuplicate))
 	for _, assign := range insert.OnDuplicate {
@@ -1080,39 +1078,6 @@ func buildShowWarningsSchema() *expression.Schema {
 	return schema
 }
 
-func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
-	for i, name := range names {
-		col := &expression.Column{
-			ColName: model.NewCIStr(name),
-		}
-		var retTp byte
-		if len(ftypes) == 0 || ftypes[i] == 0 {
-			// Use varchar as the default return column type.
-			retTp = mysql.TypeVarchar
-		} else {
-			retTp = ftypes[i]
-		}
-		retType := types.NewFieldType(retTp)
-		if retTp == mysql.TypeVarchar || retTp == mysql.TypeString {
-			retType.Flen = 256
-		} else if retTp == mysql.TypeDatetime {
-			retType.Flen = 19
-		}
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(retType.Tp)
-		if retType.Flen == types.UnspecifiedLength {
-			retType.Flen = defaultFlen
-		}
-		if retType.Decimal == types.UnspecifiedLength {
-			retType.Decimal = defaultDecimal
-		}
-		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
-		col.RetType = retType
-		schema.Append(col)
-	}
-	return schema
-}
-
 // buildShowSchema builds column info for ShowStmt including column name and type.
 func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 	var names []string
@@ -1185,5 +1150,22 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
-	return composeShowSchema(names, ftypes)
+
+	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
+	for i := range names {
+		col := &expression.Column{
+			ColName: model.NewCIStr(names[i]),
+		}
+		// User varchar as the default return column type.
+		tp := mysql.TypeVarchar
+		if len(ftypes) != 0 && ftypes[0] != mysql.TypeUnspecified {
+			tp = ftypes[0]
+		}
+		fieldType := types.NewFieldType(tp)
+		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
+		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
+		col.RetType = fieldType
+		schema.Append(col)
+	}
+	return schema
 }
