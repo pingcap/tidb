@@ -355,9 +355,10 @@ func (s *testSuite) TestAggPushDown(c *C) {
 func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int)")
 	tk.MustExec("select max(a) from t group by c")
 	_, err := tk.Exec("select * from t group by c")
 	c.Assert(err, NotNil)
+	tk.MustExec("select a from t group by a,b,c")
 }

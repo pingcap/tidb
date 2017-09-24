@@ -957,11 +957,13 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			if g.err != nil {
 				return inNode, false
 			}
+			if index != -1 {
+				g.fields[index].InGroupBy = true
+			}
 			if col != nil {
 				return inNode, true
 			}
 			if index != -1 {
-				g.fields[index].InGroupBy = true
 				return g.fields[index].Expr, true
 			}
 			g.err = errors.Trace(err)
@@ -997,6 +999,9 @@ func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		exprs = append(exprs, expr)
 		p = np
 	}
+
+	// When SQLMode set ONLY_FULL_GROUP_BY,
+	// we should check all the non-aggregate SelectField is in group by items
 	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
 		for index, field := range fields {
 			if _, ok := field.Expr.(*ast.AggregateFuncExpr); ok {
