@@ -357,7 +357,7 @@ var AllColumnPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv}
 // AllPrivilegeLiteral is the string literal for All Privilege.
 const AllPrivilegeLiteral = "ALL PRIVILEGES"
 
-// Default sql_mode of SysVar
+// DefaultSQLMode for GLOBAL_VARIABLES
 const DefaultSQLMode = "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"
 
 // DefaultLengthOfMysqlTypes is the map for default physical length of MySQL data types.
