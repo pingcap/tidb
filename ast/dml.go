@@ -300,6 +300,10 @@ type SelectField struct {
 	// When we add a Field into SelectField list which is used for having/orderby clause but the field is not in select clause,
 	// we should set its Auxiliary to true. Then the TrimExec will trim the field.
 	Auxiliary bool
+	// InGroupBy stands for if this field is found in group by items
+	// When SQLMode sets with ONLY_FULL_GROUP_BY and anyone field is false with InGroupBy,
+	// we should raise ErrFieldNotInGroupBy.
+	InGroupBy bool
 }
 
 // Accept implements Node Accept interface.

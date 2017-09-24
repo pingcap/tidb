@@ -577,6 +577,7 @@ func (s *testSessionSuite) TestHaving(c *C) {
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
 	mustExecSQL(c, se, "insert into t values (1,2,3), (2, 3, 1), (3, 1, 2)")
+	mustExecSQL(c, se, "set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
 
 	mustExecMatch(c, se, "select c1 as c2, c3 from t having c2 = 2", [][]interface{}{{2, 1}})
 	mustExecMatch(c, se, "select c1 as c2, c3 from t group by c2 having c2 = 2;", [][]interface{}{{1, 3}})
@@ -698,6 +699,7 @@ func (s *testSessionSuite) TestIssue177(c *C) {
 	se := newSession(c, s.store, dbName)
 	mustExecSQL(c, se, `drop table if exists t1;`)
 	mustExecSQL(c, se, `drop table if exists t2;`)
+	mustExecSQL(c, se, "set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
 	mustExecSQL(c, se, "CREATE TABLE `t1` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
 	mustExecSQL(c, se, "CREATE TABLE `t2` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
 	mustExecSQL(c, se, `INSERT INTO t1 VALUES (1,1,1);`)

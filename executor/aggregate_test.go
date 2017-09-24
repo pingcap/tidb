@@ -63,6 +63,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
 	tk.MustExec("insert t values (NULL, 1)")
@@ -310,6 +311,7 @@ func (s *testSuite) TestAggregation(c *C) {
 func (s *testSuite) TestAggPrune(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, b varchar(50), c int)")
 	tk.MustExec("insert into t values(1, '1ff', NULL), (2, '234.02', 1)")
@@ -340,6 +342,7 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 func (s *testSuite) TestAggPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
 	tk.MustExec("drop table if exists t, tt")
 	tk.MustExec("create table t(a int primary key, b int, c int)")
 	tk.MustExec("create table tt(a int primary key, b int, c int)")
@@ -347,4 +350,14 @@ func (s *testSuite) TestAggPushDown(c *C) {
 	tk.MustExec("insert into tt values(1, 2, 1)")
 	tk.MustQuery("select max(a.b), max(b.b) from t a join tt b on a.a = b.a group by a.c").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select a, count(b) from (select * from t union all select * from tt) k group by a").Check(testkit.Rows("1 2", "2 1"))
+}
+
+func (s *testSuite) TestOnlyFullGroupBy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+	tk.MustExec("select max(a) from t group by c")
+	_, err := tk.Exec("select * from t group by c")
+	c.Assert(err, NotNil)
 }

@@ -226,6 +226,7 @@ const (
 	version13 = 13
 	version14 = 14
 	version15 = 15
+	version16 = 16
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -338,6 +339,10 @@ func upgrade(s Session) {
 
 	if ver < version15 {
 		upgradeToVer15(s)
+	}
+
+	if ver < version16 {
+		upgradeToVer16(s)
 	}
 
 	updateBootstrapVer(s)
@@ -545,6 +550,14 @@ func upgradeToVer15(s Session) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func upgradeToVer16(s Session) {
+	sql := fmt.Sprintf(
+		"UPDATE %s.%s SET VARIABLE_VALUE = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION' WHERE  VARIABLE_NAME = '%s'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.SQLModeVar,
+	)
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

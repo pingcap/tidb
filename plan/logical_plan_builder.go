@@ -225,6 +225,9 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	leftPlan := b.buildResultSetNode(join.Left)
 	rightPlan := b.buildResultSetNode(join.Right)
+	if b.err != nil {
+		return nil
+	}
 	leftAlias := extractTableAlias(leftPlan)
 	rightAlias := extractTableAlias(rightPlan)
 
@@ -958,6 +961,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				return inNode, true
 			}
 			if index != -1 {
+				g.fields[index].InGroupBy = true
 				return g.fields[index].Expr, true
 			}
 			g.err = errors.Trace(err)
@@ -965,6 +969,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		}
 	case *ast.PositionExpr:
 		if v.N >= 1 && v.N <= len(g.fields) {
+			g.fields[v.N-1].InGroupBy = true
 			return g.fields[v.N-1].Expr, true
 		}
 		g.err = errors.Errorf("Unknown column '%d' in 'group statement'", v.N)
@@ -991,6 +996,17 @@ func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		}
 		exprs = append(exprs, expr)
 		p = np
+	}
+	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
+		for index, field := range fields {
+			if _, ok := field.Expr.(*ast.AggregateFuncExpr); ok {
+				continue
+			}
+			if !field.InGroupBy {
+				b.err = ErrFieldNotInGroupBy.GenByArgs(index+1, field.Text())
+				return nil, nil
+			}
+		}
 	}
 	return p, exprs
 }

@@ -66,6 +66,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		testKit.MustExec(constructInsertSQL(i, 100))
 	}
 	testKit.MustExec("analyze table t")
+	testKit.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
 	tests := []struct {
 		sql  string
 		best string

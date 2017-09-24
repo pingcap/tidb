@@ -412,6 +412,10 @@ func (m SQLMode) HasErrorForDivisionByZeroMode() bool {
 	return m&ModeErrorForDivisionByZero == ModeErrorForDivisionByZero
 }
 
+func (m SQLMode) HasOnlyFullGroupBy() bool {
+	return m&ModeOnlyFullGroupBy == ModeOnlyFullGroupBy
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0
