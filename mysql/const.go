@@ -412,6 +412,7 @@ func (m SQLMode) HasErrorForDivisionByZeroMode() bool {
 	return m&ModeErrorForDivisionByZero == ModeErrorForDivisionByZero
 }
 
+// HasOnlyFullGroupBy detects if 'ONLY_FULL_GROUP_BY' mode is set in SQLMode
 func (m SQLMode) HasOnlyFullGroupBy() bool {
 	return m&ModeOnlyFullGroupBy == ModeOnlyFullGroupBy
 }
