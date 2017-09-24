@@ -90,6 +90,7 @@ func init() {
 		codeTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
 		codeUnknown:             mysql.ErrUnknown,
 		codeInvalidDefault:      mysql.ErrInvalidDefault,
+		codeMBiggerThanD:        mysql.ErrMBiggerThanD,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTypes] = typesMySQLErrCodes
 }
