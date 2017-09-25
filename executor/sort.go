@@ -15,9 +15,7 @@ package executor
 
 import (
 	"container/heap"
-	"fmt"
 	"sort"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
@@ -118,9 +116,7 @@ func (e *SortExec) Next() (Row, error) {
 			}
 			e.Rows = append(e.Rows, orderRow)
 		}
-		start := time.Now()
 		sort.Sort(e)
-		fmt.Printf("sort takes: %vns\n", time.Since(start).Nanoseconds())
 		e.fetched = true
 	}
 	if e.err != nil {
