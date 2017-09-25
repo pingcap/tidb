@@ -47,12 +47,16 @@ func sysMockFactory(dom *Domain) (pools.Resource, error) {
 }
 
 func (*testSuite) TestT(c *C) {
+	defer testleak.AfterTest(c)()
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
-	defer testleak.AfterTest(c)()
 	dom, err := NewDomain(store, 80*time.Millisecond, 0, mockFactory, sysMockFactory)
 	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	store = dom.Store()
 	ctx := mock.NewContext()
 	ctx.Store = store
