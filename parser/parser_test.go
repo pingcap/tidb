@@ -1606,8 +1606,6 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 
 func (s *testParserSuite) TestComment(c *C) {
 	defer testleak.AfterTest(c)()
-	validComment := strings.Repeat("a", 1024)
-	invalidComment := strings.Repeat("b", 1025)
 	table := []testCase{
 		{"create table t (c int comment 'comment')", true},
 		{"create table t (c int) comment = 'comment'", true},
@@ -1617,13 +1615,6 @@ func (s *testParserSuite) TestComment(c *C) {
 		{"START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */", true},
 		// for comment in query
 		{"/*comment*/ /*comment*/ select c /* this is a comment */ from t;", true},
-		// for comment in create index
-		{"create table t (c int, key (c) comment '" + validComment + "')", true},
-		{"create table t (c int, key (c) comment '" + invalidComment + "')", false},
-		{"create index i on t (c) comment '" + validComment + "'", true},
-		{"create index i on t (c) comment '" + invalidComment + "b" + "'", false},
-		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT '" + validComment + "'", true},
-		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT '" + invalidComment + "'", false},
 	}
 	s.RunTest(c, table)
 }

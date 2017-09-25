@@ -2234,9 +2234,6 @@ IndexOption:
 	}
 |	"COMMENT" stringLit
 	{
-		if len($2) > 1024 {
-			yylex.Errorf("Comment for index is too long (max = 1024)")
-		}
 		$$ = &ast.IndexOption {
 			Comment: $2,
 		}

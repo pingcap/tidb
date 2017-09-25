@@ -703,7 +703,7 @@ var MySQLErrName = map[uint16]string{
 	ErrInsideTransactionPreventsSwitchBinlogDirect:           "Cannot modify @@session.binlogDirectNonTransactionalUpdates inside a transaction",
 	ErrStoredFunctionPreventsSwitchBinlogDirect:              "Cannot change the binlog direct flag inside a stored function or trigger",
 	ErrSpatialMustHaveGeomCol:                                "A SPATIAL index may only contain a geometrical type column",
-	ErrTooLongIndexComment:                                   "Comment for index '%-.64s' is too long (max = %lu)",
+	ErrTooLongIndexComment:                                   "Comment for index '%-.64s' is too long (max = %d)",
 	ErrLockAborted:                                           "Wait on a lock was aborted due to a pending exclusive lock",
 	ErrDataOutOfRange:                                        "%s value is out of range in '%s'",
 	ErrWrongSpvarTypeInLimit:                                 "A variable of a non-integer based type in LIMIT clause",
