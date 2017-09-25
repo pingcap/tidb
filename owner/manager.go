@@ -205,6 +205,10 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		m.SetOwner(true)
 
 		m.watchOwner(ctx, etcdSession, elec, ownerKey)
+		err = elec.Resign(goctx.Background())
+		if err != nil {
+			log.Warnf("%s failed to resign %v", logPrefix, err)
+		}
 		m.SetOwner(false)
 	}
 }
@@ -260,10 +264,6 @@ func (m *ownerManager) watchOwner(ctx goctx.Context, etcdSession *concurrency.Se
 		case <-etcdSession.Done():
 			return
 		case <-ctx.Done():
-			err := elec.Resign(goctx.Background())
-			if err != nil {
-				log.Warnf("%s failed to resign", logPrefix)
-			}
 			return
 		}
 	}
