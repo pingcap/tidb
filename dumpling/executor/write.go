@@ -71,7 +71,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			}
 			t.RebaseAutoID(val, true)
 		}
-		cmp, err := newData[i].CompareDatum(sc, oldData[i])
+		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
 		if err != nil {
 			return false, errors.Trace(err)
 		}

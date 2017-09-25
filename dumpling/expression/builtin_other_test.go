@@ -162,7 +162,7 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 	s.ctx.GetSessionVars().CurrInsertValues = currInsertValues
 	ret, err := sig.eval(nil)
 	c.Assert(err, IsNil)
-	cmp, err := ret.CompareDatum(nil, currInsertValues[1])
+	cmp, err := ret.CompareDatum(nil, &currInsertValues[1])
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)
 }
