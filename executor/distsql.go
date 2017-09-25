@@ -205,7 +205,7 @@ func convertIndexRangeTypes(sc *variable.StatementContext, ran *types.IndexRange
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(sc, ran.LowVal[i])
+		cmp, err := converted.CompareDatum(sc, &ran.LowVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -234,7 +234,7 @@ func convertIndexRangeTypes(sc *variable.StatementContext, ran *types.IndexRange
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cmp, err := converted.CompareDatum(sc, ran.HighVal[i])
+		cmp, err := converted.CompareDatum(sc, &ran.HighVal[i])
 		if err != nil {
 			return errors.Trace(err)
 		}

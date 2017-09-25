@@ -90,7 +90,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(sc, row[i])
+		equal, err1 := v.CompareDatum(sc, &row[i])
 		c.Assert(err1, IsNil)
 		c.Assert(equal, Equals, 0)
 	}
@@ -104,7 +104,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(sc, row[i])
+		equal, err1 := v.CompareDatum(sc, &row[i])
 		c.Assert(err1, IsNil)
 		c.Assert(equal, Equals, 0)
 	}
@@ -122,7 +122,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 		}
 		v, ok := r[col.id]
 		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(sc, row[i])
+		equal, err1 := v.CompareDatum(sc, &row[i])
 		c.Assert(err1, IsNil)
 		c.Assert(equal, Equals, 0)
 	}
@@ -180,7 +180,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		c.Assert(ok, IsTrue)
-		equal, err1 := v.CompareDatum(sc, row[i])
+		equal, err1 := v.CompareDatum(sc, &row[i])
 		c.Assert(err1, IsNil)
 		c.Assert(equal, Equals, 0)
 	}

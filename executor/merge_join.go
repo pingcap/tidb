@@ -314,7 +314,7 @@ func compareKeys(stmtCtx *variable.StatementContext,
 			return 0, errors.Trace(err)
 		}
 
-		ret, err := lVal.CompareDatum(stmtCtx, rVal)
+		ret, err := lVal.CompareDatum(stmtCtx, &rVal)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
