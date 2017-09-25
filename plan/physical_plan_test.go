@@ -313,8 +313,6 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		err = expression.InferType(mockContext().GetSessionVars().StmtCtx, stmt)
-		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),

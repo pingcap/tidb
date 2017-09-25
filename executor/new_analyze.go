@@ -165,9 +165,9 @@ func (e *AnalyzeColumnsExec) buildHistograms() (hists []*statistics.Histogram, e
 		}
 	}
 	for {
-		data, err := e.result.NextRaw()
-		if err != nil {
-			return nil, errors.Trace(err)
+		data, err1 := e.result.NextRaw()
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		if data == nil {
 			break

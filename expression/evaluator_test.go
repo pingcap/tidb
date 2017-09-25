@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,11 +43,9 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
-	atomic.StoreInt32(&TurnOnNewExprEval, 1)
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
-	atomic.StoreInt32(&TurnOnNewExprEval, 0)
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {
@@ -562,6 +559,8 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(t.arg)))
 		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		c.Assert(f.canBeFolded(), IsTrue)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 

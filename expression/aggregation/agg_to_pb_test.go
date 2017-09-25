@@ -15,7 +15,6 @@ package aggregation
 
 import (
 	"encoding/json"
-	"sync/atomic"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -109,11 +108,9 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 1)
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
-	atomic.StoreInt32(&expression.TurnOnNewExprEval, 0)
 }
 
 func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {

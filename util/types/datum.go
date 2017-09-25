@@ -1055,6 +1055,9 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.StatementContext) (_ *MyDecimal, err error) {
 	flen, decimal := tp.Flen, tp.Decimal
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
+		if flen < decimal {
+			return nil, ErrMBiggerThanD.GenByArgs("")
+		}
 		prec, frac := dec.PrecisionAndFrac()
 		if !dec.IsZero() && prec-frac > flen-decimal {
 			dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
