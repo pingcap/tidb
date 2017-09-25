@@ -61,6 +61,8 @@ type testDBSuite struct {
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
 
+	testleak.BeforeTest()
+
 	s.lease = 200 * time.Millisecond
 	tidb.SetSchemaLease(s.lease)
 	s.schemaName = "test_db"
@@ -90,6 +92,7 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.s.Close()
 	s.dom.Close()
 	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
@@ -163,7 +166,6 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 }
 
 func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -175,7 +177,6 @@ func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
 }
 
 func (s *testDBSuite) TestAddIndexWithPK(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -199,8 +200,6 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 }
 
 func (s *testDBSuite) TestIndex(c *C) {
-	// TODO: Make test leak more stable.
-	// defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.testAddIndex(c)
@@ -592,7 +591,6 @@ func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
 }
 
 func (s *testDBSuite) TestIssue2293(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t_issue_2293 (a int)")
@@ -618,7 +616,6 @@ func (s *testDBSuite) TestCreateIndexType(c *C) {
 }
 
 func (s *testDBSuite) TestIssue3833(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table issue3833 (b char(0))")
@@ -628,7 +625,6 @@ func (s *testDBSuite) TestIssue3833(c *C) {
 }
 
 func (s *testDBSuite) TestColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.testAddColumn(c)
@@ -824,7 +820,6 @@ LOOP:
 }
 
 func (s *testDBSuite) TestPrimaryKey(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -836,7 +831,6 @@ func (s *testDBSuite) TestPrimaryKey(c *C) {
 }
 
 func (s *testDBSuite) TestChangeColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -896,7 +890,6 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 }
 
 func (s *testDBSuite) TestAlterColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -1023,7 +1016,6 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
-	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://update_multiple_table")
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -1109,7 +1101,6 @@ func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
 }
 
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
-	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://create_table_like")
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -1184,7 +1175,6 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {
-	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://truncate_table")
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -1246,7 +1236,6 @@ func (s *testDBSuite) TestAlterTableRenameTable(c *C) {
 }
 
 func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
-	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://" + storeStr)
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -1299,7 +1288,6 @@ func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 }
 
 func (s *testDBSuite) TestRenameMultiTables(c *C) {
-	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://rename_multi_tables")
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -1319,7 +1307,6 @@ func (s *testDBSuite) TestRenameMultiTables(c *C) {
 }
 
 func (s *testDBSuite) TestAddNotNullColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 	// for different databases
@@ -1344,7 +1331,6 @@ out:
 }
 
 func (s *testDBSuite) TestIssue2858And2717(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -1362,7 +1348,6 @@ func (s *testDBSuite) TestIssue2858And2717(c *C) {
 }
 
 func (s *testDBSuite) TestIssue4432(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -1388,7 +1373,6 @@ func (s *testDBSuite) TestIssue4432(c *C) {
 }
 
 func (s *testDBSuite) TestChangeColumnPosition(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
