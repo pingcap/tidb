@@ -24,6 +24,9 @@ run-ddl = true
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "10s"
 
+# When create table, split a separated region for it.
+# split-table = false
+
 [log]
 # Log level: info, debug, warn, error, fatal.
 level = "info"
