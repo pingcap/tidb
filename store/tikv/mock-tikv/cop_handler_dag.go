@@ -87,7 +87,8 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		for _, offset := range dagReq.OutputOffsets {
 			data = append(data, row[offset]...)
 		}
-		chunks, rowCnt = appendRow(chunks, data, rowCnt)
+		chunks = appendRow(chunks, data, rowCnt)
+		rowCnt++
 	}
 	return buildResp(chunks, err)
 }
@@ -390,16 +391,13 @@ func reverseKVRanges(kvRanges []kv.KeyRange) {
 
 const rowsPerChunk = 64
 
-func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) ([]tipb.Chunk, int) {
-	if rowCnt == 0 {
+func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
+	if rowCnt%rowsPerChunk == 0 {
 		chunks = append(chunks, tipb.Chunk{})
 	}
 	cur := &chunks[len(chunks)-1]
 	cur.RowsData = append(cur.RowsData, data...)
-	if rowCnt++; rowCnt == rowsPerChunk {
-		rowCnt = 0
-	}
-	return chunks, rowCnt
+	return chunks
 }
 
 func maxStartKey(rangeStartKey kv.Key, regionStartKey []byte) []byte {
