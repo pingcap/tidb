@@ -2914,9 +2914,11 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err, NotNil)
 
 	var r *testkit.Result
-	_, err = tk.Exec("set @@session.sql_mode=',NO_ZERO_DATE';")
+	_, err = tk.Exec("set @@session.sql_mode=',NO_ZERO_DATE,ANSI,ANSI_QUOTES';")
 	r = tk.MustQuery(`select @@session.sql_mode`)
-	r.Check(testkit.Rows("NO_ZERO_DATE"))
+	r.Check(testkit.Rows("NO_ZERO_DATE,REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"))
+	r = tk.MustQuery(`show variables like 'SQL_MODE'`)
+	r.Check(testkit.Rows("sql_mode NO_ZERO_DATE,REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
