@@ -877,7 +877,7 @@ func refineConstantArg(con *Constant, op opcode.Op, ctx context.Context) *Consta
 		return con
 	}
 	datumInt := types.NewIntDatum(i64)
-	c, err := datumInt.CompareDatum(sc, con.Value)
+	c, err := datumInt.CompareDatum(sc, &con.Value)
 	if err != nil {
 		return con
 	}

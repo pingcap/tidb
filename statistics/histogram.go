@@ -179,7 +179,7 @@ func (hg *Histogram) equalRowCount(sc *variable.StatementContext, value types.Da
 	if match {
 		return float64(hg.Buckets[index].Repeats), nil
 	}
-	c, err := value.CompareDatum(sc, hg.Buckets[index].LowerBound)
+	c, err := value.CompareDatum(sc, &hg.Buckets[index].LowerBound)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -237,7 +237,7 @@ func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Dat
 	if match {
 		return lessThanBucketValueCount, nil
 	}
-	c, err := value.CompareDatum(sc, hg.Buckets[index].LowerBound)
+	c, err := value.CompareDatum(sc, &hg.Buckets[index].LowerBound)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -295,7 +295,7 @@ func (hg *Histogram) inBucketBetweenCount() float64 {
 
 func (hg *Histogram) lowerBound(sc *variable.StatementContext, target types.Datum) (index int, match bool, err error) {
 	index = sort.Search(len(hg.Buckets), func(i int) bool {
-		cmp, err1 := hg.Buckets[i].UpperBound.CompareDatum(sc, target)
+		cmp, err1 := hg.Buckets[i].UpperBound.CompareDatum(sc, &target)
 		if err1 != nil {
 			err = errors.Trace(err1)
 			return false
@@ -385,7 +385,7 @@ func MergeHistograms(sc *variable.StatementContext, lh *Histogram, rh *Histogram
 	}
 	lh.NDV += rh.NDV
 	lLen := len(lh.Buckets)
-	cmp, err := lh.Buckets[lLen-1].UpperBound.CompareDatum(sc, rh.Buckets[0].LowerBound)
+	cmp, err := lh.Buckets[lLen-1].UpperBound.CompareDatum(sc, &rh.Buckets[0].LowerBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -477,7 +477,7 @@ func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges [
 func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []*types.ColumnRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
-		cmp, err := rg.Low.CompareDatum(sc, rg.High)
+		cmp, err := rg.Low.CompareDatum(sc, &rg.High)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
