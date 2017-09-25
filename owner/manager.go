@@ -162,26 +162,17 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 	var err error
 	for {
 		select {
-		case <-ctx.Done():
-			// Revoke the session lease.
-			// If revoke takes longer than the ttl, lease is expired anyway.
-			cancelCtx, cancel := goctx.WithTimeout(goctx.Background(),
-				time.Duration(ManagerSessionTTL)*time.Second)
-			_, err = m.etcdCli.Revoke(cancelCtx, etcdSession.Lease())
-			cancel()
-			log.Infof("%s break campaign loop, revoke err %v", logPrefix, err)
-			return
-		default:
-		}
-
-		select {
 		case <-etcdSession.Done():
 			log.Infof("%s etcd session is done, creates a new one", logPrefix)
+			leaseID := etcdSession.Lease()
 			etcdSession, err = NewSession(ctx, logPrefix, m.etcdCli, NewSessionRetryUnlimited, ManagerSessionTTL)
 			if err != nil {
 				log.Infof("%s break campaign loop, NewSession err %v", logPrefix, err)
+				m.revokeSession(logPrefix, leaseID)
 				return
 			}
+		case <-ctx.Done():
+			m.revokeSession(logPrefix, etcdSession.Lease())
 		default:
 		}
 		// If the etcd server turns clocks forward，the following case may occur.
@@ -210,6 +201,16 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		m.watchOwner(ctx, etcdSession, ownerKey)
 		m.SetOwner(false)
 	}
+}
+
+func (m *ownerManager) revokeSession(logPrefix string, leaseID clientv3.LeaseID) {
+	// Revoke the session lease.
+	// If revoke takes longer than the ttl, lease is expired anyway.
+	cancelCtx, cancel := goctx.WithTimeout(goctx.Background(),
+		time.Duration(ManagerSessionTTL)*time.Second)
+	_, err := m.etcdCli.Revoke(cancelCtx, leaseID)
+	cancel()
+	log.Infof("%s break campaign loop, revoke err %v", logPrefix, err)
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.
