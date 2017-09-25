@@ -162,13 +162,6 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 	var err error
 	for {
 		select {
-		case <-etcdSession.Done():
-			log.Infof("%s etcd session is done, creates a new one", logPrefix)
-			etcdSession, err = NewSession(ctx, logPrefix, m.etcdCli, NewSessionRetryUnlimited, ManagerSessionTTL)
-			if err != nil {
-				log.Infof("%s break campaign loop, err %v", logPrefix, err)
-				return
-			}
 		case <-ctx.Done():
 			// Revoke the session lease.
 			// If revoke takes longer than the ttl, lease is expired anyway.
@@ -176,8 +169,19 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 				time.Duration(ManagerSessionTTL)*time.Second)
 			_, err = m.etcdCli.Revoke(cancelCtx, etcdSession.Lease())
 			cancel()
-			log.Infof("%s break campaign loop err %v", logPrefix, err)
+			log.Infof("%s break campaign loop, revoke err %v", logPrefix, err)
 			return
+		default:
+		}
+
+		select {
+		case <-etcdSession.Done():
+			log.Infof("%s etcd session is done, creates a new one", logPrefix)
+			etcdSession, err = NewSession(ctx, logPrefix, m.etcdCli, NewSessionRetryUnlimited, ManagerSessionTTL)
+			if err != nil {
+				log.Infof("%s break campaign loop, NewSession err %v", logPrefix, err)
+				return
+			}
 		default:
 		}
 		// If the etcd server turns clocks forward，the following case may occur.
@@ -203,12 +207,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 			continue
 		}
 		m.SetOwner(true)
-
-		m.watchOwner(ctx, etcdSession, elec, ownerKey)
-		err = elec.Resign(goctx.Background())
-		if err != nil {
-			log.Warnf("%s failed to resign %v", logPrefix, err)
-		}
+		m.watchOwner(ctx, etcdSession, ownerKey)
 		m.SetOwner(false)
 	}
 }
@@ -243,7 +242,7 @@ func GetOwnerInfo(ctx goctx.Context, elec *concurrency.Election, logPrefix, id s
 	return string(resp.Kvs[0].Key), nil
 }
 
-func (m *ownerManager) watchOwner(ctx goctx.Context, etcdSession *concurrency.Session, elec *concurrency.Election, key string) {
+func (m *ownerManager) watchOwner(ctx goctx.Context, etcdSession *concurrency.Session, key string) {
 	logPrefix := fmt.Sprintf("[%s] ownerManager %s watch owner key %v", m.prompt, m.id, key)
 	log.Debugf("%s", logPrefix)
 	watchCh := m.etcdCli.Watch(ctx, key)
