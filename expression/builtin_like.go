@@ -46,7 +46,7 @@ func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTp...)
 	bf.tp.Flen = 1
 	sig := &builtinLikeSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_LikeNew)
+	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
 	return sig.setSelf(sig), nil
 }
 
