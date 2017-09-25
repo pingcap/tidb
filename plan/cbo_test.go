@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
@@ -97,7 +96,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 20",
-			best: "IndexLookUp(Index(t.b_c)[[-inf <nil>,20 +inf]], Table(t)->HashAgg)->HashAgg",
+			best: "IndexLookUp(Index(t.b)[[-inf,20]], Table(t)->HashAgg)->HashAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 30",
@@ -156,8 +155,6 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
-		err = expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
-		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -206,8 +203,6 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		stmt := stmts[0]
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
-		c.Assert(err, IsNil)
-		err = expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
@@ -293,8 +288,6 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		stmt := stmts[0]
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
-		c.Assert(err, IsNil)
-		err = expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
