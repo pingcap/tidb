@@ -70,7 +70,8 @@ func convertOneDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		return float64(value.GetMysqlDuration().Duration)
 	case types.KindMysqlTime:
 		valueTime := value.GetMysqlTime()
-		zeroTime := types.Time{Type: valueTime.Type, Fsp: types.DefaultFsp}
+		zeroTime := types.ZeroDatetime
+		zeroTime.Type = valueTime.Type
 		return float64(valueTime.Sub(&zeroTime).Duration)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
