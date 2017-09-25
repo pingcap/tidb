@@ -676,7 +676,7 @@ func (c *isNullFunctionClass) getFunction(ctx context.Context, args []Expression
 	argTp := args[0].GetType().EvalType()
 	if argTp == types.ETTimestamp {
 		argTp = types.ETDatetime
-	} else if argTp == types.ETJSON {
+	} else if argTp == types.ETJson {
 		argTp = types.ETString
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, argTp)

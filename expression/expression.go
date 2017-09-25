@@ -183,7 +183,7 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 		return res, val.IsNull(), errors.Trace(err)
 	}
 	exprEvalTp := expr.GetType().EvalType()
-	if exprEvalTp == types.ETString || exprEvalTp == types.ETJSON || IsHybridType(expr) {
+	if exprEvalTp == types.ETString || exprEvalTp == types.ETJson || IsHybridType(expr) {
 		// We cannot use val.GetString() directly.
 		// For example, `Bit` is regarded as ClassString,
 		// while we can not use val.GetString() to get the value of a Bit variable,

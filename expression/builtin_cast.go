@@ -139,7 +139,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx context.Context, args []Express
 	case types.ETDuration:
 		sig = &builtinCastDurationAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsInt)
-	case types.ETJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsInt)
 	case types.ETString:
@@ -185,7 +185,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx context.Context, args []Expres
 	case types.ETDuration:
 		sig = &builtinCastDurationAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsReal)
-	case types.ETJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsReal)
 	case types.ETString:
@@ -231,7 +231,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx context.Context, args []Exp
 	case types.ETDuration:
 		sig = &builtinCastDurationAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsDecimal)
-	case types.ETJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsDecimal)
 	case types.ETString:
@@ -277,7 +277,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx context.Context, args []Expr
 	case types.ETDuration:
 		sig = &builtinCastDurationAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsString)
-	case types.ETJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsString)
 	case types.ETString:
@@ -323,7 +323,7 @@ func (c *castAsTimeFunctionClass) getFunction(ctx context.Context, args []Expres
 	case types.ETDuration:
 		sig = &builtinCastDurationAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsTime)
-	case types.ETJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsTime)
 	case types.ETString:
@@ -369,7 +369,7 @@ func (c *castAsDurationFunctionClass) getFunction(ctx context.Context, args []Ex
 	case types.ETDuration:
 		sig = &builtinCastDurationAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsDuration)
-	case types.ETJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsDuration)
 	case types.ETString:
@@ -415,7 +415,7 @@ func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expres
 	case types.ETDuration:
 		sig = &builtinCastDurationAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsJson)
-	case types.ETJSON:
+	case types.ETJson:
 		sig = &builtinCastJSONAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
 	case types.ETString:

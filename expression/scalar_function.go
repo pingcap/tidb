@@ -128,7 +128,7 @@ func (sf *ScalarFunction) Clone() Expression {
 			offset = sf.Function.(*builtinValuesTimeSig).offset
 		case types.ETDuration:
 			offset = sf.Function.(*builtinValuesDurationSig).offset
-		case types.ETJSON:
+		case types.ETJson:
 			offset = sf.Function.(*builtinValuesJSONSig).offset
 		}
 		return NewValuesFunc(offset, sf.GetType(), sf.GetCtx())

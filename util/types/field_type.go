@@ -161,7 +161,7 @@ func (ft *FieldType) EvalType() EvalType {
 	case mysql.TypeDuration:
 		return ETDuration
 	case mysql.TypeJSON:
-		return ETJSON
+		return ETJson
 	}
 	return ETString
 }

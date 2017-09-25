@@ -415,7 +415,7 @@ func (c *ifFunctionClass) getFunction(ctx context.Context, args []Expression) (s
 	case types.ETDuration:
 		sig = &builtinIfDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDuration)
-	case types.ETJSON:
+	case types.ETJson:
 		sig = &builtinIfJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
 	}
@@ -595,7 +595,7 @@ func (c *ifNullFunctionClass) getFunction(ctx context.Context, args []Expression
 	case types.ETDuration:
 		sig = &builtinIfNullDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDuration)
-	case types.ETJSON:
+	case types.ETJson:
 		sig = &builtinIfNullJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
 	}

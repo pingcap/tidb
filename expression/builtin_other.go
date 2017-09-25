@@ -177,7 +177,7 @@ func (c *valuesFunctionClass) getFunction(ctx context.Context, args []Expression
 		sig = &builtinValuesTimeSig{bf, c.offset}
 	case types.ETDuration:
 		sig = &builtinValuesDurationSig{bf, c.offset}
-	case types.ETJSON:
+	case types.ETJson:
 		sig = &builtinValuesJSONSig{bf, c.offset}
 	}
 	return sig.setSelf(sig), nil

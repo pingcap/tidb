@@ -928,7 +928,7 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 	cmpType := getCmpType(tc0, tc1)
 	if (tc0 == types.ClassString && ft1.Tp == mysql.TypeJSON) ||
 		(ft0.Tp == mysql.TypeJSON && tc1 == types.ClassString) {
-		sig, err = c.generateCmpSigs(args, types.ETJSON, ctx)
+		sig, err = c.generateCmpSigs(args, types.ETJson, ctx)
 	} else if cmpType == types.ClassString && (types.IsTypeTime(ft0.Tp) || types.IsTypeTime(ft1.Tp)) {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
@@ -1145,7 +1145,7 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp types.EvalT
 			sig = &builtinNullEQTimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQTime)
 		}
-	case types.ETJSON:
+	case types.ETJson:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTJSONSig{bf}

@@ -1243,7 +1243,7 @@ func (c *hexFunctionClass) getFunction(ctx context.Context, args []Expression) (
 
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
-	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJSON:
+	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
 		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, types.ETString)
 		// Use UTF-8 as default
 		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
@@ -1303,7 +1303,7 @@ func (c *unhexFunctionClass) getFunction(ctx context.Context, args []Expression)
 	argType := args[0].GetType()
 	argEvalTp := argType.EvalType()
 	switch argEvalTp {
-	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJSON:
+	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
 		// Use UTF-8 as default charset, so there're (Flen * 3 + 1) / 2 byte-pairs
 		retFlen = (argType.Flen*3 + 1) / 2
 	case types.ETInt, types.ETReal, types.ETDecimal:

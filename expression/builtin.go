@@ -83,7 +83,7 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ty
 			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
 		case types.ETDuration:
 			args[i] = WrapWithCastAsDuration(args[i], ctx)
-		case types.ETJSON:
+		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(args[i], ctx)
 		}
 	}
@@ -137,7 +137,7 @@ func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType ty
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
-	case types.ETJSON:
+	case types.ETJson:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeJSON,
 			Flen:    mysql.MaxBlobWidth,
@@ -207,7 +207,7 @@ func (b *baseBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
 		res, isNull, err = b.self.evalTime(row)
 	case types.ETDuration:
 		res, isNull, err = b.self.evalDuration(row)
-	case types.ETJSON:
+	case types.ETJson:
 		res, isNull, err = b.self.evalJSON(row)
 	case types.ETString:
 		res, isNull, err = b.self.evalString(row)

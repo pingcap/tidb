@@ -31,6 +31,6 @@ const (
 	ETTimestamp
 	// ETDuration represents type DURATION in evaluation.
 	ETDuration
-	// ETJSON represents type JSON in evaluation.
-	ETJSON
+	// ETJson represents type JSON in evaluation.
+	ETJson
 )

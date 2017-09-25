@@ -198,7 +198,7 @@ func (c *anyValueFunctionClass) getFunction(ctx context.Context, args []Expressi
 	case types.ETInt:
 		bf.tp.Decimal = 0
 		sig = &builtinIntAnyValueSig{bf}
-	case types.ETJSON:
+	case types.ETJson:
 		sig = &builtinJSONAnyValueSig{bf}
 	case types.ETReal:
 		sig = &builtinRealAnyValueSig{bf}
