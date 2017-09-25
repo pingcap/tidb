@@ -503,6 +503,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx context.Context, args []
 		bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETReal, types.ETReal, types.ETReal)
 		c.setType4DivReal(bf.tp)
 		sig := &builtinArithmeticDivideRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_DivideReal)
 		return sig.setSelf(sig), nil
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETDecimal, types.ETDecimal, types.ETDecimal)
