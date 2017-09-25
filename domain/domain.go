@@ -534,6 +534,9 @@ func (do *Domain) CreateStatsHandle(ctx context.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
+// RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
+var RunAutoAnalyze = false
+
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
@@ -552,6 +555,9 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	}
 	do.wg.Add(1)
 	go do.updateStatsWorker(ctx, lease)
+	if RunAutoAnalyze {
+		go do.autoAnalyzeWorker(lease)
+	}
 	return nil
 }
 
