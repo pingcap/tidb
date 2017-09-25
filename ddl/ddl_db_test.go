@@ -195,18 +195,6 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 	s.tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 }
 
-func (s *testDBSuite) TestIndex(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
-	s.testAddIndex(c)
-	s.testAddAnonymousIndex(c)
-	s.testDropIndex(c)
-	s.testAddUniqueIndexRollback(c)
-	s.testAddIndexWithDupCols(c)
-	s.tk.MustExec("drop table t1")
-}
-
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(context.Context)
 	domain := sessionctx.GetDomain(ctx)
@@ -234,7 +222,7 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 	done <- errors.Trace(err)
 }
 
-func (s *testDBSuite) testAddUniqueIndexRollback(c *C) {
+func (s *testDBSuite) TestAddUniqueIndexRollback(c *C) {
 	// t1 (c1 int, c2 int, c3 int, primary key(c1))
 	s.mustExec(c, "delete from t1")
 	// defaultBatchSize is equal to ddl.defaultBatchSize
@@ -290,7 +278,7 @@ LOOP:
 	sessionExec(c, s.store, "create index c3_index on t1 (c3)")
 }
 
-func (s *testDBSuite) testAddAnonymousIndex(c *C) {
+func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.mustExec(c, "create table t_anonymous_index (c1 int, c2 int, C3 int)")
@@ -347,7 +335,11 @@ func (s *testDBSuite) testAlterLock(c *C) {
 	s.mustExec(c, "alter table t_indx_lock add index (c1, c2), lock=none")
 }
 
-func (s *testDBSuite) testAddIndex(c *C) {
+func (s *testDBSuite) TestAddIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
+
 	done := make(chan error, 1)
 	start := -10
 	num := defaultBatchSize
@@ -466,11 +458,16 @@ LOOP:
 		c.Assert(ok, IsTrue)
 		delete(handles, h)
 	}
-
 	c.Assert(handles, HasLen, 0)
+
+	s.tk.MustExec("drop table t1")
 }
 
 func (s *testDBSuite) testDropIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
+	s.tk.MustExec("create index c3_index on t1 (c3)")
 	done := make(chan error, 1)
 	s.mustExec(c, "delete from t1")
 
@@ -563,9 +560,11 @@ LOOP:
 		}
 	}
 	c.Assert(handles, HasLen, 0)
+
+	s.tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite) testAddIndexWithDupCols(c *C) {
+func (s *testDBSuite) TestAddIndexWithDupCols(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	err1 := infoschema.ErrColumnExists.GenByArgs("b")
