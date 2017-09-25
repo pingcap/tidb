@@ -97,6 +97,8 @@ type index struct {
 	tblInfo *model.TableInfo
 	idxInfo *model.IndexInfo
 	prefix  kv.Key
+
+	key []byte // It's used reduce the number of new slice when multiple index keys are created.
 }
 
 // NewIndex builds a new Index object.
@@ -144,12 +146,14 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 		}
 	}
 
-	key = make([]byte, 0, len(c.prefix)+len(indexedValues)+9)
+	if c.key == nil {
+		c.key = make([]byte, 0, len(c.prefix)+len(indexedValues)+9)
+	}
+	key = c.key[:0]
 	key = append(key, []byte(c.prefix)...)
-	if distinct {
-		key, err = codec.EncodeKey(key, indexedValues...)
-	} else {
-		key, err = codec.EncodeKey(key, append(indexedValues, types.NewDatum(h))...)
+	key, err = codec.EncodeKey(key, indexedValues...)
+	if !distinct && err == nil {
+		key, err = codec.EncodeKey(key, types.NewDatum(h))
 	}
 	if err != nil {
 		return nil, false, errors.Trace(err)
