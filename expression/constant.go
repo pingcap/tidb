@@ -150,7 +150,7 @@ func (c *Constant) Equal(b Expression, ctx context.Context) bool {
 	if !ok {
 		return false
 	}
-	con, err := c.Value.CompareDatum(ctx.GetSessionVars().StmtCtx, y.Value)
+	con, err := c.Value.CompareDatum(ctx.GetSessionVars().StmtCtx, &y.Value)
 	if err != nil || con != 0 {
 		return false
 	}
