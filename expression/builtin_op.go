@@ -180,6 +180,7 @@ func (c *bitAndFunctionClass) getFunction(ctx context.Context, args []Expression
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitAndSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_BitAndSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
 }
@@ -212,6 +213,7 @@ func (c *bitOrFunctionClass) getFunction(ctx context.Context, args []Expression)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitOrSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_BitOrSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
 }
@@ -244,6 +246,7 @@ func (c *bitXorFunctionClass) getFunction(ctx context.Context, args []Expression
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt, tpInt)
 	sig := &builtinBitXorSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_BitXorSig)
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig.setSelf(sig), nil
 }
@@ -353,19 +356,25 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx context.Context, args []Exp
 		switch argTp {
 		case tpReal:
 			sig = &builtinRealIsTrueSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_RealIsTrue)
 		case tpDecimal:
 			sig = &builtinDecimalIsTrueSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_DecimalIsTrue)
 		case tpInt:
 			sig = &builtinIntIsTrueSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
 		}
 	case opcode.IsFalsity:
 		switch argTp {
 		case tpReal:
 			sig = &builtinRealIsFalseSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_RealIsFalse)
 		case tpDecimal:
 			sig = &builtinDecimalIsFalseSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_DecimalIsFalse)
 		case tpInt:
 			sig = &builtinIntIsFalseSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
 		}
 	}
 	return sig.setSelf(sig), nil
@@ -472,6 +481,7 @@ func (c *bitNegFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinBitNegSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_BitNegSig)
 	return sig.setSelf(sig), nil
 }
 

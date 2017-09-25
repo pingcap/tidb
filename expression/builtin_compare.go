@@ -180,16 +180,22 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 	switch retEvalTp {
 	case tpInt:
 		sig = &builtinCoalesceIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceInt)
 	case tpReal:
 		sig = &builtinCoalesceRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceReal)
 	case tpDecimal:
 		sig = &builtinCoalesceDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDecimal)
 	case tpString:
 		sig = &builtinCoalesceStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceString)
 	case tpDatetime, tpTimestamp:
 		sig = &builtinCoalesceTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceTime)
 	case tpDuration:
 		sig = &builtinCoalesceDurationSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
 	}
 
 	return sig.setSelf(sig), nil
