@@ -78,12 +78,8 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 
 	_, err = s.s.Execute("create database test_db")
 	c.Assert(err, IsNil)
-	_, err = s.s.Execute("use " + s.schemaName)
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute("create table t2 (c1 int, c2 int, c3 int)")
-	c.Assert(err, IsNil)
+
+	s.tk = testkit.NewTestKit(c, s.store)
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
@@ -199,16 +195,6 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 	s.tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 }
 
-func (s *testDBSuite) TestIndex(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-	s.testAddIndex(c)
-	s.testAddAnonymousIndex(c)
-	s.testDropIndex(c)
-	s.testAddUniqueIndexRollback(c)
-	s.testAddIndexWithDupCols(c)
-}
-
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(context.Context)
 	domain := sessionctx.GetDomain(ctx)
@@ -236,7 +222,7 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 	done <- errors.Trace(err)
 }
 
-func (s *testDBSuite) testAddUniqueIndexRollback(c *C) {
+func (s *testDBSuite) TestAddUniqueIndexRollback(c *C) {
 	// t1 (c1 int, c2 int, c3 int, primary key(c1))
 	s.mustExec(c, "delete from t1")
 	// defaultBatchSize is equal to ddl.defaultBatchSize
@@ -292,7 +278,7 @@ LOOP:
 	sessionExec(c, s.store, "create index c3_index on t1 (c3)")
 }
 
-func (s *testDBSuite) testAddAnonymousIndex(c *C) {
+func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.mustExec(c, "create table t_anonymous_index (c1 int, c2 int, C3 int)")
@@ -349,13 +335,18 @@ func (s *testDBSuite) testAlterLock(c *C) {
 	s.mustExec(c, "alter table t_indx_lock add index (c1, c2), lock=none")
 }
 
-func (s *testDBSuite) testAddIndex(c *C) {
+func (s *testDBSuite) TestAddIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
+
 	done := make(chan error, 1)
 	start := -10
 	num := defaultBatchSize
 	// first add some rows
 	for i := start; i < num; i++ {
-		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
+		sql := fmt.Sprintf("insert into t1 values (%d, %d, %d)", i, i, i)
+		s.mustExec(c, sql)
 	}
 
 	sessionExecInGoroutine(c, s.store, "create index c3_index on t1 (c3)", done)
@@ -467,11 +458,16 @@ LOOP:
 		c.Assert(ok, IsTrue)
 		delete(handles, h)
 	}
-
 	c.Assert(handles, HasLen, 0)
+
+	s.tk.MustExec("drop table t1")
 }
 
 func (s *testDBSuite) testDropIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
+	s.tk.MustExec("create index c3_index on t1 (c3)")
 	done := make(chan error, 1)
 	s.mustExec(c, "delete from t1")
 
@@ -564,9 +560,11 @@ LOOP:
 		}
 	}
 	c.Assert(handles, HasLen, 0)
+
+	s.tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite) testAddIndexWithDupCols(c *C) {
+func (s *testDBSuite) TestAddIndexWithDupCols(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	err1 := infoschema.ErrColumnExists.GenByArgs("b")
@@ -584,6 +582,8 @@ func (s *testDBSuite) testAddIndexWithDupCols(c *C) {
 
 	_, err = s.tk.Exec("alter table t add index c (b, a, B)")
 	c.Check(err2.Equal(err), Equals, true)
+
+	s.tk.MustExec("drop table t")
 }
 
 func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
@@ -627,8 +627,10 @@ func (s *testDBSuite) TestIssue3833(c *C) {
 func (s *testDBSuite) TestColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
 	s.testAddColumn(c)
 	s.testDropColumn(c)
+	s.tk.MustExec("drop table t2")
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
@@ -887,6 +889,8 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
+
+	s.tk.MustExec("drop table t3")
 }
 
 func (s *testDBSuite) TestAlterColumn(c *C) {
@@ -1016,13 +1020,7 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
-	store, err := tidb.NewStore("memory://update_multiple_table")
-	c.Assert(err, IsNil)
-	defer store.Close()
-	dom, err := tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer dom.Close()
-	tk := testkit.NewTestKit(c, store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int)")
 	tk.MustExec("insert t1 values (1, 1), (2, 2)")
@@ -1049,7 +1047,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	}
 	t1Info.Columns = append(t1Info.Columns, newColumn)
 
-	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
@@ -1065,7 +1063,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 
 	newColumn.State = model.StatePublic
 
-	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
@@ -1076,6 +1074,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
+	tk.MustExec("drop table t1, t2")
 }
 
 func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
@@ -1101,14 +1100,6 @@ func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
 }
 
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
-	store, err := tidb.NewStore("memory://create_table_like")
-	c.Assert(err, IsNil)
-	defer store.Close()
-	s.tk = testkit.NewTestKit(c, store)
-	dom, err := tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer dom.Close()
-
 	// for the same database
 	s.tk.MustExec("use test")
 	s.tk.MustExec("create table tt(id int primary key)")
@@ -1128,6 +1119,9 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	col := tblInfo.Columns[0]
 	hasNotNull := tmysql.HasNotNullFlag(col.Flag)
 	c.Assert(hasNotNull, IsTrue)
+
+	s.tk.MustExec("drop table tt, t, t1")
+
 	// for different databases
 	s.tk.MustExec("create database test1")
 	s.tk.MustExec("use test1")
@@ -1148,22 +1142,17 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.testErrorCode(c, failSQL, tmysql.ErrBadDB)
 	failSQL = fmt.Sprintf("create table t1 like test.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+
+	s.tk.MustExec("drop table t1")
 }
 
 func (s *testDBSuite) TestCreateTable(c *C) {
-	store, err := tidb.NewStore("memory://create_table")
-	c.Assert(err, IsNil)
-	defer store.Close()
-	s.tk = testkit.NewTestKit(c, store)
-	dom, err := tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer dom.Close()
-
 	s.tk.MustExec("use test")
 	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
 	ctx := s.tk.Se.(context.Context)
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
 	cols := tbl.Cols()
 
 	c.Assert(len(cols), Equals, 1)
@@ -1172,32 +1161,28 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 	d, ok := col.DefaultValue.(string)
 	c.Assert(ok, IsTrue)
 	c.Assert(d, Equals, "2.0")
+
+	s.tk.MustExec("drop table t")
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {
-	store, err := tidb.NewStore("memory://truncate_table")
-	c.Assert(err, IsNil)
-	defer store.Close()
-	dom, err := tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer dom.Close()
-	tk := testkit.NewTestKit(c, store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (c1 int, c2 int)")
-	tk.MustExec("insert t values (1, 1), (2, 2)")
+	tk.MustExec("create table truncate_table (c1 int, c2 int)")
+	tk.MustExec("insert truncate_table values (1, 1), (2, 2)")
 	ctx := tk.Se.(context.Context)
 	is := sessionctx.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("truncate_table"))
 	c.Assert(err, IsNil)
 	oldTblID := oldTblInfo.Meta().ID
 
-	tk.MustExec("truncate table t")
+	tk.MustExec("truncate table truncate_table")
 
-	tk.MustExec("insert t values (3, 3), (4, 4)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("3 3", "4 4"))
+	tk.MustExec("insert truncate_table values (3, 3), (4, 4)")
+	tk.MustQuery("select * from truncate_table").Check(testkit.Rows("3 3", "4 4"))
 
 	is = sessionctx.GetDomain(ctx).InfoSchema()
-	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("truncate_table"))
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo.Meta().ID, Greater, oldTblID)
 
@@ -1205,7 +1190,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
 	for i := 0; i < 30; i++ {
-		err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 			it, err1 := txn.Seek(tablePrefix)
 			if err1 != nil {
 				return err1
@@ -1236,15 +1221,7 @@ func (s *testDBSuite) TestAlterTableRenameTable(c *C) {
 }
 
 func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
-	store, err := tidb.NewStore("memory://" + storeStr)
-	c.Assert(err, IsNil)
-	defer store.Close()
-	dom, err := tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer dom.Close()
-	s.tk = testkit.NewTestKit(c, store)
 	s.tk.MustExec("use test")
-
 	// for different databases
 	s.tk.MustExec("create table t (c1 int, c2 int)")
 	s.tk.MustExec("insert t values (1, 1), (2, 2)")
@@ -1285,25 +1262,23 @@ func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
 	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+
+	s.tk.MustExec("drop table test1.t2")
 }
 
 func (s *testDBSuite) TestRenameMultiTables(c *C) {
-	store, err := tidb.NewStore("memory://rename_multi_tables")
-	c.Assert(err, IsNil)
-	defer store.Close()
-	dom, err := tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer dom.Close()
-	s.tk = testkit.NewTestKit(c, store)
+	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("create table t1(id int)")
 	s.tk.MustExec("create table t2(id int)")
 	// Currently it will fail only.
 	sql := fmt.Sprintf("rename table t1 to t3, t2 to t4")
-	_, err = s.tk.Exec(sql)
+	_, err := s.tk.Exec(sql)
 	c.Assert(err, NotNil)
 	originErr := errors.Cause(err)
 	c.Assert(originErr.Error(), Equals, "can't run multi schema change")
+
+	s.tk.MustExec("drop table t1, t2")
 }
 
 func (s *testDBSuite) TestAddNotNullColumn(c *C) {
@@ -1328,6 +1303,8 @@ out:
 	}
 	expected := fmt.Sprintf("%d %d", updateCnt, 3)
 	s.tk.MustQuery("select c2, c3 from tnn where c1 = 99").Check(testkit.Rows(expected))
+
+	s.tk.MustExec("drop table tnn")
 }
 
 func (s *testDBSuite) TestIssue2858And2717(c *C) {
