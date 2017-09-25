@@ -56,7 +56,7 @@ func (b *SortedBuilder) Hist() *Histogram {
 
 // Iterate updates the histogram incrementally.
 func (b *SortedBuilder) Iterate(data types.Datum) error {
-	cmp, err := b.hist.Buckets[b.bucketIdx].UpperBound.CompareDatum(b.sc, data)
+	cmp, err := b.hist.Buckets[b.bucketIdx].UpperBound.CompareDatum(b.sc, &data)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -162,7 +162,7 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, collector *SampleCol
 	var lastCount int64
 	hg.Buckets[0].LowerBound = samples[0]
 	for i := int64(0); i < int64(len(samples)); i++ {
-		cmp, err := hg.Buckets[bucketIdx].UpperBound.CompareDatum(sc, samples[i])
+		cmp, err := hg.Buckets[bucketIdx].UpperBound.CompareDatum(sc, &samples[i])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

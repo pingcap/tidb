@@ -74,7 +74,7 @@ func testFrac(c *C, v *types.MyDecimal) {
 	_, d2, err := DecodeDecimal(b)
 	c.Assert(err, IsNil)
 	sc := new(variable.StatementContext)
-	cmp, err := d1.CompareDatum(sc, d2)
+	cmp, err := d1.CompareDatum(sc, &d2)
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)
 	c.Assert(d1.GetMysqlDecimal().String(), Equals, d2.GetMysqlDecimal().String())
