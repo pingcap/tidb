@@ -257,7 +257,7 @@ func (n *aggregateFuncExpr) updateMaxMin(ctx *selectContext, args []types.Datum,
 		aggItem.value = arg
 		return nil
 	}
-	c, err := aggItem.value.CompareDatum(ctx.sc, arg)
+	c, err := aggItem.value.CompareDatum(ctx.sc, &arg)
 	if err != nil {
 		return errors.Trace(err)
 	}

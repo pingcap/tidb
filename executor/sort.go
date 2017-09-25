@@ -25,7 +25,7 @@ import (
 
 // orderByRow binds a row to its order values, so it can be sorted.
 type orderByRow struct {
-	key []types.Datum
+	key []*types.Datum
 	row Row
 }
 
@@ -105,13 +105,14 @@ func (e *SortExec) Next() (Row, error) {
 			}
 			orderRow := &orderByRow{
 				row: srcRow,
-				key: make([]types.Datum, len(e.ByItems)),
+				key: make([]*types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = byItem.Expr.Eval(srcRow)
+				key, err := byItem.Expr.Eval(srcRow)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
+				orderRow.key[i] = &key
 			}
 			e.Rows = append(e.Rows, orderRow)
 		}
@@ -204,13 +205,14 @@ func (e *TopNExec) Next() (Row, error) {
 			// build orderRow from srcRow.
 			orderRow := &orderByRow{
 				row: srcRow,
-				key: make([]types.Datum, len(e.ByItems)),
+				key: make([]*types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = byItem.Expr.Eval(srcRow)
+				key, err := byItem.Expr.Eval(srcRow)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
+				orderRow.key[i] = &key
 			}
 			if e.totalCount == e.heapSize {
 				// An equivalent of Push and Pop. We don't use the standard Push and Pop
