@@ -317,6 +317,7 @@ func setGlobalVars() {
 	tidb.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
 	tidb.SetStatsLease(statsLeaseDuration)
+	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	ddl.RunWorker = cfg.RunDDL
 	tidb.SetCommitRetryLimit(cfg.Performance.RetryLimit)
 	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
