@@ -173,6 +173,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 			}
 		case <-ctx.Done():
 			m.revokeSession(logPrefix, etcdSession.Lease())
+			return
 		default:
 		}
 		// If the etcd server turns clocks forward，the following case may occur.
