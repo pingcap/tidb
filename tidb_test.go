@@ -346,6 +346,7 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 }
 
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
+	c.Skip("make leak should check it")
 	// TODO: testleak package should be able to find this leak.
 	store, dom := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
 	defer dom.Close()
@@ -380,14 +381,6 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	}
 	after := runtime.NumGoroutine()
 	c.Assert(after-before, Less, 3)
-}
-
-func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
-	se.Execute("BEGIN;")
-	r, err := se.Execute(sql)
-	c.Assert(err, IsNil)
-	se.Execute("COMMIT;")
-	return r, err
 }
 
 func newStore(c *C, dbPath string) kv.Storage {

@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -46,7 +47,7 @@ import (
 
 var _ = Suite(&testDBSuite{})
 
-const defaultBatchSize = 1024
+const defaultBatchSize = 4196
 
 type testDBSuite struct {
 	store      kv.Storage
@@ -59,6 +60,8 @@ type testDBSuite struct {
 
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
+
+	testleak.BeforeTest()
 
 	s.lease = 200 * time.Millisecond
 	tidb.SetSchemaLease(s.lease)
@@ -89,6 +92,7 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.s.Close()
 	s.dom.Close()
 	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
@@ -162,7 +166,6 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 }
 
 func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -174,7 +177,6 @@ func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
 }
 
 func (s *testDBSuite) TestAddIndexWithPK(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -198,7 +200,6 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 }
 
 func (s *testDBSuite) TestIndex(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.testAddIndex(c)
@@ -350,9 +351,10 @@ func (s *testDBSuite) testAlterLock(c *C) {
 
 func (s *testDBSuite) testAddIndex(c *C) {
 	done := make(chan error, 1)
-	num := defaultBatchSize + 10
+	start := -10
+	num := defaultBatchSize
 	// first add some rows
-	for i := 0; i < num; i++ {
+	for i := start; i < num; i++ {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
 
@@ -382,8 +384,10 @@ LOOP:
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
 				deletedKeys[n] = struct{}{}
-				s.mustExec(c, "delete from t1 where c1 = ?", n)
-				s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
+				sql := fmt.Sprintf("delete from t1 where c1 = %d", n)
+				s.mustExec(c, sql)
+				sql = fmt.Sprintf("insert into t1 values (%d, %d, %d)", i, i, i)
+				s.mustExec(c, sql)
 			}
 			num += step
 		}
@@ -391,7 +395,7 @@ LOOP:
 
 	// get exists keys
 	keys := make([]int, 0, num)
-	for i := 0; i < num; i++ {
+	for i := start; i < num; i++ {
 		if _, ok := deletedKeys[i]; ok {
 			continue
 		}
@@ -403,7 +407,7 @@ LOOP:
 	for _, key := range keys {
 		expectedRows = append(expectedRows, []interface{}{key})
 	}
-	rows := s.mustQuery(c, "select c1 from t1 where c3 >= 0")
+	rows := s.mustQuery(c, fmt.Sprintf("select c1 from t1 where c3 >= %d", start))
 	matchRows(c, rows, expectedRows)
 
 	// test index range
@@ -424,7 +428,8 @@ LOOP:
 	c.Assert(ctx.NewTxn(), IsNil)
 	t := s.testGetTable(c, "t1")
 	handles := make(map[int64]struct{})
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+	startKey := t.RecordKey(math.MinInt64)
+	err := t.IterRecords(ctx, startKey, t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles[h] = struct{}{}
 			return true, nil
@@ -586,7 +591,6 @@ func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
 }
 
 func (s *testDBSuite) TestIssue2293(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t_issue_2293 (a int)")
@@ -612,7 +616,6 @@ func (s *testDBSuite) TestCreateIndexType(c *C) {
 }
 
 func (s *testDBSuite) TestIssue3833(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table issue3833 (b char(0))")
@@ -622,7 +625,6 @@ func (s *testDBSuite) TestIssue3833(c *C) {
 }
 
 func (s *testDBSuite) TestColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.testAddColumn(c)
@@ -818,7 +820,6 @@ LOOP:
 }
 
 func (s *testDBSuite) TestPrimaryKey(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -830,7 +831,6 @@ func (s *testDBSuite) TestPrimaryKey(c *C) {
 }
 
 func (s *testDBSuite) TestChangeColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -890,7 +890,6 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 }
 
 func (s *testDBSuite) TestAlterColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -1017,7 +1016,6 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
-	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://update_multiple_table")
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -1103,7 +1101,6 @@ func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
 }
 
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
-	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://create_table_like")
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -1156,9 +1153,11 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 func (s *testDBSuite) TestCreateTable(c *C) {
 	store, err := tidb.NewStore("memory://create_table")
 	c.Assert(err, IsNil)
+	defer store.Close()
 	s.tk = testkit.NewTestKit(c, store)
-	_, err = tidb.BootstrapSession(store)
+	dom, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 
 	s.tk.MustExec("use test")
 	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
@@ -1176,7 +1175,6 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {
-	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://truncate_table")
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -1238,7 +1236,6 @@ func (s *testDBSuite) TestAlterTableRenameTable(c *C) {
 }
 
 func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
-	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://" + storeStr)
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -1291,7 +1288,6 @@ func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 }
 
 func (s *testDBSuite) TestRenameMultiTables(c *C) {
-	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore("memory://rename_multi_tables")
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -1311,7 +1307,6 @@ func (s *testDBSuite) TestRenameMultiTables(c *C) {
 }
 
 func (s *testDBSuite) TestAddNotNullColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 	// for different databases
@@ -1336,7 +1331,6 @@ out:
 }
 
 func (s *testDBSuite) TestIssue2858And2717(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -1354,7 +1348,6 @@ func (s *testDBSuite) TestIssue2858And2717(c *C) {
 }
 
 func (s *testDBSuite) TestIssue4432(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
@@ -1380,7 +1373,6 @@ func (s *testDBSuite) TestIssue4432(c *C) {
 }
 
 func (s *testDBSuite) TestChangeColumnPosition(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table/tables"
@@ -111,30 +110,6 @@ func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
 	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
 	result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
 	c.Assert(result, Equals, domain.ResultUnknown)
-}
-
-func (s *testSessionSuite) TestResultField(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_result_field"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	// create table
-	mustExecSQL(c, se, s.dropTableSQL)
-	mustExecSQL(c, se, "create table t (id int);")
-
-	mustExecSQL(c, se, `INSERT INTO t VALUES (1);`)
-	mustExecSQL(c, se, `INSERT INTO t VALUES (2);`)
-	r := mustExecSQL(c, se, `SELECT count(*) from t;`)
-	c.Assert(r, NotNil)
-	_, err := GetRows(r)
-	c.Assert(err, IsNil)
-	fields, err := r.Fields()
-	c.Assert(err, IsNil)
-	c.Assert(len(fields), Equals, 1)
-	field := fields[0].Column
-	c.Assert(field.Tp, Equals, mysql.TypeLonglong)
-	c.Assert(field.Flen, Equals, 21)
-	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestIssue1118(c *C) {
@@ -559,30 +534,6 @@ func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
-	defer testleak.AfterTest(c)()
-	// If set unspecified column flen to 0, it will cause bug in union.
-	// This test is used to prevent the bug reappear.
-	dbName := "test_default_flen_bug"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "create table t1 (c double);")
-	mustExecSQL(c, se, "create table t2 (c double);")
-	mustExecSQL(c, se, "insert into t1 value (73);")
-	mustExecSQL(c, se, "insert into t2 value (930);")
-	// The data in the second src will be casted as the type of the first src.
-	// If use flen=0, it will be truncated.
-	r := mustExecSQL(c, se, "select c from t1 union (select c from t2) order by c;")
-	rows, err := GetRows(r)
-	c.Assert(err, IsNil)
-	c.Assert(rows, HasLen, 2)
-	c.Assert(rows[1][0].GetFloat64(), Equals, float64(930))
-
-	mustExecSQL(c, se, dropDBSQL)
-	c.Assert(err, IsNil)
-}
-
 func (s *testSessionSuite) TestOrderBy(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_order_by"
@@ -655,24 +606,6 @@ func (s *testSessionSuite) TestHaving(c *C) {
 	mustExecFailed(c, se, "select c1 + 1 from t having c1 + 1")
 	mustExecFailed(c, se, "select a.c1 as c, b.c1 as d from t as a, t as b having c1")
 	mustExecFailed(c, se, "select 1 from t having sum(avg(c1))")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestResultType(c *C) {
-	defer testleak.AfterTest(c)()
-	// Testcase for https://github.com/pingcap/tidb/issues/325
-	dbName := "test_result_type"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	rs := mustExecSQL(c, se, `select cast(null as char(30))`)
-	c.Assert(rs, NotNil)
-	row, err := rs.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetValue(), IsNil)
-	fs, err := rs.Fields()
-	c.Assert(err, IsNil)
-	c.Assert(fs[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -774,42 +707,6 @@ func (s *testSessionSuite) TestIssue177(c *C) {
 	mustExecSQL(c, se, `EXECUTE my_stmt;`)
 	mustExecSQL(c, se, `deallocate prepare my_stmt;`)
 	mustExecSQL(c, se, `drop table t1,t2;`)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestFieldText(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_field_text"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (a int)")
-	tests := []struct {
-		sql   string
-		field string
-	}{
-		{"select distinct(a) from t", "a"},
-		{"select (1)", "1"},
-		{"select (1+1)", "(1+1)"},
-		{"select a from t", "a"},
-		{"select        ((a+1))     from t", "((a+1))"},
-		{"select 1 /*!32301 +1 */;", "1  +1 "},
-		{"select /*!32301 1  +1 */;", "1  +1 "},
-		{"/*!32301 select 1  +1 */;", "1  +1 "},
-		{"select 1 + /*!32301 1 +1 */;", "1 +  1 +1 "},
-		{"select 1 /*!32301 + 1, 1 */;", "1  + 1"},
-		{"select /*!32301 1, 1 +1 */;", "1"},
-		{"select /*!32301 1 + 1, */ +1;", "1 + 1"},
-	}
-	for _, tt := range tests {
-		results, err := se.Execute(tt.sql)
-		c.Assert(err, IsNil)
-		result := results[0]
-		fields, err := result.Fields()
-		c.Assert(err, IsNil)
-		c.Assert(fields[0].ColumnAsName.O, Equals, tt.field)
-	}
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -1046,199 +943,6 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	se1.Close()
 	se2.Close()
 	localstore.MockRemoteStore = false
-}
-
-func (s *testSessionSuite) TestIndexMaxLength(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_index_max_length"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t;")
-
-	// create simple index at table creation
-	_, err := exec(se, "create table t (c1 varchar(3073), index(c1));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	// create simple index after table creation
-	mustExecSQL(c, se, "create table t (c1 varchar(3073));")
-	_, err = exec(se, "create index idx_c1 on t(c1) ")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	// create compound index at table creation
-	mustExecSQL(c, se, "drop table if exists t;")
-	_, err = exec(se, "create table t (c1 varchar(3072), c2 varchar(1), index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create table t (c1 varchar(3072), c2 char(1), index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create table t (c1 varchar(3072), c2 char, index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create table t (c1 varchar(3072), c2 date, index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create table t (c1 varchar(3068), c2 timestamp(1), index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(26), index(c1, c2));") // 26 bit = 4 bytes
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(32), index(c1, c2));") // 32 bit = 4 bytes
-	mustExecSQL(c, se, "drop table if exists t;")
-	_, err = exec(se, "create table t (c1 varchar(3068), c2 bit(33), index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	// create compound index after table creation
-	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 varchar(1));")
-	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 char(1));")
-	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 char);")
-	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 date);")
-	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 timestamp(1));")
-	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_specify_index_prefix_length"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecSQL(c, se, "drop table if exists t;")
-
-	_, err := exec(se, "create table t (c1 char, index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create table t (c1 int, index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create table t (c1 bit(10), index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "create table t (c1 char, c2 int, c3 bit(10));")
-
-	_, err = exec(se, "create index idx_c1 on t (c1(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c2(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c3(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "drop table if exists t;")
-
-	_, err = exec(se, "create table t (c1 int, c2 blob, c3 varchar(64), index(c2));")
-	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "create table t (c1 int, c2 blob, c3 varchar(64));")
-	_, err = exec(se, "create index idx_c1 on t (c2);")
-	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c2(555555));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	_, err = exec(se, "create index idx_c1 on t (c1(5))")
-	// ERROR 1089 (HY000): Incorrect prefix key;
-	// the used key part isn't a string, the used length is longer than the key part,
-	// or the storage engine doesn't support unique prefix keys
-	c.Assert(err, NotNil)
-
-	mustExecSQL(c, se, "create index idx_c1 on t (c1);")
-	mustExecSQL(c, se, "create index idx_c2 on t (c2(3));")
-	mustExecSQL(c, se, "create unique index idx_c3 on t (c3(5));")
-
-	mustExecSQL(c, se, "insert into t values (3, 'abc', 'def');")
-	sql := "select c2 from t where c2 = 'abc';"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}})
-
-	mustExecSQL(c, se, "insert into t values (4, 'abcd', 'xxx');")
-	mustExecSQL(c, se, "insert into t values (4, 'abcf', 'yyy');")
-	sql = "select c2 from t where c2 = 'abcf';"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abcf")}})
-	sql = "select c2 from t where c2 = 'abcd';"
-	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abcd")}})
-
-	mustExecSQL(c, se, "insert into t values (4, 'ignore', 'abcdeXXX');")
-	_, err = exec(se, "insert into t values (5, 'ignore', 'abcdeYYY');")
-	// ERROR 1062 (23000): Duplicate entry 'abcde' for key 'idx_c3'
-	c.Assert(err, NotNil)
-	sql = "select c3 from t where c3 = 'abcde';"
-	mustExecMatch(c, se, sql, [][]interface{}{})
-
-	mustExecSQL(c, se, "delete from t where c3 = 'abcdeXXX';")
-	mustExecSQL(c, se, "delete from t where c2 = 'abc';")
-
-	mustExecMatch(c, se, "select c2 from t where c2 > 'abcd';", [][]interface{}{{[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 < 'abcf';", [][]interface{}{{[]byte("abcd")}})
-	mustExecMatch(c, se, "select c2 from t where c2 >= 'abcd';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 <= 'abcf';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 != 'abc';", [][]interface{}{{[]byte("abcd")}, {[]byte("abcf")}})
-	mustExecMatch(c, se, "select c2 from t where c2 != 'abcd';", [][]interface{}{{[]byte("abcf")}})
-
-	mustExecSQL(c, se, "drop table if exists t1;")
-	mustExecSQL(c, se, "create table t1 (a int, b char(255), key(a, b(20)));")
-	mustExecSQL(c, se, "insert into t1 values (0, '1');")
-	mustExecSQL(c, se, "update t1 set b = b + 1 where a = 0;")
-	mustExecMatch(c, se, "select b from t1 where a = 0;", [][]interface{}{{[]byte("2")}})
-
-	// test union index.
-	mustExecSQL(c, se, "drop table if exists t;")
-	mustExecSQL(c, se, "create table t (a text, b text, c int, index (a(3), b(3), c));")
-	mustExecSQL(c, se, "insert into t values ('abc', 'abcd', 1);")
-	mustExecSQL(c, se, "insert into t values ('abcx', 'abcf', 2);")
-	mustExecSQL(c, se, "insert into t values ('abcy', 'abcf', 3);")
-	mustExecSQL(c, se, "insert into t values ('bbc', 'abcd', 4);")
-	mustExecSQL(c, se, "insert into t values ('bbcz', 'abcd', 5);")
-	mustExecSQL(c, se, "insert into t values ('cbck', 'abd', 6);")
-	mustExecMatch(c, se, "select c from t where a = 'abc' and b <= 'abc';", [][]interface{}{})
-	mustExecMatch(c, se, "select c from t where a = 'abc' and b <= 'abd';", [][]interface{}{{1}})
-	mustExecMatch(c, se, "select c from t where a < 'cbc' and b > 'abcd';", [][]interface{}{{2}, {3}})
-	mustExecMatch(c, se, "select c from t where a <= 'abd' and b > 'abc';", [][]interface{}{{1}, {2}, {3}})
-	mustExecMatch(c, se, "select c from t where a < 'bbcc' and b = 'abcd';", [][]interface{}{{1}, {4}})
-	mustExecMatch(c, se, "select c from t where a > 'bbcf';", [][]interface{}{{5}, {6}})
-
-	mustExecSQL(c, se, dropDBSQL)
-	se.Close()
 }
 
 func (s *testSessionSuite) TestIndexColumnLength(c *C) {

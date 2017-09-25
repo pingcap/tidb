@@ -80,8 +80,8 @@ func (e *AnalyzeExec) Next() (Row, error) {
 		for i := 0; i < len(e.tasks); i++ {
 			result := <-resultCh
 			if result.Err != nil {
-				err1 = err
-				log.Error(errors.ErrorStack(err))
+				err1 = result.Err
+				log.Error(errors.ErrorStack(err1))
 				continue
 			}
 			dom.StatsHandle().AnalyzeResultCh() <- &result
@@ -95,8 +95,8 @@ func (e *AnalyzeExec) Next() (Row, error) {
 	for i := 0; i < len(e.tasks); i++ {
 		result := <-resultCh
 		if result.Err != nil {
-			err1 = err
-			log.Error(errors.ErrorStack(err))
+			err1 = result.Err
+			log.Error(errors.ErrorStack(err1))
 			continue
 		}
 		results = append(results, result)

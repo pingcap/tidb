@@ -181,30 +181,30 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 	switch tp {
 	case tpInt:
 		bf.tp.Decimal = 0
-		sig = &builtinCaseWhenIntSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinCaseWhenIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenInt)
 	case tpReal:
-		sig = &builtinCaseWhenRealSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinCaseWhenRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenReal)
 	case tpDecimal:
-		sig = &builtinCaseWhenDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig = &builtinCaseWhenDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDecimal)
 	case tpString:
 		bf.tp.Decimal = types.UnspecifiedLength
-		sig = &builtinCaseWhenStringSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinCaseWhenStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenString)
 	case tpDatetime, tpTimestamp:
-		sig = &builtinCaseWhenTimeSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinCaseWhenTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenTime)
 	case tpDuration:
-		sig = &builtinCaseWhenDurationSig{baseDurationBuiltinFunc{bf}}
+		sig = &builtinCaseWhenDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDuration)
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCaseWhenIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a builtinCaseWhenIntSig.
@@ -235,7 +235,7 @@ func (b *builtinCaseWhenIntSig) evalInt(row []types.Datum) (ret int64, isNull bo
 }
 
 type builtinCaseWhenRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinCaseWhenRealSig.
@@ -266,7 +266,7 @@ func (b *builtinCaseWhenRealSig) evalReal(row []types.Datum) (ret float64, isNul
 }
 
 type builtinCaseWhenDecimalSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDecimal evals a builtinCaseWhenDecimalSig.
@@ -297,7 +297,7 @@ func (b *builtinCaseWhenDecimalSig) evalDecimal(row []types.Datum) (ret *types.M
 }
 
 type builtinCaseWhenStringSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinCaseWhenStringSig.
@@ -328,7 +328,7 @@ func (b *builtinCaseWhenStringSig) evalString(row []types.Datum) (ret string, is
 }
 
 type builtinCaseWhenTimeSig struct {
-	baseTimeBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalTime evals a builtinCaseWhenTimeSig.
@@ -359,7 +359,7 @@ func (b *builtinCaseWhenTimeSig) evalTime(row []types.Datum) (ret types.Time, is
 }
 
 type builtinCaseWhenDurationSig struct {
-	baseDurationBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDuration evals a builtinCaseWhenDurationSig.
@@ -404,32 +404,32 @@ func (c *ifFunctionClass) getFunction(ctx context.Context, args []Expression) (s
 	bf.tp = retTp
 	switch evalTps {
 	case tpInt:
-		sig = &builtinIfIntSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinIfIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfInt)
 	case tpReal:
-		sig = &builtinIfRealSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinIfRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfReal)
 	case tpDecimal:
-		sig = &builtinIfDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig = &builtinIfDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDecimal)
 	case tpString:
-		sig = &builtinIfStringSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinIfStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfString)
 	case tpDatetime, tpTimestamp:
-		sig = &builtinIfTimeSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinIfTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfTime)
 	case tpDuration:
-		sig = &builtinIfDurationSig{baseDurationBuiltinFunc{bf}}
+		sig = &builtinIfDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDuration)
 	case tpJSON:
-		sig = &builtinIfJSONSig{baseJSONBuiltinFunc{bf}}
+		sig = &builtinIfJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinIfIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfIntSig) evalInt(row []types.Datum) (ret int64, isNull bool, err error) {
@@ -447,7 +447,7 @@ func (b *builtinIfIntSig) evalInt(row []types.Datum) (ret int64, isNull bool, er
 }
 
 type builtinIfRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfRealSig) evalReal(row []types.Datum) (ret float64, isNull bool, err error) {
@@ -465,7 +465,7 @@ func (b *builtinIfRealSig) evalReal(row []types.Datum) (ret float64, isNull bool
 }
 
 type builtinIfDecimalSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfDecimalSig) evalDecimal(row []types.Datum) (ret *types.MyDecimal, isNull bool, err error) {
@@ -483,7 +483,7 @@ func (b *builtinIfDecimalSig) evalDecimal(row []types.Datum) (ret *types.MyDecim
 }
 
 type builtinIfStringSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfStringSig) evalString(row []types.Datum) (ret string, isNull bool, err error) {
@@ -501,7 +501,7 @@ func (b *builtinIfStringSig) evalString(row []types.Datum) (ret string, isNull b
 }
 
 type builtinIfTimeSig struct {
-	baseTimeBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfTimeSig) evalTime(row []types.Datum) (ret types.Time, isNull bool, err error) {
@@ -519,7 +519,7 @@ func (b *builtinIfTimeSig) evalTime(row []types.Datum) (ret types.Time, isNull b
 }
 
 type builtinIfDurationSig struct {
-	baseDurationBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfDurationSig) evalDuration(row []types.Datum) (ret types.Duration, isNull bool, err error) {
@@ -537,7 +537,7 @@ func (b *builtinIfDurationSig) evalDuration(row []types.Datum) (ret types.Durati
 }
 
 type builtinIfJSONSig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfJSONSig) evalJSON(row []types.Datum) (ret json.JSON, isNull bool, err error) {
@@ -584,32 +584,32 @@ func (c *ifNullFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf.tp = retTp
 	switch evalTps {
 	case tpInt:
-		sig = &builtinIfNullIntSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinIfNullIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullInt)
 	case tpReal:
-		sig = &builtinIfNullRealSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinIfNullRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullReal)
 	case tpDecimal:
-		sig = &builtinIfNullDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig = &builtinIfNullDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDecimal)
 	case tpString:
-		sig = &builtinIfNullStringSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinIfNullStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullString)
 	case tpDatetime, tpTimestamp:
-		sig = &builtinIfNullTimeSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinIfNullTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullTime)
 	case tpDuration:
-		sig = &builtinIfNullDurationSig{baseDurationBuiltinFunc{bf}}
+		sig = &builtinIfNullDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDuration)
 	case tpJSON:
-		sig = &builtinIfNullJSONSig{baseJSONBuiltinFunc{bf}}
+		sig = &builtinIfNullJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinIfNullIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullIntSig) evalInt(row []types.Datum) (int64, bool, error) {
@@ -623,7 +623,7 @@ func (b *builtinIfNullIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 type builtinIfNullRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullRealSig) evalReal(row []types.Datum) (float64, bool, error) {
@@ -637,7 +637,7 @@ func (b *builtinIfNullRealSig) evalReal(row []types.Datum) (float64, bool, error
 }
 
 type builtinIfNullDecimalSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
@@ -651,7 +651,7 @@ func (b *builtinIfNullDecimalSig) evalDecimal(row []types.Datum) (*types.MyDecim
 }
 
 type builtinIfNullStringSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullStringSig) evalString(row []types.Datum) (string, bool, error) {
@@ -665,7 +665,7 @@ func (b *builtinIfNullStringSig) evalString(row []types.Datum) (string, bool, er
 }
 
 type builtinIfNullTimeSig struct {
-	baseTimeBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullTimeSig) evalTime(row []types.Datum) (types.Time, bool, error) {
@@ -679,7 +679,7 @@ func (b *builtinIfNullTimeSig) evalTime(row []types.Datum) (types.Time, bool, er
 }
 
 type builtinIfNullDurationSig struct {
-	baseDurationBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullDurationSig) evalDuration(row []types.Datum) (types.Duration, bool, error) {
@@ -693,7 +693,7 @@ func (b *builtinIfNullDurationSig) evalDuration(row []types.Datum) (types.Durati
 }
 
 type builtinIfNullJSONSig struct {
-	baseJSONBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinIfNullJSONSig) evalJSON(row []types.Datum) (json.JSON, bool, error) {

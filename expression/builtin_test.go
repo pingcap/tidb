@@ -102,7 +102,7 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 func newFunctionForTest(ctx context.Context, funcName string, args ...Expression) (Expression, error) {
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenByArgs(funcName)
+		return nil, errFunctionNotExists.GenByArgs("FUNCTION", funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)

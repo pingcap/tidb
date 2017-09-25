@@ -272,7 +272,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	for {
 		startTime := time.Now()
 		handles = handles[:0]
-		err = d.iterateSnapshotRows(t, version, seekHandle,
+		err = iterateSnapshotRows(d.store, t, version, seekHandle,
 			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 				handles = append(handles, h)
 				if len(handles) == defaultBatchCnt {
@@ -363,7 +363,7 @@ func (d *ddl) backfillColumn(ctx context.Context, t table.Table, colMeta *column
 		}
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isReorgRunnable(txn); err != nil {
+			if err := d.isReorgRunnable(); err != nil {
 				return errors.Trace(err)
 			}
 

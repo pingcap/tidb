@@ -64,12 +64,12 @@ func (c *databaseFunctionClass) getFunction(ctx context.Context, args []Expressi
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
 	bf.tp.Flen = 64
 	bf.foldable = false
-	sig := &builtinDatabaseSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinDatabaseSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinDatabaseSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinDatabaseSig.
@@ -90,12 +90,12 @@ func (c *foundRowsFunctionClass) getFunction(ctx context.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt)
 	bf.tp.Flag |= mysql.UnsignedFlag
 	bf.foldable = false
-	sig := &builtinFoundRowsSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinFoundRowsSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinFoundRowsSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a builtinFoundRowsSig.
@@ -120,12 +120,12 @@ func (c *currentUserFunctionClass) getFunction(ctx context.Context, args []Expre
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
 	bf.tp.Flen = 64
 	bf.foldable = false
-	sig := &builtinCurrentUserSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinCurrentUserSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCurrentUserSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinCurrentUserSig.
@@ -151,12 +151,12 @@ func (c *userFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
 	bf.foldable = false
 	bf.tp.Flen = 64
-	sig := &builtinUserSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinUserSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinUserSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // eval evals a builtinUserSig.
@@ -181,12 +181,12 @@ func (c *connectionIDFunctionClass) getFunction(ctx context.Context, args []Expr
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt)
 	bf.foldable = false
 	bf.tp.Flag |= mysql.UnsignedFlag
-	sig := &builtinConnectionIDSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinConnectionIDSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinConnectionIDSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinConnectionIDSig) evalInt(_ []types.Datum) (int64, bool, error) {
@@ -215,15 +215,15 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx context.Context, args []Expr
 	bf.foldable = false
 
 	if len(args) == 1 {
-		sig = &builtinLastInsertIDWithIDSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinLastInsertIDWithIDSig{bf}
 	} else {
-		sig = &builtinLastInsertIDSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinLastInsertIDSig{bf}
 	}
 	return sig.setSelf(sig), errors.Trace(err)
 }
 
 type builtinLastInsertIDSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals LAST_INSERT_ID().
@@ -234,7 +234,7 @@ func (b *builtinLastInsertIDSig) evalInt(row []types.Datum) (res int64, isNull b
 }
 
 type builtinLastInsertIDWithIDSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals LAST_INSERT_ID(expr).
@@ -261,12 +261,12 @@ func (c *versionFunctionClass) getFunction(ctx context.Context, args []Expressio
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
 	bf.tp.Flen = 64
 	bf.foldable = false
-	sig := &builtinVersionSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinVersionSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinVersionSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinVersionSig.
@@ -285,12 +285,12 @@ func (c *tidbVersionFunctionClass) getFunction(ctx context.Context, args []Expre
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
 	bf.tp.Flen = len(printer.GetTiDBInfo())
-	sig := &builtinTiDBVersionSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinTiDBVersionSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinTiDBVersionSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals a builtinTiDBVersionSig.
@@ -304,7 +304,7 @@ type benchmarkFunctionClass struct {
 }
 
 func (c *benchmarkFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("BENCHMARK")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "BENCHMARK")
 }
 
 type charsetFunctionClass struct {
@@ -312,7 +312,7 @@ type charsetFunctionClass struct {
 }
 
 func (c *charsetFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("CHARSET")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "CHARSET")
 }
 
 type coercibilityFunctionClass struct {
@@ -320,7 +320,7 @@ type coercibilityFunctionClass struct {
 }
 
 func (c *coercibilityFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("COERCIBILITY")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "COERCIBILITY")
 }
 
 type collationFunctionClass struct {
@@ -328,7 +328,7 @@ type collationFunctionClass struct {
 }
 
 func (c *collationFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("COLLATION")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "COLLATION")
 }
 
 type rowCountFunctionClass struct {
@@ -336,5 +336,5 @@ type rowCountFunctionClass struct {
 }
 
 func (c *rowCountFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("ROW_COUNT")
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "ROW_COUNT")
 }

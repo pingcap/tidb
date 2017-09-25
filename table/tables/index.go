@@ -144,6 +144,7 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 		}
 	}
 
+	key = make([]byte, 0, len(c.prefix)+len(indexedValues)+9)
 	key = append(key, []byte(c.prefix)...)
 	if distinct {
 		key, err = codec.EncodeKey(key, indexedValues...)
