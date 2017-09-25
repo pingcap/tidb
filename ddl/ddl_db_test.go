@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -46,7 +47,7 @@ import (
 
 var _ = Suite(&testDBSuite{})
 
-const defaultBatchSize = 1024
+const defaultBatchSize = 4196
 
 type testDBSuite struct {
 	store      kv.Storage
@@ -350,9 +351,10 @@ func (s *testDBSuite) testAlterLock(c *C) {
 
 func (s *testDBSuite) testAddIndex(c *C) {
 	done := make(chan error, 1)
-	num := defaultBatchSize + 10
+	start := -10
+	num := defaultBatchSize
 	// first add some rows
-	for i := 0; i < num; i++ {
+	for i := start; i < num; i++ {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
 
@@ -382,8 +384,10 @@ LOOP:
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
 				deletedKeys[n] = struct{}{}
-				s.mustExec(c, "delete from t1 where c1 = ?", n)
-				s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
+				sql := fmt.Sprintf("delete from t1 where c1 = %d", n)
+				s.mustExec(c, sql)
+				sql = fmt.Sprintf("insert into t1 values (%d, %d, %d)", i, i, i)
+				s.mustExec(c, sql)
 			}
 			num += step
 		}
@@ -391,7 +395,7 @@ LOOP:
 
 	// get exists keys
 	keys := make([]int, 0, num)
-	for i := 0; i < num; i++ {
+	for i := start; i < num; i++ {
 		if _, ok := deletedKeys[i]; ok {
 			continue
 		}
@@ -403,7 +407,7 @@ LOOP:
 	for _, key := range keys {
 		expectedRows = append(expectedRows, []interface{}{key})
 	}
-	rows := s.mustQuery(c, "select c1 from t1 where c3 >= 0")
+	rows := s.mustQuery(c, fmt.Sprintf("select c1 from t1 where c3 >= %d", start))
 	matchRows(c, rows, expectedRows)
 
 	// test index range
@@ -424,7 +428,8 @@ LOOP:
 	c.Assert(ctx.NewTxn(), IsNil)
 	t := s.testGetTable(c, "t1")
 	handles := make(map[int64]struct{})
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+	startKey := t.RecordKey(math.MinInt64)
+	err := t.IterRecords(ctx, startKey, t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles[h] = struct{}{}
 			return true, nil
@@ -1156,9 +1161,11 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 func (s *testDBSuite) TestCreateTable(c *C) {
 	store, err := tidb.NewStore("memory://create_table")
 	c.Assert(err, IsNil)
+	defer store.Close()
 	s.tk = testkit.NewTestKit(c, store)
-	_, err = tidb.BootstrapSession(store)
+	dom, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 
 	s.tk.MustExec("use test")
 	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
