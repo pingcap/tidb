@@ -341,12 +341,6 @@ func columnExpr(columnID int64) *tipb.Expr {
 	return expr
 }
 
-func likeExpr(target, pattern string) *tipb.Expr {
-	targetExpr := datumExpr(types.NewStringDatum(target))
-	patternExpr := datumExpr(types.NewStringDatum(pattern))
-	return &tipb.Expr{Tp: tipb.ExprType_Like, Children: []*tipb.Expr{targetExpr, patternExpr}}
-}
-
 func notExpr(value interface{}) *tipb.Expr {
 	expr := new(tipb.Expr)
 	expr.Tp = tipb.ExprType_Not
@@ -357,66 +351,6 @@ func notExpr(value interface{}) *tipb.Expr {
 		expr.Children = []*tipb.Expr{x}
 	}
 	return expr
-}
-
-func (s *testEvalSuite) TestLike(c *C) {
-	tests := []struct {
-		expr   *tipb.Expr
-		result int64
-	}{
-		{
-			expr:   likeExpr("a", ""),
-			result: 0,
-		},
-		{
-			expr:   likeExpr("a", "a"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("a", "b"),
-			result: 0,
-		},
-		{
-			expr:   likeExpr("aAb", "AaB"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("a", "%"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("aAD", "%d"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("aAeD", "%e"),
-			result: 0,
-		},
-		{
-			expr:   likeExpr("aAb", "Aa%"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("abAb", "Aa%"),
-			result: 0,
-		},
-		{
-			expr:   likeExpr("aAcb", "%C%"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("aAb", "%C%"),
-			result: 0,
-		},
-	}
-	sc := new(variable.StatementContext)
-	for _, tt := range tests {
-		expr, err := PBToExpr(tt.expr, nil, sc)
-		c.Check(err, IsNil)
-		res, err := expr.Eval(nil)
-		c.Check(err, IsNil)
-		c.Check(res.GetInt64(), Equals, tt.result)
-	}
 }
 
 func (s *testEvalSuite) TestEvalIsNull(c *C) {
