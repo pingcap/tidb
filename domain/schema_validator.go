@@ -44,6 +44,8 @@ type SchemaValidator interface {
 	Stop()
 	// Restart restarts the schema validator after it is stopped.
 	Restart()
+	// Reset resets SchemaValidator to initial state.
+	Reset()
 }
 
 type deltaSchemaInfo struct {
@@ -84,6 +86,14 @@ func (s *schemaValidator) Restart() {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
+}
+
+func (s *schemaValidator) Reset() {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	s.isStarted = true
+	s.latestSchemaVer = 0
+	s.deltaSchemaInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
 }
 
 func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, changedTableIDs []int64) {

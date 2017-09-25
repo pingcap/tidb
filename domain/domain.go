@@ -300,7 +300,8 @@ func (do *Domain) Reload() error {
 	loadSchemaCounter.WithLabelValues("succ").Inc()
 
 	if fullLoad {
-		do.SchemaValidator.Restart()
+		log.Info("[ddl] full load and reset schema validator.")
+		do.SchemaValidator.Reset()
 	}
 	do.SchemaValidator.Update(ver.Ver, schemaVersion, latestSchemaVersion, changedTableIDs)
 
