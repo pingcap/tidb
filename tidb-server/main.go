@@ -319,6 +319,7 @@ func setGlobalVars() {
 	tidb.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	ddl.RunWorker = cfg.RunDDL
+	ddl.EnableSplitTableRegion = cfg.SplitTable
 	tidb.SetCommitRetryLimit(cfg.Performance.RetryLimit)
 	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
