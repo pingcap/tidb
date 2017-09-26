@@ -459,7 +459,7 @@ func FormatSQLModeStr(s string) string {
 		if len(part) == 0 {
 			continue
 		}
-		if modeParts, ok := combinationSQLMode[part]; ok {
+		if modeParts, ok := CombinationSQLMode[part]; ok {
 			for _, modePart := range modeParts {
 				if _, exist := existParts[modePart]; !exist {
 					nonEmptyParts = append(nonEmptyParts, modePart)
@@ -526,18 +526,18 @@ var Str2SQLMode = map[string]SQLMode{
 	"PAD_CHAR_TO_FULL_LENGTH":    ModePadCharToFullLength,
 }
 
-// combinationSQLMode is the special modes that provided as shorthand for combinations of mode values.
+// CombinationSQLMode is the special modes that provided as shorthand for combinations of mode values.
 // See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-combo.
-var combinationSQLMode = map[string][]string{
-	"ANSI":        []string{"REAL_AS_FLOAT", "PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "ONLY_FULL_GROUP_BY"},
-	"DB2":         []string{"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
-	"MAXDB":       []string{"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS", "NO_AUTO_CREATE_USER"},
-	"MSSQL":       []string{"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
-	"MYSQL323":    []string{"MYSQL323", "HIGH_NOT_PRECEDENCE"},
-	"MYSQL40":     []string{"MYSQL40", "HIGH_NOT_PRECEDENCE"},
-	"ORACLE":      []string{"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS", "NO_AUTO_CREATE_USER"},
-	"POSTGRESQL":  []string{"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
-	"TRADITIONAL": []string{"STRICT_TRANS_TABLES", "STRICT_ALL_TABLES", "NO_ZERO_IN_DATE", "NO_ZERO_DATE", "ERROR_FOR_DIVISION_BY_ZERO", "NO_AUTO_CREATE_USER", "NO_ENGINE_SUBSTITUTION"},
+var CombinationSQLMode = map[string][]string{
+	"ANSI":        {"REAL_AS_FLOAT", "PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "ONLY_FULL_GROUP_BY"},
+	"DB2":         {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
+	"MAXDB":       {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS", "NO_AUTO_CREATE_USER"},
+	"MSSQL":       {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
+	"MYSQL323":    {"MYSQL323", "HIGH_NOT_PRECEDENCE"},
+	"MYSQL40":     {"MYSQL40", "HIGH_NOT_PRECEDENCE"},
+	"ORACLE":      {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS", "NO_AUTO_CREATE_USER"},
+	"POSTGRESQL":  {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
+	"TRADITIONAL": {"STRICT_TRANS_TABLES", "STRICT_ALL_TABLES", "NO_ZERO_IN_DATE", "NO_ZERO_DATE", "ERROR_FOR_DIVISION_BY_ZERO", "NO_AUTO_CREATE_USER", "NO_ENGINE_SUBSTITUTION"},
 }
 
 // FormatFunc is the locale format function signature.
