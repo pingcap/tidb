@@ -433,7 +433,7 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *
 
 func (w *worker) getIndexRecord(t table.Table, taskOpInfo *indexTaskOpInfo, rawRecord []byte, idxRecord *indexRecord) error {
 	cols := t.Cols()
-	idxInfo := taskOpInfo.tblIndex.Meta()
+	idxInfo := w.index.Meta()
 	_, err := tablecodec.DecodeRowWithMap(rawRecord, taskOpInfo.colMap, time.UTC, w.rowMap)
 	if err != nil {
 		return errors.Trace(err)
@@ -488,13 +488,13 @@ type indexRecord struct {
 
 // indexTaskOpInfo records the information that is needed in the task.
 type indexTaskOpInfo struct {
-	tblIndex table.Index
-	colMap   map[int64]*types.FieldType // It's the index columns map.
+	colMap map[int64]*types.FieldType // It's the index columns map.
 }
 
 type worker struct {
 	id          int
 	ctx         context.Context
+	index       table.Index
 	defaultVals []types.Datum  // It's used to reduce the number of new slice.
 	idxRecords  []*indexRecord // It's used to reduce the number of new slice.
 	taskRange   handleInfo     // Every task's handle range.
@@ -550,8 +550,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 	workerCnt := defaultWorkers
 	taskOpInfo := &indexTaskOpInfo{
-		tblIndex: tables.NewIndex(t.Meta(), indexInfo),
-		colMap:   colMap,
+		colMap: colMap,
 	}
 
 	taskBatch := int64(defaultTaskHandleCnt)
@@ -562,6 +561,8 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	for i := 0; i < workerCnt; i++ {
 		ctx := d.newContext()
 		workers[i] = newWorker(ctx, i, int(taskBatch), len(cols), len(taskOpInfo.colMap))
+		// Make sure every worker has its own index buffer.
+		workers[i].index = tables.NewIndexWithBuffer(t.Meta(), indexInfo)
 	}
 	for {
 		startTime := time.Now()
@@ -655,7 +656,7 @@ func (w *worker) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, tas
 		}
 
 		// Create the index.
-		handle, err := taskOpInfo.tblIndex.Create(txn, idxRecord.vals, idxRecord.handle)
+		handle, err := w.index.Create(txn, idxRecord.vals, idxRecord.handle)
 		if err != nil {
 			if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
 				// Index already exists, skip it.

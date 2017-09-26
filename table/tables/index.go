@@ -98,7 +98,19 @@ type index struct {
 	idxInfo *model.IndexInfo
 	prefix  kv.Key
 
-	key []byte // It's used reduce the number of new slice when multiple index keys are created.
+	buffer []byte // It's used reduce the number of new slice when multiple index keys are created.
+}
+
+// NewIndexWithBuffer builds a new Index object whit the buffer.
+func NewIndexWithBuffer(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+	idxPrefix := kv.Key(tablecodec.EncodeTableIndexPrefix(tableInfo.ID, indexInfo.ID))
+	index := &index{
+		tblInfo: tableInfo,
+		idxInfo: indexInfo,
+		prefix:  idxPrefix,
+		buffer:  make([]byte, 0, len(idxPrefix)+len(indexInfo.Columns)*9+9),
+	}
+	return index
 }
 
 // NewIndex builds a new Index object.
@@ -146,10 +158,11 @@ func (c *index) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, d
 		}
 	}
 
-	if c.key == nil {
-		c.key = make([]byte, 0, len(c.prefix)+len(indexedValues)+9)
+	if c.buffer != nil {
+		key = c.buffer[:0]
+	} else {
+		key = make([]byte, 0, len(c.prefix)+len(indexedValues)*9+9)
 	}
-	key = c.key[:0]
 	key = append(key, []byte(c.prefix)...)
 	key, err = codec.EncodeKey(key, indexedValues...)
 	if !distinct && err == nil {
