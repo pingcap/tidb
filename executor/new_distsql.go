@@ -143,7 +143,10 @@ func (e *TableReaderExecutor) Open() error {
 		Priority:       e.priority,
 	}
 	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, &kvReq)
+	if err = setDAGRequest(&kvReq, e.dagPB); err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), &kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -164,7 +167,10 @@ func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.C
 		Priority:       e.priority,
 	}
 	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, &kvReq)
+	if err = setDAGRequest(&kvReq, e.dagPB); err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, &kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -279,7 +285,10 @@ func (e *IndexReaderExecutor) Open() error {
 		IsolationLevel: getIsolationLevel(e.ctx.GetSessionVars()),
 		Priority:       e.priority,
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, &kvReq)
+	if err = setDAGRequest(&kvReq, e.dagPB); err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), &kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -301,7 +310,10 @@ func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 		IsolationLevel: getIsolationLevel(e.ctx.GetSessionVars()),
 		Priority:       e.priority,
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, &kvReq)
+	if err = setDAGRequest(&kvReq, e.dagPB); err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), &kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -351,7 +363,10 @@ func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh ch
 		IsolationLevel: getIsolationLevel(e.ctx.GetSessionVars()),
 		Priority:       e.priority,
 	}
-	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, &kvReq)
+	if err := setDAGRequest(&kvReq, e.dagPB); err != nil {
+		return errors.Trace(err)
+	}
+	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), &kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -619,4 +634,11 @@ func (e *IndexLookUpExecutor) Next() (Row, error) {
 		}
 		e.resultCurr = nil
 	}
+}
+
+func setDAGRequest(kvReq *kv.Request, dag *tipb.DAGRequest) (err error) {
+	kvReq.Tp = kv.ReqTypeDAG
+	kvReq.StartTs = dag.StartTs
+	kvReq.Data, err = dag.Marshal()
+	return
 }
