@@ -556,6 +556,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	do.wg.Add(1)
 	go do.updateStatsWorker(ctx, lease)
 	if RunAutoAnalyze {
+		do.wg.Add(1)
 		go do.autoAnalyzeWorker(lease)
 	}
 	return nil
@@ -612,14 +613,21 @@ func (do *Domain) autoAnalyzeWorker(lease time.Duration) {
 		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
 	}
 	statsHandle := do.StatsHandle()
+	analyzeTicker := time.NewTicker(lease)
+	defer analyzeTicker.Stop()
 	for {
-		if statsOwner.IsOwner() {
-			err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
-			if err != nil {
-				log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
+		select {
+		case <-analyzeTicker.C:
+			if statsOwner.IsOwner() {
+				err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
+				if err != nil {
+					log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
+				}
 			}
+		case <-do.exit:
+			do.wg.Done()
+			return
 		}
-		time.Sleep(lease)
 	}
 }
 
