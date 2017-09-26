@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan/cache"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
@@ -137,6 +138,9 @@ type session struct {
 	sessionManager util.SessionManager
 
 	statsCollector *statistics.SessionStatsCollector
+
+	// for plan cache
+	planCache *cache.SimpleLRUCache
 }
 
 // Cancel cancels the execution of current transaction.
@@ -638,29 +642,16 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	s.PrepareTxnCtx()
 	startTS := time.Now()
 
-	charset, collation := s.sessionVars.GetCharsetInfo()
 	connID := s.sessionVars.ConnectionID
-	rawStmts, err := s.ParseSQL(sql, charset, collation)
-	if err != nil {
-		log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
-		return nil, errors.Trace(err)
-	}
-	sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
-
 	var rs []ast.RecordSet
-	for _, rst := range rawStmts {
-		s.PrepareTxnCtx()
-		startTS := time.Now()
-		// Some executions are done in compile stage, so we reset them before compile.
-		executor.ResetStmtCtx(s, rst)
-		st, err1 := Compile(s, rst)
-		if err1 != nil {
-			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
-			s.RollbackTxn()
-			return nil, errors.Trace(err1)
-		}
-		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
+	schemaVersion := sessionctx.GetDomain(s).InfoSchema().SchemaMetaVersion()
+	database := s.sessionVars.CurrentDB
+	sck := cache.NewSQLCacheKey(schemaVersion, database, sql)
+
+	if cacheValue, exists := s.planCache.Get(sck); exists {
+		st := cacheValue.(ast.Statement)
+		s.PrepareTxnCtx()
 		s.SetValue(context.QueryString, st.OriginText())
 
 		startTS = time.Now()
@@ -675,8 +666,51 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		if r != nil {
 			rs = append(rs, r)
 		}
+	} else {
+		charset, collation := s.sessionVars.GetCharsetInfo()
+		rawStmts, err := s.ParseSQL(sql, charset, collation)
+		if err != nil {
+			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
+			return nil, errors.Trace(err)
+		}
+		sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
-		logCrucialStmt(rst)
+		for _, rst := range rawStmts {
+			s.PrepareTxnCtx()
+			startTS := time.Now()
+			// Some executions are done in compile stage, so we reset them before compile.
+			executor.ResetStmtCtx(s, rst)
+			st, err1 := Compile(s, rst)
+			if err1 != nil {
+				log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
+				s.RollbackTxn()
+				return nil, errors.Trace(err1)
+			}
+			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
+
+			s.SetValue(context.QueryString, st.OriginText())
+			if len(rawStmts) == 1 {
+				_, isSelect := rawStmts[0].(*ast.SelectStmt)
+				if isSelect {
+					s.planCache.Put(sck, st)
+				}
+			}
+
+			startTS = time.Now()
+			r, err := runStmt(s, st)
+			if err != nil {
+				if !kv.ErrKeyExists.Equal(err) {
+					log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
+				}
+				return nil, errors.Trace(err)
+			}
+			sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
+			if r != nil {
+				rs = append(rs, r)
+			}
+
+			logCrucialStmt(rst)
+		}
 	}
 
 	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(rs) > 1 {
@@ -980,6 +1014,7 @@ func createSession(store kv.Storage) (*session, error) {
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
+		planCache:   cache.NewSimpleLRUCache(1000),
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, domain)
@@ -998,6 +1033,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
+		planCache:   cache.NewSimpleLRUCache(1000),
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, dom)
