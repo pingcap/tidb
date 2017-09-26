@@ -121,10 +121,10 @@ func inferType4ControlFuncs(tp1, tp2 *types.FieldType) *types.FieldType {
 		}
 	}
 	// Fix decimal for int and string.
-	fieldTp := fieldTp2EvalTp(retTp)
-	if fieldTp == tpInt {
+	fieldTp := retTp.EvalType()
+	if fieldTp == types.ETInt {
 		retTp.Decimal = 0
-	} else if fieldTp == tpString {
+	} else if fieldTp == types.ETString {
 		if tp1.Tp != mysql.TypeNull || tp2.Tp != mysql.TypeNull {
 			retTp.Decimal = types.UnspecifiedLength
 		}
@@ -154,9 +154,9 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 
 	fieldTp := types.AggFieldType(fieldTps)
-	tp := fieldTp2EvalTp(fieldTp)
+	tp := fieldTp.EvalType()
 
-	if tp == tpInt {
+	if tp == types.ETInt {
 		decimal = 0
 	}
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
@@ -168,9 +168,9 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 		fieldTp.Flen, fieldTp.Decimal = 0, -1
 		types.SetBinChsClnFlag(fieldTp)
 	}
-	argTps := make([]evalTp, 0, l)
+	argTps := make([]types.EvalType, 0, l)
 	for i := 0; i < l-1; i += 2 {
-		argTps = append(argTps, tpInt, tp)
+		argTps = append(argTps, types.ETInt, tp)
 	}
 	if l%2 == 1 {
 		argTps = append(argTps, tp)
@@ -179,24 +179,24 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 	bf.tp = fieldTp
 
 	switch tp {
-	case tpInt:
+	case types.ETInt:
 		bf.tp.Decimal = 0
 		sig = &builtinCaseWhenIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenInt)
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinCaseWhenRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenReal)
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinCaseWhenDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDecimal)
-	case tpString:
+	case types.ETString:
 		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinCaseWhenStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenString)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCaseWhenTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenTime)
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinCaseWhenDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDuration)
 	}
@@ -399,29 +399,29 @@ func (c *ifFunctionClass) getFunction(ctx context.Context, args []Expression) (s
 		return nil, errors.Trace(err)
 	}
 	retTp := inferType4ControlFuncs(args[1].GetType(), args[2].GetType())
-	evalTps := fieldTp2EvalTp(retTp)
-	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, tpInt, evalTps, evalTps)
+	evalTps := retTp.EvalType()
+	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, types.ETInt, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinIfIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfInt)
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinIfRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfReal)
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinIfDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDecimal)
-	case tpString:
+	case types.ETString:
 		sig = &builtinIfStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfString)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinIfTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfTime)
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinIfDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDuration)
-	case tpJSON:
+	case types.ETJson:
 		sig = &builtinIfJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
 	}
@@ -579,29 +579,29 @@ func (c *ifNullFunctionClass) getFunction(ctx context.Context, args []Expression
 		retTp.Flen, retTp.Decimal = 0, -1
 		types.SetBinChsClnFlag(retTp)
 	}
-	evalTps := fieldTp2EvalTp(retTp)
+	evalTps := retTp.EvalType()
 	bf := newBaseBuiltinFuncWithTp(args, ctx, evalTps, evalTps, evalTps)
 	bf.tp = retTp
 	switch evalTps {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinIfNullIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullInt)
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinIfNullRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullReal)
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinIfNullDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDecimal)
-	case tpString:
+	case types.ETString:
 		sig = &builtinIfNullStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullString)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinIfNullTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullTime)
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinIfNullDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDuration)
-	case tpJSON:
+	case types.ETJson:
 		sig = &builtinIfNullJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
 	}
