@@ -412,6 +412,11 @@ func (m SQLMode) HasErrorForDivisionByZeroMode() bool {
 	return m&ModeErrorForDivisionByZero == ModeErrorForDivisionByZero
 }
 
+// HasStrictMode detects if 'STRICT_TRANS_TABLES' or 'STRICT_ALL_TABLES' mode is set in SQLMode
+func (m SQLMode) HasStrictMode() bool {
+	return m&ModeStrictTransTables == ModeStrictTransTables || m&ModeStrictAllTables == ModeStrictAllTables
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0
