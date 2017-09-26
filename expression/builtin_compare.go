@@ -116,9 +116,9 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 
 	// Use the aggregated field type as retType.
-	retTp := types.AggFieldType(fieldTps)
-	retCTp := types.AggTypeClass(fieldTps, &retTp.Flag)
-	retEvalTp := retTp.EvalType()
+	resultFieldType := types.AggFieldType(fieldTps)
+	resultEvalType := types.AggregateEvalType(fieldTps, &resultFieldType.Flag)
+	retEvalTp := resultFieldType.EvalType()
 
 	fieldEvalTps := make([]types.EvalType, 0, len(args))
 	for range args {
@@ -127,11 +127,11 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 
 	bf := newBaseBuiltinFuncWithTp(args, ctx, retEvalTp, fieldEvalTps...)
 
-	bf.tp.Flag |= retTp.Flag
-	retTp.Flen, retTp.Decimal = 0, types.UnspecifiedLength
+	bf.tp.Flag |= resultFieldType.Flag
+	resultFieldType.Flen, resultFieldType.Decimal = 0, types.UnspecifiedLength
 
 	// Set retType to BINARY(0) if all arguments are of type NULL.
-	if retTp.Tp == mysql.TypeNull {
+	if resultFieldType.Tp == mysql.TypeNull {
 		types.SetBinChsClnFlag(bf.tp)
 	} else {
 		maxIntLen := 0
@@ -140,8 +140,8 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 		// Find the max length of field in `maxFlen`,
 		// and max integer-part length in `maxIntLen`.
 		for _, argTp := range fieldTps {
-			if argTp.Decimal > retTp.Decimal {
-				retTp.Decimal = argTp.Decimal
+			if argTp.Decimal > resultFieldType.Decimal {
+				resultFieldType.Decimal = argTp.Decimal
 			}
 			argIntLen := argTp.Flen
 			if argTp.Decimal > 0 {
@@ -162,15 +162,15 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 
 		// For integer, field length = maxIntLen + (1/0 for sign bit)
 		// For decimal, field length = maxIntLen + maxDecimal + (1/0 for sign bit)
-		if retCTp == types.ClassInt || retCTp == types.ClassDecimal {
-			retTp.Flen = maxIntLen + retTp.Decimal
-			if retTp.Decimal > 0 {
-				retTp.Flen++
+		if resultEvalType == types.ETInt || resultEvalType == types.ETDecimal {
+			resultFieldType.Flen = maxIntLen + resultFieldType.Decimal
+			if resultFieldType.Decimal > 0 {
+				resultFieldType.Flen++
 			}
-			if !mysql.HasUnsignedFlag(retTp.Flag) {
-				retTp.Flen++
+			if !mysql.HasUnsignedFlag(resultFieldType.Flag) {
+				resultFieldType.Flen++
 			}
-			bf.tp = retTp
+			bf.tp = resultFieldType
 		} else {
 			// Set the field length to maxFlen for other types.
 			bf.tp.Flen = maxFlen
@@ -297,17 +297,17 @@ func (b *builtinCoalesceDurationSig) evalDuration(row []types.Datum) (res types.
 	return res, isNull, errors.Trace(err)
 }
 
-// temporalWithDateAsNumTypeClass makes DATE, DATETIME, TIMESTAMP pretend to be numbers rather than strings.
-func temporalWithDateAsNumTypeClass(argTp *types.FieldType) (argTypeClass types.TypeClass, isStr bool, isTemporalWithDate bool) {
-	argTypeClass = argTp.ToClass()
-	isStr, isTemporalWithDate = argTypeClass == types.ClassString, types.IsTemporalWithDate(argTp.Tp)
+// temporalWithDateAsNumEvalType makes DATE, DATETIME, TIMESTAMP pretend to be numbers rather than strings.
+func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.EvalType, isStr bool, isTemporalWithDate bool) {
+	argEvalType = argTp.EvalType()
+	isStr, isTemporalWithDate = argEvalType.IsStringKind(), types.IsTemporalWithDate(argTp.Tp)
 	if !isTemporalWithDate {
 		return
 	}
 	if argTp.Decimal > 0 {
-		argTypeClass = types.ClassDecimal
+		argEvalType = types.ETDecimal
 	} else {
-		argTypeClass = types.ClassInt
+		argEvalType = types.ETInt
 	}
 	return
 }
@@ -315,7 +315,7 @@ func temporalWithDateAsNumTypeClass(argTp *types.FieldType) (argTypeClass types.
 // getCmp4MinMax gets compare type for GREATEST and LEAST.
 func getCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	datetimeFound, isAllStr := false, true
-	cmpType, isStr, isTemporalWithDate := temporalWithDateAsNumTypeClass(args[0].GetType())
+	cmpEvalType, isStr, isTemporalWithDate := temporalWithDateAsNumEvalType(args[0].GetType())
 	if !isStr {
 		isAllStr = false
 	}
@@ -323,25 +323,19 @@ func getCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 		datetimeFound = true
 	}
 	for i := range args {
-		var tp types.TypeClass
-		tp, isStr, isTemporalWithDate = temporalWithDateAsNumTypeClass(args[i].GetType())
+		var tp types.EvalType
+		tp, isStr, isTemporalWithDate = temporalWithDateAsNumEvalType(args[i].GetType())
 		if isTemporalWithDate {
 			datetimeFound = true
 		}
 		if !isStr {
 			isAllStr = false
 		}
-		cmpType = getCmpType(cmpType, tp)
+		cmpEvalType = getCmpType(cmpEvalType, tp)
 	}
-	switch cmpType {
-	case types.ClassString:
+	argTp = cmpEvalType
+	if cmpEvalType.IsStringKind() {
 		argTp = types.ETString
-	case types.ClassInt:
-		argTp = types.ETInt
-	case types.ClassReal:
-		argTp = types.ETReal
-	case types.ClassDecimal:
-		argTp = types.ETDecimal
 	}
 	if isAllStr && datetimeFound {
 		argTp = types.ETDatetime
@@ -828,16 +822,16 @@ type compareFunctionClass struct {
 }
 
 // getCmpType gets the ClassType that the two args will be treated as when comparing.
-func getCmpType(a types.TypeClass, b types.TypeClass) types.TypeClass {
-	if a == types.ClassString && b == types.ClassString {
-		return types.ClassString
-	} else if a == types.ClassInt && b == types.ClassInt {
-		return types.ClassInt
-	} else if (a == types.ClassInt || a == types.ClassDecimal) &&
-		(b == types.ClassInt || b == types.ClassDecimal) {
-		return types.ClassDecimal
+func getCmpType(lhs, rhs types.EvalType) types.EvalType {
+	if lhs.IsStringKind() && rhs.IsStringKind() {
+		return types.ETString
+	} else if lhs == types.ETInt && rhs == types.ETInt {
+		return types.ETInt
+	} else if (lhs == types.ETInt || lhs == types.ETDecimal) &&
+		(rhs == types.ETInt || rhs == types.ETDecimal) {
+		return types.ETDecimal
 	}
-	return types.ClassReal
+	return types.ETReal
 }
 
 // isTemporalColumn checks if a expression is a temporal column,
@@ -855,7 +849,7 @@ func isTemporalColumn(expr Expression) bool {
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
 func tryToConvertConstantInt(con *Constant, ctx context.Context) *Constant {
-	if con.GetTypeClass() == types.ClassInt {
+	if con.GetType().EvalType() == types.ETInt {
 		return con
 	}
 	sc := ctx.GetSessionVars().StmtCtx
@@ -906,8 +900,8 @@ func refineConstantArg(con *Constant, op opcode.Op, ctx context.Context) *Consta
 // refineArgs rewrite the arguments if one of them is int expression and another one is non-int constant.
 // Like a < 1.1 will be changed to a < 2.
 func (c *compareFunctionClass) refineArgs(args []Expression, ctx context.Context) []Expression {
-	arg0IsInt := args[0].GetTypeClass() == types.ClassInt
-	arg1IsInt := args[1].GetTypeClass() == types.ClassInt
+	arg0IsInt := args[0].GetType().EvalType() == types.ETInt
+	arg1IsInt := args[1].GetType().EvalType() == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
 	// int non-constant [cmp] non-int constant
@@ -929,30 +923,30 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 		return nil, errors.Trace(err)
 	}
 	args := c.refineArgs(rawArgs, ctx)
-	ft0, ft1 := args[0].GetType(), args[1].GetType()
-	tc0, tc1 := ft0.ToClass(), ft1.ToClass()
-	cmpType := getCmpType(tc0, tc1)
-	if (tc0 == types.ClassString && ft1.Tp == mysql.TypeJSON) ||
-		(ft0.Tp == mysql.TypeJSON && tc1 == types.ClassString) {
+	lhsFieldType, rhsFieldType := args[0].GetType(), args[1].GetType()
+	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
+	cmpType := getCmpType(lhsEvalType, rhsEvalType)
+	if (lhsEvalType.IsStringKind() && rhsFieldType.Tp == mysql.TypeJSON) ||
+		(lhsFieldType.Tp == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
 		sig, err = c.generateCmpSigs(args, types.ETJson, ctx)
-	} else if cmpType == types.ClassString && (types.IsTypeTime(ft0.Tp) || types.IsTypeTime(ft1.Tp)) {
+	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.Tp) || types.IsTypeTime(rhsFieldType.Tp)) {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
 		// compare as time
-		if ft0.Tp == ft1.Tp {
-			sig, err = c.generateCmpSigs(args, ft0.EvalType(), ctx)
+		if lhsFieldType.Tp == rhsFieldType.Tp {
+			sig, err = c.generateCmpSigs(args, lhsFieldType.EvalType(), ctx)
 		} else {
 			sig, err = c.generateCmpSigs(args, types.ETDatetime, ctx)
 		}
-	} else if ft0.Tp == mysql.TypeDuration && ft1.Tp == mysql.TypeDuration {
+	} else if lhsFieldType.Tp == mysql.TypeDuration && rhsFieldType.Tp == mysql.TypeDuration {
 		// duration <cmp> duration
 		// compare as duration
 		sig, err = c.generateCmpSigs(args, types.ETDuration, ctx)
-	} else if cmpType == types.ClassReal || cmpType == types.ClassString {
-		_, isConst0 := args[0].(*Constant)
-		_, isConst1 := args[1].(*Constant)
-		if (tc0 == types.ClassDecimal && !isConst0 && tc1 == types.ClassString && isConst1) ||
-			(tc1 == types.ClassDecimal && !isConst1 && tc0 == types.ClassString && isConst0) {
+	} else if cmpType == types.ETReal || cmpType == types.ETString {
+		_, isLHSConst := args[0].(*Constant)
+		_, isRHSConst := args[1].(*Constant)
+		if (lhsEvalType == types.ETDecimal && !isLHSConst && rhsEvalType.IsStringKind() && isRHSConst) ||
+			(rhsEvalType == types.ETDecimal && !isRHSConst && lhsEvalType.IsStringKind() && isLHSConst) {
 			/*
 				<non-const decimal expression> <cmp> <const string expression>
 				or
@@ -960,9 +954,9 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 
 				Do comparison as decimal rather than float, in order not to lose precision.
 			)*/
-			cmpType = types.ClassDecimal
-		} else if isTemporalColumn(args[0]) && isConst1 ||
-			isTemporalColumn(args[1]) && isConst0 {
+			cmpType = types.ETDecimal
+		} else if isTemporalColumn(args[0]) && isRHSConst ||
+			isTemporalColumn(args[1]) && isLHSConst {
 			/*
 				<temporal column> <cmp> <non-temporal constant>
 				or
@@ -970,8 +964,8 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 
 				Convert the constant to temporal type.
 			*/
-			col, isColumn0 := args[0].(*Column)
-			if !isColumn0 {
+			col, isLHSColumn := args[0].(*Column)
+			if !isLHSColumn {
 				col = args[1].(*Column)
 			}
 			if col.GetType().Tp == mysql.TypeDuration {
@@ -986,13 +980,13 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 	}
 	if sig == nil {
 		switch cmpType {
-		case types.ClassString:
+		case types.ETString:
 			sig, err = c.generateCmpSigs(args, types.ETString, ctx)
-		case types.ClassInt:
+		case types.ETInt:
 			sig, err = c.generateCmpSigs(args, types.ETInt, ctx)
-		case types.ClassDecimal:
+		case types.ETDecimal:
 			sig, err = c.generateCmpSigs(args, types.ETDecimal, ctx)
-		case types.ClassReal:
+		case types.ETReal:
 			sig, err = c.generateCmpSigs(args, types.ETReal, ctx)
 		}
 		if err != nil {
