@@ -134,8 +134,16 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 // Open implements the Executor Open interface.
 func (e *TableReaderExecutor) Open() error {
 	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
+	kvReq := kv.Request{
+		KeyRanges:      kvRanges,
+		KeepOrder:      e.keepOrder,
+		Desc:           e.desc,
+		Concurrency:    e.ctx.GetSessionVars().DistSQLScanConcurrency,
+		IsolationLevel: getIsolationLevel(e.ctx.GetSessionVars()),
+		Priority:       e.priority,
+	}
 	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, &kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -147,8 +155,16 @@ func (e *TableReaderExecutor) Open() error {
 func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.Context) error {
 	sort.Sort(int64Slice(handles))
 	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
+	kvReq := kv.Request{
+		KeyRanges:      kvRanges,
+		KeepOrder:      e.keepOrder,
+		Desc:           e.desc,
+		Concurrency:    e.ctx.GetSessionVars().DistSQLScanConcurrency,
+		IsolationLevel: getIsolationLevel(e.ctx.GetSessionVars()),
+		Priority:       e.priority,
+	}
 	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, &kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -255,7 +271,15 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	kvReq := kv.Request{
+		KeyRanges:      kvRanges,
+		KeepOrder:      e.keepOrder,
+		Desc:           e.desc,
+		Concurrency:    e.ctx.GetSessionVars().DistSQLScanConcurrency,
+		IsolationLevel: getIsolationLevel(e.ctx.GetSessionVars()),
+		Priority:       e.priority,
+	}
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, &kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -269,7 +293,15 @@ func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	kvReq := kv.Request{
+		KeyRanges:      kvRanges,
+		KeepOrder:      e.keepOrder,
+		Desc:           e.desc,
+		Concurrency:    e.ctx.GetSessionVars().DistSQLScanConcurrency,
+		IsolationLevel: getIsolationLevel(e.ctx.GetSessionVars()),
+		Priority:       e.priority,
+	}
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, &kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -311,8 +343,15 @@ type indexWorker struct {
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, finished <-chan struct{}) error {
-	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges,
-		e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority)
+	kvReq := kv.Request{
+		KeyRanges:      kvRanges,
+		KeepOrder:      e.keepOrder,
+		Desc:           e.desc,
+		Concurrency:    e.ctx.GetSessionVars().DistSQLScanConcurrency,
+		IsolationLevel: getIsolationLevel(e.ctx.GetSessionVars()),
+		Priority:       e.priority,
+	}
+	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, &kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}

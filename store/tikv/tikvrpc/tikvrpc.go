@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -52,8 +53,8 @@ const (
 
 // Request wraps all kv/coprocessor requests.
 type Request struct {
+	kvrpcpb.Context
 	Type             CmdType
-	Priority         kvrpcpb.CommandPri
 	Get              *kvrpcpb.GetRequest
 	Scan             *kvrpcpb.ScanRequest
 	Prewrite         *kvrpcpb.PrewriteRequest
@@ -73,54 +74,6 @@ type Request struct {
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyRequest
 	MvccGetByStartTs *kvrpcpb.MvccGetByStartTsRequest
 	SplitRegion      *kvrpcpb.SplitRegionRequest
-}
-
-// GetContext returns the rpc context for the underlying concrete request.
-func (req *Request) GetContext() (*kvrpcpb.Context, error) {
-	var c *kvrpcpb.Context
-	switch req.Type {
-	case CmdGet:
-		c = req.Get.GetContext()
-	case CmdScan:
-		c = req.Scan.GetContext()
-	case CmdPrewrite:
-		c = req.Prewrite.GetContext()
-	case CmdCommit:
-		c = req.Commit.GetContext()
-	case CmdCleanup:
-		c = req.Cleanup.GetContext()
-	case CmdBatchGet:
-		c = req.BatchGet.GetContext()
-	case CmdBatchRollback:
-		c = req.BatchRollback.GetContext()
-	case CmdScanLock:
-		c = req.ScanLock.GetContext()
-	case CmdResolveLock:
-		c = req.ResolveLock.GetContext()
-	case CmdGC:
-		c = req.GC.GetContext()
-	case CmdDeleteRange:
-		c = req.DeleteRange.GetContext()
-	case CmdRawGet:
-		c = req.RawGet.GetContext()
-	case CmdRawPut:
-		c = req.RawPut.GetContext()
-	case CmdRawDelete:
-		c = req.RawDelete.GetContext()
-	case CmdRawScan:
-		c = req.RawScan.GetContext()
-	case CmdCop:
-		c = req.Cop.GetContext()
-	case CmdMvccGetByKey:
-		c = req.MvccGetByKey.GetContext()
-	case CmdMvccGetByStartTs:
-		c = req.MvccGetByStartTs.GetContext()
-	case CmdSplitRegion:
-		c = req.SplitRegion.GetContext()
-	default:
-		return nil, fmt.Errorf("invalid request type %v", req.Type)
-	}
-	return c, nil
 }
 
 // Response wraps all kv/coprocessor responses.
@@ -148,8 +101,12 @@ type Response struct {
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
-func SetContext(req *Request, ctx *kvrpcpb.Context) error {
-	ctx.Priority = req.Priority
+func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
+	ctx := &req.Context
+	ctx.RegionId = region.Id
+	ctx.RegionEpoch = region.RegionEpoch
+	ctx.Peer = peer
+
 	switch req.Type {
 	case CmdGet:
 		req.Get.Context = ctx
