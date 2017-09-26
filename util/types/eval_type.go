@@ -34,3 +34,9 @@ const (
 	// ETJson represents type JSON in evaluation.
 	ETJson
 )
+
+// IsStringKind returns true for ETString, ETDatetime, ETTimestamp, ETDuration, ETJson EvalTypes.
+func (et EvalType) IsStringKind() bool {
+	return et == ETString || et == ETDatetime ||
+		et == ETTimestamp || et == ETDuration || et == ETJson
+}
