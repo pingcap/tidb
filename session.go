@@ -781,7 +781,7 @@ func (s *session) Txn() kv.Transaction {
 
 func (s *session) NewTxn() error {
 	if s.txn != nil && s.txn.Valid() {
-		err := s.doCommitWithRetry()
+		err := s.CommitTxn()
 		if err != nil {
 			return errors.Trace(err)
 		}
