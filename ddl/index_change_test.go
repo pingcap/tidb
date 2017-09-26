@@ -81,8 +81,10 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		publicTable     table.Table
 		checkErr        error
 	)
+	writeReorgStartVal := 100 // Make sure that new keys aren't duplicated with existing keys.
+	writeReorgStep := 10
 	tc.onJobUpdated = func(job *model.Job) {
-		if job.SchemaState == prevState {
+		if job.SchemaState == prevState && job.SchemaState != model.StateWriteReorganization {
 			return
 		}
 		ctx1 := testNewContext(d)
@@ -103,9 +105,20 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
+		case model.StateWriteReorganization:
+			writeReorgTable, err1 := getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
+			if err1 != nil {
+				checkErr = errors.Trace(err1)
+			}
+			err = s.addRecordWriteReorg(ctx1, writeReorgTable, writeReorgStartVal, writeReorgStep)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+			writeReorgStartVal += writeReorgStep
 		case model.StatePublic:
-			if job.GetRowCount() != 3 {
-				checkErr = errors.Errorf("job's row count %d != 3", job.GetRowCount())
+			reorgRows := 3 + int64(writeReorgStep)
+			if job.GetRowCount() != reorgRows {
+				checkErr = errors.Errorf("job's row count %d != %d", job.GetRowCount(), reorgRows)
 			}
 			publicTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
@@ -178,6 +191,21 @@ func checkIndexExists(ctx context.Context, tbl table.Table, indexValue interface
 		return errors.New("index should not exists")
 	}
 	return nil
+}
+
+func (s *testIndexChangeSuite) addRecordWriteReorg(ctx context.Context, table table.Table, startKey, step int) error {
+	// WriteReorgTable: insert t values (startKey, startKey)...(startKey+step-1, startKey+step-1);
+	for i := startKey; i < startKey+step; i++ {
+		err := ctx.NewTxn()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = table.AddRecord(ctx, types.MakeDatums(i, i))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return ctx.Txn().Commit()
 }
 
 func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, delOnlyTbl, writeOnlyTbl table.Table) error {

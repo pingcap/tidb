@@ -403,7 +403,7 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *
 	w.idxRecords = w.idxRecords[:0]
 	ret := &taskResult{outOfRangeHandle: w.taskRange.endHandle}
 	isEnd := true
-	err := iterateSnapshotRows(w.ctx.GetStore(), t, txn.StartTS(), w.taskRange.startHandle,
+	err := iterateSnapshotRows(w.ctx.GetStore(), t, taskOpInfo.snapshotVer, w.taskRange.startHandle,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			if h >= w.taskRange.endHandle {
 				ret.outOfRangeHandle = h
@@ -489,8 +489,9 @@ type indexRecord struct {
 
 // indexTaskOpInfo records the information that is needed in the task.
 type indexTaskOpInfo struct {
-	tblIndex table.Index
-	colMap   map[int64]*types.FieldType // It's the index columns map.
+	snapshotVer uint64
+	tblIndex    table.Index
+	colMap      map[int64]*types.FieldType // It's the index columns map.
 }
 
 type worker struct {
@@ -551,8 +552,9 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 	workerCnt := defaultWorkers
 	taskOpInfo := &indexTaskOpInfo{
-		tblIndex: tables.NewIndex(t.Meta(), indexInfo),
-		colMap:   colMap,
+		snapshotVer: job.SnapshotVer,
+		tblIndex:    tables.NewIndex(t.Meta(), indexInfo),
+		colMap:      colMap,
 	}
 
 	taskBatch := int64(defaultTaskHandleCnt)
