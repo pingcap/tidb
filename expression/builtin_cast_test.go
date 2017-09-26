@@ -143,7 +143,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	// create table t1(s1 time);
 	// insert into t1 values('11:11:11');
 	// select cast(s1 as decimal(7, 2)) from t1;
-	tpDecimal := &types.FieldType{
+	ft := &types.FieldType{
 		Tp:      mysql.TypeNewDecimal,
 		Flag:    mysql.BinaryFlag | mysql.UnsignedFlag,
 		Charset: charset.CharsetBin,
@@ -151,7 +151,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 		Flen:    7,
 		Decimal: 2,
 	}
-	f = NewCastFunc(tpDecimal, &Constant{Value: timeDatum, RetType: types.NewFieldType(mysql.TypeDatetime)}, ctx)
+	f = NewCastFunc(ft, &Constant{Value: timeDatum, RetType: types.NewFieldType(mysql.TypeDatetime)}, ctx)
 	res, err = f.Eval(nil)
 	c.Assert(err, IsNil)
 	resDecimal := new(types.MyDecimal)
