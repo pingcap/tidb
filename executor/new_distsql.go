@@ -449,11 +449,11 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		schema = e.schema
 	}
 	tableReader := &TableReaderExecutor{
-		table:     e.table,
-		tableID:   e.tableID,
-		dagPB:     e.tableRequest,
-		schema:    schema,
-		ctx:       e.ctx,
+		table:   e.table,
+		tableID: e.tableID,
+		dagPB:   e.tableRequest,
+		schema:  schema,
+		ctx:     e.ctx,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {
