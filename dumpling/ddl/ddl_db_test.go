@@ -224,8 +224,9 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 }
 
 func (s *testDBSuite) TestAddUniqueIndexRollback(c *C) {
-	// t1 (c1 int, c2 int, c3 int, primary key(c1))
-	s.mustExec(c, "delete from t1")
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
 	// defaultBatchSize is equal to ddl.defaultBatchSize
 	base := defaultBatchSize * 2
 	count := base
@@ -277,6 +278,8 @@ LOOP:
 		s.mustExec(c, "delete from t1 where c1 = ?", i+10)
 	}
 	sessionExec(c, s.store, "create index c3_index on t1 (c3)")
+
+	s.mustExec(c, "drop table t1")
 }
 
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
@@ -464,7 +467,7 @@ LOOP:
 	s.tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite) testDropIndex(c *C) {
+func (s *testDBSuite) TestDropIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
