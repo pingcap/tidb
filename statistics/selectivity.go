@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"math"
+	"math/bits"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -183,9 +184,9 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 		bestID, bestCount, bestTp := -1, 0, colType
 		for i, set := range sets {
 			set.mask &= mask
-			bits := popCount(set.mask)
-			if (bestTp == colType && set.tp < colType) || bestCount < bits {
-				bestID, bestCount, bestTp = i, bits, set.tp
+			count := bits.OnesCount64(uint64(set.mask))
+			if (bestTp == colType && set.tp < colType) || bestCount < count {
+				bestID, bestCount, bestTp = i, count, set.tp
 			}
 		}
 		if bestCount == 0 {
@@ -200,15 +201,4 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 		}
 	}
 	return
-}
-
-// popCount is the digit sum of the binary representation of the number x.
-func popCount(x int64) int {
-	ret := 0
-	// x -= x & -x, remove the lowest bit of the x.
-	// e.g. result will be 2 if x is 3.
-	for ; x > 0; x -= x & -x {
-		ret++
-	}
-	return ret
 }
