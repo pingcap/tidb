@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -574,7 +575,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
+func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, ctx context.Context) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
@@ -657,7 +658,13 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 		}
 		// set index type.
 		if constr.Option != nil {
-			idxInfo.Comment = constr.Option.Comment
+			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(),
+				constr.Option.Comment,
+				maxCommentLength,
+				errTooLongIndexComment.GenByArgs(idxInfo.Name.String(), maxCommentLength))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			if constr.Option.Tp == model.IndexTypeInvalid {
 				// Use btree as default index type.
 				idxInfo.Tp = model.IndexTypeBtree
@@ -749,7 +756,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(err)
 	}
 
-	tbInfo, err := d.buildTableInfo(ident.Name, cols, newConstraints)
+	tbInfo, err := d.buildTableInfo(ident.Name, cols, newConstraints, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1425,6 +1432,17 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 		return errDupKeyName.Gen("index already exist %s", indexName)
 	}
 
+	if indexOption != nil {
+		// May be truncate comment here, when index comment too long and sql_mode is't strict.
+		indexOption.Comment, err = validateCommentLength(ctx.GetSessionVars(),
+			indexOption.Comment,
+			maxCommentLength,
+			errTooLongIndexComment.GenByArgs(indexName.String(), maxCommentLength))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -1575,4 +1593,18 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
 	}
 	return nil
+}
+
+// validateCommentLength checks comment length of table, column, index and partition.
+// If comment length is more than the standard length truncate it
+// and store the comment length upto the standard comment length size.
+func validateCommentLength(vars *variable.SessionVars, comment string, maxLen int, err error) (string, error) {
+	if len(comment) > maxLen {
+		if vars.StrictSQLMode {
+			return "", err
+		}
+		vars.StmtCtx.AppendWarning(err)
+		return comment[:maxLen], nil
+	}
+	return comment, nil
 }
