@@ -182,17 +182,23 @@ func (c *caseWhenFunctionClass) getFunction(ctx context.Context, args []Expressi
 	case tpInt:
 		bf.tp.Decimal = 0
 		sig = &builtinCaseWhenIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenInt)
 	case tpReal:
 		sig = &builtinCaseWhenRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenReal)
 	case tpDecimal:
 		sig = &builtinCaseWhenDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDecimal)
 	case tpString:
 		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinCaseWhenStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenString)
 	case tpDatetime, tpTimestamp:
 		sig = &builtinCaseWhenTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenTime)
 	case tpDuration:
 		sig = &builtinCaseWhenDurationSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDuration)
 	}
 	return sig.setSelf(sig), nil
 }

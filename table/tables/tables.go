@@ -239,7 +239,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cmp, errCmp := oldData[col.Offset].CompareDatum(ctx.GetSessionVars().StmtCtx, value)
+			cmp, errCmp := oldData[col.Offset].CompareDatum(ctx.GetSessionVars().StmtCtx, &value)
 			if errCmp != nil {
 				return errors.Trace(errCmp)
 			}

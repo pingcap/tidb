@@ -29,6 +29,7 @@ type Config struct {
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 	Lease        string `toml:"lease" json:"lease"`
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable   bool   `toml:"split-table" json:"split-table"`
 
 	Log         Log         `toml:"log" json:"log"`
 	Security    Security    `toml:"security" json:"security"`
@@ -76,6 +77,7 @@ type Performance struct {
 	JoinConcurrency int    `toml:"join-concurrency" json:"join-concurrency"`
 	CrossJoin       bool   `toml:"cross-join" json:"cross-join"`
 	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
+	RunAutoAnalyze  bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -113,6 +115,7 @@ var defaultConf = Config{
 		JoinConcurrency: 5,
 		CrossJoin:       true,
 		StatsLease:      "3s",
+		RunAutoAnalyze:  false,
 	},
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",

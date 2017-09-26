@@ -785,6 +785,7 @@ func (s *session) NewTxn() error {
 		return errors.Trace(err)
 	}
 	s.txn = txn
+	s.sessionVars.TxnCtx.StartTS = txn.StartTS()
 	return nil
 }
 
