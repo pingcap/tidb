@@ -292,7 +292,7 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 	}
 }
 
-func (s *testFieldTypeSuite) TestAggTypeClass(c *C) {
+func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {
 	defer testleak.AfterTest(c)()
 	fts := []*FieldType{
 		NewFieldType(mysql.TypeDecimal),
@@ -327,67 +327,67 @@ func (s *testFieldTypeSuite) TestAggTypeClass(c *C) {
 
 	for i := range fts {
 		var flag uint
-		aggTc := AggTypeClass(fts[i:i+1], &flag)
+		aggregatedEvalType := AggregateEvalType(fts[i:i+1], &flag)
 		switch fts[i].Tp {
 		case mysql.TypeDecimal, mysql.TypeNull, mysql.TypeTimestamp, mysql.TypeDate,
 			mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar,
 			mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
 			mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
 			mysql.TypeVarString, mysql.TypeString, mysql.TypeGeometry:
-			c.Assert(aggTc, Equals, ClassString)
+			c.Assert(aggregatedEvalType.IsStringKind(), IsTrue)
 			c.Assert(flag, Equals, uint(0))
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeBit,
 			mysql.TypeInt24, mysql.TypeYear:
-			c.Assert(aggTc, Equals, ClassInt)
+			c.Assert(aggregatedEvalType, Equals, ETInt)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeFloat, mysql.TypeDouble:
-			c.Assert(aggTc, Equals, ClassReal)
+			c.Assert(aggregatedEvalType, Equals, ETReal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeNewDecimal:
-			c.Assert(aggTc, Equals, ClassDecimal)
+			c.Assert(aggregatedEvalType, Equals, ETDecimal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		}
 
 		flag = 0
-		aggTc = AggTypeClass([]*FieldType{fts[i], fts[i]}, &flag)
+		aggregatedEvalType = AggregateEvalType([]*FieldType{fts[i], fts[i]}, &flag)
 		switch fts[i].Tp {
 		case mysql.TypeDecimal, mysql.TypeNull, mysql.TypeTimestamp, mysql.TypeDate,
 			mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar,
 			mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
 			mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
 			mysql.TypeVarString, mysql.TypeString, mysql.TypeGeometry:
-			c.Assert(aggTc, Equals, ClassString)
+			c.Assert(aggregatedEvalType.IsStringKind(), IsTrue)
 			c.Assert(flag, Equals, uint(0))
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeBit,
 			mysql.TypeInt24, mysql.TypeYear:
-			c.Assert(aggTc, Equals, ClassInt)
+			c.Assert(aggregatedEvalType, Equals, ETInt)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeFloat, mysql.TypeDouble:
-			c.Assert(aggTc, Equals, ClassReal)
+			c.Assert(aggregatedEvalType, Equals, ETReal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeNewDecimal:
-			c.Assert(aggTc, Equals, ClassDecimal)
+			c.Assert(aggregatedEvalType, Equals, ETDecimal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		}
 		flag = 0
-		aggTc = AggTypeClass([]*FieldType{fts[i], NewFieldType(mysql.TypeLong)}, &flag)
+		aggregatedEvalType = AggregateEvalType([]*FieldType{fts[i], NewFieldType(mysql.TypeLong)}, &flag)
 		switch fts[i].Tp {
 		case mysql.TypeDecimal, mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration,
 			mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar, mysql.TypeJSON,
 			mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob, mysql.TypeMediumBlob,
 			mysql.TypeLongBlob, mysql.TypeBlob, mysql.TypeVarString,
 			mysql.TypeString, mysql.TypeGeometry:
-			c.Assert(aggTc, Equals, ClassString)
+			c.Assert(aggregatedEvalType.IsStringKind(), IsTrue)
 			c.Assert(flag, Equals, uint(0))
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeNull, mysql.TypeBit,
 			mysql.TypeLonglong, mysql.TypeYear, mysql.TypeInt24:
-			c.Assert(aggTc, Equals, ClassInt)
+			c.Assert(aggregatedEvalType, Equals, ETInt)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeFloat, mysql.TypeDouble:
-			c.Assert(aggTc, Equals, ClassReal)
+			c.Assert(aggregatedEvalType, Equals, ETReal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeNewDecimal:
-			c.Assert(aggTc, Equals, ClassDecimal)
+			c.Assert(aggregatedEvalType, Equals, ETDecimal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		}
 	}
