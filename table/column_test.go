@@ -317,7 +317,7 @@ func (s *testTableSuite) TestGetDefaultValue(c *C) {
 			},
 			true,
 			types.NewDatum(zeroTimestamp),
-			errNoDefaultValue,
+			ErrNoDefaultValue,
 		},
 		{
 			&model.ColumnInfo{

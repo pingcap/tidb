@@ -1265,6 +1265,12 @@ func (s *testSuite) TestInsertCalculatedValue(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("<nil> <nil> <nil>", "<nil> <nil> <nil>"))
 	tk.MustExec(`insert into t (a, b) value ('{"a": 1}', a->'$.a'+1)`)
 	tk.MustQuery("select * from t where c = 1").Check(testkit.Rows(`{"a":1} 2 1`))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert t set b = c + 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustExec("truncate table t")
+	tk.MustExec(`insert t set a = '{"a": 1}', b = c`)
+	tk.MustQuery("select * from t").Check(testkit.Rows(`{"a":1} <nil> 1`))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int auto_increment key, b int)")
@@ -1273,4 +1279,10 @@ func (s *testSuite) TestInsertCalculatedValue(c *C) {
 	tk.MustExec("set SQL_MODE=NO_AUTO_VALUE_ON_ZERO")
 	tk.MustExec("insert into t (b) value (a+1)")
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 0", "2 1", "3 1"))
+
+	tk.MustExec("set SQL_MODE=STRICT_ALL_TABLES")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null, b int, c int as (sqrt(a)))")
+	tk.MustExec("insert t set b = a, a = 4")
+	tk.MustQuery("select * from t").Check(testkit.Rows("4 0 2"))
 }

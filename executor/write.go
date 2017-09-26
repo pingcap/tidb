@@ -886,53 +886,57 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 }
 
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
+	// row is a eval context, so `insert t set b = 1, a = b + 1` can eval correctly.
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
-	if err := e.fillDefaultValues(row, ignoreErr); err != nil {
+
+	// Use fillDefaultValues init this row for eval.
+	// So `insert t set b = a + 1` can use the correct value of a.
+	if err := e.fillDefaultValues(row, hasValue, ignoreErr); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	for i, expr := range list {
 		val, err := expr.Eval(row)
+		err = e.filterErr(err, ignoreErr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		val, err = table.CastValue(e.ctx, val, cols[i].ToInfo())
+		err = e.filterErr(err, ignoreErr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
 		offset := cols[i].Offset
-		row[offset] = val
-		hasValue[offset] = true
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		row[offset], hasValue[offset] = val, true
 	}
 
-	return e.checkRowData(cols, len(list), hasValue, row, ignoreErr)
+	return e.fillGenColData(cols, len(list), hasValue, row, ignoreErr)
 }
 
-func (e *InsertValues) fillDefaultValues(row []types.Datum, ignoreErr bool) error {
-	var defaultValueCols []*table.Column
+// fillDefaultValues fill a row followed by these rules:
+//     1. for nullable and no default value column, use NULL.
+//     2. for nullable and have default value column, use it's default value.
+//     3. for not null column, use zero value even in strict mode.
+func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
 	for i, c := range e.Table.Cols() {
 		var err error
 		if c.IsGenerated() {
+			// Default value of generated columns is NULL.
 			continue
 		} else if mysql.HasAutoIncrementFlag(c.Flag) {
 			row[i] = table.GetZeroValue(c.ToInfo())
 		} else {
 			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
-			if table.IsNoDefault(err) && mysql.HasNotNullFlag(c.Flag) {
+			hasValue[c.Offset] = true
+			if table.ErrNoDefaultValue.Equal(err) {
 				row[i] = table.GetZeroValue(c.ToInfo())
-			} else if err != nil {
+				hasValue[c.Offset] = false
+			} else if err = e.filterErr(err, ignoreErr); err != nil {
 				return errors.Trace(err)
 			}
 		}
-		defaultValueCols = append(defaultValueCols, c)
-	}
-	if err := table.CastValues(e.ctx, row, defaultValueCols, ignoreErr); err != nil {
-		return errors.Trace(err)
 	}
 
 	return nil
@@ -971,10 +975,10 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 		hasValue[offset] = true
 	}
 
-	return e.checkRowData(cols, len(vals), hasValue, row, ignoreErr)
+	return e.fillGenColData(cols, len(vals), hasValue, row, ignoreErr)
 }
 
-func (e *InsertValues) checkRowData(cols []*table.Column, valLen int, hasValue []bool, row []types.Datum, ignoreErr bool) ([]types.Datum, error) {
+func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue []bool, row []types.Datum, ignoreErr bool) ([]types.Datum, error) {
 	err := e.initDefaultValues(row, hasValue, ignoreErr)
 	if err != nil {
 		return nil, errors.Trace(err)

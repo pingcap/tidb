@@ -693,7 +693,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		return nil
 	}
 	tableInfo := tn.TableInfo
-	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema
+	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
 	schema := expression.TableInfo2SchemaWithDBName(tn.Schema, tableInfo)
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
