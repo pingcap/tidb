@@ -125,7 +125,9 @@ func (t *testStatisticsSuite) TestCalcFraction(c *C) {
 		},
 	}
 	for _, test := range tests {
-		fraction := calcFraction(&test.lower, &test.upper, &test.value)
+		lower, upper, common := preCalculateDatumScalar(&test.lower, &test.upper)
+		value := convertDatumToScalar(&test.value, common)
+		fraction := calcFraction(lower, upper, value)
 		c.Check(math.Abs(fraction-test.fraction) < eps, IsTrue)
 	}
 }
