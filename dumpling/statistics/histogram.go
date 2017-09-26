@@ -51,10 +51,13 @@ type Histogram struct {
 // Repeat is the number of repeats of the bucket value, it can be used to find popular values.
 //
 type Bucket struct {
-	Count      int64
-	UpperBound types.Datum
-	LowerBound types.Datum
-	Repeats    int64
+	Count        int64
+	UpperBound   types.Datum
+	LowerBound   types.Datum
+	Repeats      int64
+	lowerScalar  float64
+	upperScalar  float64
+	commonPfxLen int // when the bucket value type is KindString or KindBytes, commonPfxLen is the common prefix length of the lower bound and upper bound.
 }
 
 // SaveToStorage saves the histogram to storage.
@@ -139,11 +142,15 @@ func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *t
 				return nil, errors.Trace(err)
 			}
 		}
+		lowerScalar, upperScalar, commonLength := preCalculateDatumScalar(&lowerBound, &upperBound)
 		hg.Buckets[bucketID] = Bucket{
-			Count:      count,
-			UpperBound: upperBound,
-			LowerBound: lowerBound,
-			Repeats:    repeats,
+			Count:        count,
+			UpperBound:   upperBound,
+			LowerBound:   lowerBound,
+			Repeats:      repeats,
+			lowerScalar:  lowerScalar,
+			upperScalar:  upperScalar,
+			commonPfxLen: commonLength,
 		}
 	}
 	for i := 1; i < bucketSize; i++ {
@@ -244,7 +251,8 @@ func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Dat
 	if c <= 0 {
 		return prevCount, nil
 	}
-	frac := calcFraction(&hg.Buckets[index].LowerBound, &hg.Buckets[index].UpperBound, &value)
+	valueScalar := convertDatumToScalar(&value, hg.Buckets[index].commonPfxLen)
+	frac := calcFraction(hg.Buckets[index].lowerScalar, hg.Buckets[index].upperScalar, valueScalar)
 	return prevCount + (lessThanBucketValueCount-prevCount)*frac, nil
 }
 
