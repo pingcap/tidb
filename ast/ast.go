@@ -176,6 +176,8 @@ type Statement interface {
 
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool
+
+	CanBeCached() bool
 }
 
 // Visitor visits a Node.

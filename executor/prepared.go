@@ -318,14 +318,14 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 		value := ast.NewValueExpr(val)
 		execPlan.UsingVars[i] = &expression.Constant{Value: value.Datum, RetType: &value.Type}
 	}
-	sa := &statement{
+	stmt := &statement{
 		is:   GetInfoSchema(ctx),
 		plan: execPlan,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*Prepared); ok {
-		sa.text = prepared.Stmt.Text()
+		stmt.text = prepared.Stmt.Text()
 	}
-	return sa
+	return stmt
 }
 
 // ResetStmtCtx resets the StmtContext.

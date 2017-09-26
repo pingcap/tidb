@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -230,6 +231,7 @@ type builtinLastInsertIDSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
 func (b *builtinLastInsertIDSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
 	res = int64(b.ctx.GetSessionVars().PrevLastInsertID)
+	fmt.Printf("ctx: %p, last insert id: %v\n", b.ctx, res)
 	return res, false, nil
 }
 

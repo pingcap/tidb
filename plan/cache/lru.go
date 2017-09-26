@@ -97,3 +97,10 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		l.size--
 	}
 }
+
+// Clear clears the cache.
+func (l *SimpleLRUCache) Clear() {
+	l.size = 0
+	l.elements = make(map[string]*list.Element)
+	l.cache = list.New()
+}

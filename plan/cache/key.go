@@ -14,14 +14,24 @@
 package cache
 
 import (
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
 )
 
+var (
+	EnablePlanCache   bool  = true
+	PlanCacheCapacity int64 = 1000
+)
+
 type sqlCacheKey struct {
-	schemaVersion int64
-	database      string
-	sql           string
-	hash          []byte
+	schemaVersion  int64
+	sqlMode        mysql.SQLMode
+	timeZoneOffset int
+	snapshot       uint64
+	database       string
+	sql            string
+	hash           []byte
 }
 
 // Hash implements Key interface
@@ -30,10 +40,13 @@ func (sck *sqlCacheKey) Hash() []byte {
 		dbBytes := []byte(sck.database)
 		sqlBytes := []byte(sck.sql)
 
-		bufferSize := 8 + len(dbBytes) + len(sqlBytes)
+		bufferSize := 8*4 + len(dbBytes) + len(sqlBytes)
 		sck.hash = make([]byte, 0, bufferSize)
 
 		sck.hash = codec.EncodeInt(sck.hash, sck.schemaVersion)
+		sck.hash = codec.EncodeInt(sck.hash, int64(sck.sqlMode))
+		sck.hash = codec.EncodeInt(sck.hash, int64(sck.timeZoneOffset))
+		sck.hash = codec.EncodeInt(sck.hash, int64(sck.snapshot))
 		sck.hash = append(sck.hash, dbBytes...)
 		sck.hash = append(sck.hash, sqlBytes...)
 	}
@@ -41,10 +54,25 @@ func (sck *sqlCacheKey) Hash() []byte {
 }
 
 // NewSQLCacheKey creates a new sqlCacheKey object.
-func NewSQLCacheKey(schemaVersion int64, database, sql string) Key {
+func NewSQLCacheKey(schemaVersion int64, sqlMode mysql.SQLMode, timeZoneOffset int, snapshot uint64, database, sql string) Key {
 	return &sqlCacheKey{
-		schemaVersion: schemaVersion,
-		database:      database,
-		sql:           sql,
+		schemaVersion:  schemaVersion,
+		sqlMode:        sqlMode,
+		timeZoneOffset: timeZoneOffset,
+		snapshot:       snapshot,
+		database:       database,
+		sql:            sql,
+	}
+}
+
+type SQLCacheValue struct {
+	Stmt ast.Statement
+	Ast  ast.StmtNode
+}
+
+func NewSQLCacheValue(stmt ast.Statement, ast ast.StmtNode) *SQLCacheValue {
+	return &SQLCacheValue{
+		Stmt: stmt,
+		Ast:  ast,
 	}
 }

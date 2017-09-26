@@ -38,6 +38,9 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	if err := plan.Validate(node, false); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	cacheable := plan.CheckCacheable(node)
+
 	p, err := plan.Optimize(ctx, node, is)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -45,13 +48,14 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 
 	// Don't take restricted SQL into account for metrics.
 	isExpensive := stmtCount(node, p, ctx.GetSessionVars().InRestrictedSQL)
-	sa := &statement{
+	stmt := &statement{
 		is:        is,
 		plan:      p,
 		text:      node.Text(),
 		expensive: isExpensive,
+		cacheable: cacheable,
 	}
-	return sa, nil
+	return stmt, nil
 }
 
 // GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,

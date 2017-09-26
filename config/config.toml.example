@@ -114,3 +114,7 @@ xport = 14000
 
 # The socket file to use for x protocol connection.
 xsocket = ""
+
+[plan-cache]
+enable-plan-cache = true
+plan-cache-capacity = 1000

@@ -15,6 +15,7 @@ package expression
 
 import (
 	log "github.com/Sirupsen/logrus"
+	//"github.com/pingcap/tidb/plan/cache"
 )
 
 // FoldConstant does constant folding optimization on an expression.
@@ -23,6 +24,9 @@ func FoldConstant(expr Expression) Expression {
 	if !ok || !scalarFunc.Function.canBeFolded() {
 		return expr
 	}
+	//if cache.EnablePlanCache {
+	//	return expr
+	//}
 	args := scalarFunc.GetArgs()
 	canFold := true
 	for i := 0; i < len(args); i++ {

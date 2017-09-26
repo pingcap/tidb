@@ -140,7 +140,8 @@ type session struct {
 	statsCollector *statistics.SessionStatsCollector
 
 	// for plan cache
-	planCache *cache.SimpleLRUCache
+	planCache           *cache.SimpleLRUCache
+	planBuildOnReadOnly bool
 }
 
 // Cancel cancels the execution of current transaction.
@@ -638,24 +639,36 @@ func (s *session) SetProcessInfo(sql string) {
 	s.processInfo.Store(pi)
 }
 
-func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
+func (s *session) executeWithPlanCache(sql string) ([]ast.RecordSet, error) {
 	s.PrepareTxnCtx()
-	startTS := time.Now()
 
 	connID := s.sessionVars.ConnectionID
-	var rs []ast.RecordSet
+	var recordSets []ast.RecordSet
 
 	schemaVersion := sessionctx.GetDomain(s).InfoSchema().SchemaMetaVersion()
+	sqlMode := s.sessionVars.SQLMode
+	timeZoneOffset := 0
+	if s.sessionVars.TimeZone != nil {
+		_, timeZoneOffset = time.Now().In(s.sessionVars.TimeZone).Zone()
+	}
+	snapshot := s.sessionVars.SnapshotTS
 	database := s.sessionVars.CurrentDB
-	sck := cache.NewSQLCacheKey(schemaVersion, database, sql)
+	cacheKey := cache.NewSQLCacheKey(schemaVersion, sqlMode, timeZoneOffset, snapshot, database, sql)
 
-	if cacheValue, exists := s.planCache.Get(sck); exists {
-		st := cacheValue.(ast.Statement)
+	if s.Txn() != nil && s.Txn().IsReadOnly() == false && s.planBuildOnReadOnly {
+		s.planBuildOnReadOnly = false
+		s.planCache.Clear()
+	}
+
+	if cacheValue, exists := s.planCache.Get(cacheKey); exists {
+		stmt := cacheValue.(*cache.SQLCacheValue).Stmt
+		stmtNode := cacheValue.(*cache.SQLCacheValue).Ast
 		s.PrepareTxnCtx()
-		s.SetValue(context.QueryString, st.OriginText())
+		s.SetValue(context.QueryString, stmt.OriginText())
+		executor.ResetStmtCtx(s, stmtNode)
 
-		startTS = time.Now()
-		r, err := runStmt(s, st)
+		startTS := time.Now()
+		recordSet, err := runStmt(s, stmt)
 		if err != nil {
 			if !kv.ErrKeyExists.Equal(err) {
 				log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
@@ -663,24 +676,25 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			return nil, errors.Trace(err)
 		}
 		sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
-		if r != nil {
-			rs = append(rs, r)
+		if recordSet != nil {
+			recordSets = append(recordSets, recordSet)
 		}
 	} else {
 		charset, collation := s.sessionVars.GetCharsetInfo()
-		rawStmts, err := s.ParseSQL(sql, charset, collation)
+		startTS := time.Now()
+		stmtNodes, err := s.ParseSQL(sql, charset, collation)
 		if err != nil {
 			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
 		sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
-		for _, rst := range rawStmts {
+		for _, stmtNode := range stmtNodes {
 			s.PrepareTxnCtx()
 			startTS := time.Now()
 			// Some executions are done in compile stage, so we reset them before compile.
-			executor.ResetStmtCtx(s, rst)
-			st, err1 := Compile(s, rst)
+			executor.ResetStmtCtx(s, stmtNode)
+			stmt, err1 := Compile(s, stmtNode)
 			if err1 != nil {
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
 				s.RollbackTxn()
@@ -688,16 +702,16 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			}
 			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
-			s.SetValue(context.QueryString, st.OriginText())
-			if len(rawStmts) == 1 {
-				_, isSelect := rawStmts[0].(*ast.SelectStmt)
-				if isSelect {
-					s.planCache.Put(sck, st)
+			s.SetValue(context.QueryString, stmt.OriginText())
+			if len(stmtNodes) == 1 {
+				_, isSelect := stmtNodes[0].(*ast.SelectStmt)
+				if isSelect && stmt.CanBeCached() {
+					s.planCache.Put(cacheKey, cache.NewSQLCacheValue(stmt, stmtNode))
 				}
 			}
 
 			startTS = time.Now()
-			r, err := runStmt(s, st)
+			recordSet, err := runStmt(s, stmt)
 			if err != nil {
 				if !kv.ErrKeyExists.Equal(err) {
 					log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
@@ -705,19 +719,75 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 				return nil, errors.Trace(err)
 			}
 			sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
-			if r != nil {
-				rs = append(rs, r)
+			if recordSet != nil {
+				recordSets = append(recordSets, recordSet)
 			}
 
-			logCrucialStmt(rst)
+			logCrucialStmt(stmtNode)
 		}
 	}
 
-	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(rs) > 1 {
+	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(recordSets) > 1 {
 		// return the first recordset if client doesn't support ClientMultiResults.
-		rs = rs[:1]
+		recordSets = recordSets[:1]
 	}
-	return rs, nil
+	return recordSets, nil
+}
+
+func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
+	if cache.EnablePlanCache {
+		recordSets, err := s.executeWithPlanCache(sql)
+		return recordSets, errors.Trace(err)
+	}
+	s.PrepareTxnCtx()
+	startTS := time.Now()
+
+	charset, collation := s.sessionVars.GetCharsetInfo()
+	connID := s.sessionVars.ConnectionID
+	stmtNodes, err := s.ParseSQL(sql, charset, collation)
+	if err != nil {
+		log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
+		return nil, errors.Trace(err)
+	}
+	sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
+
+	var recordSets []ast.RecordSet
+	for _, stmtNode := range stmtNodes {
+		s.PrepareTxnCtx()
+		startTS := time.Now()
+		// Some executions are done in compile stage, so we reset them before compile.
+		executor.ResetStmtCtx(s, stmtNode)
+		stmt, err1 := Compile(s, stmtNode)
+		if err1 != nil {
+			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
+			s.RollbackTxn()
+			return nil, errors.Trace(err1)
+		}
+		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
+
+		s.SetValue(context.QueryString, stmt.OriginText())
+
+		startTS = time.Now()
+		recordSet, err := runStmt(s, stmt)
+		if err != nil {
+			if !kv.ErrKeyExists.Equal(err) {
+				log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
+			}
+			return nil, errors.Trace(err)
+		}
+		sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
+		if recordSet != nil {
+			recordSets = append(recordSets, recordSet)
+		}
+
+		logCrucialStmt(stmtNode)
+	}
+
+	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(recordSets) > 1 {
+		// return the first recordset if client doesn't support ClientMultiResults.
+		recordSets = recordSets[:1]
+	}
+	return recordSets, nil
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol
@@ -1014,7 +1084,10 @@ func createSession(store kv.Storage) (*session, error) {
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
-		planCache:   cache.NewSimpleLRUCache(1000),
+	}
+	if cache.EnablePlanCache {
+		s.planCache = cache.NewSimpleLRUCache(cache.PlanCacheCapacity)
+		s.planBuildOnReadOnly = true
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, domain)
@@ -1033,7 +1106,10 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
-		planCache:   cache.NewSimpleLRUCache(1000),
+	}
+	if cache.EnablePlanCache {
+		s.planCache = cache.NewSimpleLRUCache(cache.PlanCacheCapacity)
+		s.planBuildOnReadOnly = true
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, dom)

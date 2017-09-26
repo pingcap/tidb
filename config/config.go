@@ -36,6 +36,7 @@ type Config struct {
 	Status      Status      `toml:"status" json:"status"`
 	Performance Performance `toml:"performance" json:"performance"`
 	XProtocol   XProtocol   `toml:"xprotocol" json:"xprotocol"`
+	PlanCache   PlanCache   `toml:"plan-cache" json:"plan-cache"`
 }
 
 // Log is the log section of config.
@@ -88,6 +89,11 @@ type XProtocol struct {
 	XSocket string `toml:"xsocket" json:"xsocket"`
 }
 
+type PlanCache struct {
+	Enabled  bool  `toml:"enable-plan-cache" json:"enable-plan-cache"`
+	Capacity int64 `toml:"plan-cache-capacity" json:"plan-cache-capacity"`
+}
+
 var defaultConf = Config{
 	Host:   "0.0.0.0",
 	Port:   4000,
@@ -120,6 +126,10 @@ var defaultConf = Config{
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",
 		XPort: 14000,
+	},
+	PlanCache: PlanCache{
+		Enabled:  true,
+		Capacity: 1000,
 	},
 }
 

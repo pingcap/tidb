@@ -99,6 +99,11 @@ type statement struct {
 	startTime      time.Time
 	isPreparedStmt bool
 	expensive      bool
+	cacheable      bool
+}
+
+func (a *statement) CanBeCached() bool {
+	return a.cacheable
 }
 
 func (a *statement) OriginText() string {
