@@ -86,7 +86,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, types.ETJson)
 	bf.tp.Flen = 51 // Flen of JSON_TYPE is length of UNSIGNED INTEGER.
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONTypeSig{bf}
@@ -115,12 +115,12 @@ func (c *jsonExtractFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	argTps := make([]evalTp, 0, len(args))
-	argTps = append(argTps, tpJSON)
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETJson)
 	for range args[1:] {
-		argTps = append(argTps, tpString)
+		argTps = append(argTps, types.ETString)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETJson, argTps...)
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONExtractSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonExtractSig)
@@ -165,7 +165,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpJSON)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, types.ETJson)
 	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig.setSelf(sig), nil
@@ -196,12 +196,12 @@ func (c *jsonSetFunctionClass) getFunction(ctx context.Context, args []Expressio
 	if len(args)&1 != 1 {
 		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
 	}
-	argTps := make([]evalTp, 0, len(args))
-	argTps = append(argTps, tpJSON)
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETJson)
 	for i := 1; i < len(args)-1; i += 2 {
-		argTps = append(argTps, tpString, tpJSON)
+		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETJson, argTps...)
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
@@ -229,12 +229,12 @@ func (c *jsonInsertFunctionClass) getFunction(ctx context.Context, args []Expres
 	if len(args)&1 != 1 {
 		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
 	}
-	argTps := make([]evalTp, 0, len(args))
-	argTps = append(argTps, tpJSON)
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETJson)
 	for i := 1; i < len(args)-1; i += 2 {
-		argTps = append(argTps, tpString, tpJSON)
+		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETJson, argTps...)
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONInsertSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
@@ -262,12 +262,12 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx context.Context, args []Expre
 	if len(args)&1 != 1 {
 		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
 	}
-	argTps := make([]evalTp, 0, len(args))
-	argTps = append(argTps, tpJSON)
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETJson)
 	for i := 1; i < len(args)-1; i += 2 {
-		argTps = append(argTps, tpString, tpJSON)
+		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETJson, argTps...)
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONReplaceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
@@ -292,12 +292,12 @@ func (c *jsonRemoveFunctionClass) getFunction(ctx context.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	argTps := make([]evalTp, 0, len(args))
-	argTps = append(argTps, tpJSON)
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETJson)
 	for range args[1:] {
-		argTps = append(argTps, tpString)
+		argTps = append(argTps, types.ETString)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETJson, argTps...)
 	args[0].GetType().Flag |= mysql.ParseToJSONFlag
 	sig := &builtinJSONRemoveSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonRemoveSig)
@@ -343,11 +343,11 @@ func (c *jsonMergeFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	argTps := make([]evalTp, 0, len(args))
+	argTps := make([]types.EvalType, 0, len(args))
 	for range args {
-		argTps = append(argTps, tpJSON)
+		argTps = append(argTps, types.ETJson)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETJson, argTps...)
 	for i := range args {
 		args[i].GetType().Flag |= mysql.ParseToJSONFlag
 	}
@@ -386,11 +386,11 @@ func (c *jsonObjectFunctionClass) getFunction(ctx context.Context, args []Expres
 	if len(args)&1 != 0 {
 		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
 	}
-	argTps := make([]evalTp, 0, len(args))
+	argTps := make([]types.EvalType, 0, len(args))
 	for i := 0; i < len(args)-1; i += 2 {
-		argTps = append(argTps, tpString, tpJSON)
+		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETJson, argTps...)
 	sig := &builtinJSONObjectSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
 	return sig.setSelf(sig), nil
@@ -435,11 +435,11 @@ func (c *jsonArrayFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	argTps := make([]evalTp, 0, len(args))
+	argTps := make([]types.EvalType, 0, len(args))
 	for range args {
-		argTps = append(argTps, tpJSON)
+		argTps = append(argTps, types.ETJson)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpJSON, argTps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETJson, argTps...)
 	sig := &builtinJSONArraySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)
 	return sig.setSelf(sig), nil

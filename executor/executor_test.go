@@ -1806,6 +1806,11 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	rows := tk.MustQuery("select @@tidb_current_ts").Rows()
 	tsStr := rows[0][0].(string)
 	c.Assert(tsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn().StartTS()))
+	tk.MustExec("begin")
+	rows = tk.MustQuery("select @@tidb_current_ts").Rows()
+	newTsStr := rows[0][0].(string)
+	c.Assert(newTsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn().StartTS()))
+	c.Assert(newTsStr, Not(Equals), tsStr)
 	tk.MustExec("commit")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
