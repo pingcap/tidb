@@ -149,6 +149,13 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 	return b.Count, b.hist, nil
 }
 
+func calculateScalar(hist *Histogram) {
+	for i, bkt := range hist.Buckets {
+		bkt.lowerScalar, bkt.upperScalar, bkt.commonPfxLen = preCalculateDatumScalar(&bkt.LowerBound, &bkt.UpperBound)
+		hist.Buckets[i] = bkt
+	}
+}
+
 func (s *testStatisticsSuite) TestBuild(c *C) {
 	bucketCount := int64(256)
 	sketch, _, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
@@ -162,6 +169,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 		Sketch:    sketch,
 	}
 	col, err := BuildColumn(ctx, bucketCount, 2, collector)
+	calculateScalar(col)
 	c.Check(err, IsNil)
 	c.Check(len(col.Buckets), Equals, 232)
 	count, err := col.equalRowCount(sc, types.NewIntDatum(1000))
@@ -193,6 +201,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 9)
 
 	tblCount, col, err := BuildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
+	calculateScalar(col)
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, encodeKey(types.NewIntDatum(10000)))
@@ -210,6 +219,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 
 	s.pk.(*recordSet).cursor = 0
 	tblCount, col, err = buildPK(ctx, bucketCount, 4, ast.RecordSet(s.pk))
+	calculateScalar(col)
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))
@@ -362,6 +372,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 		Sketch:    sketch,
 	}
 	hg, err := BuildColumn(ctx, bucketCount, 2, collector)
+	calculateScalar(hg)
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg}
 	tbl := &Table{
@@ -427,6 +438,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 
 	s.pk.(*recordSet).cursor = 0
 	rowCount, hg, err := buildPK(ctx, bucketCount, 0, s.pk)
+	calculateScalar(hg)
 	c.Check(err, IsNil)
 	c.Check(rowCount, Equals, int64(100000))
 	col := &Column{Histogram: *hg}
