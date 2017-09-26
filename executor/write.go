@@ -925,6 +925,8 @@ func (e *InsertValues) fillDefaultValues(row []types.Datum, ignoreErr bool) erro
 			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
 			if table.IsNoDefault(err) && mysql.HasNotNullFlag(c.Flag) {
 				row[i] = table.GetZeroValue(c.ToInfo())
+			} else if err != nil {
+				return errors.Trace(err)
 			}
 		}
 		defaultValueCols = append(defaultValueCols, c)
