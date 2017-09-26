@@ -597,30 +597,57 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 	}
 }
 
-func (do *Domain) autoAnalyzeWorker(lease time.Duration) {
-	id := do.ddl.OwnerManager().ID()
-	cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
-	var statsOwner owner.Manager
+func (do *Domain) autoAnalyzeWorker(ctx context.Context, lease time.Duration) {
+	var jobManager statistics.JobManager
 	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(id, cancelFunc)
+		jobManager = statistics.NewMockJobManager()
 	} else {
-		statsOwner = owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
-	}
-	// TODO: Need to do something when err is not nil.
-	err := statsOwner.CampaignOwner(cancelCtx)
-	if err != nil {
-		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
+		id := do.ddl.OwnerManager().ID()
+		cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
+		statsOwner := owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
+		// TODO: Need to do something when err is not nil.
+		// If the err is not nil, this means that the statsOwner could not be the owner, but it could be a worker to
+		// do the analyze.
+		err := statsOwner.CampaignOwner(cancelCtx)
+		if err != nil {
+			log.Warnf("[stats] campaign owner fail: ", errors.ErrorStack(err))
+		}
+		// If the err is not nil, this means that the jobManager could not be the worker to do the job, but it could be
+		// a owner to push analyze jobs into jobManager.
+		session, err := owner.NewSession(cancelCtx, statistics.StatsPrompt, do.etcdClient, owner.NewSessionDefaultRetryCnt, owner.ManagerSessionTTL)
+		if err != nil {
+			log.Warnf("[stats] create new session fail: ", errors.ErrorStack(err))
+		}
+		jobManager = statistics.NewJobManager(statsOwner, do.etcdClient, session)
 	}
 	statsHandle := do.StatsHandle()
-	for {
-		if statsOwner.IsOwner() {
-			err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
+	go func() {
+		for {
+			if jobManager.IsOwner() {
+				pendingSize, err := jobManager.PendingSize()
+				if err != nil {
+					log.Error("[stats] job manager get pending size fail: ", errors.ErrorStack(err))
+					continue
+				}
+				if pendingSize > 0 {
+					continue
+				}
+				err = jobManager.Enqueue(statsHandle.GetAutoAnalyzeJobs(do.InfoSchema()))
+				if err != nil {
+					log.Error("[stats] job manager enqueue fail: ", errors.ErrorStack(err))
+				}
+			}
+			time.Sleep(lease)
+		}
+	}()
+	go func() {
+		for {
+			err := jobManager.DequeueAndAnalyze(ctx, statsHandle, do.InfoSchema())
 			if err != nil {
-				log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
+				log.Error("[stats] auto analyze fail: ", errors.ErrorStack(err))
 			}
 		}
-		time.Sleep(lease)
-	}
+	}()
 }
 
 const privilegeKey = "/tidb/privilege"
