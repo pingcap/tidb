@@ -24,6 +24,7 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
@@ -81,6 +82,10 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 
 	s.tk = testkit.NewTestKit(c, s.store)
+
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: "debug",
+	})
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
