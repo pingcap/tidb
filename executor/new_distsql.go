@@ -122,7 +122,7 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 func (e *TableReaderExecutor) Open() error {
 	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
 	var err error
-	e.result, err = distsql.NewSelectDAG(e.ctx, goctx.Background(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, colLen)
+	e.result, err = distsql.NewSelectDAG(e.ctx, goctx.Background(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, e.schema.Len())
 	if err != nil {
 		return errors.Trace(err)
 	}
