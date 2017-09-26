@@ -22,93 +22,84 @@ import (
 
 // calcFraction is used to calculate the fraction of the interval [lower, upper] that lies within the [lower, value]
 // using the continuous-value assumption.
-func calcFraction(lower, upper, value *types.Datum) float64 {
-	lowerScalar, upperScalar, valueScalar := convertToScalar(lower, upper, value)
-	if upperScalar <= lowerScalar {
+func calcFraction(lower, upper, value float64) float64 {
+	if upper <= lower {
 		return 0.5
 	}
-	if valueScalar <= lowerScalar {
+	if value <= lower {
 		return 0
 	}
-	if valueScalar >= upperScalar {
+	if value >= upper {
 		return 1
 	}
-	frac := (valueScalar - lowerScalar) / (upperScalar - lowerScalar)
+	frac := (value - lower) / (upper - lower)
 	if math.IsNaN(frac) || math.IsInf(frac, 0) || frac < 0 || frac > 1 {
 		return 0.5
 	}
 	return frac
 }
 
-// convertToScalar converts the datum to scalar values.
-// TODO: We may cache results for some types.
-func convertToScalar(lower, upper, value *types.Datum) (float64, float64, float64) {
+// preCalculateDatumScalar converts the lower and upper to scalar. When the datum type is KindString or KindBytes, we also
+// calculate their common prefix length, because when a value falls between lower and upper, the common prefix
+// of lower and upper equals to the common prefix of the lower, upper and the value.
+func preCalculateDatumScalar(lower, upper *types.Datum) (float64, float64, int) {
+	common := 0
+	if lower.Kind() == types.KindString || lower.Kind() == types.KindBytes {
+		common = commonPrefixLength(lower.GetBytes(), upper.GetBytes())
+	}
+	return convertDatumToScalar(lower, common), convertDatumToScalar(upper, common), common
+}
+
+func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
 	case types.KindFloat32:
-		return float64(lower.GetFloat32()), float64(upper.GetFloat32()), float64(value.GetFloat32())
+		return float64(value.GetFloat32())
 	case types.KindFloat64:
-		return lower.GetFloat64(), upper.GetFloat64(), value.GetFloat64()
+		return value.GetFloat64()
 	case types.KindInt64:
-		return float64(lower.GetInt64()), float64(upper.GetInt64()), float64(value.GetInt64())
+		return float64(value.GetInt64())
 	case types.KindUint64:
-		return float64(lower.GetUint64()), float64(upper.GetUint64()), float64(value.GetUint64())
+		return float64(value.GetUint64())
 	case types.KindMysqlDecimal:
-		return convertDecimalToScalar(lower, upper, value)
+		scalar, err := value.GetMysqlDecimal().ToFloat64()
+		if err != nil {
+			return 0
+		}
+		return scalar
 	case types.KindMysqlDuration:
-		return float64(lower.GetMysqlDuration().Duration), float64(upper.GetMysqlDuration().Duration), float64(value.GetMysqlDuration().Duration)
+		return float64(value.GetMysqlDuration().Duration)
 	case types.KindMysqlTime:
-		lowerTime := lower.GetMysqlTime()
-		upperTime := upper.GetMysqlTime()
 		valueTime := value.GetMysqlTime()
-		return 0, float64(upperTime.Sub(&lowerTime).Duration), float64(valueTime.Sub(&lowerTime).Duration)
+		zeroTime := types.ZeroDatetime
+		zeroTime.Type = valueTime.Type
+		return float64(valueTime.Sub(&zeroTime).Duration)
 	case types.KindString, types.KindBytes:
-		return convertBytesToScalar(lower.GetBytes(), upper.GetBytes(), value.GetBytes())
+		bytes := value.GetBytes()
+		if len(bytes) <= commonPfxLen {
+			return 0
+		}
+		return convertBytesToScalar(bytes[commonPfxLen:])
 	default:
 		// do not know how to convert
-		return 0, 0, 0
+		return 0
 	}
 }
 
-// Decimal types are simply converted to their equivalent float64 values.
-func convertDecimalToScalar(lower, upper, value *types.Datum) (float64, float64, float64) {
-	lowerScalar, err := lower.GetMysqlDecimal().ToFloat64()
-	if err != nil {
-		return 0, 0, 0
-	}
-	upperScalar, err := upper.GetMysqlDecimal().ToFloat64()
-	if err != nil {
-		return 0, 0, 0
-	}
-	valueScalar, err := value.GetMysqlDecimal().ToFloat64()
-	if err != nil {
-		return 0, 0, 0
-	}
-	return lowerScalar, upperScalar, valueScalar
-}
-
-// Bytes type is viewed as a base-256 value.
-func convertBytesToScalar(lower, upper, value []byte) (float64, float64, float64) {
+func commonPrefixLength(lower, upper []byte) int {
 	minLen := len(lower)
-	if len(upper) < minLen {
+	if minLen > len(upper) {
 		minLen = len(upper)
 	}
-	if len(value) < minLen {
-		minLen = len(value)
-	}
-	// remove their common prefix
-	common := 0
-	for common < minLen {
-		if lower[common] == upper[common] && lower[common] == value[common] {
-			common++
-		} else {
-			break
+	for i := 0; i < minLen; i++ {
+		if lower[i] != upper[i] {
+			return i
 		}
 	}
-	return convertOneBytesToScalar(lower[common:]), convertOneBytesToScalar(upper[common:]), convertOneBytesToScalar(value[common:])
+	return minLen
 }
 
-func convertOneBytesToScalar(value []byte) float64 {
-	// Since the base is 256, we only consider at most 8 bytes.
+func convertBytesToScalar(value []byte) float64 {
+	// Bytes type is viewed as a base-256 value, so we only consider at most 8 bytes.
 	var buf [8]byte
 	copy(buf[:], value)
 	return float64(binary.BigEndian.Uint64(buf[:]))
