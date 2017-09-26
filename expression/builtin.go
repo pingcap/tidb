@@ -29,41 +29,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// evalTp indicates the specified types that arguments and result of a built-in function should be.
-type evalTp byte
-
-const (
-	tpInt evalTp = iota
-	tpReal
-	tpDecimal
-	tpString
-	tpDatetime
-	tpTimestamp
-	tpDuration
-	tpJSON
-)
-
-func fieldTp2EvalTp(tp *types.FieldType) evalTp {
-	switch tp.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeBit, mysql.TypeYear:
-		return tpInt
-	case mysql.TypeFloat, mysql.TypeDouble:
-		return tpReal
-	case mysql.TypeNewDecimal:
-		return tpDecimal
-	case mysql.TypeDate, mysql.TypeDatetime:
-		return tpDatetime
-	case mysql.TypeTimestamp:
-		return tpTimestamp
-	case mysql.TypeDuration:
-		return tpDuration
-	case mysql.TypeJSON:
-		return tpJSON
-	}
-	return tpString
-}
-
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
 	args      []Expression
@@ -98,81 +63,81 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType evalTp, argTps ...evalTp) (bf baseBuiltinFunc) {
+func newBaseBuiltinFuncWithTp(args []Expression, ctx context.Context, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
 	for i := range args {
 		switch argTps[i] {
-		case tpInt:
+		case types.ETInt:
 			args[i] = WrapWithCastAsInt(args[i], ctx)
-		case tpReal:
+		case types.ETReal:
 			args[i] = WrapWithCastAsReal(args[i], ctx)
-		case tpDecimal:
+		case types.ETDecimal:
 			args[i] = WrapWithCastAsDecimal(args[i], ctx)
-		case tpString:
+		case types.ETString:
 			args[i] = WrapWithCastAsString(args[i], ctx)
-		case tpDatetime:
+		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeDatetime), ctx)
-		case tpTimestamp:
+		case types.ETTimestamp:
 			args[i] = WrapWithCastAsTime(args[i], types.NewFieldType(mysql.TypeTimestamp), ctx)
-		case tpDuration:
+		case types.ETDuration:
 			args[i] = WrapWithCastAsDuration(args[i], ctx)
-		case tpJSON:
+		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(args[i], ctx)
 		}
 	}
 	var fieldType *types.FieldType
 	switch retType {
-	case tpInt:
+	case types.ETInt:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeLonglong,
 			Flen:    mysql.MaxIntWidth,
 			Decimal: 0,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpReal:
+	case types.ETReal:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDouble,
 			Flen:    mysql.MaxRealWidth,
 			Decimal: types.UnspecifiedLength,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpDecimal:
+	case types.ETDecimal:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeNewDecimal,
 			Flen:    11,
 			Decimal: 0,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpString:
+	case types.ETString:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeVarString,
 			Flen:    0,
 			Decimal: types.UnspecifiedLength,
 		}
-	case tpDatetime:
+	case types.ETDatetime:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDatetime,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpTimestamp:
+	case types.ETTimestamp:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeTimestamp,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpDuration:
+	case types.ETDuration:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeDuration,
 			Flen:    mysql.MaxDurationWidthWithFsp,
 			Decimal: types.MaxFsp,
 			Flag:    mysql.BinaryFlag,
 		}
-	case tpJSON:
+	case types.ETJson:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeJSON,
 			Flen:    mysql.MaxBlobWidth,
@@ -225,8 +190,8 @@ func (b *baseBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
 		res    interface{}
 		isNull bool
 	)
-	switch fieldTp2EvalTp(b.tp) {
-	case tpInt:
+	switch b.tp.EvalType() {
+	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = b.self.evalInt(row)
 		if mysql.HasUnsignedFlag(b.tp.Flag) {
@@ -234,17 +199,17 @@ func (b *baseBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
 		} else {
 			res = intRes
 		}
-	case tpReal:
+	case types.ETReal:
 		res, isNull, err = b.self.evalReal(row)
-	case tpDecimal:
+	case types.ETDecimal:
 		res, isNull, err = b.self.evalDecimal(row)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		res, isNull, err = b.self.evalTime(row)
-	case tpDuration:
+	case types.ETDuration:
 		res, isNull, err = b.self.evalDuration(row)
-	case tpJSON:
+	case types.ETJson:
 		res, isNull, err = b.self.evalJSON(row)
-	case tpString:
+	case types.ETString:
 		res, isNull, err = b.self.evalString(row)
 	}
 
@@ -285,8 +250,8 @@ func (b *baseBuiltinFunc) evalJSON(row []types.Datum) (json.JSON, bool, error) {
 }
 
 func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
-	switch fieldTp2EvalTp(b.tp) {
-	case tpString:
+	switch b.tp.EvalType() {
+	case types.ETString:
 		if b.tp.Flen >= mysql.MaxBlobWidth {
 			b.tp.Tp = mysql.TypeLongBlob
 		} else if b.tp.Flen >= 65536 {

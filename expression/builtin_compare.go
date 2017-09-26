@@ -118,9 +118,9 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 	// Use the aggregated field type as retType.
 	retTp := types.AggFieldType(fieldTps)
 	retCTp := types.AggTypeClass(fieldTps, &retTp.Flag)
-	retEvalTp := fieldTp2EvalTp(retTp)
+	retEvalTp := retTp.EvalType()
 
-	fieldEvalTps := make([]evalTp, 0, len(args))
+	fieldEvalTps := make([]types.EvalType, 0, len(args))
 	for range args {
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
 	}
@@ -178,22 +178,22 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 	}
 
 	switch retEvalTp {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinCoalesceIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceInt)
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinCoalesceRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceReal)
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinCoalesceDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDecimal)
-	case tpString:
+	case types.ETString:
 		sig = &builtinCoalesceStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceString)
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCoalesceTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceTime)
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinCoalesceDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
 	}
@@ -313,7 +313,7 @@ func temporalWithDateAsNumTypeClass(argTp *types.FieldType) (argTypeClass types.
 }
 
 // getCmp4MinMax gets compare type for GREATEST and LEAST.
-func getCmpTp4MinMax(args []Expression) (argTp evalTp) {
+func getCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	datetimeFound, isAllStr := false, true
 	cmpType, isStr, isTemporalWithDate := temporalWithDateAsNumTypeClass(args[0].GetType())
 	if !isStr {
@@ -335,16 +335,16 @@ func getCmpTp4MinMax(args []Expression) (argTp evalTp) {
 	}
 	switch cmpType {
 	case types.ClassString:
-		argTp = tpString
+		argTp = types.ETString
 	case types.ClassInt:
-		argTp = tpInt
+		argTp = types.ETInt
 	case types.ClassReal:
-		argTp = tpReal
+		argTp = types.ETReal
 	case types.ClassDecimal:
-		argTp = tpDecimal
+		argTp = types.ETDecimal
 	}
 	if isAllStr && datetimeFound {
-		argTp = tpDatetime
+		argTp = types.ETDatetime
 	}
 	return argTp
 }
@@ -358,28 +358,28 @@ func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expressi
 		return nil, errors.Trace(err)
 	}
 	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
-	if tp == tpDatetime {
+	if tp == types.ETDatetime {
 		cmpAsDatetime = true
-		tp = tpString
+		tp = types.ETString
 	}
-	argTps := make([]evalTp, len(args))
+	argTps := make([]types.EvalType, len(args))
 	for i := range args {
 		argTps[i] = tp
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
 	if cmpAsDatetime {
-		tp = tpDatetime
+		tp = types.ETDatetime
 	}
 	switch tp {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinGreatestIntSig{bf}
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinGreatestRealSig{bf}
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinGreatestDecimalSig{bf}
-	case tpString:
+	case types.ETString:
 		sig = &builtinGreatestStringSig{bf}
-	case tpDatetime:
+	case types.ETDatetime:
 		sig = &builtinGreatestTimeSig{bf}
 	}
 	return sig.setSelf(sig), nil
@@ -526,28 +526,28 @@ func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression)
 		return nil, errors.Trace(err)
 	}
 	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
-	if tp == tpDatetime {
+	if tp == types.ETDatetime {
 		cmpAsDatetime = true
-		tp = tpString
+		tp = types.ETString
 	}
-	argTps := make([]evalTp, len(args))
+	argTps := make([]types.EvalType, len(args))
 	for i := range args {
 		argTps[i] = tp
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
 	if cmpAsDatetime {
-		tp = tpDatetime
+		tp = types.ETDatetime
 	}
 	switch tp {
-	case tpInt:
+	case types.ETInt:
 		sig = &builtinLeastIntSig{bf}
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinLeastRealSig{bf}
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinLeastDecimalSig{bf}
-	case tpString:
+	case types.ETString:
 		sig = &builtinLeastStringSig{bf}
-	case tpDatetime:
+	case types.ETDatetime:
 		sig = &builtinLeastTimeSig{bf}
 	}
 	return sig.setSelf(sig), nil
@@ -706,19 +706,19 @@ func (c *intervalFunctionClass) getFunction(ctx context.Context, args []Expressi
 
 	allInt := true
 	for i := range args {
-		if fieldTp2EvalTp(args[i].GetType()) != tpInt {
+		if args[i].GetType().EvalType() != types.ETInt {
 			allInt = false
 		}
 	}
 
-	argTps, argTp := make([]evalTp, 0, len(args)), tpReal
+	argTps, argTp := make([]types.EvalType, 0, len(args)), types.ETReal
 	if allInt {
-		argTp = tpInt
+		argTp = types.ETInt
 	}
 	for range args {
 		argTps = append(argTps, argTp)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, argTps...)
 	var sig builtinFunc
 	if allInt {
 		sig = &builtinIntervalIntSig{bf}
@@ -934,20 +934,20 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 	cmpType := getCmpType(tc0, tc1)
 	if (tc0 == types.ClassString && ft1.Tp == mysql.TypeJSON) ||
 		(ft0.Tp == mysql.TypeJSON && tc1 == types.ClassString) {
-		sig, err = c.generateCmpSigs(args, tpJSON, ctx)
+		sig, err = c.generateCmpSigs(args, types.ETJson, ctx)
 	} else if cmpType == types.ClassString && (types.IsTypeTime(ft0.Tp) || types.IsTypeTime(ft1.Tp)) {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
 		// compare as time
 		if ft0.Tp == ft1.Tp {
-			sig, err = c.generateCmpSigs(args, fieldTp2EvalTp(ft0), ctx)
+			sig, err = c.generateCmpSigs(args, ft0.EvalType(), ctx)
 		} else {
-			sig, err = c.generateCmpSigs(args, tpDatetime, ctx)
+			sig, err = c.generateCmpSigs(args, types.ETDatetime, ctx)
 		}
 	} else if ft0.Tp == mysql.TypeDuration && ft1.Tp == mysql.TypeDuration {
 		// duration <cmp> duration
 		// compare as duration
-		sig, err = c.generateCmpSigs(args, tpDuration, ctx)
+		sig, err = c.generateCmpSigs(args, types.ETDuration, ctx)
 	} else if cmpType == types.ClassReal || cmpType == types.ClassString {
 		_, isConst0 := args[0].(*Constant)
 		_, isConst1 := args[1].(*Constant)
@@ -975,9 +975,9 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 				col = args[1].(*Column)
 			}
 			if col.GetType().Tp == mysql.TypeDuration {
-				sig, err = c.generateCmpSigs(args, tpDuration, ctx)
+				sig, err = c.generateCmpSigs(args, types.ETDuration, ctx)
 			} else {
-				sig, err = c.generateCmpSigs(args, tpDatetime, ctx)
+				sig, err = c.generateCmpSigs(args, types.ETDatetime, ctx)
 			}
 		}
 	}
@@ -987,13 +987,13 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 	if sig == nil {
 		switch cmpType {
 		case types.ClassString:
-			sig, err = c.generateCmpSigs(args, tpString, ctx)
+			sig, err = c.generateCmpSigs(args, types.ETString, ctx)
 		case types.ClassInt:
-			sig, err = c.generateCmpSigs(args, tpInt, ctx)
+			sig, err = c.generateCmpSigs(args, types.ETInt, ctx)
 		case types.ClassDecimal:
-			sig, err = c.generateCmpSigs(args, tpDecimal, ctx)
+			sig, err = c.generateCmpSigs(args, types.ETDecimal, ctx)
 		case types.ClassReal:
-			sig, err = c.generateCmpSigs(args, tpReal, ctx)
+			sig, err = c.generateCmpSigs(args, types.ETReal, ctx)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1003,11 +1003,11 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 }
 
 // genCmpSigs generates compare function signatures.
-func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx context.Context) (sig builtinFunc, err error) {
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
+func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp types.EvalType, ctx context.Context) (sig builtinFunc, err error) {
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, tp, tp)
 	bf.tp.Flen = 1
 	switch tp {
-	case tpInt:
+	case types.ETInt:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTIntSig{bf}
@@ -1031,7 +1031,7 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 			sig = &builtinNullEQIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQInt)
 		}
-	case tpReal:
+	case types.ETReal:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTRealSig{bf}
@@ -1055,7 +1055,7 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 			sig = &builtinNullEQRealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQReal)
 		}
-	case tpDecimal:
+	case types.ETDecimal:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTDecimalSig{bf}
@@ -1079,7 +1079,7 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 			sig = &builtinNullEQDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQDecimal)
 		}
-	case tpString:
+	case types.ETString:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTStringSig{bf}
@@ -1103,7 +1103,7 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 			sig = &builtinNullEQStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQString)
 		}
-	case tpDuration:
+	case types.ETDuration:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTDurationSig{bf}
@@ -1127,7 +1127,7 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 			sig = &builtinNullEQDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQDuration)
 		}
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTTimeSig{bf}
@@ -1151,7 +1151,7 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 			sig = &builtinNullEQTimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQTime)
 		}
-	case tpJSON:
+	case types.ETJson:
 		switch c.op {
 		case opcode.LT:
 			sig = &builtinLTJSONSig{bf}

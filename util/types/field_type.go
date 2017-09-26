@@ -144,6 +144,28 @@ func (ft *FieldType) ToClass() TypeClass {
 	}
 }
 
+// EvalType gets the type in evaluation.
+func (ft *FieldType) EvalType() EvalType {
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeBit, mysql.TypeYear:
+		return ETInt
+	case mysql.TypeFloat, mysql.TypeDouble:
+		return ETReal
+	case mysql.TypeNewDecimal:
+		return ETDecimal
+	case mysql.TypeDate, mysql.TypeDatetime:
+		return ETDatetime
+	case mysql.TypeTimestamp:
+		return ETTimestamp
+	case mysql.TypeDuration:
+		return ETDuration
+	case mysql.TypeJSON:
+		return ETJson
+	}
+	return ETString
+}
+
 func (tc TypeClass) String() string {
 	switch tc {
 	case ClassString:
