@@ -459,7 +459,7 @@ LOOP:
 
 		c.Assert(err, IsNil)
 		_, ok := handles[h]
-		c.Assert(ok, IsTrue)
+		c.Assert(ok, IsTrue, Commentf("h %d", h))
 		delete(handles, h)
 	}
 	c.Assert(handles, HasLen, 0)
