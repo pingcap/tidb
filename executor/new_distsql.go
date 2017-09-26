@@ -64,8 +64,6 @@ type TableReaderExecutor struct {
 	schema    *expression.Schema
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
-	// This is the column that represent the handle, we can use handleCol.Index to know its position.
-	handleCol *expression.Column
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.NewSelectResult
@@ -456,7 +454,6 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 		dagPB:     e.tableRequest,
 		schema:    schema,
 		ctx:       e.ctx,
-		handleCol: e.handleCol,
 	}
 	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {

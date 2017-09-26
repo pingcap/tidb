@@ -1139,10 +1139,6 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
-	var handleCol *expression.Column
-	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2Handle[ts.Table.ID][0]
-	}
 	e := &TableReaderExecutor{
 		ctx:       b.ctx,
 		schema:    v.Schema(),
@@ -1153,7 +1149,6 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		desc:      ts.Desc,
 		ranges:    ts.Ranges,
 		columns:   ts.Columns,
-		handleCol: handleCol,
 		priority:  b.priority,
 	}
 
@@ -1208,6 +1203,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		tableReaderSchema *expression.Schema
 	)
 	table, _ := b.is.TableByID(is.Table.ID)
+	len := v.Schema().Len()
 	if v.NeedColHandle {
 		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
 	} else if !is.OutOfOrder {
@@ -1219,10 +1215,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		}
 		tableReaderSchema.Append(handleCol)
-	}
-
-	len := v.Schema().Len()
-	if tableReaderSchema != nil {
 		len = tableReaderSchema.Len()
 	}
 
