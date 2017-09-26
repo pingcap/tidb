@@ -18,7 +18,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -30,13 +29,14 @@ type leaseGrantItem struct {
 
 func (*testSuite) TestSchemaValidator(c *C) {
 	defer testleak.AfterTest(c)()
+
 	lease := 5 * time.Millisecond
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
 	exit := make(chan struct{})
 	go serverFunc(lease, leaseGrantCh, oracleCh, exit)
 
-	validator := NewSchemaValidator(lease)
+	validator := NewSchemaValidator(lease).(*schemaValidator)
 
 	for i := 0; i < 10; i++ {
 		delay := time.Duration(100+rand.Intn(900)) * time.Microsecond
@@ -47,53 +47,50 @@ func (*testSuite) TestSchemaValidator(c *C) {
 
 	// Take a lease, check it's valid.
 	item := <-leaseGrantCh
-	validator.Update(item.leaseGrantTS, 0, item.schemaVer, nil)
-	valid := validator.Check(item.leaseGrantTS, item.schemaVer)
-	c.Assert(valid, IsTrue)
+	validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer, []int64{10})
+	valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
+	c.Assert(valid, Equals, ResultSucc)
 
 	// Stop the validator, validator's items value is nil.
 	validator.Stop()
-	isTablesChanged, err := validator.IsRelatedTablesChanged(item.leaseGrantTS, item.schemaVer, nil)
-	c.Assert(terror.ErrorEqual(err, ErrInfoSchemaExpired), IsTrue)
-	c.Assert(isTablesChanged, IsFalse)
-	valid = validator.Check(item.leaseGrantTS, item.schemaVer)
-	c.Assert(valid, IsFalse)
+	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
+	c.Assert(isTablesChanged, IsTrue)
+	valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
+	c.Assert(valid, Equals, ResultFail)
 	validator.Restart()
 
 	// Sleep for a long time, check schema is invalid.
 	time.Sleep(lease)
 	ts := <-oracleCh
-	valid = validator.Check(ts, item.schemaVer)
-	c.Assert(valid, IsFalse)
+	valid = validator.Check(ts, item.schemaVer, []int64{10})
+	c.Assert(valid, Equals, ResultUnknown)
 
 	currVer := reload(validator, leaseGrantCh, 0)
-	valid = validator.Check(ts, item.schemaVer)
-	c.Assert(valid, IsFalse)
+	valid = validator.Check(ts, item.schemaVer, []int64{0})
+	c.Assert(valid, Equals, ResultFail)
 	// Check the latest schema version must changed.
-	c.Assert(item.schemaVer, Less, validator.Latest())
+	c.Assert(item.schemaVer, Less, validator.latestSchemaVer)
 
 	// Make sure newItem's version is bigger than currVer.
 	time.Sleep(lease * 2)
 	newItem := <-leaseGrantCh
+
 	// Update current schema version to newItem's version and the delta table IDs is 1, 2, 3.
 	validator.Update(ts, currVer, newItem.schemaVer, []int64{1, 2, 3})
 	// Make sure the updated table IDs don't be covered with the same schema version.
 	validator.Update(ts, newItem.schemaVer, newItem.schemaVer, nil)
-	isTablesChanged, err = validator.IsRelatedTablesChanged(ts, currVer, nil)
-	c.Assert(err, IsNil)
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
 	c.Assert(isTablesChanged, IsFalse)
-	isTablesChanged, err = validator.IsRelatedTablesChanged(ts, currVer, []int64{2})
-	c.Assert(err, IsNil)
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
 	c.Assert(isTablesChanged, IsTrue)
 	// The current schema version is older than the oldest schema version.
-	isTablesChanged, err = validator.IsRelatedTablesChanged(ts, -1, nil)
-	c.Assert(terror.ErrorEqual(err, ErrInfoSchemaChanged), IsTrue)
-	c.Assert(isTablesChanged, IsFalse)
+	isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
+	c.Assert(isTablesChanged, IsTrue)
+
 	// All schema versions is expired.
 	ts = uint64(time.Now().Add(lease).UnixNano())
-	isTablesChanged, err = validator.IsRelatedTablesChanged(ts, currVer, nil)
-	c.Assert(terror.ErrorEqual(err, ErrInfoSchemaExpired), IsTrue)
-	c.Assert(isTablesChanged, IsFalse)
+	valid = validator.Check(ts, newItem.schemaVer, nil)
+	c.Assert(valid, Equals, ResultUnknown)
 
 	exit <- struct{}{}
 }

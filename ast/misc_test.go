@@ -124,3 +124,34 @@ load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by
 		stmt.Accept(visitor1{})
 	}
 }
+
+func (ts *testMiscSuite) TestSensitiveStatement(c *C) {
+	positive := []StmtNode{
+		&SetPwdStmt{},
+		&CreateUserStmt{},
+		&AlterUserStmt{},
+		&GrantStmt{},
+	}
+	for i, stmt := range positive {
+		_, ok := stmt.(SensitiveStmtNode)
+		c.Assert(ok, IsTrue, Commentf("%d, %#v fail", i, stmt))
+	}
+
+	negative := []StmtNode{
+		&DropUserStmt{},
+		&RevokeStmt{},
+		&AlterTableStmt{},
+		&CreateDatabaseStmt{},
+		&CreateIndexStmt{},
+		&CreateTableStmt{},
+		&DropDatabaseStmt{},
+		&DropIndexStmt{},
+		&DropTableStmt{},
+		&RenameTableStmt{},
+		&TruncateTableStmt{},
+	}
+	for _, stmt := range negative {
+		_, ok := stmt.(SensitiveStmtNode)
+		c.Assert(ok, IsFalse)
+	}
+}

@@ -19,8 +19,8 @@ import (
 	"math/rand"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	goctx "golang.org/x/net/context"
 )
 
@@ -128,6 +128,7 @@ const (
 	gcResolveLockMaxBackoff = 100000
 	gcDeleteRangeMaxBackoff = 100000
 	rawkvMaxBackoff         = 20000
+	splitRegionBackoff      = 20000
 )
 
 var commitMaxBackoff = 20000
@@ -179,7 +180,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
-			if log.GetLogLevel() >= log.LOG_LEVEL_DEBUG || i >= len(b.errors)-3 {
+			if log.GetLevel() == log.DebugLevel || i >= len(b.errors)-3 {
 				errMsg += "\n" + err.Error()
 			}
 		}

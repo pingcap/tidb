@@ -22,9 +22,9 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -47,6 +47,16 @@ const (
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey = "/tidb/ddl/fg/owner"
 	ddlPrompt   = "ddl"
+)
+
+var (
+	// TableColumnCountLimit is limit of the number of columns in a table.
+	// It's exported for testing.
+	TableColumnCountLimit = 512
+	// EnableSplitTableRegion is a flag to decide whether to split a new region for
+	// a newly created table. It takes effect only if the Storage supports split
+	// region.
+	EnableSplitTableRegion = false
 )
 
 var (
@@ -80,8 +90,8 @@ var (
 	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
 	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
-	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+	errTooManyFields         = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
@@ -534,7 +544,6 @@ const (
 	codeBadField                     = 1054
 	codeTooLongIdent                 = 1059
 	codeDupKeyName                   = 1061
-	codeInvalidDefault               = 1067
 	codeTooLongKey                   = 1071
 	codeKeyColumnDoesNotExits        = 1072
 	codeIncorrectPrefixKey           = 1089
@@ -543,6 +552,7 @@ const (
 	codeBlobCantHaveDefault          = 1101
 	codeWrongDBName                  = 1102
 	codeWrongTableName               = 1103
+	codeTooManyFields                = 1117
 	codeInvalidUseOfNull             = 1138
 	codeWrongColumnName              = 1166
 	codeWrongKeyColumn               = 1167
@@ -572,7 +582,6 @@ func init() {
 		codeFileNotFound:                 mysql.ErrFileNotFound,
 		codeErrorOnRename:                mysql.ErrErrorOnRename,
 		codeBadField:                     mysql.ErrBadField,
-		codeInvalidDefault:               mysql.ErrInvalidDefault,
 		codeInvalidUseOfNull:             mysql.ErrInvalidUseOfNull,
 		codeUnsupportedOnGeneratedColumn: mysql.ErrUnsupportedOnGeneratedColumn,
 		codeGeneratedColumnNonPrior:      mysql.ErrGeneratedColumnNonPrior,
@@ -582,6 +591,7 @@ func init() {
 		codeWrongColumnName:              mysql.ErrWrongColumnName,
 		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
 		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
+		codeTooManyFields:                mysql.ErrTooManyFields,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

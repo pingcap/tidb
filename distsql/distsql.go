@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -35,10 +36,14 @@ var (
 	_ PartialResult = &partialResult{}
 )
 
+var selectResultGP = gp.New(2 * time.Minute)
+
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
 	// Next gets the next partial result.
 	Next() (PartialResult, error)
+	// NextRaw gets the next raw result.
+	NextRaw() ([]byte, error)
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
@@ -66,12 +71,14 @@ type selectResult struct {
 }
 
 type resultWithErr struct {
-	result PartialResult
+	result []byte
 	err    error
 }
 
 func (r *selectResult) Fetch(ctx goctx.Context) {
-	go r.fetch(ctx)
+	selectResultGP.Go(func() {
+		r.fetch(ctx)
+	})
 }
 
 func (r *selectResult) fetch(ctx goctx.Context) {
@@ -90,11 +97,9 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 		if resultSubset == nil {
 			return
 		}
-		pr := &partialResult{}
-		pr.unmarshal(resultSubset)
 
 		select {
-		case r.results <- resultWithErr{result: pr}:
+		case r.results <- resultWithErr{result: resultSubset}:
 		case <-r.closed:
 			// if selectResult called Close() already, make fetch goroutine exit
 			return
@@ -106,6 +111,20 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 
 // Next returns the next row.
 func (r *selectResult) Next() (PartialResult, error) {
+	re := <-r.results
+	if re.err != nil {
+		return nil, errors.Trace(re.err)
+	}
+	if re.result == nil {
+		return nil, nil
+	}
+	pr := &partialResult{}
+	err := pr.unmarshal(re.result)
+	return pr, errors.Trace(err)
+}
+
+// NextRaw returns the next raw partial result.
+func (r *selectResult) NextRaw() ([]byte, error) {
 	re := <-r.results
 	return re.result, errors.Trace(re.err)
 }
@@ -204,8 +223,7 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
-		err = errors.New("client returns nil response")
-		return nil, err
+		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
 		resp:    resp,
@@ -242,6 +260,7 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 
 	kvReq := &kv.Request{
 		Tp:             kv.ReqTypeDAG,
+		StartTs:        dag.StartTs,
 		Concurrency:    concurrency,
 		KeepOrder:      keepOrder,
 		KeyRanges:      keyRanges,
@@ -256,8 +275,7 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
-		err = errors.New("client returns nil response")
-		return nil, errors.Trace(err)
+		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
 		label:   "dag",
@@ -268,9 +286,48 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 	return result, nil
 }
 
+// Analyze do a analyze request.
+func Analyze(client kv.Client, ctx goctx.Context, req *tipb.AnalyzeReq, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, priority int) (SelectResult, error) {
+	var err error
+	defer func() {
+		// Add metrics.
+		if err != nil {
+			queryCounter.WithLabelValues(queryFailed).Inc()
+		} else {
+			queryCounter.WithLabelValues(querySucc).Inc()
+		}
+	}()
+	kvReq := &kv.Request{
+		Tp:             kv.ReqTypeAnalyze,
+		Concurrency:    concurrency,
+		KeepOrder:      keepOrder,
+		KeyRanges:      keyRanges,
+		Desc:           false,
+		IsolationLevel: kv.RC,
+		Priority:       priority,
+	}
+	kvReq.Data, err = req.Marshal()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	resp := client.Send(ctx, kvReq)
+	if resp == nil {
+		return nil, errors.New("client returns nil response")
+	}
+	result := &selectResult{
+		label:   "analyze",
+		resp:    resp,
+		results: make(chan resultWithErr, concurrency),
+		closed:  make(chan struct{}),
+	}
+	return result, nil
+}
+
 // Convert tipb.Request to kv.Request.
 func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, isolationLevel kv.IsoLevel, priority int) (*kv.Request, error) {
 	kvReq := &kv.Request{
+		StartTs:        req.StartTs,
 		Concurrency:    concurrency,
 		KeepOrder:      keepOrder,
 		KeyRanges:      keyRanges,

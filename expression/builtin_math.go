@@ -119,22 +119,17 @@ func (c *absFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
-	tc := args[0].GetTypeClass()
-	var argTp evalTp
-	switch tc {
-	case types.ClassInt:
-		argTp = tpInt
-	case types.ClassDecimal:
-		argTp = tpDecimal
-	default:
+
+	argFieldTp := args[0].GetType()
+	argTp := fieldTp2EvalTp(argFieldTp)
+	if argTp != tpInt && argTp != tpDecimal {
 		argTp = tpReal
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, argTp, argTp)
-	argFieldTp := args[0].GetType()
 	if mysql.HasUnsignedFlag(argFieldTp.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
-	if tc == types.ClassReal {
+	if argTp == tpReal {
 		bf.tp.Flen, bf.tp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDouble)
 	} else {
 		bf.tp.Flen = argFieldTp.Flen
@@ -144,17 +139,17 @@ func (c *absFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	switch argTp {
 	case tpInt:
 		if mysql.HasUnsignedFlag(argFieldTp.Flag) {
-			sig = &builtinAbsUIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinAbsUIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AbsInt)
 		} else {
-			sig = &builtinAbsIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinAbsIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AbsUInt)
 		}
 	case tpDecimal:
-		sig = &builtinAbsDecSig{baseDecimalBuiltinFunc{bf}}
+		sig = &builtinAbsDecSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_AbsDecimal)
 	case tpReal:
-		sig = &builtinAbsRealSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinAbsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_AbsReal)
 	default:
 		panic("unexpected argTp")
@@ -163,7 +158,7 @@ func (c *absFunctionClass) getFunction(ctx context.Context, args []Expression) (
 }
 
 type builtinAbsRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals ABS(value).
@@ -177,7 +172,7 @@ func (b *builtinAbsRealSig) evalReal(row []types.Datum) (float64, bool, error) {
 }
 
 type builtinAbsIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals ABS(value).
@@ -197,7 +192,7 @@ func (b *builtinAbsIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 type builtinAbsUIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals ABS(value).
@@ -207,7 +202,7 @@ func (b *builtinAbsUIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 type builtinAbsDecSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDecimal evals ABS(value).
@@ -232,14 +227,8 @@ func (c *roundFunctionClass) getFunction(ctx context.Context, args []Expression)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
-	tc := args[0].GetTypeClass()
-	var argTp evalTp
-	switch tc {
-	case types.ClassInt:
-		argTp = tpInt
-	case types.ClassDecimal:
-		argTp = tpDecimal
-	default:
+	argTp := fieldTp2EvalTp(args[0].GetType())
+	if argTp != tpInt && argTp != tpDecimal {
 		argTp = tpReal
 	}
 	argTps := []evalTp{argTp}
@@ -257,22 +246,22 @@ func (c *roundFunctionClass) getFunction(ctx context.Context, args []Expression)
 	if len(args) > 1 {
 		switch argTp {
 		case tpInt:
-			sig = &builtinRoundWithFracIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinRoundWithFracIntSig{bf}
 		case tpDecimal:
-			sig = &builtinRoundWithFracDecSig{baseDecimalBuiltinFunc{bf}}
+			sig = &builtinRoundWithFracDecSig{bf}
 		case tpReal:
-			sig = &builtinRoundWithFracRealSig{baseRealBuiltinFunc{bf}}
+			sig = &builtinRoundWithFracRealSig{bf}
 		default:
 			panic("unexpected argTp")
 		}
 	} else {
 		switch argTp {
 		case tpInt:
-			sig = &builtinRoundIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinRoundIntSig{bf}
 		case tpDecimal:
-			sig = &builtinRoundDecSig{baseDecimalBuiltinFunc{bf}}
+			sig = &builtinRoundDecSig{bf}
 		case tpReal:
-			sig = &builtinRoundRealSig{baseRealBuiltinFunc{bf}}
+			sig = &builtinRoundRealSig{bf}
 		default:
 			panic("unexpected argTp")
 		}
@@ -281,7 +270,7 @@ func (c *roundFunctionClass) getFunction(ctx context.Context, args []Expression)
 }
 
 type builtinRoundRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals ROUND(value).
@@ -295,7 +284,7 @@ func (b *builtinRoundRealSig) evalReal(row []types.Datum) (float64, bool, error)
 }
 
 type builtinRoundIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals ROUND(value).
@@ -305,7 +294,7 @@ func (b *builtinRoundIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 type builtinRoundDecSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDecimal evals ROUND(value).
@@ -323,7 +312,7 @@ func (b *builtinRoundDecSig) evalDecimal(row []types.Datum) (*types.MyDecimal, b
 }
 
 type builtinRoundWithFracRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals ROUND(value, frac).
@@ -341,7 +330,7 @@ func (b *builtinRoundWithFracRealSig) evalReal(row []types.Datum) (float64, bool
 }
 
 type builtinRoundWithFracIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals ROUND(value, frac).
@@ -359,7 +348,7 @@ func (b *builtinRoundWithFracIntSig) evalInt(row []types.Datum) (int64, bool, er
 }
 
 type builtinRoundWithFracDecSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDecimal evals ROUND(value, frac).
@@ -384,50 +373,43 @@ type ceilFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *ceilFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	var (
-		bf  baseBuiltinFunc
-		sig builtinFunc
-		err error
-	)
-
+func (c *ceilFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
-	bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
 	setFlag4FloorAndCeil(bf.tp, args[0])
 	argFieldTp := args[0].GetType()
-	bf.tp.Flen = argFieldTp.Flen
-	bf.tp.Decimal = 0
+	bf.tp.Flen, bf.tp.Decimal = argFieldTp.Flen, 0
 
-	switch args[0].GetTypeClass() {
-	case types.ClassInt:
+	switch argTp {
+	case tpInt:
 		if retTp == tpInt {
-			sig = &builtinCeilIntToIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinCeilIntToIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_CeilIntToInt)
 		} else {
-			sig = &builtinCeilIntToDecSig{baseDecimalBuiltinFunc{bf}}
+			sig = &builtinCeilIntToDecSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_CeilIntToDec)
 		}
-	case types.ClassDecimal:
+	case tpDecimal:
 		if retTp == tpInt {
-			sig = &builtinCeilDecToIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinCeilDecToIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_CeilDecToInt)
 		} else {
-			sig = &builtinCeilDecToDecSig{baseDecimalBuiltinFunc{bf}}
+			sig = &builtinCeilDecToDecSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_CeilDecToDec)
 		}
 	default:
-		sig = &builtinCeilRealSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinCeilRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CeilReal)
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCeilRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinCeilRealSig.
@@ -441,7 +423,7 @@ func (b *builtinCeilRealSig) evalReal(row []types.Datum) (float64, bool, error) 
 }
 
 type builtinCeilIntToIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a builtinCeilIntToIntSig.
@@ -451,7 +433,7 @@ func (b *builtinCeilIntToIntSig) evalInt(row []types.Datum) (int64, bool, error)
 }
 
 type builtinCeilIntToDecSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDec evals a builtinCeilIntToDecSig.
@@ -462,7 +444,7 @@ func (b *builtinCeilIntToDecSig) evalDecimal(row []types.Datum) (*types.MyDecima
 }
 
 type builtinCeilDecToIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a builtinCeilDecToIntSig.
@@ -482,7 +464,7 @@ func (b *builtinCeilDecToIntSig) evalInt(row []types.Datum) (int64, bool, error)
 }
 
 type builtinCeilDecToDecSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDec evals a builtinCeilDecToDecSig.
@@ -506,22 +488,20 @@ type floorFunctionClass struct {
 // getEvalTp4FloorAndCeil gets the evalTp of FLOOR and CEIL.
 func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp evalTp) {
 	fieldTp := arg.GetType()
-	switch arg.GetTypeClass() {
-	case types.ClassInt:
-		retTp, argTp = tpInt, tpInt
+	retTp, argTp = tpInt, fieldTp2EvalTp(fieldTp)
+	switch argTp {
+	case tpInt:
 		if fieldTp.Tp == mysql.TypeLonglong {
 			retTp = tpDecimal
 		}
-	case types.ClassDecimal:
-		if fieldTp.Flen-fieldTp.Decimal <= mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
-			retTp, argTp = tpInt, tpDecimal
-		} else {
-			retTp, argTp = tpDecimal, tpDecimal
+	case tpDecimal:
+		if fieldTp.Flen-fieldTp.Decimal > mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
+			retTp = tpDecimal
 		}
 	default:
 		retTp, argTp = tpReal, tpReal
 	}
-	return
+	return retTp, argTp
 }
 
 // setFlag4FloorAndCeil sets return flag of FLOOR and CEIL.
@@ -533,48 +513,41 @@ func setFlag4FloorAndCeil(tp *types.FieldType, arg Expression) {
 	// TODO: when argument type is timestamp, add not null flag.
 }
 
-func (c *floorFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	var (
-		bf  baseBuiltinFunc
-		sig builtinFunc
-		err error
-	)
-
+func (c *floorFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
-	bf = newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, retTp, argTp)
 	setFlag4FloorAndCeil(bf.tp, args[0])
-	bf.tp.Flen = args[0].GetType().Flen
-	bf.tp.Decimal = 0
-	switch args[0].GetTypeClass() {
-	case types.ClassInt:
+	bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+	switch argTp {
+	case tpInt:
 		if retTp == tpInt {
-			sig = &builtinFloorIntToIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinFloorIntToIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_FloorIntToInt)
 		} else {
-			sig = &builtinFloorIntToDecSig{baseDecimalBuiltinFunc{bf}}
+			sig = &builtinFloorIntToDecSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_FloorIntToDec)
 		}
-	case types.ClassDecimal:
+	case tpDecimal:
 		if retTp == tpInt {
-			sig = &builtinFloorDecToIntSig{baseIntBuiltinFunc{bf}}
+			sig = &builtinFloorDecToIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_FloorDecToInt)
 		} else {
-			sig = &builtinFloorDecToDecSig{baseDecimalBuiltinFunc{bf}}
+			sig = &builtinFloorDecToDecSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_FloorDecToDec)
 		}
 	default:
-		sig = &builtinFloorRealSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinFloorRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FloorReal)
 	}
 	return sig.setSelf(sig), nil
 }
 
 type builtinFloorRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinFloorRealSig.
@@ -588,7 +561,7 @@ func (b *builtinFloorRealSig) evalReal(row []types.Datum) (float64, bool, error)
 }
 
 type builtinFloorIntToIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a builtinFloorIntToIntSig.
@@ -598,7 +571,7 @@ func (b *builtinFloorIntToIntSig) evalInt(row []types.Datum) (int64, bool, error
 }
 
 type builtinFloorIntToDecSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDec evals a builtinFloorIntToDecSig.
@@ -609,7 +582,7 @@ func (b *builtinFloorIntToDecSig) evalDecimal(row []types.Datum) (*types.MyDecim
 }
 
 type builtinFloorDecToIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a builtinFloorDecToIntSig.
@@ -629,7 +602,7 @@ func (b *builtinFloorDecToIntSig) evalInt(row []types.Datum) (int64, bool, error
 }
 
 type builtinFloorDecToDecSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDec evals a builtinFloorDecToDecSig.
@@ -667,16 +640,16 @@ func (c *logFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	}
 
 	if argsLen == 1 {
-		sig = &builtinLog1ArgSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinLog1ArgSig{bf}
 	} else {
-		sig = &builtinLog2ArgsSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinLog2ArgsSig{bf}
 	}
 
 	return sig.setSelf(sig), nil
 }
 
 type builtinLog1ArgSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinLog1ArgSig, corresponding to log(x).
@@ -693,7 +666,7 @@ func (b *builtinLog1ArgSig) evalReal(row []types.Datum) (float64, bool, error) {
 }
 
 type builtinLog2ArgsSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinLog2ArgsSig, corresponding to log(b, x).
@@ -727,12 +700,12 @@ func (c *log2FunctionClass) getFunction(ctx context.Context, args []Expression) 
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinLog2Sig{baseRealBuiltinFunc{bf}}
+	sig := &builtinLog2Sig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinLog2Sig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinLog2Sig.
@@ -757,12 +730,12 @@ func (c *log10FunctionClass) getFunction(ctx context.Context, args []Expression)
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinLog10Sig{baseRealBuiltinFunc{bf}}
+	sig := &builtinLog10Sig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinLog10Sig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinLog10Sig.
@@ -792,7 +765,7 @@ func (c *randFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		argTps = []evalTp{tpInt}
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, argTps...)
-	bt := baseRealBuiltinFunc{bf}
+	bt := bf
 	bt.foldable = false
 	if len(args) == 0 {
 		sig = &builtinRandSig{bt, nil}
@@ -803,7 +776,7 @@ func (c *randFunctionClass) getFunction(ctx context.Context, args []Expression) 
 }
 
 type builtinRandSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 	randGen *rand.Rand
 }
 
@@ -817,7 +790,7 @@ func (b *builtinRandSig) evalReal(row []types.Datum) (float64, bool, error) {
 }
 
 type builtinRandWithSeedSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 	randGen *rand.Rand
 }
 
@@ -848,12 +821,12 @@ func (c *powFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal, tpReal)
-	sig := &builtinPowSig{baseRealBuiltinFunc{bf}}
+	sig := &builtinPowSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinPowSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals POW(x, y).
@@ -890,12 +863,12 @@ func (c *convFunctionClass) getFunction(ctx context.Context, args []Expression) 
 
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpInt, tpInt)
 	bf.tp.Flen = 64
-	sig := &builtinConvSig{baseStringBuiltinFunc{bf}}
+	sig := &builtinConvSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinConvSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalString evals CONV(N,from_base,to_base).
@@ -990,12 +963,12 @@ func (c *crc32FunctionClass) getFunction(ctx context.Context, args []Expression)
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
 	bf.tp.Flen = 10
 	bf.tp.Flag |= mysql.UnsignedFlag
-	sig := &builtinCRC32Sig{baseIntBuiltinFunc{bf}}
+	sig := &builtinCRC32Sig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCRC32Sig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a CRC32(expr).
@@ -1018,12 +991,12 @@ func (c *signFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpReal)
-	sig := &builtinSignSig{baseIntBuiltinFunc{bf}}
+	sig := &builtinSignSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinSignSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals SIGN(v).
@@ -1051,12 +1024,12 @@ func (c *sqrtFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinSqrtSig{baseRealBuiltinFunc{bf}}
+	sig := &builtinSqrtSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinSqrtSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a SQRT(x).
@@ -1081,12 +1054,12 @@ func (c *acosFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinAcosSig{baseRealBuiltinFunc{bf}}
+	sig := &builtinAcosSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinAcosSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinAcosSig.
@@ -1112,12 +1085,12 @@ func (c *asinFunctionClass) getFunction(ctx context.Context, args []Expression) 
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinAsinSig{baseRealBuiltinFunc{bf}}
+	sig := &builtinAsinSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinAsinSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinAsinSig.
@@ -1156,16 +1129,16 @@ func (c *atanFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	}
 
 	if argsLen == 1 {
-		sig = &builtinAtan1ArgSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinAtan1ArgSig{bf}
 	} else {
-		sig = &builtinAtan2ArgsSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinAtan2ArgsSig{bf}
 	}
 
 	return sig.setSelf(sig), nil
 }
 
 type builtinAtan1ArgSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinAtan1ArgSig, corresponding to atan(x).
@@ -1180,7 +1153,7 @@ func (b *builtinAtan1ArgSig) evalReal(row []types.Datum) (float64, bool, error) 
 }
 
 type builtinAtan2ArgsSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinAtan1ArgSig, corresponding to atan(y, x).
@@ -1209,12 +1182,12 @@ func (c *cosFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinCosSig{baseRealBuiltinFunc{bf}}
+	sig := &builtinCosSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCosSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinCosSig.
@@ -1236,12 +1209,12 @@ func (c *cotFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinCotSig{baseRealBuiltinFunc{bf}}
+	sig := &builtinCotSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinCotSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinCotSig.
@@ -1271,12 +1244,12 @@ func (c *degreesFunctionClass) getFunction(ctx context.Context, args []Expressio
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinDegreesSig{baseRealBuiltinFunc{bf}}
+	sig := &builtinDegreesSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinDegreesSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinDegreesSig.
@@ -1299,12 +1272,12 @@ func (c *expFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinExpSig{baseRealBuiltinFunc{bf}}
+	sig := &builtinExpSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinExpSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinExpSig.
@@ -1338,12 +1311,12 @@ func (c *piFunctionClass) getFunction(ctx context.Context, args []Expression) (b
 	bf = newBaseBuiltinFuncWithTp(args, ctx, tpReal)
 	bf.tp.Decimal = 6
 	bf.tp.Flen = 8
-	sig = &builtinPISig{baseRealBuiltinFunc{bf}}
+	sig = &builtinPISig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinPISig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a builtinPISig.
@@ -1361,12 +1334,12 @@ func (c *radiansFunctionClass) getFunction(ctx context.Context, args []Expressio
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinRadiansSig{baseRealBuiltinFunc{bf}}
+	sig := &builtinRadiansSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinRadiansSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals RADIANS(X).
@@ -1388,12 +1361,12 @@ func (c *sinFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinSinSig{baseRealBuiltinFunc{bf}}
+	sig := &builtinSinSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinSinSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalreal evals a builtinSinSig.
@@ -1415,12 +1388,12 @@ func (c *tanFunctionClass) getFunction(ctx context.Context, args []Expression) (
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpReal, tpReal)
-	sig := &builtinTanSig{baseRealBuiltinFunc{bf}}
+	sig := &builtinTanSig{bf}
 	return sig.setSelf(sig), nil
 }
 
 type builtinTanSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // eval evals a builtinTanSig.
@@ -1476,18 +1449,18 @@ func (c *truncateFunctionClass) getFunction(ctx context.Context, args []Expressi
 	var sig builtinFunc
 	switch argTp {
 	case tpInt:
-		sig = &builtinTruncateIntSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinTruncateIntSig{bf}
 	case tpReal:
-		sig = &builtinTruncateRealSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinTruncateRealSig{bf}
 	case tpDecimal:
-		sig = &builtinTruncateDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig = &builtinTruncateDecimalSig{bf}
 	}
 
 	return sig.setSelf(sig), nil
 }
 
 type builtinTruncateDecimalSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalDecimal evals a TRUNCATE(X,D).
@@ -1513,7 +1486,7 @@ func (b *builtinTruncateDecimalSig) evalDecimal(row []types.Datum) (*types.MyDec
 }
 
 type builtinTruncateRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalReal evals a TRUNCATE(X,D).
@@ -1535,7 +1508,7 @@ func (b *builtinTruncateRealSig) evalReal(row []types.Datum) (float64, bool, err
 }
 
 type builtinTruncateIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evals a TRUNCATE(X,D).

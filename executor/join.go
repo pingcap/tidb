@@ -349,9 +349,7 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow Row, result *execR
 			return false
 		}
 	}
-	for _, r := range matchedRows {
-		result.rows = append(result.rows, r)
-	}
+	result.rows = append(result.rows, matchedRows...)
 	if len(matchedRows) == 0 && e.outer {
 		r := e.fillRowWithDefaultValues(bigRow)
 		result.rows = append(result.rows, r)

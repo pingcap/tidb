@@ -16,7 +16,6 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -74,7 +73,7 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenByArgs(funcName)
+		return nil, errFunctionNotExists.GenByArgs("FUNCTION", funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
@@ -113,10 +112,26 @@ func (sf *ScalarFunction) Clone() Expression {
 	}
 	switch sf.FuncName.L {
 	case ast.Cast:
-		return buildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
+		return BuildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
 	case ast.Values:
-		v := sf.Function.(*builtinValuesSig)
-		return NewValuesFunc(v.offset, sf.GetType(), sf.GetCtx())
+		var offset int
+		switch fieldTp2EvalTp(sf.GetType()) {
+		case tpInt:
+			offset = sf.Function.(*builtinValuesIntSig).offset
+		case tpReal:
+			offset = sf.Function.(*builtinValuesRealSig).offset
+		case tpDecimal:
+			offset = sf.Function.(*builtinValuesDecimalSig).offset
+		case tpString:
+			offset = sf.Function.(*builtinValuesStringSig).offset
+		case tpDatetime, tpTimestamp:
+			offset = sf.Function.(*builtinValuesTimeSig).offset
+		case tpDuration:
+			offset = sf.Function.(*builtinValuesDurationSig).offset
+		case tpJSON:
+			offset = sf.Function.(*builtinValuesJSONSig).offset
+		}
+		return NewValuesFunc(offset, sf.GetType(), sf.GetCtx())
 	}
 	newFunc, _ := NewFunction(sf.GetCtx(), sf.FuncName.L, sf.RetType, newArgs...)
 	return newFunc
@@ -164,9 +179,6 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
-	if atomic.LoadInt32(&TurnOnNewExprEval) == 0 {
-		return sf.Function.eval(row)
-	}
 	sc := sf.GetCtx().GetSessionVars().StmtCtx
 	var (
 		res    interface{}

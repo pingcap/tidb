@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"strings"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -51,12 +51,14 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	// because all of them are sorted by their `Offset`, which
 	// causes all writable columns are after public columns.
 	for i, col := range t.Cols() {
-		// Cast changed fields with respective columns.
-		v, err := table.CastValue(ctx, newData[i], col.ToInfo())
-		if err != nil {
-			return false, errors.Trace(err)
+		if modified[i] {
+			// Cast changed fields with respective columns.
+			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			newData[i] = v
 		}
-		newData[i] = v
 
 		// Rebase auto increment id if the field is changed.
 		if mysql.HasAutoIncrementFlag(col.Flag) {
@@ -69,7 +71,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			}
 			t.RebaseAutoID(val, true)
 		}
-		cmp, err := newData[i].CompareDatum(sc, oldData[i])
+		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -105,7 +107,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
-			v, errGT := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
+			v, errGT := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal)
 			if errGT != nil {
 				return false, errors.Trace(errGT)
 			}

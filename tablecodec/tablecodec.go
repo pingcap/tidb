@@ -204,11 +204,10 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 	case types.KindMysqlSet:
 		data.SetUint64(data.GetMysqlSet().Value)
 		return data, nil
-	case types.KindMysqlBit:
-		data.SetUint64(data.GetMysqlBit().Value)
-		return data, nil
-	case types.KindMysqlHex:
-		data.SetInt64(data.GetMysqlHex().Value)
+	case types.KindBinaryLiteral, types.KindMysqlBit:
+		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
+		val, _ := data.GetBinaryLiteral().ToInt()
+		data.SetUint64(val)
 		return data, nil
 	default:
 		return data, nil
@@ -228,16 +227,18 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 	return colDatum, nil
 }
 
-// DecodeRow decodes a byte slice into datums.
+// DecodeRowWithMap decodes a byte slice into datums with a existing row map.
 // Row layout: colID1, value1, colID2, value2, .....
-func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
+func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	if row == nil {
+		row = make(map[int64]types.Datum, len(cols))
+	}
 	if b == nil {
 		return nil, nil
 	}
 	if len(b) == 1 && b[0] == codec.NilFlag {
 		return nil, nil
 	}
-	row := make(map[int64]types.Datum, len(cols))
 	cnt := 0
 	var (
 		data []byte
@@ -278,6 +279,12 @@ func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (m
 		}
 	}
 	return row, nil
+}
+
+// DecodeRow decodes a byte slice into datums.
+// Row layout: colID1, value1, colID2, value2, .....
+func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
+	return DecodeRowWithMap(b, cols, loc, nil)
 }
 
 // CutRowNew cuts encoded row into byte slices and return columns' byte slice.
@@ -406,9 +413,9 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetValue(set)
 		return datum, nil
 	case mysql.TypeBit:
-		bit := types.Bit{Value: datum.GetUint64(), Width: ft.Flen}
-		datum.SetValue(bit)
-		return datum, nil
+		val := datum.GetUint64()
+		byteSize := (ft.Flen + 7) >> 3
+		datum.SetMysqlBit(types.NewBinaryLiteralFromUint(val, byteSize))
 	}
 	return datum, nil
 }
@@ -504,6 +511,14 @@ func GenTableRecordPrefix(tableID int64) kv.Key {
 func GenTableIndexPrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(tablePrefix)+8+len(indexPrefixSep))
 	return appendTableIndexPrefix(buf, tableID)
+}
+
+// GenTablePrefix composes table record and index prefix: "t[tableID]".
+func GenTablePrefix(tableID int64) kv.Key {
+	buf := make([]byte, 0, len(tablePrefix)+8)
+	buf = append(buf, tablePrefix...)
+	buf = codec.EncodeInt(buf, tableID)
+	return buf
 }
 
 // TruncateToRowKeyLen truncates the key to row key length if the key is longer than row key.

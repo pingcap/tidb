@@ -25,11 +25,9 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestCharsetDatabase(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
 	tk.MustExec(testSQL)
@@ -49,14 +47,12 @@ func (s *testSuite) TestCharsetDatabase(c *C) {
 }
 
 func (s *testSuite) TestDo(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, @a:=1")
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestTransaction(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("begin")
 	ctx := tk.Se.(context.Context)
@@ -90,7 +86,6 @@ func inTxn(ctx context.Context) bool {
 }
 
 func (s *testSuite) TestUser(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
 	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
@@ -176,7 +171,6 @@ func (s *testSuite) TestUser(c *C) {
 }
 
 func (s *testSuite) TestSetPwd(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 
 	createUserSQL := `CREATE USER 'testpwd'@'localhost' IDENTIFIED BY '';`
@@ -209,7 +203,6 @@ func (s *testSuite) TestSetPwd(c *C) {
 }
 
 func (s *testSuite) TestFlushPrivileges(c *C) {
-	defer testleak.AfterTest(c)()
 	// Global variables is really bad, when the test cases run concurrently.
 	save := privileges.Enable
 	privileges.Enable = true
@@ -239,7 +232,6 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 }
 
 func (s *testSuite) TestDropStats(c *C) {
-	defer testleak.AfterTest(c)()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")

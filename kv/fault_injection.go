@@ -18,7 +18,8 @@ import "sync"
 // InjectionConfig is used for fault injections for KV components.
 type InjectionConfig struct {
 	sync.RWMutex
-	getError error // kv.Get() always return this error.
+	getError    error // kv.Get() always return this error.
+	commitError error // Transaction.Commit() always return this error.
 }
 
 // SetGetError injects an error for all kv.Get() methods.
@@ -27,6 +28,13 @@ func (c *InjectionConfig) SetGetError(err error) {
 	defer c.Unlock()
 
 	c.getError = err
+}
+
+// SetCommitError injects an error for all Transaction.Commit() methods.
+func (c *InjectionConfig) SetCommitError(err error) {
+	c.Lock()
+	defer c.Unlock()
+	c.commitError = err
 }
 
 // InjectedStore wraps a Storage with injections.
@@ -84,6 +92,16 @@ func (t *InjectedTransaction) Get(k Key) ([]byte, error) {
 		return nil, t.cfg.getError
 	}
 	return t.Transaction.Get(k)
+}
+
+// Commit returns an error if cfg.commitError is set.
+func (t *InjectedTransaction) Commit() error {
+	t.cfg.RLock()
+	defer t.cfg.RUnlock()
+	if t.cfg.commitError != nil {
+		return t.cfg.commitError
+	}
+	return t.Transaction.Commit()
 }
 
 // InjectedSnapshot wraps a Snapshot with injections.

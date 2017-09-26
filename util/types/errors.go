@@ -45,6 +45,10 @@ var (
 	ErrCastAsSignedOverflow = terror.ClassTypes.New(codeUnknown, msgCastAsSignedOverflow)
 	// ErrCastNegIntAsUnsigned is returned when a negative integer be casted to an unsigned int.
 	ErrCastNegIntAsUnsigned = terror.ClassTypes.New(codeUnknown, msgCastNegIntAsUnsigned)
+	// ErrInvalidDefault is returned when meet a invalid default value.
+	ErrInvalidDefault = terror.ClassTypes.New(codeInvalidDefault, "Invalid default value for '%s'")
+	// ErrMBiggerThanD is returned when precision less than the scale.
+	ErrMBiggerThanD = terror.ClassTypes.New(codeMBiggerThanD, mysql.MySQLErrName[mysql.ErrMBiggerThanD])
 )
 
 const (
@@ -61,6 +65,8 @@ const (
 	codeWrongFieldSpec      terror.ErrCode = terror.ErrCode(mysql.ErrWrongFieldSpec)
 	codeTruncatedWrongValue terror.ErrCode = terror.ErrCode(mysql.ErrTruncatedWrongValue)
 	codeUnknown             terror.ErrCode = terror.ErrCode(mysql.ErrUnknown)
+	codeInvalidDefault      terror.ErrCode = terror.ErrCode(mysql.ErrInvalidDefault)
+	codeMBiggerThanD        terror.ErrCode = terror.ErrCode(mysql.ErrMBiggerThanD)
 )
 
 var (
@@ -83,6 +89,8 @@ func init() {
 		codeWrongFieldSpec:      mysql.ErrWrongFieldSpec,
 		codeTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
 		codeUnknown:             mysql.ErrUnknown,
+		codeInvalidDefault:      mysql.ErrInvalidDefault,
+		codeMBiggerThanD:        mysql.ErrMBiggerThanD,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTypes] = typesMySQLErrCodes
 }

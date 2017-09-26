@@ -15,14 +15,13 @@ package expression
 
 import (
 	"math"
-	"sort"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 	"github.com/pingcap/tipb/go-tipb"
@@ -44,9 +43,18 @@ var (
 	_ builtinFunc = &builtinCoalesceTimeSig{}
 	_ builtinFunc = &builtinCoalesceDurationSig{}
 
-	_ builtinFunc = &builtinGreatestSig{}
-	_ builtinFunc = &builtinLeastSig{}
-	_ builtinFunc = &builtinIntervalSig{}
+	_ builtinFunc = &builtinGreatestIntSig{}
+	_ builtinFunc = &builtinGreatestRealSig{}
+	_ builtinFunc = &builtinGreatestDecimalSig{}
+	_ builtinFunc = &builtinGreatestStringSig{}
+	_ builtinFunc = &builtinGreatestTimeSig{}
+	_ builtinFunc = &builtinLeastIntSig{}
+	_ builtinFunc = &builtinLeastRealSig{}
+	_ builtinFunc = &builtinLeastDecimalSig{}
+	_ builtinFunc = &builtinLeastStringSig{}
+	_ builtinFunc = &builtinLeastTimeSig{}
+	_ builtinFunc = &builtinIntervalIntSig{}
+	_ builtinFunc = &builtinIntervalRealSig{}
 
 	_ builtinFunc = &builtinLTIntSig{}
 	_ builtinFunc = &builtinLTRealSig{}
@@ -153,7 +161,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 		}
 
 		// For integer, field length = maxIntLen + (1/0 for sign bit)
-		// For decimal, field lenght = maxIntLen + maxDecimal + (1/0 for sign bit)
+		// For decimal, field length = maxIntLen + maxDecimal + (1/0 for sign bit)
 		if retCTp == types.ClassInt || retCTp == types.ClassDecimal {
 			retTp.Flen = maxIntLen + retTp.Decimal
 			if retTp.Decimal > 0 {
@@ -171,17 +179,23 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 
 	switch retEvalTp {
 	case tpInt:
-		sig = &builtinCoalesceIntSig{baseIntBuiltinFunc{bf}}
+		sig = &builtinCoalesceIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceInt)
 	case tpReal:
-		sig = &builtinCoalesceRealSig{baseRealBuiltinFunc{bf}}
+		sig = &builtinCoalesceRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceReal)
 	case tpDecimal:
-		sig = &builtinCoalesceDecimalSig{baseDecimalBuiltinFunc{bf}}
+		sig = &builtinCoalesceDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDecimal)
 	case tpString:
-		sig = &builtinCoalesceStringSig{baseStringBuiltinFunc{bf}}
+		sig = &builtinCoalesceStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceString)
 	case tpDatetime, tpTimestamp:
-		sig = &builtinCoalesceTimeSig{baseTimeBuiltinFunc{bf}}
+		sig = &builtinCoalesceTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceTime)
 	case tpDuration:
-		sig = &builtinCoalesceDurationSig{baseDurationBuiltinFunc{bf}}
+		sig = &builtinCoalesceDurationSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
 	}
 
 	return sig.setSelf(sig), nil
@@ -189,7 +203,7 @@ func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expressi
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCoalesceIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
@@ -205,7 +219,7 @@ func (b *builtinCoalesceIntSig) evalInt(row []types.Datum) (res int64, isNull bo
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceRealSig struct {
-	baseRealBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCoalesceRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
@@ -221,7 +235,7 @@ func (b *builtinCoalesceRealSig) evalReal(row []types.Datum) (res float64, isNul
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDecimalSig struct {
-	baseDecimalBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCoalesceDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
@@ -237,7 +251,7 @@ func (b *builtinCoalesceDecimalSig) evalDecimal(row []types.Datum) (res *types.M
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceStringSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCoalesceStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -253,7 +267,7 @@ func (b *builtinCoalesceStringSig) evalString(row []types.Datum) (res string, is
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceTimeSig struct {
-	baseTimeBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCoalesceTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
@@ -269,7 +283,7 @@ func (b *builtinCoalesceTimeSig) evalTime(row []types.Datum) (res types.Time, is
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDurationSig struct {
-	baseDurationBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCoalesceDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
@@ -283,96 +297,402 @@ func (b *builtinCoalesceDurationSig) evalDuration(row []types.Datum) (res types.
 	return res, isNull, errors.Trace(err)
 }
 
+// temporalWithDateAsNumTypeClass makes DATE, DATETIME, TIMESTAMP pretend to be numbers rather than strings.
+func temporalWithDateAsNumTypeClass(argTp *types.FieldType) (argTypeClass types.TypeClass, isStr bool, isTemporalWithDate bool) {
+	argTypeClass = argTp.ToClass()
+	isStr, isTemporalWithDate = argTypeClass == types.ClassString, types.IsTemporalWithDate(argTp.Tp)
+	if !isTemporalWithDate {
+		return
+	}
+	if argTp.Decimal > 0 {
+		argTypeClass = types.ClassDecimal
+	} else {
+		argTypeClass = types.ClassInt
+	}
+	return
+}
+
+// getCmp4MinMax gets compare type for GREATEST and LEAST.
+func getCmpTp4MinMax(args []Expression) (argTp evalTp) {
+	datetimeFound, isAllStr := false, true
+	cmpType, isStr, isTemporalWithDate := temporalWithDateAsNumTypeClass(args[0].GetType())
+	if !isStr {
+		isAllStr = false
+	}
+	if isTemporalWithDate {
+		datetimeFound = true
+	}
+	for i := range args {
+		var tp types.TypeClass
+		tp, isStr, isTemporalWithDate = temporalWithDateAsNumTypeClass(args[i].GetType())
+		if isTemporalWithDate {
+			datetimeFound = true
+		}
+		if !isStr {
+			isAllStr = false
+		}
+		cmpType = getCmpType(cmpType, tp)
+	}
+	switch cmpType {
+	case types.ClassString:
+		argTp = tpString
+	case types.ClassInt:
+		argTp = tpInt
+	case types.ClassReal:
+		argTp = tpReal
+	case types.ClassDecimal:
+		argTp = tpDecimal
+	}
+	if isAllStr && datetimeFound {
+		argTp = tpDatetime
+	}
+	return argTp
+}
+
 type greatestFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinGreatestSig{newBaseBuiltinFunc(args, ctx)}
+	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
+	if tp == tpDatetime {
+		cmpAsDatetime = true
+		tp = tpString
+	}
+	argTps := make([]evalTp, len(args))
+	for i := range args {
+		argTps[i] = tp
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
+	if cmpAsDatetime {
+		tp = tpDatetime
+	}
+	switch tp {
+	case tpInt:
+		sig = &builtinGreatestIntSig{bf}
+	case tpReal:
+		sig = &builtinGreatestRealSig{bf}
+	case tpDecimal:
+		sig = &builtinGreatestDecimalSig{bf}
+	case tpString:
+		sig = &builtinGreatestStringSig{bf}
+	case tpDatetime:
+		sig = &builtinGreatestTimeSig{bf}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinGreatestSig struct {
+type builtinGreatestIntSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinGreatestSig.
+// evalInt evals a builtinGreatestIntSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return
-	}
-	max := 0
+func (b *builtinGreatestIntSig) evalInt(row []types.Datum) (max int64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	for i := 1; i < len(args); i++ {
-		if args[i].IsNull() {
-			return
+	max, isNull, err = b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return max, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v int64
+		v, isNull, err = b.args[i].EvalInt(row, sc)
+		if isNull || err != nil {
+			return max, isNull, errors.Trace(err)
 		}
-
-		var cmp int
-		if cmp, err = args[i].CompareDatum(sc, args[max]); err != nil {
-			return
-		}
-
-		if cmp > 0 {
-			max = i
+		if v > max {
+			max = v
 		}
 	}
-	d = args[max]
 	return
+}
+
+type builtinGreatestRealSig struct {
+	baseBuiltinFunc
+}
+
+// evalReal evals a builtinGreatestRealSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
+func (b *builtinGreatestRealSig) evalReal(row []types.Datum) (max float64, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	max, isNull, err = b.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return max, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v float64
+		v, isNull, err = b.args[i].EvalReal(row, sc)
+		if isNull || err != nil {
+			return max, isNull, errors.Trace(err)
+		}
+		if v > max {
+			max = v
+		}
+	}
+	return
+}
+
+type builtinGreatestDecimalSig struct {
+	baseBuiltinFunc
+}
+
+// evalDecimal evals a builtinGreatestDecimalSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
+func (b *builtinGreatestDecimalSig) evalDecimal(row []types.Datum) (max *types.MyDecimal, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	max, isNull, err = b.args[0].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return max, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v *types.MyDecimal
+		v, isNull, err = b.args[i].EvalDecimal(row, sc)
+		if isNull || err != nil {
+			return max, isNull, errors.Trace(err)
+		}
+		if v.Compare(max) > 0 {
+			max = v
+		}
+	}
+	return
+}
+
+type builtinGreatestStringSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals a builtinGreatestStringSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
+func (b *builtinGreatestStringSig) evalString(row []types.Datum) (max string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	max, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return max, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v string
+		v, isNull, err = b.args[i].EvalString(row, sc)
+		if isNull || err != nil {
+			return max, isNull, errors.Trace(err)
+		}
+		if types.CompareString(v, max) > 0 {
+			max = v
+		}
+	}
+	return
+}
+
+type builtinGreatestTimeSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals a builtinGreatestTimeSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
+func (b *builtinGreatestTimeSig) evalString(row []types.Datum) (_ string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	var (
+		v string
+		t types.Time
+	)
+	max := types.ZeroDatetime
+	for i := 0; i < len(b.args); i++ {
+		v, isNull, err = b.args[i].EvalString(row, sc)
+		if isNull {
+			return "", true, nil
+		}
+		t, err = types.ParseDatetime(v)
+		if err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				return v, true, errors.Trace(err)
+			}
+			continue
+		}
+		if t.Compare(max) > 0 {
+			max = t
+		}
+	}
+	return max.String(), false, nil
 }
 
 type leastFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinLeastSig{newBaseBuiltinFunc(args, ctx)}
+	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
+	if tp == tpDatetime {
+		cmpAsDatetime = true
+		tp = tpString
+	}
+	argTps := make([]evalTp, len(args))
+	for i := range args {
+		argTps[i] = tp
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tp, argTps...)
+	if cmpAsDatetime {
+		tp = tpDatetime
+	}
+	switch tp {
+	case tpInt:
+		sig = &builtinLeastIntSig{bf}
+	case tpReal:
+		sig = &builtinLeastRealSig{bf}
+	case tpDecimal:
+		sig = &builtinLeastDecimalSig{bf}
+	case tpString:
+		sig = &builtinLeastStringSig{bf}
+	case tpDatetime:
+		sig = &builtinLeastTimeSig{bf}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinLeastSig struct {
+type builtinLeastIntSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinLeastSig.
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
-func (b *builtinLeastSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return
-	}
-	min := 0
+// evalInt evals a builtinLeastIntSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+func (b *builtinLeastIntSig) evalInt(row []types.Datum) (min int64, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
-	for i := 1; i < len(args); i++ {
-		if args[i].IsNull() {
-			return
+	min, isNull, err = b.args[0].EvalInt(row, sc)
+	if isNull || err != nil {
+		return min, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v int64
+		v, isNull, err = b.args[i].EvalInt(row, sc)
+		if isNull || err != nil {
+			return min, isNull, errors.Trace(err)
 		}
-
-		var cmp int
-		if cmp, err = args[i].CompareDatum(sc, args[min]); err != nil {
-			return
-		}
-
-		if cmp < 0 {
-			min = i
+		if v < min {
+			min = v
 		}
 	}
-	d = args[min]
 	return
+}
+
+type builtinLeastRealSig struct {
+	baseBuiltinFunc
+}
+
+// evalReal evals a builtinLeastRealSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+func (b *builtinLeastRealSig) evalReal(row []types.Datum) (min float64, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	min, isNull, err = b.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return min, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v float64
+		v, isNull, err = b.args[i].EvalReal(row, sc)
+		if isNull || err != nil {
+			return min, isNull, errors.Trace(err)
+		}
+		if v < min {
+			min = v
+		}
+	}
+	return
+}
+
+type builtinLeastDecimalSig struct {
+	baseBuiltinFunc
+}
+
+// evalDecimal evals a builtinLeastDecimalSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+func (b *builtinLeastDecimalSig) evalDecimal(row []types.Datum) (min *types.MyDecimal, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	min, isNull, err = b.args[0].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return min, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v *types.MyDecimal
+		v, isNull, err = b.args[i].EvalDecimal(row, sc)
+		if isNull || err != nil {
+			return min, isNull, errors.Trace(err)
+		}
+		if v.Compare(min) < 0 {
+			min = v
+		}
+	}
+	return
+}
+
+type builtinLeastStringSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals a builtinLeastStringSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+func (b *builtinLeastStringSig) evalString(row []types.Datum) (min string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	min, isNull, err = b.args[0].EvalString(row, sc)
+	if isNull || err != nil {
+		return min, isNull, errors.Trace(err)
+	}
+	for i := 1; i < len(b.args); i++ {
+		var v string
+		v, isNull, err = b.args[i].EvalString(row, sc)
+		if isNull || err != nil {
+			return min, isNull, errors.Trace(err)
+		}
+		if types.CompareString(v, min) < 0 {
+			min = v
+		}
+	}
+	return
+}
+
+type builtinLeastTimeSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals a builtinLeastTimeSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+func (b *builtinLeastTimeSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	var (
+		v string
+		t types.Time
+	)
+	min := types.Time{
+		Time: types.MaxDatetime,
+		Type: mysql.TypeDatetime,
+		Fsp:  types.MaxFsp,
+	}
+	findInvalidTime := false
+	for i := 0; i < len(b.args); i++ {
+		v, isNull, err = b.args[i].EvalString(row, sc)
+		if isNull {
+			return "", true, nil
+		}
+		t, err = types.ParseDatetime(v)
+		if err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				return v, true, errors.Trace(err)
+			} else if !findInvalidTime {
+				res = v
+				findInvalidTime = true
+			}
+		}
+		if t.Compare(min) < 0 {
+			min = t
+		}
+	}
+	if !findInvalidTime {
+		res = min.String()
+	}
+	return res, false, nil
 }
 
 type intervalFunctionClass struct {
@@ -383,48 +703,122 @@ func (c *intervalFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinIntervalSig{newBaseBuiltinFunc(args, ctx)}
+
+	allInt := true
+	for i := range args {
+		if fieldTp2EvalTp(args[i].GetType()) != tpInt {
+			allInt = false
+		}
+	}
+
+	argTps, argTp := make([]evalTp, 0, len(args)), tpReal
+	if allInt {
+		argTp = tpInt
+	}
+	for range args {
+		argTps = append(argTps, argTp)
+	}
+	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, argTps...)
+	var sig builtinFunc
+	if allInt {
+		sig = &builtinIntervalIntSig{bf}
+	} else {
+		sig = &builtinIntervalRealSig{bf}
+	}
 	return sig.setSelf(sig), nil
 }
 
-type builtinIntervalSig struct {
+type builtinIntervalIntSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinIntervalSig.
+// evalInt evals a builtinIntervalIntSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
-func (b *builtinIntervalSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		d.SetInt64(int64(-1))
-		return
-	}
+func (b *builtinIntervalIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
+	args0, isNull, err := b.args[0].EvalInt(row, sc)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull {
+		return -1, false, nil
+	}
+	idx, err := b.binSearch(sc, args0, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], row)
+	return int64(idx), err != nil, errors.Trace(err)
+}
 
-	idx := sort.Search(len(args)-1, func(i int) bool {
-		d1, d2 := args[0], args[i+1]
-		if d1.Kind() == types.KindInt64 && d1.Kind() == d2.Kind() {
-			return d1.GetInt64() < d2.GetInt64()
+// All arguments are treated as integers.
+// It is required that arg[0] < args[1] < args[2] < ... < args[n] for this function to work correctly.
+// This is because a binary search is used (very fast).
+func (b *builtinIntervalIntSig) binSearch(sc *variable.StatementContext, target int64, isUint1 bool, args []Expression, row []types.Datum) (_ int, err error) {
+	i, j, cmp := 0, len(args), false
+	for i < j {
+		mid := i + (j-i)/2
+		v, isNull, err1 := args[mid].EvalInt(row, sc)
+		if err1 != nil {
+			err = err1
+			break
 		}
-		if d1.Kind() == types.KindUint64 && d1.Kind() == d2.Kind() {
-			return d1.GetUint64() < d2.GetUint64()
+		if isNull {
+			v = target
 		}
-		if d1.Kind() == types.KindInt64 && d2.Kind() == types.KindUint64 {
-			return d1.GetInt64() < 0 || d1.GetUint64() < d2.GetUint64()
+		isUint2 := mysql.HasUnsignedFlag(args[mid].GetType().Flag)
+		switch {
+		case !isUint1 && !isUint2:
+			cmp = target < v
+		case isUint1 && isUint2:
+			cmp = uint64(target) < uint64(v)
+		case !isUint1 && isUint2:
+			cmp = target < 0 || uint64(target) < uint64(v)
+		case isUint1 && !isUint2:
+			cmp = v > 0 && uint64(target) < uint64(v)
 		}
-		if d1.Kind() == types.KindUint64 && d2.Kind() == types.KindInt64 {
-			return d2.GetInt64() > 0 && d1.GetUint64() < d2.GetUint64()
+		if !cmp {
+			i = mid + 1
+		} else {
+			j = mid
 		}
-		v1, _ := d1.ToFloat64(sc)
-		v2, _ := d2.ToFloat64(sc)
-		return v1 < v2
-	})
-	d.SetInt64(int64(idx))
+	}
+	return i, errors.Trace(err)
+}
 
-	return
+type builtinIntervalRealSig struct {
+	baseBuiltinFunc
+}
+
+// evalInt evals a builtinIntervalRealSig.
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
+func (b *builtinIntervalRealSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	args0, isNull, err := b.args[0].EvalReal(row, sc)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull {
+		return -1, false, nil
+	}
+	idx, err := b.binSearch(sc, args0, b.args[1:], row)
+	return int64(idx), err != nil, errors.Trace(err)
+}
+
+func (b *builtinIntervalRealSig) binSearch(sc *variable.StatementContext, target float64, args []Expression, row []types.Datum) (_ int, err error) {
+	i, j := 0, len(args)
+	for i < j {
+		mid := i + (j-i)/2
+		v, isNull, err1 := args[mid].EvalReal(row, sc)
+		if err != nil {
+			err = err1
+			break
+		}
+		if isNull {
+			i = mid + 1
+		} else if cmp := target < v; !cmp {
+			i = mid + 1
+		} else {
+			j = mid
+		}
+	}
+	return i, errors.Trace(err)
 }
 
 type compareFunctionClass struct {
@@ -480,13 +874,11 @@ func refineConstantArg(con *Constant, op opcode.Op, ctx context.Context) *Consta
 	sc := ctx.GetSessionVars().StmtCtx
 	i64, err := con.Value.ToInt64(sc)
 	if err != nil {
-		log.Warnf("failed to refine this expression, the constant argument is %s", con)
 		return con
 	}
 	datumInt := types.NewIntDatum(i64)
-	c, err := datumInt.CompareDatum(sc, con.Value)
+	c, err := datumInt.CompareDatum(sc, &con.Value)
 	if err != nil {
-		log.Warnf("failed to refine this expression, the constant argument is %s", con)
 		return con
 	}
 	if c == 0 {
@@ -566,7 +958,7 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 				or
 				<const string expression> <cmp> <non-const decimal expression>
 
-				Do comparision as decimal rather than float, in order not to lose precision.
+				Do comparison as decimal rather than float, in order not to lose precision.
 			)*/
 			cmpType = types.ClassDecimal
 		} else if isTemporalColumn(args[0]) && isConst1 ||
@@ -614,174 +1006,173 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx context.Context) (sig builtinFunc, err error) {
 	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tp, tp)
 	bf.tp.Flen = 1
-	intBf := baseIntBuiltinFunc{bf}
 	switch tp {
 	case tpInt:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTIntSig{intBf}
+			sig = &builtinLTIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTInt)
 		case opcode.LE:
-			sig = &builtinLEIntSig{intBf}
+			sig = &builtinLEIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEInt)
 		case opcode.GT:
-			sig = &builtinGTIntSig{intBf}
+			sig = &builtinGTIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTInt)
 		case opcode.EQ:
-			sig = &builtinEQIntSig{intBf}
+			sig = &builtinEQIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQInt)
 		case opcode.GE:
-			sig = &builtinGEIntSig{intBf}
+			sig = &builtinGEIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEInt)
 		case opcode.NE:
-			sig = &builtinNEIntSig{intBf}
+			sig = &builtinNEIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEInt)
 		case opcode.NullEQ:
-			sig = &builtinNullEQIntSig{intBf}
+			sig = &builtinNullEQIntSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQInt)
 		}
 	case tpReal:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTRealSig{intBf}
+			sig = &builtinLTRealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTReal)
 		case opcode.LE:
-			sig = &builtinLERealSig{intBf}
+			sig = &builtinLERealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEReal)
 		case opcode.GT:
-			sig = &builtinGTRealSig{intBf}
+			sig = &builtinGTRealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTReal)
 		case opcode.GE:
-			sig = &builtinGERealSig{intBf}
+			sig = &builtinGERealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEReal)
 		case opcode.EQ:
-			sig = &builtinEQRealSig{intBf}
+			sig = &builtinEQRealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQReal)
 		case opcode.NE:
-			sig = &builtinNERealSig{intBf}
+			sig = &builtinNERealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEReal)
 		case opcode.NullEQ:
-			sig = &builtinNullEQRealSig{intBf}
+			sig = &builtinNullEQRealSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQReal)
 		}
 	case tpDecimal:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTDecimalSig{intBf}
+			sig = &builtinLTDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTDecimal)
 		case opcode.LE:
-			sig = &builtinLEDecimalSig{intBf}
+			sig = &builtinLEDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEDecimal)
 		case opcode.GT:
-			sig = &builtinGTDecimalSig{intBf}
+			sig = &builtinGTDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTDecimal)
 		case opcode.GE:
-			sig = &builtinGEDecimalSig{intBf}
+			sig = &builtinGEDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEDecimal)
 		case opcode.EQ:
-			sig = &builtinEQDecimalSig{intBf}
+			sig = &builtinEQDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQDecimal)
 		case opcode.NE:
-			sig = &builtinNEDecimalSig{intBf}
+			sig = &builtinNEDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEDecimal)
 		case opcode.NullEQ:
-			sig = &builtinNullEQDecimalSig{intBf}
+			sig = &builtinNullEQDecimalSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQDecimal)
 		}
 	case tpString:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTStringSig{intBf}
+			sig = &builtinLTStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTString)
 		case opcode.LE:
-			sig = &builtinLEStringSig{intBf}
+			sig = &builtinLEStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEString)
 		case opcode.GT:
-			sig = &builtinGTStringSig{intBf}
+			sig = &builtinGTStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTString)
 		case opcode.GE:
-			sig = &builtinGEStringSig{intBf}
+			sig = &builtinGEStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEString)
 		case opcode.EQ:
-			sig = &builtinEQStringSig{intBf}
+			sig = &builtinEQStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQString)
 		case opcode.NE:
-			sig = &builtinNEStringSig{intBf}
+			sig = &builtinNEStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEString)
 		case opcode.NullEQ:
-			sig = &builtinNullEQStringSig{intBf}
+			sig = &builtinNullEQStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQString)
 		}
 	case tpDuration:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTDurationSig{intBf}
+			sig = &builtinLTDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTDuration)
 		case opcode.LE:
-			sig = &builtinLEDurationSig{intBf}
+			sig = &builtinLEDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEDuration)
 		case opcode.GT:
-			sig = &builtinGTDurationSig{intBf}
+			sig = &builtinGTDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTDuration)
 		case opcode.GE:
-			sig = &builtinGEDurationSig{intBf}
+			sig = &builtinGEDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEDuration)
 		case opcode.EQ:
-			sig = &builtinEQDurationSig{intBf}
+			sig = &builtinEQDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQDuration)
 		case opcode.NE:
-			sig = &builtinNEDurationSig{intBf}
+			sig = &builtinNEDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEDuration)
 		case opcode.NullEQ:
-			sig = &builtinNullEQDurationSig{intBf}
+			sig = &builtinNullEQDurationSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQDuration)
 		}
 	case tpDatetime, tpTimestamp:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTTimeSig{intBf}
+			sig = &builtinLTTimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTTime)
 		case opcode.LE:
-			sig = &builtinLETimeSig{intBf}
+			sig = &builtinLETimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LETime)
 		case opcode.GT:
-			sig = &builtinGTTimeSig{intBf}
+			sig = &builtinGTTimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTTime)
 		case opcode.GE:
-			sig = &builtinGETimeSig{intBf}
+			sig = &builtinGETimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GETime)
 		case opcode.EQ:
-			sig = &builtinEQTimeSig{intBf}
+			sig = &builtinEQTimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQTime)
 		case opcode.NE:
-			sig = &builtinNETimeSig{intBf}
+			sig = &builtinNETimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NETime)
 		case opcode.NullEQ:
-			sig = &builtinNullEQTimeSig{intBf}
+			sig = &builtinNullEQTimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQTime)
 		}
 	case tpJSON:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTJSONSig{intBf}
+			sig = &builtinLTJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LTJson)
 		case opcode.LE:
-			sig = &builtinLEJSONSig{intBf}
+			sig = &builtinLEJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LEJson)
 		case opcode.GT:
-			sig = &builtinGTJSONSig{intBf}
+			sig = &builtinGTJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GTJson)
 		case opcode.GE:
-			sig = &builtinGEJSONSig{intBf}
+			sig = &builtinGEJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GEJson)
 		case opcode.EQ:
-			sig = &builtinEQJSONSig{intBf}
+			sig = &builtinEQJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_EQJson)
 		case opcode.NE:
-			sig = &builtinNEJSONSig{intBf}
+			sig = &builtinNEJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NEJson)
 		case opcode.NullEQ:
-			sig = &builtinNullEQJSONSig{intBf}
+			sig = &builtinNullEQJSONSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullEQJson)
 		}
 	}
@@ -789,7 +1180,7 @@ func (c *compareFunctionClass) generateCmpSigs(args []Expression, tp evalTp, ctx
 }
 
 type builtinLTIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLTIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -797,7 +1188,7 @@ func (s *builtinLTIntSig) evalInt(row []types.Datum) (val int64, isNull bool, er
 }
 
 type builtinLTRealSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLTRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -805,7 +1196,7 @@ func (s *builtinLTRealSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinLTDecimalSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLTDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -813,7 +1204,7 @@ func (s *builtinLTDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool
 }
 
 type builtinLTStringSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLTStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -821,7 +1212,7 @@ func (s *builtinLTStringSig) evalInt(row []types.Datum) (val int64, isNull bool,
 }
 
 type builtinLTDurationSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLTDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -829,7 +1220,7 @@ func (s *builtinLTDurationSig) evalInt(row []types.Datum) (val int64, isNull boo
 }
 
 type builtinLTTimeSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLTTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -837,7 +1228,7 @@ func (s *builtinLTTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinLTJSONSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLTJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -845,7 +1236,7 @@ func (s *builtinLTJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinLEIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -853,7 +1244,7 @@ func (s *builtinLEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, er
 }
 
 type builtinLERealSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLERealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -861,7 +1252,7 @@ func (s *builtinLERealSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinLEDecimalSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -869,7 +1260,7 @@ func (s *builtinLEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool
 }
 
 type builtinLEStringSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLEStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -877,7 +1268,7 @@ func (s *builtinLEStringSig) evalInt(row []types.Datum) (val int64, isNull bool,
 }
 
 type builtinLEDurationSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLEDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -885,7 +1276,7 @@ func (s *builtinLEDurationSig) evalInt(row []types.Datum) (val int64, isNull boo
 }
 
 type builtinLETimeSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -893,7 +1284,7 @@ func (s *builtinLETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinLEJSONSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinLEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -901,7 +1292,7 @@ func (s *builtinLEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinGTIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGTIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -909,7 +1300,7 @@ func (s *builtinGTIntSig) evalInt(row []types.Datum) (val int64, isNull bool, er
 }
 
 type builtinGTRealSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGTRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -917,7 +1308,7 @@ func (s *builtinGTRealSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinGTDecimalSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGTDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -925,7 +1316,7 @@ func (s *builtinGTDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool
 }
 
 type builtinGTStringSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGTStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -933,7 +1324,7 @@ func (s *builtinGTStringSig) evalInt(row []types.Datum) (val int64, isNull bool,
 }
 
 type builtinGTDurationSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGTDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -941,7 +1332,7 @@ func (s *builtinGTDurationSig) evalInt(row []types.Datum) (val int64, isNull boo
 }
 
 type builtinGTTimeSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGTTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -949,7 +1340,7 @@ func (s *builtinGTTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinGTJSONSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGTJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -957,7 +1348,7 @@ func (s *builtinGTJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinGEIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -965,7 +1356,7 @@ func (s *builtinGEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, er
 }
 
 type builtinGERealSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGERealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -973,7 +1364,7 @@ func (s *builtinGERealSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinGEDecimalSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -981,7 +1372,7 @@ func (s *builtinGEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool
 }
 
 type builtinGEStringSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGEStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -989,7 +1380,7 @@ func (s *builtinGEStringSig) evalInt(row []types.Datum) (val int64, isNull bool,
 }
 
 type builtinGEDurationSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGEDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -997,7 +1388,7 @@ func (s *builtinGEDurationSig) evalInt(row []types.Datum) (val int64, isNull boo
 }
 
 type builtinGETimeSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1005,7 +1396,7 @@ func (s *builtinGETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinGEJSONSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinGEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1013,7 +1404,7 @@ func (s *builtinGEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinEQIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinEQIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1021,7 +1412,7 @@ func (s *builtinEQIntSig) evalInt(row []types.Datum) (val int64, isNull bool, er
 }
 
 type builtinEQRealSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinEQRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1029,7 +1420,7 @@ func (s *builtinEQRealSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinEQDecimalSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1037,7 +1428,7 @@ func (s *builtinEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool
 }
 
 type builtinEQStringSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinEQStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1045,7 +1436,7 @@ func (s *builtinEQStringSig) evalInt(row []types.Datum) (val int64, isNull bool,
 }
 
 type builtinEQDurationSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinEQDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1053,7 +1444,7 @@ func (s *builtinEQDurationSig) evalInt(row []types.Datum) (val int64, isNull boo
 }
 
 type builtinEQTimeSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinEQTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1061,7 +1452,7 @@ func (s *builtinEQTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinEQJSONSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinEQJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1069,7 +1460,7 @@ func (s *builtinEQJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinNEIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1077,7 +1468,7 @@ func (s *builtinNEIntSig) evalInt(row []types.Datum) (val int64, isNull bool, er
 }
 
 type builtinNERealSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNERealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1085,7 +1476,7 @@ func (s *builtinNERealSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinNEDecimalSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1093,7 +1484,7 @@ func (s *builtinNEDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool
 }
 
 type builtinNEStringSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNEStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1101,7 +1492,7 @@ func (s *builtinNEStringSig) evalInt(row []types.Datum) (val int64, isNull bool,
 }
 
 type builtinNEDurationSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNEDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1109,7 +1500,7 @@ func (s *builtinNEDurationSig) evalInt(row []types.Datum) (val int64, isNull boo
 }
 
 type builtinNETimeSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1117,7 +1508,7 @@ func (s *builtinNETimeSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinNEJSONSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
@@ -1125,18 +1516,18 @@ func (s *builtinNEJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, e
 }
 
 type builtinNullEQIntSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNullEQIntSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalInt(row, sc)
 	if err != nil {
-		return zeroI64, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalInt(row, sc)
 	if err != nil {
-		return zeroI64, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.Trace(err)
 	}
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(s.args[0].GetType().Flag), mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 	var res int64
@@ -1168,18 +1559,18 @@ func (s *builtinNullEQIntSig) evalInt(row []types.Datum) (val int64, isNull bool
 }
 
 type builtinNullEQRealSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNullEQRealSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalReal(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalReal(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1194,18 +1585,18 @@ func (s *builtinNullEQRealSig) evalInt(row []types.Datum) (val int64, isNull boo
 }
 
 type builtinNullEQDecimalSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNullEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalDecimal(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalDecimal(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1220,18 +1611,18 @@ func (s *builtinNullEQDecimalSig) evalInt(row []types.Datum) (val int64, isNull 
 }
 
 type builtinNullEQStringSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNullEQStringSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalString(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalString(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1246,18 +1637,18 @@ func (s *builtinNullEQStringSig) evalInt(row []types.Datum) (val int64, isNull b
 }
 
 type builtinNullEQDurationSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNullEQDurationSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalDuration(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalDuration(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1272,18 +1663,18 @@ func (s *builtinNullEQDurationSig) evalInt(row []types.Datum) (val int64, isNull
 }
 
 type builtinNullEQTimeSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNullEQTimeSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalTime(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalTime(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1298,18 +1689,18 @@ func (s *builtinNullEQTimeSig) evalInt(row []types.Datum) (val int64, isNull boo
 }
 
 type builtinNullEQJSONSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 func (s *builtinNullEQJSONSig) evalInt(row []types.Datum) (val int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := s.args[0].EvalJSON(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	arg1, isNull1, err := s.args[1].EvalJSON(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	var res int64
 	switch {
@@ -1405,11 +1796,11 @@ func compareInt(args []Expression, row []types.Datum, ctx context.Context) (val 
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalInt(row, sc)
 	if isNull0 || err != nil {
-		return zeroI64, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalInt(row, sc)
 	if isNull1 || err != nil {
-		return zeroI64, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.Trace(err)
 	}
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(args[0].GetType().Flag), mysql.HasUnsignedFlag(args[1].GetType().Flag)
 	var res int
@@ -1438,11 +1829,11 @@ func compareString(args []Expression, row []types.Datum, ctx context.Context) (v
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalString(row, sc)
 	if isNull0 || err != nil {
-		return zeroI64, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalString(row, sc)
 	if isNull1 || err != nil {
-		return zeroI64, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.Trace(err)
 	}
 	return int64(types.CompareString(arg0, arg1)), false, nil
 }
@@ -1451,11 +1842,11 @@ func compareReal(args []Expression, row []types.Datum, ctx context.Context) (val
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalReal(row, sc)
 	if isNull0 || err != nil {
-		return zeroI64, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalReal(row, sc)
 	if isNull1 || err != nil {
-		return zeroI64, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.Trace(err)
 	}
 	return int64(types.CompareFloat64(arg0, arg1)), false, nil
 }
@@ -1464,14 +1855,14 @@ func compareDecimal(args []Expression, row []types.Datum, ctx context.Context) (
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalDecimal(row, sc)
 	if isNull0 || err != nil {
-		return zeroI64, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalDecimal(row, sc)
 	if err != nil {
-		return zeroI64, false, errors.Trace(err)
+		return 0, false, errors.Trace(err)
 	}
 	if isNull1 || err != nil {
-		return zeroI64, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.Trace(err)
 	}
 	return int64(arg0.Compare(arg1)), false, nil
 }
@@ -1480,11 +1871,11 @@ func compareTime(args []Expression, row []types.Datum, ctx context.Context) (int
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalTime(row, sc)
 	if isNull0 || err != nil {
-		return zeroI64, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalTime(row, sc)
 	if isNull1 || err != nil {
-		return zeroI64, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.Trace(err)
 	}
 	return int64(arg0.Compare(arg1)), false, nil
 }
@@ -1493,11 +1884,11 @@ func compareDuration(args []Expression, row []types.Datum, ctx context.Context) 
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalDuration(row, sc)
 	if isNull0 || err != nil {
-		return zeroI64, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalDuration(row, sc)
 	if isNull1 || err != nil {
-		return zeroI64, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.Trace(err)
 	}
 	return int64(arg0.Compare(arg1)), false, nil
 }
@@ -1506,11 +1897,11 @@ func compareJSON(args []Expression, row []types.Datum, ctx context.Context) (int
 	sc := ctx.GetSessionVars().StmtCtx
 	arg0, isNull0, err := args[0].EvalJSON(row, sc)
 	if isNull0 || err != nil {
-		return zeroI64, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.Trace(err)
 	}
 	arg1, isNull1, err := args[1].EvalJSON(row, sc)
 	if isNull1 || err != nil {
-		return zeroI64, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.Trace(err)
 	}
 	res, err := json.CompareJSON(arg0, arg1)
 	return int64(res), false, errors.Trace(err)

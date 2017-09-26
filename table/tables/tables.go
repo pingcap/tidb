@@ -18,10 +18,11 @@
 package tables
 
 import (
+	"math"
 	"strings"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -203,7 +204,7 @@ func (t *Table) RecordKey(h int64) kv.Key {
 
 // FirstKey implements table.Table FirstKey interface.
 func (t *Table) FirstKey() kv.Key {
-	return t.RecordKey(0)
+	return t.RecordKey(math.MinInt64)
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -238,7 +239,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cmp, errCmp := oldData[col.Offset].CompareDatum(ctx.GetSessionVars().StmtCtx, value)
+			cmp, errCmp := oldData[col.Offset].CompareDatum(ctx.GetSessionVars().StmtCtx, &value)
 			if errCmp != nil {
 				return errors.Trace(errCmp)
 			}
@@ -733,6 +734,11 @@ func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 		return 0, false, errors.Trace(err)
 	}
 	return handle, true, nil
+}
+
+// Type implements table.Table Type interface.
+func (t *Table) Type() table.Type {
+	return table.NormalTable
 }
 
 func shouldWriteBinlog(ctx context.Context) bool {

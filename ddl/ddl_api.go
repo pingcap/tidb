@@ -19,7 +19,6 @@ package ddl
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -299,7 +298,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
-				if !expression.IsCurrentTimeExpr(v.Expr) {
+				if !expression.IsCurrentTimestampExpr(v.Expr) {
 					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 				}
 				col.Flag |= mysql.OnUpdateNowFlag
@@ -328,6 +327,11 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 
 	if col.Charset == charset.CharsetBin {
 		col.Flag |= mysql.BinaryFlag
+	}
+	if col.Tp == mysql.TypeBit {
+		// For BIT field, it's charset is binary but does not have binary flag.
+		col.Flag &= ^mysql.BinaryFlag
+		col.Flag |= mysql.UnsignedFlag
 	}
 	err := checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
@@ -365,8 +369,24 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 		return nil, nil
 	}
 
-	if v.Kind() == types.KindMysqlHex {
-		return strconv.FormatInt(v.GetMysqlHex().Value, 10), nil
+	if v.Kind() == types.KindBinaryLiteral || v.Kind() == types.KindMysqlBit {
+		if tp == mysql.TypeBit ||
+			tp == mysql.TypeString || tp == mysql.TypeVarchar || tp == mysql.TypeVarString ||
+			tp == mysql.TypeBlob || tp == mysql.TypeLongBlob || tp == mysql.TypeMediumBlob || tp == mysql.TypeTinyBlob ||
+			tp == mysql.TypeJSON {
+			// For BinaryLiteral / string fields, when getting default value we cast the value into BinaryLiteral{}, thus we return
+			// its raw string content here.
+			return v.GetBinaryLiteral().ToString(), nil
+		}
+		// For other kind of fields (e.g. INT), we supply its integer value so that it acts as integers.
+		return v.GetBinaryLiteral().ToInt()
+	}
+
+	if tp == mysql.TypeBit {
+		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
+			// For BIT fields, convert int into BinaryLiteral.
+			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), nil
+		}
 	}
 
 	return v.ToString()
@@ -388,9 +408,9 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	// For timestamp Col, if is not set default value or not set null, use current timestamp.
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
-			c.DefaultValue = expression.ZeroTimestamp
+			c.DefaultValue = types.ZeroDatetimeStr
 		} else {
-			c.DefaultValue = expression.CurrentTimestamp
+			c.DefaultValue = strings.ToUpper(ast.CurrentTimestamp)
 		}
 	}
 }
@@ -418,14 +438,14 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 	if c.DefaultValue != nil {
 		_, err := table.GetColDefaultValue(ctx, c.ToInfo())
 		if types.ErrTruncated.Equal(err) {
-			return errInvalidDefault.GenByArgs(c.Name)
+			return types.ErrInvalidDefault.GenByArgs(c.Name)
 		}
 		return errors.Trace(err)
 	}
 
 	// Set not null but default null is invalid.
 	if mysql.HasNotNullFlag(c.Flag) {
-		return errInvalidDefault.GenByArgs(c.Name)
+		return types.ErrInvalidDefault.GenByArgs(c.Name)
 	}
 
 	return nil
@@ -474,6 +494,13 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
 			return ErrTooLongIdent.Gen("too long column %s", colDef.Name.Name)
 		}
+	}
+	return nil
+}
+
+func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
+	if len(colDefs) > TableColumnCountLimit {
+		return errTooManyFields
 	}
 	return nil
 }
@@ -708,6 +735,9 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	if err = checkTooLongColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
+	if err = checkTooManyColumns(colDefs); err != nil {
+		return errors.Trace(err)
+	}
 
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, constraints)
 	if err != nil {
@@ -919,7 +949,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		}
 	}
 
-	if col.OriginDefaultValue == expression.CurrentTimestamp &&
+	if col.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
 		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
 		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
 	}
@@ -1079,7 +1109,7 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			return errUnsupportedModifyColumn.Gen("unsupported modify column constraint - %v", opt.Tp)
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
-			if !expression.IsCurrentTimeExpr(opt.Expr) {
+			if !expression.IsCurrentTimestampExpr(opt.Expr) {
 				return ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 			}
 			col.Flag |= mysql.OnUpdateNowFlag

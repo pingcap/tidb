@@ -18,8 +18,8 @@ import (
 	"math"
 	"strings"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -298,7 +298,7 @@ func getPseudoRowCountByColumnRanges(sc *variable.StatementContext, tableRowCoun
 		} else if ran.High.Kind() == types.KindMaxValue {
 			rowCount += tableRowCount / pseudoLessRate
 		} else {
-			compare, err1 := ran.Low.CompareDatum(sc, ran.High)
+			compare, err1 := ran.Low.CompareDatum(sc, &ran.High)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}

@@ -69,7 +69,7 @@ func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
 	}
 	tblInfo.Columns[0].Flag |= mysql.PriKeyFlag
 	alloc := autoid.NewMemoryAllocator(int64(10))
-	ts.tbl, _ = tables.MemoryTableFromMeta(alloc, tblInfo)
+	ts.tbl = tables.MemoryTableFromMeta(alloc, tblInfo)
 }
 
 func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {

@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -26,7 +27,7 @@ import (
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *basePhysicalPlan) ToPB(_ context.Context) (*tipb.Executor, error) {
-	return nil, errors.Errorf("plan %s fails converts to PB", p.basePlan.id)
+	return nil, errors.Errorf("plan %d fails converts to PB", p.basePlan.id)
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -37,7 +38,7 @@ func (p *PhysicalAggregation) ToPB(ctx context.Context) (*tipb.Executor, error) 
 		GroupBy: expression.ExpressionsToPBList(sc, p.GroupByItems, client),
 	}
 	for _, aggFunc := range p.AggFuncs {
-		aggExec.AggFunc = append(aggExec.AggFunc, expression.AggFuncToPBExpr(sc, client, aggFunc))
+		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeAggregation, Aggregation: aggExec}, nil
 }

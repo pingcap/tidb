@@ -137,6 +137,16 @@ func (s *testMockTiKVSuite) mustScanOK(c *C, start string, limit int, ts uint64,
 	}
 }
 
+func (s *testMockTiKVSuite) mustReverseScanOK(c *C, end string, limit int, ts uint64, expect ...string) {
+	pairs := s.store.ReverseScan(nil, []byte(end), limit, ts, kvrpcpb.IsolationLevel_SI)
+	c.Assert(len(pairs)*2, Equals, len(expect))
+	for i := 0; i < len(pairs); i++ {
+		c.Assert(pairs[i].Err, IsNil)
+		c.Assert(pairs[i].Key, BytesEquals, []byte(expect[i*2]))
+		c.Assert(string(pairs[i].Value), Equals, expect[i*2+1])
+	}
+}
+
 func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
 	errs := s.store.Prewrite(mutations, []byte(primary), startTS, 0)
 	for _, err := range errs {
@@ -200,6 +210,65 @@ func (s *testMockTiKVSuite) TestCleanupRollback(c *C) {
 	s.mustGetErr(c, "secondary", 12)
 	s.mustCommitOK(c, [][]byte{[]byte("primary")}, 5, 10)
 	s.mustRollbackErr(c, [][]byte{[]byte("primary")}, 5)
+}
+
+func (s *testMockTiKVSuite) TestReverseScan(c *C) {
+	// ver10: A(10) - B(_) - C(10) - D(_) - E(10)
+	s.mustPutOK(c, "A", "A10", 5, 10)
+	s.mustPutOK(c, "C", "C10", 5, 10)
+	s.mustPutOK(c, "E", "E10", 5, 10)
+
+	checkV10 := func() {
+		s.mustReverseScanOK(c, "Z", 0, 10)
+		s.mustReverseScanOK(c, "Z", 1, 10, "E", "E10")
+		s.mustReverseScanOK(c, "Z", 2, 10, "E", "E10", "C", "C10")
+		s.mustReverseScanOK(c, "Z", 3, 10, "E", "E10", "C", "C10", "A", "A10")
+		s.mustReverseScanOK(c, "Z", 4, 10, "E", "E10", "C", "C10", "A", "A10")
+		s.mustReverseScanOK(c, "E\x00", 3, 10, "E", "E10", "C", "C10", "A", "A10")
+		s.mustReverseScanOK(c, "C\x00", 3, 10, "C", "C10", "A", "A10")
+		s.mustReverseScanOK(c, "C\x00", 4, 10, "C", "C10", "A", "A10")
+		s.mustReverseScanOK(c, "B", 1, 10, "A", "A10")
+	}
+	checkV10()
+
+	// ver20: A(10) - B(20) - C(10) - D(20) - E(10)
+	s.mustPutOK(c, "B", "B20", 15, 20)
+	s.mustPutOK(c, "D", "D20", 15, 20)
+
+	checkV20 := func() {
+		s.mustReverseScanOK(c, "Z", 5, 20, "E", "E10", "D", "D20", "C", "C10", "B", "B20", "A", "A10")
+		s.mustReverseScanOK(c, "C\x00", 5, 20, "C", "C10", "B", "B20", "A", "A10")
+		s.mustReverseScanOK(c, "A\x00", 1, 20, "A", "A10")
+	}
+	checkV10()
+	checkV20()
+
+	// ver30: A(_) - B(20) - C(10) - D(_) - E(10)
+	s.mustDeleteOK(c, "A", 25, 30)
+	s.mustDeleteOK(c, "D", 25, 30)
+
+	checkV30 := func() {
+		s.mustReverseScanOK(c, "Z", 5, 30, "E", "E10", "C", "C10", "B", "B20")
+		s.mustReverseScanOK(c, "C", 1, 30, "B", "B20")
+		s.mustReverseScanOK(c, "C\x00", 5, 30, "C", "C10", "B", "B20")
+	}
+	checkV10()
+	checkV20()
+	checkV30()
+
+	// ver40: A(_) - B(_) - C(40) - D(40) - E(10)
+	s.mustDeleteOK(c, "B", 35, 40)
+	s.mustPutOK(c, "C", "C40", 35, 40)
+	s.mustPutOK(c, "D", "D40", 35, 40)
+
+	checkV40 := func() {
+		s.mustReverseScanOK(c, "Z", 5, 40, "E", "E10", "D", "D40", "C", "C40")
+		s.mustReverseScanOK(c, "Z", 5, 100, "E", "E10", "D", "D40", "C", "C40")
+	}
+	checkV10()
+	checkV20()
+	checkV30()
+	checkV40()
 }
 
 func (s *testMockTiKVSuite) TestScan(c *C) {

@@ -228,9 +228,12 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
+	originTZ := sc.TimeZone
 	sc.IgnoreTruncate = true
+	sc.TimeZone = time.Local
 	defer func() {
 		sc.IgnoreTruncate = originIgnoreTruncate
+		sc.TimeZone = originTZ
 	}()
 	var sig builtinFunc
 
@@ -273,7 +276,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 	for i, t := range castToDecCases {
 		args := []Expression{t.before}
-		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		decFunc := newBaseBuiltinFunc(args, ctx)
 		decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
 		switch i {
 		case 0:
@@ -356,7 +359,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeNewDecimal)
 		tp.Flen, tp.Decimal = t.flen, t.decimal
-		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		decFunc := newBaseBuiltinFunc(args, ctx)
 		decFunc.tp = tp
 		switch i {
 		case 0:
@@ -423,7 +426,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 	for i, t := range castToIntCases {
 		args := []Expression{t.before}
-		intFunc := baseIntBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		intFunc := newBaseBuiltinFunc(args, ctx)
 		switch i {
 		case 0:
 			sig = &builtinCastStringAsIntSig{intFunc}
@@ -489,7 +492,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 	for i, t := range castToRealCases {
 		args := []Expression{t.before}
-		realFunc := baseRealBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		realFunc := newBaseBuiltinFunc(args, ctx)
 		switch i {
 		case 0:
 			sig = &builtinCastStringAsRealSig{realFunc}
@@ -563,7 +566,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.Charset = charset.CharsetBin
 		args := []Expression{t.before}
-		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		stringFunc := newBaseBuiltinFunc(args, ctx)
 		stringFunc.tp = tp
 		switch i {
 		case 0:
@@ -641,7 +644,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.Flen, tp.Charset = t.flen, charset.CharsetBin
-		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		stringFunc := newBaseBuiltinFunc(args, ctx)
 		stringFunc.tp = tp
 		switch i {
 		case 0:
@@ -716,7 +719,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDatetime)
 		tp.Decimal = types.DefaultFsp
-		timeFunc := baseTimeBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		timeFunc := newBaseBuiltinFunc(args, ctx)
 		timeFunc.tp = tp
 		switch i {
 		case 0:
@@ -737,6 +740,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalTime(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
+		c.Assert(res.TimeZone, Equals, sc.TimeZone)
 		c.Assert(res.String(), Equals, t.after.String())
 	}
 
@@ -800,7 +804,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(t.tp)
 		tp.Decimal = t.fsp
-		timeFunc := baseTimeBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		timeFunc := newBaseBuiltinFunc(args, ctx)
 		timeFunc.tp = tp
 		switch i {
 		case 0:
@@ -819,6 +823,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalTime(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
+		c.Assert(res.TimeZone, Equals, sc.TimeZone)
 		resAfter := t.after.String()
 		if t.fsp > 0 {
 			resAfter += "."
@@ -881,7 +886,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = types.DefaultFsp
-		durationFunc := baseDurationBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		durationFunc := newBaseBuiltinFunc(args, ctx)
 		durationFunc.tp = tp
 		switch i {
 		case 0:
@@ -958,7 +963,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = t.fsp
-		durationFunc := baseDurationBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		durationFunc := newBaseBuiltinFunc(args, ctx)
 		durationFunc.tp = tp
 		switch i {
 		case 0:
@@ -990,7 +995,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	// null case
 	args := []Expression{&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
 	row := []types.Datum{types.NewDatum(nil)}
-	bf := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+	bf := newBaseBuiltinFunc(args, ctx)
 	bf.tp = types.NewFieldType(mysql.TypeVarString)
 	sig = &builtinCastRealAsStringSig{bf}
 	sRes, isNull, err := sig.evalString(row)
@@ -1000,7 +1005,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 
 	// test hybridType case.
 	args = []Expression{&Constant{types.NewDatum(types.Enum{Name: "a", Value: 0}), types.NewFieldType(mysql.TypeEnum)}}
-	sig = &builtinCastStringAsIntSig{baseIntBuiltinFunc{newBaseBuiltinFunc(args, ctx)}}
+	sig = &builtinCastStringAsIntSig{newBaseBuiltinFunc(args, ctx)}
 	iRes, isNull, err := sig.evalInt(nil)
 	c.Assert(isNull, Equals, false)
 	c.Assert(err, IsNil)
@@ -1076,9 +1081,9 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 			123, 123, types.NewDecFromStringForTest("123"), "a",
 		},
 		{
-			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewDatum(types.Hex{Value: 0x61})},
+			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0x61, -1))},
 			nil,
-			97, 97, types.NewDecFromInt(97), "a",
+			97, 97, types.NewDecFromInt(0x61), "a",
 		},
 	}
 	for _, t := range cases {
@@ -1116,7 +1121,8 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		strExpr := WrapWithCastAsString(t.expr, ctx)
 		c.Assert(strExpr.GetTypeClass(), Equals, types.ClassString)
 		_, ok = strExpr.(*ScalarFunction)
-		c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassString)
+		exprTp := t.expr.GetType().Tp
+		c.Assert(ok, Equals, t.expr.GetTypeClass() != types.ClassString || types.IsTypeTime(exprTp) || exprTp == mysql.TypeDuration)
 		strRes, isNull, err := strExpr.EvalString(t.row, sc)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)

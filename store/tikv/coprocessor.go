@@ -19,14 +19,17 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
+
+var copIteratorGP = gp.New(time.Minute)
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -45,6 +48,8 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 		}
 	case kv.ReqTypeDAG:
 		return c.supportExpr(tipb.ExprType(subType))
+	case kv.ReqTypeAnalyze:
+		return c.store.mock
 	}
 	return false
 }
@@ -81,7 +86,7 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	case kv.ReqSubTypeDesc:
 		return true
 	case kv.ReqSubTypeSignature:
-		return c.store.mock
+		return true
 	default:
 		return false
 	}
@@ -113,7 +118,6 @@ func (c *CopClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
 	if !it.req.KeepOrder {
 		it.respChan = make(chan copResponse, it.concurrency)
 	}
-	it.taskCh = make(chan *copTask, req.Concurrency)
 	it.run(ctx)
 	return it
 }
@@ -301,7 +305,6 @@ type copIterator struct {
 	req         *kv.Request
 	concurrency int
 	finished    chan struct{}
-	taskCh      chan *copTask
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
@@ -358,39 +361,40 @@ func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 }
 
 func (it *copIterator) run(ctx goctx.Context) {
+	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
-		go func() {
+		copIteratorGP.Go(func() {
 			childCtx, cancel := goctx.WithCancel(ctx)
 			defer cancel()
-			it.work(childCtx, it.taskCh)
-		}()
+			it.work(childCtx, taskCh)
+		})
 	}
 
-	go func() {
+	copIteratorGP.Go(func() {
 		// Send tasks to feed the worker goroutines.
 		childCtx, cancel := goctx.WithCancel(ctx)
 		defer cancel()
 		for _, t := range it.tasks {
-			finished, canceled := it.sendToTaskCh(childCtx, t)
+			finished, canceled := it.sendToTaskCh(childCtx, t, taskCh)
 			if finished || canceled {
 				break
 			}
 		}
-		close(it.taskCh)
+		close(taskCh)
 
 		// Wait for worker goroutines to exit.
 		it.wg.Wait()
 		if !it.req.KeepOrder {
 			close(it.respChan)
 		}
-	}()
+	})
 }
 
-func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask) (finished bool, canceled bool) {
+func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask, taskCh chan<- *copTask) (finished bool, canceled bool) {
 	select {
-	case it.taskCh <- t:
+	case taskCh <- t:
 	case <-it.finished:
 		finished = true
 	case <-ctx.Done():
@@ -427,6 +431,7 @@ func (it *copIterator) Next() ([]byte, error) {
 				break
 			}
 			// Switch to next task.
+			it.tasks[it.curr] = nil
 			it.curr++
 		}
 	}
@@ -437,6 +442,12 @@ func (it *copIterator) Next() ([]byte, error) {
 	if resp.Data == nil {
 		return []byte{}, nil
 	}
+
+	err := it.store.CheckVisibility(it.req.StartTs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return resp.Data, nil
 }
 

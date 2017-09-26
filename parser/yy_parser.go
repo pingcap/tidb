@@ -196,16 +196,10 @@ func toFloat(l yyLexer, lval *yySymType, str string) int {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func toHex(l yyLexer, lval *yySymType, str string) int {
-	h, err := types.ParseHex(str)
+	h, err := types.NewHexLiteral(str)
 	if err != nil {
-		// If parse hexadecimal literal to numerical value error, we should treat it as a string.
-		hexStr, err1 := types.ParseHexStr(str)
-		if err1 != nil {
-			l.Errorf("hex literal: %v", err)
-			return int(unicode.ReplacementChar)
-		}
-		lval.item = hexStr
-		return hexLit
+		l.Errorf("hex literal: %v", err)
+		return int(unicode.ReplacementChar)
 	}
 	lval.item = h
 	return hexLit
@@ -213,7 +207,7 @@ func toHex(l yyLexer, lval *yySymType, str string) int {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
 func toBit(l yyLexer, lval *yySymType, str string) int {
-	b, err := types.ParseBit(str, -1)
+	b, err := types.NewBitLiteral(str)
 	if err != nil {
 		l.Errorf("bit literal: %v", err)
 		return int(unicode.ReplacementChar)

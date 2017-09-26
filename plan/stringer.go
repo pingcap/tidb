@@ -184,6 +184,23 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.InnerJoinKeys[i]
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
+	case *Analyze:
+		str = "Analyze{"
+		var children []string
+		for _, idx := range x.IdxTasks {
+			children = append(children, fmt.Sprintf("Index(%t, %s.%s)", idx.PushDown, idx.TableInfo.Name.O, idx.IndexInfo.Name.O))
+		}
+		for _, col := range x.ColTasks {
+			var colNames []string
+			if col.PKInfo != nil {
+				colNames = append(colNames, fmt.Sprintf("%s.%s", col.TableInfo.Name.O, col.PKInfo.Name.O))
+			}
+			for _, c := range col.ColsInfo {
+				colNames = append(colNames, fmt.Sprintf("%s.%s", col.TableInfo.Name.O, c.Name.O))
+			}
+			children = append(children, fmt.Sprintf("Table(%t, %s)", col.PushDown, strings.Join(colNames, ", ")))
+		}
+		str = str + strings.Join(children, ",") + "}"
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

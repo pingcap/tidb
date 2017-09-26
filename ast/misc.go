@@ -14,7 +14,9 @@
 package ast
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
@@ -52,6 +54,18 @@ const (
 	ReadUncommitted = "READ-UNCOMMITTED"
 	Serializable    = "SERIALIZABLE"
 	RepeatableRead  = "REPEATABLE-READ"
+
+	// Valid formats for explain statement.
+	ExplainFormatROW = "row"
+	ExplainFormatDOT = "dot"
+)
+
+var (
+	// ExplainFormats stores the valid formats for explain statement, used by validator.
+	ExplainFormats = []string{
+		ExplainFormatROW,
+		ExplainFormatDOT,
+	}
 )
 
 // TypeOpt is used for parsing data type option from SQL.
@@ -82,7 +96,8 @@ type AuthOption struct {
 type ExplainStmt struct {
 	stmtNode
 
-	Stmt StmtNode
+	Stmt   StmtNode
+	Format string
 }
 
 // Accept implements Node Accept interface.
@@ -406,6 +421,11 @@ type SetPwdStmt struct {
 	Password string
 }
 
+// SecureText implements SensitiveStatement interface.
+func (n *SetPwdStmt) SecureText() string {
+	return fmt.Sprintf("set password for user %s", n.User)
+}
+
 // Accept implements Node Accept interface.
 func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -455,6 +475,17 @@ func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// SecureText implements SensitiveStatement interface.
+func (n *CreateUserStmt) SecureText() string {
+	var buf bytes.Buffer
+	buf.WriteString("create user")
+	for _, user := range n.Specs {
+		buf.WriteString(" ")
+		buf.WriteString(user.SecurityString())
+	}
+	return buf.String()
+}
+
 // AlterUserStmt modifies user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/alter-user.html
 type AlterUserStmt struct {
@@ -463,6 +494,17 @@ type AlterUserStmt struct {
 	IfExists    bool
 	CurrentAuth *AuthOption
 	Specs       []*UserSpec
+}
+
+// SecureText implements SensitiveStatement interface.
+func (n *AlterUserStmt) SecureText() string {
+	var buf bytes.Buffer
+	buf.WriteString("alter user")
+	for _, user := range n.Specs {
+		buf.WriteString(" ")
+		buf.WriteString(user.SecurityString())
+	}
+	return buf.String()
 }
 
 // Accept implements Node Accept interface.
@@ -525,6 +567,7 @@ type AdminStmtType int
 const (
 	AdminShowDDL = iota + 1
 	AdminCheckTable
+	AdminShowDDLJobs
 )
 
 // AdminStmt is the struct for Admin statement.
@@ -646,6 +689,17 @@ type GrantStmt struct {
 	Level      *GrantLevel
 	Users      []*UserSpec
 	WithGrant  bool
+}
+
+// SecureText implements SensitiveStatement interface.
+func (n *GrantStmt) SecureText() string {
+	text := n.text
+	// Filter "identified by xxx" because it would expose password information.
+	idx := strings.Index(strings.ToLower(text), "identified")
+	if idx > 0 {
+		text = text[:idx]
+	}
+	return text
 }
 
 // Accept implements Node Accept interface.

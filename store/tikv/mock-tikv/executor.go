@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -82,10 +83,11 @@ func (e *tableScanExec) Next() (handle int64, value [][]byte, err error) {
 
 func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error) {
 	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
 	if len(val) == 0 {
 		return 0, nil, nil
-	} else if err != nil {
-		return 0, nil, errors.Trace(err)
 	}
 	handle, err := tablecodec.DecodeRowKey(kv.Key(ran.StartKey))
 	if err != nil {
@@ -313,9 +315,12 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 	}
 }
 
+type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
+
 type aggregateExec struct {
 	evalCtx           *evalContext
-	aggExprs          []expression.AggregationFunction
+	aggExprs          []aggregation.Aggregation
+	aggCtxsMap        aggCtxsMapper
 	groupByExprs      []expression.Expression
 	relatedColOffsets []int
 	row               []types.Datum
@@ -348,6 +353,9 @@ func (e *aggregateExec) innerNext() (bool, error) {
 }
 
 func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
+	if e.aggCtxsMap == nil {
+		e.aggCtxsMap = make(aggCtxsMapper, 0)
+	}
 	if !e.executed {
 		for {
 			hasMore, err := e.innerNext()
@@ -366,8 +374,9 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	}
 	gk := e.groupKeys[e.currGroupIdx]
 	value = make([][]byte, 0, len(e.groupByExprs)+2*len(e.aggExprs))
-	for _, agg := range e.aggExprs {
-		partialResults := agg.GetPartialResult(gk)
+	aggCtxs := e.getContexts(gk)
+	for i, agg := range e.aggExprs {
+		partialResults := agg.GetPartialResult(aggCtxs[i])
 		for _, result := range partialResults {
 			data, err := codec.EncodeValue(nil, result)
 			if err != nil {
@@ -427,10 +436,24 @@ func (e *aggregateExec) aggregate(value [][]byte) error {
 		e.groupKeyRows = append(e.groupKeyRows, gbyKeyRow)
 	}
 	// Update aggregate expressions.
-	for _, agg := range e.aggExprs {
-		agg.Update(e.row, gk, e.evalCtx.sc)
+	aggCtxs := e.getContexts(gk)
+	for i, agg := range e.aggExprs {
+		agg.Update(aggCtxs[i], e.evalCtx.sc, e.row)
 	}
 	return nil
+}
+
+func (e *aggregateExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext {
+	groupKeyString := string(groupKey)
+	aggCtxs, ok := e.aggCtxsMap[groupKeyString]
+	if !ok {
+		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.aggExprs))
+		for _, agg := range e.aggExprs {
+			aggCtxs = append(aggCtxs, agg.CreateContext())
+		}
+		e.aggCtxsMap[groupKeyString] = aggCtxs
+	}
+	return aggCtxs
 }
 
 type topNExec struct {

@@ -22,15 +22,10 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists truncate_test;`)
@@ -44,10 +39,6 @@ func (s *testSuite) TestTruncateTable(c *C) {
 }
 
 func (s *testSuite) TestCreateTable(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
@@ -110,7 +101,6 @@ func (s *testSuite) TestCreateTable(c *C) {
 }
 
 func (s *testSuite) TestCreateDropDatabase(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists drop_test;")
 	tk.MustExec("drop database if exists drop_test;")
@@ -124,7 +114,6 @@ func (s *testSuite) TestCreateDropDatabase(c *C) {
 }
 
 func (s *testSuite) TestCreateDropTable(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
@@ -134,7 +123,6 @@ func (s *testSuite) TestCreateDropTable(c *C) {
 }
 
 func (s *testSuite) TestCreateDropIndex(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
@@ -144,7 +132,6 @@ func (s *testSuite) TestCreateDropIndex(c *C) {
 }
 
 func (s *testSuite) TestAlterTableAddColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")
@@ -164,7 +151,6 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 }
 
 func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table nn (c1 int)")
@@ -186,7 +172,6 @@ func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
 }
 
 func (s *testSuite) TestAlterTableModifyColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists mc")
@@ -210,7 +195,6 @@ func (s *testSuite) TestAlterTableModifyColumn(c *C) {
 }
 
 func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 
 	testSQL := `create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
@@ -230,7 +214,6 @@ func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
 }
 
 func (s *testSuite) TestRenameTable(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database rename1")
@@ -251,7 +234,6 @@ func (s *testSuite) TestRenameTable(c *C) {
 }
 
 func (s *testSuite) TestUnsupportedCharset(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	dbName := "unsupported_charset"
 	tk.MustExec("create database " + dbName)
