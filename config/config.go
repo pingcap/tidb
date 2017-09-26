@@ -114,7 +114,7 @@ var defaultConf = Config{
 		RetryLimit:      10,
 		JoinConcurrency: 5,
 		CrossJoin:       true,
-		StatsLease:      "3s",
+		StatsLease:      "0s",
 		RunAutoAnalyze:  false,
 	},
 	XProtocol: XProtocol{

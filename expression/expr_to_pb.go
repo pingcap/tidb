@@ -235,9 +235,12 @@ func (pc PbConverter) compareOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
 }
 
 func (pc PbConverter) likeToPBExpr(expr *ScalarFunction) *tipb.Expr {
+	log.Warning("in likeToPBExpr")
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_Like)) {
+		log.Warning("In if")
 		return nil
 	}
+	log.Warning("if")
 	return pc.convertToPBExpr(expr, tipb.ExprType_Like)
 }
 
@@ -357,6 +360,7 @@ func (pc PbConverter) controlFuncsToPBExpr(expr *ScalarFunction) *tipb.Expr {
 }
 
 func (pc PbConverter) convertToPBExpr(expr *ScalarFunction, tp tipb.ExprType) *tipb.Expr {
+	log.Warning(expr.String())
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
@@ -371,9 +375,11 @@ func (pc PbConverter) convertToPBExpr(expr *ScalarFunction, tp tipb.ExprType) *t
 	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeSignature) {
 		code := expr.Function.PbCode()
 		if code > 0 {
+			log.Warning("new expression")
 			return &tipb.Expr{Tp: tipb.ExprType_ScalarFunc, Sig: code, Children: children, FieldType: toPBFieldType(expr.RetType)}
 		}
 		return nil
 	}
+	log.Warning("old expression")
 	return &tipb.Expr{Tp: tp, Children: children}
 }
