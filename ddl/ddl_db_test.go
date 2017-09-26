@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -223,8 +224,9 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 }
 
 func (s *testDBSuite) TestAddUniqueIndexRollback(c *C) {
-	// t1 (c1 int, c2 int, c3 int, primary key(c1))
-	s.mustExec(c, "delete from t1")
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
 	// defaultBatchSize is equal to ddl.defaultBatchSize
 	base := defaultBatchSize * 2
 	count := base
@@ -276,6 +278,8 @@ LOOP:
 		s.mustExec(c, "delete from t1 where c1 = ?", i+10)
 	}
 	sessionExec(c, s.store, "create index c3_index on t1 (c3)")
+
+	s.mustExec(c, "drop table t1")
 }
 
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
@@ -463,7 +467,7 @@ LOOP:
 	s.tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite) testDropIndex(c *C) {
+func (s *testDBSuite) TestDropIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
@@ -1470,4 +1474,35 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	s.tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
+}
+
+func (s *testDBSuite) TestComment(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("drop table if exists ct, ct1")
+
+	validComment := strings.Repeat("a", 1024)
+	invalidComment := strings.Repeat("b", 1025)
+
+	s.tk.MustExec("create table ct (c int, d int, e int, key (c) comment '" + validComment + "')")
+	s.tk.MustExec("create index i on ct (d) comment '" + validComment + "'")
+	s.tk.MustExec("alter table ct add key (e) comment '" + validComment + "'")
+
+	s.testErrorCode(c, "create table ct1 (c int, key (c) comment '"+invalidComment+"')", tmysql.ErrTooLongIndexComment)
+	s.testErrorCode(c, "create index i1 on ct (d) comment '"+invalidComment+"b"+"'", tmysql.ErrTooLongIndexComment)
+	s.testErrorCode(c, "alter table ct add key (e) comment '"+invalidComment+"'", tmysql.ErrTooLongIndexComment)
+
+	s.tk.MustExec("set @@sql_mode=''")
+	s.tk.MustExec("create table ct1 (c int, d int, e int, key (c) comment '" + invalidComment + "')")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1688|Comment for index 'c' is too long (max = 1024)"))
+	s.tk.MustExec("create index i1 on ct1 (d) comment '" + invalidComment + "b" + "'")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1688|Comment for index 'i1' is too long (max = 1024)"))
+	s.tk.MustExec("alter table ct1 add key (e) comment '" + invalidComment + "'")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1688|Comment for index 'e' is too long (max = 1024)"))
+
+	s.tk.MustExec("drop table if exists ct, ct1")
 }
