@@ -121,10 +121,6 @@ func (e *TableReaderExecutor) Next() (Row, error) {
 // Open implements the Executor Open interface.
 func (e *TableReaderExecutor) Open() error {
 	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
-	colLen := e.schema.Len()
-	if colLen == 0 {
-		colLen = 1
-	}
 	var err error
 	e.result, err = distsql.NewSelectDAG(e.ctx, goctx.Background(), e.dagPB, kvRanges, e.keepOrder, e.desc, getIsolationLevel(e.ctx.GetSessionVars()), e.priority, colLen)
 	if err != nil {
