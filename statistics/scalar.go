@@ -47,10 +47,10 @@ func preCalculateDatumScalar(lower, upper *types.Datum) (float64, float64, int) 
 	if lower.Kind() == types.KindString || lower.Kind() == types.KindBytes {
 		common = commonPrefixLength(lower.GetBytes(), upper.GetBytes())
 	}
-	return convertOneDatumToScalar(lower, common), convertOneDatumToScalar(upper, common), common
+	return convertDatumToScalar(lower, common), convertDatumToScalar(upper, common), common
 }
 
-func convertOneDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
+func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
 	case types.KindFloat32:
 		return float64(value.GetFloat32())
@@ -78,7 +78,7 @@ func convertOneDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		if len(bytes) <= commonPfxLen {
 			return 0
 		}
-		return convertOneBytesToScalar(bytes[commonPfxLen:])
+		return convertBytesToScalar(bytes[commonPfxLen:])
 	default:
 		// do not know how to convert
 		return 0
@@ -98,7 +98,7 @@ func commonPrefixLength(lower, upper []byte) int {
 	return minLen
 }
 
-func convertOneBytesToScalar(value []byte) float64 {
+func convertBytesToScalar(value []byte) float64 {
 	// Bytes type is viewed as a base-256 value, so we only consider at most 8 bytes.
 	var buf [8]byte
 	copy(buf[:], value)

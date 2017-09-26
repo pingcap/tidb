@@ -251,7 +251,7 @@ func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Dat
 	if c <= 0 {
 		return prevCount, nil
 	}
-	valueScalar := convertOneDatumToScalar(&value, hg.Buckets[index].commonPfxLen)
+	valueScalar := convertDatumToScalar(&value, hg.Buckets[index].commonPfxLen)
 	frac := calcFraction(hg.Buckets[index].lowerScalar, hg.Buckets[index].upperScalar, valueScalar)
 	return prevCount + (lessThanBucketValueCount-prevCount)*frac, nil
 }
