@@ -2014,10 +2014,10 @@ func (s *testSuite) TestHandleTransfer(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, index idx(a))")
 	tk.MustExec("insert into t values(1), (2), (4)")
+	tk.MustExec("begin")
 	tk.MustExec("update t set a = 3 where a = 4")
 	// test table scan read whose result need handle.
 	tk.MustQuery("select * from t ignore index(idx)").Check(testkit.Rows("1", "2", "3"))
-	tk.MustExec("begin")
 	tk.MustExec("insert into t values(4)")
 	// test single read whose result need handle
 	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("1", "2", "3", "4"))
