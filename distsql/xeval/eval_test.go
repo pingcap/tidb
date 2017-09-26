@@ -277,7 +277,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 		result, err := xevaluator.Eval(tt.expr)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, tt.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.StatementCtx, tt.result)
+		cmp, err := result.CompareDatum(xevaluator.StatementCtx, &tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -495,7 +495,7 @@ func (s *testEvalSuite) TestEvalIsNull(c *C) {
 		result, err := xevaluator.Eval(tt.expr)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, tt.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.StatementCtx, tt.result)
+		cmp, err := result.CompareDatum(xevaluator.StatementCtx, &tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}

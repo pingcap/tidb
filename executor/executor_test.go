@@ -858,6 +858,15 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("SELECT a from t1 UNION select a FROM t2")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" + "  `a` date DEFAULT NULL\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
+	// Move from session test.
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (c double);")
+	tk.MustExec("create table t2 (c double);")
+	tk.MustExec("insert into t1 value (73);")
+	tk.MustExec("insert into t2 value (930);")
+	// If set unspecified column flen to 0, it will cause bug in union.
+	// This test is used to prevent the bug reappear.
+	tk.MustQuery("select c from t1 union (select c from t2) order by c").Check(testkit.Rows("73", "930"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -1796,6 +1805,11 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	rows := tk.MustQuery("select @@tidb_current_ts").Rows()
 	tsStr := rows[0][0].(string)
 	c.Assert(tsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn().StartTS()))
+	tk.MustExec("begin")
+	rows = tk.MustQuery("select @@tidb_current_ts").Rows()
+	newTsStr := rows[0][0].(string)
+	c.Assert(newTsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn().StartTS()))
+	c.Assert(newTsStr, Not(Equals), tsStr)
 	tk.MustExec("commit")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 

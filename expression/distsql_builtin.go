@@ -330,7 +330,10 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinArithmeticMultiplyDecimalSig{base}
 	case tipb.ScalarFuncSig_MultiplyReal:
 		f = &builtinArithmeticMultiplyRealSig{base}
-
+	case tipb.ScalarFuncSig_DivideDecimal:
+		f = &builtinArithmeticDivideDecimalSig{base}
+	case tipb.ScalarFuncSig_DivideReal:
+		f = &builtinArithmeticDivideRealSig{base}
 	case tipb.ScalarFuncSig_AbsInt:
 		f = &builtinAbsIntSig{base}
 	case tipb.ScalarFuncSig_AbsReal:
@@ -360,6 +363,14 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinLogicOrSig{base}
 	case tipb.ScalarFuncSig_LogicalXor:
 		f = &builtinLogicXorSig{base}
+	case tipb.ScalarFuncSig_BitAndSig:
+		f = &builtinBitAndSig{base}
+	case tipb.ScalarFuncSig_BitOrSig:
+		f = &builtinBitOrSig{base}
+	case tipb.ScalarFuncSig_BitXorSig:
+		f = &builtinBitXorSig{base}
+	case tipb.ScalarFuncSig_BitNegSig:
+		f = &builtinBitNegSig{base}
 
 	case tipb.ScalarFuncSig_UnaryNot:
 		f = &builtinUnaryNotSig{base}
@@ -383,6 +394,45 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 	case tipb.ScalarFuncSig_IntIsNull:
 		f = &builtinIntIsNullSig{base}
 
+	case tipb.ScalarFuncSig_CoalesceDecimal:
+		f = &builtinCoalesceDecimalSig{base}
+	case tipb.ScalarFuncSig_CoalesceDuration:
+		f = &builtinCoalesceDurationSig{base}
+	case tipb.ScalarFuncSig_CoalesceReal:
+		f = &builtinCoalesceRealSig{base}
+	case tipb.ScalarFuncSig_CoalesceTime:
+		f = &builtinCoalesceTimeSig{base}
+	case tipb.ScalarFuncSig_CoalesceString:
+		f = &builtinCoalesceStringSig{base}
+	case tipb.ScalarFuncSig_CoalesceInt:
+		f = &builtinCoalesceIntSig{base}
+
+	case tipb.ScalarFuncSig_CaseWhenDecimal:
+		f = &builtinCaseWhenDecimalSig{base}
+	case tipb.ScalarFuncSig_CaseWhenDuration:
+		f = &builtinCaseWhenDurationSig{base}
+	case tipb.ScalarFuncSig_CaseWhenReal:
+		f = &builtinCaseWhenRealSig{base}
+	case tipb.ScalarFuncSig_CaseWhenTime:
+		f = &builtinCaseWhenTimeSig{base}
+	case tipb.ScalarFuncSig_CaseWhenString:
+		f = &builtinCaseWhenStringSig{base}
+	case tipb.ScalarFuncSig_CaseWhenInt:
+		f = &builtinCaseWhenIntSig{base}
+
+	case tipb.ScalarFuncSig_IntIsFalse:
+		f = &builtinIntIsFalseSig{base}
+	case tipb.ScalarFuncSig_RealIsFalse:
+		f = &builtinRealIsFalseSig{base}
+	case tipb.ScalarFuncSig_DecimalIsFalse:
+		f = &builtinDecimalIsFalseSig{base}
+	case tipb.ScalarFuncSig_IntIsTrue:
+		f = &builtinIntIsTrueSig{base}
+	case tipb.ScalarFuncSig_RealIsTrue:
+		f = &builtinRealIsTrueSig{base}
+	case tipb.ScalarFuncSig_DecimalIsTrue:
+		f = &builtinDecimalIsTrueSig{base}
+
 	case tipb.ScalarFuncSig_IfNullReal:
 		f = &builtinIfNullRealSig{base}
 	case tipb.ScalarFuncSig_IfNullInt:
@@ -394,7 +444,9 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 	case tipb.ScalarFuncSig_IfNullTime:
 		f = &builtinIfNullTimeSig{base}
 	case tipb.ScalarFuncSig_IfNullDuration:
-		f = &builtinIfNullTimeSig{base}
+		f = &builtinIfNullDurationSig{base}
+	case tipb.ScalarFuncSig_IfNullJson:
+		f = &builtinIfNullJSONSig{base}
 	case tipb.ScalarFuncSig_IfReal:
 		f = &builtinIfRealSig{base}
 	case tipb.ScalarFuncSig_IfInt:
@@ -407,6 +459,8 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinIfTimeSig{base}
 	case tipb.ScalarFuncSig_IfDuration:
 		f = &builtinIfDurationSig{base}
+	case tipb.ScalarFuncSig_IfJson:
+		f = &builtinIfJSONSig{base}
 
 	case tipb.ScalarFuncSig_JsonTypeSig:
 		f = &builtinJSONTypeSig{base}
@@ -428,6 +482,8 @@ func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.
 		f = &builtinJSONRemoveSig{base}
 	case tipb.ScalarFuncSig_JsonMergeSig:
 		f = &builtinJSONMergeSig{base}
+	case tipb.ScalarFuncSig_LikeSig:
+		f = &builtinLikeSig{base}
 
 	default:
 		e = errFunctionNotExists.GenByArgs("FUNCTION", sigCode)
