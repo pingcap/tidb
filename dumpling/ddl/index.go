@@ -34,6 +34,7 @@ import (
 )
 
 const maxPrefixLength = 3072
+const maxCommentLength = 1024
 
 func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColName) ([]*model.IndexColumn, error) {
 	// Build offsets.
