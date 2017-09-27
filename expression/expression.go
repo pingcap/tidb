@@ -130,7 +130,7 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	if IsHybridType(expr) {
 		res, err = val.ToInt64(sc)
 		return res, false, errors.Trace(err)
-	} else if fieldTp2EvalTp(expr.GetType()) == tpInt {
+	} else if expr.GetType().EvalType() == types.ETInt {
 		return val.GetInt64(), false, nil
 	}
 	panic(fmt.Sprintf("cannot get INT result from %s expression", types.TypeStr(expr.GetType().Tp)))
@@ -142,7 +142,7 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if fieldTp2EvalTp(expr.GetType()) == tpReal {
+	if expr.GetType().EvalType() == types.ETReal {
 		// TODO: fix this to val.GetFloat64() after all built-in functions been rewritten.
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
@@ -159,7 +159,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	if fieldTp2EvalTp(expr.GetType()) == tpDecimal {
+	if expr.GetType().EvalType() == types.ETDecimal {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
 		// TODO: We maintain two sets of type systems, one for Expression, one for Datum.
@@ -182,8 +182,8 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	exprEvalTp := fieldTp2EvalTp(expr.GetType())
-	if exprEvalTp == tpString || exprEvalTp == tpJSON || IsHybridType(expr) {
+	exprEvalTp := expr.GetType().EvalType()
+	if exprEvalTp == types.ETString || exprEvalTp == types.ETJson || IsHybridType(expr) {
 		// We cannot use val.GetString() directly.
 		// For example, `Bit` is regarded as ClassString,
 		// while we can not use val.GetString() to get the value of a Bit variable,

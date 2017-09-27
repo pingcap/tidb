@@ -83,7 +83,7 @@ func (c *sleepFunctionClass) getFunction(ctx context.Context, args []Expression)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpReal)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETReal)
 	bf.tp.Flen = 21
 	bf.foldable = false
 	sig := &builtinSleepSig{bf}
@@ -134,7 +134,7 @@ func (c *lockFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString, tpInt)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETString, types.ETInt)
 	sig := &builtinLockSig{bf}
 	bf.tp.Flen = 1
 	return sig.setSelf(sig), nil
@@ -160,7 +160,7 @@ func (c *releaseLockFunctionClass) getFunction(ctx context.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETString)
 	sig := &builtinReleaseLockSig{bf}
 	bf.tp.Flen = 1
 	return sig.setSelf(sig), nil
@@ -186,30 +186,30 @@ func (c *anyValueFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	argTp := fieldTp2EvalTp(args[0].GetType())
+	argTp := args[0].GetType().EvalType()
 	bf := newBaseBuiltinFuncWithTp(args, ctx, argTp, argTp)
 	*bf.tp = *args[0].GetType()
 	var sig builtinFunc
 	switch argTp {
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinDecimalAnyValueSig{bf}
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinDurationAnyValueSig{bf}
-	case tpInt:
+	case types.ETInt:
 		bf.tp.Decimal = 0
 		sig = &builtinIntAnyValueSig{bf}
-	case tpJSON:
+	case types.ETJson:
 		sig = &builtinJSONAnyValueSig{bf}
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinRealAnyValueSig{bf}
-	case tpString:
+	case types.ETString:
 		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinStringAnyValueSig{bf}
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
 		sig = &builtinTimeAnyValueSig{bf}
 	default:
-		panic("unexpected evalTp of builtin function ANY_VALUE")
+		panic("unexpected types.EvalType of builtin function ANY_VALUE")
 	}
 	return sig.setSelf(sig), nil
 }
@@ -300,7 +300,7 @@ func (c *inetAtonFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETString)
 	bf.tp.Flen = 21
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinInetAtonSig{bf}
@@ -367,7 +367,7 @@ func (c *inetNtoaFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpInt)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, types.ETInt)
 	bf.tp.Flen = 93
 	bf.tp.Decimal = 0
 	sig := &builtinInetNtoaSig{bf}
@@ -409,7 +409,7 @@ func (c *inet6AtonFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, types.ETString)
 	bf.tp.Flen = 16
 	types.SetBinChsClnFlag(bf.tp)
 	bf.tp.Decimal = 0
@@ -472,7 +472,7 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, types.ETString)
 	bf.tp.Flen = 117
 	bf.tp.Decimal = 0
 	sig := &builtinInet6NtoaSig{bf}
@@ -518,7 +518,7 @@ func (c *isIPv4FunctionClass) getFunction(ctx context.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4Sig{bf}
 	return sig.setSelf(sig), nil
@@ -576,7 +576,7 @@ func (c *isIPv4CompatFunctionClass) getFunction(ctx context.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4CompatSig{bf}
 	return sig.setSelf(sig), nil
@@ -615,7 +615,7 @@ func (c *isIPv4MappedFunctionClass) getFunction(ctx context.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4MappedSig{bf}
 	return sig.setSelf(sig), nil
@@ -654,7 +654,7 @@ func (c *isIPv6FunctionClass) getFunction(ctx context.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpString)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv6Sig{bf}
 	return sig.setSelf(sig), nil
@@ -718,7 +718,7 @@ func (c *uuidFunctionClass) getFunction(ctx context.Context, args []Expression) 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString)
 	bf.tp.Flen = 36
 	bf.foldable = false
 	sig := &builtinUUIDSig{bf}

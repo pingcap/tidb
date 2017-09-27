@@ -82,7 +82,7 @@ func (mmf *maxMinFunction) Update(ctx *AggEvaluateContext, sc *variable.Statemen
 		return nil
 	}
 	var c int
-	c, err = ctx.Value.CompareDatum(sc, value)
+	c, err = ctx.Value.CompareDatum(sc, &value)
 	if err != nil {
 		return errors.Trace(err)
 	}
