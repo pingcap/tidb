@@ -29,18 +29,6 @@ const (
 	UnspecifiedLength int = -1
 )
 
-// TypeClass classifies field types, used for type inference.
-type TypeClass byte
-
-// TypeClass values.
-const (
-	ClassString  TypeClass = 0
-	ClassReal    TypeClass = 1
-	ClassInt     TypeClass = 2
-	ClassRow     TypeClass = 3
-	ClassDecimal TypeClass = 4
-)
-
 // FieldType records field type information.
 type FieldType struct {
 	Tp      byte
@@ -80,46 +68,45 @@ func AggFieldType(tps []*FieldType) *FieldType {
 	return &currType
 }
 
-// AggTypeClass aggregates arguments' TypeClass of a multi-argument function.
-func AggTypeClass(tps []*FieldType, flag *uint) TypeClass {
+// AggregateEvalType aggregates arguments' EvalType of a multi-argument function.
+func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 	var (
-		tpClass      = ClassString
-		unsigned     bool
-		gotFirst     bool
-		gotBinString bool
+		aggregatedEvalType = ETString
+		unsigned           bool
+		gotFirst           bool
+		gotBinString       bool
 	)
-	for _, argFieldType := range tps {
-		if argFieldType.Tp == mysql.TypeNull {
+	for _, ft := range fts {
+		if ft.Tp == mysql.TypeNull {
 			continue
 		}
-		argTypeClass := argFieldType.ToClass()
-		if (IsTypeBlob(argFieldType.Tp) || IsTypeVarchar(argFieldType.Tp) || IsTypeChar(argFieldType.Tp)) &&
-			mysql.HasBinaryFlag(argFieldType.Flag) {
+		et := ft.EvalType()
+		if (IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeChar(ft.Tp)) && mysql.HasBinaryFlag(ft.Flag) {
 			gotBinString = true
 		}
 		if !gotFirst {
 			gotFirst = true
-			tpClass = argTypeClass
-			unsigned = mysql.HasUnsignedFlag(argFieldType.Flag)
+			aggregatedEvalType = et
+			unsigned = mysql.HasUnsignedFlag(ft.Flag)
 		} else {
-			tpClass = mergeTypeClass(tpClass, argTypeClass, unsigned, mysql.HasUnsignedFlag(argFieldType.Flag))
-			unsigned = unsigned && mysql.HasUnsignedFlag(argFieldType.Flag)
+			aggregatedEvalType = mergeEvalType(aggregatedEvalType, et, unsigned, mysql.HasUnsignedFlag(ft.Flag))
+			unsigned = unsigned && mysql.HasUnsignedFlag(ft.Flag)
 		}
 	}
 	setTypeFlag(flag, uint(mysql.UnsignedFlag), unsigned)
-	setTypeFlag(flag, uint(mysql.BinaryFlag), tpClass != ClassString || gotBinString)
-	return tpClass
+	setTypeFlag(flag, uint(mysql.BinaryFlag), !aggregatedEvalType.IsStringKind() || gotBinString)
+	return aggregatedEvalType
 }
 
-func mergeTypeClass(a, b TypeClass, aUnsigned, bUnsigned bool) TypeClass {
-	if a == ClassString || b == ClassString {
-		return ClassString
-	} else if a == ClassReal || b == ClassReal {
-		return ClassReal
-	} else if a == ClassDecimal || b == ClassDecimal || aUnsigned != bUnsigned {
-		return ClassDecimal
+func mergeEvalType(lhs, rhs EvalType, isLHSUnsigned, isRHSUnsigned bool) EvalType {
+	if lhs.IsStringKind() || rhs.IsStringKind() {
+		return ETString
+	} else if lhs == ETReal || rhs == ETReal {
+		return ETReal
+	} else if lhs == ETDecimal || rhs == ETDecimal || isLHSUnsigned != isRHSUnsigned {
+		return ETDecimal
 	}
-	return ClassInt
+	return ETInt
 }
 
 func setTypeFlag(flag *uint, flagItem uint, on bool) {
@@ -127,20 +114,6 @@ func setTypeFlag(flag *uint, flagItem uint, on bool) {
 		*flag |= flagItem
 	} else {
 		*flag &= ^flagItem
-	}
-}
-
-// ToClass maps the field type to a type class.
-func (ft *FieldType) ToClass() TypeClass {
-	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeBit:
-		return ClassInt
-	case mysql.TypeNewDecimal:
-		return ClassDecimal
-	case mysql.TypeFloat, mysql.TypeDouble:
-		return ClassReal
-	default:
-		return ClassString
 	}
 }
 
@@ -164,37 +137,6 @@ func (ft *FieldType) EvalType() EvalType {
 		return ETJson
 	}
 	return ETString
-}
-
-func (tc TypeClass) String() string {
-	switch tc {
-	case ClassString:
-		return "ClassString"
-	case ClassReal:
-		return "ClassReal"
-	case ClassInt:
-		return "ClassInt"
-	case ClassDecimal:
-		return "ClassDecimal"
-	default:
-		return "ClassRow"
-	}
-}
-
-// ToType maps the type class to a type.
-func (tc TypeClass) ToType() byte {
-	switch tc {
-	case ClassString:
-		return mysql.TypeVarString
-	case ClassReal:
-		return mysql.TypeDouble
-	case ClassInt:
-		return mysql.TypeLonglong
-	case ClassDecimal:
-		return mysql.TypeNewDecimal
-	default:
-		return mysql.TypeUnspecified
-	}
 }
 
 // Init initializes the FieldType data.

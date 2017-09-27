@@ -462,10 +462,7 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	if err != nil {
 		return nil, err
 	}
-	reqCtx, err := req.GetContext()
-	if err != nil {
-		return nil, err
-	}
+	reqCtx := &req.Context
 	resp := &tikvrpc.Response{}
 	resp.Type = req.Type
 	switch req.Type {
