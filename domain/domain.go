@@ -20,6 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/ngaut/pools"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -419,6 +421,10 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			cli, err = clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
 				DialTimeout: 5 * time.Second,
+				DialOptions: []grpc.DialOption{
+					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+				},
 			})
 			if err != nil {
 				return nil, errors.Trace(err)
