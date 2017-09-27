@@ -321,8 +321,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	}
 
 	req := &tikvrpc.Request{
-		Type:     tikvrpc.CmdPrewrite,
-		Priority: c.priority,
+		Type: tikvrpc.CmdPrewrite,
 		Prewrite: &pb.PrewriteRequest{
 			Mutations:    mutations,
 			PrimaryLock:  c.primary(),
@@ -330,6 +329,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			LockTtl:      c.lockTTL,
 		},
 	}
+	req.Context.Priority = c.priority
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
@@ -408,14 +408,14 @@ func kvPriorityToCommandPri(pri int) pb.CommandPri {
 
 func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
 	req := &tikvrpc.Request{
-		Type:     tikvrpc.CmdCommit,
-		Priority: c.priority,
+		Type: tikvrpc.CmdCommit,
 		Commit: &pb.CommitRequest{
 			StartVersion:  c.startTS,
 			Keys:          batch.keys,
 			CommitVersion: c.commitTS,
 		},
 	}
+	req.Context.Priority = c.priority
 
 	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
 	// transaction has been successfully committed.
