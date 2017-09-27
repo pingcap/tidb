@@ -1285,23 +1285,21 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row []types.Datum) (res type
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(expr Expression, tp *types.FieldType, ctx context.Context) *ScalarFunction {
 	var fc functionClass
-	switch tp.ToClass() {
-	case types.ClassInt:
+	switch tp.EvalType() {
+	case types.ETInt:
 		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ClassDecimal:
+	case types.ETDecimal:
 		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ClassReal:
+	case types.ETReal:
 		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ClassString:
-		if types.IsTypeTime(tp.Tp) {
-			fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		} else if tp.Tp == mysql.TypeDuration {
-			fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		} else if tp.Tp == mysql.TypeJSON {
-			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		} else {
-			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-		}
+	case types.ETDatetime, types.ETTimestamp:
+		fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETDuration:
+		fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETJson:
+		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case types.ETString:
+		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	}
 	f, _ := fc.getFunction(ctx, []Expression{expr})
 	return &ScalarFunction{
