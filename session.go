@@ -711,7 +711,7 @@ func (s *session) executeWithPlanCache(sql string) ([]ast.RecordSet, error) {
 			s.SetValue(context.QueryString, stmt.OriginText())
 			if len(stmtNodes) == 1 {
 				_, isSelect := stmtNodes[0].(*ast.SelectStmt)
-				if isSelect && stmt.CanBeCached() {
+				if isSelect && stmt.Cacheable() {
 					s.planCache.Put(cacheKey, cache.NewSQLCacheValue(stmt, stmtNode))
 				}
 			}

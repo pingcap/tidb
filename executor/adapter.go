@@ -102,7 +102,7 @@ type statement struct {
 	cacheable      bool
 }
 
-func (a *statement) CanBeCached() bool {
+func (a *statement) Cacheable() bool {
 	return a.cacheable
 }
 
