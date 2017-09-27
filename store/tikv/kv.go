@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 type storeCache struct {
@@ -42,6 +45,21 @@ var mc storeCache
 
 // Driver implements engine Driver.
 type Driver struct {
+}
+
+func createEtcdKV(addrs []string) (*clientv3.Client, error) {
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   addrs,
+		DialTimeout: 5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+		},
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return cli, nil
 }
 
 // Open opens or creates an TiKV storage with given path.
