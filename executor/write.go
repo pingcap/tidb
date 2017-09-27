@@ -898,13 +898,11 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 
 	for i, expr := range list {
 		val, err := expr.Eval(row)
-		err = e.filterErr(err, ignoreErr)
-		if err != nil {
+		if err = e.filterErr(err, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
 		val, err = table.CastValue(e.ctx, val, cols[i].ToInfo())
-		err = e.filterErr(err, ignoreErr)
-		if err != nil {
+		if err = e.filterErr(err, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
 
