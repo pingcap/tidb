@@ -58,11 +58,11 @@ func (c *rowFunctionClass) getFunction(ctx context.Context, args []Expression) (
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	argTps := make([]evalTp, len(args))
+	argTps := make([]types.EvalType, len(args))
 	for i := range argTps {
-		argTps[i] = fieldTp2EvalTp(args[i].GetType())
+		argTps[i] = args[i].GetType().EvalType()
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, argTps...)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, argTps...)
 	bf.foldable = false
 	sig = &builtinRowSig{bf}
 	return sig.setSelf(sig), nil
@@ -85,7 +85,7 @@ func (c *setVarFunctionClass) getFunction(ctx context.Context, args []Expression
 	if err = errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString, tpString)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, types.ETString, types.ETString)
 	bf.tp.Flen, bf.foldable = args[1].GetType().Flen, false
 	// TODO: we should consider the type of the argument, but not take it as string for all situations.
 	sig = &builtinSetVarSig{bf}
@@ -124,7 +124,7 @@ func (c *getVarFunctionClass) getFunction(ctx context.Context, args []Expression
 		return nil, err
 	}
 	// TODO: we should consider the type of the argument, but not take it as string for all situations.
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpString, tpString)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETString, types.ETString)
 	bf.tp.Flen, bf.foldable = mysql.MaxFieldVarCharLength, false
 	sig = &builtinGetVarSig{bf}
 	return sig.setSelf(sig), nil
@@ -164,20 +164,20 @@ func (c *valuesFunctionClass) getFunction(ctx context.Context, args []Expression
 	bf := newBaseBuiltinFunc(args, ctx)
 	bf.tp = c.tp
 	bf.foldable = false
-	switch fieldTp2EvalTp(c.tp) {
-	case tpInt:
+	switch c.tp.EvalType() {
+	case types.ETInt:
 		sig = &builtinValuesIntSig{bf, c.offset}
-	case tpReal:
+	case types.ETReal:
 		sig = &builtinValuesRealSig{bf, c.offset}
-	case tpDecimal:
+	case types.ETDecimal:
 		sig = &builtinValuesRealSig{bf, c.offset}
-	case tpString:
+	case types.ETString:
 		sig = &builtinValuesStringSig{bf, c.offset}
-	case tpDatetime, tpTimestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinValuesTimeSig{bf, c.offset}
-	case tpDuration:
+	case types.ETDuration:
 		sig = &builtinValuesDurationSig{bf, c.offset}
-	case tpJSON:
+	case types.ETJson:
 		sig = &builtinValuesJSONSig{bf, c.offset}
 	}
 	return sig.setSelf(sig), nil
@@ -331,7 +331,7 @@ func (c *bitCountFunctionClass) getFunction(ctx context.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(args, ctx, tpInt, tpInt)
+	bf := newBaseBuiltinFuncWithTp(args, ctx, types.ETInt, types.ETInt)
 	bf.tp.Flen = 2
 	sig := &builtinBitCountSig{bf}
 	return sig.setSelf(sig), nil

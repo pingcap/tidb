@@ -115,20 +115,20 @@ func (sf *ScalarFunction) Clone() Expression {
 		return BuildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
 	case ast.Values:
 		var offset int
-		switch fieldTp2EvalTp(sf.GetType()) {
-		case tpInt:
+		switch sf.GetType().EvalType() {
+		case types.ETInt:
 			offset = sf.Function.(*builtinValuesIntSig).offset
-		case tpReal:
+		case types.ETReal:
 			offset = sf.Function.(*builtinValuesRealSig).offset
-		case tpDecimal:
+		case types.ETDecimal:
 			offset = sf.Function.(*builtinValuesDecimalSig).offset
-		case tpString:
+		case types.ETString:
 			offset = sf.Function.(*builtinValuesStringSig).offset
-		case tpDatetime, tpTimestamp:
+		case types.ETDatetime, types.ETTimestamp:
 			offset = sf.Function.(*builtinValuesTimeSig).offset
-		case tpDuration:
+		case types.ETDuration:
 			offset = sf.Function.(*builtinValuesDurationSig).offset
-		case tpJSON:
+		case types.ETJson:
 			offset = sf.Function.(*builtinValuesJSONSig).offset
 		}
 		return NewValuesFunc(offset, sf.GetType(), sf.GetCtx())
