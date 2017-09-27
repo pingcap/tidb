@@ -396,7 +396,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *indexTaskOpInfo) (
+func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, colMap map[int64]*types.FieldType) (
 	[]*indexRecord, *taskResult) {
 	startTime := time.Now()
 	w.idxRecords = w.idxRecords[:0]
@@ -410,7 +410,7 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *
 				return false, nil
 			}
 			indexRecord := &indexRecord{handle: h, key: rowKey}
-			err1 := w.getIndexRecord(t, taskOpInfo, rawRecord, indexRecord)
+			err1 := w.getIndexRecord(t, colMap, rawRecord, indexRecord)
 			if err1 != nil {
 				return false, errors.Trace(err1)
 			}
@@ -431,10 +431,10 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *
 	return w.idxRecords, ret
 }
 
-func (w *worker) getIndexRecord(t table.Table, taskOpInfo *indexTaskOpInfo, rawRecord []byte, idxRecord *indexRecord) error {
+func (w *worker) getIndexRecord(t table.Table, colMap map[int64]*types.FieldType, rawRecord []byte, idxRecord *indexRecord) error {
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
-	_, err := tablecodec.DecodeRowWithMap(rawRecord, taskOpInfo.colMap, time.UTC, w.rowMap)
+	_, err := tablecodec.DecodeRowWithMap(rawRecord, colMap, time.UTC, w.rowMap)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -484,11 +484,6 @@ type indexRecord struct {
 	handle int64
 	key    []byte        // It's used to lock a record. Record it to reduce the encoding time.
 	vals   []types.Datum // It's the index values.
-}
-
-// indexTaskOpInfo records the information that is needed in the task.
-type indexTaskOpInfo struct {
-	colMap map[int64]*types.FieldType // It's the index columns map.
 }
 
 type worker struct {
@@ -549,10 +544,6 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		colMap[col.ID] = &col.FieldType
 	}
 	workerCnt := defaultWorkers
-	taskOpInfo := &indexTaskOpInfo{
-		colMap: colMap,
-	}
-
 	taskBatch := int64(defaultTaskHandleCnt)
 	addedCount := job.GetRowCount()
 	baseHandle := reorgInfo.Handle
@@ -560,7 +551,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	workers := make([]*worker, workerCnt)
 	for i := 0; i < workerCnt; i++ {
 		ctx := d.newContext()
-		workers[i] = newWorker(ctx, i, int(taskBatch), len(cols), len(taskOpInfo.colMap))
+		workers[i] = newWorker(ctx, i, int(taskBatch), len(cols), len(colMap))
 		// Make sure every worker has its own index buffer.
 		workers[i].index = tables.NewIndexWithBuffer(t.Meta(), indexInfo)
 	}
@@ -571,7 +562,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			wg.Add(1)
 			workers[i].setTaskNewRange(baseHandle, baseHandle+taskBatch)
 			// TODO: Consider one worker to one goroutine.
-			go workers[i].doBackfillIndexTask(t, taskOpInfo, &wg)
+			go workers[i].doBackfillIndexTask(t, colMap, &wg)
 			baseHandle += taskBatch
 		}
 		wg.Wait()
@@ -620,13 +611,13 @@ func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
 	return taskAddedCount, nextHandle, isEnd, errors.Trace(err)
 }
 
-func (w *worker) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, wg *sync.WaitGroup) {
+func (w *worker) doBackfillIndexTask(t table.Table, colMap map[int64]*types.FieldType, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	startTime := time.Now()
 	var ret *taskResult
 	err := kv.RunInNewTxn(w.ctx.GetStore(), true, func(txn kv.Transaction) error {
-		ret = w.doBackfillIndexTaskInTxn(t, txn, taskOpInfo)
+		ret = w.doBackfillIndexTaskInTxn(t, txn, colMap)
 		return errors.Trace(ret.err)
 	})
 	if err != nil {
@@ -640,8 +631,8 @@ func (w *worker) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo,
 
 // doBackfillIndexTaskInTxn deals with a part of backfilling index data in a Transaction.
 // This part of the index data rows is defaultTaskHandleCnt.
-func (w *worker) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, taskOpInfo *indexTaskOpInfo) *taskResult {
-	idxRecords, taskRet := w.fetchRowColVals(txn, t, taskOpInfo)
+func (w *worker) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, colMap map[int64]*types.FieldType) *taskResult {
+	idxRecords, taskRet := w.fetchRowColVals(txn, t, colMap)
 	if taskRet.err != nil {
 		taskRet.err = errors.Trace(taskRet.err)
 		return taskRet
