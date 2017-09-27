@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 )
 
+// CheckCacheable checks whether the input ast is cacheable.
 func CheckCacheable(node ast.Node) bool {
 	checker := cacheableChecker{
 		cacheable: true,
@@ -29,6 +30,7 @@ type cacheableChecker struct {
 	cacheable bool
 }
 
+// Enter implements Visitor interface.
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.SelectStmt:
@@ -53,6 +55,7 @@ func (checker *cacheableChecker) canExprBeCached(exprNode ast.ExprNode) bool {
 	return true
 }
 
+// Leave implements Visitor interface.
 func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, skipChildren bool) {
 	return in, false
 }

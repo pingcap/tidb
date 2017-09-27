@@ -89,6 +89,7 @@ type XProtocol struct {
 	XSocket string `toml:"xsocket" json:"xsocket"`
 }
 
+// PlanCache is the PlanCache section of the config.
 type PlanCache struct {
 	Enabled  bool  `toml:"enable-plan-cache" json:"enable-plan-cache"`
 	Capacity int64 `toml:"plan-cache-capacity" json:"plan-cache-capacity"`

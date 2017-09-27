@@ -20,8 +20,10 @@ import (
 )
 
 var (
-	EnablePlanCache   bool  = true
-	PlanCacheCapacity int64 = 1000
+	// EnablePlanCache stores the global config "enable-plan-cache".
+	EnablePlanCache bool
+	// PlanCacheCapacity stores the global config "plan-cache-capacity".
+	PlanCacheCapacity int64
 )
 
 type sqlCacheKey struct {
@@ -34,7 +36,7 @@ type sqlCacheKey struct {
 	hash           []byte
 }
 
-// Hash implements Key interface
+// Hash implements Key interface.
 func (sck *sqlCacheKey) Hash() []byte {
 	if sck.hash == nil {
 		dbBytes := []byte(sck.database)
@@ -65,11 +67,13 @@ func NewSQLCacheKey(schemaVersion int64, sqlMode mysql.SQLMode, timeZoneOffset i
 	}
 }
 
+// SQLCacheValue stores the cached Statement and StmtNode.
 type SQLCacheValue struct {
 	Stmt ast.Statement
 	Ast  ast.StmtNode
 }
 
+// NewSQLCacheValue creates a SQLCacheValue.
 func NewSQLCacheValue(stmt ast.Statement, ast ast.StmtNode) *SQLCacheValue {
 	return &SQLCacheValue{
 		Stmt: stmt,
