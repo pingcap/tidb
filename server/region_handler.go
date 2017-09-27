@@ -541,7 +541,6 @@ func (t *regionHandlerTool) getMvccByRecordID(tableID, recordID int64) (*kvrpcpb
 			Key: encodeKey,
 		},
 	}
-	tikvReq.Context.Priority = kvrpcpb.CommandPri_Normal
 	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
 	log.Info(string(encodeKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
 
