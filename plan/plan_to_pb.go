@@ -76,9 +76,10 @@ func (p *Limit) ToPB(ctx context.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
+	columns := p.Columns
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
-		Columns: distsql.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
+		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
 	err := setPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
@@ -89,7 +90,14 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
 	for _, col := range p.schema.Columns {
-		columns = append(columns, p.Table.Columns[col.Position])
+		if col.ID == model.ExtraHandleID {
+			columns = append(columns, &model.ColumnInfo{
+				ID:   model.ExtraHandleID,
+				Name: model.NewCIStr("_rowid"),
+			})
+		} else {
+			columns = append(columns, p.Table.Columns[col.Position])
+		}
 	}
 	idxExec := &tipb.IndexScan{
 		TableId: p.Table.ID,
