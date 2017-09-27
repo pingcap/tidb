@@ -19,8 +19,8 @@ import (
 	"runtime"
 	"strconv"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 )
 
@@ -82,6 +82,7 @@ const (
 	ClassGlobal
 	ClassMockTikv
 	ClassJSON
+	ClassTiKV
 	// Add more as needed.
 )
 
@@ -107,6 +108,8 @@ var errClz2Str = map[ErrClass]string{
 	ClassTypes:         "types",
 	ClassGlobal:        "global",
 	ClassMockTikv:      "mocktikv",
+	ClassJSON:          "json",
+	ClassTiKV:          "tikv",
 }
 
 // String implements fmt.Stringer interface.

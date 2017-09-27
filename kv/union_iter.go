@@ -14,8 +14,8 @@
 package kv
 
 import (
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 )
 
 // UnionIter is the iterator on an UnionStore.

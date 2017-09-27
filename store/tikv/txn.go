@@ -17,9 +17,9 @@ import (
 	"fmt"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
@@ -40,6 +40,7 @@ type tikvTxn struct {
 	valid     bool
 	lockKeys  [][]byte
 	dirty     bool
+	setCnt    int64
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -75,11 +76,17 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	err = txn.store.CheckVisibility(txn.startTS)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return ret, nil
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
-	txnCmdCounter.WithLabelValues("set").Inc()
+	txn.setCnt++
 
 	txn.dirty = true
 	return txn.us.Set(k, v)
@@ -136,6 +143,7 @@ func (txn *tikvTxn) Commit() error {
 	}
 	defer txn.close()
 
+	txnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	txnCmdCounter.WithLabelValues("commit").Inc()
 	start := time.Now()
 	defer func() { txnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()

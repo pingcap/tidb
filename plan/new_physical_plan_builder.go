@@ -16,11 +16,12 @@ package plan
 import (
 	"math"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -212,13 +213,13 @@ func (p *PhysicalMergeJoin) getChildrenPossibleProps(prop *requiredProp) [][]*re
 		if prop.desc {
 			return nil
 		}
-		if !prop.equal(lProp) && !prop.equal(rProp) {
+		if !prop.isPrefix(lProp) && !prop.isPrefix(rProp) {
 			return nil
 		}
-		if prop.equal(rProp) && p.JoinType == LeftOuterJoin {
+		if prop.isPrefix(rProp) && p.JoinType == LeftOuterJoin {
 			return nil
 		}
-		if prop.equal(lProp) && p.JoinType == RightOuterJoin {
+		if prop.isPrefix(lProp) && p.JoinType == RightOuterJoin {
 			return nil
 		}
 	}
@@ -451,10 +452,7 @@ func (p *TopN) generatePhysicalPlans() []PhysicalPlan {
 // If this sort is a topN plan, we will try to push the sort down and leave the limit.
 // TODO: If this is a sort plan and the coming prop is not nil, this plan is redundant and can be removed.
 func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
-	t, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	t := p.getTask(prop)
 	if t != nil {
 		return t, nil
 	}
@@ -463,10 +461,11 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		// e.g. If an aggregation want to be pushed, the SQL is always like select count(*) from t order by ...
 		// The Sort will on top of Aggregation. If the SQL is like select count(*) from (select * from s order by k).
 		// The Aggregation will also be blocked by projection. In the future we will break this restriction.
-		return invalidTask, p.storeTask(prop, invalidTask)
+		p.storeTask(prop, invalidTask)
+		return invalidTask, nil
 	}
 	// enforce branch
-	t, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
+	t, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -483,30 +482,30 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 		}
 	}
 	t = prop.enforceProperty(t, p.ctx, p.allocator)
-	return t, p.storeTask(prop, t)
+	p.storeTask(prop, t)
+	return t, nil
 }
 
 // convert2NewPhysicalPlan implements LogicalPlan interface.
-func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
+func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (t task, err error) {
 	// look up the task map
-	t, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	t = p.getTask(prop)
 	if t != nil {
 		return t, nil
 	}
 	t = invalidTask
 	if prop.taskTp != rootTaskType {
 		// Currently all plan cannot totally push down.
-		return t, p.storeTask(prop, t)
+		p.storeTask(prop, t)
+		return t, nil
 	}
 	// Now we only consider rootTask.
 	if len(p.basePlan.children) == 0 {
 		// When the children length is 0, we process it specially.
 		t = &rootTask{p: p.basePlan.self.(PhysicalPlan)}
 		t = prop.enforceProperty(t, p.basePlan.ctx, p.basePlan.allocator)
-		return t, p.storeTask(prop, t)
+		p.storeTask(prop, t)
+		return t, nil
 	}
 	// Else we suppose it only has one child.
 	for _, pp := range p.basePlan.self.(LogicalPlan).generatePhysicalPlans() {
@@ -523,7 +522,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (task, err
 			return nil, errors.Trace(err)
 		}
 	}
-	return t, p.storeTask(prop, t)
+	p.storeTask(prop, t)
+	return t, nil
 }
 
 func (p *baseLogicalPlan) getBestTask(bestTask task, prop *requiredProp, pp PhysicalPlan, enforced bool) (task, error) {
@@ -623,26 +623,25 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 	if prop == nil {
 		return nil, nil
 	}
-	t, err := p.getTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	t := p.getTask(prop)
 	if t != nil {
 		return t, nil
 	}
-	t, err = p.tryToGetDualTask()
+	t, err := p.tryToGetDualTask()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if t != nil {
-		return t, p.storeTask(prop, t)
+		p.storeTask(prop, t)
+		return t, nil
 	}
 	t, err = p.tryToGetMemTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if t != nil {
-		return t, p.storeTask(prop, t)
+		p.storeTask(prop, t)
+		return t, nil
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
@@ -664,7 +663,8 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (task, error) {
 			}
 		}
 	}
-	return t, p.storeTask(prop, t)
+	p.storeTask(prop, t)
+	return t, nil
 }
 
 func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
@@ -677,6 +677,7 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 		dataSourceSchema:    p.schema,
 		physicalTableSource: physicalTableSource{NeedColHandle: p.NeedColHandle},
 		Ranges:              ranger.FullIndexRange(),
+		OutOfOrder:          true,
 	}.init(p.allocator, p.ctx)
 	is.filterCondition = p.pushedDownConds
 	is.profile = p.profile
@@ -688,19 +689,7 @@ func (p *DataSource) forceToIndexScan(idx *model.IndexInfo) PhysicalPlan {
 		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
 		cop.tablePlan.SetSchema(is.dataSourceSchema)
 	}
-	var indexCols []*expression.Column
-	for _, col := range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-	}
-	if is.Table.PKIsHandle {
-		for _, col := range is.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-				break
-			}
-		}
-	}
-	is.SetSchema(expression.NewSchema(indexCols...))
+	is.initSchema(p.id, idx, cop.tablePlan != nil)
 	is.addPushedDownSelection(cop, p, math.MaxFloat64)
 	t := finishCopTask(cop, p.ctx, p.allocator)
 	return t.plan()
@@ -743,13 +732,14 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		}
 	}
 	is.profile = p.getStatsProfileByFilter(p.pushedDownConds)
+
 	cop := &copTask{
 		indexPlan: is,
 	}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
 		cop.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
-		cop.tablePlan.SetSchema(is.dataSourceSchema)
+		cop.tablePlan.SetSchema(is.dataSourceSchema.Clone())
 		// If it's parent requires single read task, return max cost.
 		if prop.taskTp == copSingleReadTaskType {
 			return &copTask{cst: math.MaxFloat64}, nil
@@ -758,19 +748,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		// If it's parent requires double read task, return max cost.
 		return &copTask{cst: math.MaxFloat64}, nil
 	}
-	var indexCols []*expression.Column
-	for _, col := range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-	}
-	if is.Table.PKIsHandle {
-		for _, col := range is.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-				break
-			}
-		}
-	}
-	is.SetSchema(expression.NewSchema(indexCols...))
+	is.initSchema(p.id, idx, cop.tablePlan != nil)
 	// Check if this plan matches the property.
 	matchProperty := false
 	if !prop.isEmpty() {
@@ -802,6 +780,14 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
+		if !is.NeedColHandle && cop.tablePlan != nil {
+			tblPlan := cop.tablePlan.(*PhysicalTableScan)
+			tblPlan.Columns = append(tblPlan.Columns, &model.ColumnInfo{
+				ID:   model.ExtraHandleID,
+				Name: model.NewCIStr("_rowid"),
+			})
+		}
+		cop.keepOrder = true
 		is.addPushedDownSelection(cop, p, prop.expectedCnt)
 		if p.unionScanSchema != nil {
 			task = addUnionScan(cop, p)
@@ -824,6 +810,27 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		return invalidTask, nil
 	}
 	return task, nil
+}
+
+func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
+	var indexCols []*expression.Column
+	for _, col := range idx.Columns {
+		indexCols = append(indexCols, &expression.Column{FromID: id, Position: col.Offset})
+	}
+	setHandle := false
+	for _, col := range is.Columns {
+		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+			indexCols = append(indexCols, &expression.Column{FromID: id, ID: col.ID, Position: col.Offset})
+			setHandle = true
+			break
+		}
+	}
+	// If it's double read case, the first index must return handle. So we should add extra handle column
+	// if there isn't a handle column.
+	if isDoubleRead && !setHandle {
+		indexCols = append(indexCols, &expression.Column{FromID: id, ID: model.ExtraHandleID, Position: -1})
+	}
+	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64) {
@@ -960,6 +967,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 			copTask.cst = rowCount * descScanFactor
 		}
 		ts.KeepOrder = true
+		copTask.keepOrder = true
 		ts.addPushedDownSelection(copTask, p.profile, prop.expectedCnt)
 		if p.unionScanSchema != nil {
 			task = addUnionScan(copTask, p)
@@ -1089,26 +1097,74 @@ func (p *TopN) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	return props
 }
 
+func (p *LogicalAggregation) getStreamAggs() []PhysicalPlan {
+	if len(p.possibleProperties) == 0 {
+		return nil
+	}
+	for _, aggFunc := range p.AggFuncs {
+		if aggFunc.GetMode() == aggregation.FinalMode {
+			return nil
+		}
+	}
+	// group by a + b is not interested in any order.
+	if len(p.groupByCols) != len(p.GroupByItems) {
+		return nil
+	}
+	streamAggs := make([]PhysicalPlan, 0, len(p.possibleProperties))
+	for _, cols := range p.possibleProperties {
+		_, keys := getPermutation(cols, p.groupByCols)
+		if len(keys) != len(p.groupByCols) {
+			continue
+		}
+		agg := PhysicalAggregation{
+			GroupByItems: p.GroupByItems,
+			AggFuncs:     p.AggFuncs,
+			HasGby:       len(p.GroupByItems) > 0,
+			AggType:      StreamedAgg,
+			propKeys:     cols,
+			inputCount:   p.inputCount,
+		}.init(p.allocator, p.ctx)
+		agg.SetSchema(p.schema.Clone())
+		agg.profile = p.profile
+		streamAggs = append(streamAggs, agg)
+	}
+	return streamAggs
+}
+
 func (p *LogicalAggregation) generatePhysicalPlans() []PhysicalPlan {
-	ha := PhysicalAggregation{
+	aggs := make([]PhysicalPlan, 0, len(p.possibleProperties)+1)
+	agg := PhysicalAggregation{
 		GroupByItems: p.GroupByItems,
 		AggFuncs:     p.AggFuncs,
 		HasGby:       len(p.GroupByItems) > 0,
 		AggType:      CompleteAgg,
 	}.init(p.allocator, p.ctx)
-	ha.SetSchema(p.schema)
-	ha.profile = p.profile
-	return []PhysicalPlan{ha}
+	agg.SetSchema(p.schema.Clone())
+	agg.profile = p.profile
+	aggs = append(aggs, agg)
+
+	streamAggs := p.getStreamAggs()
+	aggs = append(aggs, streamAggs...)
+
+	return aggs
 }
 
 func (p *PhysicalAggregation) getChildrenPossibleProps(prop *requiredProp) [][]*requiredProp {
 	p.expectedCnt = prop.expectedCnt
-	if !prop.isEmpty() {
+	if p.AggType != StreamedAgg {
+		if !prop.isEmpty() {
+			return nil
+		}
+		props := make([][]*requiredProp, 0, len(wholeTaskTypes))
+		for _, tp := range wholeTaskTypes {
+			props = append(props, []*requiredProp{{taskTp: tp, expectedCnt: math.MaxFloat64}})
+		}
+		return props
+	}
+
+	reqProp := &requiredProp{taskTp: rootTaskType, cols: p.propKeys, expectedCnt: prop.expectedCnt * p.inputCount / p.profile.count, desc: prop.desc}
+	if !prop.isEmpty() && !prop.isPrefix(reqProp) {
 		return nil
 	}
-	props := make([][]*requiredProp, 0, len(wholeTaskTypes))
-	for _, tp := range wholeTaskTypes {
-		props = append(props, []*requiredProp{{taskTp: tp, expectedCnt: math.MaxFloat64}})
-	}
-	return props
+	return [][]*requiredProp{{reqProp}}
 }

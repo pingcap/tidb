@@ -65,6 +65,18 @@ func (e *ShowExec) Next() (Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		for i := 0; e.rows != nil && i < len(e.rows); i++ {
+			for j, row := 0, e.rows[i]; j < len(row); j++ {
+				if row[j].Kind() != types.KindString {
+					continue
+				}
+				val := row[j].GetString()
+				retType := e.Schema().Columns[j].RetType
+				if valLen := len(val); retType.Flen < valLen {
+					retType.Flen = valLen
+				}
+			}
+		}
 	}
 	if e.cursor >= len(e.rows) {
 		return nil, nil
@@ -429,7 +441,13 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
 				default:
-					buf.WriteString(fmt.Sprintf(" DEFAULT '%v'", col.DefaultValue))
+					defaultValStr := fmt.Sprintf("%v", col.DefaultValue)
+					if col.Tp == mysql.TypeBit {
+						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
+						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true)))
+					} else {
+						buf.WriteString(fmt.Sprintf(" DEFAULT '%s'", format.OutputFormat(defaultValStr)))
+					}
 				}
 			}
 			if mysql.HasOnUpdateNowFlag(col.Flag) {
@@ -437,7 +455,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 		}
 		if len(col.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", col.Comment))
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
 		}
 		if i != len(tb.Cols())-1 {
 			buf.WriteString(",\n")
@@ -496,7 +514,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 
 		refCols := make([]string, 0, len(fk.RefCols))
-		for _, c := range fk.Cols {
+		for _, c := range fk.RefCols {
 			refCols = append(refCols, c.O)
 		}
 

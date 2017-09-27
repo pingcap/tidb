@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
@@ -39,6 +39,10 @@ import (
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 	TestingT(t)
 }
 
@@ -73,8 +77,6 @@ type testBinlogSuite struct {
 }
 
 func (s *testBinlogSuite) SetUpSuite(c *C) {
-	logLevel := os.Getenv("log_level")
-	log.SetLevelByString(logLevel)
 	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store

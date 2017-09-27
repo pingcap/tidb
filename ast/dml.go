@@ -717,7 +717,7 @@ type InsertStmt struct {
 	dmlNode
 
 	IsReplace   bool
-	Ignore      bool
+	IgnoreErr   bool
 	Table       *TableRefsClause
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
@@ -795,7 +795,7 @@ type DeleteStmt struct {
 	Order        *OrderByClause
 	Limit        *Limit
 	LowPriority  bool
-	Ignore       bool
+	IgnoreErr    bool
 	Quick        bool
 	IsMultiTable bool
 	BeforeFrom   bool
@@ -856,7 +856,7 @@ type UpdateStmt struct {
 	Order         *OrderByClause
 	Limit         *Limit
 	LowPriority   bool
-	Ignore        bool
+	IgnoreErr     bool
 	MultipleTable bool
 }
 

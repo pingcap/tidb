@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"strings"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -51,12 +51,14 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	// because all of them are sorted by their `Offset`, which
 	// causes all writable columns are after public columns.
 	for i, col := range t.Cols() {
-		// Cast changed fields with respective columns.
-		v, err := table.CastValue(ctx, newData[i], col.ToInfo())
-		if err != nil {
-			return false, errors.Trace(err)
+		if modified[i] {
+			// Cast changed fields with respective columns.
+			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			newData[i] = v
 		}
-		newData[i] = v
 
 		// Rebase auto increment id if the field is changed.
 		if mysql.HasAutoIncrementFlag(col.Flag) {
@@ -69,7 +71,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			}
 			t.RebaseAutoID(val, true)
 		}
-		cmp, err := newData[i].CompareDatum(sc, oldData[i])
+		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -105,7 +107,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
-			v, errGT := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
+			v, errGT := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal)
 			if errGT != nil {
 				return false, errors.Trace(errGT)
 			}
@@ -114,11 +116,11 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 
 	if handleChanged {
-		err = t.RemoveRecord(ctx, h, oldData)
+		_, err = t.AddRecord(ctx, newData)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		_, err = t.AddRecord(ctx, newData)
+		err = t.RemoveRecord(ctx, h, oldData)
 	} else {
 		// Update record to new value and update index.
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
@@ -637,11 +639,13 @@ func (e *LoadData) Open() error {
 
 // InsertValues is the data to insert.
 type InsertValues struct {
-	currRow      int64
-	batchRows    int64
-	lastInsertID uint64
-	ctx          context.Context
-	SelectExec   Executor
+	currRow               int64
+	batchRows             int64
+	lastInsertID          uint64
+	ctx                   context.Context
+	needFillDefaultValues bool
+
+	SelectExec Executor
 
 	Table     table.Table
 	Columns   []*ast.ColumnName
@@ -659,8 +663,8 @@ type InsertExec struct {
 
 	OnDuplicate []*expression.Assignment
 
-	Priority mysql.PriorityEnum
-	Ignore   bool
+	Priority  mysql.PriorityEnum
+	IgnoreErr bool
 
 	finished bool
 }
@@ -690,9 +694,9 @@ func (e *InsertExec) Next() (Row, error) {
 
 	var rows [][]types.Datum
 	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(cols, e.Ignore)
+		rows, err = e.getRowsSelect(cols, e.IgnoreErr)
 	} else {
-		rows, err = e.getRows(cols, e.Ignore)
+		rows, err = e.getRows(cols, e.IgnoreErr)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -712,7 +716,7 @@ func (e *InsertExec) Next() (Row, error) {
 			txn = e.ctx.Txn()
 			rowCount = 0
 		}
-		if len(e.OnDuplicate) == 0 && !e.Ignore {
+		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := e.Table.AddRecord(e.ctx, row)
@@ -727,7 +731,7 @@ func (e *InsertExec) Next() (Row, error) {
 			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-			if e.Ignore {
+			if e.IgnoreErr {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
@@ -883,16 +887,61 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 	return
 }
 
+// getRow eval the insert statement. Because the value of column may calculated based on other column,
+// it use fillDefaultValues to init the empty row before eval expressions when needFillDefaultValues is true.
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
-	vals := make([]types.Datum, len(list))
-	for i, expr := range list {
-		val, err := expr.Eval(nil)
-		vals[i] = val
-		if err != nil {
+	row := make([]types.Datum, len(e.Table.Cols()))
+	hasValue := make([]bool, len(e.Table.Cols()))
+
+	if e.needFillDefaultValues {
+		if err := e.fillDefaultValues(row, hasValue, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	return e.fillRowData(cols, vals, ignoreErr)
+
+	for i, expr := range list {
+		val, err := expr.Eval(row)
+		if err = e.filterErr(err, ignoreErr); err != nil {
+			return nil, errors.Trace(err)
+		}
+		val, err = table.CastValue(e.ctx, val, cols[i].ToInfo())
+		if err = e.filterErr(err, ignoreErr); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		offset := cols[i].Offset
+		row[offset], hasValue[offset] = val, true
+	}
+
+	return e.fillGenColData(cols, len(list), hasValue, row, ignoreErr)
+}
+
+// fillDefaultValues fills a row followed by these rules:
+//     1. for nullable and no default value column, use NULL.
+//     2. for nullable and have default value column, use it's default value.
+//     3. for not null column, use zero value even in strict mode.
+//     4. for auto_increment column, use zero value.
+//     5. for generated column, use NULL.
+func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
+	for i, c := range e.Table.Cols() {
+		var err error
+		if c.IsGenerated() {
+			continue
+		} else if mysql.HasAutoIncrementFlag(c.Flag) {
+			row[i] = table.GetZeroValue(c.ToInfo())
+		} else {
+			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
+			hasValue[c.Offset] = true
+			if table.ErrNoDefaultValue.Equal(err) {
+				row[i] = table.GetZeroValue(c.ToInfo())
+				hasValue[c.Offset] = false
+			} else if err = e.filterErr(err, ignoreErr); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
@@ -927,6 +976,11 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 		row[offset] = v
 		hasValue[offset] = true
 	}
+
+	return e.fillGenColData(cols, len(vals), hasValue, row, ignoreErr)
+}
+
+func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue []bool, row []types.Datum, ignoreErr bool) ([]types.Datum, error) {
 	err := e.initDefaultValues(row, hasValue, ignoreErr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -937,7 +991,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 		if err = e.filterErr(err, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
-		offset := cols[len(vals)+i].Offset
+		offset := cols[valLen+i].Offset
 		row[offset] = val
 	}
 	if err = table.CastValues(e.ctx, row, cols, ignoreErr); err != nil {
@@ -962,6 +1016,8 @@ func (e *InsertValues) filterErr(err error, ignoreErr bool) error {
 	return nil
 }
 
+// initDefaultValues fills generated columns, auto_increment column and empty column.
+// For NOT NULL column, it will return error or use zero value based on sql_mode.
 func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ignoreErr bool) error {
 	var defaultValueCols []*table.Column
 	strictSQL := e.ctx.GetSessionVars().StrictSQLMode
@@ -978,6 +1034,9 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool, ign
 			// Just leave generated column as null. It will be calculated later
 			// but before we check whether the column can be null or not.
 			needDefaultValue = false
+			if !hasValue[i] {
+				row[i].SetNull()
+			}
 		}
 		if needDefaultValue {
 			var err error
@@ -1202,6 +1261,7 @@ type UpdateExec struct {
 
 	SelectExec  Executor
 	OrderedList []*expression.Assignment
+	IgnoreErr   bool
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
 	updatedRowKeys map[int64]map[int64]struct{}
@@ -1254,12 +1314,18 @@ func (e *UpdateExec) Next() (Row, error) {
 			}
 			// Update row
 			changed, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
-			if err1 != nil {
-				return nil, errors.Trace(err1)
+			if err1 == nil {
+				if changed {
+					e.updatedRowKeys[id][handle] = struct{}{}
+				}
+				continue
 			}
-			if changed {
-				e.updatedRowKeys[id][handle] = struct{}{}
+
+			if kv.ErrKeyExists.Equal(err1) && e.IgnoreErr {
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
+				continue
 			}
+			return nil, errors.Trace(err1)
 		}
 	}
 	e.cursor++

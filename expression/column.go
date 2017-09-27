@@ -17,8 +17,8 @@ import (
 	"bytes"
 	"fmt"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -46,44 +46,71 @@ func (col *CorrelatedColumn) Eval(row []types.Datum) (types.Datum, error) {
 
 // EvalInt returns int representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
-	val, isNull, err := evalExprToInt(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	if col.Data.IsNull() {
+		return 0, true, nil
+	}
+	if col.GetType().Hybrid() {
+		res, err := col.Data.ToInt64(sc)
+		return res, err != nil, errors.Trace(err)
+	}
+	return col.Data.GetInt64(), false, nil
 }
 
 // EvalReal returns real representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
-	val, isNull, err := evalExprToReal(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	if col.Data.IsNull() {
+		return 0, true, nil
+	}
+	if col.GetType().Hybrid() {
+		res, err := col.Data.ToFloat64(sc)
+		return res, err != nil, errors.Trace(err)
+	}
+	return col.Data.GetFloat64(), false, nil
 }
 
 // EvalString returns string representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
-	val, isNull, err := evalExprToString(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	if col.Data.IsNull() {
+		return "", true, nil
+	}
+	res, err := col.Data.ToString()
+	return res, err != nil, errors.Trace(err)
 }
 
 // EvalDecimal returns decimal representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
-	val, isNull, err := evalExprToDecimal(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	if col.Data.IsNull() {
+		return nil, true, nil
+	}
+	if col.GetType().Hybrid() {
+		res, err := col.Data.ToDecimal(sc)
+		return res, err != nil, errors.Trace(err)
+	}
+	return col.Data.GetMysqlDecimal(), false, nil
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
-	val, isNull, err := evalExprToTime(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	if col.Data.IsNull() {
+		return types.Time{}, true, nil
+	}
+	return col.Data.GetMysqlTime(), false, nil
 }
 
 // EvalDuration returns Duration representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
-	val, isNull, err := evalExprToDuration(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	if col.Data.IsNull() {
+		return types.Duration{}, true, nil
+	}
+	return col.Data.GetMysqlDuration(), false, nil
 }
 
 // EvalJSON returns JSON representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalJSON(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
-	val, isNull, err := evalExprToJSON(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	if col.Data.IsNull() {
+		return json.JSON{}, true, nil
+	}
+	return col.Data.GetMysqlJSON(), false, nil
 }
 
 // Equal implements Expression interface.
@@ -113,7 +140,7 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 
 // Column represents a column.
 type Column struct {
-	FromID  string
+	FromID  int
 	ColName model.CIStr
 	DBName  model.CIStr
 	TblName model.CIStr
@@ -164,11 +191,6 @@ func (col *Column) GetType() *types.FieldType {
 	return col.RetType
 }
 
-// GetTypeClass implements Expression interface.
-func (col *Column) GetTypeClass() types.TypeClass {
-	return col.RetType.ToClass()
-}
-
 // Eval implements Expression interface.
 func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 	return row[col.Index], nil
@@ -176,44 +198,78 @@ func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 
 // EvalInt returns int representation of Column.
 func (col *Column) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
-	val, isNull, err := evalExprToInt(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	val := &row[col.Index]
+	if val.IsNull() {
+		return 0, true, nil
+	}
+	if col.GetType().Hybrid() {
+		res, err := val.ToInt64(sc)
+		return res, err != nil, errors.Trace(err)
+	}
+	return val.GetInt64(), false, nil
 }
 
 // EvalReal returns real representation of Column.
 func (col *Column) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
-	val, isNull, err := evalExprToReal(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	val := &row[col.Index]
+	if val.IsNull() {
+		return 0, true, nil
+	}
+	if col.GetType().Hybrid() {
+		res, err := val.ToFloat64(sc)
+		return res, err != nil, errors.Trace(err)
+	}
+	return val.GetFloat64(), false, nil
 }
 
 // EvalString returns string representation of Column.
 func (col *Column) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
-	val, isNull, err := evalExprToString(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	val := &row[col.Index]
+	if val.IsNull() {
+		return "", true, nil
+	}
+	res, err := val.ToString()
+	return res, err != nil, errors.Trace(err)
 }
 
 // EvalDecimal returns decimal representation of Column.
 func (col *Column) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
-	val, isNull, err := evalExprToDecimal(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	val := &row[col.Index]
+	if val.IsNull() {
+		return nil, true, nil
+	}
+	if col.GetType().Hybrid() {
+		res, err := val.ToDecimal(sc)
+		return res, err != nil, errors.Trace(err)
+	}
+	return val.GetMysqlDecimal(), false, nil
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
 func (col *Column) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
-	val, isNull, err := evalExprToTime(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	val := &row[col.Index]
+	if val.IsNull() {
+		return types.Time{}, true, nil
+	}
+	return val.GetMysqlTime(), false, nil
 }
 
 // EvalDuration returns Duration representation of Column.
 func (col *Column) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
-	val, isNull, err := evalExprToDuration(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	val := &row[col.Index]
+	if val.IsNull() {
+		return types.Duration{}, true, nil
+	}
+	return val.GetMysqlDuration(), false, nil
 }
 
 // EvalJSON returns JSON representation of Column.
 func (col *Column) EvalJSON(row []types.Datum, sc *variable.StatementContext) (json.JSON, bool, error) {
-	val, isNull, err := evalExprToJSON(col, row, sc)
-	return val, isNull, errors.Trace(err)
+	val := &row[col.Index]
+	if val.IsNull() {
+		return json.JSON{}, true, nil
+	}
+	return val.GetMysqlJSON(), false, nil
 }
 
 // Clone implements Expression interface.
@@ -237,7 +293,9 @@ func (col *Column) HashCode() []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
-	col.hashcode, _ = codec.EncodeValue(col.hashcode, types.NewStringDatum(col.FromID), types.NewIntDatum(int64(col.Position)))
+	col.hashcode = make([]byte, 0, 16)
+	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.FromID))
+	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.Position))
 	return col.hashcode
 }
 

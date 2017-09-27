@@ -161,7 +161,12 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 				}
 			}
 		case '_':
-			lastAny = false
+			if lastAny {
+				patChars[patLen-1], patTypes[patLen-1] = c, patOne
+				patChars[patLen], patTypes[patLen] = '%', patAny
+				patLen++
+				continue
+			}
 			tp = patOne
 		case '%':
 			if lastAny {
@@ -176,12 +181,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 		patChars[patLen] = c
 		patTypes[patLen] = tp
 		patLen++
-	}
-	for i := 0; i < patLen-1; i++ {
-		if (patTypes[i] == patAny) && (patTypes[i+1] == patOne) {
-			patTypes[i] = patOne
-			patTypes[i+1] = patAny
-		}
 	}
 	patChars = patChars[:patLen]
 	patTypes = patTypes[:patLen]

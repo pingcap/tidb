@@ -667,9 +667,7 @@ func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForColumnsInTable(schema, table)
-			for _, r := range rs {
-				rows = append(rows, r)
-			}
+			rows = append(rows, rs...)
 		}
 	}
 	return rows
@@ -724,9 +722,7 @@ func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForStatisticsInTable(schema, table)
-			for _, r := range rs {
-				rows = append(rows, r)
-			}
+			rows = append(rows, rs...)
 		}
 	}
 	return rows
@@ -1171,4 +1167,8 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 // Seek is the first method called for table scan, we lazy initialize it here.
 func (it *infoschemaTable) Seek(ctx context.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp
+}
+
+func (it *infoschemaTable) Type() table.Type {
+	return table.VirtualTable
 }

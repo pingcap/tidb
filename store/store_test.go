@@ -22,8 +22,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/pd/pkg/logutil"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
@@ -45,6 +45,10 @@ const (
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(&logutil.LogConfig{
+		Level: logLevel,
+	})
 	TestingT(t)
 }
 
@@ -61,8 +65,6 @@ func (s *testKVSuite) SetUpSuite(c *C) {
 
 	cacheS, _ := tidb.NewStore(fmt.Sprintf("%s://%s", *testStore, *testStorePath))
 	c.Assert(cacheS, Equals, store)
-	logLevel := os.Getenv("log_level")
-	log.SetLevelByString(logLevel)
 }
 
 func (s *testKVSuite) TearDownSuite(c *C) {

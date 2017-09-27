@@ -173,7 +173,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	row, err = rs[0].Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data, NotNil)
-	c.Assert(row.Data[5].GetMysqlBit(), Equals, types.Bit{Value: 6, Width: 8})
+	c.Assert(row.Data[5].GetBinaryLiteral(), DeepEquals, types.NewBinaryLiteralFromUint(6, -1))
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 
@@ -285,7 +285,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	ts.se.Execute("DROP TABLE IF EXISTS test.tIter")
 	_, err := ts.se.Execute("CREATE TABLE test.tIter (a int primary key, b int)")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute("INSERT test.tIter VALUES (1, 2), (2, NULL)")
+	_, err = ts.se.Execute("INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(context.Context)
 	c.Assert(ctx.NewTxn(), IsNil)

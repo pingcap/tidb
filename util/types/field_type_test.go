@@ -99,11 +99,11 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 
 	ft = NewFieldType(mysql.TypeEnum)
 	ft.Elems = []string{"a\nb", "a\tb", "a\rb"}
-	c.Assert(ft.String(), Equals, "enum('a\\nb','a\\tb','a\\rb')")
+	c.Assert(ft.String(), Equals, "enum('a\\nb','a\tb','a\\rb')")
 
 	ft = NewFieldType(mysql.TypeEnum)
-	ft.Elems = []string{"a'\nb", "a'b\tc"}
-	c.Assert(ft.String(), Equals, "enum('a''\\nb','a''b\\tc')")
+	ft.Elems = []string{"a\nb", "a'\t\r\nb", "a\rb"}
+	c.Assert(ft.String(), Equals, "enum('a\\nb','a''	\\r\\nb','a\\rb')")
 
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"a", "b"}
@@ -114,12 +114,12 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	c.Assert(ft.String(), Equals, "set('''a''','''b''')")
 
 	ft = NewFieldType(mysql.TypeSet)
-	ft.Elems = []string{"a\nb", "a\tb", "a\rb"}
-	c.Assert(ft.String(), Equals, "set('a\\nb','a\\tb','a\\rb')")
+	ft.Elems = []string{"a\nb", "a'\t\r\nb", "a\rb"}
+	c.Assert(ft.String(), Equals, "set('a\\nb','a''	\\r\\nb','a\\rb')")
 
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"a'\nb", "a'b\tc"}
-	c.Assert(ft.String(), Equals, "set('a''\\nb','a''b\\tc')")
+	c.Assert(ft.String(), Equals, "set('a''\\nb','a''b	c')")
 
 	ft = NewFieldType(mysql.TypeTimestamp)
 	ft.Flen = 8
@@ -170,23 +170,32 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 		flag      uint
 	}{
 		{nil, mysql.TypeNull, 0, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
-		{1, mysql.TypeLonglong, 1, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
-		{uint64(1), mysql.TypeLonglong, 1, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
-		{"abc", mysql.TypeVarString, 9, UnspecifiedLength, charset.CharsetUTF8, charset.CollationUTF8, 0},
-		{1.1, mysql.TypeDouble, 3, 1, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{1, mysql.TypeLonglong, 1, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{uint64(1), mysql.TypeLonglong, 1, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag},
+		{"abc", mysql.TypeVarString, 3, UnspecifiedLength, charset.CharsetUTF8, charset.CollationUTF8, 0},
+		{1.1, mysql.TypeDouble, 3, -1, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
 		{[]byte("abc"), mysql.TypeBlob, 3, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
-		{Bit{}, mysql.TypeVarchar, 3, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
-		{Hex{}, mysql.TypeVarchar, 3, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{HexLiteral{}, mysql.TypeVarString, 0, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag},
+		{BitLiteral{}, mysql.TypeVarString, 0, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
 		{Time{Type: mysql.TypeDatetime}, mysql.TypeDatetime, 19, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
-		{Duration{}, mysql.TypeDuration, 9, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
-		{&MyDecimal{}, mysql.TypeNewDecimal, 0, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{Time{
+			Time: FromDate(2017, 12, 12, 12, 59, 59, 0),
+			Type: mysql.TypeDatetime,
+			Fsp:  3}, mysql.TypeDatetime, 23, 3, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{Duration{}, mysql.TypeDuration, 8, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
+		{&MyDecimal{}, mysql.TypeNewDecimal, 1, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
 		{Enum{Name: "a", Value: 1}, mysql.TypeEnum, 1, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
 		{Set{Name: "a", Value: 1}, mysql.TypeSet, 1, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag},
 	}
 	for _, tt := range tests {
 		var ft FieldType
 		DefaultTypeForValue(tt.value, &ft)
-		c.Assert(ft.Tp, Equals, tt.tp, Commentf("%v %v", ft, tt))
+		c.Assert(ft.Tp, Equals, tt.tp, Commentf("%v %v", ft.Tp, tt.tp))
+		c.Assert(ft.Flen, Equals, tt.flen, Commentf("%v %v", ft.Flen, tt.flen))
+		c.Assert(ft.Charset, Equals, tt.charset, Commentf("%v %v", ft.Charset, tt.charset))
+		c.Assert(ft.Decimal, Equals, tt.decimal, Commentf("%v %v", ft.Decimal, tt.decimal))
+		c.Assert(ft.Collate, Equals, tt.collation, Commentf("%v %v", ft.Collate, tt.collation))
+		c.Assert(ft.Flag, Equals, tt.flag, Commentf("%v %v", ft.Flag, tt.flag))
 	}
 }
 
@@ -283,7 +292,7 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 	}
 }
 
-func (s *testFieldTypeSuite) TestAggTypeClass(c *C) {
+func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {
 	defer testleak.AfterTest(c)()
 	fts := []*FieldType{
 		NewFieldType(mysql.TypeDecimal),
@@ -318,67 +327,67 @@ func (s *testFieldTypeSuite) TestAggTypeClass(c *C) {
 
 	for i := range fts {
 		var flag uint
-		aggTc := AggTypeClass(fts[i:i+1], &flag)
+		aggregatedEvalType := AggregateEvalType(fts[i:i+1], &flag)
 		switch fts[i].Tp {
 		case mysql.TypeDecimal, mysql.TypeNull, mysql.TypeTimestamp, mysql.TypeDate,
 			mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar,
 			mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
 			mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
 			mysql.TypeVarString, mysql.TypeString, mysql.TypeGeometry:
-			c.Assert(aggTc, Equals, ClassString)
+			c.Assert(aggregatedEvalType.IsStringKind(), IsTrue)
 			c.Assert(flag, Equals, uint(0))
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
-			mysql.TypeInt24, mysql.TypeYear, mysql.TypeBit:
-			c.Assert(aggTc, Equals, ClassInt)
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeBit,
+			mysql.TypeInt24, mysql.TypeYear:
+			c.Assert(aggregatedEvalType, Equals, ETInt)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeFloat, mysql.TypeDouble:
-			c.Assert(aggTc, Equals, ClassReal)
+			c.Assert(aggregatedEvalType, Equals, ETReal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeNewDecimal:
-			c.Assert(aggTc, Equals, ClassDecimal)
+			c.Assert(aggregatedEvalType, Equals, ETDecimal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		}
 
 		flag = 0
-		aggTc = AggTypeClass([]*FieldType{fts[i], fts[i]}, &flag)
+		aggregatedEvalType = AggregateEvalType([]*FieldType{fts[i], fts[i]}, &flag)
 		switch fts[i].Tp {
 		case mysql.TypeDecimal, mysql.TypeNull, mysql.TypeTimestamp, mysql.TypeDate,
 			mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar,
 			mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
 			mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
 			mysql.TypeVarString, mysql.TypeString, mysql.TypeGeometry:
-			c.Assert(aggTc, Equals, ClassString)
+			c.Assert(aggregatedEvalType.IsStringKind(), IsTrue)
 			c.Assert(flag, Equals, uint(0))
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
-			mysql.TypeInt24, mysql.TypeYear, mysql.TypeBit:
-			c.Assert(aggTc, Equals, ClassInt)
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeBit,
+			mysql.TypeInt24, mysql.TypeYear:
+			c.Assert(aggregatedEvalType, Equals, ETInt)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeFloat, mysql.TypeDouble:
-			c.Assert(aggTc, Equals, ClassReal)
+			c.Assert(aggregatedEvalType, Equals, ETReal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeNewDecimal:
-			c.Assert(aggTc, Equals, ClassDecimal)
+			c.Assert(aggregatedEvalType, Equals, ETDecimal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		}
 		flag = 0
-		aggTc = AggTypeClass([]*FieldType{fts[i], NewFieldType(mysql.TypeLong)}, &flag)
+		aggregatedEvalType = AggregateEvalType([]*FieldType{fts[i], NewFieldType(mysql.TypeLong)}, &flag)
 		switch fts[i].Tp {
 		case mysql.TypeDecimal, mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration,
 			mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar, mysql.TypeJSON,
 			mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob, mysql.TypeMediumBlob,
 			mysql.TypeLongBlob, mysql.TypeBlob, mysql.TypeVarString,
 			mysql.TypeString, mysql.TypeGeometry:
-			c.Assert(aggTc, Equals, ClassString)
+			c.Assert(aggregatedEvalType.IsStringKind(), IsTrue)
 			c.Assert(flag, Equals, uint(0))
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeNull,
-			mysql.TypeLonglong, mysql.TypeYear, mysql.TypeInt24, mysql.TypeBit:
-			c.Assert(aggTc, Equals, ClassInt)
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeNull, mysql.TypeBit,
+			mysql.TypeLonglong, mysql.TypeYear, mysql.TypeInt24:
+			c.Assert(aggregatedEvalType, Equals, ETInt)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeFloat, mysql.TypeDouble:
-			c.Assert(aggTc, Equals, ClassReal)
+			c.Assert(aggregatedEvalType, Equals, ETReal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		case mysql.TypeNewDecimal:
-			c.Assert(aggTc, Equals, ClassDecimal)
+			c.Assert(aggregatedEvalType, Equals, ETDecimal)
 			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
 		}
 	}

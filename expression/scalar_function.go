@@ -16,7 +16,6 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -74,7 +73,7 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenByArgs(funcName)
+		return nil, errFunctionNotExists.GenByArgs("FUNCTION", funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
@@ -113,10 +112,26 @@ func (sf *ScalarFunction) Clone() Expression {
 	}
 	switch sf.FuncName.L {
 	case ast.Cast:
-		return buildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
+		return BuildCastFunction(sf.GetArgs()[0], sf.GetType(), sf.GetCtx())
 	case ast.Values:
-		v := sf.Function.(*builtinValuesSig)
-		return NewValuesFunc(v.offset, sf.GetType(), sf.GetCtx())
+		var offset int
+		switch sf.GetType().EvalType() {
+		case types.ETInt:
+			offset = sf.Function.(*builtinValuesIntSig).offset
+		case types.ETReal:
+			offset = sf.Function.(*builtinValuesRealSig).offset
+		case types.ETDecimal:
+			offset = sf.Function.(*builtinValuesDecimalSig).offset
+		case types.ETString:
+			offset = sf.Function.(*builtinValuesStringSig).offset
+		case types.ETDatetime, types.ETTimestamp:
+			offset = sf.Function.(*builtinValuesTimeSig).offset
+		case types.ETDuration:
+			offset = sf.Function.(*builtinValuesDurationSig).offset
+		case types.ETJson:
+			offset = sf.Function.(*builtinValuesJSONSig).offset
+		}
+		return NewValuesFunc(offset, sf.GetType(), sf.GetCtx())
 	}
 	newFunc, _ := NewFunction(sf.GetCtx(), sf.FuncName.L, sf.RetType, newArgs...)
 	return newFunc
@@ -125,11 +140,6 @@ func (sf *ScalarFunction) Clone() Expression {
 // GetType implements Expression interface.
 func (sf *ScalarFunction) GetType() *types.FieldType {
 	return sf.RetType
-}
-
-// GetTypeClass implements Expression interface.
-func (sf *ScalarFunction) GetTypeClass() types.TypeClass {
-	return sf.RetType.ToClass()
 }
 
 // Equal implements Expression interface.
@@ -164,17 +174,13 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
-	if atomic.LoadInt32(&TurnOnNewExprEval) == 0 {
-		return sf.Function.eval(row)
-	}
 	sc := sf.GetCtx().GetSessionVars().StmtCtx
 	var (
 		res    interface{}
 		isNull bool
 	)
-	tp := sf.GetType()
-	switch sf.GetTypeClass() {
-	case types.ClassInt:
+	switch tp, evalType := sf.GetType(), sf.GetType().EvalType(); evalType {
+	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(row, sc)
 		if mysql.HasUnsignedFlag(tp.Flag) {
@@ -182,21 +188,18 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
 		} else {
 			res = intRes
 		}
-	case types.ClassReal:
+	case types.ETReal:
 		res, isNull, err = sf.EvalReal(row, sc)
-	case types.ClassDecimal:
+	case types.ETDecimal:
 		res, isNull, err = sf.EvalDecimal(row, sc)
-	case types.ClassString:
-		switch x := sf.GetType().Tp; x {
-		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeNewDate:
-			res, isNull, err = sf.EvalTime(row, sc)
-		case mysql.TypeDuration:
-			res, isNull, err = sf.EvalDuration(row, sc)
-		case mysql.TypeJSON:
-			res, isNull, err = sf.EvalJSON(row, sc)
-		default:
-			res, isNull, err = sf.EvalString(row, sc)
-		}
+	case types.ETDatetime, types.ETTimestamp:
+		res, isNull, err = sf.EvalTime(row, sc)
+	case types.ETDuration:
+		res, isNull, err = sf.EvalDuration(row, sc)
+	case types.ETJson:
+		res, isNull, err = sf.EvalJSON(row, sc)
+	case types.ETString:
+		res, isNull, err = sf.EvalString(row, sc)
 	}
 
 	if isNull || err != nil {

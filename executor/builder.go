@@ -15,7 +15,6 @@ package executor
 
 import (
 	"math"
-	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -81,6 +81,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSelectLock(v)
 	case *plan.ShowDDL:
 		return b.buildShowDDL(v)
+	case *plan.ShowDDLJobs:
+		return b.buildShowDDLJobs(v)
 	case *plan.Show:
 		return b.buildShow(v)
 	case *plan.Simple:
@@ -166,6 +168,26 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	}
 	e.ddlInfo = ddlInfo
 	e.selfID = ownerManager.ID()
+	return e
+}
+
+func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
+	e := &ShowDDLJobsExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+	}
+
+	var err error
+	e.jobs, err = inspectkv.GetDDLJobs(e.ctx.Txn())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	historyJobs, err := inspectkv.GetHistoryDDLJobs(e.ctx.Txn())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	e.jobs = append(e.jobs, historyJobs...)
 	return e
 }
 
@@ -270,12 +292,13 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	ivs := &InsertValues{
-		ctx:        b.ctx,
-		Columns:    v.Columns,
-		Lists:      v.Lists,
-		Setlist:    v.Setlist,
-		GenColumns: v.GenCols.Columns,
-		GenExprs:   v.GenCols.Exprs,
+		ctx:                   b.ctx,
+		Columns:               v.Columns,
+		Lists:                 v.Lists,
+		Setlist:               v.Setlist,
+		GenColumns:            v.GenCols.Columns,
+		GenExprs:              v.GenCols.Exprs,
+		needFillDefaultValues: v.NeedFillDefaultValue,
 	}
 	if len(v.Children()) > 0 {
 		ivs.SelectExec = b.build(v.Children()[0])
@@ -288,7 +311,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 		Priority:     v.Priority,
-		Ignore:       v.Ignore,
+		IgnoreErr:    v.IgnoreErr,
 	}
 	return insert
 }
@@ -580,9 +603,8 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	exec := &SelectionExec{
-		baseExecutor:   newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
-		scanController: v.ScanController,
-		Conditions:     v.Conditions,
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		Conditions:   v.Conditions,
 	}
 	return exec
 }
@@ -610,15 +632,15 @@ func (b *executorBuilder) getStartTS() uint64 {
 }
 
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
-	table, _ := b.is.TableByID(v.Table.ID)
+	tb, _ := b.is.TableByID(v.Table.ID)
 	ts := &TableScanExec{
-		t:            table,
-		ctx:          b.ctx,
-		columns:      v.Columns,
-		schema:       v.Schema(),
-		seekHandle:   math.MinInt64,
-		ranges:       v.Ranges,
-		isInfoSchema: strings.EqualFold(v.DBName.L, infoschema.Name),
+		t:              tb,
+		ctx:            b.ctx,
+		columns:        v.Columns,
+		schema:         v.Schema(),
+		seekHandle:     math.MinInt64,
+		ranges:         v.Ranges,
+		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
 	return ts
 }
@@ -628,7 +650,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	if b.err != nil {
 		return nil
 	}
-	table, _ := b.is.TableByID(v.Table.ID)
+	tbl, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	var handleCol *expression.Column
@@ -640,7 +662,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		ctx:         b.ctx,
 		startTS:     startTS,
 		supportDesc: supportDesc,
-		table:       table,
+		table:       tbl,
 		schema:      v.Schema(),
 		Columns:     v.Columns,
 		ranges:      v.Ranges,
@@ -663,7 +685,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	if b.err != nil {
 		return nil
 	}
-	table, _ := b.is.TableByID(v.Table.ID)
+	tbl, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	var handleCol *expression.Column
@@ -674,7 +696,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		tableInfo:            v.Table,
 		ctx:                  b.ctx,
 		supportDesc:          supportDesc,
-		table:                table,
+		table:                tbl,
 		singleReadMode:       !v.DoubleRead,
 		startTS:              startTS,
 		where:                v.TableConditionPBExpr,
@@ -838,6 +860,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		SelectExec:   b.build(v.Children()[0]),
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
+		IgnoreErr:    v.IgnoreErr,
 	}
 }
 
@@ -881,7 +904,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, pk 
 			ranges:    ranges,
 			keepOrder: keepOrder,
 			dagPB: &tipb.DAGRequest{
-				StartTs:        b.getStartTS(),
+				StartTs:        startTS,
 				TimeZoneOffset: timeZoneOffset(b.ctx),
 				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			},
@@ -937,7 +960,7 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 			ranges:    []*types.IndexRange{idxRange},
 			keepOrder: true,
 			dagPB: &tipb.DAGRequest{
-				StartTs:        b.getStartTS(),
+				StartTs:        startTS,
 				TimeZoneOffset: timeZoneOffset(b.ctx),
 				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			},
@@ -978,27 +1001,98 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	return e
 }
 
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) *AnalyzeIndexExec {
+	startTS := b.getStartTS()
+	if b.err != nil {
+		return nil
+	}
+	e := &AnalyzeIndexExec{
+		ctx:         b.ctx,
+		tblInfo:     task.TableInfo,
+		idxInfo:     task.IndexInfo,
+		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency,
+		priority:    b.priority,
+		analyzePB: &tipb.AnalyzeReq{
+			Tp:             tipb.AnalyzeType_TypeIndex,
+			StartTs:        startTS,
+			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			TimeZoneOffset: timeZoneOffset(b.ctx),
+		},
+	}
+	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
+		BucketSize: maxBucketSize,
+		NumColumns: int32(len(task.IndexInfo.Columns)),
+	}
+	return e
+}
+
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTask) *AnalyzeColumnsExec {
+	cols := task.ColsInfo
+	keepOrder := false
+	if task.PKInfo != nil {
+		keepOrder = true
+		cols = append([]*model.ColumnInfo{task.PKInfo}, cols...)
+	}
+	e := &AnalyzeColumnsExec{
+		ctx:         b.ctx,
+		tblInfo:     task.TableInfo,
+		colsInfo:    task.ColsInfo,
+		pkInfo:      task.PKInfo,
+		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency,
+		priority:    b.priority,
+		keepOrder:   keepOrder,
+		analyzePB: &tipb.AnalyzeReq{
+			Tp:             tipb.AnalyzeType_TypeColumn,
+			StartTs:        b.getStartTS(),
+			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			TimeZoneOffset: timeZoneOffset(b.ctx),
+		},
+	}
+	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
+		BucketSize:  maxBucketSize,
+		SampleSize:  maxRegionSampleSize,
+		SketchSize:  maxSketchSize,
+		ColumnsInfo: distsql.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+	}
+	b.err = setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
+	return e
+}
+
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		ctx:   b.ctx,
 		tasks: make([]*analyzeTask, 0, len(v.Children())),
 	}
 	for _, task := range v.ColTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType:  colTask,
-			src:       b.buildTableScanForAnalyze(task.TableInfo, task.PKInfo, task.ColsInfo),
-			tableInfo: task.TableInfo,
-			Columns:   task.ColsInfo,
-			PKInfo:    task.PKInfo,
-		})
+		if task.PushDown {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: colTask,
+				colExec:  b.buildAnalyzeColumnsPushdown(task),
+			})
+		} else {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType:  colTask,
+				src:       b.buildTableScanForAnalyze(task.TableInfo, task.PKInfo, task.ColsInfo),
+				tableInfo: task.TableInfo,
+				Columns:   task.ColsInfo,
+				PKInfo:    task.PKInfo,
+			})
+		}
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType:  idxTask,
-			src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
-			indexInfo: task.IndexInfo,
-			tableInfo: task.TableInfo,
-		})
+		if task.PushDown {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType: idxTask,
+				idxExec:  b.buildAnalyzeIndexPushdown(task),
+			})
+		} else {
+			e.tasks = append(e.tasks, &analyzeTask{
+				taskType:  idxTask,
+				src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
+				indexInfo: task.IndexInfo,
+				tableInfo: task.TableInfo,
+			})
+		}
 	}
 	return e
 }
@@ -1046,10 +1140,6 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
-	var handleCol *expression.Column
-	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2Handle[ts.Table.ID][0]
-	}
 	e := &TableReaderExecutor{
 		ctx:       b.ctx,
 		schema:    v.Schema(),
@@ -1060,14 +1150,10 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		desc:      ts.Desc,
 		ranges:    ts.Ranges,
 		columns:   ts.Columns,
-		handleCol: handleCol,
 		priority:  b.priority,
 	}
 
 	for i := range v.Schema().Columns {
-		if v.Schema().Columns[i].ID == model.ExtraHandleID {
-			break
-		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
@@ -1081,10 +1167,6 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
-	var handleCol *expression.Column
-	if v.NeedColHandle {
-		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
-	}
 	e := &IndexReaderExecutor{
 		ctx:       b.ctx,
 		schema:    v.Schema(),
@@ -1096,15 +1178,10 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		desc:      is.Desc,
 		ranges:    is.Ranges,
 		columns:   is.Columns,
-		handleCol: handleCol,
 		priority:  b.priority,
 	}
 
 	for _, col := range v.OutputColumns {
-		// If it's ID is ExtraHandleID, then it must is the tail of the slice.
-		if col.ID == model.ExtraHandleID {
-			break
-		}
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
 	}
 
@@ -1121,15 +1198,25 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		return nil
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
+	var (
+		handleCol         *expression.Column
+		tableReaderSchema *expression.Schema
+	)
 	table, _ := b.is.TableByID(is.Table.ID)
-	var handleCol *expression.Column
+	len := v.Schema().Len()
 	if v.NeedColHandle {
 		handleCol = v.Schema().TblID2Handle[is.Table.ID][0]
-	}
-
-	len := v.Schema().Len()
-	if handleIsExtra(handleCol) {
-		len--
+	} else if !is.OutOfOrder {
+		tableReaderSchema = v.Schema().Clone()
+		handleCol = &expression.Column{
+			ID:      model.ExtraHandleID,
+			ColName: model.NewCIStr("_rowid"),
+			Index:   v.Schema().Len(),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		tableReaderSchema.Append(handleCol)
+		len = tableReaderSchema.Len()
 	}
 
 	for i := 0; i < len; i++ {
@@ -1137,19 +1224,20 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 
 	e := &IndexLookUpExecutor{
-		ctx:          b.ctx,
-		schema:       v.Schema(),
-		dagPB:        indexReq,
-		tableID:      is.Table.ID,
-		table:        table,
-		index:        is.Index,
-		keepOrder:    !is.OutOfOrder,
-		desc:         is.Desc,
-		ranges:       is.Ranges,
-		tableRequest: tableReq,
-		columns:      is.Columns,
-		handleCol:    handleCol,
-		priority:     b.priority,
+		ctx:               b.ctx,
+		schema:            v.Schema(),
+		dagPB:             indexReq,
+		tableID:           is.Table.ID,
+		table:             table,
+		index:             is.Index,
+		keepOrder:         !is.OutOfOrder,
+		desc:              is.Desc,
+		ranges:            is.Ranges,
+		tableRequest:      tableReq,
+		columns:           is.Columns,
+		handleCol:         handleCol,
+		priority:          b.priority,
+		tableReaderSchema: tableReaderSchema,
 	}
 	return e
 }

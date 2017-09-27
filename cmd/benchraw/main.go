@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/store/tikv"
 )
 
@@ -63,7 +63,7 @@ func batchRawPut(value []byte) {
 
 func main() {
 	flag.Parse()
-	log.SetLevelByString("warn")
+	log.SetLevel(log.WarnLevel)
 	go http.ListenAndServe(":9191", nil)
 
 	value := make([]byte, *valueSize)

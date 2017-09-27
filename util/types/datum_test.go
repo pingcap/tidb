@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 var _ = Suite(&testDatumSuite{})
@@ -63,8 +64,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, "0.1", 0)
 	testDatumToBool(c, []byte{}, 0)
 	testDatumToBool(c, []byte("0.1"), 0)
-	testDatumToBool(c, Hex{Value: 0}, 0)
-	testDatumToBool(c, Bit{Value: 0, Width: 8}, 0)
+	testDatumToBool(c, NewBinaryLiteralFromUint(0, -1), 0)
 	testDatumToBool(c, Enum{Name: "a", Value: 1}, 1)
 	testDatumToBool(c, Set{Name: "a", Value: 1}, 1)
 
@@ -119,7 +119,7 @@ func (ts *testDatumSuite) TestEqualDatums(c *C) {
 func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
 	sc := new(variable.StatementContext)
 	sc.IgnoreTruncate = true
-	res, err := EqualDatums(sc, MakeDatums(a), MakeDatums(b))
+	res, err := EqualDatums(sc, MakeDatums(a...), MakeDatums(b...))
 	c.Assert(err, IsNil)
 	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
 }
@@ -140,10 +140,10 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, uint64(0), int64(0))
 	testDatumToInt64(c, float32(3.1), int64(3))
 	testDatumToInt64(c, float64(3.1), int64(3))
-	testDatumToInt64(c, Hex{Value: 100}, int64(100))
-	testDatumToInt64(c, Bit{Value: 100, Width: 8}, int64(100))
+	testDatumToInt64(c, NewBinaryLiteralFromUint(100, -1), int64(100))
 	testDatumToInt64(c, Enum{Name: "a", Value: 1}, int64(1))
 	testDatumToInt64(c, Set{Name: "a", Value: 1}, int64(1))
+	testDatumToInt64(c, json.CreateJSON(int64(3)), int64(3))
 
 	t, err := ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
 	c.Assert(err, IsNil)
@@ -209,7 +209,6 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 		{NewStringDatum("\"hello, 世界\""), `"hello, 世界"`, true},
 		{NewStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
 		{NewStringDatum("{}"), `{}`, true},
-		{NewIntDatum(1), `true`, true},
 		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
 
 		// can not parse JSON from this string, so error occurs.
@@ -226,7 +225,7 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 			c.Assert(err, IsNil)
 
 			var cmp int
-			cmp, err = obtain.CompareDatum(sc, expected)
+			cmp, err = obtain.CompareDatum(sc, &expected)
 			c.Assert(err, IsNil)
 			c.Assert(cmp, Equals, 0)
 		} else {
@@ -379,16 +378,6 @@ func mustParseDurationDatum(str string, fsp int) Datum {
 	return NewDurationDatum(dur)
 }
 
-func mustParseHexDatum(str string) Datum {
-	hex, err := ParseHex(str)
-	if err != nil {
-		panic(err)
-	}
-	var d Datum
-	d.SetMysqlHex(hex)
-	return d
-}
-
 func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
 	sc := &variable.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
@@ -403,8 +392,8 @@ func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
 		{mustParseTimeIntoDatum("2017-07-18 17:21:42.32172", mysql.TypeDatetime, 0), NewIntDatum(20170718172142), false},
 		{mustParseDurationDatum("10:10:10", 0), NewIntDatum(101010), false},
 		{mustParseDurationDatum("10:10:10.100", 3), NewDatum(NewDecFromStringForTest("101010.100")), false},
-		{mustParseHexDatum("x'4D7953514C'"), NewFloat64Datum(332747985228), false},
-		{NewDatum(Bit{Value: 1, Width: 8}), NewFloat64Datum(1), false},
+		{NewBinaryLiteralDatum(NewBinaryLiteralFromUint(0x4D7953514C, -1)), NewUintDatum(332747985228), false},
+		{NewBinaryLiteralDatum(NewBinaryLiteralFromUint(1, -1)), NewUintDatum(1), false},
 		{NewDatum(Enum{"xxx", 1}), NewFloat64Datum(1), false},
 		{NewDatum(Set{"xxx", 1}), NewFloat64Datum(1), false},
 		{NewIntDatum(5), NewIntDatum(5), false},
@@ -414,7 +403,7 @@ func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
 	for _, tt := range tests {
 		got, err := CoerceArithmetic(sc, tt.input)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.expect)
+		v, err := got.CompareDatum(sc, &tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("got:%#v, expect:%#v", got, tt.expect))
 	}
@@ -442,13 +431,13 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 	for ith, tt := range tests {
 		got, err := ComputePlus(tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.plus)
+		v, err := got.CompareDatum(sc, &tt.plus)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.plus))
 
 		got, err = ComputeMinus(tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err = got.CompareDatum(sc, tt.minus)
+		v, err = got.CompareDatum(sc, &tt.minus)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.minus))
 	}
@@ -475,7 +464,7 @@ func (ts *testDatumSuite) TestComputeMul(c *C) {
 	for ith, tt := range tests {
 		got, err := ComputeMul(tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.expect)
+		v, err := got.CompareDatum(sc, &tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
 	}
@@ -504,7 +493,7 @@ func (ts *testDatumSuite) TestComputeDiv(c *C) {
 	for ith, tt := range tests {
 		got, err := ComputeDiv(sc, tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.expect)
+		v, err := got.CompareDatum(sc, &tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
 	}
@@ -538,7 +527,7 @@ func (ts *testDatumSuite) TestComputeMod(c *C) {
 	for ith, tt := range tests {
 		got, err := ComputeMod(sc, tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.expect)
+		v, err := got.CompareDatum(sc, &tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
 	}
@@ -567,8 +556,33 @@ func (ts *testDatumSuite) TestComputeIntDiv(c *C) {
 	for ith, tt := range tests {
 		got, err := ComputeIntDiv(sc, tt.a, tt.b)
 		c.Assert(err != nil, Equals, tt.hasErr)
-		v, err := got.CompareDatum(sc, tt.expect)
+		v, err := got.CompareDatum(sc, &tt.expect)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.expect))
+	}
+}
+
+func (ts *testDatumSuite) TestCopyDatum(c *C) {
+	var raw Datum
+	raw.b = []byte("raw")
+	raw.k = KindRaw
+	tests := []Datum{
+		NewIntDatum(72),
+		NewUintDatum(72),
+		NewStringDatum("abcd"),
+		NewBytesDatum([]byte("abcd")),
+		raw,
+	}
+
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	for _, tt := range tests {
+		tt1 := CopyDatum(tt)
+		res, err := tt.CompareDatum(sc, &tt1)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, 0)
+		if tt.b != nil {
+			c.Assert(&tt.b[0], Not(Equals), &tt1.b[0])
+		}
 	}
 }

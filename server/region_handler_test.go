@@ -178,18 +178,17 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	tidbdrv := NewTiDBDriver(store)
 
 	cfg := &config.Config{
-		Addr:         ":4001",
-		LogLevel:     "debug",
-		StatusAddr:   ":10090",
-		ReportStatus: true,
-		Store:        "tikv",
+		Port:  4001,
+		Store: "tikv",
 	}
+	cfg.Status.StatusPort = 10090
+	cfg.Status.ReportStatus = true
 
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go server.Run()
-	waitUntilServerOnline(cfg.StatusAddr)
+	waitUntilServerOnline(cfg.Status.StatusPort)
 }
 
 func (ts *TidbRegionHandlerTestSuite) stopServer(c *C) {

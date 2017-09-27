@@ -100,6 +100,13 @@ func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
 	h.TableInfo = tblInfo
 }
 
+// Clean cleans history information.
+func (h *HistoryInfo) Clean() {
+	h.SchemaVersion = 0
+	h.DBInfo = nil
+	h.TableInfo = nil
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID       int64         `json:"id"`

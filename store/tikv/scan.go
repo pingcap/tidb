@@ -14,8 +14,8 @@
 package tikv
 
 import (
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -139,14 +139,14 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(err)
 		}
 		req := &tikvrpc.Request{
-			Type:     tikvrpc.CmdScan,
-			Priority: s.snapshot.priority,
+			Type: tikvrpc.CmdScan,
 			Scan: &pb.ScanRequest{
 				StartKey: []byte(s.nextStartKey),
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
 			},
 		}
+		req.Context.Priority = s.snapshot.priority
 		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
@@ -166,6 +166,11 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		cmdScanResp := resp.Scan
 		if cmdScanResp == nil {
 			return errors.Trace(errBodyMissing)
+		}
+
+		err = s.snapshot.store.CheckVisibility(s.startTS())
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		kvPairs := cmdScanResp.Pairs

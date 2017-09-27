@@ -18,11 +18,12 @@ import (
 	"time"
 	"unsafe"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	goctx "golang.org/x/net/context"
 )
 
@@ -42,6 +43,8 @@ type tikvSnapshot struct {
 	isolationLevel kv.IsoLevel
 	priority       pb.CommandPri
 }
+
+var snapshotGP = gp.New(time.Minute)
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
 func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
@@ -78,6 +81,12 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	err = s.store.CheckVisibility(s.version.Ver)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return m, nil
 }
 
@@ -101,12 +110,13 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		return errors.Trace(s.batchGetSingleRegion(bo, batches[0], collectF))
 	}
 	ch := make(chan error)
-	for _, batch := range batches {
-		go func(batch batchKeys) {
+	for _, batch1 := range batches {
+		batch := batch1
+		snapshotGP.Go(func() {
 			backoffer, cancel := bo.Fork()
 			defer cancel()
 			ch <- s.batchGetSingleRegion(backoffer, batch, collectF)
-		}(batch)
+		})
 	}
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
@@ -123,13 +133,13 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 	pending := batch.keys
 	for {
 		req := &tikvrpc.Request{
-			Type:     tikvrpc.CmdBatchGet,
-			Priority: s.priority,
+			Type: tikvrpc.CmdBatchGet,
 			BatchGet: &pb.BatchGetRequest{
 				Keys:    pending,
 				Version: s.version.Ver,
 			},
 		}
+		req.Context.Priority = s.priority
 		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
@@ -201,13 +211,13 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, pbIsolationLevel(s.isolationLevel))
 
 	req := &tikvrpc.Request{
-		Type:     tikvrpc.CmdGet,
-		Priority: s.priority,
+		Type: tikvrpc.CmdGet,
 		Get: &pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
 		},
 	}
+	req.Context.Priority = s.priority
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {

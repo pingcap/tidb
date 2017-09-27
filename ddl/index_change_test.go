@@ -122,7 +122,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(ctx.Txn().Commit(), IsNil)
 	d.Stop()
-	prevState = model.StatePublic
+	prevState = model.StateNone
 	var noneTable table.Table
 	tc.onJobUpdated = func(job *model.Job) {
 		if job.SchemaState == prevState {

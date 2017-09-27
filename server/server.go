@@ -29,6 +29,10 @@
 package server
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"net"
 	"sync"
@@ -37,10 +41,11 @@ import (
 	// For pprof
 	_ "net/http/pprof"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
@@ -59,14 +64,24 @@ var (
 	errAccessDenied      = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
+// DefaultCapability is the capability of the server when it is created using the default configuration.
+// When server is configured with SSL, the server will have extra capabilities compared to DefaultCapability.
+const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
+	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
+	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
+	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth
+
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
+	tlsConfig         *tls.Config
 	driver            IDriver
 	listener          net.Listener
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
+	capability        uint32
 
 	// When a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
@@ -95,27 +110,26 @@ func (s *Server) releaseToken(token *Token) {
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := &clientConn{
-		conn:         conn,
-		pkt:          newPacketIO(conn),
 		server:       s,
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
 	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
-	if s.cfg.TCPKeepAlive {
+	if s.cfg.Performance.TCPKeepAlive {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			if err := tcpConn.SetKeepAlive(true); err != nil {
 				log.Error("failed to set tcp keep alive option:", err)
 			}
 		}
 	}
+	cc.setConn(conn)
 	cc.salt = util.RandomBuf(20)
 	return cc
 }
 
 func (s *Server) skipAuth() bool {
-	return s.cfg.SkipAuth
+	return s.cfg.Socket != ""
 }
 
 const tokenLimit = 1000
@@ -130,16 +144,22 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
+	s.loadTLSCertificates()
+
+	s.capability = defaultCapability
+	if s.tlsConfig != nil {
+		s.capability |= mysql.ClientSSL
+	}
 
 	var err error
 	if cfg.Socket != "" {
-		cfg.SkipAuth = true
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
 			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
 		}
 	} else {
-		if s.listener, err = net.Listen("tcp", s.cfg.Addr); err == nil {
-			log.Infof("Server is running MySQL Protocol at [%s]", s.cfg.Addr)
+		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+		if s.listener, err = net.Listen("tcp", addr); err == nil {
+			log.Infof("Server is running MySQL Protocol at [%s]", addr)
 		}
 	}
 	if err != nil {
@@ -151,10 +171,58 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	return s, nil
 }
 
+func (s *Server) loadTLSCertificates() {
+	defer func() {
+		if s.tlsConfig != nil {
+			log.Infof("Secure connection is enabled (client verification enabled = %v)", len(variable.SysVars["ssl_ca"].Value) > 0)
+			variable.SysVars["have_openssl"].Value = "YES"
+			variable.SysVars["have_ssl"].Value = "YES"
+			variable.SysVars["ssl_cert"].Value = s.cfg.Security.SSLCert
+			variable.SysVars["ssl_key"].Value = s.cfg.Security.SSLKey
+		} else {
+			log.Warn("Secure connection is NOT ENABLED")
+		}
+	}()
+
+	if len(s.cfg.Security.SSLCert) == 0 || len(s.cfg.Security.SSLKey) == 0 {
+		s.tlsConfig = nil
+		return
+	}
+
+	tlsCert, err := tls.LoadX509KeyPair(s.cfg.Security.SSLCert, s.cfg.Security.SSLKey)
+	if err != nil {
+		log.Warn(errors.ErrorStack(err))
+		s.tlsConfig = nil
+		return
+	}
+
+	// Try loading CA cert.
+	clientAuthPolicy := tls.NoClientCert
+	var certPool *x509.CertPool
+	if len(s.cfg.Security.SSLCA) > 0 {
+		caCert, err := ioutil.ReadFile(s.cfg.Security.SSLCA)
+		if err != nil {
+			log.Warn(errors.ErrorStack(err))
+		} else {
+			certPool = x509.NewCertPool()
+			if certPool.AppendCertsFromPEM(caCert) {
+				clientAuthPolicy = tls.VerifyClientCertIfGiven
+			}
+			variable.SysVars["ssl_ca"].Value = s.cfg.Security.SSLCA
+		}
+	}
+	s.tlsConfig = &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		ClientCAs:    certPool,
+		ClientAuth:   clientAuthPolicy,
+		MinVersion:   0,
+	}
+}
+
 // Run runs the server.
 func (s *Server) Run() error {
 	// Start HTTP API to report tidb info such as TPS.
-	if s.cfg.ReportStatus {
+	if s.cfg.Status.ReportStatus {
 		s.startStatusHTTP()
 	}
 	for {

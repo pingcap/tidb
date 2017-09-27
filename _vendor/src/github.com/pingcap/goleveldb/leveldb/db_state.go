@@ -67,12 +67,11 @@ func (db *DB) sampleSeek(ikey internalKey) {
 }
 
 func (db *DB) mpoolPut(mem *memdb.DB) {
-	defer func() {
-		recover()
-	}()
-	select {
-	case db.memPool <- mem:
-	default:
+	if !db.isClosed() {
+		select {
+		case db.memPool <- mem:
+		default:
+		}
 	}
 }
 
@@ -101,6 +100,12 @@ func (db *DB) mpoolDrain() {
 			default:
 			}
 		case _, _ = <-db.closeC:
+			ticker.Stop()
+			// Make sure the pool is drained.
+			select {
+			case <-db.memPool:
+			case <-time.After(time.Second):
+			}
 			close(db.memPool)
 			return
 		}

@@ -15,11 +15,12 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
@@ -50,8 +51,8 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
 		router.Handle("/mvcc/txn/{startTS}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
 	}
-	addr := s.cfg.StatusAddr
-	if len(addr) == 0 {
+	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
+	if s.cfg.Status.StatusPort == 0 {
 		addr = defaultStatusAddr
 	}
 	log.Infof("Listening on %v for status and metrics report.", addr)

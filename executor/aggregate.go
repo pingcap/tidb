@@ -16,12 +16,15 @@ package executor
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/types"
 )
+
+type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
 
 // HashAggExec deals with all the aggregate functions.
 // It is built from the Aggregate Plan. When Next() is called, it reads all the data from Src
@@ -33,7 +36,8 @@ type HashAggExec struct {
 	hasGby        bool
 	aggType       plan.AggregationType
 	sc            *variable.StatementContext
-	AggFuncs      []expression.AggregationFunction
+	AggFuncs      []aggregation.Aggregation
+	aggCtxsMap    aggCtxsMapper
 	groupMap      *mvmap.MVMap
 	groupIterator *mvmap.Iterator
 	GroupByItems  []expression.Expression
@@ -43,9 +47,7 @@ type HashAggExec struct {
 func (e *HashAggExec) Close() error {
 	e.groupMap = nil
 	e.groupIterator = nil
-	for _, agg := range e.AggFuncs {
-		agg.Reset()
-	}
+	e.aggCtxsMap = nil
 	return errors.Trace(e.children[0].Close())
 }
 
@@ -54,6 +56,7 @@ func (e *HashAggExec) Open() error {
 	e.executed = false
 	e.groupMap = mvmap.NewMVMap()
 	e.groupIterator = e.groupMap.NewIterator()
+	e.aggCtxsMap = make(aggCtxsMapper, 0)
 	return errors.Trace(e.children[0].Open())
 }
 
@@ -84,8 +87,9 @@ func (e *HashAggExec) Next() (Row, error) {
 		return nil, nil
 	}
 	retRow := make([]types.Datum, 0, len(e.AggFuncs))
-	for _, af := range e.AggFuncs {
-		retRow = append(retRow, af.GetGroupResult(groupKey))
+	aggCtxs := e.getContexts(groupKey)
+	for i, af := range e.AggFuncs {
+		retRow = append(retRow, af.GetResult(aggCtxs[i]))
 	}
 	return retRow, nil
 }
@@ -134,10 +138,24 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 	if e.groupMap.Get(groupKey) == nil {
 		e.groupMap.Put(groupKey, []byte{})
 	}
-	for _, af := range e.AggFuncs {
-		af.Update(srcRow, groupKey, e.sc)
+	aggCtxs := e.getContexts(groupKey)
+	for i, af := range e.AggFuncs {
+		af.Update(aggCtxs[i], e.sc, srcRow)
 	}
 	return true, nil
+}
+
+func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext {
+	groupKeyString := string(groupKey)
+	aggCtxs, ok := e.aggCtxsMap[groupKeyString]
+	if !ok {
+		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
+		for _, af := range e.AggFuncs {
+			aggCtxs = append(aggCtxs, af.CreateContext())
+		}
+		e.aggCtxsMap[groupKeyString] = aggCtxs
+	}
+	return aggCtxs
 }
 
 // StreamAggExec deals with all the aggregate functions.
@@ -149,7 +167,8 @@ type StreamAggExec struct {
 	executed           bool
 	hasData            bool
 	StmtCtx            *variable.StatementContext
-	AggFuncs           []expression.AggregationFunction
+	AggFuncs           []aggregation.Aggregation
+	aggCtxs            []*aggregation.AggEvaluateContext
 	GroupByItems       []expression.Expression
 	curGroupEncodedKey []byte
 	curGroupKey        []types.Datum
@@ -160,9 +179,7 @@ type StreamAggExec struct {
 func (e *StreamAggExec) Open() error {
 	e.executed = false
 	e.hasData = false
-	for _, agg := range e.AggFuncs {
-		agg.Reset()
-	}
+	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
 	return errors.Trace(e.children[0].Open())
 }
 
@@ -170,6 +187,11 @@ func (e *StreamAggExec) Open() error {
 func (e *StreamAggExec) Next() (Row, error) {
 	if e.executed {
 		return nil, nil
+	}
+	if len(e.aggCtxs) == 0 {
+		for _, agg := range e.AggFuncs {
+			e.aggCtxs = append(e.aggCtxs, agg.CreateContext())
+		}
 	}
 	retRow := make([]types.Datum, 0, len(e.AggFuncs))
 	for {
@@ -189,15 +211,17 @@ func (e *StreamAggExec) Next() (Row, error) {
 			}
 		}
 		if newGroup {
-			for _, af := range e.AggFuncs {
-				retRow = append(retRow, af.GetStreamResult())
+			for i, af := range e.AggFuncs {
+				retRow = append(retRow, af.GetResult(e.aggCtxs[i]))
+				// Clear stream results after grabbing them.
+				e.aggCtxs[i] = af.CreateContext()
 			}
 		}
 		if e.executed {
 			break
 		}
-		for _, af := range e.AggFuncs {
-			err = af.StreamUpdate(row, e.StmtCtx)
+		for i, af := range e.AggFuncs {
+			err = af.Update(e.aggCtxs[i], e.StmtCtx, row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -228,7 +252,7 @@ func (e *StreamAggExec) meetNewGroup(row Row) (bool, error) {
 			return false, errors.Trace(err)
 		}
 		if matched {
-			c, err := v.CompareDatum(e.StmtCtx, e.curGroupKey[i])
+			c, err := v.CompareDatum(e.StmtCtx, &e.curGroupKey[i])
 			if err != nil {
 				return false, errors.Trace(err)
 			}
