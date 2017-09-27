@@ -635,7 +635,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows("2"))
 	r = tk.MustQuery("select b from (select a,b from t order by a,c limit 1) t")
 	r.Check(testkit.Rows("2"))
-
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("insert into t values(1, 1), (2, 2)")
@@ -2031,6 +2030,29 @@ func (s testPrioritySuite) TestCoprocessorPriority(c *C) {
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
+}
+
+func (s *testSuite) TestHandleTransfer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("insert into t values(1), (2), (4)")
+	tk.MustExec("begin")
+	tk.MustExec("update t set a = 3 where a = 4")
+	// test table scan read whose result need handle.
+	tk.MustQuery("select * from t ignore index(idx)").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("insert into t values(4)")
+	// test single read whose result need handle
+	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("update t set a = 5 where a = 3")
+	tk.MustQuery("select * from t use index(idx)").Check(testkit.Rows("1", "2", "4", "5"))
+	tk.MustExec("commit")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("insert into t values(3, 3), (1, 1), (2, 2)")
+	// Second test double read.
+	tk.MustQuery("select * from t use index(idx) order by a").Check(testkit.Rows("1 1", "2 2", "3 3"))
 }
 
 func (s *testSuite) TestBit(c *C) {

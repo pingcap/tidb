@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -68,13 +70,13 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var chunks []tipb.Chunk
+	var (
+		chunks []tipb.Chunk
+		rowCnt int
+	)
 	for {
-		var (
-			handle int64
-			row    [][]byte
-		)
-		handle, row, err = e.Next()
+		var row [][]byte
+		row, err = e.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -85,7 +87,8 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		for _, offset := range dagReq.OutputOffsets {
 			data = append(data, row[offset]...)
 		}
-		chunks = appendRow(chunks, handle, data)
+		chunks = appendRow(chunks, data, rowCnt)
+		rowCnt++
 	}
 	return buildResp(chunks, err)
 }
@@ -146,10 +149,17 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
-	var pkCol *tipb.ColumnInfo
+	pkStatus := pkColNotExists
 	// The PKHandle column info has been collected in ctx.
 	if columns[length-1].GetPkHandle() {
-		pkCol = columns[length-1]
+		if mysql.HasUnsignedFlag(uint(columns[length-1].GetFlag())) {
+			pkStatus = pkColIsUnsigned
+		} else {
+			pkStatus = pkColIsSigned
+		}
+		columns = columns[:length-1]
+	} else if columns[length-1].ColumnId == model.ExtraHandleID {
+		pkStatus = pkColIsSigned
 		columns = columns[:length-1]
 	}
 	ranges := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
@@ -161,7 +171,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 		startTS:        ctx.dagReq.GetStartTs(),
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
-		pkCol:          pkCol,
+		pkStatus:       pkStatus,
 	}
 }
 
@@ -381,12 +391,11 @@ func reverseKVRanges(kvRanges []kv.KeyRange) {
 
 const rowsPerChunk = 64
 
-func appendRow(chunks []tipb.Chunk, handle int64, data []byte) []tipb.Chunk {
-	if len(chunks) == 0 || len(chunks[len(chunks)-1].RowsMeta) >= rowsPerChunk {
+func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
+	if rowCnt%rowsPerChunk == 0 {
 		chunks = append(chunks, tipb.Chunk{})
 	}
 	cur := &chunks[len(chunks)-1]
-	cur.RowsMeta = append(cur.RowsMeta, tipb.RowMeta{Handle: handle, Length: int64(len(data))})
 	cur.RowsData = append(cur.RowsData, data...)
 	return chunks
 }

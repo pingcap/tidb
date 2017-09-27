@@ -61,7 +61,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 	}
 	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0)
 	for {
-		_, values, err := e.Next()
+		values, err := e.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -146,7 +146,7 @@ func (e *analyzeColumnsExec) Fields() (fields []*ast.ResultField, err error) {
 
 // Next implements the ast.RecordSet Next interface.
 func (e *analyzeColumnsExec) Next() (row *ast.Row, err error) {
-	_, values, err := e.tblExec.Next()
+	values, err := e.tblExec.Next()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
