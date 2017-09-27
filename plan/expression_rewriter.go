@@ -1150,5 +1150,5 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-	er.err = ErrUnknownColumn.GenByArgs(v.Text(), "field list")
+	er.err = ErrUnknownColumn.GenByArgs(v.String(), "field list")
 }
