@@ -1084,6 +1084,7 @@ func createSession(store kv.Storage) (*session, error) {
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
+		planCache:   cache.NewSimpleLRUCache(1000),
 	}
 	if cache.EnablePlanCache {
 		s.planCache = cache.NewSimpleLRUCache(cache.PlanCacheCapacity)
@@ -1106,6 +1107,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
+		planCache:   cache.NewSimpleLRUCache(1000),
 	}
 	if cache.EnablePlanCache {
 		s.planCache = cache.NewSimpleLRUCache(cache.PlanCacheCapacity)
