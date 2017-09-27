@@ -51,5 +51,5 @@ func init() {
 		mysql.ErrRegionUnavaiable:   mysql.ErrRegionUnavaiable,
 		mysql.ErrTiKVServerBusy:     mysql.ErrTiKVServerBusy,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassExpression] = tikvMySQLErrCodes
+	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
 }
