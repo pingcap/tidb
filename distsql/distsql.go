@@ -245,7 +245,7 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 
 // SelectDAG sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func SelectDAG(client kv.Client, ctx goctx.Context, kvReq *kv.Request) (SelectResult, error) {
+func SelectDAG(ctx goctx.Context, client kv.Client, kvReq *kv.Request) (SelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics.

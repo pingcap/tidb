@@ -145,7 +145,7 @@ func (e *TableReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), kvReq)
+	e.result, err = distsql.SelectDAG(goctx.Background(), e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -167,7 +167,7 @@ func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.C
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, kvReq)
+	e.result, err = distsql.SelectDAG(goCtx, e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -281,7 +281,7 @@ func (e *IndexReaderExecutor) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), kvReq)
+	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -302,7 +302,7 @@ func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx g
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), kvReq)
+	e.result, err = distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -355,7 +355,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh ch
 	if err != nil {
 		return errors.Trace(err)
 	}
-	result, err := distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), kvReq)
+	result, err := distsql.SelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
