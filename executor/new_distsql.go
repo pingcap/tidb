@@ -301,6 +301,7 @@ type IndexLookUpExecutor struct {
 	tableRequest *tipb.DAGRequest
 	// When we need to sort the data in the second read, we must use handle to do this,
 	// In this case, schema that the table reader use is different with executor's schema.
+	// TODO: store it in table plan's schema. Not store it here.
 	tableReaderSchema *expression.Schema
 	// columns are only required by union scan.
 	columns  []*model.ColumnInfo
@@ -333,6 +334,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(kvRanges []kv.KeyRange, workCh ch
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Since the first read only need handle information. So its returned col is only 1.
 	result, err := distsql.NewSelectDAG(e.ctx.GoCtx(), e.ctx.GetClient(), kvReq, 1)
 	if err != nil {
 		return errors.Trace(err)
