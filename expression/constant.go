@@ -74,11 +74,6 @@ func (c *Constant) GetType() *types.FieldType {
 	return c.RetType
 }
 
-// GetTypeClass implements Expression interface.
-func (c *Constant) GetTypeClass() types.TypeClass {
-	return c.RetType.ToClass()
-}
-
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 	return c.Value, nil
