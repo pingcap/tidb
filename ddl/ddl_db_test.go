@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -44,6 +44,13 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
+)
+
+const (
+	// waitForCleanDataRound indicates how many times should we check data is cleaned or not.
+	waitForCleanDataRound = 60
+	// waitForCleanDataInterval is a min duration between 2 check for data clean.
+	waitForCleanDataInterval = time.Millisecond * 100
 )
 
 var _ = Suite(&testDBSuite{})
@@ -66,10 +73,11 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 
 	s.lease = 200 * time.Millisecond
 	tidb.SetSchemaLease(s.lease)
+	tidb.SetStatsLease(0)
 	s.schemaName = "test_db"
-	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
+
+	s.store, err = tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	localstore.MockRemoteStore = true
 
 	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -84,7 +92,6 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
-	localstore.MockRemoteStore = false
 	s.s.Execute("drop database if exists test_db")
 	s.s.Close()
 	s.dom.Close()
@@ -555,10 +562,10 @@ LOOP:
 	}
 
 	var handles map[int64]struct{}
-	for i := 0; i < 30; i++ {
+	for i := 0; i < waitForCleanDataRound; i++ {
 		handles = f()
 		if len(handles) != 0 {
-			time.Sleep(time.Millisecond * 100)
+			time.Sleep(waitForCleanDataInterval)
 		} else {
 			break
 		}
@@ -1193,7 +1200,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	// Verify that the old table data has been deleted by background worker.
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
-	for i := 0; i < 30; i++ {
+	for i := 0; i < waitForCleanDataRound; i++ {
 		err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 			it, err1 := txn.Seek(tablePrefix)
 			if err1 != nil {
@@ -1211,7 +1218,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 		if !hasOldTableData {
 			break
 		}
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(waitForCleanDataInterval)
 	}
 	c.Assert(hasOldTableData, IsFalse)
 }
