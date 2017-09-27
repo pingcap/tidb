@@ -639,11 +639,10 @@ func (e *LoadData) Open() error {
 
 // InsertValues is the data to insert.
 type InsertValues struct {
-	currRow      int64
-	batchRows    int64
-	lastInsertID uint64
-	ctx          context.Context
-
+	currRow               int64
+	batchRows             int64
+	lastInsertID          uint64
+	ctx                   context.Context
 	needFillDefaultValues bool
 
 	SelectExec Executor
