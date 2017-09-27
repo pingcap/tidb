@@ -345,6 +345,18 @@ func (n *ColumnName) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// String implements Stringer interface.
+func (n *ColumnName) String() string {
+	result := n.Name.L
+	if n.Table.L != "" {
+		result = n.Table.L + "." + result
+	}
+	if n.Schema.L != "" {
+		result = n.Schema.L + "." + result
+	}
+	return result
+}
+
 // ColumnNameExpr represents a column name expression.
 type ColumnNameExpr struct {
 	exprNode
