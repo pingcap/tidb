@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -66,10 +66,11 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 
 	s.lease = 200 * time.Millisecond
 	tidb.SetSchemaLease(s.lease)
+	tidb.SetStatsLease(0)
 	s.schemaName = "test_db"
-	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
+
+	s.store, err = tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	localstore.MockRemoteStore = true
 
 	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -84,7 +85,6 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
-	localstore.MockRemoteStore = false
 	s.s.Execute("drop database if exists test_db")
 	s.s.Close()
 	s.dom.Close()
