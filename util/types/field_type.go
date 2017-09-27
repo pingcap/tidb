@@ -139,6 +139,11 @@ func (ft *FieldType) EvalType() EvalType {
 	return ETString
 }
 
+// Hybrid checks whether a type is a hybrid type, which can represent different types of value in specific context.
+func (ft *FieldType) Hybrid() bool {
+	return ft.Tp == mysql.TypeEnum || ft.Tp == mysql.TypeBit || ft.Tp == mysql.TypeSet
+}
+
 // Init initializes the FieldType data.
 func (ft *FieldType) Init(tp byte) {
 	ft.Tp = tp
