@@ -19,11 +19,10 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
-
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 )
 
@@ -204,7 +203,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 			}
 		}
 		log.Warn(errMsg)
-		// User the last backoff type to generate a MySQL error.
+		// Use the last backoff type to generate a MySQL error.
 		return typ.TError()
 	}
 	return nil
