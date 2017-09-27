@@ -1477,7 +1477,6 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 }
 
 func (s *testDBSuite) TestComment(c *C) {
-	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("drop table if exists ct, ct1")
