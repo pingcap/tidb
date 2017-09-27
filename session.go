@@ -324,7 +324,13 @@ func (s *session) doCommitWithRetry() error {
 }
 
 func (s *session) CommitTxn() error {
-	return s.doCommitWithRetry()
+	err := s.doCommitWithRetry()
+	label := "OK"
+	if err != nil {
+		label = "Error"
+	}
+	transactionCounter.WithLabelValues(label).Inc()
+	return errors.Trace(err)
 }
 
 func (s *session) RollbackTxn() error {
@@ -879,7 +885,7 @@ func (s *session) Txn() kv.Transaction {
 
 func (s *session) NewTxn() error {
 	if s.txn != nil && s.txn.Valid() {
-		err := s.doCommitWithRetry()
+		err := s.CommitTxn()
 		if err != nil {
 			return errors.Trace(err)
 		}

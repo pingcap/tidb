@@ -133,13 +133,13 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 	pending := batch.keys
 	for {
 		req := &tikvrpc.Request{
-			Type:     tikvrpc.CmdBatchGet,
-			Priority: s.priority,
+			Type: tikvrpc.CmdBatchGet,
 			BatchGet: &pb.BatchGetRequest{
 				Keys:    pending,
 				Version: s.version.Ver,
 			},
 		}
+		req.Context.Priority = s.priority
 		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
@@ -211,13 +211,13 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	sender := NewRegionRequestSender(s.store.regionCache, s.store.client, pbIsolationLevel(s.isolationLevel))
 
 	req := &tikvrpc.Request{
-		Type:     tikvrpc.CmdGet,
-		Priority: s.priority,
+		Type: tikvrpc.CmdGet,
 		Get: &pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
 		},
 	}
+	req.Context.Priority = s.priority
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
