@@ -251,6 +251,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for issue 2402
 		{"INSERT INTO tt VALUES (01000001783);", true},
+		{"INSERT INTO tt VALUES (default);", true},
 
 		{"REPLACE INTO foo VALUES (1 || 2)", true},
 		{"REPLACE INTO foo VALUES (1 | 2)", true},

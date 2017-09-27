@@ -479,10 +479,9 @@ import (
 	Expression			"expression"
 	ExpressionList			"expression list"
 	ExpressionListOpt		"expression list opt"
-	ExpressionListList		"expression list list"
+	ExprOrDefault			"expression or default"
 	FuncDatetimePrecListOpt	        "Function datetime precision list opt"
 	FuncDatetimePrecList	        "Function datetime precision list"
-	ExpressionListListItem		"expression list list item"
 	BoolPri				"boolean primary expression"
 	PredicateExpr			"Predicate expression factor"
 	Field				"field expression"
@@ -577,6 +576,7 @@ import (
 	RevokeStmt			"Revoke statement"
 	RollbackStmt			"ROLLBACK statement"
 	RowFormat			"Row format option"
+	RowValue			"Row value"
 	SelectLockOpt			"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmt			"SELECT statement"
 	SelectStmtCalcFoundRows		"SELECT statement optional SQL_CALC_FOUND_ROWS"
@@ -640,6 +640,9 @@ import (
 	UserVariable		"User defined variable name"
 	UserVariableList	"User defined variable name list"
 	UseStmt			"USE statement"
+	Values			"values"
+	ValuesList		"values list"
+	ValuesOpt		"values optional"
 	VariableAssignment	"set variable value"
 	VariableAssignmentList	"set variable value list"
 	Variable		"User or system variable"
@@ -2308,7 +2311,7 @@ IntoOpt:
 |	"INTO"
 
 InsertValues:
-	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
+	'(' ColumnNameListOpt ')' ValueSym ValuesList
 	{
 		$$ = &ast.InsertStmt{
 			Columns:   $2.([]*ast.ColumnName),
@@ -2323,7 +2326,7 @@ InsertValues:
 	{
 		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: $4.(*ast.UnionStmt)}
 	}
-|	ValueSym ExpressionListList %prec insertValues
+|	ValueSym ValuesList %prec insertValues
 	{
 		$$ = &ast.InsertStmt{Lists:  $2.([][]ast.ExprNode)}
 	}
@@ -2343,20 +2346,43 @@ InsertValues:
 ValueSym:
 "VALUE" | "VALUES"
 
-ExpressionListList:
-	ExpressionListListItem
+ValuesList:
+	RowValue
 	{
 		$$ = [][]ast.ExprNode{$1.([]ast.ExprNode)}
 	}
-|	ExpressionListList ',' ExpressionListListItem
+|	ValuesList ',' RowValue
 	{
 		$$ = append($1.([][]ast.ExprNode), $3.([]ast.ExprNode))
 	}
 
-ExpressionListListItem:
-	'(' ExpressionListOpt ')'
+RowValue:
+	'(' ValuesOpt ')'
 	{
 		$$ = $2
+	}
+
+ValuesOpt:
+	{
+		$$ = []ast.ExprNode{}
+	}
+|	Values
+
+Values:
+	Values ',' ExprOrDefault
+	{
+		$$ = append($1.([]ast.ExprNode), $3.(ast.ExprNode))
+	}
+|	ExprOrDefault
+	{
+		$$ = []ast.ExprNode{$1.(ast.ExprNode)}
+	}
+
+ExprOrDefault:
+	Expression
+|	"DEFAULT"
+	{
+		$$ = &ast.DefaultExpr{}
 	}
 
 ColumnSetValue:
@@ -4223,11 +4249,7 @@ SetExpr:
 	{
 		$$ = ast.NewValueExpr("ON")
 	}
-|	"DEFAULT"
-	{
-		$$ = &ast.DefaultExpr{}
-	}
-|	Expression
+|	ExprOrDefault
 
 VariableAssignment:
 	Identifier eq SetExpr
